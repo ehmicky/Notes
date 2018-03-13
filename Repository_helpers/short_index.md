@@ -1,1 +1,1 @@
-__~Architecture__
+__Architecture__

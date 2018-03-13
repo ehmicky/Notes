@@ -25,7 +25,8 @@ md-file-tree | sed '
 cat "$dir/intermediate.md" "$dir/index.md" > "$dir/long_index.md"
 
 sed '
-  /[[_]~/! d
+  /[[_]~/! d;
+  s/~//;
 ' "$dir/index.md" > "$dir/short_index.md"
 
 # Updates README.md
