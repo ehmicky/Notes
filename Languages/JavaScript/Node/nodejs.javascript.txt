@@ -510,6 +510,7 @@ OBJECT MODE ==>                                 #SVAL is any VAL (except null):
                                                 #  - ISTREAM.read() NUM argument is ignored (always 1)
 
 ISTREAM ==>                                     #Input stream. Actually called Readable
+                                                #Is an ASYNC_ITERABLE
 new STREAM.Readable([OBJ])                      #OBJ:
                                                 #  - encoding 'ENCODING' (def: null, i.e. uses BUFFER)
                                                 #  - objectMode BOOL: see above
@@ -566,6 +567,11 @@ OSTREAM.on("close", FUNC())                     #Like ISTREAM
 OSTREAM.on("finish", FUNC())                    #Fired when end() done
 OSTREAM.on("[un]pipe", FUNC(ISTREAM))           #Fired by ISTREAM.[un]pipe()
 OSTREAM.on("error", FUNC(ERROR))                #
+
+finished(ISTREAM|OSTREAM[,FUNC(ERROR)])->PROMISE#Resolved on 'close', 'end|finish' or destroy()
+                                                #Rejected on 'error' or destroy(ERROR)
+pipeline(ISTREAM|OSTREAM...[, FUNC(ERROR)])
+ ->PROMISE                                      #Like finished(STREAM.pipe(STREAM2).pipe(...), ...)
 
 IOSTREAM ==>                                    #Implement both ISTREAM and OSTREAM. Actually called either:
                                                 #  - STREAM.Duplex
@@ -2046,6 +2052,9 @@ VM.createContext([CONT_OBJ][, CONT_OPTS])->COBJ #COBJ is an OBJ with some hidden
                                                 #CONT_OPTS:
                                                 #  - name STR (def: 'VM Context NUM'): for debugging
                                                 #  - origin PROTO://HOST[:PORT] (def: ''): for debugging
+                                                #  - codeGeneration:
+                                                #     - strings BOOL (def: true): if false, throws on eval() or derivatives (new Function(...), etc.)
+                                                #     - wasm BOOL (def: true): if false, throws when trying to compile WASM
 VM.isContext(COBJ)->BOOL                        #Returns true if COBJ
 
 runInContext(STR, COBJ[, RUN_OPTS])             #Like eval() but use context COBJ as unique global environment:
@@ -2065,17 +2074,13 @@ runInContext(STR, COBJ[, RUN_OPTS])             #Like eval() but use context COB
                                                 #  - displayErrors BOOL (def: true): prints to current stderr any stderr
                                                 #    from code
                                                 #  - timeout NUM: throw error if timeout
-                                                #"Debug" runs in V8 debug context
 runInNewContext(STR[, CONT_OBJ]
  [, RUN_OPTS|CONT_OPTS])                        #Same but automatically use VM.createContext(CONT_OBJ, CONT_OPTS)
 runInThisContext(STR[, RUN_OPTS])               #Same as runInNewContext(STR, global)
 
-new VM.Script(STR[, RUN_OPTS|SCRIPT_OPTS])      #Returns a SCRIPT, i.e. a compiled version of STR.
-                                                #Can call SCRIPT.run*(...):
-                                                #  - same as VM.run*(STR, ...) but separate compiling STR from running it
-                                                #  - every SCRIPT.run*(...) can be bound to different COBJ
-                                                #SCRIPT.runInContext()'s RUN_OPTS also has:
-                                                #  - breakOnSigint BOOL
+new VM.Script(STR[, RUN_OPTS|SCRIPT_OPTS])      #Returns a SCRIPT, i.e. a compiled version of STR:
+                                                #  - separates compiling from running STR
+                                                #  - every run can be bound to different COBJ
                                                 #SCRIPT_OPTS:
                                                 #  - producedCachedData BOOL:
                                                 #     - if true, sets cachedData with copy of code as BUFFER
@@ -2084,6 +2089,9 @@ new VM.Script(STR[, RUN_OPTS|SCRIPT_OPTS])      #Returns a SCRIPT, i.e. a compil
                                                 #     - copy from previous script, to improve load performance
                                                 #     - V8.cachedDataVersionTag()->NUM returns a hash of v8
                                                 #       version, CLI flags and CPU features
+SCRIPT.runIn[New|This]Context(...)              #Same as VM.run*(STR, ...)
+                                                #RUN_OPTS also has:
+                                                #  - breakOnSigint BOOL
 
 new VM.Module(STR[, MODULE_OPTS])               #Same as VM.Script but for ES module
                                                 #MODULE_OPTS:
@@ -2214,7 +2222,7 @@ DIGEST, FUNC(ERROR, BUFFER))                    #the input, second the salt (sho
                                                 #iterations (should be min. 1000) and NUM2 the final string length.
 pbkdf2Sync
  (STBUFFER, STBUFFER2, NUM, NUM2, DIGEST)       #Same but synchronous (returns BUFFER).
-randomBytes(NUM[, CALLBACK(ERROR, BUFFER)])     #Generates random BUFFER of length NUM
+randomBytes(NUM[, FUNC(ERROR, BUFFER)])         #Generates random BUFFER of length NUM
                                                 #Is cryptographically secure (e.g. from /dev/random)
                                                 #If no FUNC, synchronous (returns BUFFER)
 randomFill[Sync](TDBUFFER[, NUM[, NUM2]]        #Like randomBytes() but by filling in a TDBUFFER instead, from offset NUM
@@ -2408,6 +2416,7 @@ format(STR[, STR2...])                          #Printf-like FUNC, STR can conta
                                                 #  - "%O": OBJ. Uses UTIL.inspect() with default options
                                                 #  - "%o": OBJ. Uses UTIL.inspect() with options: showHidden true, depth 4,
                                                 #    showProxy true
+formatWithOptions(OBJ, ...)                     #Like format(...) except if can specify inspect() options OBJ
 
 debuglog(STR)                                   #Returns FUNC() that works like console.error() except:
                                                 #  - appends STR
@@ -2435,6 +2444,31 @@ inherits(TYPE_FUNC, TYPEPARENT_FUNC)            #Makes TYPE inherits from TYPEPA
                                                 #Also creates a TYPE.super_ that points to TYPEPARENT
                                                 #Since it does not use OBJ in Object.create(), needs to create own static
                                                 #members with TYPE.prototype.VAR = VAL
+
+
+types.isRegExp(VAL)->BOOL                       #True if REGEXP
+types.isDate(VAL)->BOOL                         #True if DATE
+types.isPromise(VAL)->BOOL                      #True if PROMISE
+types.is[Weak]Map|Set(VAL)->BOOL                #True if [WEAK]MAP|SET
+types.isNativeError(VAL)->BOOL                  #True if instanceof ERROR
+types.isProxy(VAL)->BOOL                        #True if PROXY
+
+types.isArgumentsObject(VAL)->BOOL              #True if arguments
+
+types.isAsyncFunction(VAL)->BOOL                #True if async FUNC
+
+types.isGeneratorFunction(VAL)->BOOL            #True if FUNC *
+types.isGeneratorObject(VAL)->BOOL              #True if return value of FUNC * (not just any ITERABLETOR)
+types.isMap|SetIterator(VAL)->BOOL              #True if MAP|SET.keys|values|entries|Symbol.iterator()
+
+types.is[Shared|Any]ArrayBuffer|DataView|
+ TypedArray|Int|Uint|Float*Array(VAL)->BOOL     #True if [SHARED]ARRAYBUFFER|DATAVIEW|TYPED_ARR|UINT|INT|FLOAT*ARRAY
+
+types.isBoolean|Number|StringObject(VAL)->BOOL  #True if new Boolean|Number|String(VAL) (not Boolean|Number|String(VAL))
+types.isSymbolObject(VAL)->BOOL                 #True if Object(Symbol(VAL)) (not Symbol(VAL))
+
+types.isWebAssemblyCompiledModule(VAL)->BOOL    #True if compiled WASM
+types.isExternal(VAL)->BOOL                     #True if external C/C++ value
 
 
                                              /=+===============================+=\
