@@ -45,16 +45,6 @@ Architecture:
               - must use TLS 1.2+ with SNI extension
               - if using TLS 1.2, must disable compression, renegotiation
         - HTTP/1.*: not required
-  - URI scheme: 
-     - http:
-        - over TCP
-        - default port: 80
-        - HOSTNAME: required, IP address or DNS name
-        - PATH: def is "/"
-     - https:
-        - over SSL
-        - default port: 443
-        - HOSTNAME|PATH: like http
   - client-server:
      - client: "user agents", e.g. web browser, web crawler, app, etc.
      - order is always: client request -> server response (can include several streams)
@@ -993,89 +983,105 @@ Prefetching (resource hints, server push):
            - can use document.visibilityState 'prerender' to handle it
         - security: website make decision (not user) to trust content by browsing it
 
-Long request:
-  - header first, then body:
-     - client: Expect: "100-continue" [C], no request body
-     - server:
-        - 100 (Continue) if success
-        - 417 (Expectation Failed) if failure
-     - client: request body body
-  - Content-Length [C|S]:
-     - request|response body length ('entity', not 'instance')
-     - cannot be used with Transfer-Encoding [S]
-     - can use 411 (Length Required)
-  - request too large:
-     - 414 (Request URI too long)
-     - 431 (Request header fields too large)
-     - 413 (Request Entity too large)
-
-Long response (size):
-  - request specific ranges (byte serving):
-     - init: 
-        - server:
-            200 (OK)
-            Accept-Ranges: VAL [S]:
-              - bytes
-              - none (def)
-              - any other UNIT: will require different Range [C] and Content-Range [S] values
-            Empty response body
-     - each range:
-        - client:
-           - only GET
-           - Range: bytes=RANGE,... [C]
-              - RANGE: NUM-[NUM2] or -NUM (last bytes)
-           - If-Range: ETAG|MDATE [C] (optional)
-              - like If-Match|If-Unmodified-Since, except if fails, should ignore Range [C]
-              - goal: only retrieve each range if "instance" remains the same (otherwise would be corrupted)
-        - server:
-           - success:
-              - 206 (Partial content)
-              - caching:
-                 - ETAG|MDATE:
-                    - designates the "instance", not "entity", i.e.:
-                       - whole resource not RANGE
-                       - must be same as first 200 (OK) response
-                 - ETAG must be strong
-              - Accept-Ranges: VAL [S]
-              - only one RANGE was requested:
-                  Content-Range: bytes NUM-NUM2/TOTAL [S] 
-                    - TOTAL can be * if unknown
-              - several RANGEs were requested:
-                  Content-Type: "multipart/byteranges; boundary=STR" [S], with payload:
-                    STR	
-                    [Content-Type: TYPE]
-                    Content-Range: bytes NUM-NUM2/TOTAL
-                    content as is
-                    STR
-                    ...
-                    STR--
-           - failure:
-               416 (Requested Range Not Satisfiable)
-               Content-Range: bytes */TOTAL [S] 
-  - Prefer: return=minimal [C]:
-     - should not return response body, only headers
-     - as opposed to HEAD, can be done on other HTTP methods, and can include request body
-  - Prefer: return=representation [C]:
-     - should return only what has been changed by request, not full resource
-     - should also include Content-Location [S] to full resource
-  (HTTP/1.* only)
-  - send response body in several times:
-     - how:
-        - Transfer-Encoding: chunked [S|C]:
-           - sent with each chunk:
-              - first line is SIZE_HEX_NUM[;VAR=VAL;...]
-              - rest is data
-           - empty chunk indicates end
-        - Trailer: HEADER
-           - headers sent in the end because based on content (which is not known yet)
-           - HEADER cannot be Transfer-Encoding, Content-Length or Trailer
-     - how:
-        - client: TE: chunked[, trailers] [C]
-        - server:
-           - Trailer: HEADER [S] (optional) to indicate trailer headers
-     - transformations:
-        - should use compression
+Request|response length:
+  - hint (request|response):
+     - Content-Length: NUM [C|S]:
+        - request|response body length ('entity', not 'instance')
+        - presence:
+           - mandatory if body present
+           - forbidden with chunked transfer encoding
+           - can use 411 (Length Required)
+        - only hint to help allocating resources:
+           - not substitute for reading actual body length
+  - unkwnown length (request|response):
+     (HTTP/2)
+     - not sending END_STREAM flag
+     - use trailer HEADER frame for headers that are based on body, when body is not known in advance
+     (HTTP/1.1)
+     - Chunked transfer encoding:
+        - send request|response body in several times
+        - how:
+           - TE: chunked[, trailers] [C]:
+              - optional
+              - indicates preference for chunked [and trailing headers] response
+           - Transfer-Encoding: chunked [S|C]:
+              - sent with each chunk:
+                 - first line is SIZE_HEX_NUM[;VAR=VAL;...]
+                 - rest is data
+              - empty chunk indicates end
+           - Trailer: HEADER
+              - optional
+              - unless HEADER is not important (client can use body without it), only if TE: trailers [C]
+              - HEADER cannot be Transfer-Encoding, Content-Length or Trailer
         - applied after any transformation (compression, range, delta encoding)
+           - should use compression
+  - big length:
+     - request:
+        - Chunked transfer encoding, not sending END_STREAM flag (see above)
+        - sending header before sending body:
+           - client: Expect: "100-continue" [C], no request body
+           - server:
+              - 100 (Continue) if success
+              - 417 (Expectation Failed) if failure
+           - client: request body
+        - request too large:
+           - 414 (Request URI too long)
+           - 431 (Request header fields too large)
+           - 413 (Request Entity too large)
+     - response:
+        - Chunked transfer encoding, not sending END_STREAM flag (see above)
+        - request specific ranges (byte serving):
+           - init: 
+              - server:
+                  200 (OK)
+                  Accept-Ranges: VAL [S]:
+                    - bytes
+                    - none (def)
+                    - any other UNIT: will require different Range [C] and Content-Range [S] values
+                  Empty response body
+           - each range:
+              - client:
+                 - only GET
+                 - Range: bytes=RANGE,... [C]
+                    - RANGE: NUM-[NUM2] or -NUM (last bytes)
+                 - If-Range: ETAG|MDATE [C] (optional)
+                    - like If-Match|If-Unmodified-Since, except if fails, should ignore Range [C]
+                    - goal: only retrieve each range if "instance" remains the same (otherwise would be corrupted)
+              - server:
+                 - success:
+                    - 206 (Partial content)
+                    - caching:
+                       - ETAG|MDATE:
+                          - designates the "instance", not "entity", i.e.:
+                             - whole resource not RANGE
+                             - must be same as first 200 (OK) response
+                       - ETAG must be strong
+                    - Accept-Ranges: VAL [S]
+                    - only one RANGE was requested:
+                        Content-Range: bytes NUM-NUM2/TOTAL [S] 
+                          - TOTAL can be * if unknown
+                    - several RANGEs were requested:
+                        Content-Type: "multipart/byteranges; boundary=STR" [S], with payload:
+                          STR	
+                          [Content-Type: TYPE]
+                          Content-Range: bytes NUM-NUM2/TOTAL
+                          content as is
+                          STR
+                          ...
+                          STR--
+                 - failure:
+                     416 (Requested Range Not Satisfiable)
+                     Content-Range: bytes */TOTAL [S] 
+  - partial body:
+     - request:
+        - PATCH method (see above)
+     - response:
+        - HEAD method (see above)
+        - Prefer: return=minimal [C]:
+           - like HEAD but can be done on other HTTP methods, and can include request body
+        - Prefer: return=representation [C]:
+           - should return only what has been changed by request, not full resource
+           - should also include Content-Location [S] to full resource
 
 Long response (time)
   - 202 (Accepted): 
@@ -1421,7 +1427,16 @@ Practices becoming bad with HTTP/2:
   - domain sharding
 
 HTTP URLs:
-  - http:
+  - URI scheme: 
+     - http:
+        - over TCP
+        - default port: 80
+        - HOSTNAME: required, IP address or DNS name
+        - PATH: def is "/"
+     - https:
+        - over SSL
+        - default port: 443
+        - HOSTNAME|PATH: like http
   - //HOST/PATH
   - #HASH not send to server
   - interpretation depends on document format:
