@@ -449,7 +449,7 @@ USER: /users
   | getCurrentAccount()->ACCOUNT
   | isMe(POSITION|PARTICIPANT)
   - isGuest|User(), isGuest(VAL): getter/setter
-  - getAccessToken(), setAccessToken(VAL)
+  - getAccessToken(), setAccessToken(HASH): just used to remember HASH
   - settings SETTINGS_POSITION /positions/POSITION/settings
      + Flow.settings
      + If type guest:
@@ -468,7 +468,7 @@ USER: /users
   | isStateNew|Invited|Guest|Registered()
   x "user:signup"(OBJ): /users/signup, with OBJ: company_*, private_token STR, fullname, password, language, persistent, mixpanel_id
 
-COMPANY: /directory/companies/
+COMPANY: /directory/companies/: only used as Typeahead choices when signinup and filling up company
   - name [V]
   - orgnr [V]
   - country [V]
@@ -1145,29 +1145,48 @@ Auth:
         - sends /api/users/login with:
            - data.email|password|persistent (form)
            - messageContainer|error() + ignoredStatusCodes 401: to show error in UI
-       Cookie flow-user-hash STR, and redirects to "/app" (triggering "auth:autologin" then)
+       Sets cookie flow-user-hash STR, and redirects to "/app" (triggering "auth:autologin" then)
      - "auth:autologin"(OBJ): 
         - at startup.
-        - uses Flow.startupData, filled from a <script> served by server based on flow-user-hash cookie. OBJ:
-           - auth_user_id STR, users OBJ_ARR, positions OBJ_ARR
-        - sets Flow.user|account|position|settings
-        - pings to /api/ping every minute, which returns 401 if not logged in, and redirects to login page
-        - Ghosting:
-           - How: 
-              - X-Ghost: 0d1b9873308d8ccaf13df3e82097fe738689e9f4 [C]
-              - X-Ghost-Target-UserId: USER_ID [C]
-              - Sets USER.ghost true -> USER.isGhost() true
-           - Effect:
-              - append "GHOSTING" view to <body>
-              - no pings
-              - cannot subscribe to Pusher private-*|presence-* channels
+        - uses Flow.startupData:
+           - OBJ: auth_user_id STR, users OBJ_ARR, (not used yet) positions OBJ_ARR
+           - filled from a <script> served by server based on flow-user-hash cookie. 
+        - sets Flow.user, then (from it) Flow.account|position|settings
      - "auth:logout"(OBJ): 
         - when clicking logout button
         - calls /api/users/logout, which unsets cookie flow-user-hash, then redirects to "/"
-     - "auth:token-user:init"(VAL)
-        - on /contracts/ID/at/VAL or MDL_EVENT "agreements:agreement:show:token"(ID, VAL)
-        - sets Flow-Access-Token: VAL [C], and put in guest mode
-     - "auth:token-user:set"(USER, POSITION, BOOL)
+     - "auth:token-user:init"(HASH)
+        - on /contracts/ID/at/HASH or MDL_EVENT "agreements:agreement:show:token"(ID, HASH), before fetching the AGREEMENT
+        - sets Flow-Access-Token: HASH [C] 
+        - sets Flow.user as new USER, and put in guest mode (so USER.isGuest()->true)
+        - use USER.setAccessToken(HASH), so can retrieve USER.getAccessToken()->HASH
+     - "auth:token-user:set"(OBJ, POSITION, BOOL):
+        - on /contracts/ID/at/HASH or MDL_EVENT "agreements:agreement:show:token"(ID, HASH), after fetching the AGREEMENT, but before showing it
+        - parameters:
+           - POSITION retrieved from AGREEMENT.token_participant_id PARTICIPANT_ID
+           - OBJ:
+              - puid|email|state: from AGREEMENT.user_puid|email|state
+              - ghost BOOL (according to X-Ghost [S])
+              - current_position POSITION.id
+              - positions [POSITION]
+           - BOOL same as ghost above
+        - Adds OBJ to USER
+        - Sets Flow.position|account
+        - Flow.settings set by the caller
+  - Pings:
+     - pings to /api/ping every minute, which returns 401 if not logged in, and redirects to login page
+  - Ghosting:
+     - How: 
+        - Ghost: 0d1b9873308d8ccaf13df3e82097fe738689e9f4 [C]
+        - Ghost-Target-UserId: USER_ID [C]
+        - X-Ghost: 1 [S]
+        - Sets USER.ghost true -> USER.isGhost() true
+     - Effect:
+        - login as a specified USER
+        - append "GHOSTING" view to <body>
+        - no pings
+        - should not edit anything
+        - cannot subscribe to Pusher private-*|presence-* channels
 
 Analytics:
   - Analytics.mixpanel|ga("FUNC", ...) -> calls window.mixpanel|ga.FUNC(...)
@@ -1182,19 +1201,39 @@ Analytics:
      - Loads Google Adwords HTML page
 
 Public:
+  - all have public access
   - login:
-     - route "login", MDL_EVENT "login:show"
+     - route "login" and MDL_EVENT "login:show"(BOOL, BOOL2):
+        - if BOOL2 true, change URL to /login
+        - form with email|password|persistent:
+           - email|persistent can be prefilled with startupData.form_data.email|persistent
+           - "Submit" -> "auth:login"(FORM_OBJ)
+        - error messages:
+           - incorrect password -> reload and shows error message:
+              - right away when using app login page
+              - using startupData.general_error "incorrect", when using site login page
+           - "Locked account" error when server api_error_code 2001
+            - if BOOL true, shows Automatic logout message
+        - "Forgot your password" -> "recovery:enter-email:show"()
+     - redirected to when:
+        - tries to access non public access and not logged in
+        - 401 error (with Automatic logout message)
+        - 404 error
   - recover-account:
      - routes:
         - "recover-account"
         - "recover-account/HASH"
      - MDL_EVENT: "recovery:enter-email:show"
   - signup:
-      - routes:
-         - "signup/HASH"
-      - MDL_EVENT: 
-         - "signup:success"
-         - "signup:invalid-hash"
+      - route "signup/HASH":
+         - /users/signup with data { private_token HASH }, which returns a newly created USER
+         - SignupView:
+            - MODEL USER:
+               - according to email|fullname|password|language|company_country|company_name|company_orgnr|terms|persistent
+            - Company_country|language uses Select2, company_name uses Typeahead (source: /directory/companies)
+            - company_country|name|orgnr can only be picked if not USER state "invited"
+         - on error, sets Cookie "invalid-hash" 1 and redirects to "/" (can also use MDL_EVENT "signup:invalid-hash")
+         - redirects to "/app" (can also use MDL_EVENT "signup:success")
 
 Index:
   - route "" and MDL_EVENT "index:show"(OBJ) -> "agreements:dashboard:show"(Flow.settings.direction(), OBJ) 
