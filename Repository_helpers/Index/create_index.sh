@@ -7,17 +7,16 @@ if [[ ! -f "$dir/index.md" ]]; then
   exit 1
 fi
 
+md-file-tree | sed -f "$dir/create_index.sed" > "$dir/index.md"
+
+# Updates number of files/lines
 numberOfFiles="$( find -type f -iname "*.txt" | wc -l )"
 numberOfLines="$( find -type f -iname "*.txt" | while read; do cat "$REPLY"; done | wc -l )"
 numberOfPages=$(( $numberOfLines / 25 )); 
-
-md-file-tree |
-  sed -f "$dir/create_index.sed" |
-  sed "
-    s/NUMBER_OF_FILES/$numberOfFiles/
-    s/NUMBER_OF_LINES/$numberOfLines/
-    s/NUMBER_OF_PAGES/$numberOfPages/
-  " > "$dir/index.md"
-
-# Updates README.md
-cat "$dir/presentation.md" "$dir/index.md" > README.md
+sed "
+  s/NUMBER_OF_FILES/$numberOfFiles/
+  s/NUMBER_OF_LINES/$numberOfLines/
+  s/NUMBER_OF_PAGES/$numberOfPages/
+" "$dir/presentation.md" |
+  # Updates README.md
+  cat "$dir/index.md" > README.md
