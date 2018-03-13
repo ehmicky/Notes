@@ -100,9 +100,6 @@ Authorization: Bearer API_KEY [C] #Authentication
                                   #  - can be scoped to:
                                   #     - specific endpoints
                                   #     - read/write, read-only, none
-Authorization: API_KEY [C]
-Stripe-Account:
- STRIPE_ACCOUNT.id [C]            #Authentication for Connect instead.
 
 TEST MODE ==>                     #Each key has either a production or a test version
                                   #  - sandbox / separate data
@@ -440,8 +437,9 @@ CURRENCY CONVERSION ==>           #Conversion is automatic and has three stages:
                                   #  - CHARGE.currency ("presentment" currency) (specified by our code)
                                   #     - stored in BALANCE, currency-wise
                                   #  - destination's currency (our bank account)
-                                  #     - used during PAYOUT
+                                  #     - used during PAYOUT|TOPUP
                                   #        - not when money is re-used with a REFUND or a Connect transaction
+BALANCE_TRANSACTION.exchange_rate #NUM. Customer's currency to CHARGE.currency exchange rate.
 AVAILABLE CURRENCIES ==>          #Customer's currency:
                                   #  - see full list at https://stripe.com/docs/currencies
                                   #CHARGE.currency is payment method-specific:
@@ -456,12 +454,12 @@ AVAILABLE CURRENCIES ==>          #Customer's currency:
                                   #  - 'usd', 'gbp', 'eur', 'aud', 'cad', 'hkd', 'sgd' for 'wechat'
                                   #Destination currency:
                                   #  - must match main currency of STRIPE_ACCOUNT.country
-                                  #  - but PAYOUT can be to another country with same currency (e.g. Eurozone)
+                                  #  - but PAYOUT|TOPUP can be to another country with same currency (e.g. Eurozone)
 EXCHANGE FEE ==>                  #Conversion exchange fee (if conversion needed):
                                   #  - customer to presentment: paid by customer (bank fee)
                                   #  - presentment to destination: 1% Stripe fee
                                   #I.e. CHARGE.currency should either use:
-                                  #  - customer's currency (preferred): fee is paid by us, if PAYOUT
+                                  #  - customer's currency (preferred): fee is paid by us, if PAYOUT|TOPUP
                                   #  - destination's currency: fee is paid by customer, always
                                   #There is also an unrelated fee when customer's bank's country is different from destination's:
                                   #  - paid by customer (bank fee)
@@ -698,9 +696,7 @@ PINTENT.on_behalf_of             C#
 PINTENT.description             CU#
 PINTENT.receipt_email           CU#
 PINTENT.invoice                   #
-PINTENT.review                    #
-PINTENT.transfer_data            C#
-PINTENT.transfer_group          CU#Like CHARGE.*
+PINTENT.review                    #Like CHARGE.*
 PINTENT.charges                   #CHARGE_LIST
                                   #Contains all failed CHARGEs + an final successful CHARGE (if any).
                                   #Sorted in reverse order.
@@ -783,8 +779,6 @@ STRIPE.charges.retrieve|list|
 CHARGE.amount                   *C#PMONEY
                                   #Have a currency-specific minimum (around $0.5).
                                   #  - see https://stripe.com/docs/currencies#minimum-and-maximum-charge-amounts
-CHARGE.application_fee_amount    C#PMONEY
-CHARGE.application_fee            #STRIPE_ACCOUNT_FEE.id
 CHARGE.balance_transaction        #BALANCE_TRANSACTION.id
 CHARGE.paid                       #BOOL for success
 CHARGE.status                     #First 'pending' then either 'succeeded' or 'failed'.
@@ -811,9 +805,6 @@ CHARGE.payment_method_details     #Like SOURCE.type + SOURCE.TYPE.*
 CHARGE.customer                 CU#CUSTOMER.id
 ?customer=CUSTOMER.id             #
 CHARGE.shipping                 CU#SHIPPING.
-CHARGE.application                #STRIPE_ACCOUNT.id
-CHARGE.on_behalf_of              C#STRIPE_ACCOUNT.id
-                                  #When one made transaction of another's behalf
 CHARGE.description              CU#STR. Shown in receipts.
 CHARGE.receipt_email            CU#'EMAIL' to send a receipt to.
                                   #Defaults to CHARGE.customer.email
@@ -853,14 +844,7 @@ CHARGE.invoice                    #INVOICE.id
 CHARGE.order                      #ORDER.id
 CHARGE.payment_intent             #PINTENT.id
 CHARGE.review                     #REVIEW.id
-CHARGE.transfer                   #TRANSFER.id. Only applicable if the charge was created using the destination parameter.
-CHARGE.source_transfer            #TRANSFER.id. Only present if the charge came from another Stripe account.
 CHARGE.billing_details            #BILL_DETAILS.
-CHARGE.transfer_data             C#TRANSFER_DATA.
-TRANSFER_DATA.amount             C#MONEY (def: CHARGE.amount).
-TRANSFER_DATA.destination        C#STR. Stripe account to transfer funds to if CHARGE.transfer_data was defined.
-CHARGE.transfer_group           CU#STR.
-?transfer_group=STR               #
 
 POST /charges/ID/capture          #Like POST/charges/ID with CHARGE.capture true
 STRIPE.capture()                  #
@@ -909,10 +893,6 @@ REFUND.amount                    C#MONEY.
                                   #  - in that case, refund_application_fee|reverse_transfer will be proportional.
                                   #  - can do several REFUNDs per CHARGE, but sum cannot exceed total CHARGE amount
 REFUND.balance_transaction        #BALANCE_TRANSACTION.id of the refund
-REFUND.refund_application_fee   RC#BOOL (def: false). Whether should refund application_fee as well.
-REFUND.reverse_transfer         RC#BOOL (def: false). Whether should reverse TRANSFER.
-REFUND.source_transfer_reversal   #TRAVERSAL.id if was using Connect.
-REFUND.transfer_reversal          #TRAVERSAL.id if was using Connect and used 'destination'.
 REFUND.reason                   ?C#STR among 'duplicate', 'fraudulent', 'requested_by_customer'.
 REFUND.description                #STR. Shown to users. Only for non-card payments.
 REFUND.receipt_number             #Like CHARGE.*
@@ -988,6 +968,28 @@ SCHEDULE.monthly_anchor         CU#NUM. Days of the month if SCHEDULE.interval '
 SCHEDULE.delay_days             CU#Wait for INT days before any CHARGE is included in automatic PAYOUTs.
 PAYOUTS_SETTINGS.               CU#BOOL (def: true for Express, false for Custom accounts).
  debit_negative_balances          #Automatically create negative PAYOUT if BALANCE is negative.
+
+GET /topups[/ID]
+POST /topups[/ID]                 #
+POST /topups/ID/cancel            #From TOPUP.status 'pending' to 'canceled'.
+STRIPE.topups.list|retrieve|
+ create|update|cancel()           #
+TOPUP                             #Inverse of PAYOUT. Money added to STRIPE_ACCOUNT
+TOPUP.status                      #Can be:
+                                  #  - 'pending'
+                                  #  - 'succeeded' (EVENT 'topup.succeeded')
+                                  #  - 'failed' (EVENT 'topup.failed')
+                                  #  - 'canceled' (EVENT 'topup.canceled')
+                                  #  - 'reversed' (EVENT 'topup.reversed')
+?status=STR                       #
+TOPUP.amount                    *C#PMONEY
+?amount=CMP_FILTER                #
+TOPUP.source                     C#SOURCE
+TOPUP.balance_transaction        ?#BALANCE_TRANSACTION.id
+TOPUP.expected_availability_date ?#DATE_NUM.
+TOPUP.description               CU#STR shown to users.
+TOPUP.failure_code               ?#STR
+TOPUP.failure_message            ?#STR
 
 DISPUTE ==>                       #When a CUSTOMER questions our CHARGE. Also called "chargebacks".
                                   #Possible causes:
@@ -1673,7 +1675,6 @@ CARD.*                            #Same properties as SOURCE.card
 CARD.*_check                      #Same as CARD.*
 CARD.tokenization_method          #Same as WALLET.type
 CARD.dynamic_last4                #Same as WALLET.dynamic_last4
-CARD.account                      #STRIPE_ACCOUNT.id (Connect)
 CARD.customer                     #CUSTOMER.id (not Connect) (not if CARD.recipent)
 CARD.recipient                    #CUSTOMER.id (not Connect) (not if CARD.customer)
 CARD.available_payout_methods     #Available PAYOUT.method as STR_ARR of 'standard', 'instant'
@@ -1691,7 +1692,6 @@ STRIPE.sources.list|retrieve|
  verifySource()                   #
 BANK_ACCOUNT                      #ach_debit SOURCE + CUSTOMER.
 BANK_ACCOUNT.*                    #Same properties as SOURCE.ach_debit|bank_account
-BANK_ACCOUNT.account              #STRIPE_ACCOUNT.id (Connect)
 BANK_ACCOUNT.customer             #CUSTOMER.id (not Connect)
 BANK_ACCOUNT.status               #STR among:
                                   #  - 'new': just created
@@ -1718,6 +1718,9 @@ EXTERNAL_ACCOUNT                  #Same as CARD|BANK_ACCOUNT, but for STRIPE_ACC
 EXTERNAL_ACCOUNT.object           #'card|bank_account'
 EXTERNAL_ACCOUNT.
  external_account               *C#EXTERNAL_ACCOUNT payload on create
+STRIPE_ACCOUNT.external_accounts  #EXTERNAL_ACCOUNT_LIST
+STRIPE_ACCOUNT.
+ external_account              RCU#EXTERNAL_ACCOUNT
 
 GET /tokens/ID
 POST /tokens
@@ -1732,16 +1735,224 @@ TOKEN.type                        #One of:
                                   #  - 'bank_account': TOKEN.bank_account + TOKEN.customer
 TOKEN.pii                       RC#OBJ: id_number STR
                                   #Personally Identifiable Information.
+TOKEN.card                       C#Same as SOURCE.card
+TOKEN.bank_account               C#Same as SOURCE.bank_account
+TOKEN.customer                  RC#CUSTOMER.id
+TOKEN.client_ip                   #'IP'
+
+STRIPE_ACCOUNT.type             *C#Can be:
+                                  #  - 'standard'
+                                  #  - 'express'
+                                  #  - 'custom'.
+
+TOKEN.type                        #Can be 'account'
 TOKEN.account                   RC#STRIPE_ACCOUNT except:
                                   #  - only business_type, company and individual
                                   #  - also tos_shown_and_accepted BOOL
                                   #  - ATTR_provided BOOL -> ATTR STR
                                   #  - no *.details|status
                                   #  - no invididual.relationship|requirements
-TOKEN.card                       C#Same as SOURCE.card
-TOKEN.bank_account               C#Same as SOURCE.bank_account
-TOKEN.customer                  RC#CUSTOMER.id
-TOKEN.client_ip                   #'IP'
+STRIPE_ACCOUNT.account_token   RCU#TOKEN.id
+PERSON.person_token            RCU#TOKEN.id
+
+Authorization: API_KEY [C]
+Stripe-Account:
+ STRIPE_ACCOUNT.id [C]            #Authentication for Connect
+
+POST /accounts/ID/login_links     #
+STRIPE.loginLinks.create()        #
+LOGIN_LINK                        #Single-use login URL for Connect Express.
+LOGIN_LINK.url                    #'URL'
+
+EXTENSIONS ==>                    #Allow apps to do things on behalf of user's STRIPE_ACCOUNT using OAuth.
+                                  #Must be registered online.
+ENDPOINT ==>                      #connect.stripe.com
+POST /oauth/[express/]authorize
+?client_id=CLIENT_ID
+?scope=read_write                 #Those are actual URL parameters
+?response_type=STR                #Returns '/oauth/authorize' full URL.
+STRIPE.oauth.authorizeUrl         #OPTS: express BOOL
+ ([URL_PARAMS, ][OPTS])->'URL'    #EVENT 'account.application.authorized'
+POST /oauth/deauthorize
+STRIPE.oauth.deauthorize()        #EVENT 'account.application.deauthorized'
+POST /oauth/token
+STRIPE.oauth.token()              #
+STRIPE.setClientId('CLIENT_ID')
+STRIPE.getClientId()->'CLIENT_ID' #
+
+POST /accounts/ID/reject          #Report STRIPE_ACCOUNT.
+                                  #Ask Stripe to set STRIPE_ACCOUNT.payouts_enabled|charges_enabled to false.
+                                  #Payload: reason
+PAYLOAD.reason                    #STR among 'fraud', 'terms_of_service', 'other'.
+STRIPE.reject()                   #
+STRIPE_ACCOUNT.payouts_enabled    #BOOL. Enable PAYOUTs.
+STRIPE_ACCOUNT.charges_enabled    #BOOL. Enable CHARGEs.
+STRIPE_ACCOUNT.
+ requested_capabilities         CU#
+STRIPE_ACCOUNT.capabilities.TYPE  #'pending', 'active' or 'inactive'
+                                  #TYPE can be 'card' (CHARGEs), 'legacy' or 'platform' (Connect)
+STRIPE_ACCOUNT|PERSON.           ?#REQUIREMENTS to:
+ requirements                     #  - re-enable STRIPE_ACCOUNT.*_enabled
+                                  #  - avoid disabling when reaching volume limit
+                                  #  - allow STRIPE_ACCOUNT.requested_capabilities (US only)
+REQUIREMENTS.disabled_reason     ?#STR among:
+                                  #  - 'requirements.pending_verification'
+                                  #  - 'requirements.past_due'
+                                  #  - 'rejected.fraud'
+                                  #  - 'rejected.terms_of_service'
+                                  #  - 'rejected.listed'
+                                  #  - 'rejected.other'
+                                  #  - 'listed'
+                                  #  - 'under_review'
+                                  #  - 'other'
+REQUIREMENTS.                     #'PROP'_ARR to fill on STRIPE_ACCOUNT
+ eventually|currently|past_due    #  - 'eventually_due': not required yet
+                                  #  - 'currently_due': required before 'current_deadline'
+                                  #  - 'past_due': past 'current_deadline'
+REQUIREMENTS.current_deadline     #DATE_NUM
+STRIPE_ACCOUNT.details_submitted  #BOOL. Whether account details have been submitted.
+                                  #If false, STRIPE_ACCOUNT.payouts_enabled will be false.
+
+GET /balance                      #BALANCE
+                                  #STRIPE_ACCOUNT "aggregated bank account".
+STRIPE.balance.retrieve()         #
+BALANCE.available                 #BALANCE_SUB_ARR. Money available.
+                                  #EVENT 'balance.available' when updated.
+BALANCE.pending                   #BALANCE_SUB_ARR. Money not available yet due to 7-day rolling pay cycle.
+BALANCE.connect_reserved          #BALANCE_SUB_ARR. Money held.
+BALANCE_SUB                       #Subdivision of BALANCE for each currency and SOURCE
+BALANCE_SUB.amount                #MONEY
+BALANCE_SUB.source_types.TYPE     #INT. How amount is divided between account TYPE 'bank_account' or 'card'.
+
+GET /balance/history[/ID]         #BALANCE_TRANSACTION.
+                                  #BALANCE's single transaction
+STRIPE.balance.
+ list|retrieveTransactions()      #
+BALANCE_TRANSACTION.amount        #PMONEY paid by sender
+BALANCE_TRANSACTION.fee           #PMONEY. Fee paid to anothr STRIPE_ACCOUNT, Stripe or taxes
+BALANCE_TRANSACTION.fee_details   #FEE_DETAILS
+FEE_DETAILS.type                  #Can be: 'application_fee', 'stripe_fee' or 'tax'
+FEE_DETAILS.application           #STRIPE_ACCOUNT.id
+?payout=PAYOUT.id                 #
+FEE_DETAILS.amount                #PMONEY
+?currency=STR                     #
+FEE_DETAILS.description           #STR
+BALANCE_TRANSACTION.net           #amount - fee
+BALANCE_TRANSACTION.status        #'pending' or 'available'
+BALANCE_TRANSACTION.available_on  #DATE_NUM. When will be 'available' in BALANCE. Until then is 'pending'
+?available_on=CMP_FILTER          #
+BALANCE_TRANSACTION.type          #Can be:
+                                  #  - adjustment
+                                  #  - advance
+                                  #  - advance_funding
+                                  #  - application_fee
+                                  #  - charge
+                                  #  - connect_collection_transfer
+                                  #  - issuing_authorization_hold
+                                  #  - issuing_authorization_release
+                                  #  - issuing_transaction
+                                  #  - payment
+                                  #  - payout
+                                  #  - refund
+                                  #  - reserve_transaction
+                                  #  - reserved_funds
+                                  #  - stripe_fee
+                                  #  - stripe_fx_fee
+                                  #  - tax_fee
+                                  #  - topup
+                                  #  - topup_reversal
+                                  #  - transfer
+                                  #  - *_refund: for application_fee|payment|payment_failure|transfer
+                                  #  - *_cancel: for payout|transfer
+                                  #  - *_failure: for payout|refund|transfer
+?type=STR                         #
+BALANCE_TRANSACTION.source        #Related RESOURCE.id
+?source=SOURCE.id                 #
+BALANCE_TRANSACTION.description   #STR
+
+CHARGE.source                   *C#Can be STRIPE_ACCOUNT
+CHARGE.application                #STRIPE_ACCOUNT.id
+CHARGE.on_behalf_of              C#STRIPE_ACCOUNT.id
+                                  #When one made transaction of another's behalf
+CARD|BANK_ACCOUNT.account         #STRIPE_ACCOUNT.id
+
+GET /transfers[/ID]
+POST /transfers[/ID]              #
+STRIPE.transfers.
+ retrieve|list|create|update()    #
+TRANSFER                          #Transfer money from current STRIPE_ACCOUNT. Can be towards another STRIPE_ACCOUNT2 (or not).
+                                  #If enough money in BALANCE, use it. Otherwise, create a CHARGE.
+                                  #EVENTs 'transfer.paid|failed'
+TRANSFER.amount                 *C#
+TRANSFER.description            CU#Like CHARGE.*
+TRANSFER.amount_reversed          #Like CHARGE.amount_refunded
+TRANSFER.source_type             C#'card|bank_account'.
+TRANSFER.balance_transaction     ?#BALANCE_TRANSACTION.id of source, if enough in BALANCE.
+TRANSFER.source_transaction     ?C#CHARGE.id of source, if not enough in BALANCE.
+CHARGE.transfer                   #TRANSFER.id (inverse)
+TRANSFER.destination            ?C#STRIPE_ACCOUNT.id
+?destination=STRIPE_ACCOUNT.id    #
+TRANSFER.destination_payment     ?#CHARGE.id of destination (if STRIPE_ACCOUNT).
+CHARGE.source_transfer            #TRANSFER.id (inverse)
+TRANSFER.reversed                 #BOOL. Whether has been fully reversed.
+                                  #EVENT 'transfer.reversed', even on partial TRAVERSAL.
+TRANSFER.reversals                #TRAVERSAL_LIST
+TRANSFER.transfer_group          C#STR to group several TRANSFERs
+?transfer_group=STR               #
+CHARGE|PINTENT.transfer_group   CU#
+?transfer_group=STR               #
+TOPUP.transfer_group             C#
+CHARGE|PINTENT.transfer_data     C#TRANSFER_DATA.
+TRANSFER_DATA.amount             C#MONEY (def: CHARGE.amount)
+TRANSFER_DATA.destination        C#STRIPE_ACCOUNT.id
+
+GET /transfers/ID/reversals[/ID]
+POST /transfers/ID/reversals[/ID] #REFUND of a TRANSFER.
+STRIPE.transferReversals.
+ list|retrieve|create|update()    #
+TRAVERSAL.transfer                #TRANSFER.id
+TRAVERSAL.amount                 C#PMONEY (def: entire amount)
+                                  #Can only reverse up to the unreversed amount remaining of the TRANSFER.
+                                  #Partial TRAVERSAL only if destination is STRIPE_ACCOUNT
+TRAVERSAL.description           RC#STR shown in Dashboard.
+TRAVERSAL.source_refund           #REFUND.id
+TRAVERSAL.balance_transaction     #BALANCE_TRANSACTION.id
+TRAVERSAL.
+ destination_payment_refund       #CHARGE.id
+REFUND.reverse_transfer         RC#BOOL (def: false). Whether should reverse TRANSFER.
+REFUND.source_transfer_reversal   #TRAVERSAL.id if source was STRIPE_ACCOUNT
+REFUND.transfer_reversal          #TRAVERSAL.id if destination was STRIPE_ACCOUNT
+
+GET /application_fees[/ID]        #
+STRIPE.applicationFees.
+ retrieve|list()                  #
+FEE                               #Cut taken from STRIPE_ACCOUNT to STRIPE_ACCOUNT2 CHARGE.
+CHARGE.application_fee_amount    C#PMONEY
+INVOICE.application_fee_amount  CU#PMONEY
+CHARGE.application_fee            #FEE.id
+FEE.account                       #STRIPE_ACCOUNT.id that paid the fee
+FEE.application                   #STRIPE_ACCOUNT.id that earned the fee
+FEE.originating_transaction       #CHARGE|TRANSFER.id
+FEE.charge                        #CHARGE.id
+?charge=CHARGE.id                 #
+FEE.balance_transaction           #BALANCE_TRANSACTION.id
+FEE.amount                        #PMONEY
+FEE.amount_refunded               #PMONEY.
+FEE.refunded                      #BOOL. True if fully refunded.
+                                  #EVENT 'application_fee.refunded', even on partial REFUND.
+FEE.refunds                       #FEE_REFUND_LIST
+TRAVERSAL|REFUND.
+ refund_application_fee         RC#BOOL (def: false). Whether should refund application_fee as well.
+
+GET /application_feeds/ID/
+ refunds[/ID]
+POST /application_feeds/ID/
+ refunds[/ID]                     #REFUND of a FEE.
+STRIPE.applicationFeeRefunds.
+ retrieve|list|create|update()    #
+FEE_REFUND.amount                C#MONEY
+FEE_REFUND.fee                    #FEE.id
+FEE_REFUND.balance_transaction    #BALANCE_TRANSACTION.id
 
 GET /checkout/sessions/ID
 POST /checkout/sessions           #
@@ -1812,7 +2023,6 @@ INVOICE.amount_due                #integer Final amount due at this time for thi
                                   #The charge that gets generated for the invoice will be for the amount specified in amount_due.
 INVOICE.amount_paid               #integer The amount, in cents, that was paid.
 INVOICE.amount_remaining          #integer The amount remaining, in cents, that is due.
-INVOICE.application_fee_amount  CU#integer The fee in cents that will be applied to the invoice and transferred to the application owner's Stripe account when the invoice is paid.
 INVOICE.attempt_count             #positive integer or zero Number of payment attempts made for this invoice, from the perspective of the payment retry schedule.
                                   #Any payment attempt counts as the first attempt, and subsequently only automatic retries increment the attempt count.
                                   #In other words, manual payment attempts after the first attempt do not affect the retry schedule.
@@ -2199,215 +2409,6 @@ TAX_RATE.description            CU#STR. An arbitrary string attached to the tax 
 TAX_RATE.jurisdiction           CU#STR. The jurisdiction for the tax rate.
 TAX_RATE.active                 CU#BOOL (def: true)
 ?active=BOOL                      #When set to false, this tax rate cannot be applied to objects in the API, but will still be applied to subscriptions and invoices that already have it set.
-
-STRIPE_ACCOUNT.type             *C#Can be 'standard', 'express', or 'custom'.
-STRIPE_ACCOUNT.external_accounts  #EXTERNAL_ACCOUNT_LIST
-STRIPE_ACCOUNT.
- external_account              RCU#EXTERNAL_ACCOUNT
-STRIPE_ACCOUNT.account_token   RCU#TOKEN.id
-PERSON.person_token            RCU#TOKEN.id
-
-POST /accounts/ID/login_links     #
-STRIPE.loginLinks.create()        #
-LOGIN_LINK                        #Single-use login URL for Connect Express.
-LOGIN_LINK.url                    #string The URL for the login link.
-
-EXTENSIONS ==>                    #Allow apps to do things on behalf of user's STRIPE_ACCOUNT using OAuth.
-                                  #Must be registered online.
-POST /oauth/[express/]authorize
-?client_id=CLIENT_ID
-?scope=read_write
-?response_type=STR                #Those are actual URL parameters
-STRIPE.oauth.authorizeUrl         #Returns '/oauth/authorize' full URL. OPTS:
- ([URL_PARAMS, ][OPTS])->'URL'    #  - express BOOL
-POST /oauth/token
-POST /oauth/deauthorize           #
-STRIPE.oauth.token|deauthorize()  #Endpoint is 'connect.stripe.com'
-STRIPE.setClientId('CLIENT_ID')
-STRIPE.getClientId()->'CLIENT_ID' #
-account.application.authorized    #'EVENT_TYPE' when a user authorizes an application.
-account.application.deauthorized  #'EVENT_TYPE' when a user deauthorizes an application.
-
-POST /accounts/ID/reject          #Report STRIPE_ACCOUNT.
-                                  #Ask Stripe to set STRIPE_ACCOUNT.payouts_enabled|charges_enabled to false.
-                                  #Payload: reason
-PAYLOAD.reason                    #STR among 'fraud', 'terms_of_service', 'other'.
-STRIPE.reject()                   #
-STRIPE_ACCOUNT.payouts_enabled    #BOOL. Enable PAYOUTs.
-STRIPE_ACCOUNT.charges_enabled    #BOOL. Enable CHARGEs.
-STRIPE_ACCOUNT.
- requested_capabilities         CU#
-STRIPE_ACCOUNT.capabilities.TYPE  #'pending', 'active' or 'inactive'
-                                  #TYPE can be 'card' (CHARGEs), 'legacy' or 'platform' (Connect)
-STRIPE_ACCOUNT|PERSON.           ?#REQUIREMENTS to:
- requirements                     #  - re-enable STRIPE_ACCOUNT.*_enabled
-                                  #  - avoid disabling when reaching volume limit
-                                  #  - allow STRIPE_ACCOUNT.requested_capabilities (US only)
-REQUIREMENTS.disabled_reason     ?#STR among:
-                                  #  - 'requirements.pending_verification'
-                                  #  - 'requirements.past_due'
-                                  #  - 'rejected.fraud'
-                                  #  - 'rejected.terms_of_service'
-                                  #  - 'rejected.listed'
-                                  #  - 'rejected.other'
-                                  #  - 'listed'
-                                  #  - 'under_review'
-                                  #  - 'other'
-REQUIREMENTS.                     #'PROP'_ARR to fill on STRIPE_ACCOUNT
- eventually|currently|past_due    #  - 'eventually_due': not required yet
-                                  #  - 'currently_due': required before 'current_deadline'
-                                  #  - 'past_due': past 'current_deadline'
-REQUIREMENTS.current_deadline     #DATE_NUM
-STRIPE_ACCOUNT.details_submitted  #BOOL. Whether account details have been submitted.
-                                  #If false, STRIPE_ACCOUNT.payouts_enabled will be false.
-
-GET /balance                      #BALANCE
-                                  #STRIPE_ACCOUNT "aggregated bank account".
-STRIPE.balance.retrieve()         #
-balance.available                 #'EVENT_TYPE' when your Stripe balance has been updated (e.g., when a charge is available to be paid out).
-                                  #By default, Stripe automatically transfers funds in your balance to your bank account on a daily basis.
-BALANCE.available                 #BALANCE_SUB_ARR. Money available.
-BALANCE.pending                   #BALANCE_SUB_ARR. Money not available yet due to 7-day rolling pay cycle.
-BALANCE.connect_reserved          #BALANCE_SUB_ARR. Money held.
-BALANCE_SUB                       #Subdivision of BALANCE for each currency and SOURCE
-BALANCE_SUB.amount                #MONEY
-BALANCE_SUB.source_types.TYPE     #INT. How amount is divided between account TYPE 'bank_account' or 'card'.
-
-GET /balance/history[/ID]         #BALANCE_TRANSACTION.
-                                  #BALANCE's single transaction
-STRIPE.balance.
- list|retrieveTransactions()      #
-BALANCE_TRANSACTION.amount        #PMONEY paid by sender
-BALANCE_TRANSACTION.fee           #PMONEY paid to Stripe or taxes
-BALANCE_TRANSACTION.fee_details   #FEE_DETAILS
-FEE_DETAILS.application           #STRIPE_ACCOUNT.id
-?payout=PAYOUT.id                 #
-FEE_DETAILS.amount                #PMONEY
-?currency=STR                     #
-FEE_DETAILS.description           #STR
-FEE_DETAILS.type                  #Can be: 'application_fee', 'stripe_fee' or 'tax'
-BALANCE_TRANSACTION.net           #amount - fee
-BALANCE_TRANSACTION.exchange_rate #NUM
-BALANCE_TRANSACTION.available_on  #DATE_NUM. When will be 'available' in BALANCE. Until then is 'pending'
-?available_on=CMP_FILTER          #
-BALANCE_TRANSACTION.status        #'pending' or 'available'
-BALANCE_TRANSACTION.type          #Can be:
-                                  #  - adjustment
-                                  #  - advance
-                                  #  - advance_funding
-                                  #  - application_fee
-                                  #  - charge
-                                  #  - connect_collection_transfer
-                                  #  - issuing_authorization_hold
-                                  #  - issuing_authorization_release
-                                  #  - issuing_transaction
-                                  #  - payment
-                                  #  - payout
-                                  #  - refund
-                                  #  - reserve_transaction
-                                  #  - reserved_funds
-                                  #  - stripe_fee
-                                  #  - stripe_fx_fee
-                                  #  - tax_fee
-                                  #  - topup
-                                  #  - topup_reversal
-                                  #  - transfer
-                                  #  - *_refund: for application_fee|payment|payment_failure|transfer
-                                  #  - *_cancel: for payout|transfer
-                                  #  - *_failure: for payout|refund|transfer
-?type=STR                         #
-BALANCE_TRANSACTION.source        #Related RESOURCE.id
-?source=SOURCE.id                 #
-BALANCE_TRANSACTION.description   #STR
-
-GET /transfers[/ID]
-POST /transfers[/ID]              #
-STRIPE.transfers.
- retrieve|list|create|update()    #
-transfer.failed                   #'EVENT_TYPE' when a transfer failed.
-transfer.paid                     #'EVENT_TYPE' after a transfer is paid. For Instant Payouts, the event will be sent on the next business day, although the funds should be received well beforehand.
-transfer.reversed                 #'EVENT_TYPE' when a transfer is reversed, including partial reversals.
-TRANSFER                          #Like CHARGE but from current STRIPE_ACCOUNT. Can be towards another STRIPE_ACCOUNT2 (or not).
-TRANSFER.amount                 *C#
-TRANSFER.description            CU#Like CHARGE.*
-TRANSFER.amount_reversed          #Like CHARGE.amount_refunded
-TRANSFER.source_type             C#One of 'card' or 'bank_account'.
-TRANSFER.destination            ?C#STRIPE_ACCOUNT.id
-?destination=STRIPE_ACCOUNT.id    #
-TRANSFER.balance_transaction      #BALANCE_TRANSACTION.id of source.
-TRANSFER.source_transaction     ?C#CHARGE.id of source, if not enough in BALANCE.
-TRANSFER.destination_payment     ?#CHARGE.id of destination (if STRIPE_ACCOUNT).
-TRANSFER.reversed                 #boolean Whether the transfer has been fully reversed. If the transfer is only partially reversed, this attribute will still be false.
-TRANSFER.reversals                #TRAVERSAL_LIST
-TRANSFER.transfer_group          C#string A string that identifies this transaction as part of a group. See the Connect documentation for details.
-?transfer_group=STR               #
-
-GET /transfers/ID/reversals[/ID]
-POST /transfers/ID/reversals[/ID] #Reverting a TRANSFER.
-STRIPE.transferReversals.
- list|retrieve|create|update()    #
-TRAVERSAL.amount                 C#PMONEY
-                                  #A positive integer in cents representing how much of this transfer to reverse.
-                                  #Can only reverse up to the unreversed amount remaining of the transfer.
-                                  #Partial transfer reversals are only allowed for transfers to Stripe Accounts.
-                                  #Defaults to the entire transfer amount.
-TRAVERSAL.description           RC#An arbitrary string which you can attach to a reversal object. It is displayed alongside the reversal in the Dashboard. This will be unset if you POST an empty value.
-TRAVERSL.refund_application_fee RC#Like REFUND.*
-TRAVERSAL.balance_transaction     #BALANCE_TRANSACTION.id Balance transaction that describes the impact on your account balance.
-TRAVERSAL.
- destination_payment_refund       #CHARGE.id Linked payment refund for the transfer reversal.
-TRAVERSAL.source_refund           #REFUND.id
-TRAVERSAL.transfer                #TRANSFER.id
-
-GET /application_fees[/ID]        #
-STRIPE.applicationFees.
- retrieve|list()                  #
-FEE                               #Cut taken from CUSTOMER of a CUSTOMER-to-CUSTOMER CHARGE.
-FEE.account                       #STRIPE_ACCOUNT.id
-FEE.application                   #STRIPE_ACCOUNT.id
-FEE.amount                        #PMONEY
-FEE.amount_refunded               #PMONEY Amount in cents refunded (can be less than the amount attribute on the fee if a partial refund was issued)
-FEE.balance_transaction           #BALANCE_TRANSACTION.id Balance transaction that describes the impact of this collected application fee on your account balance (not including refunds).
-FEE.charge                        #CHARGE.id
-?charge=CHARGE.id                 #
-FEE.originating_transaction       #CHARGE|TRANSFER.id ID of the corresponding charge on the platform account, if this fee was the result of a charge using the destination parameter.
-FEE.refunded                      #boolean Whether the fee has been fully refunded. If the fee is only partially refunded, this attribute will still be false.
-FEE.refunds                       #FEE_REFUND_LIST
-
-GET /application_feeds/ID/
- refunds[/ID]
-POST /application_feeds/ID/
- refunds[/ID]                     #Reverting a FEE.
-STRIPE.applicationFeeRefunds.
- retrieve|list|create|update()    #
-application_fee.refunded          #'EVENT_TYPE' when an application fee is refunded, whether from refunding a charge or from refunding the application fee directly. This includes partial refunds.
-FEE_REFUND.amount                C#MONEY
-FEE_REFUND.balance_transaction    #BALANCE_TRANSACTION.id
-FEE_REFUND.fee                    #FEE.id
-
-GET /topups[/ID]
-POST /topups[/ID]                 #
-POST /topups/ID/cancel            #From TOPUP.status 'pending' to 'canceled'.
-STRIPE.topups.list|retrieve|
- create|update|cancel()           #
-topup.canceled                    #'EVENT_TYPE' when a top-up is canceled.
-topup.failed                      #'EVENT_TYPE' when a top-up fails.
-topup.reversed                    #'EVENT_TYPE' when a top-up is reversed.
-topup.succeeded                   #'EVENT_TYPE' when a top-up succeeds.
-TOPUP                             #Money added to STRIPE_ACCOUNT
-TOPUP.amount                    *C#MONEY Amount transferred.
-?amount=CMP_FILTER                #
-TOPUP.balance_transaction         #BALANCE_TRANSACTION.id. May not be specified depending on status of top-up.
-TOPUP.description               CU#string An arbitrary string attached to the object. Often useful for displaying to users.
-TOPUP.expected_availability_date  #integer Date the funds are expected to arrive in your Stripe account for payouts.
-                                  #This factors in delays like weekends or bank holidays.
-                                  #May not be specified depending on status of top-up.
-TOPUP.failure_code                #string Error code explaining reason for top-up failure if available (see the errors section for a list of codes).
-TOPUP.failure_message             #string Message to user further explaining reason for top-up failure if available.
-TOPUP.source                     C#SOURCE For most Stripe users, the source of every top-up is a bank account. This hash is then the source object describing that bank account.
-TOPUP.status                      #string The status of the top-up is either canceled, failed, pending, reversed, or succeeded.
-?status=STR                       #
-TOPUP.transfer_group             C#string A string that identifies this top-up as part of a group.
 
 GET /orders[/ID]
 POST /orders[/ID]                 #
