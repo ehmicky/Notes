@@ -26,6 +26,7 @@ node[js] -e|--eval|-p|--print STR [--] [ARGS]   #nodejs is symlink to node (pref
                                                 #With -p, evaluates STR, and prints last return value.
 NODE_OPTIONS=--OPT,... ENVVAR                   #Same as using node --OPT ...
 --v8-options                                    #Prints available v8 options.
+process.allowedNodeEnvironmentFlags             #Read-only SET with all available NODE_OPTIONS
 
 -i
 --interactive                                   #Enters REPL even if stdin does not come from a terminal
@@ -1458,6 +1459,17 @@ userInfo([OBJ])->OBJ2                           #OBJ2:
 EOL                                             #"\n" or "\r\n"
 constants                                       #OBJ: errno.ERROR NUM, signals: SIGNAME NUM
 
+setPriority([PID, ]NUM)                         #Sets OS process scheduling priority ("niceness").
+                                                #If 0 (def), current process
+                                                #NUM is between -20 (high priority) and 19 (low priority) or using constants:
+                                                #  - constants.PRIORITY_LOW: 19
+                                                #  - constants.PRIORITY_BELOW_NORMAL: 10
+                                                #  - constants.PRIORITY_NORMAL: 0
+                                                #  - constants.PRIORITY_ABOVE_NORMAL: -7
+                                                #  - constants.PRIORITY_HIGH: -14
+                                                #  - constants.PRIORITY_HIGHEST: -20
+getPriority([PID])->NUM                         #
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -1590,9 +1602,15 @@ FS-EXTRA.ensureFile|Dir(FILE|DIR,FUNC(ERROR))  ##Create file|dir, including pare
 FS-EXTRA.mkdirs(DIR, FUNC(ERROR))              ##Like ensureDir()
 WRENCH.mkdirSyncRecursive(DIR[, MODE_INT])
 
-readdir(DIR, FUNC(ERROR, 'FILE'_ARR))           #ls: 'FILE' excludes . and ..
+readdir(DIR, [OPTS, ]                           #ls: 'FILE' excludes . and ..
+ FUNC(ERROR, 'FILE'|DIRENT_ARR))                #OPTS:
+                                                #  - encoding 'ENCODING'
+                                                #  - withFileTypes BOOL (def: false): whether to return DIRENT_ARR or 'FILE'_ARR
 WRENCH.readdirSync[Recursive]
-(DIR[,FUNC(ERROR, STR2_ARR)])                  ##Same but recursive
+(DIR[, OPTS][, FUNC(ERROR, STR2_ARR)])          ##Same but recursive
+DIRENT.isFile|Directory|Block|CharacterDevice|
+ FIFO|Socket|SymbolicLink()->BOOL               #
+DIRENT.name                                     #STR
 
 open(PATH, STR|NUM[, MODE], FUNC(ERROR, FD_INT))#Open a file and return a file descriptor.
                                                 #STR are flags: "r|w|a[s|x][+]":
@@ -1618,11 +1636,11 @@ open(PATH, STR|NUM[, MODE], FUNC(ERROR, FD_INT))#Open a file and return a file d
                                                 #  - O_NONBLOCK: use async when opening special files like serial ports
                                                 #MODE INT is 0666 by def.
 close(FD_INT, FUNC(ERROR))                      #
-write(FD_INT, UBUFFER, INT, INT2, [ INT3,]      #Write INT2 bytes from UBUFFER at its position INT to file FD_INT at its position INT3 (def: current).
-FUNC(ERROR, INT4, UBUFFER))                     #INT4 is the number of bytes written.
+write(FD_INT, TDBUFFER, INT, INT2, [ INT3,]     #Write INT2 bytes from TDBUFFER at its position INT to file FD_INT at its position INT3 (def: current).
+FUNC(ERROR, INT4, TDBUFFER))                    #INT4 is the number of bytes written.
 write(FD_INT, STR[, INT3,
 ['ENCODING', ]] FUNC(ERROR, INT4, STR))         #Similar.
-read(FD_INT, UBUFFER, INT, INT2,
+read(FD_INT, TDBUFFER, INT, INT2,
 INT3, FUNC(ERROR, INT4, BUFFER))                #
 f[data]sync(FD_INT, FUNC(ERROR))                #Flushes to disk
                                                 #If 'data', does not flush metadata (e.g. mtime)
@@ -1634,7 +1652,7 @@ readFile                                        #Easier way than using open() an
                                                 #Prefer createReadStream(...).pipe(OSTREAM)
 FS-EXTRA.readJson(...)                         ##Same as readFile(), but return as OBJ
 write|appendFile(FILENAME|UINT,                 #OBJ has same members but also mode MODE_INT (def: 0666)
-[SBUFFER,] [OBJ, ] FUNC(ERROR))                 #Def flag is "w|a"
+[STDBUFFER,] [OBJ, ] FUNC(ERROR))               #Def flag is "w|a"
 FS-EXTRA.outputFile(...)                       ##Same as writeFile(), but calls ensureFile() first
 FS-EXTRA.writeJson|outputJson(...)             ##Same as writeFile|outputFile(), but with an OBJ (JSON.stringify'd).
 createReadStream(PATH[, OBJ])->ISTREAM          #Preferred over readFile().
@@ -2234,6 +2252,11 @@ runInNewContext(STR[, CONT_OBJ]
  [, RUN_OPTS|CONT_OPTS])                        #Same but automatically use createContext(CONT_OBJ, CONT_OPTS)
 runInThisContext(STR[, RUN_OPTS])               #Same as runInNewContext(STR, global)
 
+compileFunction('CODE'[, 'PARAM_NAME'_ARR]      #Like new Function() but use OPTS.parsingContext COBJ (def: global)
+ [, RUN_OPTS|SCRIPT_OPTS])->FUNC                #RUN_OPTS|SCRIPT_OPTS:
+                                                #  - filename, line|columnOffset, cachedData
+                                                #  - contextExtensions OBJ_ARR (def: []): objects wrapping COBJ
+
 new Script(STR[, RUN_OPTS|SCRIPT_OPTS])         #Returns a SCRIPT, i.e. a compiled version of STR:
                                                 #  - separates compiling from running STR
                                                 #  - every run can be bound to different COBJ
@@ -2657,7 +2680,6 @@ types.isExternal(VAL)->BOOL                     #True if external C/C++ value
                                              \=+===============================+=/
 
 
-
 NODE_V8_COVEREAGE=DIR                           #ENVVAR
                                                 #Uses V8 "startPreciseCoverage" to record coverage information and save to DIR/coverage-PID-TIMESTAMP.json
                                                 #Has performance impact.
@@ -2684,11 +2706,6 @@ FUNCCOV.isBlockCoverage                         #BOOL. If false, branch covers t
 BRANCHCOV                                       #Coverage of a specific branch
 BRANCHCOV.startOffset|endOffset                 #Bytes offset inside the file
 BRANCHCOV.count                                 #NUM of times it was hit. Can be 0
-
-
-V8-TO-ISTANBUL('./SOURCE_FILE')->CSCRIPT
-CSCRIPT.applyCoverage(V8_FILECOV)
-CSCRIPT.toIstanbul()->ISTANBUL_FILECOV
 
 
                                              /=+===============================+=\
