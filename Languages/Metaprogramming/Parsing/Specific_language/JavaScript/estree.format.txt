@@ -6,7 +6,6 @@
 
 
 TODO:
-  - check that export { VAR as default, ... } === export default VAL, and import { default as VAR2, ... } === import VAR
   - go through ESTree spec
   - try with online parser everything documented here, to see if there is more in output
   - go through JavaScript doc to see if something is missing
@@ -62,10 +61,15 @@ for (...;...;...) {...}           #Child of STATEMENT, type 'ForStatement':
                                   #  - [test EXPR]
                                   #  - [update EXPR]
                                   #  - body STATEMENT
-for (VAR in|of VAL) {...}         #Child of STATEMENT, type 'ForInStatement|ForOfStatement':
+for (VAR in VAL) {...}            #Child of STATEMENT, type 'ForInStatement':
                                   #  - left VARIABLE_DECLARATION|PATTERN
                                   #  - right EXPR
                                   #  - body STATEMENT
+for [await] (VAR of VAL) {...}    #Child of STATEMENT, type 'ForOfStatement':
+                                  #  - left VARIABLE_DECLARATION|PATTERN
+                                  #  - right EXPR
+                                  #  - body STATEMENT
+                                  #  - await BOOL
 break [LABEL]                     #Child of STATEMENT, type 'BreakStatement':
                                   #  - [label IDENFIFIER]
 continue [LABEL]                  #Child of STATEMENT, type 'ContinueStatement':
@@ -103,17 +107,18 @@ this                              #Child of EXPR, type 'ThisExpression'
 
 [VAL...]                          #Child of EXPR, type 'ArrayExpression':
                                   #  - elements EXPR2|SPREAD_ELEMENT_ARR (null for sparse ARR elements)
-...ARR                            #Type 'SpreadElement':
-                                  #  - argument EXPR
 
 {VAR[: VAL], ...}                 #Child of EXPR, type 'ObjectExpression':
-{[VAL]: VAL}                      #  - properties PROPERTY_ARR (type 'Property'):
-{FUNC(...){...}}                  #     - key EXPR (LITERAL if {[VAR]: VAL} or {NUM: VAL})
-                                  #     - value EXPR
-                                  #     - kind 'init|get|set' (get|set are for getters|setters)
-                                  #     - method BOOL (if FUNC)
-                                  #     - shorthand BOOL (if { VAR })
-                                  #     - computed BOOL
+{[VAL]: VAL}                      #  - properties ARR of either:
+{...OBJ}                          #      PROPERTY (type 'Property')
+{                                 #        - key EXPR (LITERAL if {[VAR]: VAL} or {NUM: VAL})
+  [@DECORATOR]                    #        - value EXPR
+  FUNC(...){...}                  #        - kind 'init|get|set' (get|set are for getters|setters)
+}                                 #        - method BOOL (if FUNC)
+                                  #        - shorthand BOOL (if { VAR })
+                                  #        - computed BOOL
+                                  #        - decorators DECORATOR_ARR
+                                  #      SPREAD_ELEMENT (...OBJ)
 
 VAR or related                    #PATTERN
 VAR                               #Child of EXPR+PATTERN, type 'Identifier':
@@ -124,13 +129,18 @@ OBJ[VAL]                          #  - object EXPR|SUPER (OBJ)
                                   #  - computed true (VAL) or false (VAR)
 [VAR,...]                         #Child of PATTERN, type 'ArrayPattern' (deconstruction):
                                   #  - elements PATTERN_ARR (null for parse array element)
-{VAR,...}                         #Child of PATTERN, type 'ObjectPattern' (deconstruction):
-                                  #  - properties ASSIGNMENT_PROPERTY_ARR, child of PROPERTY with differences:
-                                  #     - value PATTERN
-                                  #     - kind always 'init'
-                                  #     - method always false
-...VARIADIC_ARG                   #Child of PATTERN, type 'RestElement':
+{VAR, ...}                        #Child of PATTERN, type 'ObjectPattern' (deconstruction):
+{...OBJ, ...}                     #  - properties ARR of either:
+                                  #      ASSIGNMENT_PROPERTY (VAR), child of PROPERTY with differences:
+                                  #        - value PATTERN
+                                  #        - kind always 'init'
+                                  #        - method always false
+                                  #      REST_ELEMENT (...OBJ)
+
+...VAR                            #Child of PATTERN, type 'RestElement' (when setting):
                                   #  - argument PATTERN
+...VAR                            #Type 'SpreadElement' (when getting):
+                                  #  - argument EXPR
 
 FUNC                              #FUNCTION:
                                   #  - [id IDENTIFIER] (null if anonymous)
@@ -157,11 +167,13 @@ yield [*] [VAL]                   #Child of EXPR, type 'YieldExpression':
 await VAL                         #Child of EXPRT, type 'AwaitExpression':
                                   #  - argument EXPR
 FUNC(...)                         #Child of EXPR, type 'CallExpression':
-                                  #  - callee EXPR|SUPER (FUNC)
-                                  #  - arguments EXPR|SPREAD_ELEMENT_ARR
+                                  #  - callee EXPR|SUPER|IMPORT (FUNC)
+                                  #  - arguments EXPR|REST_ELEMENT_ARR
 new FUNC(...)                     #Child of EXPR, type 'NewExpression':
                                   #  - callee EXPR (FUNC)
-                                  #  - arguments EXPR|SPREAD_ELEMENT_ARR
+                                  #  - arguments EXPR|REST_ELEMENT_ARR
+
+@DECORATOR                        #Type 'Decorator'
 
 -VAL
 +VAL
@@ -208,19 +220,23 @@ TAG`...`                          #Child of EXPR, type 'TaggedTemplateExpression
 `...`                             #Child of EXPR, type 'TemplateLiteral':
                                   #  - quasis TEMPLATE_ELEMENT_ARR (non-${} parts), type 'TemplateElement':
                                   #     - tail BOOL (if last one, including empty "" if ends with ${})
-                                  #     - value: cooked|raw STR
+                                  #     - value:
+                                  #        - [cooked STR] (null if contain invalid escape sequences)
+                                  #        - raw STR
                                   #  - expressions EXPR_ARR (${} parts)
 
-class [CLASS] [extends PARENT] {  #Type 'Class':
-  [static] FUNC(...) {...}        #  - [id IDENTIFIER]
-}                                 #  - [superclass EXPR]
-                                  #  - body CLASS_BODY, type 'ClassBody':
-                                  #     - body METHOD_DEFINITION_ARR, type 'MethodDefinition':
+[@DECORATOR]                      #Type 'Class':
+class [CLASS] [extends PARENT] {  #  - [id IDENTIFIER]
+  [@DECORATOR]                    #  - [superclass EXPR]
+  [static] FUNC(...) {...}        #  - body CLASS_BODY, type 'ClassBody':
+}                                 #     - body METHOD_DEFINITION_ARR, type 'MethodDefinition':
                                   #        - key EXPR
                                   #        - value FUNCTION_EXPR
                                   #        - kind 'constructor|method|get|set'
                                   #        - static BOOL
                                   #        - computed BOOL
+                                  #        - decorators DECORATOR_ARR
+                                  #  - decorators DECORATOR_ARR
 class CLASS ... {}                #Child of CLASS+DECLARATION, type 'ClassDeclaration'
 class [CLASS] ... {}              #Child of CLASS+EXPR, type 'ClassExpression'
 new.target                        #Child of EXPR, type 'MetaProperty':
@@ -257,3 +273,5 @@ import * as VAR                   #      IMPORT_NAMESPACE_SPECIFIER, type 'Impor
                                   #        - local IDENTIFIER (VAR)
 import "MDL"                      #
 import {}                         #Those have empty ARR as specifiers
+
+IMPORT("MDL")                     #Type 'Import', used in CALLEXPRESSION
