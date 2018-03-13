@@ -7,95 +7,106 @@ IDL format:
      - allows those conf files as input, converting them first
   - yamllint the IDL meta-schema
 
-IDL validation:
-  - IDL syntax:
+Compile-time JSL validation:
+  - validate that only attributes that can have JSL|function have JSL|function
+  - values that use JSL like transform or helpers|variables are not currently validated:
+     - if JSL, they should be string and be valid JSL
+     - otherwise (for ones like transform), they should be same type as current attribute
+  - make sure JSL does not use unknown params, which is challenging because:
+     - params are determined runtime
+     - function body might not be readable, e.g. if function is bound
+  - perform static analysis, e.g. linting
+
+User defaults:
+  - attribute can specify a "default" if it is a required attribute
+     - when done, remove the runtime check done for this in userDefaults middleware
+
+Do not try to make IDL a JSON schema anymore:
+  - put validation stuff under attribute.validate, avoiding model.validate:
+     - model.validate.required 'ATTR'_ARR -> attribute.validate.required BOOL
+        - be careful, as required is used by other parts, e.g. by GraphQL schema and by defaults
+     - model.validate.dependencies.VAR 'ATTR'_ARR -> attribute.validate.dependencies 'ATTR'_ARR
+     - reverse it during dataValidation middleware
+  - rename model.properties -> model.attributes
+  - remove $schema
+  - fix IDL validation so that it only checks JSON metaschema under attribute.validate, and it does not
+    have to be recursive anymore, except for arrays|objects attributes
+  - keep IDL.definitions, but not validated. However, when $ref referenced, they get validated in their destination
+  - should only use validation properties for the current model|attribute's type
+     - e.g. should not use maxLength if the attribute is a boolean
+     - type might be absent during IDL validation, as IDL transform assign default values to them
+  - restrict attr.validate on nested models: only required, dependencies
+  - whitelist possible JSON schema keywords:
+     - no OBJ_SCHEMA keywords, except required|dependencies (see above)
+     - no polymorphism, e.g. no additionalItems
+     - only validation-related ones, e.g. no attribute.validate.title|description|examples|default
+        - some of those might make sense as attribute.* though, e.g. description
+    deepProperties, properties,
+  - this should fix the following problems:
      - for parts of the schema that are not a top-level model, not a nested model and not a attribute, e.g. definitions
        or members of a combination property like anyOf, propertyName validation is too loose.
        E.g. one can define an attribute: {my_attribute: {type: "string", anyOf: [model: "mode"]}}:
        model should be forbidden here
-     - should only use validation properties for the current model|attribute's type
-       E.g. should not use maxLength if the attribute is a boolean
-       Note: type might be absent during IDL validation, as IDL transform assign default values to them
-  - attribute can specify a "default" if it is a required attribute
-     - when done, remove the runtime check done for this in userDefaults middleware
-  - JSL:
-     - validate that only attributes that can have JSL|function have JSL|function
-     - values that use JSL like transform or helpers|variables are not currently validated:
-        - if JSL, they should be string and be valid JSL
-        - otherwise (for ones like transform), they should be same type as current attribute
-     - make sure JSL does not use unknown params, which is challenging because:
-        - params are determined runtime
-        - function body might not be readable, e.g. if function is bound
-     - run ESLint to at least look for undefined vars, maybe do more
 
-API validation:
-  - do not try to make IDL a JSON schema anymore. Put validation stuff under model|atribute.validate
-  - validateInput vs validateData:
-     - attr.validate is shortcut to specify both
-     - common traits:
-          - validates arg.data according to IDL validation keywords
-          - both on input and output
-     - differences:
-          - when it is performed:
-               - validateInput: before arg.data is modified, e.g. by transforms or aliases, or generated,
-                 e.g. by default values or transforms. I.e. probably at beginning of command layer.
-               - validateData: at beginning of database layer
-          - goal:
-               - validateInput: reporting bad input|output to client
-               - validateData: ensuring data consistency/quality
-          - status:
-               - validateInput: on input, client error, e.g. 4**. On output, server error, e.g. 5**
-               - validateData: server error, e.g. 5** (e.g. wrong transform)
-     - when validation is same (on input or output) between validateInput and validateData,
-       i.e. same model|attribute and same validation keywords, per request (to avoid memory leaks)
-     - add `validateData`, `validateInput` and `validate` to the list of properties that are incompatible with
-       using `compute`, during IDL validation
+attr.validateInput vs attr.validateData:
+  - attr.validate is shortcut to specify both
+  - common traits:
+     - validates arg.data according to IDL validation keywords
+     - both on input and output
+  - differences:
+     - when it is performed:
+        - validateInput: before arg.data is modified, e.g. by transforms or aliases, or generated,
+          e.g. by default values or transforms. I.e. probably at beginning of command layer.
+        - validateData: at beginning of database layer
+     - goal:
+        - validateInput: reporting bad input|output to client
+        - validateData: ensuring data consistency/quality
+     - status:
+        - validateInput: on input, client error, e.g. 4**. On output, server error, e.g. 5**
+        - validateData: server error, e.g. 5** (e.g. wrong transform)
+  - when validation is same (on input or output) between validateInput and validateData,
+    i.e. same model|attribute and same validation keywords, memoize|reuse per request (to avoid memory leaks)
+  - add `validateData`, `validateInput` and `validate` to the list of properties that are incompatible with
+    using `compute`, during IDL validation
+
+Exception handling:
   - error reasons:
-     - rationalize|reduce error reasons, not in terms of guessing where error was triggered, but in terms of how client should
-       respond.
-       E.g. it does not matter if InputValidation error is because args.data is wrong or args.filter, what matters is that
-       client displays that input is wrong.
-     - should add `extra` information to any throw ERROR that possess interesting information.
-       All errors with the same `reason` should expose the same `extra` variables
-     - add all `generic.title`
-  - layer validation middlewares:
-     - should all validate the response too, e.g. that type is set, and that content matches type
-     - redo how args|dbArgs|sysArgs are being validated:
-        - each validation middleware should validate what it can
-        - some validation from the database validation middleware should probably be placed earlier
-        - make sure layer validation middlewares give 4** when it is client. E.g. wrong action or command is 4** not 5**
-        - validate unknown arguments
-  - differentiate between required array (ARR != null) and required array items (ARR.items.length > 0)
+     - rationalize|reduce error reasons:
+        - should be not about guessing where error was internally triggered, but in terms of how client should respond.
+        - e.g. it does not matter if InputValidation error is because args.data is wrong or args.filter, what matters is that
+          client displays that input is wrong.
+  - should add `extra` information to any throw ERROR that possess interesting information.
+     - all errors with the same `reason` should expose the same `extra` variables
+  - add all `generic.title`
+
+GraphQL:
   - look at GraphQL spec validation chapter, to make sure my validation layer conforms
-  - try to reduce usage of JSON schema:
-     - speed issues
-     - error messages are not always clear
+
+Pagination:
   - pagination error messages on wrong cursors are not clear
-  - JSON schema:
-     - improve error messages for composed types: schema.contains|propertyNames|not|anyOf|oneOf|if|then|else (others are fine)
-     - add support for deepRequired:
-         - be careful as required is a special validation attribute as it has impact on other parts of the system
-           (e.g. documentation).
-         - also deepRequired uses absolute JSON pointers, which might create problems as the user might not understand
-           what the root is
-     - add support for deepProperties
-  - reporting:
-     - offer option to set validation error message data path as JSON pointer or JSON path
-     - error response should include parsable info for validation errors, e.g. data path, rule (e.g. 'exclusiveMinimum'), etc.
-     - validation messages are not descriptive enough, i.e. validation layer does not know which part of GraphQL query
-       triggered error, because it is operation-agnostic, but it would be useful to have that info in validation messages
-     - add `locations` attribute to GraphQL errors, and possibly other documented in my GraphQL doc
-     - be better about wrong|mispelled action name, with automatic autocorrection in error message, but operation-independent
-     - message should include the data that failed, not just its path
-  - 405 errors should include Allow [S]
+
+Model.id:
   - must ensure cannot change model.id, even through args.data JSL
-  - use ATTR.validate[data|input].required BOOL, not MODEL.required 'ATTR'_ARR
-     - be careful, as required is used by other parts, e.g. by GraphQL schema and by defaults
+  - allow configuring name and type of `id` attribute, including with findOne(), etc. actions that use that argument.
+  - allow alternate ids, e.g. a query can either use machine-friendly `id` attribute, or human-friendly `name` attribute
+
+Error reporting:
+  - improve error messages for JSON schema composed types: schema.contains|propertyNames|not|anyOf|oneOf|if|then|else (others are fine)
+  - error response should include parsable info for validation errors:
+     - data that failed
+     - data path: either as JSON path (def) or as JSON pointer (using a serverOpts)
+     - rule (e.g. 'exclusiveMinimum')
+     - operation context (e.g. action, fullAction)
+     - any other relevant info
+  - add `locations` attribute to GraphQL errors, and possibly other documented in my GraphQL doc
+  - autocorrection|suggestions:
+     - e.g. wrong|mispelled action|attribute name. Should be operation-independent
 
 Schema strictness, polymorphism:
   - think about additional properties (not specified in schema), and whether to allow them in input, and in output:
      - if want looser schema, think of impact on:
-        - schema.additionalProperties validation of those
+        - validation: see related JSON schema keywords: prohibited, additionalProperties, patternProperties, patternRequired,
+          propertyNames, additionalItems
         - GraphQL schema
   - allow mixed arrays:
      - i.e. using schema.items SCHEMA_ARR instead of schema.items SCHEMA
@@ -104,7 +115,6 @@ Schema strictness, polymorphism:
   - overloading, i.e. union types:
      - in GraphQL, use "union" maybe.
      - could be done by passing array of schema.type or schema.model
-     - should support array of schema.type as it is standard JSON schema
   - subtyping:
      - both nominal (e.g. guessing type using an attribute as differentiator)
      - or structural (e.g. guessing type from which attributes are there, or which are their types)
@@ -126,9 +136,11 @@ API base types:
      - e.g. undefined, function, Infinity|NaN
      - allow custom types
 
-API models:
+Model naming:
   - separate how model is refered to in IDL (idl.models.MODEL) and how it is communicated to client
     (idl.models.MODEL.name, def to IDL.models.MODEL, can be an array of aliases)
+
+Nested models:
   - rethink nested models:
      - at the moment, normalizer copy the refered model, but what it should do instead, is creating two attributes:
        one copying the refered model's `id` property, and one copying the refered model
@@ -138,14 +150,11 @@ API models:
      - this should solve the fact that nested models do not inherit the refered model.id's default|transform|compute[_out]
        attributes (while they should)
   - nested arrays+objects in IDL definition do not really work
-  - `id` attribute:
-     - allow configuring name and type of `id` attribute, including with findOne(), etc. actions that use that argument.
-     - allow alternate ids, e.g. a query can either use machine-friendly `id` attribute, or human-friendly `name` attribute
 
 Modularity:
   - reusing server as part of a bigger project:
      - e.g. multiple instances at once
-     - problem: currently server assumes it owns process, e.g. calls process.exit() and process.on() and Error.stackTraceLimit.
+     - problem: currently server assumes it owns process, e.g. calls process.exit|kill|on() and Error.stackTraceLimit.
        There should be a serverOpts.ownsProcess BOOL to disable those parts.
 
 Actions:
@@ -230,7 +239,7 @@ Authorization:
                    - how to know? partial evaluation?
                - 403 becomes 405 on forbidden goals
                - forbidden goals not shown in GraphQL schema
-               - Allow [S] does not show forbidden goals
+               - Allow [S] does not show forbidden goals (i.e. need to add support for Allow [S])
 
 Aggregating:
   - are just other actions, following similar logic as the others
