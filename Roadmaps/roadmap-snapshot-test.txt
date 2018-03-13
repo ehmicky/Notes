@@ -1,0 +1,334 @@
+
+                         
+   ROADMAP-SNAPSHOT-TEST  
+                         
+
+
+
+Name???
+
+Catchphrase: "Snapshot-driven testing" and/or "Forget test assertions"
+  - do not set it until promotion, to avoid idea stealing
+
+test("TITLE", [...ARR], FUNC(...ARG)->[PROMISE_]VAL [, ...OPTS])->PROMISE
+  - must be called synchronously during file load
+
+"TITLE":
+   - not optional
+   - must be unique within file
+
+...ARR + FUNC:
+   - use test-each
+   - `info` not passed to FUNC
+
+FUNC:
+   - should return VAL to snapshot
+   - should be fired on next tick
+   - if return PROMISE, await it
+
+PROMISE:
+  - resolved value:
+      - OBJ:
+         - title STR, args: ARR_ARR, options OPTS
+         - tests OBJ_ARR: success BOOL, type 'new|removed|same|different|inconstant', action 'next|update|remove|input', value VAL, snapshot STR, args ARR, async BOOL, errored BOOL
+         - others???
+      - not documented. Meant for plugins.
+  - always resolved, even on test failure
+
+Re-using:
+   - TITLE (like describe()): test = (title, ...args) => test(`TITLE > ${title}`, ...args)
+   - ...ARR: test = (title, ...args) => test(title, ...ARR, ...args)
+   - OPTS: test = (...args) => test(...args, OPTS)
+       - which is why OPTS is variadic
+
+Hooks not needed:
+  - beforeAll():
+      - just execute code in top-level scope
+      - for async, top-level code can return PROMISE then each test can use await PROMISE
+   - afterAll(): use Promise.all(...PROMISE).then() using returned PROMISEs
+   - before|afterEach(): just repeat code at beginning|end of FUNC
+
+Exceptions or rejected PROMISEs:
+  - snapshot the ERROR
+  - serializer should always snapshot ERRORs with String() (i.e. no stack trace)
+  - snapshot (including reporting) should include the fact that it's been either thrown or rejected (async BOOL, errored BOOL)
+
+CLI runner
+
+Snapshot types:
+   - "new" snapshots
+   - "removed" snapshots
+        - those are not automatically pruned. User must be explicit because they might have removed snapshots by accident during test refactoring.
+        - also this makes design simpler and more orthogonal, at the expense of more actions from user.
+   - "same" snapshots (i.e. unchanged)
+   - "different" snapshots (same snapshot key but different snapshot)
+   - "inconstant" snapshots (current test code created different snapshots when run several times)
+
+Interactive mode:
+   - CONF.interactive BOOL (--[no-]interactive in CLI)
+   - false:
+        - always false (cannot override) if !stdin.isTTY || isCi
+        - always do "next"
+   - true (def):
+        - interactively ask on each snapshot which action to do
+        - similar to add -p
+        - prompt is:
+              n/next, u/update, r/remove, i/input, u/undo, q/quit
+              1/single, t/test, f/file, */all, s/[no-]same, c/[no-]compact, ?/help
+
+"next" action:
+   - go to next snapshots
+   - tests will fail if "new"|"removed"|"different"|"inconstant" snapshots
+
+"update" action:
+   - if "new" snapshots, create it
+   - if "different" snapshots, update it
+   - not shown if "removed"|"same"|"inconstant" snapshots
+
+"remove" action:
+   - remove current snapshots
+   - tests will fail if "same"|"different" (not if "removed")
+   - not shown for "new"|"inconstant" snapshots
+
+"input" action:
+   - modify current snapshots by prompting for input
+   - for "new"|"same"|"different" snapshots
+   - not shown for "removed"|"inconstant" snapshots
+   - prompt:
+        - use Node REPL ("readline" core module)
+        - can use history to see previous inputs
+        - current snapshot is copied in clipboard
+        - retry if invalid input
+   - tests will fail, unless input snapshot is the same as current snapshot
+   - only shown when group "single"
+   - goal: test-first development
+
+"undo" action:
+   - for the last "next|update|remove|input" action
+        - including grouped action
+   - restore previous group|same modes if different
+   - should highlight previously done action
+   - not shown if no action to undo
+
+"same" mode:
+   - whether to show "same" snapshots
+   - prompt should not show current mode
+   - def is CONF.same (def: false)
+
+Group mode:
+   - several snapshots at once:
+        - print each before prompt
+        - action applies to each
+   - grouped by "GROUP": single, test, file, all
+   - def is CONF.group (def: 'single')
+   - prompt should not show current group mode
+   - for a given group, each snapshot type is shown and prompted separately:
+        - in order: "same" > "different" > "removed" > "new"
+        - reason: being able to do separate actions for each snapshot type, since they share common actions
+
+Switching between modes:
+ - group|[no-]same mode: do not switch to snapshots where an action (including "next") was already taken
+ - switch first snapshot to:
+     - "same" mode: first "same" snapshot of current group (or of current test if group "single"). If none, current snapshot.
+     - "no-same" mode: first "different"|"removed"|"new" snapshot of current group (or of current test if group "single"). If none, of next group.
+     - group mode: current snapshot
+
+Default reporter:
+  - the following applies regardless of group mode
+  - each test: purple header with:
+      - "shortest filepath" (see below)
+      - test title:
+          - ellipsis in middle if needed
+  - each data:
+      - smaller header (do not repeat test header)
+      - color of header: "new" (backgroundGreen), "removed" (backgroundRed), "different" (backgroundYellow), "same" (backgroundGrey), "inconstant" (backgroundMagenta)
+      - start with snapshot type: "New", "Removed", "Different", "Same", "Inconstant"
+      - then data:
+          - space-separated ARGs
+          - ARG stringified with prettyFormat()
+          - ellipsis in middle of each ARG if needed
+             - each ARG gets same amount of max chars
+  - content first column:
+      - "removed" snapshots: red minuses for all lines
+      - "new" snapshots: green pluses for all lines
+      - "different" snapshots: red minuses or green minuses for relevant lines
+      - "same" snapshots: nothing
+      - "inconstant" snapshots: like "different" if snapshot exists, "new" otherwise
+  - content: full snapshot
+  - for "inconstant": data header + content is reported twice, because two snapshots are shown
+  - prompt question:
+      - remove it after user has confirmed input
+  - prompt input:
+      - prompt characters (on the left) should be very noticeable so that it is easy to scroll up and distinguish groups
+      - input should be left so user can see previous answers
+
+Color highlighting in snapshots:
+  - use a syntax highlighting library
+      - so that YAML/HTML/etc. snapshots arre highlighted too
+      - should work well with prettyFormat()
+  - all snapshots types:
+      - but for "different" snapshots: not on the added|removed lines. They should instead be backgroundGreen|Red and auto in foreground
+  - CONF.color BOOL (--[no-]color) (def: chalk default)
+
+Compact mode:
+  - goals:
+      - make each headers + snapshot + prompt fit a single screen
+      - avoiding slowing down machine when snapshot is big
+  - [no-]compact mode:
+      - only show one of them at a time
+      - def is CONF.compact BOOL (def: true) (or --[no-]compact)
+  - truncates:
+      - OBJ max depth 2
+      - ARR max length 4
+          - truncate in middle
+      - max lines NUM:
+          - truncate in middle
+          - newline should be either CRLF or LF
+          - NUM should be whatever fits a typical terminal screen
+          - each series of 80 chars without any newlines should be considered a line:
+              - increments the number of "lines"
+              - might be truncated in the middle of the line
+  - should try not to truncate first:
+      - if over max lines, then truncate it
+      - if not over max lines, keep it not truncated
+          - do not show "[no-]compact" modes
+
+Reporting:
+  - should take as input UI information: snapshots, titles, filepaths, data, whether an error was thrown|rejected, available actions, etc.
+  - interactivity:
+      - should declare whether it can be interactive
+      - if OPTS.interactive true, should return action as output (and argument for "input" action)
+  - should not need to handle most logic including:
+      - action handling
+      - color highlighting
+      - showing last action with undo
+      - truncating
+      - grouping and modes (just get current snapshots as input)
+  - should be designed to allow a potential GUI interactive reporter in the future
+
+Reporting ordering:
+  - the following applies to all reporters
+  - run in parallel but buffer and report in order (like test-openapi)
+     - should stream it, including in interactive mode
+  - order should be:
+     - for any group mode (including single)
+     - according to (by priority):
+        - lexicographical ordering of "shortest filepath" (see below)
+        - when test() was called
+        - snapshot type: "same" > "different" > "removed" > "new"
+        - argument order in parameters
+
+Use itself for unit testing, but its latest release (not direct require())
+
+Use worker threads / workers for each test file
+
+Timeout:
+  - CONF.timeout NUM (in secs):
+     - global timeout, because per-test timeout does not work with parallel tests
+     - def 10 minutes
+     - when hit, report which tests are still running
+  - on SIGINT/SIGTERM/SIGQUIT/etc.
+     - if no tests finished in last 5 secs
+     - then report which tests are still running
+     - goal: allow debugging hanging code
+
+Normalization:
+   - to normalize snapshots, user needs to modify the return value of tests before returning it
+   - create a separate package with some common normalization methods:
+       - separate some of those methods to own package if makes sense, including deep(), compose(), error(), duration()
+       - deep(FUNC(VAL)->VAL)->FUNC(OBJ)->OBJ:
+           - make a mapping FUNC recursive
+           - avoid infinite recursions
+           - only enumerated own properties
+           - applied to all methods in the package
+      - compose(FUNC,...)->FUNC: functional compose
+      - trim(STR)->STR
+      - error(STR)->STR: replace stack traces (lines starting with \s+at ...) by single "at STACK TRACE"
+          - should work on ERROR since error() is deep and should be applied to error.stack
+      - colors(STR)->STR: remove colors
+      - duration(STR[, STR2])->STR: replace anything that looks like durations by STR2 (def: "100ms")
+      - timestamp(STR[, STR2])->STR: replace anything that looks like timestamps by STR2 (with a default of epoch)
+      - newline(STR)->STR: CRLF or LF
+      - removePath(STR)->STR: remove anything that looks like a path (including Windows PATH)
+      - normalizePath(STR)->STR: normalize Windows paths to Unix paths
+      - replace(REGEXP, STR)
+
+Fuzz testing:
+  - use test-each: NUM, input functions
+      - rely on opts.indexes from test-each to know whether they were originally used
+  - CONF.repeat NUM:
+      - append NUM to each set of data, i.e. repeat each test NUM times
+      - >= 0
+      - def: 2 if new|different snapshot, 1 otherwise
+          - goal: checking for inconstant results, due to randomness in either input function or test function itself
+  - NUM as data dimension:
+      - NUM is absent from snapshot key
+      - only a single snapshot is created for all iterations:
+          - if all the same, use any
+          - if any differs: snapshot type "inconstant":
+              - no "update", "remove", "input" actions
+                  - i.e. only action forward is "next", making tests fail
+              - first two different snapshots are reported
+                  - if any snapshot is same as current one, should use it as the first one
+  - input function:
+      - `${FUNC.name}()` (or "function()" if anonymous) should be used as snapshot key
+      - but generated value should be used in reporting
+      - although test takes randomness as input, the test output should be consistent across runs, otherwise each new run will fail
+
+Fuzz data generation:
+  - similar to faker but specific to fuzz testing
+  - data meant to test different types (and potential issues) of inputs
+     - e.g. for numbers: Infinity, -Infinity, NaN, +0, -0, EPSILON, MAX|MIN_SAFE_INTEGER, MAX|MIN_VALUE, 1/3, 1, 10
+     - e.g. for strings: get some ideas from big-list-of-naughty-strings but ensure those are printable, and smaller set
+  - export:
+     - each set of data
+     - methods that retrieve random value among each set of data
+  - random function should allow a seed as argument
+  - try to search for similar packages
+  - separate package
+  - link to it from documentation of both test-each and snapshot testing tool
+
+skip/only:
+  - not needed because can comment code and select specific files to run???
+  - what about users that might split different parts of their app into different tests, and run them separately??? E.g. marking slow tests as such in the title, and only run them in CI.
+
+fail fast
+
+watch mode
+
+TAP
+
+Can set Node CLI flags:
+  - including --require and --inspect
+
+Config:
+  - test OPTS can also be set as global defaults on CONF
+
+Executing commands:
+  - should create a separate repo which is a thin wrapper around execa()
+  - returning { code, stdout, stderr[, error] }
+  - always use opts.reject false
+  - with correct normalization
+  - allow using current package CLI name (finds it in `package.json`)
+      - see https://github.com/sindresorhus/execa/issues/281
+
+Snapshots???
+  - have both Markdown and binary files like ava???
+      - use v8.serialize() on binary files???
+      - use brotli on binary files???
+  - use sourcemaps to figure out where to put snapshots
+     - or only allow overidding snapshot dir instead???
+  - should try to keep existing sorting, so that git diff do not show changes due to sorting
+  - key should be combination of:
+      - "shortest filepath":
+          - if unique: filename without .EXT
+          - if differ only by .EXT: filename with .EXT
+          - otherwise, prepend first parent dir (and so on) until different (and do not use .EXT)
+      - test title
+      - ARR of data serialized with same logic as snapshot
+
+Should run in browsers too
+  - add multi platform capability???
+
+Use ava or jest-snapshot or snap-shot-it under the hood???
+  - at least check them to get inspiration of features???
