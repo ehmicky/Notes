@@ -62,29 +62,83 @@ PUBSUBENGINE.unsubscribe(SUB_ID)  #
 PubSub                            #Implementation that uses a local Event emitter
 
 
-SUBSCRIPTIONS-TRANSPORT-WS ==>   ##Implementation that uses WebSocket (using "ws" package, see its doc)
-                                 ##Actually does not implement PubSubEngine, but passes SUBMANAGER as argument instead
+                                             /=+===============================+=\ 
+                                            /  :                               :  \  
+                                            )==:           TRANSPORT           :==(   
+                                            \  :_______________________________:  /    
+                                             \=+===============================+=/
+
+
+SUBSCRIPTIONS-TRANSPORT-WS ==>   ##Communicates using WebSocket (using "ws" package, see its doc)
+                                 ##Uses WebSocket subchannel 'graphql-subscriptions'
+                                 ##Is not a PubSubEngine, but uses SUBMANAGER
+                                 ##Summary:
+                                 ##  - client initiates WebSocket connection
+                                 ##     - can pass COPTS.connectionParams, which the server uses to generate INIT_VAL, used as connection-wide context
+                                 ##  - client subscribes to channel, i.e. to GraphQL subscription, providing PAYLOAD.query|variables|operationName
+                                 ##  - server pushes message, i.e. execute GraphQL query, passing result to client callback
                                  ##Version 0.5.3
 
-new SubscriptionServer
-(OPTS, WS_OPTS)
-                                 ##OPTS:
-                                 ##  - subscriptionManager SUBMANAGER
-                                 ##  - onConnect(OBJ)->PROMISE
-                                 ##     - OBJ is client's connectionParams
-                                 ##WS_OPTS:
-                                 ##  - passed to WS.Server()
+new SubscriptionServer           ##Must specify:
+(SOPTS, WS_OPTS)                 ##  - SOPTS.subscriptionManager SUBMANAGER
+                                 ##  - WS_OPTS: passed to WS.Server()
+                                 ##Automatically starts serving
 
+new SubscriptionClient           ##Can specify WEBSOCKET (def: WINDOW.WebSocket), e.g. for mocking. Available at SUB_CLIENT.client
+(WS[S]_URL[, COPTS][, WEBSOCKET])##Automatically connects
+                                 ##Sent messages are buffered while connecting
 
-new SubscriptionClient(WS[S]_URL[, OPTS])
-                                 ##OPTS:
-                                 ##  - connectionParams: passed to server onConnect()
-                                 ##  - timeout NUM
-                                 ##  - reconnect BOOL
-                                 ##  - reconnectionAttemps NUM
-                                 ##  - connectionCallback([ERROR]): after connection setup
+FLOW ==>                         ##New connection:
+                                 ##  - (client) SUB_CLIENT.onConnect(FUNC())
+                                 ##  - (client sends) type 'init', payload COPTS.connectionParams
+                                 ##  - (server) SOPTS.onConnect(COPTS.connectionParams, WSOCKET)->PROMISE(INIT_VAL)
+                                 ##  - if INIT_VAL false:
+                                 ##     - (server sends) type 'init_fail', error 'MESSAGE', and closes socket
+                                 ##     - (client) COPTS.connectionCallback('ERROR_MESSAGE')
+                                 ##  - otherwise:
+                                 ##     - (server sends) type 'init_success'
+                                 ##     - (client) COPTS.connectionCallback()
+                                 ##Reconnection:
+                                 ##  - done on client disconnection, providing COPTS.reconnect true (def: false)
+                                 ##  - redo "New connection" except:
+                                 ##     - fires SUB_CLIENT.onReconnect(FUNC()) instead
+                                 ##     - resubscribe to channels
+                                 ##     - retries COPTS.reconnectionAttempts NUM times, with exponential backoff
+                                 ##New channel:
+                                 ##  - (client) SUB_CLIENT.subscribe(PAYLOAD, CHANDLER(ERROR, OBJ))
+                                 ##  - (client sends) type 'subscription_start', id SUB_ID, payload PAYLOAD
+                                 ##  - (server) SOPTS.onSubscribe(PAYLOAD, OBJ, WSOCKET)->PROMISE(SUB_OPTS), with OBJ:
+                                 ##     - query|variables|operationName: from PAYLOAD
+                                 ##     - context INIT_VAL
+                                 ##  - (server) SUBMANAGER.subscribe(SOPTS)
+                                 ##  - (server sends) type 'subscription_success', id SUB_ID
+                                 ##  - (client) waits for max COPTS.timeout NUM (def: 5000)
+                                 ##New server->client message:
+                                 ##  - i.e. after SUBMANAGER.subscribe() SOPTS.callback(ERROR[_STR], OBJ) gets triggered by SUBMANAGER.publish()
+                                 ##  - if ERROR:
+                                 ##     - (server sends) if ERROR, type 'subscription_data', id SUB_ID, payload {errors: ERROR.errors or OBJ_ARR: message ERROR_STR}
+                                 ##     - (client) CHANDLER(ERRORS_OBJ_ARR)
+                                 ##  - otherwise:
+                                 ##     - (server sends) otherwise, type 'subscription_data', id SUB_ID, payload OBJ
+                                 ##     - (client) CHANDLER(null, OBJ)
+                                 ##New client->server message: not possible
+                                 ##End channel:
+                                 ##  - (client) SUB_CLIENT.unsubscribe(SUB_ID) or SUB_CLIENT.unsubscribeAll()
+                                 ##  - (client sends) type 'subscription_end', id SUB_ID
+                                 ##  - (server) SUBMANAGER.unsubscribe(SUB_ID)
+                                 ##  - (server) SOPTS.onUnsubscribe(SUB_ID)
+                                 ##Wront client message errors:
+                                 ##  - (server sends) type 'subscription_fail', id SUB_ID, payload {errors OBJ_ARR: message STR}
+                                 ##  - (client) CHANDLER(ERRORS_OBJ_ARR)
+                                 ##Ping:
+                                 ##  - (server) sends type 'keepalive'
+                                 ##     - only if SOPTS.keepAlive NUM (in ms)
+                                 ##End connection:
+                                 ##  - (client) SUB_CLIENT.onDisconnect(FUNC())
+                                 ##  - (server) SOPTS.onDisconnect(WSOCKET)
 
-addGraphQLSubscriptions(NETWORKINTERFACE, SUBCLIENT)
+addGraphQLSubscriptions
+(NETWORKINTERFACE, SUB_CLIENT)   ##Helper for apollo client
 
 
                                              /=+===============================+=\ 
