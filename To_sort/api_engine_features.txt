@@ -2,30 +2,7 @@ Dependencies:
   - upgrade yargs to 9.1.0 (when they push to npm)
 
 Database connections:
-  - runOpts.db.TYPE:
-     - models STR_ARR:
-        - optional
-        - either "MODEL" or "kind:KIND"
-        - validate:
-           - two dbConnections cannot specify the same "MODEL"
-           - two dbConnections cannot specify the same "kind:KIND"
-           - "MODEL" must be in schema
-           - "KIND" must exist
-           - cannot target "MODEL" if any model.kind is not among adapter.kinds
-           - cannot target "kind:KIND" if not among adapter.kinds
-     - any others:
-        - options passed to adapter
-        - models are not passed
-  - def: a single "memory" dbConnection
   - start connections at server startup:
-     - pass them to mInput.dbConnections.MODEL ADAPTER:
-        - i.e. assign a dbConnection to each model at startup time
-        - for each model, pick in order:
-           - if current model is included in some dbConnection.models "MODEL", use that one
-           - if current model.kind is included in some dbConnection.models "kind:KIND", use that one
-           - otherwise pick the first (in runOpts.db array order) dbConnection whose ADAPTER.kinds (at least) contains model.kind
-           - otherwise, throw error
-        - if some dbConnections are not assigned to any model, throw error
      - call each CONNECTION = ADAPTER.connect({ options })
      - bind ADAPTER methods with ADAPTER.options and CONNECTION
      - assign mInput.dbConnections.MODEL ADAPTER
@@ -60,6 +37,9 @@ Adapters:
      - array operates on whole ARR (e.g. deep equal), except if some|all
      - like REGEXP test should not be anchored, unless ^$ is used
      - should try to use the same option names accross adapters, e.g. port, host, username, password
+  - when connecting to database, should do check schema matches database, e.g.:
+     - each model exist
+     - has the right properties
   - add database stats to systemInfo event payload
      - same for supported protocols, operations, and their options
 
@@ -67,6 +47,113 @@ Create a toSentence() common utility
 
 GraphQL schema:
   - fix args.filter
+
+Pagination:
+  - problems (should document them in code):
+     - parent actions are performed several times while going through the child action pages:
+        - this is inefficient
+        - this creates duplicates results, i.e. clients need to remove them
+        - does not work when parent action cannot be performed twice, e.g. delete or create
+     - this creates one pagination output metadata per action, which is more complex
+  - solution: max models limit:
+     - top-level actions are paginated, i.e. limited by runOpts.pageSize
+     - nested actions are not paginated. Instead, two limits:
+        - maxModels:
+           - each operation can contain maximum NUM models, including top-level and nested actions. This is operation-wise, not action-wise.
+              - does not include duplicate models. E.g. if fetching two nested models with same id, consistency middleware will remove duplicates, so they will not impact database load, and should not be counted in limit.
+           - NUM is runOpts.maxModels.
+              - defaults to 100 * runOpts.pageSize (not args.pageSize)
+           - for many-to-many nested operations that hit that limit, two solutions:
+              - decreasing args.pageSize
+              - split the nested operation into several flatter operations
+        - each nested action OBJ_ARR output length must be maximum pageSize:
+           - this is to avoid using nesting to circumvent pagination
+           - should count duplicates, not ignore them
+           - it is for each OBJ_ARR, not whole nested action. E.g. if a parent has 100 OBJ_ARR children, each child should be under that limit,
+             even though they will all trigger one single action, which might return more than that limit
+     - for both limits:
+        - if over limit, throws error
+           - should trigger rollback
+           - if it can be thrown before write actions are fired, it is even better as it avoids rollback
+        - should use database offset|limiting NUM+1 in child actions to limit database load
+        - for all commands, including createMany and replaceMany
+  - general (top-level actions):
+     - *One commands: no pagination
+     - createMany, replaceMany:
+        - no pagination args nor output metadata
+        - but if args.data length (top-level only) > runOpts.pageSize, throws error
+        - do not allow args.page_size
+     - findMany:
+        - either:
+           - offset vs cursor:
+              - is offset pagination if args.page !== undefined
+              - default is cursor pagination otherwise, with args.after ""
+              - document difference with offset pagination: not random-access, but stronger consistency/isolation
+           - offset pagination:
+              - args:
+                 - page, page_size: same as current system
+              - metadata.pagination:
+                 - page, page_size: same as current system
+                 - has_previous_page, has_next_page: same as current system
+                 - total_size NUM, page_count NUM:
+                    - calculated by doing an extra count database query
+                    - always performed, but on offset pagination only
+           - cursor pagination:
+              - args:
+                 - page_size: same as current system
+                 - after, before: same as current system:
+                    - including:
+                       - how cursors are calculated
+                       - "" cursors for beginning and end
+              - metadata.pagination:
+                 - page_size: same as current system
+                 - has_previous_page, has_next_page: same as current system
+                 - previous|next_token "CURSOR":
+                    - instead of current system where each model has its own token
+                    - those two cursors are the cursor calculated of the last and first model
+                    - undefined if no previous or no next page
+                    - cursors should store oArgs and use them for comparisons, not normalized args.
+                       - clients should submit the same args.filter|order_by (instead of not submitting any, as it is now), i.e. only add args.after|before.
+                 - first_token|last_token: always ""
+     - patchMany, deleteMany:
+        - like findMany except for the following points
+        - no offset pagination
+        - only forward cursors, i.e. no args.before nor  metadata.pagination.previous_token|first_token|last_token. metadata.pagination.has_previous_page is always false.
+        - paginates the write database query itself:
+           - i.e. cannot patch nor delete too many models at once
+           - do it by paginating first internal find command, then use the ids in replace|patch|delete command
+              - i.e. replace|patch|delete commands do not use pagination middleware for cursor pagination directly
+  - middleware:
+     - handles all types of pagination: max args.data length, cursor pagination, offset pagination.
+     - e.g. max args.data length not done during args syntax check middleware
+  - runOpts.pageSize:
+     - instead of the three runOpts currently used, i.e. maxPageSize, defaultPageSize and maxDataLength
+     - defaulting to 100
+     - args.page_size can be used to change pageSize:
+        - but can only be lower
+        - integer, minimum 1
+        - with findMany, patchMany, deleteMany
+     - 0 to disable pagination:
+        - i.e. no paginating, pagination args nor output metadata
+        - args.page_size can be anything
+  - metadata:
+     - should not be selectable, i.e. always fully rendered in output
+     - operation-wise, i.e. not action-wise, nor model-wise
+     - in output, is sibling to "data", in both GraphQL and REST, i.e. { data OBJ, metadata OBJ }
+     - should be undefined if args.silent true
+     - go through the whole codebase looking for "metadata" because there's been quite some changes
+  - relay.js:
+     - requires model-wise cursors, which is too slow, and too complicated for users, i.e.:
+       - only expose Relay.js cursors as opt-in
+       - only first and last cursor are calculated. The others simply append an offset to the first cursor.
+          - it is not as isolation-safe, but is much faster and only meant for Relay.js
+  - protocol-level:
+     - use Range [C] and Accept-Ranges [S] for pagination
+        - e.g. transforming them into pagination regular arguments
+     - first|last|previous|next:
+        - like first|last|previous|next_token, but prepended with URL to perform the query
+        - for GraphQL, need to put query in the URL query string
+        - also as HTTP Link: <URL>; rel="first|last|prev|next|self[ ...]"
 
 Database constraints:
   - uniqueness
@@ -189,113 +276,6 @@ JSON-RPC:
   
 Operations:
   - implement other operations, beyond GraphQL, REST and JSON-RPC
-
-Pagination:
-  - problems (should document them in code):
-     - parent actions are performed several times while going through the child action pages:
-        - this is inefficient
-        - this creates duplicates results, i.e. clients need to remove them
-        - does not work when parent action cannot be performed twice, e.g. delete or create
-     - this creates one pagination output metadata per action, which is more complex
-  - solution: max models limit:
-     - top-level actions are paginated, i.e. limited by runOpts.pageSize
-     - nested actions are not paginated. Instead, two limits:
-        - maxModels:
-           - each operation can contain maximum NUM models, including top-level and nested actions. This is operation-wise, not action-wise.
-              - does not include duplicate models. E.g. if fetching two nested models with same id, consistency middleware will remove duplicates, so they will not impact database load, and should not be counted in limit.
-           - NUM is runOpts.maxModels.
-              - defaults to 100 * runOpts.pageSize (not args.pageSize)
-           - for many-to-many nested operations that hit that limit, two solutions:
-              - decreasing args.pageSize
-              - split the nested operation into several flatter operations
-        - each nested action OBJ_ARR output length must be maximum pageSize:
-           - this is to avoid using nesting to circumvent pagination
-           - should count duplicates, not ignore them
-           - it is for each OBJ_ARR, not whole nested action. E.g. if a parent has 100 OBJ_ARR children, each child should be under that limit,
-             even though they will all trigger one single action, which might return more than that limit
-     - for both limits:
-        - if over limit, throws error
-           - should trigger rollback
-           - if it can be thrown before write actions are fired, it is even better as it avoids rollback
-        - should use database offset|limiting NUM+1 in child actions to limit database load
-        - for all commands, including createMany and replaceMany
-  - general (top-level actions):
-     - *One commands: no pagination
-     - createMany, replaceMany:
-        - no pagination args nor output metadata
-        - but if args.data length (top-level only) > runOpts.pageSize, throws error
-        - do not allow args.page_size
-     - findMany:
-        - either:
-           - offset vs cursor:
-              - is offset pagination if args.page !== undefined
-              - default is cursor pagination otherwise, with args.after ""
-              - document difference with offset pagination: not random-access, but stronger consistency/isolation
-           - offset pagination:
-              - args:
-                 - page, page_size: same as current system
-              - metadata.pagination:
-                 - page, page_size: same as current system
-                 - has_previous_page, has_next_page: same as current system
-                 - total_size NUM, page_count NUM:
-                    - calculated by doing an extra count database query
-                    - always performed, but on offset pagination only
-           - cursor pagination:
-              - args:
-                 - page_size: same as current system
-                 - after, before: same as current system:
-                    - including:
-                       - how cursors are calculated
-                       - "" cursors for beginning and end
-              - metadata.pagination:
-                 - page_size: same as current system
-                 - has_previous_page, has_next_page: same as current system
-                 - previous|next_token "CURSOR":
-                    - instead of current system where each model has its own token
-                    - those two cursors are the cursor calculated of the last and first model
-                    - undefined if no previous or no next page
-                    - cursors should store oArgs and use them for comparisons, not normalized args.
-                       - clients should submit the same args.filter|order_by (instead of not submitting any, as it is now), i.e. only add args.after|before.
-                 - first_token|last_token: always ""
-     - patchMany, deleteMany:
-        - like findMany except for the following points
-        - no offset pagination
-        - only forward cursors, i.e. no args.before nor  metadata.pagination.previous_token|first_token|last_token. metadata.pagination.has_previous_page is always false.
-        - paginates the write database query itself:
-           - i.e. cannot patch nor delete too many models at once
-           - do it by paginating first internal find command, then use the ids in replace|patch|delete command
-              - i.e. replace|patch|delete commands do not use pagination middleware for cursor pagination directly
-  - middleware:
-     - handles all types of pagination: max args.data length, cursor pagination, offset pagination.
-     - e.g. max args.data length not done during args syntax check middleware
-  - runOpts.pageSize:
-     - instead of the three runOpts currently used, i.e. maxPageSize, defaultPageSize and maxDataLength
-     - defaulting to 100
-     - args.page_size can be used to change pageSize:
-        - but can only be lower
-        - integer, minimum 1
-        - with findMany, patchMany, deleteMany
-     - 0 to disable pagination:
-        - i.e. no paginating, pagination args nor output metadata
-        - args.page_size can be anything
-  - metadata:
-     - should not be selectable, i.e. always fully rendered in output
-     - operation-wise, i.e. not action-wise, nor model-wise
-     - in output, is sibling to "data", in both GraphQL and REST, i.e. { data OBJ, metadata OBJ }
-     - should be undefined if args.silent true
-     - go through the whole codebase looking for "metadata" because there's been quite some changes
-  - relay.js:
-     - requires model-wise cursors, which is too slow, and too complicated for users, i.e.:
-       - only expose Relay.js cursors as opt-in
-       - only first and last cursor are calculated. The others simply append an offset to the first cursor.
-          - it is not as isolation-safe, but is much faster and only meant for Relay.js
-  - protocol-level:
-     - use Range [C] and Accept-Ranges [S] for pagination
-        - e.g. transforming them into pagination regular arguments
-     - first|last|previous|next:
-        - like first|last|previous|next_token, but prepended with URL to perform the query
-        - for GraphQL, need to put query in the URL query string
-        - also as HTTP Link: <URL>; rel="first|last|prev|next|self[ ...]"
 
 Authorization:
   - IDL functions for idl|model|attr.authorize:
@@ -1042,6 +1022,7 @@ Positioning:
 
  30  MUST HAVE FEATURES
  3   Database
+ 2   Pagination
 ?0.5 Database constraints
  1   Complex patches
  2   Orphans
@@ -1049,7 +1030,6 @@ Positioning:
  1   REST
  0.5 JSON-RPC
  0.5 Other operations
- 2   Pagination
  3   Authorization
  4   Aggregating
 ?7   Compatibility layer
