@@ -41,7 +41,7 @@ HTTP-related RFCs:
   - Language tag: 4645, 4647, 5645, 5646
   - HTTP/1.*: 1945, 7231
   - Caching: 5861, 7232, 7234, https://www.w3.org/TR/edge-arch/
-  - Content negotiation: 2295 (stopped at section 5), 2296, 7694, 7240
+  - Content negotiation: 7240
   - Compression, chunked encoding: 7230
   - Range [C]: 7233
   - Proxies: 3143, 3205, 7239
@@ -464,61 +464,7 @@ Content:
      - variant: a resource with a specific representation (e.g. language, Content-Type, etc.)
      - instance: a variant inside a request/response payload, without transfer-related encoding (e.g. compression, Range [C])
      - entity: same as instance, but with transfer-related encoding (i.e. what is actually sent)
-  - content negotiation:
-     - server-side:
-        - client informs of accepted variants (NUM is preference):
-           - Accept:         MIME_TYPE[; q=NUM],... [C]
-           - Accept-Charset:   CHARSET[; q=NUM],... [C]
-           - Accept-language: LANGUAGE[; q=NUM],... [C] 
-           - Accept-features:  FEATURE[; q=NUM],... [C]
-              - FEATURE: FEAT, FEAT=|!=VAL, FEAT=[NUM-NUM2], !FEAT, *
-              - anything not covered by MIME_TYPE, CHARSET or LANGUAGE: MEDIAQUERYLIST, web API support, speed vs graphics, etc.
-              - should be x-FEATURE if not standard
-        - server:
-           - picks one:
-              - Content-Type: MIME_TYPE[; charset=CHARSET] [S]
-              - Content-language: LANG [S]
-           - 406 (Not Acceptable): wrong Accept-* [C]
-     - transparent:
-        - client asks for possible variants:
-           - Accept* [C] (optional)
-           - Negotiate: VAL [C]:
-              - trans: supports Alternates [S]
-              - VERSION,...: supports Alternates [S] with those variant selection algorithm versions. Can be '*'
-              - guest-small: supports Alternates [S] providing list is small enough
-              - vlist: supports and ask for Alternates [S]
-        - server informs of possible variants:
-           - TCN: VAL [S]: type of response:
-              - ad-hoc[, keep???]: same as server-side negotiation, i.e. server picked
-              - list[, re-choose???]: 
-                 - let client pick, i.e. gives only possible representations
-                    - should be kept short, e.g. 2 to 10
-                    - variant URI should not have variant itself. Otherwise should return 506 (Variant also negotiates)
-                 - Alternates: CHOICE,... [S]: 
-                   - CHOICE: 
-                      - {"URI" NUM {ATTR VAL} ...}
-                         - ATTR: 
-                            - type|charset|language VAL
-                            - features FEATURE ...:
-                               - can also use FEATURESET;[+NUM][-NUM2], where FEATURESET is FEATURE or [FEATURE ...]
-                               - NUM is max quality improvement (def: 1), NUM2 max degradation (def: 0)
-                            - length NUM
-                            - description "STR". Use %xXX for Unicode encoding.
-                            - any other x-ATTR
-                         - NUM (0-1):
-                            - quality
-                            - calculated by remote variant selection algorithm
-                      - <URI>: fallback
-                      - proxy-rvsa="VERSION,...": remote variant selection algorithm versions
-                   - other possible representations
-                 - 300 status code
-              - choice: ad-hoc + list
-           - adds ";VAL" to ETags???
-        - client accepts chosen variant (ad-hoc, choice) or ask for a specific one (choice, list)
-     - only for GET|HEAD
-     - trade-offs:
-        - mandatory Accept* [C]: allows fingerprinting user agent (privacy concern)
-        - transparent negotiation with list: extra HTTP request
+  - content negotiation: see below
   - request payload:
      - 415 (Unsupported Media Type): wrong request payload MIME_TYPE
   - response payload:
@@ -534,6 +480,83 @@ Content:
         - def:
            - depends on Content-Type [S], i.e. if rendering is supported by client
            - Content-Type "multipart/form-data; boundary=STR" [S]: attachment
+
+Content negotiation:
+  - client:
+     - only GET|HEAD
+     - Accept* [C]:
+        - accepted variants:
+           - Accept:         MIME_TYPE[; q=NUM],... [C]
+           - Accept-Charset:   CHARSET[; q=NUM],... [C]
+           - Accept-language: LANGUAGE[; q=NUM],... [C] 
+           - Accept-features:  FEATURE[; q=NUM],... [C]
+              - FEATURE: FEAT, FEAT=|!=VAL, FEAT=[NUM-NUM2], !FEAT, *
+              - anything not covered by MIME_TYPE, CHARSET or LANGUAGE: MEDIAQUERYLIST, web API support, speed vs graphics, etc.
+              - should be x-FEATURE if not standard
+        - NUM is preference (see below)
+        - Accept* [C]: allows fingerprinting user agent (privacy concern)
+        - if ommitted: should not use 'choice'
+     - Negotiate: VAL [C]:
+        - VAL:
+           - trans: supports list|choice
+           - VERSION,...: supports list|choice with those variant selection algorithm versions. Can be '*'
+           - guest-small: supports and ask for list|choice providing list is small enough
+           - vlist: supports and ask for list|choice
+           - (default): ask for ad-hoc
+        - TCN: list, re-choose [S]: 
+           - server forced TCN: list, although not asked by Negotiate [C]
+  - server: 
+     - list|choice is called 'transparent content negotiation', ad-hoc 'server-side negotiation'
+     - TCN: VAL [S]: 
+        - 2xx or 3xx, except 304
+        - ad-hoc[, keep]: 
+           - picks one variant, provides no choice to client
+           - should use:
+              - Content-Location: URI [S]
+              - Content-Type: MIME_TYPE[; charset=CHARSET] [S]
+              - Content-language: LANGUAGE [S]
+           - 406 (Not Acceptable): wrong Accept-* [C]
+        - list[, re-choose]: 
+           - provides client only with possible variants:
+              - should be kept short, e.g. 2 to 10
+              - variant URI: 
+                 - should not have variant itself. Otherwise should return 506 (Variant also negotiates)
+                 - are best as relative "FILENAME"
+              - requires extra HTTP request
+           - 300 status code
+           - Alternates: CHOICE,... [S] (variants):
+              - {"URI" NUM {ATTR VAL} ...}
+                 - ATTR: 
+                    - type|charset|language VAL
+                    - features FEATURE ...:
+                       - can also use FEATURESET;[+NUM][-NUM2], where FEATURESET is FEATURE or [FEATURE ...]
+                       - NUM is max quality improvement (def: 1), NUM2 max degradation (def: 0)
+                    - length NUM
+                    - description "STR". Use %xXX for Unicode encoding.
+                    - any other x-ATTR
+                 - NUM (0-1):
+                    - quality
+                    - calculated by remote variant selection algorithm:
+                       - it also selects whether to use list or choice
+                       - e.g. RVSA 1.0:
+                          - NUM = product of all matching Accept*;q preferences (def: 1 for each)
+                          - should use list if no NUM > 0, or only used wildcards (e.g. Accept-Features: * or Accept: */*)
+              - <URI>: fallback
+              - proxy-rvsa="VERSION,...": remote variant selection algorithm versions
+        - choice: 
+           - ad-hoc + list
+           - "URI" must be relative "FILENAME" for security reasons
+           - reverse proxy can choose to only respond with ad-hoc answer by:
+              - Variant-Vary [S] -> Vary [S]
+              - remove Content-Location [S], Alternates [S]
+              - remove ';LIST_ETAG'
+     - caching:
+        - Vary: Negotiate, Accept*... [S]: list itself (list|choice)
+        - Variant-Vary [S]: ad-hoc answer (choice)
+        - must append ";LIST_ETAG" to each variant ETAG
+  - client:
+     - accepts chosen variant (ad-hoc, choice) or ask for a specific one (choice, list)
+     - when using TCN: ad-hoc, keep, force accepting chosen variant
 
 Links:
   - Link: <URL>[; ATTR="VAL"];... [, <URL>...] [S]
@@ -642,7 +665,6 @@ Cache:
      - notifies client to use different entry caches on same URL if different HEADER [C] value
      - to use when headers have impact on content, i.e. usually on Accept* [C]
      - usually towards proxies, since browsers usually use only one set of headers
-     - Variant-Vary ???
   - debug: chrome://cache on Chrome
   - see above for which status code usually cache or not
   - caching is based on URL, including query string, excluding #HASH or request body
@@ -940,7 +962,10 @@ Compression:
         - "br"
            - best compression. Same decompression speed as DEFLATE but slower at compressing.
            - browser support: Firefox, Chrome
-     - server: Content-encoding: PROGRAM [S]
+     - server: 
+        - Content-encoding: PROGRAM [S]: which one picked
+        - Accept-Encoding: PROGRAM,... [S]: which one could have been possible
+        - 415 (Unsupported media type): none could be picked
   - summary: server should offer in order: br, [sdch,] lzma, gzip, identity
   - server should cache compression
 
