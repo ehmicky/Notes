@@ -3,9 +3,6 @@
    EXPRESS   
              
 
-To do:
-  - look at expressjs.com
-  - connnect
 
 
 VERSION ==>                   #Node module (4.14.0)
@@ -44,8 +41,8 @@ APPVAR "env"                  #Defines whether it is run in "development", "test
 																						 \=+===============================+=/
 
 
-CONNECT()                     #Returns APP like EXPRESS but only with APP.use|listen() and limited functionalities.
-                              #Version 3.0.2
+CONNECT()                     #Returns APP like EXPRESS but only with APP.use|listen() and limited functionalities (e.g. no globbing, PARAM, APPVAR, etc.)
+                              #Version 3.4.1
 
 
 ORDER ==>                     #Should do in order: APP.set(), MIDWR (logging first), APP.METHOD(), ERROR_MIDWR, APP.listen()
@@ -54,7 +51,7 @@ ORDER ==>                     #Should do in order: APP.set(), MIDWR (logging fir
 APP.use                       #MIDWR are middleware functions, i.e. meant to modify incoming|outcoming REQ|RES
 (['PATH'[_ARR],]MIDWR(REQ,RES,#NEXT():
 [, NEXT([ERROR])])[_ARR]...)  #  - proceed to the next registered MIDWR
-                              #  - the "end point", i.e. the final middleware:
+->APP                         #  - the "end point", i.e. the final middleware:
                               #     - usually delivers the content to the client
                               #     - should not call NEXT()
                               #     - can be different from request to request
@@ -63,33 +60,35 @@ APP.use                       #MIDWR are middleware functions, i.e. meant to mod
                               #  - if no MIDWR has intercepted a request:
                               #     - send 404 with body "Cannot METHOD PATH"
                               #     - to redefine it, use a last MIDWR with no 'PATH' (but not an ERROR_MIDWR)
-                              #Only applies to requests to 'PATH':
+                              #Only applies to requests to 'PATH' (def: '/'):
                               #  - excluding query string or hash
-                              #  - 'PATH' is "mounted":
-                              #     - i.e. it is stripped from REQ.url (but not from REQ.originalUrl)
                               #  - PATH 'route' matching:
                               #     - '^PATH[/...]'
                               #     - can use APPVAR "case sensitive routing" (def: false) 
-                              #     - can use globbing: ? \* + ( )
+                              #     - can use globbing: 
+                              #        - quantifiers: ? + ( )
+                              #        - anything: *
                               #     - can use PARAM (see below)
 
 APP.use                       
-(['PATH',] MIDWR(ERROR,REQ,RES#ERROR_MIDWR.
-[, NEXT([ERROR])])[_ARR]...)  #Default ERROR_MIDWR will send 500 status code with response ERROR
+(['PATH',] MIDWR(ERROR,REQ,RES
+[, NEXT([ERROR])])[_ARR]...)  #ERROR_MIDWR.
+->APP                         #Default ERROR_MIDWR will send 500 status code with response ERROR
                               
-APP.use(['PATH', ]APP2)       #APP2:
+APP.use(['PATH', ]APP2)->APP  #APP2:
                               #  - will be used when requests made to 'PATH[/...]'
                               #  - since PATH is "mounted", APP2 paths will be relative to PATH
                               #  - goal is to create sub-apps, which is why every app:
                               #     - should be assigned to module.exports
                               #     - only use APP.listen() if (! module.parent)
-APP2.mounthpath               #When mounted, parent 'PATH'
-APP2.path()->'PATH'           #Same but recursively
-REQ.baseUrl                   #When mounted, only APP.path(). Only in APP.METHOD()
-REQ.url                       #When mounted, strips APP.path(). Only in APP.METHOD()
-REQ.originalUrl               #REQ.baseUrl + REQ.url
+APP2.on('mount', FUNC(APP))   #Fired on mounting
+APP2.mounthpath               #When mounted, parent 'PATH' (otherwise '/')
+APP2.path()->'PATH'           #Same but recursively (otherwise '')
+REQ.baseUrl                   #APP.path(), and (if APP.use()) 'PATH'
+REQ.url                       #Full URL, without REQ.baseUrl
+REQ.originalUrl               #Full URL
 
-APP.METHOD(...)               #Like APP.use(...) except:
+APP.METHOD(...)->APP          #Like APP.use(...) except:
                               #  - only fired when using HTTP METHOD:
                               #     - "all" for any
                               #     - "get" also catches "head" (unless APP.head() defined)
@@ -102,6 +101,7 @@ APP.METHOD(...)               #Like APP.use(...) except:
                               #        - parenthesis matches are available at REQ.params ARR (empty if no parenthesis)
                               #  - if current APP.METHOD() use several MIDWRs (e.g. by passing an array):
                               #     - can bypass them with NEXT('route')
+                              #        - as such, should prefer use only one APP.METHOD() (with several MIDWRs) for a given METHOD and 'PATH'
                               #  - cannot use APP.METHOD(..., APP2) nor be ERROR_MIDWR
 APP.route('PATH')->ROUTE      
 ROUTE.METHOD(...)->ROUTE      #Same as APP.METHOD('PATH', ...)
@@ -120,8 +120,9 @@ PARAM                         #Any part of URL in APP.use|METHOD() that matches 
                               #  - if ?, optional
                               #  - variable name must be [:alnum:]_
 REQ.params.PARAM              #PARAM_VAL
-APP.param('PARAM',          
-MIDWR(..., PARAM_VAL))        #Fires FUNC() each time a route taken includes 'PARAM'
+APP.param('PARAM'[_ARR],      
+MIDWR(..., PARAM_VAL,'PARAM'))#Fires FUNC() each time a route taken includes 'PARAM'    
+->APP                         #Since it is MIDWR, must call NEXT()
 APP.param                     
 ('PARAM', FUNC(VAL)->BOOL)   ##Only use PARAM if true
 APP.param(PARAM_VAR, REGEXP) ##Same with REGEXP.test()
@@ -138,17 +139,18 @@ EXPRESS-PARAMS.extend(APP)   ##Version 0.0.3
 
 
 REQ                           #Same as Node.js but augmented with extra properties
+REQ.app                       #APP
 
 
 REQ.route.methods.METHOD      #BOOL
 REQ.url|originalUrl|baseUrl   #See above for difference
-REQ.protocol                  #REQ.url protocol, i.e. "http[s]"
+REQ.protocol                  #Request protocol, i.e. "http[s]"
 REQ.secure                    #Same as REQ.protocol == "https"
-REQ.hostname                  #REQ.url hostname
+REQ.hostname                  #Request hostname
 REQ.subdomains                #REQ.hostname as STR_ARR:
                               #  - without top NUM subdomains (APPVAR 'subdomain offset', def: 2)
                               #  - top first
-REQ.path                      #REQ.url 'PATH'
+REQ.path                      #REQ.url but without '?SEARCH' nor '#HASH'
 
 REQ.ip                        #Client 'ADDR'
 REQ.ips                       #'ADDR'_ARR: client + reverse proxies list (furthest to server first)
@@ -203,6 +205,8 @@ REQ.fresh|stale               #Returns true|false if:
 
 
 RES                           #Same as Node.js but augmented with extra properties
+RES.app                       #APP
+
 
 RES.status(NUM)->RES          #Sets RES.statusCode
 RES.set('VAR','VAL'[ARR])->RES#Like RES.setHeader() but:
@@ -212,6 +216,7 @@ RES.set(OBJ)->RES             #  - can use OBJ
 RES.get('VAR')->'VAL'[_ARR]   #Like RES.getHeader()
 RES.append('VAR', VAL[_ARR])
  ->RES                        #Like RES.set(), but appends to current value if existing
+RES.headersSent               #BOOL: true after headers have been sent
 
 
 RES.location(URL)->RES        #Sets Location: URL [S]
