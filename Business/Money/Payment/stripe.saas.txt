@@ -379,6 +379,7 @@ CURRENCY CONVERSION ==>           #Conversion is automatic and has three stages:
 AVAILABLE CURRENCIES ==>          #Customer's currency and CHARGE.currency:
                                   #  - see full list at https://stripe.com/docs/currencies
                                   #  - credit cards with JCB, Discover and Diners Club can only be 'usd'
+                                  #  - with alipay, CHARGE.currency must be same as destination currency
                                   #Destination currency:
                                   #  - must match main currency of STRIPE_ACCOUNT.country
                                   #  - but PAYOUT can be to another country with same currency (e.g. Eurozone)
@@ -1116,6 +1117,7 @@ SOURCE.type 'TYPE'              *C#Specific payment method among:
                                   #  (payment provider companies controlled)
                                   #  - 'stripe_account': Connect
                                   #  - 'alipay' (called 'alipay_account' on create|update): Alibab, China (>50% market share)
+                                  #     - terms of service are too restrictive, should not use
                                   #  - 'wechat': China
                                   #  (tech companies controlled)
                                   #  - 'card' with CARD.wallet.type: 'apple_pay', 'google_pay', 'microsoft_pay', 'samsung_pay'
@@ -1134,10 +1136,19 @@ SOURCE.type 'TYPE'              *C#Specific payment method among:
                                   #     - more anonymous, more fraud-friendly
                                   #     - no possible refunds
                                   #     - high fees
+                                  #Availability:
+                                  #  - right away: 'card', 'stripe_account', 'apple_pay', 'google_pay', 'microsoft_pay', 'samsung_pay'
+                                  #  - US bank accounts + USD only: 'ach*'
+                                  #  - must have processed payments for 30 days: 'sepa_debit'
+                                  #  - behind feature toggles in dashboard settings, and agree to additional terms of service:
+                                  #     - 'visa_checkout', 'masterpass', 'amex_express_checkout'
+                                  #     - 'sofort', 'giropay', 'eps', 'ideal', 'bancontact', 'multibanco', 'p24'
+                                  #     - 'alipay', 'wechat'
                                   #Differences:
                                   #  - how customer inputs the information (SOURCE.TYPE)
                                   #  - sync vs async CHARGEs (see CHARGE webhooks above)
                                   #  - SOURCE.flow
+                                  #  - SOURCE.usage
 SOURCE.TYPE                       #SOURCE_DETAILS. Each TYPE has its own attributes, but some are shared.
                                   #On update, should use SOURCE.* not SOURCE.TYPE.*
 SOURCE.card*.number            *RC#STR. Credit card number.
@@ -1251,19 +1262,23 @@ SOURCE.alipay.payment_amount      #PMONEY if one-time payment.
 
 SOURCE.token                    RC#TOKEN.id. Use TOKEN to populate properties.
 SOURCE.usage                     C#Either:
-                                  #  - 'reusable'
-                                  #  - 'single_use'
-                                  #Only one of them might be available depending on SOURCE.type
+                                  #  - 'reusable': for SOURCE.type 'card*', 'ach*', 'sepa_debit', 'alipay'
+                                  #  - 'single_use': for all others SOURCE.type, and also 'alipay'
 SOURCE.amount                    C#PMONEY if SOURCE.usage 'single_use'
-SOURCE.client_secret              #STR. The client secret of the source. Used for client-side retrieval using a publishable key.
 SOURCE.customer                   #CUSTOMER.id This will not be present when the source has not been attached to a customer.
 SOURCE.owner                   RCU#BILL_DETAILS
 
 SOURCE.status                     #STR among:
                                   #  - 'pending': SOURCE not ready for payment yet
                                   #  - 'chargeable': can charge SOURCE (EVENT 'source.chargeable')
-                                  #  - 'canceled': cannot charge SOURCE anymore (EVENT 'source.canceled')
                                   #  - 'failed': cannot charge SOURCE anymore (EVENT 'source.failed')
+                                  #  - 'canceled':
+                                  #      - not used, with SOURCE.usage 'single_use' (EVENT 'source.canceled')
+                                  #      - cannot charge SOURCE anymore
+                                  #      - for:
+                                  #         - 'alipay':
+                                  #            - SOURCE.status must be 'chargeable' within 6 hours
+                                  #            - CHARGE must be created then within 1 hour
                                   #  - 'consumed': already charge, with SOURCE.usage 'single_use'
 SOURCE.flow                      C#How the SOURCE is authenticated among:
                                   #  - 'none':
@@ -1279,6 +1294,10 @@ SOURCE.flow                      C#How the SOURCE is authenticated among:
 SOURCE.redirect                  C#REDIRECT. If SOURCE.flow 'redirect'
 REDIRECT.url                      #'URL' of payment provider to redirect user to.
 REDIRECT.return_url              C#'URL' to redirect after successful authentication.
+                                  #Will pass the following query variables:
+                                  #  - client_secret STR: should be same as SOURCE.client_secret
+                                  #  - source SOURCE.id
+                                  #  - livemode BOOL
 REDIRECT.status                   #STR among:
                                   #  - 'not_required'
                                   #  - 'pending'
@@ -1287,6 +1306,8 @@ REDIRECT.failure_reason           #If REDIRECT.status 'failed', STR among:
                                   #  - 'user_abort': customer aborted
                                   #  - 'declined': authentication failed
                                   #  - 'processing_error': technical error
+SOURCE.client_secret              #STR. ?client_secret is added to REDIRECT.return_url redirection.
+                                  #Should match SOURCE.client_secret to ensure this is the same customer.
 SOURCE.code_verification          #CODE_VERIF. If SOURCE.flow 'code_verification'.
 CODE_VERIF.attempts_remaining     #NUM of attempts left to authenticate SOURCE.
 CODE_VERIF.status                 #STR among:
