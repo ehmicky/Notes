@@ -184,8 +184,8 @@ BOOL                                            #true|false
                                                 #  ! && ||
 
 STR                                             #"STR"|'STR' (same, except for " or ' escaping)
+                                               |#or `...` (can include ${EXPR})
                                                 #Any backslash escape, except \a, \c et \e
-                                                #Can use Unicode chars or \uXXXX.
                                                 #Operators:
                                                 #  STR + STR2
                                                 #  STR += STR2
@@ -280,6 +280,17 @@ var VAR[ = VAL]                                 #Declaration. Default value is u
   [, VAR2[ = VAL2]]...                          #VAR must be [[:alnum:]$_], can't begin with number, can include Unicode.
 VAR = VAL;                                      #Assignation. Returns VAL, so chain possible: VAR = VAR2 = VAL
 
+var [ VAR[ = VAL], ... ] = ARR                 |#var VAR = ARR[NUM], ...
+                                               |#VAL is default value
+                                               |#Final VAR can be ...ARR2 for variadic assignment
+var { KEY: VAR[ = VAL] } = OBJ                 |#var VAR = OBJ[KEY], ...
+                                               |#VAL is default value
+                                               |#Can be { KEY: { KEY2: ... } }
+var { KEY[ = VAL] } = OBJ                      |#Same as var { KEY: KEY[ = VAL] } = OBJ
+
+let VAR                                        |#Like var VAR, but {} block scoped.
+const VAR                                      |#Like let VAR but read-only (throws error on assignments beyond declaration)
+
 delete OBJ.VAR                                  #Like assigning undefined except:
                                                 #  - remove key as well
                                                 #  - cannot be performed if non-configurable
@@ -311,9 +322,11 @@ function [FUNC]([...]) { ... [return VAL;] ... }#Declare and returns FUNC.
                                                 #  - body is STR can be dynamically created. Can create injection risk.
                                                 #Use only if really necessary.
 
-FUNC([VAL]...)                                  #Fire FUNC and returns its return value
-                                                #Arguments:
-                                                #  - positional
+(...) => {...}                                 |#Same as (function(...) {...}).bind(this)
+(...) => VAL                                   |#Same as (...) => { return VAL; }
+ARG => {...}                                   |#Same as (ARG) => {...}
+
+ARGUMENTS ==>                                   #  - positional
                                                 #  - extra parameters do not fire exceptions
                                                 #  - non-OBJ are passed by value, but OBJ always by reference:
                                                 #     - including in assignment
@@ -321,10 +334,17 @@ FUNC([VAL]...)                                  #Fire FUNC and returns its retur
                                                 #        - i.e. assigning to an OBJ argument removes precedent reference:
                                                 #            function(OBJ){ OBJ = OBJ2 }     // Removes OBJ reference
                                                 #            function(OBJ){ OBJ.VAR = VAL }  // Keep OBJ reference
+                                               |#  - VAR = VAL: default value. Can refer to previous argument of same function.
+                                               |#    VAL is evaluated at each function call, not at declaration.
+                                               |#  - {...}: assigns var {...} = OBJ
+                                               |#  - [VAR...]: assigns ARR = [VAL...]
 arguments                                       #Contains currently passed arguments
                                                 #  - can only use arguments[NUM] and arguments.length
                                                 #  - can be converted to ARR with Array.prototype.slice.call(arguments)
                                                 #  - readonly
+
+FUNC([VAL]...)                                  #Fire FUNC and returns its return value
+                                                #Arguments:
 FUNC.length                                     #Number of required arguments
 FUNC.toString()                                 #Returns source code.
 
@@ -342,6 +362,14 @@ FUNC.call(VAL[, ...])                           #Same as FUNC.bind(VAL[, ...])()
 FUNC.apply(VAL[, ARR])                          #Same but using an ARR instead of comma-separated arguments.
                                                 #Often used to forward to another function: FUNC.apply(this, arguments)
 
+VAR = FUNC([...]); return VAR;                 |#Two examples of a tail call optimization: 
+return FUNC([...]);                            |#  - the last FUNC() performed before "return" (besides assignments)
+                                               |#    (includes FUNC like native operators)
+                                               |#This will optimize FUNC() call:
+                                               |#  - faster, because optimizer can replace call stack current frame instead 
+                                               |#    of adding to it
+                                               |#  - allow infinite recursion
+
 
                                              /=+===============================+=\ 
                                             /  :                               :  \  
@@ -355,13 +383,17 @@ FUNC.apply(VAL[, ARR])                          #Same but using an ARR instead o
 OBJ.VAR                                         #Access property (can be any type)
 OBJ['VAR']                                      #OBJ.VAR has same naming restrictions as var VAR, but not 'VAR'
 
-{ VAR: VAL ... }                                #Literal OBJ.
+{ VAR[: VAL] ... }                              #Literal OBJ.
                                                 #If could be interpreted as a { ... } structure (e.g. beginning of line), wrap with ()      
+                                               |#Def VAL is VAR
+                                               |#VAR can be [STR], for dynamic property name.
+                                               |#If duplicate key, the last one will overwrite the ones before.
+{ [*] FUNC() {...} ... }                       |#Same as { FUNC: function [*] FUNC() {...} ... }
 
 ITERATING OVER PROPERTIES ==>                   #                    +-------------------------------+---------------------------+
                                                 #                    | Own                           | Own+shared                |
                                                 # +------------------+-------------------------------+---------------------------+
-                                                # | enum             |Object.keys(OBJ)               | for ('VAR' in OBJ)        |
+                                                # | enum             |Object.keys(OBJ)               | for (var|let 'VAR' in OBJ)|
                                                 # +------------------+-------------------------------+---------------------------+
                                                 # | [non-]enum       |Object.getOwnPropertyNames(OBJ)| 'VAR' in OBJ              |
                                                 # +------------------+-------------------------------+---------------------------+
@@ -373,7 +405,29 @@ OBJ.hasOwnProperty('VAR')                       #Returns true if OBJ['VAR'] is i
 
 'VAR' in OBJ                                    #Returns true if OBJ['VAR'] is member, including shared or non-enumerable.
                                                 #Negation: !('VAR' in OBJ)
-                                                #Note: for (var STR in OBJ) includes shared, but excludes non-enumerable 
+                                                #Note: for (var|let STR in OBJ) includes shared, but excludes non-enumerable 
+
+
+																						 /=+===============================+=\ 
+																						/  :                               :  \  
+							 														  )==:            SYMBOLS            :==(   
+																						\  :_______________________________:  /    
+																						 \=+===============================+=/
+
+
+var SYM = Symbol(["VAR"])                      +#Same as OBJ["VAR"], but:
+OBJ[SYM]                                       +#  - not a STR:
+                                               +#     - length is 1
+                                               +#     - primitive type. typeof "symbol"
+                                               +#     - cannot convert to NUM
+                                               +#     - String(SYM) or SYM.toString()
+                                               +#     - no STR methods
+                                               +#  - semantically for private members:
+                                               +#      - properties with a key of SYM will be ignored by JSON.stringify()
+                                               +#      - not enumerable in "for in"
+                                               +#      - "VAR" optional (just used for debugging description)
+                                               +#      - getOwnPropertyNames() -> getOwnPropertySymbols()
+                                               +#OBJ[Symbol("VAR")] !== OBJ["VAR"]
 
 
 																						 /=+===============================+=\ 
@@ -393,7 +447,7 @@ Object.defineProperty(OBJ, 'VAR', OBJ2)         #Assign OBJ['VAR'] = VAL, where 
                                                 #     - if false, OBJ.VAR = VAL returns VAL but does not modify OBJ.VAR
                                                 #     - not possible with get|set()
                                                 #  - enumerable BOOL (déf: false): if false, not listed by Object.keys(),
-                                                #    OBJ.propertyIsEnumerable() and for (var STR in OBJ)
+                                                #    OBJ.propertyIsEnumerable() and for (var|let STR in OBJ)
                                                 #  - configurable BOOL (déf: false): 
                                                 #     - if false, cannot call delete OBJ.VAR nor 
                                                 #       Object.defineProperty(OBJ, 'VAR', OBJ2)
@@ -470,6 +524,23 @@ STATIC MEMBERS ==>                              #Own members of TYPE itself, i.e
                                                 #  - not inherited (unless using Backbone extend())
                                                 #  - must be called on TYPE itself, not an instance
 
+class TYPE [extends TYPE_PARENT]               |#Other syntax to define inheritance, defining var TYPE = FUNC:
+{                                              |#  - extends TYPE2:
+  [constructor(...) { ... }]                   |#      constructor() -> function TYPE():
+  [static] FUNC(...) { ... }                   |#       - must call super(...) before assigning to this 
+}                                              |#       - by def: constructor() { super(arguments) }
+                                               |#      TYPE.prototype = Object.create(TYPE2.prototype)
+                                               |#      TYPE.prototype.constructor = TYPE (non-enumerable)
+                                               |#      TYPE.__proto__ = TYPE2
+                                               |#  (non-static)
+                                               |#  - TYPE.prototype.FUNC = FUNC (non-enumerable)
+                                               |#  (static)
+                                               |#  - TYPE.FUNC = FUNC (non-enumerable)
+                                               |#Throw error if not called with new.
+                                               |#No comma between definition members.
+super.*                                        |#Inside class {...}, same as TYPE_PARENT.prototype.*
+super(...)                                     |#Inside class {...}, same as TYPE_PARENT.prototype.constructor(...)
+
 UTIL.inherits(TYPE, TYPE_PARENT)               ##For Node.js:
                                                ##  TYPE.prototype = Object.create(TYPE_PARENT.prototype);
                                                ##  TYPE.prototype.constructor = TYPE;
@@ -535,10 +606,12 @@ switch (VAL) {                                  #Use VAL === VAL2
 
 for ( [EXPR1] ; [TEST] ; [EXPR2] ) { ... }      #Same as:
                                                 #  EXPR1; while ( TEST ) { ...; EXPR2; }
-for ( var VAR in OBJ ) { ... }                  #Iterate over own+shared enumerable keys.
-                                                #OBJ can be ITERATOR.
 while ( TEST ) { ... }
 do { ... } while ( TEST ) 
+
+for ( var|let VAR in OBJ ) { ... }              #Iterate over own+shared enumerable keys.
+                                                #OBJ can be ITERATOR.
+for ([var|let ]VAR of ITERABLE) {...}          |#Iterates with VAR = NEXT
 
 break [LABEL]                                   #Stop current for|while|switch iteration.
                                                 #Can target a specific for|while|switch iteration by specifying LABEL: before
@@ -608,18 +681,20 @@ Number(NUM)                                     #Returns NUM (see above)
 new String(STR)                                 #Returns OBJ (see above)
 String(STR)                                     #Returns STR (see above)
 
-                                                #STRING semble supporter Unicode chars, compris comme un seul char.
-String.fromCharCode(NUM...)                     #Renvoie STR avec Unicode codepoint NUM...
+`...${EXPR}...`                                |#"..." + EXPR + "..."
+                                               |#Escape everything in it, including " ' newline
+FUNC`...`                                      |#FUNC(STR_ARR, VAL...):
+FUNC `...`                                     |#  - VAL... are each ${EXPR}
+                                               |#  - STR_ARR[.raw][NUM] are each `...` in-betwen, including empty "" at beginning|end if starts|ends
+                                               |#    with ${EXPR}
+                                               |#    If "raw", escape backslashes
+                                               |#FUNC can be String.raw(), which concanates all like normal template, except it escape backslashes
+
 
 STRING[NUM]                                     #Read-only. undefined if out of range.
 STRING.charAt(NUM)                              #Same except "" if out of range
-STRING.charCodeAt(NUM)                          #Unicode codepoint.
 
 String.length                           
-
-STRING.localCompare(STRING2)                    #Correct way to compare STRING : renvoie -1, 0 ou 1.
-                                                #<, >, ==, etc. suffisent pour STR cependant (mais prennent pas en compte
-                                                #locales)
 
 STRING.match(REGEXP)                            #Comme REGEXP.exec(STRING), sauf que si g flag, renvoie ensemble des 
                                                 #occurences dans l'ARRAY.
@@ -637,7 +712,7 @@ STRING.replace(REGEXP,FUNC)                     #Renvoie STRING, avec replacemen
 STRING.split(REGEXP[, UINT])                    #Renvoie une ARRAY splittant STRING, avec comme délimiteur REGEXP et, si UINT,
                                                 #ne renvoie que les UINT premiers éléments.
 
-STRING.to[Locale][Upper/Lower]Case()            #Renvoie sans modifier. Préférer avec Locale
+STRING.to[Upper/Lower]Case()                    #Renvoie sans modifier.
 STRING.trim()                                   #Remove whitespaces on left and right.
 
 STRING.concat(STR...)                           #Préférer + et +=
@@ -653,6 +728,41 @@ en|decodeURI(STR)                               #Percent encore all non-ASCII ch
                                                 #decodeURI() can throw URIError
 en|decodeURIComponent(STR)                      #Percent encode all non-ASCII chars, plus ? & = # + $ ; , / : @
                                                 #To use in the data part of an URI
+
+
+																						 /=+===============================+=\ 
+																						/  :                               :  \  
+							 														  )==:            UNICODE            :==(   
+																						\  :_______________________________:  /    
+																						 \=+===============================+=/
+
+
+STRING ==>                                      #Support it for Unicode chars <=FFFF: Unicode chars is a single char.
+                                                #Specify CODEPOINT[_HEXA] if <=FFFF, S_CODEPOINT[_HEXA] if only <=FFFF.
+\uCODEPOINT_HEXA                                #
+\u{S_CODEPOINT_HEXA}                           |#
+
+String.fromCharCode(CODEPOINT...)               #
+String.fromCodePoint(S_CODEPOINT)              |#Returns STR
+
+STR.charCodeAt(NUM)                             #Returns CODEPOINT
+STR.codePointAt(NUM)                           |#Returns S_CODEPOINT
+
+/REGEXP/u                                      |#Make . match a Unicode char, even >=FFFF
+
+
+																						 /=+===============================+=\ 
+																						/  :                               :  \  
+							 														  )==:             INTL              :==(   
+																						\  :_______________________________:  /    
+																						 \=+===============================+=/
+
+
+STRING.localCompare(STRING2)                    #Correct way to compare STRING : renvoie -1, 0 ou 1.
+                                                #<, >, ==, etc. suffisent pour STR cependant (mais prennent pas en compte
+                                                #locales)
+
+STRING.toLocale[Upper/Lower]Case()              #
 
 
 																						 /=+===============================+=\ 
@@ -708,6 +818,8 @@ Array                                           #Array are objects. Indexs sont 
 [ [VAL]... ]                                    #ARRAY. Peut être left-head : écriture et [...].FUNC()
                                                 #VAL est par défaut undefined.
                                                 #Peut contenir types différents.
+                                               |#VAL can be ...ITERABLE (replaced by NEXT...)
+
 Array(NUM)                                      #Renvoie ARRAY avec NUM éléments undefined.
                                                 #Throw RangeError if non-positive or decimal.
 
@@ -809,11 +921,39 @@ DATAVIEW.getFloat32|64(UINT[, BOOL])            #UINT est l'offset en byte et BO
 DATAVIEW.set*(UINT, UINT2[, BOOL])              #UINT est l'offset en byte (attention) et UINT2 la valeur à mettre.
 
 
+																						 /=+===============================+=\ 
+																						/  :                               :  \  
+							 														  )==:           ITERATORS           :==(   
+																						\  :_______________________________:  /    
+																						 \=+===============================+=/
+
+
+FUNC()->{ 
+  next()->{done BOOL, value NEXT}              +#ITERATOR_FUNC, returning ITERATOR. Convention for a FUNC returning specific functions.
+}                                              +#Consumers usually call var NEXT = next() until BOOL true.
+ITERABLE                                       +#OBJ where OBJ[Symbol.iterator] is ITERATOR_FUNC.
+                                               +#STR|ARR|TYPED_ARR|MAP|SET are ITERABLE.
+function* [FUNC](){...}                        +#Generator. Translates to an ITERATOR_FUNC where next([VAL]):
+                                               +#  - stops at the next "yield NEXT", returning VAL, making next() return {done false, value NEXT}
+                                               +#  - then stops at "return NEXT" making next() return {done true, value FINAL_NEXT}
+                                               +#  - then always return {done true}
+                                               +#The ITERATOR returned by ITERATOR_FUNC():
+                                               +#  - is also ITERABLE
+                                               +#  - has extra members:
+                                               +#     - return(FINAL_NEXT)->{done true, value FINAL_NEXT}
+                                               +#     - throw(ERROR): thrown from the context of the last yield
+                                               +#Can also use yield* ITERABLE:
+                                               +#  - yield NEXT several times
+                                               +#  - returns FINAL_NEXT
+new GeneratorFunction(...)                     +#Like new Function(...) but for function*(){}
+
+
                                              /=+===============================+=\ 
                                             /  :                               :  \  
                                             )==:             DATE              :==(   
                                             \  :_______________________________:  /    
                                              \=+===============================+=/
+
 
 Date                                            #Stored internally as number of seconds since Epoch. Enfant de Function.
                                                 #Granularité est millisecondes.
@@ -918,3 +1058,21 @@ JSON.stringify(VAL[,VAL2[,VAL3]])               #Renvoie la conversion de VAL en
                                                 #VAL.toJSON().
 
 
+																						 /=+===============================+=\ 
+																						/  :                               :  \  
+							 														  )==:            MODULES            :==(   
+																						\  :_______________________________:  /    
+																						 \=+===============================+=/
+
+
+export var|let|const VAR = VAL
+export function VAR(...){...}                  |#
+export { VAR[ as VAR2] }                       |#With VAR name
+export default VAL                             |#Without VAR name
+export ... from "MDL"                          |#Same as import ... from "MDL", then multiple export
+
+import {VAR[ as VAR2],...} 
+from "MDL"                                     |#
+import * as VAR2 from "MDL"                    |#With VAR name
+import VAR from "MDL"                          |#Without VAR name. Can be combined, e.g. import VAR, {...} from "MDL"
+import "MDL"                                   |#Do not import the variable, just execute the file
