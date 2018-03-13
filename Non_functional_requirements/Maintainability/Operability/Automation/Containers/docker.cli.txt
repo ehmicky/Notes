@@ -83,7 +83,17 @@ DOCKERDIR                         #Runtime directory for docker with notably:
                                   #  - volumes/: data volumes
                                   #  - swarm/: swarm state
                                   #  - tmp/: can choose different dir with ENVVAR DOCKER_TMPDIR
-                                  #Def: /var/lib/docker/                  
+                                  #Def: /var/lib/docker/
+dockerd ...
+--exec-root DOCKERDIR             #For container state
+-g DOCKERDIR
+--graph DOCKERDIR                 #For images
+
+DOCKERPIDFILE                     #PID of dockerd. Def: /var/run/docker.pid
+dockerd ...
+-p PIDFILE
+--pidfile PIDFILE                 #
+
                                   
 DOCKERHOME                        #~/.docker/
 docker ...  
@@ -104,13 +114,14 @@ DOCKERCONF                        #Either:
 
 
 OCI ==>                           #Docker is built on top of "Open containers", using containerd
+dockerd ...
 --containerd FILE                 #Path to containerd socket
---add-runtime NAME=PATH           #Adds OCI-compatible runtime (like runC)
-                                  #Can also use DOCKERCONF:
-                                  #  - default-runtime NAME
-                                  #  - runtimes.NAME:
-                                  #     - path PATH
-                                  #     - runtimeArgs STR_ARR
+--default-runtime NAME            #OCI-compatible runtime (like runC)
+                                  #Can also use DOCKERCONF.default-runtime NAME
+--add-runtime NAME=PATH           #Adds OCI-compatible runtime
+                                  #Can also use DOCKERCONF.runtimes.NAME:
+                                  #  - path PATH
+                                  #  - runtimeArgs STR_ARR
 --exec-opt VAR=VAL                #Options passed to OCI runtime, e.g.
                                   #  - native.cgroupdriver systemd or cgroupfs (def)
 
@@ -149,9 +160,21 @@ dockerd                           #Starts server
                                   #  - systemd: e.g. start (at each boot) with: sudo systemctl enable docker
                                   #  - upstart
 DOCKER_OPTS                       #Extra flags passed to dockerd
+--config-file DOCKEDCONF          #JSON config file (def: /etc/docker/daemon.json) to pass extra flags to dockerd
+                                  #Cannot be in conflict with options passed on the CLI
+                                  #Flags that can appear several times use plural name, e.g. --label STR -> "labels" STR_ARR
+                                  #Can be reloaded by sending SIGHUP to dockerd:
+                                  #  - only for --debug, --labels, --live-restore, --max-concurrent-* and 
 
 
 /etc/default/docker               #File read when using SysVInit or upstart, usually setting ENVVAR
+
+
+MULTIPLE SERVERS ==>              #To run multiple servers on a single host, must be separated from each other using these
+                                  #options (documented elsewhere in this doc):
+                                  #  - --bridge, --host, --iptables, --tls*: for networks
+                                  #  - --exec-root, --graph, --pidfile: for filesystem
+                                  #  - --config-file: for config
 
 
                                              /=+===============================+=\ 
@@ -550,8 +573,9 @@ CONTROL GROUPS ==>                #Ensures for each process (i.e. container), at
                                   #     - --cgroup-parent uses a specific control group instead
                                   #  - NUM can be -1, i.e. infinity (usually def)
 
-docker create ...                 
---cgroup-parent CGROUP            #Assigns a specific control group to the container. 
+dockerd ...                       #Assigns a specific control group to the container. 
+docker create ...                 #If /CGROUP, is under root cgroup. If CGROUP, is under daemon cgroup
+--cgroup-parent CGROUP            #Def: /docker for fs cgroup, system.slice for systemd cgroup
 
 -m NUM[b|k|m|g]
 --memory=NUM[b|k|m|g]             #Memory hard limit. Min: 4M.
@@ -908,39 +932,41 @@ NETWORK                           #Is a set of network-related settings/resource
                                   #Containers can:
                                   #  - be associated with several networks
 
-DRIVER                            #Can be:
-                                  #  - bridge: 
-                                  #     - single-host inter-container communication, with single gateway
-                                  #     - hosts uses docker0 ethernet interface:
-                                  #        - automatically creates gateway (external single IP for the subnet)
-                                  #     - container uses eth0 interface:
-                                  #        - uses one IP among host's single subnet
-                                  #           - def: automatic, with 2^16 possible IP addresses
-                                  #  - macvlan:
-                                  #     - similar to bridge, but different design, which is more performant and simpler
-                                  #        - while in bridge, containers have their own interface and MAC, in macvlan, they use sub-interfaces of the host's interface
-                                  #     - containers must use same interface as host:
-                                  #        - specified with NETWORK option parent=INTERFACE
-                                  #  - overlay:
-                                  #     - multi-host inter-container communication, with single gateway ("advertiser")
-                                  #        - connected together using a key-value store
-                                  #        - hosts must have unique hostnames
-                                  #     - key-value store:
-                                  #        - supported: consul, etcd, zookeeper
-                                  #        - must open ports 4789 (UDP) and 7946 (TCP/UDP)
-                                  #        - docked --cluster-opts kv.path=PATH:
-                                  #           - namespace to prepends to all keys in key-value store
-                                  #           - def: docker/nodes
-                                  #     - dockerd:
-                                  #        - --cluster-store PROVIDER://URL
-                                  #        - --cluster-advertise IP:PORT (advertiser)
-                                  #        - --cluster-opts OPT_VAR=OPT_VAL,...:
-                                  #     - can have multiple subnets (by specifying several --subnet)
-                                  #     - OPT:
-                                  #        - encrypted: use IPSec (port 50 must be opened)
-                                  #     - with swarm:
-                                  #        - does not need key-value store
-                                  #        - can be assigned to SERVICE, which will be applied to every node using the SERVICE
+DRIVER                            #Can be bridge, macvlan or overlay
+
+BRIDGE ==>                        #Single-host inter-container communication, with single gateway
+                                  #Hosts uses docker0 ethernet interface:
+                                  #  - automatically creates gateway (external single IP for the subnet)
+                                  #Container uses eth0 interface:
+                                  #  - uses one IP among host's single subnet
+                                  #     - def: automatic, with 2^16 possible IP addresses
+dockerd ...
+-b INTERFACE
+--bridge INTERFACE                #Instead of docker0. Can be "none" (e.g. if NETWORK bridge is not used)
+
+MACVLAN ==>                       #Similar to bridge, but different design, which is more performant and simpler
+                                  #  - while in bridge, containers have their own interface and MAC, in macvlan, they use sub-interfaces of the host's interface
+                                  #Containers must use same interface as host:
+                                  #  - specified with NETWORK option parent=INTERFACE
+
+OVERLAY ==>                       #Multi-host inter-container communication, with single gateway ("advertiser")
+                                  #  - connected together using a key-value store
+                                  #  - hosts must have unique hostnames
+                                  #Key-value store:
+                                  #  - supported: consul, etcd, zookeeper
+                                  #  - must open ports 4789 (UDP) and 7946 (TCP/UDP)
+                                  #Can have multiple subnets (by specifying several --subnet)
+                                  #OPT:
+                                  #  - encrypted: use IPSec (port 50 must be opened)
+                                  #With swarm:
+                                  #  - does not need key-value store
+                                  #  - can be assigned to SERVICE, which will be applied to every node using the SERVICE
+dockerd ...
+--cluster-opts kv.path=PATH       #Namespace to prepends to all keys in key-value store
+                                  #Def: docker/nodes
+--cluster-store PROVIDER://URL    #
+--cluster-advertise IP:PORT       #Advertiser
+--cluster-opts OPT_VAR=OPT_VAL,...#
 
 
 docker network create NETWORK_NAME#Creates NETWORK
@@ -962,12 +988,13 @@ dockerd ...
 
 docker network create ...
 -o "com.docker.network.bridge.
- name=NAME"                       #Bridge name to be used when creating the Linux bridge
+ enable_ip_masquerade"  
+dockerd ...                       #Enable IP masquerading, i.e. containers do not have to have a public IP to communicate outside of NETWORK: 
+--ip-masq                         #they will use host's IP instead
+
 docker network create ...
 -o "com.docker.network.bridge.
- enable_ip_masquerade"  
-dockerd ...
---ip-masq                         #Enable IP masquerading
+ name=NAME"                       #Bridge name to be used when creating the Linux bridge
 docker network create ...
 -o "com.docker.network.bridge.
  enable_icc=BOOL"
@@ -1073,6 +1100,8 @@ dockerd ...
 
 
 PORT FORWARDING ==>               #Only works with default NETWORK
+                                  #This works with Docker appending rules to iptables
+--iptables=false                  #Do not allow Docker to modify iptables, i.e. must manually modify it to get port forwarding working
 
 
 docker create ...
