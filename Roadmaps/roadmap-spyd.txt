@@ -39,6 +39,19 @@ OPTS.files "FILE"_ARR instead of OPTS.file "FILE":
 OPTS.tasks "TASK_ID"_ARR:
   - def: all
 
+Process IPC:
+  - replace by JSON stream on stdin|stdout
+  - events:
+     - parent start child process with no arguments
+     - child: event "ready"
+     - parent: event "load", taskFile, run BOOL
+        - if run false, child does not wait for "run" event from parent
+           - used by parent at startup to only list available iterations
+     - child: event "load", iterations OBJ_ARR: taskId, variationId
+     - parent: event "run", taskId, variationId, duration NUM
+     - child: event "run", times NUM_ARR, count NUM
+     - no "close" event. Parent just waits for child to exit.
+
 OPTS.data 'DIR':
   - def: "./spyd/" sibling to task file
   - save file to DATA_DIR/TIMESTAMP.json.gz:
@@ -51,16 +64,35 @@ OPTS.data 'DIR':
          - retrieve all matching BENCHMARK_ARR
      - do POST BENCHMARK
         - on --save
-  - BENCHMARK.iterations[*].diff NUM: percentage of change of median since latest data (if any)
-     - not persisted to data file, but passed to reporters
   - BENCHMARK.iterations[*].previous BENCHMARK_ARR
      - not persisted to data file, but passed to reporters
+     - data files are loaded in parallel
 
 OPTS.save BOOL (def: false):
   - save current results to data file
 
-OPTS.compare BOOL (def: true):
-  - make reporters show BENCHMARK.iterations[*].diff, e.g. green|red down|up arrow with time difference
+BENCHMARK.iterations[*].stats.diff NUM:
+  - percentage of change of median since latest data file
+     - for each iteration, use most recent data file that has this iteration (taskId + variationId)
+  - printedStats.diff '+|-NUM%'
+     - padded (between +|- and NUM) so that all iterations[*].diff have same length
+  - undefined if no previous data file
+  - OPTS.diff BOOL|"TIMESTAMP" (def: true):
+     - stats.diff undefined if false
+     - if "TIMESTAMP" use that data file instead
+  - not persisted to data file, but passed to reporters
+  - shown by reporters, e.g. green|red down|up arrow with time difference
+  - allow comparing data files with different BENCHMARK.system but warn on reporting using:
+     - BENCHMARK.previousSystem OBJ:
+        - reported as "Previous system:" after "System:"
+        - only keep fields that are different
+        - undefined if no differences
+     - BENCHMARK.system.id 'HASH'
+        - used by time series reporter to distinguish different systems
+
+OPTS.show BOOL|"TIMESTAMP" (def: false)
+  - re-use data file instead of doing new run
+  - if true, use latest data file
 
 OPTS.limit.TASK_ID NUM
   - NUM is max percentage of increase, relative to data file
@@ -94,11 +126,11 @@ Reporters:
      - CLI reporter that shows BENCHMARK.iterations[*].previous as a time series
   - CLI|Markdown list:
      - follow the formatting I used in fast-cartesian example
-        - simple list for TASK with no TASK.parameters
+        - simple list for TASK with no variations
   - CLI|Markdown tables:
-     - parameters as x axis, mains as y axis
+     - variations as x axis, tasks as y axis
   - default reporter:
-     - CLI|Markdown table if more than half of cells would be filled, and some TASK.parameters are defined
+     - CLI|Markdown table if more than half of cells would be filled, and some TASK.variations are defined
         - CLI|Markdown list otherwise
      - Markdown table|list if OPTS.insert '*.md|*.markdown|README|readme'
         - CLI table|list otherwise
@@ -114,18 +146,49 @@ BENCHMARK.git OBJ:
   - only if `git` installed
   - used e.g. by HTML reporter
 
-OPTS.platforms STR (use browserlist and PACKAGE.engines)
-  - run in different browsers and Node versions
-     - i.e. should probably enforce ESM
-  - the same logic should be used to launch benchmarks and to load task file itself (to figure out the task names and parameters)
-  - create one BENCHMARK per platform
-  - abstract to own package
-  - should allow adding platforms as plugins
+Runners:
+  - own packages
+  - distributed with npm, JavaScript endpoint, but can otherwise use any programming language
+  - entry point must export RUNNER_OBJ:
+     - extensions "EXT"_ARR:
+        - chooses runner to pick
+        - several runners can be picked, resulting in several separate iterations
+           - e.g. node + browsers
+     - command(RUNNER_OPTS)->OBJ_ARR
+        - OBJ_ARR:
+           - title STR: shown in reporting
+           - command STR: to launch runner entry point
+     - versions.RUNTIME "COMMAND"
+        - e.g. { node: "node --version" }
+        - set to BENCHMARK.system.RUNTIME
+        - also used to check if runtime exists
+  - OPTS.run.RUNNER BOOL|OBJ
+     - chooses runners and pass options to them
+        - RUNNER is module name
+     - passed to child as EVENT.options OBJ during 'load' event
+  - OPTS.require -> OPTS.run.node.require
+  - BENCHMARK.runners OBJ_ARR:
+     - OBJ_ARR: runnerId, runnerTitle
+     - sorted by fastest average median
+  - ITERATION.runner INDEX:
+     - pointing to BENCHMARK.runners[INDEX]
+  - should behave like it was an extra level of variations:
+     - ITERATION.fastest should handle likewise
+     - ITERATION.fullName STR (task + variation + runner) vs ITERATION.name (variation + runner)
+  - spyd-*:
+     - spyd-node
+         - separate from browsers
+         - supports TypeScript
+     - spyd-chrome
+     - spyd-selenium
+  - comparing node versions???
+
+REPL???
 
 Competitors benchmark:
   - benchmark with other benchmarking tools
   - each should benchmark Math.random() for the same duration
-     - use different durations as parameters
+     - use different durations as variations
   - report both medians (for accuracy) and standard deviation (for precision)
 
 Separate each reporter to own package
