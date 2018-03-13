@@ -9,7 +9,7 @@
 /LICENSE\]/ d
 /\[README/ d
 /Repository_helpers/ d
-/__Index__\]/ d
+/__Index__/ d
 
 # Remove temporary files
 /swp\]/ d
