@@ -6,9 +6,10 @@
 
 
 TODO:
-  - stopped at https://stripe.com/docs/billing/invoices
+  - stopped at https://stripe.com/docs/radar
+     - including https://stripe.com/radar/guide
+     - including https://stripe.com/docs/strong-customer-authentication/connect-platforms#radar
   - go back to:
-     - https://stripe.com/docs/billing/webhooks
      - https://stripe.com/docs/building-extensions
      - https://stripe.com/docs/recipes
      - https://stripe.com/docs/development/checklist
@@ -20,8 +21,6 @@ TODO:
         - https://stripe.com/docs/payments/3d-secure-iframe
      - https://stripe.com/docs/payments/checkout
         - including the Checkout section on https://stripe.com/docs/receipts
-     - https://stripe.com/en-US/radar/guide
-        - https://stripe.com/docs/strong-customer-authentication/connect-platforms#radar
   - pricing
      - including differences based on where the Stripe account was created
   - go through Stripe dashboard
@@ -118,6 +117,9 @@ PRICING ==>                       #CHARGE:
                                   #REVIEW:
                                   #  - free
                                   #  - $0.02 per CHARGE for Radar for Fraud Teams
+                                  #CHARGE through TERMINAL:
+                                  #  - 2.7% + $0.05
+                                  #  - TERMINAL itself ($59 or $299)
 
 ENDPOINT ==>                      #https://api.stripe.com/v1/
 
@@ -151,6 +153,7 @@ TEST DATA ==>                     #Can use test|fake SOURCE|TOKEN with following
                                   #  - https://stripe.com/docs/testing
                                   #  - each of the payment method doc pages
                                   #  - https://stripe.com/docs/connect/testing
+                                  #  - https://stripe.com/docs/billing/testing
                                   #SOURCE for CHARGE|PINTENT:
                                   #  - 'card':
                                   #      - use SOURCE.TYPE.number
@@ -211,6 +214,14 @@ TEST DATA ==>                     #Can use test|fake SOURCE|TOKEN with following
                                   #  - OAuth:
                                   #     - should create separate test ACCOUNT (not OAuth to self)
                                   #     - ?redirect_uri can be HTTP, and can be localhost
+                                  #TAX_ID:
+                                  #  - different ones: success|failure|pending
+                                  #READER:
+                                  #  - SDK can mock a READER ("simulator")
+                                  #CHARGE with READER:
+                                  #  - must use a physical test card sent by Stripe
+                                  #  - use CHARGE.amount
+                                  #  - different ones: failure codes
 
 Request-Id: UUID [S]              #
 
@@ -555,6 +566,7 @@ AVAILABLE COUNTRIES ==>           #Only in Western countries (except Eastern Eur
                                   #  - soon: Greece, Baltic countries, Poland, Brazil, India, Mexico, Malaysia
                                   #  - but can accept payments from any country
                                   #TRANSFER|PAYOUT|TOPUP must be within country with same default currency (e.g. Eurozone)
+                                  #TERMINAL and ISSUING* available in US only
 
 BILL_DETAILS.address              #ADDRESS
 BILL_DETAILS.email                #STR.
@@ -563,12 +575,6 @@ BILL_DETAILS.phone                #STR. Includes country extension
 SHIPPING                          #Like ADDRESS with extra fields:
 SHIPPING.carrier                  #STR. Delivery service like 'Fedex', 'UPS', 'USPS', etc.
 SHIPPING.tracking_number          #'STR,...'.
-PRECISE_SHIPPING                  #Like SHIPPING with extra fields:
-PRECISE_SHIPPING.tracking_url     #'URL'
-PRECISE_SHIPPING.status           #STR among 'pending', 'shipped', 'delivered', 'returned', 'failure', 'canceled'.
-PRECISE_SHIPPING.eta              #DATE_NUM
-VERIFIED_BILL_DETAILS             #Like ADDRESS with extra fields:
-VERIFIED_BILL_DETAILS.verified_*  #Like ADDRESS.* but verified by provider.
 
 ADDRESS                           #
 ADDRESS.country                   #COUNTRY
@@ -1292,7 +1298,7 @@ SOURCE TYPES ==>                  #Differences between source types:
                                   #      - includes personal information and address, i.e. more convenient (no need to ask for them)
                                   #      - some allow using with smartphone NFC
                                   #      - includes (CARD.wallet.type) 'visa_checkout', 'masterpass', 'amex_express_checkout'
-                                  #  - 'card_present': credit card payment down from a physical terminal
+                                  #  - 'card_present': READER
                                   #Bank-consortium controlled:
                                   #  - 'bank_account':
                                   #      - generic TYPE for all bank accounts payments
@@ -1453,7 +1459,7 @@ CARD_RECEIPT.
  terminal_verification_results    #STR. The outcome of a series of EMV functions performed by the card reader.
 CARD_RECEIPT.
  transaction_status_information   #STR. An indication of various EMV functions performed during the transaction.
-SOURC.card_present.generated_card?#CARD.id
+SOURC.card_present.generated_card?#CARD.id. Can be attached to CUSTOMER for re-use.
 SOURCE.card*|ach_debit|sepa_debit.
  last4                            #STR. Last four digits of the bank account or card number.
 SOURCE.card*|ach*|sepa_debit|
@@ -1515,7 +1521,8 @@ SOURCE.usage                     C#Either:
                                   #  - can be either: 'alipay', 'google_pay', 'apply_pay', 'samsung_pay', 'microsoft_pay', 'sepa_debit'
                                   #For 'reusable', must attach SOURCE to CUSTOMER before first usage, to be able to re-use it.
 SOURCE.amount                    C#PMONEY if SOURCE.usage 'single_use'
-SOURCE.owner                   RCU#BILL_DETAILS
+SOURCE.owner                   RCU#BILL_DETAILS:
+                                  #  - also include BILL_DETAILS.verified_*: like BILL_DETAILS.*, but verified by provider
                                   #Strongly recommended to decrease DISPUTEs and faciliate payment UX flow.
 
 SOURCE.status                     #STR among:
@@ -2392,15 +2399,20 @@ SUBSCRIPTION.status               #STR among:
                                   #     - either:
                                   #        - initial state
                                   #        - PINTENT.status 'requires_action'
-                                  #        - first CHARGE failed (other PINTENT.status)
+                                  #        - first CHARGE (not after trial) failed (other PINTENT.status)
                                   #           - should retry with POST /invoices/ID/pay
                                   #     - SUBSCRIPTION read-only except for default_source
-                                  #  - 'past_due': non-first CHARGE not paid
+                                  #  - 'past_due':
+                                  #     - either:
+                                  #        - non-first CHARGE not paid
+                                  #        - first CHARGE after trial not paid
                                   #  (terminal errors)
-                                  #  - 'incomplete_expired': first CHARGE not paid within 23 hours
+                                  #  - 'incomplete_expired':
+                                  #     - first CHARGE not paid within 23 hours
+                                  #     - INVOICE is voided
                                   #  - 'unpaid':
                                   #     - several attempts or deadline after 'past_due'
-                                  #     - INVOICEs are still created but closed directly, and be re-opened
+                                  #     - INVOICEs are still created but closed directly, and can be re-opened
                                   #  - 'canceled'
                                   #     - INVOICEs are not created anymore.
                                   #     - on-going INVOICEs still valid, unless deleted. However CHARGE must be manually created.
@@ -2600,7 +2612,6 @@ CREDIT_NOTE                       #Adjustment on an 'open|paid' INVOICE (wrong q
                                   #  - type 'post_payment' + refund[_amount]: REFUND
                                   #  - type 'post_payment' + credit_amount: reduces CUSTOMER.account_balance
                                   #  - any thing left after there is considered settled outside of Stripe
-                                  #Applied after DISCOUNT, TAX_RATE, starting_balance, prorate.
 CREDIT_NOTE.type                  #One of:
                                   #  - 'pre_payment': INVOICE.status 'open'
                                   #  - 'post_payment': INVOICE.status 'paid'
@@ -2664,19 +2675,26 @@ CUSTOMER.delinquent               #BOOL. True if last INVOICE unpaid by due date
 INVOICE.starting_balance          #CUSTOMER.account_balance before this INVOICE
 INVOICE.ending_balance           ?#CUSTOMER.account_balance after this INVOICE
                                   #Only once status 'open'
-INVOICE.subtotal                  #PMONEY without DISCOUNT, TAX_RATE, starting_balance, prorate, CREDIT_NOTE.
-INVOICE.total                     #PMONEY with DISCOUNT, but without TAX_RATE, starting_balance, prorate, CREDIT_NOTE.
-INVOICE.amount_due                #PMONEY with DISCOUNT, TAX_RATE, starting_balance, prorate, CREDIT_NOTE.
-                                  #Used as CHARGE.amount
+INVOICE.subtotal                  #PMONEY. Order:
+INVOICE.total                     #  INVOICE.subtotal: original amount
+INVOICE.amount_due                #  - DISCOUNT
+                                  #  INVOICE.total
+                                  #  - exclusive TAX_RATE
+                                  #  - starting_balance
+                                  #  - prorate
+                                  #  - CREDIT_NOTE
+                                  #  INVOICE.amount_due: final amount, used as CHARGE.amount
+
 INVOICE.amount_paid|remaining     #PMONEY. Their sum === INVOICE.amount_due
 INVOICE.paid                      #BOOL
 INVOICE.status                    #STR among:
                                   #  - 'draft'
                                   #     - does not have following fields yet: invoice_pdf|hosted_invoice_url|receipt_number|number|customer_*
+                                  #     - only state where can update LINE_ITEMs or amount
                                   #  - 'open'
                                   #     - EVENT 'invoice.finalized'
                                   #  - 'paid'
-                                  #     - EVENTs 'invoice.payment_succeeded|failed'
+                                  #     - EVENTs 'invoice.payment_succeeded|payment_failed|payment_action_required'
                                   #  - 'uncollectible'
                                   #     - canceled because CUSTOMER cannot pay
                                   #     - accounted as bad debt
@@ -2702,8 +2720,8 @@ INVOICE.auto_advance            CU#BOOL for all the following actions.
                                   #     - after 15 days since first attempt
                                   #     - after 60 days since due_date
                                   #Charges payments:
-                                  #  - using SUBSCRIPTION.default_source|payment_method
-                                  #  - including sending emails if PINTENT.status 'requires_action'
+                                  #  - using SUBSCRIPTION.default_source|payment_method|hosted_invoice_url
+                                  #  - including sending emails if PINTENT.status 'requires_action' (e.g. 3D secure)
                                   #  - if SUBSCRIPTION.billing 'charge_automatically'
                                   #Retries failed payments:
                                   #  - default 4 times within 3 weeks
@@ -2864,9 +2882,15 @@ POST /customers/ID/tax_ids
 DELETE /customers/ID/tax_ids/ID   #
 STRIPE.taxIds.
  retrieve|list|create|del()       #
-TAX_IDS                           #CUSTOMER's tax identifiers.
-                                  #Verified by Stripe, and translated into name and address.
+TAX_IDS                           #CUSTOMER's tax identifiers, e.g. company VAT ID.
+                                  #Should verify that:
+                                  #  - ID exists:
+                                  #     - (EU only) done by Stripe
+                                  #  - tax name and address match CUSTOMER's:
+                                  #     - (EU only) Stripe fills TAX_VERIF_verified_name|address, but we still need to check
+                                  #        - need to wait for EVENT 'customer.tax_id.updated'
                                   #Shown on INVOICEs.
+                                  #Collected taxes can be exported as CSV in Dashboard.
 TAX_IDS.customer                *C#CUSTOMER.id
 ?customer=CUSTOMER.id             #
 TAX_IDS.type                    *C#One of 'eu_vat' (EU), 'nz_gst' (New Zealand), 'au_abn' (Australia), 'unknown'.
@@ -2878,14 +2902,16 @@ TAX_VERIF.verified_name           #STR
 TAX_VERIF.verified_address        #STR
 CUSTOMER.tax_ids                  #TAX_IDS_LIST
 CUSTOMER.tax_id_data            RC#TAX_IDS_ARR
-CUSTOMER.tax_exempt             CU#One of 'none' (def), 'exempt' or 'reverse'
+CUSTOMER.tax_exempt             CU#One of:
+                                  #  - 'none' (def): pay TAX_RATE
+                                  #  - 'exempt': does not pay TAX_RATEs
+                                  #  - 'reverse': does not pay TAX_RATEs, but customer must report the tax and pay it outside Stripe
 
 GET /tax_rates[/ID]
 POST /tax_rates[/ID]              #
 STRIPE.taxRates.
  retrieve|list|create|update()    #
 TAX_RATE                          #Specific tax rate for a given SUBSCRIPTION[_ITEM]|INVOICE|LINE_ITEM
-                                  #Applied after DISCOUNT but before starting_balance, prorate, CREDIT_NOTE.
 TAX_RATE.percentage             *C#FLOAT (0-1)
 ?percentage=CMP_FILTER            #
 TAX_RATE.inclusive              *C#BOOL. Whether inclusive (included in amount) or exclusive (added to amount).
@@ -3149,6 +3175,8 @@ POST /issuing/cards[/ID]          #
 STRIPE.issuing.cards.
  retrieve|list|create|update()    #
 ISSUING_CARD                      #User-created credit cards.
+                                  #Examples: employees expense cards, gift cards.
+                                  #Either physical or virtual.
 ISSUING_CARD.currency
 ISSUING_CARD.brand
 ISSUING_CARD.exp_month
@@ -3160,135 +3188,190 @@ ISSUING_CARD.name                 #Same as CARD.*
 ?last4=STR                        #
 ?name=STR                         #
 ?source=SOURCE.id                 #
-ISSUING_CARD.cardholder         CU#CARD_HOLDER
-?cardholder=CARD_HOLDER.id        #
-ISSUING_CARD.shipping            C#PRECISE_SHIPPING
-ISSUING_CARD.
- authorization_controls         CU#AUTH_CONTROLS. Spending rules that give you some control over how your cards can be used. Refer to our authorizations documentation for more details.
-AUTH_CONTRLS.allowed_categories CU#array Array of strings containing categories of authorizations permitted on this card.
-AUTH_CONTRLS.blocked_categories CU#array Array of strings containing categories of authorizations to always decline on this card.
-AUTH_CONTROLS.max_amount        CU#positive integer or zero Maximum amount allowed per authorization on this card, in the currency of the card.
-                                  #Authorization amounts in a different currency will be converted to the card's currency when evaluating this control.
-AUTH_CONTROLS.max_approvals     CU#positive integer or zero Maximum count of approved authorizations on this card. Counts all authorizations retroactively.
-AUTH_CONTROLS.spending_limits  RCU#SPENDING_LIMIT_ARR. Limit the spending with rules based on time intervals and categories.
-SPENDING_LIMIT.amount          RCU#Maximum amount allowed to spend per time interval.
-SPENDING_LIMIT.interval        RCU#The time interval with which to apply this spending limit towards. Allowed values are ‘per_authorization', ‘daily', ‘weekly', ‘monthly', ‘yearly', and ‘all_time'.
-SPENDING_LIMIT.categories      RCU#Array of strings containing categories on which to apply the spending limit. Leave this blank to limit all charges.
-ISSUING_CARD.status             CU#string One of active, inactive, canceled, lost, stolen, or pending.
-?status=STR                       #
-ISSUING_CARD.type                C#string One of virtual or physical.
+ISSUING_CARD.type                C#Either:
+                                  #  - 'physical'
+                                  #     - shipped by Stripe
+                                  #     - supports EMV, contactless payments
+                                  #  - 'virtual': through mobile wallet or online payments
 ?type=STR                         #
+ISSUING_CARD.status             CU#STR among:
+                                  #  - 'pending'
+                                  #  - 'active'
+                                  #  - 'inactive': temporarily disabled
+                                  #  - 'canceled': permanent
+                                  #  - 'lost': permanent
+                                  #  - 'stolen': permanent
+?status=STR                       #
 ISSUING_CARD.replacement_for    ?C#ISSUING_CARD2.id
+                                  #Give same card number as previous one (when possible).
+                                  #Should be set for better fraud tracking.
 ISSUING_CARD.replacement_reason ?C#STR among 'damage', 'expiration', 'loss', 'theft'
+ISSUING_CARD.cardholder         CU#Default CARD_HOLDER
+?cardholder=CARD_HOLDER.id        #
+ISSUING_CARD.shipping            C#ISSUING_CARD_SHIPPING if type 'physical'
+ISSUING_CARD_SHIPPING.*           #Like SHIPPING.*
+ISSUING_CARD_SHIPPING.status      #STR among:
+                                  #  - 'pending'
+                                  #  - 'shipped'
+                                  #  - 'delivered'
+                                  #  - 'returned', 'failure', 'canceled'
+ISSUING_CARD_SHIPPING.tracking_url#'URL'
+ISSUING_CARD_SHIPPING.eta         #DATE_NUM
+ISSUING_CARD.
+ authorization_controls         CU#AUTH_CONTROLS. Rules to automatically decline AUTHORIZATIONs
+AUTH_CONTROLS.spending_limits  RCU#SPENDING_LIMIT_ARR. Max PMONEY per time interval.
+SPENDING_LIMIT.amount          RCU#PMONEY
+SPENDING_LIMIT.interval        RCU#Frequency among 'per_authorization', 'daily', 'weekly', 'monthly', 'yearly', 'all_time'
+SPENDING_LIMIT.categories      RCU#STR_ARR. Whitelist categories.
+AUTH_CONTROLS.max_amount        CU#Max PMONEY per AUTHORIZATION
+AUTH_CONTROLS.max_approvals     CU#Max AUTHORIZATIONs count
+AUTH_CONTROLS.                  CU#'CATEGORY'_ARR. Either whitelist or blacklist categories.
+ allowed|blocked_categories       #'CATEGORY' is the type of industry (MCC). See list at https://stripe.com/docs/issuing/authorizations/categories
 
 GET /issuing/cards/ID/details     #
 STRIPE.issuing.cards.
  retrieveDetails()                #
 ISSUING_CARD_DETAILS              #Like ISSUING_CARD (same properties) but with some extra fields:
 ISSUING_CARD_DETAILS.card         #ISSUING_CARD
+ISSUING_CARD_DETAILS.number       #'NUM'
 ISSUING_CARD_DETAILS.
  cvc|exp_month|exp_year           #Like CARD.*
-ISSUING_CARD_DETAILS.number       #'NUM'
 
 GET /issuing/cardholders[/ID]
 POST /issuing/cardholders[/ID]    #
 STRIPE.cardholders.
  retrieve|list|create|update()    #
 CARD_HOLDER                       #User of a ISSUING_CARD
-CARD_HOLDER.
- authorization_controls         CU#AUTH_CONTROLS, but only allowed|blocked_categories|spending_limits
-CARD_HOLDER.billing            *CU#BILL_DETAILS
-CARD_HOLDER.email               CU#string The cardholder's email address.
-?email=STR                        #
-CARD_HOLDER.is_default          CU#boolean Whether or not this cardholder is the default cardholder.
-?is_default=BOOL                  #
-CARD_HOLDER.name                *C#string The cardholder's name. This will be printed on cards issued to them.
-CARD_HOLDER.phone_number        CU#string The cardholder's phone number.
-?phone_number=STR                 #
-CARD_HOLDER.status              CU#string One of active, inactive, blocked, or pending.
-?status=STR                       #
-CARD_HOLDER.type                *C#string One of individual or business_entity.
+                                  #CARD_HOLDERs can share same ISSUING_CARD
+CARD_HOLDER.type                *C#Either 'individual' or 'business_entity'
 ?type=STR                         #
+CARD_HOLDER.name                *C#STR. Printed on physical card.
+CARD_HOLDER.email               CU#STR
+CARD_HOLDER.phone_number        CU#STR
+?phone_number=STR                 #
+CARD_HOLDER.billing            *CU#BILL_DETAILS
+?email=STR                        #
+CARD_HOLDER.status              CU#One of:
+                                  #  - 'active': can pay
+                                  #  - 'inactive': cannot pay yet (e.g. requires extra step to activate)
+                                  #  - 'pending': set by Stripe, when CARD_HOLDER must be reviewed first
+                                  #  - 'blocked': blocked by Stripe
+?status=STR                       #
+CARD_HOLDER.
+ authorization_controls         CU#AUTH_CONTROLS, but without max_*
+CARD_HOLDER.is_default          CU#BOOL. Whether main CARD_HOLDER (ISSUING_CARD.cardholder)
+?is_default=BOOL                  #
+
+GET /authorizations[/ID]
+POST /authorizations/ID           #
+POST /authorizations/ID/approve   #Set approved to true.
+                                  #PAYLOAD: held_amount
+PAYLOAD.held_amount              ?#PMONEY. How much to authorize.
+                                  #Only if AUTHORIZATION.is_held_amount_controllable true
+POST /authorizations/ID/decline   #Set approved to false.
+STRIPE.issuing.authorizations.
+ retrieve|list|update|approve|
+ decline()                        #
+AUTHORIZATION                     #Pending ISSUING_TRANSACTIONs waiting for approval.
+                                  #EVENT 'issuing_authorization.request' is emitted on create
+                                  #  - i.e. when user is waiting for payment to be processed
+                                  #  - must set AUTHORIZATION.approved within 2 seconds
+                                  #  - if no webhook, automatically approved
+                                  #     - unless timed out, using timeout specified as Dashboard settings
+                                  #Additional 'issuing_authorization.request' EVENTs can then be made to add more money:
+                                  #  - only possible for some 'CATEGORY'
+                                  #     - e.g. hotels to extend someone's stay
+                                  #  - will not go through ISSUING_CARD.authorization_controls
+AUTHORIZATION.card                #ISSUING_CARD
+?card=ISSUING_CARD.id             #
+AUTHORIZATION.cardholder          #CARD_HOLDER
+?cardholder=CARDHOLDER.id         #
+AUTHORIZATION.merchant_data       #MERCHANT_DATA selling to CARD_HOLDER
+MERCHANT_DATA.name                #STR
+MERCHANT_DATA.*                   #ADDRESS fields, except line1|line2
+MERCHANT_DATA.category            #'CATEGORY'
+MERCHANT_DATA.network_id          #'ID' assigned by card brand
+AUTHORIZATION.balance_transactions#BALANCE_TRANSACTION_ARR
+AUTHORIZATION.transactions        #ISSUING_TRANSACTION_ARR
+AUTHORIZATION.approved            #BOOL
+AUTHORIZATION.status              #STR among:
+                                  #  - 'pending': approved, but not captured
+                                  #  - 'closed': approved and captured, or declined
+                                  #  - 'reversed': payment error
+?status=STR                       #
+AUTHORIZATION.request_history     #REQUEST_HISTORY_ARR. Previous values of AUTHORIZATION.*
+REQUEST_HISTORY.reason            #STR among:
+                                  #  - 'card_active': worked
+                                  #  - 'webhook_approved|declined|timeout': handled by webhook
+                                  #  - 'authorization_controls': declined by ISSUING_CARD.authorization_controls
+                                  #  - 'card_inactive': declined because ISSUING_CARD.status 'inactive'
+                                  #  - 'insufficient_funds': declined because not enough money
+                                  #  - 'account_compliance_disabled': declined because ACCOUNT blocked
+                                  #  - 'account_inactive': declined because ACCOUNT inactive
+                                  #  - 'suspected_fraud': declined because fraud
+REQUEST_HISTORY.
+ approved|authorized|held*        #Same as AUTHORIZATION.*
+AUTHORIZATION.                    #PMONEY requested. Set to 0 after approval.
+ pending_authorized|held_amount   #For last 'issuing_transaction.request' EVENT.
+AUTHORIZATION.authorized_amount   #PMONEY approved. Initially 0.
+                                  #For all 'issuing_transaction.request' EVENTs
+AUTHORIZATION.authorized_currency #CURRENCY of the CHARGE
+AUTHORIZATION.held_amount         #Like authorized_amount but using held_currency
+AUTHORIZATION.held_currency       #CURRENCY of the ISSUING_CARD
+AUTHORIZATION.
+ is_held_amount_controllable      #BOOL. Whether this AUTHORIZATION allows controlling how much can be authorized (with PAYLOAD.held_amount)
+AUTHORIZATION.authorization_method#STR. How card was used among:
+                                  #  - 'online'
+                                  #  - 'keyed_in': PIN
+                                  #  - 'chip'
+                                  #  - 'contactless': Bluetooth/NFC
+                                  #  - 'swipe': magnetic stripe
+AUTHORIZATION.wallet_provider    ?#One of 'apple_pay', 'google_pay', 'samsung_pay'
+AUTHORIZATION.verification_data   #Same as SOURCE.card.*_check, except values are 'match', 'mismatch' or 'not_provided'
+                                  #Should be checked
 
 GET /issuing/transactions[/ID]
 POST /issuing/transactions/ID     #
 STRIPE.issuing.transactions.
  retrieve|list|update()           #
 ISSUING_TRANSACTION               #BALANCE_TRANSACTION made with an ISSUING_CARD
-ISSUING_TRANSACTION.amount        #MONEY
-ISSUING_TRANSACTION.authorization #AUTHORIZATION.id
-ISSUING_TRANSACTION.
- balance_transaction              #BALANCE_TRANSACTION.id
 ISSUING_TRANSACTION.card          #ISSUING_CARD.id
 ?card=ISSUING_CARD.id             #
 ISSUING_TRANSACTION.cardholder    #CARDHOLDER.id
 ?cardholder=CARDHOLDER.id         #
+ISSUING_TRANSACTION.
+ balance_transaction              #BALANCE_TRANSACTION.id
+ISSUING_TRANSACTION.amount        #MONEY
+ISSUING_TRANSACTION.authorization #AUTHORIZATION.id
+ISSUING_TRANSACTION.merchant_data #Like AUTHORIZATION.merchant_data
+ISSUING_TRANSACTION.type          #One of:
+                                  #  - 'capture': normal payment
+                                  #  - 'cash_withdrawal': ATM withdrawal
+                                  #  - 'refund[_reversal]'
+                                  #  - 'dispute[_loss]'
 ISSUING_TRANSACTION.dispute       #ISSUING_DISPUTE.id
 ?dispute=ISSUING_DISPUTE.id       #
-ISSUING_TRANSACTION.type          #string One of capture, refund, cash_withdrawal, refund_reversal, dispute, or dispute_loss.
-ISSUING_TRANSACTION.merchant_data #MERCHANT_DATA
-
-GET /authorizations[/ID]
-POST /authorizations/ID           #
-POST /authorizations/ID/approve   #Set approved to true.
-                                  #PAYLOAD: held_amount
-POST /authorizations/ID/decline   #Set approved to false.
-STRIPE.issuing.authorizations.
- retrieve|list|update|approve|
- decline()                        #
-issuing_authorization.request     #'EVENT_TYPE' when describes an issuing authorization Represents a synchronous request for authorization.
-AUTHORIZATION                     #Pending ISSUING_TRANSACTION waiting for approval.
-AUTHORIZATION.approved            #boolean Whether the authorization has been approved.
-AUTHORIZATION.authorization_method#string How the card details were provided. One of keyed_in, swipe, chip, contactless, or online.
-AUTHORIZATION.authorized_amount   #integer The amount that has been authorized. This will be 0 when the object is created, and increase after it has been approved.
-AUTHORIZATION.authorized_currency #currency The currency that was presented to the cardholder for the authorization. Three-letter ISO currency code, in lowercase. Must be a supported currency.
-AUTHORIZATION.
- pending_authorized_amount        #integer The amount the user is requesting to be authorized. This field will only be non-zero during an issuing.authorization.request webhook.
-AUTHORIZATION.pending_held_amount #integer The additional amount Stripe will hold if the authorization is approved. This field will only be non-zero during an issuing.authorization.request webhook.
-AUTHORIZATION.held_amount         #integer The amount the authorization is expected to be in held_currency.
-                                  #When Stripe holds funds from you, this is the amount reserved for the authorization.
-                                  #This will be 0 when the object is created, and increase after it has been approved.
-                                  #For multi-currency transactions, held_amount can be used to determine the expected exchange rate.
-AUTHORIZATION.held_currency       #currency The currency of the held amount. This will always be the card currency.
-AUTHORIZATION.
- is_held_amount_controllable      #boolean
-AUTHORIZATION.balance_transactions#BALANCE_TRANSACTION_ARR
-AUTHORIZATION.card                #ISSUING_CARD
-?card=ISSUING_CARD.id             #
-AUTHORIZATION.cardholder          #CARD_HOLDER
-?cardholder=CARDHOLDER.id         #
-AUTHORIZATION.merchant_data       #MERCHANT_DATA. More information about the user involved in the transaction.
-MERCHANT_DATA.category            #string A categorization of the seller's type of business. See our merchant categories guide for a list of possible values.
-MERCHANT_DATA.name                #string Name of the seller
-MERCHANT_DATA.network_id          #string Identifier assigned to the seller by the card brand
-MERCHANT_DATA.*                   #ADDRESS fields, except line1|line2
-AUTHORIZATION.request_history     #REQUEST_HISTORY
-REQUEST_HISTORY.
- approved|authorized|held*        #Same as AUTHORIZATION.*
-REQUEST_HISTORY.reason            #string One of authorization_controls, card_active, card_inactive, insufficient_funds, account_compliance_disabled, account_inactive, suspected_fraud, webhook_approved,
-                                  #webhook_declined, or webhook_timeout.
-AUTHORIZATION.status              #string One of pending, reversed, or closed.
-?status=STR                       #
-AUTHORIZATION.transactions        #ISSUING_TRANSACTION_ARR
-AUTHORIZATION.verification_data   #Same as SOURCE.card.*_check, except values are 'match', 'mismatch' or 'not_provided'
-AUTHORIZATION.wallet_provider     #string What, if any, digital wallet was used for this authorization. One of apple_pay, google_pay, or samsung_pay.
 
 GET /issuing/disputes[/ID]
 POST /issuing/disputes[/ID]       #
 STRIPE.issuing.disputes.
  retrieve|list|create|update()    #
 ISSUING_DISPUTE                   #Like DISPUTE but for an ISSUING_TRANSACTION
-ISSUING_DISPUTE.amount           C#MONEY Disputed amount.
-                                  #Usually the amount of the disputed_transaction, but can differ (usually because of currency fluctuation or because only part of the order is disputed).
+                                  #Made by us against a CARDHOLDER
+                                  #Can only submit once.
+                                  #Money is only reversed after dispute is won.
 ISSUING_DISPUTE.
  disputed_transaction           *C#ISSUING_TRANSACTION.id
 ?disputed_transaction=ID          #
-ISSUING_DISPUTE.evidence         C#ISSUING_EVIDENCE. Evidence related to the dispute. This hash will contain exactly one non-null value, containing an evidence object that matches its reason
-ISSUING_EVIDNCE.fraudulent|other C#I_EVIDENCE.
-I_EVIDENCE.dispute_explanation   C#string Brief freeform text explaining why you are disputing this transaction.
-I_EVIDENCE.uncategorized_file    c#FILE.id Additional file evidence supporting your dispute.
-ISSUING_DISPUTE.reason          *C#string Reason for this dispute. One of other or fraudulent.
-ISSUING_DISPUTE.status            #string Current status of dispute. One of unsubmitted, under_review, won, or lost.
+ISSUING_DISPUTE.reason          *C#Either 'fraudulent' or 'other'
+ISSUING_DISPUTE.amount           C#MONEY
+ISSUING_DISPUTE.evidence.REASON  C#ISSUING_EVIDENCE. Similar to EVIDENCE.
+                                  #REASON is ISSUING_DISPUTE.reason
+ISSUING_EVIDENCE.
+ dispute_explanation             C#STR
+ISSUING_EVIDENCE.
+ uncategorized_file              C#FILE.id
+ISSUING_DISPUTE.status            #One of: 'unsubmitted', 'under_review', 'won', 'lost'.
 
 GET /terminal/readers[/ID]
 POST /terminal/readers[/ID]
@@ -3296,35 +3379,71 @@ DELETE /terminal/readers/ID       #
 STRIPE.terminal.readers.
  retrieve|list|create|update|del()#
 READER                            #Physical credit card reader.
+                                  #Must be either:
+                                  #  - Verifone P400
+                                  #     - $299
+                                  #     - screen, keys
+                                  #     - client must provide UI for operator
+                                  #     - can set splash screen through Dashboard settings
+                                  #     - size of a big phone
+                                  #     - connect through internet
+                                  #     - charged to wall, i.e. must be in same place
+                                  #     - READER does requests to Stripe
+                                  #        - i.e. must have internet connection, either with Ethernet or sharing through USB
+                                  #     - updated automatically
+                                  #  - BBPOS chipper 2x pt:
+                                  #     - $59
+                                  #     - no screen, no keys
+                                  #     - client must provide UI for operator+customer
+                                  #     - no JavaScript SDK (iOS/Android only)
+                                  #     - size of 1/3 phone
+                                  #     - connect through Bluetooth
+                                  #     - charged through USB, i.e. can be moved
+                                  #     - client does requests to Stripe
+                                  #     - updated manually
+                                  #Allow EMV 1|2|3, swipe and contactless payments.
+                                  #Can be ordered and shipped from Dashboard
+                                  #  - Connect ACCOUNTs can do it too
+                                  #Client runs on a mobile device:
+                                  #  - use JavaScript/iOS/Android SDK to communicate to it
+                                  #Are pre-certified by Stripe (PCI, EMV), i.e. no need to do regulation process.
+                                  #Payments:
+                                  #  - use SOURCE.type 'card_present'
+                                  #  - PINTENT.capture_method must be 'manual', and captured within 24 hours
+                                  #  - receipts are either:
+                                  #     - by email (normal CHARGE.receipt_email)
+                                  #     - manually building using SOURCE.card_present.receipt, then printing or emailing ourselves
+READER.registration_code        *C#STR. Generated by reader to register an ACCOUNT
+READER.operator_account        RCU#ACCOUNT (with Connect)
 ?operator_account=ACCOUNT.id      #
-READER.registration_code        *C#A code generated by the reader used for registering to an account.
-READER.device_sw_version          #string The current software version of the reader.
-READER.device_type                #string Type of reader, e.g., verifone_P400 or bbpos_chipper2x.
-READER.ip_address                 #string The local IP address of the reader.
-READER.label                    CU#string Custom label given to the reader for easier identification.
-READER.operator_account        RCU#To group objects on your platform account by connected account, set this parameter to the connected account operating your application.
 READER.location                  C#LOCATION.id
 ?location=LOCATION.id             #
-READER.serial_number              #string Serial number of the reader.
-READER.status                     #string The networking status of the reader.
+READER.label                    CU#STR. Custom name
+READER.device_type                #STR, e.g. 'verifone_P400' or 'bbpos_chipper2x'
+READER.device_sw_version          #Software 'VERSION'
+READER.ip_address                 #'IP'
+READER.serial_number              #STR
+READER.status                     #STR
 ?status=STR                       #
 
 GET /terminal/location[/ID]
 POST /terminal/location[/ID]
-DELETE /terminal/location/ID      #Group of READERs
+DELETE /terminal/location/ID      #
 STRIPE.terminal.locations.
  retrieve|list|create|update|del()#
+LOCATION                          #Group of READERS
+LOCATION.operator_account      RCU#ACCOUNT (with Connect)
 ?operator_account=ACCOUNT.id      #
 LOCATION.address               *CU#ADDRESS.
-LOCATION.display_name          *CU#string The display name of the location.
-LOCATION.operator_account      RCU#Like READER.*
+LOCATION.display_name          *CU#STR
 
-POST /terminal/connection_tokens  #Token to connect to READER
+POST /terminal/connection_tokens
 STRIPE.terminal.connectionTokens.
  create()                         #
+CONNECTION_TOKEN                  #Token to authenticate client to READER
+CONNECTION_TOKEN.secret           #STR. Your application should pass this token to the Stripe Terminal SDK.
 CONNECTION_TOKEN.
- operator_account               RC#Like READER.*
-CONNECTION_TOKEN.secret           #string Your application should pass this token to the Stripe Terminal SDK.
+ operator_account               RC#ACCOUNT (with Connect)
 
 GET /checkout/sessions/ID
 POST /checkout/sessions           #
@@ -3421,14 +3540,50 @@ EVENT                             #Either:
 EVENT.api_version                 #'VERSION'
                                   #EVENTs are not migrated on new API versions, i.e. they keep old shape.
 EVENT.type                        #'EVENT_TYPE'.
-                                  #Common types are:
-                                  #  - 'RESOURCE.created': on any RESOURCE creation, for account.external_account|application_fee|charge.dispute|coupon|
-                                  #    customer[.discount|source|subscription]|file|invoice|invoiceitem|issuing_authorization|issuing_card|issuing_cardholder|issuing_dispute|issuing_transaction|order|
-                                  #    order_return|payment_intent|payout|person|plan|product|sigma.scheduled_query_run|sku|source.transaction|topup|transfer
-                                  #  - 'RESOURCE.updated': on any RESOURCE update, for account[.external_account]|application_fee.refund|charge[.dispute|refund]|coupon|
-                                  #    customer[.discount|source|subscription]|invoice|invoiceitem|issuing_authorization|issuing_card|issuing_cardholder|issuing_dispute|
-                                  #    issuing_transaction|order|payout|person|plan|product|reporting.report_type|sku|source.transaction|transfer
-                                  #  - 'RESOURCE.deleted': on any RESOURCE deletion, for account.external_account|coupon|customer[.discount|source|subscription]|invoice|invoiceitem|person|plan|product|sku
+                                  #Common types are 'RESOURCE.created|updated|deleted' for:
+                                  #  (created|updated|deleted)
+                                  #  - account.external_account
+                                  #  - coupon
+                                  #  - customer[.discount|source|subscription|tax_id]
+                                  #  - invoice
+                                  #  - invoiceitem
+                                  #  - person
+                                  #  - plan
+                                  #  - product
+                                  #  - recipient
+                                  #  - sku
+                                  #  (created|updated)
+                                  #  - charge.dispute
+                                  #  - credit_note
+                                  #  - issuing_authorization
+                                  #  - issuing_card
+                                  #  - issuing_cardholder
+                                  #  - issuing_dispute
+                                  #  - issuing_settlement
+                                  #  - issuing_transaction
+                                  #  - order
+                                  #  - payout
+                                  #  - source.transaction
+                                  #  - tax_rate
+                                  #  - transfer
+                                  #  (created)
+                                  #  - application_fee
+                                  #  - file
+                                  #  - order_return
+                                  #  - payment_intent
+                                  #  - sigma.scheduled_query_run
+                                  #  - topup
+                                  #  (updated)
+                                  #  - account
+                                  #  - application_fee.refund
+                                  #  - charge
+                                  #  - charge.refund
+                                  #  - payment_method
+                                  #  - reporting.report_type
+                                  #  (none)
+                                  #  - reporting.report_run
+                                  #  - review
+                                  #  - source
                                   #Other types are documented in each related resource.
 ?type=STR                         #Can contain * for subtypes
 ?types=STR_ARR                    #
@@ -3631,7 +3786,9 @@ MOBILE SDK ==>                    #Like Stripe elements, but for native mobile
 
 STRIPE CHECKOUT ==>               #Full payment forms/flow (including Stripe elements).
 
-STRIPE TERMINAL ==>               #In-person mobile terminal.
+STRIPE TERMINAL SDK ==>           #Clients connecting to READERs.
+                                  #JavaScript/iOS/Android
+                                  #Not documented yet (only document when I need it)
 
 INVOICE WEB PAGE ==>              #INVOICE.hosted_invoice_url is 'URL' where users can pay.
                                   #Send to them by email
