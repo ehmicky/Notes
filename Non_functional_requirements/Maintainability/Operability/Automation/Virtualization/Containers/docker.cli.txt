@@ -349,7 +349,7 @@ IMAGE                             #Pulled from registry unless available locally
                                   #        - should always specify precise TAG to avoid unpredictability
                                   #        - should use same tags across environments (dev, prod, etc.) and avoid environment-specific tags. Use ENVVAR instead
                                   #     - HASH: content hash
-DL3006                           ##Should use IMAGE:TAG, because "latest" adds unpredictability
+DL3006|3007                      ##Do not use IMAGE or IMAGE:latest, but use IMAGE:TAG, because "latest" adds unpredictability
 
 
 docker commit CONTAINER [IMAGE]   #Creates a new (or copies to an) IMAGE, from an existing CONTAINER
@@ -421,12 +421,15 @@ DOCKERFILE                        #Main configuration file, with commands below
 hadolint [DOCKERFILE]            ##Dockerfile linter.
                                  ##Prints to stdout and use exit code 1 if any error
                                  ##Def DOCKERFILE: stdin
-                                 ##Version 1.2.1
-                                 ##Available as a Docker image as well
+                                 ##Also available as:
+                                 ##  - Docker image
+                                 ##  - web app
+                                 ##There is also a parser/AST in Haskell
                                  ##List of errors are documented in this doc as DL* (RULECODE)
                                  ##Other rules: 
                                  ##  - SC*: various Shell errors, linted with ShellCheck
---ignore RULECODE                ##
+                                 ##Version 1.2.1
+--ignore RULECODE                ##Most rules make sense, so should not have to ignore any
 
 
 
@@ -865,31 +868,38 @@ COMMAND                           #Means a CLI command, either:
                                   #           - cannot receive signals
                                   #        - can be changed with SHELL ["COMMAND",...] (def: ["/bin/sh", "-c"])
                                   #     - only uses escape character for escaped newlines
-                                  #     - preferred for foreground jobs
+                                  #     - preferred for RUN
                                   #  - as JSON array ["STR",...]
                                   #     - run with exec, i.e. same shell (not subcommand)
                                   #     - no shell expansion
-                                  #     - preferred for background/long-running jobs
+                                  #     - preferred for CMD|ENTRYPOINT
+DL4005                           ##Use SHELL when needed
 
 PACKAGE INSTALLATION ==>          #Containers are always unprivileged:
                                   #  - can do apt-get install -y
                                   #  - but apt-get upgrade will fail on some core packages
                                   #How to install packages:
                                   #  apt-get update && 
-                                  #  apt-get install -y PACKAGE=VERSION && (version pinning to avoid unpredictability)
-                                  #  rm -rf /var/lib/apt/lists/* (remove apt-get update footprint, so it does not take up space)
+                                  #  apt-get install -y --no-install-recommends PACKAGE=VERSION && (version pinning to avoid unpredictability)
+                                  #  apt-get clean && rm -rf /var/lib/apt/lists/* (remove apt-get update footprint, so it does not take up space)
 DL3005                           ##Avoid apt-get upgrade or dist-upgrade
+DL3014                           ##Use apt-get install -y
+DL3015                           ##Use apt-get install --no-install-recommends
+DL3008|3013                      ##Use apt-get|pip install PACKAGE=VERSION, not PACKAGE
+DL3009                           ##Use apt-get clean && rm -rf /var/lib/apt/lists/*
 
 
 RUN COMMAND                       #Dockerfile instruction. Run command, compile-time
 DL3001                           ##Avoid COMMAND which do no make sense in a container, e.g. interactive or host-controlling (shutdown, ps, kill, etc.)
+DL4001                           ##Either use wget or curl, but not both
 
-CMD COMMAND                       #First is Dockerfile instruction. 
-CPSCONF.command COMMAND           #Run command, rutime. 
-IMAGEINFO.Config.Cmd              #Sets default command, that cannot take args. 
-CONTAINERINFO.Path                #Only last CMD will be used.
-CONTAINERSPEC.Command             #At least one CMD or ENTRYPOINT required per Dockerfile
-CONTAINERINFO|CONTAINERSPEC.Args  #
+CMD COMMAND                       
+CPSCONF.command COMMAND           #First is Dockerfile instruction. 
+IMAGEINFO.Config.Cmd              #Run command, rutime. 
+CONTAINERINFO.Path                #Sets default command, that cannot take args. 
+CONTAINERSPEC.Command             #Only last CMD will be used.
+CONTAINERINFO|CONTAINERSPEC.Args  #At least one CMD or ENTRYPOINT required per Dockerfile
+DL4003                           ##Do not define multiple CMD
 
 ENTRYPOINT COMMAND                #Dockerfile instruction.
 docker create ...                 #If COMMAND uses:
@@ -899,6 +909,7 @@ CPSCONF.entrypoint                #     - sets default command, that can take ar
 IMAGEINFO.Config.Entrypoint       #     - CMD now sets default args (not default command), and must use JSON array syntax
                                   #Only last ENTRYPOINT will be used.
                                   #At least one CMD or ENTRYPOINT required per Dockerfile
+DL4004                           ##Do not define multiple ENTRYPOINT
 
 
 docker create IMAGE [...]         #If IMAGE:
@@ -1094,7 +1105,12 @@ COPY|ADD ["SRC",..., "DEST"]      #SRC:
                                   #New files/directories created with root user|group
                                   #ADD has extra features:
                                   #  - SRC can be URL
+                                  #     - if URL that is an archive: 
+                                  #        - prefer RUN curl && tar
+                                  #        - over ADD && RUN tar
+                                  #        - as it does not keep archive in extra layer, so is smaller
                                   #  - SRC can be a *.tar (unless it is a URL), which is unpacked
+DL3010|3020                      ##Use ADD if SRC is archive|URL, COPY otherwise
 
 docker cp                         #Copy files recursively:
 [CONTAINER:]PATH [CONTAINER:]PATH2#Permissions are kept
@@ -1623,6 +1639,7 @@ EXPOSE PORT ...
 docker create ...
 --expose PORT                     
 CPSCONF.expose                    #First is Dockerfile instruction.
+DL3011                           ##PORT number should be valid
 
 
 docker port CONTAINER 
@@ -1819,6 +1836,7 @@ docker-compose exec ...
 --privileged                     |#
 CPSCONF.privileged                #
 HOSTCONF.Privileged               #Add most capabilities
+                                  #To avoid
 
 
 docker create ...
@@ -1856,7 +1874,18 @@ HOSTCONF.SecurityOpt              #STR_ARR
 
 
 DOCKER SECURITY SCANNING ==>      #Automatic security static analysis of Docker images
+                                  #E.g. when installing dependencies with security risks
                                   #Only for private repositories on Docker cloud or Docker Hub
+
+docker-bench-security             #Security static analysis of Docker containers
+                                  #E.g. wrong configuration
+                                  #Also available as Docker image
+                                  #Version 1.12.3
+-l OUTPUT_FILE                    #Def: stdout
+
+
+clair                             #Security static analysis of Docker|rkt containers
+                                  #E.g. when installing dependencies with security risks
 
 
                                              /=+===============================+=\ 
@@ -2068,6 +2097,13 @@ LABEL ==>                         #Metadata on images, containers, daemons, volu
                                   #Can be:
                                   #  - viewed with docker inspect
                                   #  - used as filters with docker images, ps, network ls, events, node ls, service ls, service ps
+                                  #Often used:
+                                  #  - Name 'PROJECT'
+                                  #  - Version|Release 'NUM'
+                                  #  - Architecture 'x86|x86_64|i386'
+                                  #  - Vendor STR
+                                  #  - Url URI: project's website
+                                  #  - Help URI
 
 
 LABEL VAR="VAL" ...               #Dockerfile instruction
@@ -2097,11 +2133,13 @@ IMAGEINFO.Config.Labels.VAR
 CONTAINERSPEC.Labels.VAR          #VAL
 
 
-MAINTAINER NAME <EMAIL>           #Dockerfile instruction. Metadata about author
+MAINTAINER AUTHOR                 #Dockerfile instruction. Metadata about author
 docker commit ...
 -a AUTHOR
 --author AUTHOR                   
 IMAGEINFO.Author                  #
+DL4000                           ##Should be used
+DL3012                           ##Should be NAME <EMAIL>
 
 docker commit|import ...
 -m COMMIT_MESSAGE
