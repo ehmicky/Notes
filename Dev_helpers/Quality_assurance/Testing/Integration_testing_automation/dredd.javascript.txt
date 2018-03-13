@@ -6,10 +6,71 @@
 
 
 VERSION ==>                       #5.1.5
+                                  #Automated integration testing (assertions on HTTP request|responses on live server) using
+                                  #an API specification file.
                                   #Supports API Blueprint, OpenAPI 2.0
 
 INSTALLATION ==>                  #Unless npm install --no-optional is used, drafter (C++ library) will be used, i.e. will compile
                                   #The library is used for parsing API Blueprint, i.e. not needed if only used with OpenAPI.
+
+TO CHECK: ???
+  - go through source code and fix following questions
+  - --details???
+  - --inline-errors???
+  - RESP.examples is checked when RESP.schema is not there (same type|keys, but not values (except for STR???))???
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:           REQUESTS            :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+REQUESTS ==>                      #Fires the following requests:
+                                  #  - CONF.endpoint (not SERVER)
+                                  #  - 1 request per pair of OPERATION + 2** RESP
+                                  #  - all PARAM with PARAM.x-example (priority) or PARAM.default or first PARAM.enum (uses its value)
+                                  #     - if PARAM.required, PARAM.x-example must be defined
+                                  #     - for "in" "body|formData", a dummy value can be generated based on the SCHEMA
+                                  #  - Content-Type [C] according to SPEC|OPERATION.consumes (even charset must match) (only for JSON)
+                                  #Since it is performed against live database, state might persist, i.e. tests won't be
+                                  #isolated unless hooks do cleanup.
+
+ASSERTS ==>                       #Against the response:
+                                  #  - STATUS_CODE
+                                  #  - RESP.headers:
+                                  #     - Content-Type [S] according to SPEC|OPERATION.produces (even charset must match) (only for JSON)
+                                  #     - specified headers names are all present
+                                  #  - RESP.schema SCHEMA (i.e. body)
+
+NOT CHECKED|USED (IMPORTANT) ==>  #  - different responses according to different requests
+                                  #  - sequences of requests|responses:
+                                  #     - can fix it by using specification order, and using several SPEC_FILE
+                                  #  - error responses:
+                                  #     - only 2** responses are checked
+                                  #        - other status codes always error, even if matching the specification
+                                  #     - endpoints are skipped if either:
+                                  #        - there is at least one non-2** RESP, unless there is another RESP that is 2**
+                                  #        - there is a "default" STATUS_CODE
+                                  #     - can fix by setting TRANS.skip = false in before* hooks
+                                  #  - RESP.headers values
+                                  #    - can fix with after* hooks
+                                  #  - SECURITY_DEFS|USES
+                                  #    - can fix with CONF.header|user or before* hooks
+
+NOT CHECKED|USED (LESS IMPORTANT) #  - SCHEMA.collectionFormat "ssv|tsv|pipes" (but "csv|multi" are used)
+ ==>                              #  - example PARAM value is only partially checked against [SMALL_]SCHEMA during parsing (type|enum)
+                                  #  - RESP.examples
+                                  #  - RESP.schema.multipleOf
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:             CONF              :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
 
 CONF                              #Can be:
                                   #  - ./dredd.yml
@@ -30,37 +91,38 @@ dredd init                        #Creates a CONF file
                                              \=+===============================+=/
 
 
-dredd [SPEC_FILE|URL|GLOB]
- [SERVER_URL]
--p SPEC_FILE|URL|GLOB             #Specification files, e.g. openapi.yml. Can be used several times.
---path SPEC_FILE|URL|GLOB         #In Node.js, must specify both CONF.blueprint SPEC_FILE and CONF.path SPEC_FILE|URL|GLOB_ARR
+dredd [SPEC_FILE] [SERVER_URL]    #SPEC_FILE is CONF.blueprint, e.g. openapi.yml
+-p SPEC_FILE|URL|GLOB             #Additional specification files. Can be used several times.
+--path SPEC_FILE|URL|GLOB         #Unless CLI, required (even empty array)
 --endpoint SERVER_URL             #
 -g STR
 --server STR                      #Run a shell command (to start server), then kills process after testing.
 --server-wait NUM                 #Wait NUMsec (def: 3) before testing.
 
--r REPORTER
+-r REPORTER                       #Among: dot, nyan, markdown, html, xunit, apiary (SaaS)
 --reporter REPORTER               #Can be used several times.
--o FILE
+-j 'VAR:VAL,...'
+--custom 'VAR:VAL,...'            #Reporter options
+-o FILE                           #Required by REPORTER markdown|html|xunit
 --output FILE                     #Can be used several times.
 -q
 --silent                          #
--l
---level STR                       #Log level, among 'error', 'warn', 'info' (def), 'verbose', 'debug', 'silly'
+-l                                #Log level, among 'error', 'warn', 'info' (def), 'verbose', 'debug', 'silly'
+--level STR                       #Note that test failure is just 'info'
 -c BOOL
---color BOOL                      #Def: true
+--color BOOL                      #Def: false
 -t
 --timestamp                       #Add timestamp to output (def: false)
 
--s
---sorted                          #Sort tests by HTTP method: CONNECT, OPTIONS, POST, GET, HEAD, PUT, PATCH, DELETE, TRACE
+-s                                #Sort tests by HTTP method: CONNECT, OPTIONS, POST, GET, HEAD, PUT, PATCH, DELETE, TRACE
+--sorted                          #Otherwise, sort tests by specification order
 -n
 --names                           #Only list all the tests TEST_NAME
 -y
 --dry-run                         #
 
--h 'VAR:VAL,...'
---header 'VAR:VAL,...'            #Sets HTTP request headers. Can be used several times.
+-h 'VAR:VAL'
+--header 'VAR:VAL'                #Sets HTTP request headers. Can be used several times.
 -u 'USER:PASSWORD'
 --user 'USER:PASSWORD'            #HTTP Basic authentication
 
@@ -69,12 +131,10 @@ dredd [SPEC_FILE|URL|GLOB]
 -m 'METHOD'
 --method 'METHOD'                 #Only run tests with this HTTP method. Can be used several times.
 
--j 'VAR:VAL,...'
---custom 'VAR:VAL,...'            #???
 -d
---details                         #???
+--details                         #More verbose info.
 -e
---inline-errors                   #???
+--inline-errors                   #
 
 
                                              /=+===============================+=\
@@ -86,16 +146,21 @@ dredd [SPEC_FILE|URL|GLOB]
 
 new Dredd(OPTS)                   #DREDD
                                   #OPTS:
-                                  #  - server???
-                                  #  - emitter EVENTEMITTER
-                                  #  - hooksData???
-                                  #  - data.PATH???
-DREDD.run(FUNC(ERROR, STATS))     #
+                                  #  - server STR: instead of CONF.endpoint
+                                  #  - options CONF
+                                  #  - emitter EVENTEMITTER with following events:
+                                  #     - start(CONF)
+                                  #     - end()
+                                  #     - 'test start'(TEST)
+                                  #     - 'test pass|fail|error|skip'(TEST)
+                                  #  - data.PATH STR: like CONF.files but as a string
+                                  #  - hooksData.PATH 'JAVASCRIPT': like CONF.hookfiles but as a string
+DREDD.run(FUNC(ERROR, STATS))     #ERROR is not test failure, but parsing or conf failure
 
 STATS.result.tests                #NUM
 STATS.result.
  failures|errors|passes|skipped   #NUM
-STATS.result.start|end            #DATE_NUM
+STATS.result.start|end            #DATE
 STATS.result.duration             #NUM
 
 
@@ -155,6 +220,7 @@ HOOKS.before|beforeValidation|
 
 HOOKS.log(...)                    #To use instead of console.log(...)
 HOOKS.configuration               #CONF
+HOOKS.transactions.TEST_NAME      #TRANS
 
 
                                              /=+===============================+=\
@@ -167,14 +233,14 @@ HOOKS.configuration               #CONF
 TRANS                             #HTTP request|response
                                   #Changing actually modifies the HTTP request|response, the assertion and the results
 
-TRANS.id                          #'METHOD (STATUS) /PATH'
-TRANS.name                        #Unique 'TEST_NAME'
+TRANS.id                          #'METHOD (STATUS_CODE) /PATH'
+TRANS.name                        #'TEST_NAME', i.e. 'TAG > /PATH > OPERATION.summary > RESP.STATUS_CODE [> RESP.produces]'
 TRANS.origin.filename             #'SPEC_FILE'
-TRANS.origin.apiName              #STR
-TRANS.origin.resourceGroupName    #STR
-TRANS.origin.resourceName         #STR
-TRANS.origin.actionName           #STR
-TRANS.origin.exampleName          #STR
+TRANS.origin.apiName              #STR, e.g. SPEC.title
+TRANS.origin.resourceGroupName    #STR, e.g. TAG
+TRANS.origin.resourceName         #STR, e.g. /PATH
+TRANS.origin.actionName           #STR, e.g. OPERATION.summary
+TRANS.origin.exampleName          #STR, e.g. STATUS_CODE
 
 TRANS.protocol                    #'http[s]:'
 TRANS.host                        #STR
@@ -218,14 +284,14 @@ RESULTS.statusCode|headers|body   #GOUTPUT
 GOUTPUT.results                   #GERROR_ARR
 GOUTPUT.expectedType|realType     #'MIME'
 GOUTPUT.validator                 #STR
-GOUTPUT.rawData                   #GJSONSCHEMA or GTEXTDIFF
+GOUTPUT.rawData                   #GJSONSCHEMA_ARR or GTEXTDIFF
 
 GJSONSCHEMA.length                #NUM. Number of errors
-GJSONSCHEMA.property              #JSON_POINTER_ARR to the errored property
-GJSONSCHEMA.propertyValue         #VAL
-GJSONSCHEMA.attributeName         #JSON schema proeprty name STR
-GJSONSCHEMA.attributeValue        #VAL
-GJSONSCHEMA.message               #'ERROR'
+GJSONSCHEMA['NUM'].property       #JSON_POINTER_ARR to the errored property
+GJSONSCHEMA['NUM'].propertyValue  #VAL
+GJSONSCHEMA['NUM'].attributeName  #JSON schema proeprty name STR
+GJSONSCHEMA['NUM'].attributeValue #VAL
+GJSONSCHEMA['NUM'].message        #'ERROR'
 
 GTEXTDIFF                         #STR looking like a GNU diff.
 
