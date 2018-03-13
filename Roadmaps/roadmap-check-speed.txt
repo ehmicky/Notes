@@ -5,94 +5,98 @@
 
 
 
-Use hrtime(hrtime()) instead of performance.now()
+Loop bias:
+  - once, before all runs
+  - nowBias:
+     - time taken to perform now()
+     - calculated with getMedian(() => {}, 100ms)
+        - repeat should always be 0
+     - should be around 60ns on my machine
+  - loopBias:
+     - time taken to perform each loop in measureLoop()
+     - calculated with getMedian(() => {}, 100ms)
+        - repeat should always be 1e5
+     - should be around .3ns on my machine
+  - after each measure():
+     - substract nowBias
+     - substract repeats * loopBias
+     - if result < 0 -> 1
+     - except when calculating nowBias|loopBias themselves
 
-Time resolution:
-  - main() time must >= 100 * time resolution
-  - detect time resolution
-     - use hrtime(hrtime())
-        - shortcomings:
-            - only min resolution 1ns
-            - does not work of hrtime() takes more than 1ms (which it should not)
+Fast functions bias:
+  - use `repeat` in measure():
+     - initially 1
   - before each scale up:
-     - if median < 100 * minimum unit
-     - then:
-        - set loopRepeat = Math.ceil((100 * minimum unit) / median)
-        - use measureWithLoop(loopRepeat) instead of measureWithoutLoop()
-           - it should measure in a loop then do arithmetic mean
-        - discard current median but continue to next scale
+     - after calculating median time
+     - not if duration ran out
+     - not if not `recurse`
+  - then set `repeat` for next scale:
+     - repeat = Math.ceil(min(A, B) / median)
+        - A = time where only 1% is due to now(): 100 * timeOfNow
+        - B = at least 2 digits of precision within time resolution: 100 * timeResolution
+        - note: almost always A > B
+        - timeOfNow, timeResolution and median should be in same unit (nanosecs)
+  - when repeat changes, should discard current median (not pass it to next scale)???
+     - find a way to prevent too many changes???
      - the bigger loopRepeat is, the more likely it is too change: i.e. should be less likely to trigger a discard???
-     - adjust down as well if loopRepeat is too big???
-        - might recurse up and down infinitely of big variance???
-
-If the task is very fast, also loop it and use arithmetic mean time:
-  - reason: measured time must be too low compared to time resolution
-     - we want at least 2 digits of precision
-  - number of repetitions is automatically guessed
-     - the same number is consistently used across the run
-        - reason: looping a function might make it faster (due to engine optimizations)
-
-Remove the time taken to perform iteration itself:
-  - do it by running an empty task:
-     - then remove duration from it
-     - should be at least 0 (in case function super fast)
-  - should not do it on that empty task itself
-  - remove on each measurement, or on whole average???
-     - think about very fast tasks
-     - think about time resolution fix
 
 Separate sync and async??? See differences once implemented
 
-We only return one "average" metric:
-  - as opposed to returning distribution and related metrics: variance, standard error, etc.
-  - reasons:
-     - users are mostly interested in this
-     - simpler interface
-     - distribution is only due to:
-        - variation due to engine (garbage collection, optimization, etc.): not wanted in results
-        - variation due to different input:
-           - non-random set of inputs: should instead run several benchmarks with each set, instead of mixing several distributions
-           - random set of inputs:
-              - want distribution of this??? E.g. load testing with real input
-              - could do the same logic as median but with percentile instead???
+Remove `depth` argument from timing functions, unless it's now needed
 
-Use medians instead of arithmetic mean:
-  - reason: remove outliers due to:
-     - garbage collection and background processes
-     - engine optimization over time (first runs tend to be much slower)
-
-Use a recursive median of medians:
-  - reason: O(log n) memory instead of O(n)
-     - i.e. can have high number of iterations without crashing
-  - use an outdegree of 3 because:
-     - we want the smallest possible for minimum memory consumption
-     - 2 would make an arithmetic mean instead of a median
-
-Remove the time taken to perform iteration itself:
-  - reasons:
-     - performance.now() takes some time (36ns on my machine)
-     - the iteration itself takes a little time (1ns on my machine)
-
-Use max duration:
-  - as opposed to fixed number of loops
-  - reasons:
-     - does not increase variance as engines or code gets faster
-        - because faster code has higher variance
-     - more stable user experience, avoiding potentially very long runs
-     - get the most precision as user is ready to wait
-     - no separate timeout feature needed
-
-Max duration is approximative:
-  - reason: we need exactly 3 ** NUM iterations
-  - this might be -|+ 50% of max duration (regardless of number of main())
-     - average deviation is 25% if one task
-        - minus 1/sqrt(1) if two tasks, then minus 1/sqrt(2) if three tasks, etc.
-        - etc. 25% -> 16.7% -> 13.5% -> 11.7% -> 10.4%
-
-Use bottom-up recursion:
-  - reason: we don't know how many recursion levels are needed to reach max duration
-
-Abstract now() to its own package and compare with similar libraries
+Design:
+  - we only return one "average" metric:
+     - as opposed to returning distribution and related metrics: variance, standard error, etc.
+     - reasons:
+        - users are mostly interested in this
+        - simpler interface
+        - distribution is only due to:
+           - variation due to engine (garbage collection, optimization, etc.): not wanted in results
+           - variation due to different input:
+              - non-random set of inputs: should instead run several benchmarks with each set, instead of mixing several distributions
+              - random set of inputs:
+                 - want distribution of this??? E.g. load testing with real input
+                 - could do the same logic as median but with percentile instead???
+  - use medians instead of arithmetic mean:
+     - reason: remove outliers due to:
+        - garbage collection and background processes
+        - engine optimization over time (first runs tend to be much slower)
+  - use a recursive median of medians:
+     - reason: O(log n) memory instead of O(n)
+        - i.e. can have high number of iterations without crashing
+     - use an outdegree of 3 because:
+        - we want the smallest possible for minimum memory consumption
+        - 2 would make an arithmetic mean instead of a median
+  - remove the time taken to perform iteration itself:
+     - reasons:
+        - get current timestamp takes some time (36ns on my machine)
+        - the iteration itself takes a little time (1ns on my machine)
+  - if the task is very fast (approx. <0.1ms), also loop it and use arithmetic mean time:
+     - reasons:
+        - measured time must be too low compared to time resolution
+           - we want at least 2 digits of precision
+        - time taken to get current timestamp might be much slower than the task
+           - i.e. much of the variance would be due to it, not to the task
+           - we want task iteration to be at least 100 times the time required to get current timestamp
+     - number of repetitions is automatically guessed
+        - the same number is consistently used across the run
+           - reason: looping a function might make it faster (due to engine optimizations)
+  - use max duration:
+     - as opposed to fixed number of loops
+     - reasons:
+        - does not increase variance as engines or code gets faster
+           - because faster code has higher variance
+        - more stable user experience, avoiding potentially very long runs
+        - get the most precision as user is ready to wait
+        - no separate timeout feature needed
+  - max duration is approximative:
+     - reason: we need exactly 3 ** NUM iterations
+     - this might be -|+ 50% of max duration (regardless of number of main())
+        - average deviation is 25% if one task
+           - minus 1/sqrt(1) if two tasks, then minus 1/sqrt(2) if three tasks, etc.
+           - etc. 25% -> 16.7% -> 13.5% -> 11.7% -> 10.4%
+  - use bottom-up recursion:
+     - reason: we don't know how many recursion levels are needed to reach max duration
 
 OPTS.duration:
   - instead of OPTS.repeat
@@ -222,6 +226,10 @@ OPTS.platforms STR (use browserlist and PACKAGE.engines)
   - create one RESULT per platform, with different RESULT.system
   - abstract to own package
   - should allow adding platforms as plugins
+
+Separate now.js to its own package
+
+Separate resolution.js to its own package
 
 Promote:
   - add keywords (GitHub, package.json)
