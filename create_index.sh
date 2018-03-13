@@ -8,7 +8,7 @@ fi
 
 md-file-tree | sed '
   1 d;
-  s_Koi/_//github.com/ehmicky/Koi/tree/dev/_;
+  s_Koi/_//github.com/ehmicky/Koi/blob/dev/_;
   s/\.txt\]/]/;
   s/^  //;
   s/^- /\n/;
