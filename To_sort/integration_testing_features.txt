@@ -5,6 +5,99 @@ Truncating should happen in props/main.js so it affects:
 
 How to remove deep properties set by `spec` plugin???
 
+Helpers:
+  - goal: dynamic values
+  - syntax:
+     - { $FUNC: ARG }
+     - must be single property of the object
+        - otherwise not considered a helper, but no error
+        - reason: allow objects with some attributes starting with $
+     - if $FUNC is not a valid helper name, throw exception
+        - reason: make adding new helpers (for core or for users) predictable and non breaking
+        - $ref should already be resolved, i.e. should not be an issue
+     - if { $$FUNC: ARG }, convert to { $FUNC: ARG } and leave as is
+        - i.e. allow escaping $FUNC with $$FUNC, $$FUNC with $$$FUNC, etc.
+  - helpers can be used in:
+     - tasks files
+     - helpers return values
+     - not in config
+     - not in plugins
+        - e.g. spec plugin must access random utility code directly
+  - substitution:
+     - happens at beginning of `run` handlers
+        - reason:
+           - cannot happen during `start` because must be after `repeat` plugin
+           - must happen as early as possible, so that other handlers are not aware of it
+        - should be after `repeat` plugin
+           - reason: some handlers use global state (e.g. random or depReqs) which should give different inputs
+        - should be after `skip|only` plugin:
+           - task.skip|only value should not matter (i.e. always true when key is defined)
+           - reason: helpers not substituted yet, but we do not want to substitute helpers (e.g. long depReqs) on skipped tasks
+     - crawl task recursively:
+        - i.e. allowed in deep properties
+        - substitution happens from descendants to ancestors
+           - i.e. can be recursive e.g. { $FUNC: { $FUNC2: ARG } }
+     - substituted value is re-used for return value including:
+        - next plugins
+        - task return value even though it's part of originalTask
+           - including depReqs selection
+        - reporting
+     - plugin config validation should be fired only after all helpers substitution
+     - substituted value can be another { $FUNC: VAL }, subtituted recursively
+        - what about infinite recursion???
+        - can be used to create aliases, specifically with $var helper
+  - plugin loading:
+     - on-demand (deduced from $FUNC used) during `run` handler substitution
+        - error if cannot find
+        - validate syntax, including starts with $ and value is function
+        - memoized
+     - either (in priority):
+        - config.helpers.custom.$FUNC
+        - Node module test-openapi-helper-FUNC
+        - core $FUNC
+     - user-defined helper has priority over core:
+        - reason: allow monkey patching / flexibility
+        - other reason: make adding new core helpers non breaking
+  - helper functions arguments:
+     - FUNC(arg, { options, task: originalTask, config, pluginNames }, { plugins, runTask })
+        - options are config.helpers.$FUNC VAL (def: undefined)
+     - can be async (using promiseThen())
+        - all helpers are fired in parallel for a given task
+  - defining helpers:
+     - config.helpers.$FUNC VAL: options for any helper, including customs
+     - config.helpers.custom.$FUNC FUNC: user-defined helper
+  - core helpers:
+     - what's their names???
+     - available:
+         - constants/variables
+         - env vars
+             - should be matched case-insensitively
+             - should use parseFlat() on values
+             - should be used by `spec` plugin to retrieve PORT and HOST
+         - random from JSON schema
+             - re-use logic from `random` plugin, and remove it
+                 - must adjust `spec` plugin accordingly
+         - random from faker
+         - depReqs
+             - re-use logic from `deps` plugin, and remove it
+
+JSON references:
+  - use same code as autoserver:
+     - including relative references
+     - including can be used to target functions
+  - can be used both in config and tasks file
+  - resolved during config/tasks load, before start handlers
+
+Function parameters:
+  - as opposed to helpers:
+     - passed to plugins instead of automatically handled by task runner
+     - can access current task (not just originalTask)
+  - should be discouraged as non-declarative
+  - declared in plugin.config.*.* using JsonSchema.format 'function'
+     - add an ajv format handler
+  - passed by user using JSON references
+  - use it for validate.custom FUNC(task.call)->BOOL
+
 CLI options:
   - get all possible plugins using readdir list from plugins dir
       - add TODO to use node_modules instead
