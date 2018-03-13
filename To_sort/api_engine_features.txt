@@ -1,16 +1,30 @@
 Pagination:
-  - limits:
-     - MAX_DEPTH 5:
-        - including top-level
-        - cannot be configured by user
   - nested action:
      - metadata are at response.metadata.nested_pages.ATTR.*
-     - create|upsert:
-        - throws if args.data has recursively more than runOpts.maxmodels
-     - patch:
-        - throws if response is recursively more than runOpts.maxmodels:
-           - do this by checking, before any command, the cumulated current results (including pending results) length,
-             adding the current command length, and check if > maxmodels
+
+How:
+  - at second depth level only, using all retrieved models (which is only once if *One command)
+  - only if maxmodels !== Infinity
+  - only if top.command.type === 'find'
+  - do all this before concatenating nested actions
+  - start with secondLevelModelsCount
+  - assign weight to each nested action for current model, using number of children
+  - consider non-multiple attributes as a multiple atttributes with length 1
+  - nestedpagesize:
+     - map each model to ARR_ARR, with each ARR being each non-empty and non-length-0 nested attribute filled
+       with attribute's weight
+     - flatten ARR_ARR_ARR to ARR_ARR
+     - transform to ARR_ARR_ARR where ARR_ARR_ARR[index] is ARR_ARR containing all ARR with ARR.length === index + 1
+     - slice only first pagesize elements (to avoid nestedpagesize being higher, to avoid pagination circumventing)
+     - reduce each ARR_ARR to its sum of sums
+     - find first index where cumulated secondLevelModelsCount + sum > models, and use index - 1
+        - otherwise, use Infinity
+  - if nestedpagesize is 0, throw
+  - slice each multiple nested attribute to nestedpagesize
+  - any nested attribute where all attributes lengths < nestedpagesize should not be paginated (i.e. no metadata)
+     - otherwise, set metadata.nested_pages.ATTR.*
+
+
      - findMany:
         - use runOpts.maxmodels INT:
            - must calculate nestedpagesize that:
@@ -25,20 +39,37 @@ Pagination:
               - we can estimate it:
                  - since each top-level action has its own number of descendants, this might require an algorithm that
                    does several trials under maximized.
-           - def: 100 * runOpts.pagesize (not args.pagesize)
+           - remember maxmodels can be Infinity
         - nested pagesize is applied on each nested action, from a client perspective, even though the server concatenate
           all of them in a single command
+     - patch:
+        - throws if response is recursively more than runOpts.maxmodels:
+           - do this by checking, before any command, the cumulated current results (including pending results) length,
+             adding the current command length, and check if > maxmodels
+        - remember maxmodels can be Infinity
      - delete:
         - no pagination, including runOpts.maxmodels
         - if dryrun, paginated like find command instead:
            - including response metadata
-  - nested actions restrictions:
-     - find: can only do a *many action top-level or at the second level
-     - patch|delete|create|upsert: can do *many action on any level
   - duplicates:
      - pagination, including maxmodels, does not care whether models are duplicate only. In other words, maxmodels is
        checked against modelscount not uniquecount.
-  - metadata.pages.first|last|previous|next:
+  - user document:
+     - batch size might be smaller than args.pagesize (e.g. if response duplicates were removed)
+     - out-of-range offset pagination will set metadata.pages to undefined
+     - metadata.has_next_page|next_token|last_token are undefined if no next page
+       Same thing for *previous|first*
+     - patch commands: only forward cursor pagination
+     - document difference with offset pagination: not random-access, but stronger consistency/isolation
+     - limits:
+        - find actions can only do *many at first or second depth level
+        - maxmodels limit:
+           - delete: not applied
+           - create|upsert: args.data size
+           - patch: response size, will throw
+           - find: response size, will paginate
+           - 0 to disable
+  - metadata.[nested_]pages.first|last|previous|next:
      - only for cursor pagination
      - this is REST-specific
      - like first|last|previous|next_token, but prepended with URL to perform the query
@@ -50,13 +81,6 @@ Pagination:
            - calculated by doing an extra count database query
         - for cursor pagination:
            - only set on nested findMany actions, where it can be guessed without additional queries
-  - user document:
-     - batch size might be smaller than args.pagesize (e.g. if response duplicates were removed)
-     - out-of-range offset pagination will set metadata.pages to undefined
-     - metadata.has_next_page|next_token|last_token are undefined if no next page
-       Same thing for *previous|first*
-     - patch commands: only forward cursor pagination
-     - document difference with offset pagination: not random-access, but stronger consistency/isolation
   - relay.js:
      - requires model-wise cursors, which is too slow, and too complicated for users, i.e.:
         - only expose Relay.js cursors as opt-in
