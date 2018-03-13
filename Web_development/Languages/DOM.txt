@@ -26,6 +26,8 @@ INTEROPERABILITY ==>                            #See HTML doc for list of browse
 
 SUMMARY ==>                                     #Basic:
                                                 #  - HTML: integrating with HTML
+                                                #Architecture:
+                                                #  - Loading (async|sync)
                                                 #Utilities:
                                                 #  - Utilities
                                                 #  - Timeouts: setTimeout(), requestAnimationFrame(), etc.
@@ -35,7 +37,6 @@ SUMMARY ==>                                     #Basic:
                                                 #  - Events
                                                 #  - UIEvent
                                                 #  - Mouse/touch events
-                                                #  - Loading (async|sync)
                                                 #  - Load events
                                                 #Document:
                                                 #  - Top-level: WINDOW, DOCUMENT
@@ -106,6 +107,126 @@ DOCUMENT.scripts                                #SCRIPT_HTMLCOLLECTION
   onEVENT="CODE"                                #Deprecated. EVENT lowercase.
 
 <noscript>...</noscript>                        #When JavaScript not available.
+
+
+
+                  
+   ARCHITECTURE   
+                  
+
+
+Parts:
+  - browser chrome:
+     - changing URL: address bar, back|forward|refresh|home button, bookmarks
+     - changing loading state: stop button
+     - tabs-related features
+     - meta-information: history
+     - print, save
+     - changing document: zoom, privacy, autofil, default font size, language, accessibility
+  - extensions/addons
+  - devtools: treated like a document
+  - document: actual webpage
+
+Document parts:
+  - rendering engine: parse and ask UI backend to paint HTML
+  - networking: HTTP requests
+  - UI backend: does the pixel painting (a bit like Cairo)
+  - JavaScript interpreter: parse and execute JavaScript
+  - Data storage: localStorage, cookies, IndexedDB, etc.
+
+Rendering engine pipeline:
+  - steps:
+     - preload-parse(HTML): simplistic parser that look for early optimizations, e.g. starting to perform HTTP requests
+     - parse(HTML) -> DOM tree
+        - HTML is context-sensitive language, where CSS and JavaScript are context-free, because HTML has forgiving syntax
+     - parse(CSS) -> CSSOM tree
+     - parse(JavaScript) then execute, manipulating DOM|CSSOM tree
+     - cascade|attachment(DOM tree, CSSOM tree) -> render tree:
+        - decides which style info goes to which DOM element
+        - decides which style has priority (specificity)
+     - layout(render tree): 
+        - add screen position/width/height info to render elements
+        - use rectangular areas depending on CSS display and box model and positioning properties
+           - one element can have several areas, e.g. multiline inline element
+           - one element can have no area, e.g. with display none
+     - paint(render tree):
+        - ask UI backend to paint pixels
+     - composite:
+        - mix several paint areas, e.g. transparency
+  - each step will be reperformed globally or locally/incrementally on new events
+
+
+																						 /=+===============================+=\ 
+																						/  :                               :  \  
+							 														  )==:            LOADING            :==(   
+																						\  :_______________________________:  /    
+																						 \=+===============================+=/
+
+
+SUMMARY ==>                       							#Async:
+                                  							#  - JavaScript|CSS:
+                                  							#     - when dynamically added, <script async> or <link rel="preload">
+                                  							#     - problems: 
+                                  							#        - using DOM|CSSOM -> DOMContentLoaded or <script defer>
+                                  							#        - FOUC
+                                  							#  - other resources: always
+                                  							#Should group HTML|CSS|JavaScript into components
+
+JAVASCRIPT ==>                    							#Sync:
+																								#  - inline <script>
+																								#  - <script src>
+																								#Async:
+																								#  - how:
+																								#     - <script src async>
+																								#     - dynamically adding <script src> 
+																								#  - problem: when script uses DOM
+																								#  - fixes (aside from using sync):
+																								#     - <script src defer> 
+																								#     - DOMContentLoaded 
+																								#     - (deprecated) <script> at end of <body>
+
+CSS ==>                           							#Sync:
+																								#  - <style>
+																								#  - CSS <link>:
+																								#     - parsing blocked at next <script> 
+																								#     - rendering blocked right away
+																								#     - exceptions:
+																								#        - Safari: parsing blocked right away
+																								#        - Firefox: 
+																								#           - rendering not blocked if in <body>
+																								#           - fix: adding empty <script> after CSS <link>
+																								#  - @import
+																								#Async:
+																								#  - how:
+																								#     - <link rel="preload" url="URL.css" as="style" onload="this.rel = 'stylesheet';"> (see HTTP doc)
+																								#     - dynamically adding CSS <link>
+																								#     - loadCSS (1.2.0):
+																								#        - loadCSS('URI.css'[, ELEM[, 'MEDIAQUERYLIST']])->LINK
+																								#           - dynamically adds CSS <link>, before ELEM (def: end of <head>)
+																								#        - polyfills <link rel="preload" as="style">
+																								#  - problems:
+																								#     - (parsing) when script uses CSSOM
+																								#     - (rendering) FOUC (Flash Of Unstyled Content):
+																								#        - shows unstyled HTML
+																								#        - makes DOM jumping around
+																								#        - only for HTML visible on viewport
+																								#  - fixes (aside from using sync):
+                                  							#     - (parsing) DOMContentLoaded
+																								#     - (rendering) emulate sync by temporarily display: none on related HTML
+
+FONTS ==>                                       #@font-face always async
+                                                #Problems: FOUT (Flash Of Unstyled Text), similar to FOUC
+
+OTHER RESOURCES ==>               							#Images, video, audio, svg, object, iframe: always async
+
+PERFORMANCE ==>                   							#Async is best
+																								#Should defer sync by grouping HTML|CSS|JavaScript into components:
+																								#  - above the fold / critical path CSS:
+																								#     - (poorer) alternative to grouping into components
+																								#     - make first displayed DOM's CSS sync, other CSS async
+																								#     - usually use headless browser to load page and figure out which CSS is "above the fold"
+
+
 
 
 
@@ -445,74 +566,6 @@ TOUCHLIST                                       #TOUCH_ARR-like
 TOUCH.identifier                                #ID_NUM
 TOUCH.target                                    #
 TOUCH.screen|client|pageX|Y                     #Like MOUSEEVENT
-
-
-																						 /=+===============================+=\ 
-																						/  :                               :  \  
-							 														  )==:            LOADING            :==(   
-																						\  :_______________________________:  /    
-																						 \=+===============================+=/
-
-
-SUMMARY ==>                       							#Async:
-                                  							#  - JavaScript|CSS:
-                                  							#     - when dynamically added, <script async> or <link rel="preload">
-                                  							#     - problems: 
-                                  							#        - using DOM|CSSOM -> DOMContentLoaded or <script defer>
-                                  							#        - FOUC
-                                  							#  - other resources: always
-                                  							#Should group HTML|CSS|JavaScript into components
-
-JAVASCRIPT ==>                    							#Sync:
-																								#  - inline <script>
-																								#  - <script src>
-																								#Async:
-																								#  - how:
-																								#     - <script src async>
-																								#     - dynamically adding <script src> 
-																								#  - problem: when script uses DOM
-																								#  - fixes (aside from using sync):
-																								#     - <script src defer> 
-																								#     - DOMContentLoaded 
-																								#     - (deprecated) <script> at end of <body>
-
-CSS ==>                           							#Sync:
-																								#  - <style>
-																								#  - CSS <link>:
-																								#     - parsing blocked at next <script> 
-																								#     - rendering blocked right away
-																								#     - exceptions:
-																								#        - Safari: parsing blocked right away
-																								#        - Firefox: 
-																								#           - rendering not blocked if in <body>
-																								#           - fix: adding empty <script> after CSS <link>
-																								#  - @import
-																								#Async:
-																								#  - how:
-																								#     - <link rel="preload" url="URL.css" as="style" onload="this.rel = 'stylesheet';"> (see HTTP doc)
-																								#     - dynamically adding CSS <link>
-																								#     - loadCSS (1.2.0):
-																								#        - loadCSS('URI.css'[, ELEM[, 'MEDIAQUERYLIST']])->LINK
-																								#           - dynamically adds CSS <link>, before ELEM (def: end of <head>)
-																								#        - polyfills <link rel="preload" as="style">
-																								#  - problems:
-																								#     - (parsing) when script uses CSSOM
-																								#     - (rendering) FOUC (Flash Or Unstyled Content):
-																								#        - shows unstyled HTML
-																								#        - makes DOM jumping around
-																								#        - only for HTML visible on viewport
-																								#  - fixes (aside from using sync):
-                                  							#     - (parsing) DOMContentLoaded
-																								#     - (rendering) emulate sync by temporarily display: none on related HTML
-
-OTHER RESOURCES ==>               							#Images, video, audio, svg, object, iframe: always async
-
-PERFORMANCE ==>                   							#Async is best
-																								#Should defer sync by grouping HTML|CSS|JavaScript into components:
-																								#  - above the fold / critical path CSS:
-																								#     - (poorer) alternative to grouping into components
-																								#     - make first displayed DOM's CSS sync, other CSS async
-																								#     - usually use headless browser to load page and figure out which CSS is "above the fold"
 
 
                                              /=+===============================+=\ 
