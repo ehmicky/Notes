@@ -2405,48 +2405,21 @@ EXTERNAL DEVICES ==>                        IE11#Network Service Discovery (W) (
 
 
 IndexedDB: 
-  - like localStorage but for structured data and query
-     - including space quota???, private browsing and removing using user settings
-  - async
-  - key-value store
-  - value: any JSON val, but also REGEXP, ARRAYBUFFER[VIEW], MAP|SET, BLOB, IMAGEDATA, and circular references
+  - like localStorage:
+     - client-side key-value store
+     - affected by space quota???, private browsing and removing using user settings
+  - unlike localStorage:
+     - more value types
+     - async
   - ACID:
      - atomicity: 
         - use transactions: auto-commit
         - object store-wide write lock
-     - durability: notifies when buffered (but not flushed to disk)
-
-Connection:
-  - to a database
-  - browser can time it out
-  - can be: readwrite, readonly or versionchange
-
-Request:
-  - single operation to an object store
-
-Database:
-  - 1+ object stores
-  - name STR
-  - version NUM (def: 1):
-     - incremented when schemas change
-
-Object stores:
-  - OBJ|table
-  - stored by key in asc order
-  - name STR
-  - keys:
-     - must be unique
-     - STR|DATE|NUM|ARR
-     - can use:
-        - key generators, i.e. FUNC()->KEY
-        - key paths VARR, i.e. VAL[VARR] (in-line key)
-        - 'KEY'
-
-Indexes:
-  - are object stores themselves
-  - values are the "referenced" object store keys
-
-Cursors:
+     - durability: 
+        - notifies when buffered (but not flushed to disk)
+        - transactions can abort without notifications (e.g. when user closes browser)
+  - Connection:
+     - browser can time it out
 
 WINDOW|WORKERGLOBAL.indexedDB                   #IFACTORY
 
@@ -2455,8 +2428,8 @@ IFACTORY.open('DB'[, VERSION_NUM])->IOREQ(IDB)  #
 IFACTORY.deleteDatabase('DB')->IOREQ()          #
 IDB.name                                        #'DB'
 IDB.close()                                     #Let pending ITRANSACTION finish first, but do not start new ones
-IDB.onabort = FUNC(EVENT)                       #
-IDB.onerror = FUNC(EVENT)                       #
+IDB.onabort = FUNC(EVENT)                       #Fired if any ITRANSACTION.onabort
+IDB.onerror = FUNC(EVENT)                       #Fired if any ITRANSACTION.onerror
 
 IDB.version                                     #VERSION_NUM (ULONGLONG). Changed everytime schemas change.
                                                 #When IFACTORY.open() use VERSION_NUM (def: current one):
@@ -2464,9 +2437,10 @@ IDB.version                                     #VERSION_NUM (ULONGLONG). Change
                                                 #  - > IDB.version: 
                                                 #     - request IDB-wide lock:
                                                 #        - new connections are queued
-                                                #        - existing connections get IDB.onversionchange event, to allow them to close
+                                                #        - existing connections (e.g. other tabs) get IDB.onversionchange event, to allow them to close
                                                 #     - if any could not close, IOREQ.onblocked is fired
                                                 #     - otherwise, IOREQ.onupgradeneeded is fired, with IOREQ.mode 'versionchange' (i.e. can change schema)
+                                                #Are schemas kept accross user settings removal???
                                                 #When IFACTORY.deleteDatabase():
                                                 #  - new VERSION_NUM is null, upgradeneeded is not fired 
                                                 #  - but otherwise is like upgradeneeded mechanism
@@ -2476,10 +2450,18 @@ IOREQ.onupgradeneeded = FUNC(VCHANGEEVENT)      #
 IOREQ.onblocked = FUNC(VCHANGEEVENT)            #
 
 KEY                                             #???
+                                                #Can be STR|DATE|NUM|ARR???
+                                                #Default value???:
+                                                #  - if keyPath KEYPATH: IVAL[KEYPATH], if exists (i.e. IVAL must be OBJ)
+                                                #  - if autoIncrement true: NUM++ (starts at 1)
+                                                #  - otherwise error
                                                 #Unique constraint only on primary key???
-KEYPATH                                         #???
+                                                #By default, values are stored by key in asc order
+KEYPATH                                         #'VARR' or 'VAR'_ARR
+IFACTORY.cmp(KEY, KEY2)->-1|0|1                 #Using default IndexedDB key sorting
 IVAL                                            #Any JSON val, but also: REGEXP, ARRAYBUFFER[VIEW], MAP|SET, BLOB, IMAGEDATA, and circular references
                                                 #If trying to IVAL with unsupported type, will use IREQ with 'DataCloneError'
+
 IDBObjectStore                                  #Store (table-like)
 IDB.createObjectStore('STORE'[, OBJ])->ISTORE   #OBJ: keyPath, autoIncrement
 IDB.deleteObjectStore('STORE')                  #
@@ -2487,12 +2469,13 @@ IDB.objectStoreNames                            #'STORE'_ARR (ARR-like, with als
 ISTORE.name                                     #'STORE'
 ISTORE.keyPath                                  #KEYPATH|null
                                                 #If specified wrong, will use IREQ with 'SyntaxError'
-ISTORE.autoIncrement                            #BOOL (def: false) ???
+ISTORE.autoIncrement                            #BOOL (def: false)
 ISTORE.add(IVAL[, KEY])->IREQ(KEY)              #Create. If already exist, IREQ with 'ConstraintError'
 ISTORE.put(IVAL[, KEY])->IREQ(KEY)              #Create or update
-ISTORE.get([KEY])->IREQ(IVAL)                   #If IVAL is undefined, cannot tell if KEY exists or not. Should use ICUR to figure it out instead.
+ISTORE.get([KRANGE])->IREQ(IVAL)                #If IVAL is undefined, cannot tell if KEY exists or not. Should use ICUR to figure it out instead.
+                                                #Def KEY???
 ISTORE.count([KRANGE])->IREQ(NUM)               #
-ISTORE.delete([KRANGE])->IREQ()                 #
+ISTORE.delete([KRANGE???])->IREQ()              #
 ISTORE.clear()->IREQ()                          #
 
 KRANGE                                          #KEY|IRANGE
@@ -2505,27 +2488,29 @@ IKeyRange.only(KEY)->IRANGE                     #Same with lower === upper and l
 
 IDBCursor                                       #Iterator
 ISTORE|IINDEX.open[Key]Cursor
- ([KRANGE[, DIRECTION]])->IREQ(ICUR)            #If 'Key', ICUR.value is not available
+ ([KRANGE[, DIRECTION]])->IREQ(ICUR)            #If 'Key', ICUR.value is not available (or is different???)
 ICUR.source                                     #ISTORE|IINDEX
 ICUR.direction                                  #'next|prev[unique]' (def: 'next') ('unique' skips duplicates)
-ICUR.key|primaryKey                             #Current KEY ???
+ICUR.key|primaryKey                             #Current KEY ??? Only distinction if using IINDEX???
 ICUR.value                                      #Current IVAL
 ICUR.advance(ULONG)                             #Moves cursor ULONG times
 ICUR.continue([KEY])                            #Moves cursor until KEY reached (def: like advance(1))
 ICUR.update(IVAL)->IREQ()                       #Updates at current position
 ICUR.delete()->IREQ()                           #Deletes at current position
 
-IDBIndex                                        #
+IDBIndex                                        #Retrieves values from an ISTORE using a different KEYPATH that the primary one.
+                                                #ISTORE must contani OBJ values, using OBJ[KEYPATH] as secondary key.
 ISTORE.indexNames                               #'INDEX'_ARR (ARR-like, with also contains('INDEX'))
 ISTORE.createIndex('INDX',KEYPATH[,OBJ])->IINDEX#OBJ: unique BOOL, multiEntry BOOL
 ISTORE.index('INDEX')->IINDEX                   #
 ISTORE.deleteIndex('INDEX')                     #
 IINDEX.name                                     #'INDEX'
 IINDEX.objectStore                              #ISTORE
-IINDEX.keyPath                                  #KEYPATH ???
+IINDEX.keyPath                                  #KEYPATH
 IINDEX.multiEntry                               #BOOL (def: false) ???
-IINDEX.unique                                   #BOOL (def: false) ???
-IINDEX.get[Key](KRANGE)->IREQ(KEY|IVAL)         #
+IINDEX.unique                                   #BOOL: if true (def: false), enforces uniquess on KEYPATH
+IINDEX.getKey(KRANGE)->IREQ(KEY)                #Primary key???
+IINDEX.get(KRANGE)->IREQ(IVAL)                  #
 IINDEX.count([KRANGE])->IREQ(NUM)               #
 
 IDBTransaction                                  #Database transaction
@@ -2540,7 +2525,7 @@ ITRANSACTION.mode                               #MODE:
                                                 #  - 'readwrite': cannot modify schema (*.create|deleteObjectStore|Index()). ISTORE-wide lock.
                                                 #  - 'versionchange': can do anything. Only available inside upgradeneeded event handler. IDB-wide lock.
 ITRANSACTION.oncomplete = FUNC(EVENT)           #Fired on success, i.e. when transaction result is buffered (not flushed to disk)
-ITRANSACTION.onerror = FUNC(EVENT)              #Fired on failure
+ITRANSACTION.onerror = FUNC(EVENT)              #Fired if any IREQ.onerror
 ITRANSACTION.error                              #ERROR|null
 ITRANSACTION.abort()                            #Rollbacks changes
                                                 #Future IREQ with fail with 'AbortError'
@@ -2549,15 +2534,11 @@ ITRANSACTION.onabort = FUNC(EVENT)              #On ITRANSACTION.abort()
 IDBRequest                                      #Async operation (PROMISE-like)
 IREQ.source                                     #Object having returned it, i.e. ISTORE|IINDEX|IICURSOR|null
 IREQ.transaction                                #ITRANSACTION|null
-IREQ.readyState                                 #Can be:
-                                                #  - 'pending'
-                                                #  - 'done':
-                                                #     - success: sets IREQ.result, fires success
-                                                #     - error: sets IREQ.error, fires error
+IREQ.readyState                                 #Can be 'pending', or 'done' (success|error)
 IREQ.onsuccess = FUNC(EVENT)                    #
-IREQ.result                                     #VAL
-IREQ.onerror = FUNC(EVENT)                      #Default browser action (cancelable): calls IREQ.transaction.abort()
-IREQ.error                                      #ERROR:
+IREQ.result                                     #If success. VAL
+IREQ.onerror = FUNC(EVENT)                      #Default browser action (cancelable) (on IREQ, ITRANSACTION or IDB???): calls IREQ.transaction.abort()
+IREQ.error                                      #If error. ERROR:
                                                 #  - 'NoError': if success
                                                 #  - 'NotFoundError': did not find name
                                                 #  - 'ConstraintError': e.g. name already exist, unique constraints
@@ -2568,5 +2549,3 @@ IREQ.error                                      #ERROR:
                                                 #  - 'UnknownError': e.g. IO error
                                                 #  - '*Error': see above
 IDBOpenDBRequest                                #Child of IRequest
-
-IFACTORY.cmp(KEY, KEY2)->-1|0|1                 #Using default IndexedDB key sorting
