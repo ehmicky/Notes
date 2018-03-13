@@ -39,8 +39,8 @@ s/_\([[:lower:]][^()]\+)\]\)/_\u\1/
 s/_\([[:lower:]][^()]\+)\]\)/_\u\1/
 s/_\([[:lower:]][^()]\+)\]\)/_\u\1/
 s/_\([[:lower:]][^()]\+)\]\)/_\u\1/
-# Fix case
-s/(\([^)]*\)Cli\([^)]*\))]/(\1CLI\2)/
+# Fix case of technologies
+s/(\([^)]*\)Cli\([^)]*\))]/(\1CLI\2)]/
 #s/(Aws)/(AWS)/
 #s/(Javascript)/(JavaScript)/
 
