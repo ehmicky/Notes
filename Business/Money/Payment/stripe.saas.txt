@@ -114,21 +114,30 @@ RESOURCE.livemode                 #BOOL on all RESOURCEs
 
 Request-Id: UUID [S]              #
 
-SECURITY ==>                      #Security-sensitive information:
-                                  #  - personal info, credit cards, bank account
-                                  #  - never returned in response, only in request payloads
-                                  #  - also not needed in request payloads when letting Stripe do it through TOKENs with
-                                  #    Stripe checkout, Elements, mobile SDK, Terminal or Connect.
-                                  #     - i.e. servers never see those information
-                                  #For security and PCI compliance:
-                                  #  - use HTTPS
-                                  #  - must submit self-assessments if:
-                                  #     - creating charges manually via HTTP or via Dashboard (instead of Elements, etc.)
-                                  #  - must do a fuller compliance process if more than 15000 transactions per day
-                                  #Check online doc how to migrate from|to Stripe from|to another provider:
+SECURITY ==>                      #Check online doc how to migrate from|to Stripe from|to another provider:
                                   #  - it's not easy and might be impossible if new provider is not PCI compliant
                                   #  - from one Stripe account to another: can contact support
                                   #When using CSP in front-end, must whitelist some *.stripe.com (see online doc).
+
+PCI COMPLIANCE ==>                #See PCI doc.
+                                  #How Stripe helps:
+                                  #  - stores sensitive information
+                                  #     - i.e. never returned in response, only in request payloads
+                                  #  - front-end code (checkout, Elements, mobile SDK, Terminal, Connect) handles it,
+                                  #    i.e. never handled by our front-end or server code
+                                  #     - i.e. needs to use those to be PCI compliant
+                                  #  - validation: just need to click it every 3 month in dashboard, providing:
+                                  #     - not creating charges manually via HTTP or via Dashboard (instead of Elements, etc.)
+                                  #     - not level 1
+                                  #        - for level 1, can also offer help (must contact them), reducing audit time from 3 months to 1 week
+
+PSD2 ==>                          #EU directive. Includes SCA (Strong Customer Authentication):
+                                  #  - requires 2-factor auth on credit card payments
+                                  #     - among knowledge (e.g. password), possession (e.g. device), inherence (e.g. biometrics)
+                                  #  - 3D secure is SCA-compliant
+                                  #  - exceptions:
+                                  #     - fixed amount subscriptions, providing there is a contract
+                                  #     - phone sales
 
 { error: ERROR }                  #Error response for any endpoint
 ERROR.type                        #Can be:
@@ -480,6 +489,163 @@ FILE_LINK.file                  *C#FILE.id The file object this link points to.
 ?file=FILE.id                     #
 FILE_LINK.url                     #string The publicly accessible URL to download the file.
 
+EXTENSIONS ==>                    #Allow apps to do things on behalf of user's STRIPE_ACCOUNT using OAuth.
+                                  #Must be registered online.
+POST /oauth/[express/]authorize
+?client_id=CLIENT_ID
+?scope=read_write
+?response_type=STR                #Those are actual URL parameters
+STRIPE.oauth.authorizeUrl         #Returns '/oauth/authorize' full URL. OPTS:
+ ([URL_PARAMS, ][OPTS])->'URL'    #  - express BOOL
+POST /oauth/token
+POST /oauth/deauthorize           #
+STRIPE.oauth.token|deauthorize()  #Endpoint is 'connect.stripe.com'
+STRIPE.setClientId('CLIENT_ID')
+STRIPE.getClientId()->'CLIENT_ID' #
+account.application.authorized    #'EVENT_TYPE' when a user authorizes an application.
+account.application.deauthorized  #'EVENT_TYPE' when a user deauthorizes an application.
+
+STRIPE_ACCOUNT                    #Stripe account.
+                                  #Also used with Connect.
+GET /accounts[/ID]
+POST /accounts[/ID]
+DELETE /accounts/ID               #
+POST /accounts/ID/reject          #Flag STRIPE_ACCOUNT as suspicious by setting payouts_enabled|charges_enabled to false.
+                                  #Payload: account, reason
+STRIPE.accounts.retrieve|list|
+ create|update|del|reject()       #
+PAYLOAD.reason                    #STR. The reason for rejecting the account. Can be fraud, terms_of_service, or other.
+STRIPE_ACCOUNT.type             *C#Can be 'standard', 'express', or 'custom'.
+STRIPE_ACCOUNT.country           C#COUNTRY. Cannot be changed.
+                                  #Must match the bank account / credit card's country.
+                                  #Impacts pricing and which currency are available for payouts.
+STRIPE_ACCOUNT.email            CU#STR.
+STRIPE_ACCOUNT.
+ business_profile               CU#BUSINESS_PROFILE. Information shown to customers.
+BUSINESS_PROFILE.name           CU#STR.
+BUSINESS_PROFILE.url            CU#'URL'
+BUSINESS_PROFILE.support_addressCU#ADDRESS.
+BUSINESS_PROFILE.support_email  CU#STR.
+BUSINESS_PROFILE.support_phone  CU#STR.
+BUSINESS_PROFILE.support_url    CU#'URL'
+BUSINESS_PROFILE.mcc            CU#STR. Four-digits ISO 18245 describing industry.
+                                  #Can be used by payment providers to enforce specific rules or taxes.
+BUSINESS_PROFILE.
+ product_description            CU#STR. Internal-only description of the product sold. Used by Stripe for risk and underwriting purposes.
+STRIPE_ACCOUNT.business_type    CU#Either 'individual' or 'company'.
+STRIPE_ACCOUNT.individual       CU#PERSON. Only if business_type 'individual'.
+STRIPE_ACCOUNT.company          CU#STRIPE_COMPANY. Only if business_type 'company'. Used for verification by Stripe.
+STRIPE_COMPANY.name             CU#STR. Legal name.
+STRIPE_COMPANY.address          CU#ADDRESS.
+STRIPE_COMPANY.phone            CU#STR.
+STRIPE_COMPANY.
+ directors_provided             CU#BOOL. Must be set to true once all PERSONs with RELATIONSHIP.director true have been created.
+STRIPE_COMPANY.owners_provided  CU#BOOL. Must be set to true once all PERSONs with RELATIONSHIP.owner true have been created.
+                                  #Automatically set by Stripe if total RELATIONSHIP.percent_ownership amounts to 1.
+STRIPE_COMPANY.tax_id          RCU#Country-specific company ID.
+STRIPE_COMPANY.tax_id_provided    #BOOL
+STRIPE_COMPANY.
+ tax_id_registrar               CU#Country-specific (Germany only) company jurisdiction .
+STRIPE_COMPANY.vat_id          RCU#Country-specific company VAT number.
+STRIPE_COMPANY.vat_id_provided    #BOOL
+STRIPE_ACCOUNT.account_token   RCU#TOKEN.id
+STRIPE_ACCOUNT.                 CU#The set of capabilities you want to unlock for this account (US only).
+ requested_capabilities           #Each capability will be inactive until you have provided its specific requirements and Stripe has verified them.
+                                  #An account may have some of its requested capabilities be active and some be inactive.
+STRIPE_ACCOUNT.capabilities       #CAPABILITIES. A hash containing the set of capabilities that was requested for this account and their associated states.
+                                  #Keys may be card_payments, legacy_payments, or platform_payments. Values may be active, inactive, or pending.
+CAPABILITIES.card_payments        #string The status of the card payments capability of the account, or whether the account can directly process credit and debit card charges.
+CAPABILITIES.legacy_payments      #string The status of the legacy payments capability of the account.
+CAPABILITIES.platform_payments    #string The status of the platform payments capability of the account, or whether your platform can process charges on behalf of the account.
+STRIPE_ACCOUNT.charges_enabled    #boolean Whether the account can create live charges.
+STRIPE_ACCOUNT.
+ default_currency               CU#string Three-letter ISO currency code representing the default currency for the account. This must be a currency that Stripe supports in the account's country.
+STRIPE_ACCOUNT.details_submitted  #boolean Whether account details have been submitted. Standard accounts cannot receive payouts before this is true.
+STRIPE_ACCOUNT.external_accounts  #EXTERNAL_ACCOUNT_LIST
+STRIPE_ACCOUNT.
+ external_account              RCU#EXTERNAL_ACCOUNT
+STRIPE_ACCOUNT.payouts_enabled    #boolean Whether Stripe can send payouts to this account.
+STRIPE_ACCOUNT.requirements       #REQUIREMENTS. Information about the requirements for the account, including what information needs to be collected, and by when.
+REQUIREMENTS.current_deadline     #timestamp The date the fields in currently_due must be collected by to keep payouts enabled for the account.
+                                  #These fields might block payouts sooner if the next threshold is reached before these fields are collected.
+REQUIREMENTS.currently_due        #array containing strings The fields that need to be collected to keep the account enabled.
+                                  #If not collected by the current_deadline, these fields will appear in past_due as well, and the account will be disabled.
+REQUIREMENTS.disabled_reason      #string If the account is disabled, this string describes why the account can't create charges or receive payouts.
+                                  #Can be requirements.past_due, requirements.pending_verification, rejected.fraud, rejected.terms_of_service, rejected.listed, rejected.other, listed, under_review, or
+                                  #other.
+REQUIREMENTS.eventually_due       #array containing strings The fields that need to be collected assuming all volume thresholds are reached.
+                                  #As they become required, these fields will appear in currently_due as well, and the current_deadline will be set.
+REQUIREMENTS.past_due             #array containing strings The fields that weren't collected by the current_deadline. These fields need to be collected to re-enable the account.
+STRIPE_ACCOUNT.settings         CU#STRIPE_SETTINGS. Account options for customizing how the account functions within Stripe.
+STRIPE_SETTINGS.branding        CU#BRANDING. Customize colors/logos in receipts, invoices and Checkout.
+BRANDING.icon                   CU#FILE.id. Icon logo. Square and min 128x128. JPG/PNG/GIF.
+BRANDING.logo                   CU#FILE.id. Full logo. Min 128x128. Max 512KB. JPG/PNG/GIF.
+BRANDING.primary_color          CU#'#CSS_HEX_COLOR'
+STRIPE_SETTINGS.card_payments   CU#CARD_SETTINGS. Settings specific to card charging on the account.
+CARD_SETTINGS.decline_on        CU#DECLINE_ON (see above).
+STRIPE_SETTINGS.dashboard         #DASHBOARD_SETTINGS. Settings used to configure the account within the Stripe dashboard.
+DASHBOARD_SETTINGS.display_name   #string The display name for this account. This is used on the Stripe Dashboard to differentiate between accounts.
+DASHBOARD_SETTINGS.timezone       #string The timezone used in the Stripe Dashboard for this account. A list of possible time zone values is maintained at the IANA Time Zone Database.
+STRIPE_SETTINGS.payments        CU#PAYMENTS_SETTINGS (see above).
+STRIPE_SETTINGS.payouts         CU#PAYOUTS_SETTINGS (see above).
+STRIPE_ACCOUNT.tos_acceptance   CU#TOS_ACCEPTANCE. Details on the acceptance of the Stripe Services Agreement
+TOS_ACCEPTANCE.date             CU#timestamp The Unix timestamp marking when the Stripe Services Agreement was accepted by the account representative
+TOS_ACCEPTANCE.ip               CU#string The IP address from which the Stripe Services Agreement was accepted by the account representative
+TOS_ACCEPTANCE.user_agent       CU#string The user agent of the browser from which the Stripe Services Agreement was accepted by the account representative
+
+PERSON                            #Persons associated with a STRIPE_ACCOUNT.
+                                  #Verified by Stripe.
+GET /accounts/ID/persons[/ID]
+POST /accounts/ID/persons[/ID]
+DELETE /accounts/ID/persons/ID    #
+STRIPE.persons.
+ list|retrieve|create|udpate|del()#
+PERSON.account                  CU#STRIPE_ACCOUNT.id
+PERSON.address                  CU#ADDRESS
+PERSON.dob                      CU#DOB.
+DOB.day                           #1-31
+DOB.month                         #1-12
+DOB.year                          #4 digits
+PERSON.first_name               CU#STR
+PERSON.maiden_name              CU#STR
+PERSON.last_name                CU#STR
+PERSON.gender                   CU#'male' or 'female'
+PERSON.email                    CU#STR
+PERSON.phone                    CU#STR
+PERSON.id_number               RCU#Country-specific ID number. For example social security number in US.
+                                  #Can also be a PII TOKEN.id
+PERSON.id_number_provided         #BOOL
+PERSON.ssn_last_4              RCU#Social security number last 4 digits.
+PERSON.ssn_last_4_provided        #BOOL
+PERSON.relationship             CU#RELATIONSHIP to the account.
+RELATIONSHIP.title              CU#STR. Job title.
+RELATIONSHIP.account_opener     CU#BOOL. Whether the person opened the account.
+?relationship.account_opener=BOOL #
+RELATIONSHIP.owner              CU#BOOL. Whether the person is an owner of the company.
+?relationship.owner=BOOL          #
+RELATIONSHIP.director           CU#BOOL. Whether the person is a director of the company.
+                                  #Only if STRIPE_ACCOUNT.business_type is 'company'.
+                                  #Required for accounts in the EU.
+?relationship.director=BOOL       #
+RELATIONSHIP.percent_ownership  CU#FLOAT (0-1). Company's ownership percentage.
+PERSON_VERIF.status               #From 'pending' to 'verified' or 'unverified'.
+PERSON.verification             CU#PERSON_VERIF
+PERSON_VERIF.details              #STR. Human-friendly failure status like 'Provided identity information could not be verified'.
+PERSON_VERIF.details_code         #STR. Machine-friendly failure status: 'scan_name_mismatch', 'failed_keyed_identity', 'failed_other'.
+PERSON_VERIF.document           CU#VERIF_DOC. Passport or ID card.
+VERIF_DOC.front|back            CU#FILE.id
+VERIF_DOC.details                 #STR. Human-friendly failure status like 'Identity document is too unclear to read'.
+VERIF_DOC.details_code            #STR. Machine-friendly failure status: document_corrupt, document_failed_copy, document_not_readable, document_failed_greyscale, document_not_uploaded,
+                                  #document_id_type_not_supported, document_id_country_not_supported, document_failed_other, document_fraudulent, document_invalid, document_manipulated,
+                                  #document_missing_back, document_missing_front, document_photo_mismatch, document_too_large, or document_failed_test_mode.
+PERSON.requirements               #Like STRIPE_ACCOUNT.requirements.
+PERSON.person_token            RCU#TOKEN.id used to securely provide details to the person.
+
+POST /accounts/ID/login_links     #
+STRIPE.loginLinks.create()        #
+LOGIN_LINK                        #Single-use login URL for Connect Express.
+LOGIN_LINK.url                    #string The URL for the login link.
+
 GET /balance                      #BALANCE
                                   #Current Stripe "aggregated bank account".
 STRIPE.balance.retrieve()         #
@@ -538,6 +704,108 @@ BALANCE_TRANSACTION.type          #Can be:
 BALANCE_TRANSACTION.source        #Related RESOURCE.id
 ?source=SOURCE.id                 #
 BALANCE_TRANSACTION.description   #STR
+
+GET /payment_intents[/ID]
+POST /payment_intents[/ID]        #
+POST /payment_intents/ID/confirm  #Like PINTENT.confirm true
+                                  #Payload attributes: client_secret, payment_method, receipt_email, return_url, shipping, source, save_payment_method
+POST /payment_intents/ID/cancel   #Set PINTENT.status 'canceled'.
+                                  #Payload attributes: cancellation_reason
+STRIPE.paymentIntents.
+ retrieve|list|create|update|
+ confirm|cancel()                 #
+PINTENT                           #SOURCE authentication + CHARGE creation
+                                  #Can re-use SOURCE|PAYMENT_METHOD (CUSTOMER.sources|payment_method), but must re-authenticate for each CHARGE.
+                                  #Meant to be used with PAYMENT_METHOD and replace SOURCE over time:
+                                  #  - PINTENT.status|next_action is similar to SOURCE.flow
+PINTENT.amount                 *CU#
+PINTENT.application_fee_amount  CU#
+PINTENT.source                  CU#
+PINTENT.payment_method          CU#
+PINTENT.customer                CU#
+PINTENT.shipping                CU#
+PINTENT.application               #
+PINTENT.on_behalf_of             C#
+PINTENT.statement_descriptor    CU#
+PINTENT.description             CU#
+PINTENT.receipt_email           CU#
+PINTENT.invoice                   #
+PINTENT.review                    #
+PINTENT.transfer_data            C#
+PINTENT.transfer_group          CU#Like CHARGE.*
+PINTENT.charges                   #CHARGE_LIST
+                                  #Contains all failed CHARGEs + an final successful CHARGE (if any).
+                                  #Sorted in reverse order.
+PINTENT.payment_method_types    CU#STR_ARR of allowed SOURCE.type
+PINTENT.save_payment_method    RCU#BOOL (def: false). Save PINTENT.payment_method|source to CUSTOMER.sources.
+                                  #Must be specified again if PINTENT.payment_method|source changes.
+PINTENT.status                    #STR among:
+                                  #  - 'requires_payment_method':
+                                  #      - initial state
+                                  #      - must add PINTENT.source|payment_method
+                                  #  - 'requires_confirmation': must PINTENT.confirm true
+                                  #  - 'requires_action':
+                                  #      - ask for customer to authenticate using PINTENT.next_action (abstraction of SOURCE.flow)
+                                  #      - if not needed, directly goes to 'requires_capture|succeeded'
+                                  #  - 'processing': on-going PINTENT.next_action
+                                  #  - 'requires_capture': must STRIPE.capture() (with PINTENT.capture_method 'manual')
+                                  #  - 'succeeded': success
+                                  #     - EVENT 'payment_intent.succeeded'
+                                  #  - 'canceled':
+                                  #     - cannot be done when status is 'processing' or 'succeeded'
+                                  #     - refunded if partial captured (see amount_to_capture)
+                                  #On failure:
+                                  #  - goes back to 'requires_payment_method'
+                                  #  - EVENT 'payment_intent.payment_failed'
+                                  #  - can try again
+                                  #PINTENT should be:
+                                  #  - created as soon as possible, i.e. when CUSTOMER start adding products/services
+                                  #  - re-used if CUSTOMER does not finish, then comes back later
+PINTENT.confirm                 RC#BOOL (def: false).
+                                  #Set status to 'requires_action'
+PINTENT.confirmation_method      C#Either:
+                                  #  - 'manual':
+                                  #     - manually set PINTENT.payment_method|confirm in the server
+                                  #     - manually perform PINTENT.next_action in the client
+                                  #     - sync|async SOURCEs: like CHARGEs
+                                  #  - 'automatic' (def) (preferred):
+                                  #     - let Stripe.js handle PINTENT.payment_method|confirm|next_action automatically
+                                  #     - must pass PINTENT.client_secret to Stripe.js before it asks for payment method
+                                  #     - must use webhooks even for sync SOURCEs
+                                  #     - does not require passing TOKENs to server (since PINTENT.payment_method is set by Stripe.js)
+PINTENT.next_action              ?#NEXT_ACTION
+NEXT_ACTION.type                  #Either:
+                                  #  - 'redirect_to_url': with confirmation_method 'manual'
+                                  #  - 'use_stripe_sdk': with confirmation_method 'automatic'
+NEXT_ACTION.redirect_to_url       #REDIRECT_TO_URL
+REDIRECT_TO_URL.url               #'URL' to redirect CUSTOMER to, for payment authentication
+REDIRECT_TO_URL.return_url        #'URL' CUSTOMER will be redirected to, after payment authentication
+                                  #Will pass the following query variables:
+                                  #  - ?payment_intent ID
+                                  #  - ?payment_intent_client_secret STR: should be same as PINTENT.client_secret
+PINTENT.return_url              RC#Can only be set if PINTENT.confirm true, PINTENT.confirmation_method 'manual' and SOURCE.type is 'card*'
+PINTENT.client_secret             #PINTENT-specific STR.
+                                  #?payment_intent_client_secret is added to REDIRECT_TO_URL.return_url redirection.
+                                  #Should match PINTENT.client_secret to ensure this is the same customer.
+NEXT_ACTION.use_stripe_sdk        #Internal OBJ used by Stripe.js
+PINTENT.last_payment_error       ?#Confirmation ERROR
+PINTENT.canceled_at              ?#DATE_NUM
+PINTENT.cancellation_reason      ?#STR among: 'duplicate', 'fraudulent', 'requested_by_customer', 'failed_invoice'.
+
+POST /payment_intents/ID/capture  #Similar to CHARGE capturing.
+                                  #PINTENT.status remains 'requires_capture' before reaching 'succeeded' until fully captured.
+                                  #Can capture in several times until reaching PINTENT.amount_capturable.
+                                  #Payload attributes:
+                                  #  - amount_to_capture MONEY (def: full)
+                                  #  - application_fee_amount MONEY
+STRIPE.capture()                  #
+PINTENT.capture_method           C#Either:
+                                  #  - 'automatic' (def): no capturing
+                                  #  - 'manual': capturing
+PINTENT.amount_capturable         #How much can be withdrawn. When changes, EVENT 'payment_intent.amount_capturable_updated'
+                                  #Eventually reaches PINTENT.amount
+PINTENT.amount_received           #Sums of all PAYLOAD.amount_to_capture so far.
+
 
 CHARGE                            #Single payment
 GET /charges[/ID]
@@ -658,107 +926,6 @@ CHARGE.capture                  RC#BOOL. Delayed payment:
                                   #can confuse some customers.
                                   #Only works with card* SOURCEs
 CHARGE.captured                   #BOOL
-
-GET /payment_intents[/ID]
-POST /payment_intents[/ID]        #
-POST /payment_intents/ID/confirm  #Like PINTENT.confirm true
-                                  #Payload attributes: client_secret, payment_method, receipt_email, return_url, shipping, source, save_payment_method
-POST /payment_intents/ID/cancel   #Set PINTENT.status 'canceled'.
-                                  #Payload attributes: cancellation_reason
-STRIPE.paymentIntents.
- retrieve|list|create|update|
- confirm|cancel()                 #
-PINTENT                           #SOURCE authentication + CHARGE creation
-                                  #Can re-use SOURCE|PAYMENT_METHOD (CUSTOMER.sources|payment_method), but must re-authenticate for each CHARGE.
-                                  #Meant to be used with PAYMENT_METHOD and replace SOURCE over time:
-                                  #  - PINTENT.status|next_action is similar to SOURCE.flow
-PINTENT.amount                 *CU#
-PINTENT.application_fee_amount  CU#
-PINTENT.source                  CU#
-PINTENT.payment_method          CU#
-PINTENT.customer                CU#
-PINTENT.shipping                CU#
-PINTENT.application               #
-PINTENT.on_behalf_of             C#
-PINTENT.statement_descriptor    CU#
-PINTENT.description             CU#
-PINTENT.receipt_email           CU#
-PINTENT.invoice                   #
-PINTENT.review                    #
-PINTENT.transfer_data            C#
-PINTENT.transfer_group          CU#Like CHARGE.*
-PINTENT.charges                   #CHARGE_LIST
-                                  #Contains all failed CHARGEs + an final successful CHARGE (if any).
-                                  #Sorted in reverse order.
-PINTENT.payment_method_types    CU#STR_ARR of allowed SOURCE.type
-PINTENT.save_payment_method    RCU#BOOL (def: false). Save PINTENT.payment_method|source to CUSTOMER.sources.
-                                  #Must be specified again if PINTENT.payment_method|source changes.
-PINTENT.status                    #STR among:
-                                  #  - 'requires_payment_method':
-                                  #      - initial state
-                                  #      - must add PINTENT.source|payment_method
-                                  #  - 'requires_confirmation': must PINTENT.confirm true
-                                  #  - 'requires_action':
-                                  #      - ask for customer to authenticate using PINTENT.next_action (abstraction of SOURCE.flow)
-                                  #      - if not needed, directly goes to 'requires_capture|succeeded'
-                                  #  - 'processing': on-going PINTENT.next_action
-                                  #  - 'requires_capture': must STRIPE.capture() (with PINTENT.capture_method 'manual')
-                                  #  - 'succeeded': success
-                                  #     - EVENT 'payment_intent.succeeded'
-                                  #  - 'canceled':
-                                  #     - cannot be done when status is 'processing' or 'succeeded'
-                                  #     - refunded if partial captured (see amount_to_capture)
-                                  #On failure:
-                                  #  - goes back to 'requires_payment_method'
-                                  #  - EVENT 'payment_intent.payment_failed'
-                                  #  - can try again
-                                  #PINTENT should be:
-                                  #  - created as soon as possible, i.e. when CUSTOMER start adding products/services
-                                  #  - re-used if CUSTOMER does not finish, then comes back later
-PINTENT.confirm                 RC#BOOL (def: false).
-                                  #Set status to 'requires_action'
-PINTENT.confirmation_method      C#Either:
-                                  #  - 'manual':
-                                  #     - manually set PINTENT.payment_method|confirm in the server
-                                  #     - manually perform PINTENT.next_action in the client
-                                  #     - sync|async SOURCEs: like CHARGEs
-                                  #  - 'automatic' (def) (preferred):
-                                  #     - let Stripe.js handle PINTENT.payment_method|confirm|next_action automatically
-                                  #     - must pass PINTENT.client_secret to Stripe.js before it asks for payment method
-                                  #     - must use webhooks even for sync SOURCEs
-                                  #     - does not require passing TOKENs to server (since PINTENT.payment_method is set by Stripe.js)
-PINTENT.next_action              ?#NEXT_ACTION
-NEXT_ACTION.type                  #Either:
-                                  #  - 'redirect_to_url': with confirmation_method 'manual'
-                                  #  - 'use_stripe_sdk': with confirmation_method 'automatic'
-NEXT_ACTION.redirect_to_url       #REDIRECT_TO_URL
-REDIRECT_TO_URL.url               #'URL' to redirect CUSTOMER to, for payment authorization
-REDIRECT_TO_URL.return_url        #'URL' CUSTOMER will be redirected to, after payment authorization
-                                  #Will pass the following query variables:
-                                  #  - ?payment_intent ID
-                                  #  - ?payment_intent_client_secret STR: should be same as PINTENT.client_secret
-PINTENT.return_url              RC#Can only be set if PINTENT.confirm true, PINTENT.confirmation_method 'manual' and SOURCE.type is 'card*'
-PINTENT.client_secret             #PINTENT-specific STR.
-                                  #?payment_intent_client_secret is added to REDIRECT_TO_URL.return_url redirection.
-                                  #Should match PINTENT.client_secret to ensure this is the same customer.
-NEXT_ACTION.use_stripe_sdk        #Internal OBJ used by Stripe.js
-PINTENT.last_payment_error       ?#Confirmation ERROR
-PINTENT.canceled_at              ?#DATE_NUM
-PINTENT.cancellation_reason      ?#STR among: 'duplicate', 'fraudulent', 'requested_by_customer', 'failed_invoice'.
-
-POST /payment_intents/ID/capture  #Similar to CHARGE capturing.
-                                  #PINTENT.status remains 'requires_capture' before reaching 'succeeded' until fully captured.
-                                  #Can capture in several times until reaching PINTENT.amount_capturable.
-                                  #Payload attributes:
-                                  #  - amount_to_capture MONEY (def: full)
-                                  #  - application_fee_amount MONEY
-STRIPE.capture()                  #
-PINTENT.capture_method           C#Either:
-                                  #  - 'automatic' (def): no capturing
-                                  #  - 'manual': capturing
-PINTENT.amount_capturable         #How much can be withdrawn. When changes, EVENT 'payment_intent.amount_capturable_updated'
-                                  #Eventually reaches PINTENT.amount
-PINTENT.amount_received           #Sums of all PAYLOAD.amount_to_capture so far.
 
 GET /refunds[/ID]
 POST /refunds[/ID]                #
@@ -999,11 +1166,6 @@ SIGNS OF FRAUD ==>                #  - fake information (emails, phone numbers)
                                   #     - often legitimate (gift purchase), but raise warnings
                                   #  - change of address after purchase
                                   #  - ask for different shipping
-
-PSD2 ==>                          #EU directive. Includes SCA (Strong Customer Authentication):
-                                  #  - requires 2-factor auth on payments
-                                  #     - among knowledge (e.g. password), possession (e.g. device), inherence (e.g. biometrics)
-                                  #  - 3D secure is SCA-compliant
 
 GET /disputes[/ID]
 POST /disputes/ID                 #
@@ -2094,164 +2256,6 @@ TAX_RATE.description            CU#STR. An arbitrary string attached to the tax 
 TAX_RATE.jurisdiction           CU#STR. The jurisdiction for the tax rate.
 TAX_RATE.active                 CU#BOOL (def: true)
 ?active=BOOL                      #When set to false, this tax rate cannot be applied to objects in the API, but will still be applied to subscriptions and invoices that already have it set.
-
-EXTENSIONS ==>                    #Allow apps to do things on behalf of user's STRIPE_ACCOUNT using OAuth.
-                                  #Must be registered online.
-POST /oauth/[express/]authorize
-?client_id=CLIENT_ID
-?scope=read_write
-?response_type=STR                #Those are actual URL parameters
-STRIPE.oauth.authorizeUrl         #Returns '/oauth/authorize' full URL. OPTS:
- ([URL_PARAMS, ][OPTS])->'URL'    #  - express BOOL
-POST /oauth/token
-POST /oauth/deauthorize           #
-STRIPE.oauth.token|deauthorize()  #Endpoint is 'connect.stripe.com'
-STRIPE.setClientId('CLIENT_ID')
-STRIPE.getClientId()->'CLIENT_ID' #
-account.application.authorized    #'EVENT_TYPE' when a user authorizes an application.
-account.application.deauthorized  #'EVENT_TYPE' when a user deauthorizes an application.
-
-STRIPE_ACCOUNT                    #Stripe account.
-                                  #Also used with Connect.
-GET /accounts[/ID]
-POST /accounts[/ID]
-DELETE /accounts/ID               #
-POST /accounts/ID/reject          #Flag STRIPE_ACCOUNT as suspicious by setting payouts_enabled|charges_enabled to false.
-                                  #Payload: account, reason
-STRIPE.accounts.retrieve|list|
- create|update|del|reject()       #
-PAYLOAD.reason                    #STR. The reason for rejecting the account. Can be fraud, terms_of_service, or other.
-STRIPE_ACCOUNT.type             *C#Can be 'standard', 'express', or 'custom'.
-STRIPE_ACCOUNT.country           C#COUNTRY. Cannot be changed.
-                                  #Must match the bank account / credit card's country.
-                                  #Impacts pricing and which currency are available for payouts.
-STRIPE_ACCOUNT.email            CU#STR.
-STRIPE_ACCOUNT.
- business_profile               CU#BUSINESS_PROFILE. Information shown to customers.
-BUSINESS_PROFILE.name           CU#STR.
-BUSINESS_PROFILE.url            CU#'URL'
-BUSINESS_PROFILE.support_addressCU#ADDRESS.
-BUSINESS_PROFILE.support_email  CU#STR.
-BUSINESS_PROFILE.support_phone  CU#STR.
-BUSINESS_PROFILE.support_url    CU#'URL'
-BUSINESS_PROFILE.mcc            CU#STR. Four-digits ISO 18245 describing industry.
-                                  #Can be used by payment providers to enforce specific rules or taxes.
-BUSINESS_PROFILE.
- product_description            CU#STR. Internal-only description of the product sold. Used by Stripe for risk and underwriting purposes.
-STRIPE_ACCOUNT.business_type    CU#Either 'individual' or 'company'.
-STRIPE_ACCOUNT.individual       CU#PERSON. Only if business_type 'individual'.
-STRIPE_ACCOUNT.company          CU#STRIPE_COMPANY. Only if business_type 'company'. Used for verification by Stripe.
-STRIPE_COMPANY.name             CU#STR. Legal name.
-STRIPE_COMPANY.address          CU#ADDRESS.
-STRIPE_COMPANY.phone            CU#STR.
-STRIPE_COMPANY.
- directors_provided             CU#BOOL. Must be set to true once all PERSONs with RELATIONSHIP.director true have been created.
-STRIPE_COMPANY.owners_provided  CU#BOOL. Must be set to true once all PERSONs with RELATIONSHIP.owner true have been created.
-                                  #Automatically set by Stripe if total RELATIONSHIP.percent_ownership amounts to 1.
-STRIPE_COMPANY.tax_id          RCU#Country-specific company ID.
-STRIPE_COMPANY.tax_id_provided    #BOOL
-STRIPE_COMPANY.
- tax_id_registrar               CU#Country-specific (Germany only) company jurisdiction .
-STRIPE_COMPANY.vat_id          RCU#Country-specific company VAT number.
-STRIPE_COMPANY.vat_id_provided    #BOOL
-STRIPE_ACCOUNT.account_token   RCU#TOKEN.id
-STRIPE_ACCOUNT.                 CU#The set of capabilities you want to unlock for this account (US only).
- requested_capabilities           #Each capability will be inactive until you have provided its specific requirements and Stripe has verified them.
-                                  #An account may have some of its requested capabilities be active and some be inactive.
-STRIPE_ACCOUNT.capabilities       #CAPABILITIES. A hash containing the set of capabilities that was requested for this account and their associated states.
-                                  #Keys may be card_payments, legacy_payments, or platform_payments. Values may be active, inactive, or pending.
-CAPABILITIES.card_payments        #string The status of the card payments capability of the account, or whether the account can directly process credit and debit card charges.
-CAPABILITIES.legacy_payments      #string The status of the legacy payments capability of the account.
-CAPABILITIES.platform_payments    #string The status of the platform payments capability of the account, or whether your platform can process charges on behalf of the account.
-STRIPE_ACCOUNT.charges_enabled    #boolean Whether the account can create live charges.
-STRIPE_ACCOUNT.
- default_currency               CU#string Three-letter ISO currency code representing the default currency for the account. This must be a currency that Stripe supports in the account's country.
-STRIPE_ACCOUNT.details_submitted  #boolean Whether account details have been submitted. Standard accounts cannot receive payouts before this is true.
-STRIPE_ACCOUNT.external_accounts  #EXTERNAL_ACCOUNT_LIST
-STRIPE_ACCOUNT.
- external_account              RCU#EXTERNAL_ACCOUNT
-STRIPE_ACCOUNT.payouts_enabled    #boolean Whether Stripe can send payouts to this account.
-STRIPE_ACCOUNT.requirements       #REQUIREMENTS. Information about the requirements for the account, including what information needs to be collected, and by when.
-REQUIREMENTS.current_deadline     #timestamp The date the fields in currently_due must be collected by to keep payouts enabled for the account.
-                                  #These fields might block payouts sooner if the next threshold is reached before these fields are collected.
-REQUIREMENTS.currently_due        #array containing strings The fields that need to be collected to keep the account enabled.
-                                  #If not collected by the current_deadline, these fields will appear in past_due as well, and the account will be disabled.
-REQUIREMENTS.disabled_reason      #string If the account is disabled, this string describes why the account can't create charges or receive payouts.
-                                  #Can be requirements.past_due, requirements.pending_verification, rejected.fraud, rejected.terms_of_service, rejected.listed, rejected.other, listed, under_review, or
-                                  #other.
-REQUIREMENTS.eventually_due       #array containing strings The fields that need to be collected assuming all volume thresholds are reached.
-                                  #As they become required, these fields will appear in currently_due as well, and the current_deadline will be set.
-REQUIREMENTS.past_due             #array containing strings The fields that weren't collected by the current_deadline. These fields need to be collected to re-enable the account.
-STRIPE_ACCOUNT.settings         CU#STRIPE_SETTINGS. Account options for customizing how the account functions within Stripe.
-STRIPE_SETTINGS.branding        CU#BRANDING. Customize colors/logos in receipts, invoices and Checkout.
-BRANDING.icon                   CU#FILE.id. Icon logo. Square and min 128x128. JPG/PNG/GIF.
-BRANDING.logo                   CU#FILE.id. Full logo. Min 128x128. Max 512KB. JPG/PNG/GIF.
-BRANDING.primary_color          CU#'#CSS_HEX_COLOR'
-STRIPE_SETTINGS.card_payments   CU#CARD_SETTINGS. Settings specific to card charging on the account.
-CARD_SETTINGS.decline_on        CU#DECLINE_ON (see above).
-STRIPE_SETTINGS.dashboard         #DASHBOARD_SETTINGS. Settings used to configure the account within the Stripe dashboard.
-DASHBOARD_SETTINGS.display_name   #string The display name for this account. This is used on the Stripe Dashboard to differentiate between accounts.
-DASHBOARD_SETTINGS.timezone       #string The timezone used in the Stripe Dashboard for this account. A list of possible time zone values is maintained at the IANA Time Zone Database.
-STRIPE_SETTINGS.payments        CU#PAYMENTS_SETTINGS (see above).
-STRIPE_SETTINGS.payouts         CU#PAYOUTS_SETTINGS (see above).
-STRIPE_ACCOUNT.tos_acceptance   CU#TOS_ACCEPTANCE. Details on the acceptance of the Stripe Services Agreement
-TOS_ACCEPTANCE.date             CU#timestamp The Unix timestamp marking when the Stripe Services Agreement was accepted by the account representative
-TOS_ACCEPTANCE.ip               CU#string The IP address from which the Stripe Services Agreement was accepted by the account representative
-TOS_ACCEPTANCE.user_agent       CU#string The user agent of the browser from which the Stripe Services Agreement was accepted by the account representative
-
-PERSON                            #Persons associated with a STRIPE_ACCOUNT.
-                                  #Verified by Stripe.
-GET /accounts/ID/persons[/ID]
-POST /accounts/ID/persons[/ID]
-DELETE /accounts/ID/persons/ID    #
-STRIPE.persons.
- list|retrieve|create|udpate|del()#
-PERSON.account                  CU#STRIPE_ACCOUNT.id
-PERSON.address                  CU#ADDRESS
-PERSON.dob                      CU#DOB.
-DOB.day                           #1-31
-DOB.month                         #1-12
-DOB.year                          #4 digits
-PERSON.first_name               CU#STR
-PERSON.maiden_name              CU#STR
-PERSON.last_name                CU#STR
-PERSON.gender                   CU#'male' or 'female'
-PERSON.email                    CU#STR
-PERSON.phone                    CU#STR
-PERSON.id_number               RCU#Country-specific ID number. For example social security number in US.
-                                  #Can also be a PII TOKEN.id
-PERSON.id_number_provided         #BOOL
-PERSON.ssn_last_4              RCU#Social security number last 4 digits.
-PERSON.ssn_last_4_provided        #BOOL
-PERSON.relationship             CU#RELATIONSHIP to the account.
-RELATIONSHIP.title              CU#STR. Job title.
-RELATIONSHIP.account_opener     CU#BOOL. Whether the person opened the account.
-?relationship.account_opener=BOOL #
-RELATIONSHIP.owner              CU#BOOL. Whether the person is an owner of the company.
-?relationship.owner=BOOL          #
-RELATIONSHIP.director           CU#BOOL. Whether the person is a director of the company.
-                                  #Only if STRIPE_ACCOUNT.business_type is 'company'.
-                                  #Required for accounts in the EU.
-?relationship.director=BOOL       #
-RELATIONSHIP.percent_ownership  CU#FLOAT (0-1). Company's ownership percentage.
-PERSON_VERIF.status               #From 'pending' to 'verified' or 'unverified'.
-PERSON.verification             CU#PERSON_VERIF
-PERSON_VERIF.details              #STR. Human-friendly failure status like 'Provided identity information could not be verified'.
-PERSON_VERIF.details_code         #STR. Machine-friendly failure status: 'scan_name_mismatch', 'failed_keyed_identity', 'failed_other'.
-PERSON_VERIF.document           CU#VERIF_DOC. Passport or ID card.
-VERIF_DOC.front|back            CU#FILE.id
-VERIF_DOC.details                 #STR. Human-friendly failure status like 'Identity document is too unclear to read'.
-VERIF_DOC.details_code            #STR. Machine-friendly failure status: document_corrupt, document_failed_copy, document_not_readable, document_failed_greyscale, document_not_uploaded,
-                                  #document_id_type_not_supported, document_id_country_not_supported, document_failed_other, document_fraudulent, document_invalid, document_manipulated,
-                                  #document_missing_back, document_missing_front, document_photo_mismatch, document_too_large, or document_failed_test_mode.
-PERSON.requirements               #Like STRIPE_ACCOUNT.requirements.
-PERSON.person_token            RCU#TOKEN.id used to securely provide details to the person.
-
-
-POST /accounts/ID/login_links     #
-STRIPE.loginLinks.create()        #
-LOGIN_LINK                        #Single-use login URL for Connect Express.
-LOGIN_LINK.url                    #string The URL for the login link.
 
 GET /transfers[/ID]
 POST /transfers[/ID]              #
