@@ -811,8 +811,9 @@ createInterface(OBJ)->INTERFACE                 #OBJ:
                                                 #     - used to tab completion
                                                 #     - ARR: [STR2_ARR, STR]
                                                 #        - STR is original string
-                                                #        - STR2_ARR are possible matches. If only one left, autocompletes
-                                                #  - historySize NUM (def: 30) (0 for none)
+                                                #        - STR2_ARR are possible matches.
+                                                #           - if have common prefix, autocompletes
+                                                #  - historySize NUM (def: 30) (0 for none): in-memory, not persisted
                                                 #  - removeHistoryDuplicates BOOL (def: false): new history lines that are duplicate
                                                 #    of a previous one removes that older one
                                                 #  - prompt STR (def: '> ')
@@ -823,11 +824,12 @@ INTERFACE.close()                               #Called by ISTREAM.end() and CTR
 INTERFACE.on("close", FUNC())                   #
 
 INTERFACE.on("line", FUNC(STR))                 #Fired each time a line is read from ISTREAM.
-INTERFACE[Symbol.asyncIterator]              10*#I.e. can do for (const STR of INTERFACE)
+INTERFACE[Symbol.asyncIterator]              10*#Defined
 
-INTERFACE.write(STR[, OBJ])                     #Prints STR on OSTREAM or, if OBJ { ctrl|meta|shift: true, name: STR },
-                                                #on CTRL|META|SHIFT-STR
+INTERFACE.write(STR[, OBJ])                     #Prints STR on OSTREAM
+                                                #Use CTRL|META|SHIFT-STR if OBJ: ctrl|meta|shift: true, name: STR
                                                 #Be careful as it will be read by ISTREAM, if ISTREAM and OSTREAM point to same thing (e.g. terminal).
+                                                #  - like process.stdout.write(), but as opposed to console.*()
 
 INTERFACE.setPrompt(STR)                        #Change OBJ.prompt (see above)
 INTERFACE.prompt([BOOL])                        #Write in beginning of current OSTREAM line the OBJ.prompt
@@ -835,16 +837,16 @@ INTERFACE.prompt([BOOL])                        #Write in beginning of current O
 
 INTERFACE.question(STR, FUNC(STR2))             #Replace current prompt by STR on OSTREAM, and fires FUNC(STR2) on line event instead of normal line event.
 
-INTERFACE.pause|resume()                        #Pause|resume ISTREAM.
+INTERFACE.pause|resume()                        #Like ISTREAM.pause|resume()
                                                 #ISTREAM still accept input but buffers it, and reads it once resumed.
-                                                #Also fired by SIGCONT or SIGTSTP (CTRL-Z)
-                                                #resume() is also called by write(), prompt() and question()
+                                                #pause() is called by SIGCONT or SIGTSTP (CTRL-Z)
+                                                #resume() is called by write(), prompt() and question()
 INTERFACE.on("pause|resume", FUNC())            #
-INTERFACE.on("SIGNINT|TSTP|CONT", FUNC())       #
+INTERFACE.on("SIGINT|SIGTSTP|SIGCONT", FUNC())  #
 
-clearScreenDown(OSTREAM)                        #
-clearLine(OSTREAM, NUM)                         #Can be 0 (entire line) or -1|1 (to the left|right of cursor)
-cursorTo|moveCursor(OSTREAM, NUM, NUM2)         #Move cursor absolutely|relatively
+clearLine(OSTREAM, NUM[, FUNC()])               #Can be 0 (entire line, \e2K) or -1|1 (to the left|right of cursor, \e0K, \e1K)
+cursorTo|moveCursor(OSTREAM, NUM, NUM2[,FUNC()])#Move cursor absolutely|relatively (\eNUMA, \eNUMB, \eNUM2C, \eNUM2D)
+clearScreenDown(OSTREAM[, FUNC()])              #Clear all following lines (\e0J). To clear screen, combine with cursorTo(OSTREAM, 0, 0)
 
 emitKeypressEvents(OSTREAM[, INTERFACE])        #Enable OSTREAM.on('keypress')
                                                 #If OSTREAM is connected to an INTERFACE, can specify it to disable completion on copy-pasted input
@@ -863,30 +865,31 @@ OSTREAM.on('keypress', FUNC(STR, OBJ))          #STR is what to print (e.g. 'a',
                                              \=+===============================+=/
 
 
-start([OBJ])->REPLSERVER                        #Creates a REPLSERVER:
-                                                #  - INTERFACE made specifically for Node.js command line:
-                                                #     - line event handler is eval()
-                                                #     - core modules are loaded by default
-                                                #  - this is what is used by node with no FILE.
-                                                #If NODE_NO_READLINE envvar is defined to 1, readline is not used.
+REPLSERVER                                      #INTERFACE meant for read-eval-print loop.
+
+DEFAULT REPL ==>                                #Uses REPL except:
+
+start([OBJ])->REPLSERVER                        #Uses INTERFACE options:
+                                                #  - OBJ.input|output (def: process.stdin|stdout)
+                                                #  - OBJ.prompt
+                                                #  - OBJ.terminal (def: true unless NODE_NO_READLINE=1)
                                                 #OBJ members are:
-                                                #  - input|output|terminal|prompt:
-                                                #     - like createInterface()
-                                                #     - but with defaults process.stdin|stdout
                                                 #  - eval(STR, OBJ, FILENAME, FUNC(ERROR, STR2)):
                                                 #     - input handler:
                                                 #        - STR is input (including final newline)
                                                 #        - STR2 is printed output
                                                 #        - OBJ is current context (global object)
+                                                #        - FILENAME can be 'repl' if default REPL
                                                 #        - if ERROR is new Recoverable(''), keep prompt ongoing (e.g. for multiline input)
                                                 #           - current input is added to next input
-                                                #     - def is async. wrapper of eval():
+                                                #     - def: eval()
                                                 #  - writer FUNC(VAL):
-                                                #     - output printing, def. is util.inspect()
-                                                #     - def util.inspect() options are util.inspect.replDefaults
-                                                #        - def: same as util.inspect.defaultOptions except:
-                                                #           - showProxy true
-                                                #           - colors OPTS.useColors
+                                                #     - output printing
+                                                #     - def: util.inspect()
+                                                #        - options are util.inspect.replDefaults
+                                                #           - def: same as util.inspect.defaultOptions except:
+                                                #              - showProxy true
+                                                #              - colors OBJ.useColors
                                                 #  - useColors BOOL (def: process.stdout.hasColors())
                                                 #  - useGlobal BOOL (def: false): use current context, and not local one
                                                 #  - ignoreUndefined BOOL (def: false): if true, doesn't print output when it is undefined
@@ -898,13 +901,16 @@ start([OBJ])->REPLSERVER                        #Creates a REPLSERVER:
                                                 #  - breakEvalOnSigint BOOL: if true (def: false), stops on CTRL-C
 REPLSERVER.on("reset", FUNC())                  #When ".clear" is called.
 REPLSERVER.on("exit", FUNC())                   #
+
 REPLSERVER.context                              #Global environment, as OBJ
+                                                #Also contains:
+                                                #  - all core modules, e.g. OBJ.child_process
+                                                #  - _ and _error
                                                 #REPL command ".clear" resets it.
-
-
-REPL COMMANDS ==>                               #
 _                                               #Last expression evaluated
 _error                                        9*#Last uncaught exception
+
+REPL COMMANDS ==>                               #
 .save FILE                                      #Save all input so far to FILE
 .load FILE                                      #Input FILE
 .exit
@@ -916,16 +922,15 @@ CTRL-C                                          #
 REPLSERVER.defineCommand('STR', OBJ|FUNC(...))  #Custom commands called .STR
                                                 #OBJ:
                                                 #  - action(...)
-                                                #     - can use REPLSERVER.displayPrompt([BOOL]) to reshow the prompt
-                                                #       using INTERFACE.prompt(BOOL)
-                                              9*#     - can call REPLSERVER.clearBufferedCommand() to cancel itself
                                                 #  - help STR
+REPLSERVER.displayPrompt([BOOL])                #Reshow the prompt using INTERFACE.prompt(BOOL)
+REPLSERVER.clearBufferedCommand()             9*#Discard|ignore the line currently entered
+                                              9*#Meant to be used inside defineCommand() OBJ.action()
 
 NODE_REPL_HISTORY ENVVAR                        #Def: ~/.node_repl_history
 NODE_REPL_HISTORY_SIZE ENVVAR                   #Def: 1000
 REPLSERVER.setupHistory                      11*#Use a history file.
  ('PATH', FUNC(ERROR, REPLSERVER))           11*#Automatically done in normal CLI
-
 
 --experimental-repl-await                    10*#Allow using await top-level
 
