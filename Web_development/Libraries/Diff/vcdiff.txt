@@ -6,90 +6,112 @@
 
 STANDARDS ==>                     #RFC 3284
 
-Types:
-  - NUM: base128 -> each digit === 1 byte (with MSB 0 for last digit, 1 for others)
-  - BYTE
-  - BYTE_FLAG: or'd flag of one byte
+GOAL ==>                          #Produces a "delta file", i.e. a diff between a source and a target
+                                  #Can be text or binary
+                                  #Focus on decoding speed and encoding efficiency.
 
-Source -> Target = Delta file
+DECODING ALGORITHM ==>            #I/O:
+                                  #  - input: source file + target file
+                                  #  - output: delta file (start with empty string)
+                                  #Instructions:
+                                  #  - ADD SIZE, BYTE_ARR: append bytes (of length SIZE)
+                                  #  - RUN SIZE, BYTE: append BYTE SIZE times
+                                  #  - COPY SIZE, ADDRESS: 
+                                  #     - append SIZE bytes from ADDRESS
+                                  #     - ADDRESS is byte index inside concatenation of source window + target window
+                                  #Max SIZE: 255
+                                  #Target|source windows: target|source chunks compared against each other
 
-Windows:
-  - target|source divided into chunks ("target|source windows"), compared against each other
-  - window selection is implementation-dependant
+ENCODING ALGORITHM ==>            #I/O:
+                                  #  - input: source file + delta file
+                                  #  - output: target file
+                                  #Is implementation-dependant:
+                                  #  - which instructions to use
+                                  #  - windows
+                                  #  - secondary compressor
+                                  #  - custom code table
 
-Instructions:
-  - input: source window + target window
-  - output: delta file (start with empty string)
-  - can be:
-     - COPY SIZE, ADDRESS: 
-        - add SIZE bytes from ADDRESS to output
-        - ADDRESS is byte index inside concatenation of source window + target window
-     - ADD SIZE, BYTE...: add BYTE... (of length SIZE) to output
-     - RUN SIZE, BYTE: add BYTE SIZE times to output
-  - max SIZE: 255
-       
-Delta file:
-  - Header:
-     - 'VCD' (magic number)
-     - Version BYTE: 0x00
-     - Header indicator BYTE_FLAG:
-        - 0x01: a secondary compressor is present
-        - 0x02: a code table is present
-     - [Secondary compressor ID] BYTE
-     - [Length of code table data] NUM
-     - [Code table data]:
-        - Size of near cache BYTE
-        - Size of same cache BYTE
-        - Compressed code table data
-  - Each window:
-     - Window indicator BYTE:
-        - what's the source segment:
-           - 0x00: the window itself
-           - 0x01: the source file
-           - 0x02: the target file
-        - the size|position that follows are inside source|target file or window itself
-     - [Source segment size] NUM
-     - [Source segment position] NUM
-     - Delta encoding of target window:
-        - length of delta encoding NUM
-        - delta encoding:
-           - length of target window NUM: length of whole window, after decompression
-           - delta indicator BYTE_FLAG:
-              - 0x01: data for ADDs and RUNs is present
-              - 0x02: instructions and sizes is present
-              - 0x04: addresses for COPYs is present
-           - length of data for ADDs and RUNs NUM
-           - length of instructions and sizes NUM
-           - length of addresses for COPYs NUM
-           - data for ADDs and RUNs BYTE_ARR
-           - instructions and sizes BYTE_ARR:
-              - inst BYTE:
-                 - index in a "code table" with 256 entries
-                    - there is a default one with common instructions
-                    - but one can define a new custom one with "code table data" in header
-                 - each entry describes 2 instructions
-                 - each instruction is:
-                    - COPY|ADD|RUN|NOOP: command
-                    - SIZE: first argument, either:
-                       - NUM
-                       - 0, which means it should be taken from following size1|size2
-                    - MODE: second argument:
-                       - for ADD|RUN: 
-                          - SIZE next bytes in "data for ADDs and RUNs"
-                       - for COPY:
-                          - next byte in "address for COPYs" is ADDR_NUM
-                          - ADDRESS depends on MODE:
-                             - 0 (VCD_SELF): ADDRESS = ADDR_NUM
-                             - 1 (VCD_HERE): ADDRESS = HERE - ADDR_NUM
-                             - 2-5: ADDRESS = ADDR_NUM - NEAR_CACHE[0-3]
-                             - 6-8: ADDRESS = SAME_CACHE[(0-2)*256 + ADDR_NUM]
-              - size1 BYTE
-              - size2 BYTE
-           - addresses for COPYs BYTE_ARR
+FORMAT ==>                        #Header:
+																	#  - 'VCD' (magic number)
+																	#  - Version BYTE: 0x00
+																	#  - Header indicator BYTE_FLAG
+																	#  - [Secondary compressor ID] BYTE
+																	#  - [Length]
+																	#  - [Code table data]
+																	#Each window:
+																	#  - Window indicator BYTE
+																	#  - [Source segment size] NUM
+																	#  - [Source segment position] NUM
+																	#  - Delta encoding of target window:
+																	#     - length
+																	#     - delta encoding:
+																	#        - length of target window NUM: length of whole window, after decompression
+																	#        - delta indicator BYTE_FLAG
+																	#        - length (for each of next three sections)
+																	#        - data for ADDs and RUNs BYTE_ARR
+																	#        - instructions and sizes BYTE_ARR
+																	#        - addresses for COPYs BYTE_ARR
 
-Caches:
-  - near cache: ARR of 4 s_near slots
-  - same cache: ARR of 256*3 s_same slots
-Each processed COPY encodes NUM in both caches:
-  - near cache: at next slot (circular buffer)
-  - same cache: at NUM%(256*3)
+TYPES ==>                         #  - NUM -> base128 -> each digit === 1 byte (with MSB 0 for last digit, 1 for others)
+                                  #  - BYTE
+                                  #  - BYTE_FLAG: or'd flag of one byte
+
+LENGTH ==>                        #Means: length NUM of the segment that follows
+
+SECONDARY COMPRESSOR ==>          #  - compresses ???
+                                  #  - if Header indicator 0x01
+                                  #  - Secondary compressor ID: to indicate which algo is used
+
+SOURCE SEGMENT ==>                #According to:
+                                  #  - window indicator:
+                                  #     - 0x00: the window itself
+                                  #     - 0x01: the source file
+                                  #     - 0x02: the target file
+                                  #  - source segment size|position
+
+INSTRUCTIONS AND SIZES ==>        #Three fields (describing two encoded instructions):
+                                  #  - inst BYTE: index in "code table"
+                                  #  - size1 BYTE
+                                  #  - size2 BYTE
+                                  #Present if delta indicator 0x02
+
+CODE TABLE ==>                    #Code table:
+                                  #  - 256 entries
+                                  #  - each entry describes 2 encoded instructions
+                                  #Custom:
+                                  #  - there is a default one with common instructions
+                                  #  - if Header indicator 0x02
+                                  #  - Code table data:
+                                  #     - Size of near cache BYTE:
+                                  #        - instead of 4
+                                  #        - if different, will change lower-upper limits used in MODE
+                                  #     - Size of same cache BYTE: same for "same cache"
+                                  #     - code table
+
+ENCODED INSTRUCTIONS ==>          #Three fields (describing an instruction efficiently):
+                                  #  - command COPY|ADD|RUN|NOOP
+                                  #  - first argument, either:
+                                  #     - SIZE
+                                  #     - 0, which means it should be taken from following size1|size2
+                                  #  - MODE, describing second argument ADDRESS:
+                                  #     - for ADD|RUN: 
+                                  #        - SIZE next bytes in "data for ADDs and RUNs"
+                                  #           - that section is present if delta indicator 0x01
+                                  #        - MODE is 0
+                                  #     - for COPY:
+                                  #        - ADDR_NUM = next byte in "address for COPYs"
+                                  #           - that section is present if delta indicator 0x04
+                                  #        - ADDRESS depends on MODE:
+                                  #           - 0: ADDRESS = ADDR_NUM
+                                  #           - 1: ADDRESS = HERE - ADDR_NUM
+                                  #           - 2-5: ADDRESS = ADDR_NUM - NEAR_CACHE[0-3]
+                                  #           - 6-8: ADDRESS = SAME_CACHE[(0-2)*256 + ADDR_NUM]
+
+CACHES ==>                        #NEAR_CACHE: 
+                                  #  - ARR of 4 ADDRESSes 
+                                  #  - filled with each new ADDRESS as a circular bugger
+                                  #  - used for relative positioning with recent addresses
+                                  #SAME_CACHE:
+                                  #  - ARR of 3*256 ADDRESSes
+                                  #  - filled with each new ADDRESS at ADDRESS % ((0-2)*256)
+                                  #  - used for absolute positioning with recent addresses
