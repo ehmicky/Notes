@@ -1,6 +1,4 @@
 Authorization:
-  - user document it, including database feature and the fact it checks on both read and write, that it can use
-    schema functions, that it can use $args|params.VAR, command-wise authorization
   - Forbidden commands:
      - calculate forbiddenCommands at compile-time:
         - if some model.authorize OBJ do not specify $command, it is []
@@ -56,74 +54,59 @@ Event filters:
   - include response headers in event payload
   - default request|headers filters should include any X-Api-Engine-*
 
+Complex patches:
+  - provide MongoDB-like patch syntax for patch action, including array manipulation
+
 Orphans:
   - validation:
      - attribute targeting another model have limited validation:
-        - the reason: they might be deleted|modified when the model they target is deleted, and that model deletion should not have to care about it, but in the same time we don't want invalid models
-        - forbidden: required, minItems, dependencies, contains, custom validation, being part of $data cross-attributes validation
-  - authorization:
-     - should bypass authorization and pagination (i.e. be "internal"),
-       all of them: find dead links, remove dead links, bidirectional links
-     - results should not be reusable though (i.e. not in results), to avoid normal queries bypassing authorization
-        - however remove dead links and bidirectional links do need to use results???
-        - should try to reuse results (for perf optimization) if query should have been authorized even if not bypassed???
-        - divide between results and forbiddenResults???
-        - transform patch action into replace action right away to avoid patch middleware???
-        - only for read actions (write actions do not reuse results), both currentData, normal read and extra
-          selection in write actions
+        - the reason: they might be deleted|modified when the model they target is deleted, and that model deletion
+          should not have to care about it, but in the same time we don't want invalid models
+        - forbidden: required, minItems, dependencies, contains, custom validation, being part of
+          $data cross-attributes validation
+  - find dead links and remove dead links:
+     - should bypass authorization and pagination (using args.internal true)
      - actions should have no args.select, so they are not in output
-     - are those actions topLevel???
+     - make sure it does not impact "topLevel" action logic, since that logic might imply there is only one topLevel action
+     - do not merge their "results" with other "results", to avoid authorization issue
+     - after action performed (i.e. after db query for "remove dead links", and after 404 validation for "find dead links"),
+       response.data should be [] to avoid extra computation
   - find dead links:
      - for create|patch|replace actions
-     - find all ids+modelName that:
+     - find all ids+modelName of attributes that:
         - have attr.target !== undefined
         - are defined in args.data
-        - are a "leaf", e.g. in args.data { childA, childB: { ... } }, childA, not childB (since it will be created, it cannot be a dead link)
-     - for:
-        - create|patch:
-           - run in parallel of currentData middleware
-           - merged to same output, i.e. to results
-           - should reuse each other (results and pendingPromises)
-           - start at same time. end when both are over.
-        - replace:
-           - only args.data that are being modified, i.e. defined in args.data and different from results
-           - i.e. need to be run after currentData
-           - but output still merged to results
+        - are a "leaf", e.g. in args.data { childA, childB: { ... } }, childA, not childB (since it will be created,
+          it cannot be a dead link)
+        - are not one of the models already being written, i.e. the id of one the models in:
+           - (create) args.data
+           - (patch|replace) currentData results
+     - timing:
+        - create: run|started just before currentData middleware
+        - patch|replace:
+           - run|started just after currentData middleware
+           - only args.data that are being modified, i.e. defined in args.data and different from currentData results
+        - create|patch|replace: await the promise only just before write actions start, i.e. can be ru in parallel
+          of all middleware until then
      - goal: firing 404 if dead link
   - remove dead links:
-     - middleware fired after currentData middleware, before mergePatchData middleware
-     - on delete actions
-     - first search for models with dead links:
-        - do find actions with args.filter { attr: { containsOrIs: ids } } where ids are the models being deleted, on the models that might target them
-           - if the model being deleted contains bidirectional links, can optimize with faster action (i.e. filter directly by id) because the models ids are known
+     - for delete actions
+     - timing:
+        - run|started just after currentData middleware
+        - await it, i.e. mergePatchData middleware must not start until this is done
+     - first search for source models with dead links:
+        - do find actions with args.filter { attr: { in: ids } } (isArray false) or { attr: { some: { in: ids } } }
+          (isArray true) where ids are the models being deleted, on the models that might target them
+        - group by source model type:
+           - e.g. if two different model types have same parent model type but different parent model attribute,
+             just use args.filter OBJ_ARR alternative
+        - merge per source model attribute:
+           - e.g. if two models have same parent model attribute, merge their ids in "in", removing duplicates
         - add args.filter { id: { neq: ids } } to exclude models already being deleted, i.e. already present in delete actions
           results
-     - merge the find actions results to results
      - then create patch actions to remove dead links
         - do not fire those patch actions, only stack them up at the end, and resolveWriteAction will take care of them
-  - bidirectional links:
-     - attr.reverse "attr2"
-        - schema validate (before normalization)
-           - forbid attr.reverse if attr.target is not defined
-        - schema pre-normalization:
-           - attr2.reverse "attr" is added, unless already present. I.e. link is truly the same on both ends.
-        - schema validation (after normalization):
-           - model2.attr2 must exist, and have attr2.target defined
-           - attr.target and attr2.target must be defined and point at each others models
-           - attr.reverse "attr2" and attr2.reverse "attr" must be defined and point at each other (using also attr[2].target)
-     - middleware:
-        - on create|patch|replace actions
-        - after currentData middleware, before removeDeadLinks middleware
-        - fired for any attribute:
-           - with attr.reverse defined
-           - and that is being modified, i.e. defined in args.data and different from results
-        - first merges into results some find actions results:
-           - all ids being modified should trigger find actions
-              - except if already present in results.
-                This should cover all ids being added, since findDeadLinks middleware already searched for them.
-        - then create patch actions to modify all the reverse ids
-           - both the ones being added, and the ones being removed
-           - do not fire those patch actions, only stack them up at the end, and resolveWriteAction will take care of them
+     - should bypass 404, just in case the model got deleted in-between
 
 Pagination:
   - problems (should document them in code):
@@ -234,9 +217,6 @@ Pagination:
         - also as HTTP Link: <URL>; rel="first|last|prev|next|self[ ...]"
   - system defaults:
      - move all of them to their respective middleware
-
-Complex patches:
-  - provide MongoDB-like patch syntax for patch action, including array manipulation
 
 Atomicity/rollbacks:
   - in resolveWriteActions(), replace Promise.all() by something that waits for all promises to complete,
