@@ -44,7 +44,9 @@ Stripe-Account: ACCOUNT.id [C]    #4 keys by default:
                                   #     - specific endpoints
                                   #     - read/write, read-only, none
 
-ERROR                             #ERROR response for any endpoint
+Request-Id: UUID [S]              #
+
+{ error: ERROR }                  #Error response for any endpoint
 ERROR.type                        #Can be:
                                   #  - 'validation_error': input validation by client-side libraries
                                   #  - 'invalid_request_error' (400|404): input validation server-side
@@ -1947,6 +1949,7 @@ STRIPE.setApiKey('AUTH_KEY')      #Def: none
 STRIPE.setMaxNetworkRetries(NUM)  #Def: 0
                                   #Retry on 409 (any method) or 5** (not POST)
                                   #If not 0, defaults Idempotency-Key [C] to a UUIDv4
+                                  #Uses exponential backoff
 STRIPE.setTimeout(NUM)            #Def: 2 mins (like Node.js core)
 STRIPE.setAgent(AGENT)            #Def: AGENT with keepAlive true
 
@@ -1961,25 +1964,43 @@ STRIPE.setTelemetryEnabled(true)  #Send X-Stripe-Client-Telemetry: JSON [C] of O
 STRIPE.RESOURCE.*                 #RESOURCE is camelCase, in plural
 
 STRIPE.balances.retrieve(DATA_OBJ, OPTS)->PROMISE
+  - DATA_OBJ: request payload + URL params
   - OPTS:
      - api_key: override 'AUTH_KEY'
      - idempotency_key
      - stripe_account
      - stripe_version: override 'VERSION'
+  - PROMISE either:
+     - rejected with ERROR
+     - resolved with OBJ:
+        - also has OBJ.lastResponse RES
 
 SPEC:
+  - method STR (def: 'GET')
   - basePath 'PATH' (def: '/v1/')
      - + RESOURCE.path (e.g. 'balance')
   - path 'PATH'
      - can contain '{[optional!]}', replaced and URI encoded
-     - not sure where PATH_DATA object is specified???
-  - method STR (def: 'GET')
-  - urlParams ARR (def: [])
+  - urlParams ARR (def: []): PATH parameters
   - encode FUNC (def: noop): transform DATA_OBJ
   - host STR (def: 'api.stripe.com')
   - headers OBJ
   - validator(DATA_OBJ, { headers }): can throw error
   - requestDataProcessor('METHOD', DATA_OBJ, HEADERS, FUNC(ERROR, DATA)): override HTTP request making
+  - transformResponseData(RESPONSE)->RESPONSE
+  - includeBasic BOOL (def: false):
+     - add the following endpoints:
+        - create(): `POST /`
+        - list(): `GET /`
+        - retrieve(): `GET /{id}`
+        - update(): `POST /{id}`
+        - del(): `DELETE /{id}`
+     - add:
+        - setMetadata('ID', OBJ|null[, 'AUTH_KEY'])->PROMISE:
+           - like update({ metadata: OBJ })
+           - OBJ can also be 'VAR', VAL
+        - getMetadata('ID'[, AUTH_KEY])->PROMISE_OBJ
+           - like retrieve().metadata
 
 HTTP request:
   - encode to x-www-form-urlencoded (using QS)
@@ -1998,9 +2019,30 @@ HTTP request:
      - uname `uname -a`
      - application APPINFO
 
-ERRORs:
+Errors:
   - 'api_connection_error':
      - timeout
+     - other connection errors
+  - 'authentication_error':
+     - 401
+  - 'permission_error':
+     - 403
+  - 'rate_limit_error':
+     - 429
+  - 'card_error', 'invalid_request_error', 'api_error', 'idempotency_error': using RESPONSE.error.type
+  - 'generic_error': unknown RESPONSE.error.type
+  - 'api_error':
+     - response not JSON
+
+ERROR.type STR: e.g. 'StripeConnectionError', etc.
+(only set on { error } response)
+ERROR.headers OBJ
+ERROR.requestId STR: from Request-Id [S]
+ERROR.statusCode NUM
+(optional)
+ERROR.code STR
+ERROR.param 'PROP'
+ERROR.detail ERROR2
 
 STRIPE.on('request', FUNC(OBJ))   #OBJ:
                                   #  - method 'METHOD'
@@ -2008,3 +2050,7 @@ STRIPE.on('request', FUNC(OBJ))   #OBJ:
                                   #  - account ACCOUNT.id
                                   #  - idempotency_key STR
                                   #  - api_version 'VERSION'
+STRIPE.on('response', FUNC(OBJ))  #Like 'request' but also:
+                                  #  - status NUM
+                                  #  - request_id STR
+                                  #  - elapsed NUM (in ms)
