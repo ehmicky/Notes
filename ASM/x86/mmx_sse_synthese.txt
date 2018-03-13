@@ -1,0 +1,389 @@
+
+             
+   MMX SSE   
+             
+
+                    /=+===============================+=\ 
+                   /  :                               :  \  
+                   )==:          GENERATION           :==(   
+                   \  :_______________________________:  /    
+                    \=+===============================+=/
+
+Génération :
+  - MMX :
+    - PentiumMMX (1993)
+    - cpuid : eax == 1, edx[23] doit être == 1
+  - SSE1 ("Streaming SIMD Extension") :
+    - PentiumIII (1997)
+    - cpuid : eax == 1, edx[25] doit être == 1.
+    - Permet utilisation de floats SIMD par rapport et à MMX, et dissocie de l'alias avec x87 (-> plus besoin de faire un non-efficient emms à chaque fois)
+  - SSE2 :
+    - Pentium 4 (2000)
+    - cpuid : eax == 1, edx[26] doit être == 1.
+    - Permet utilisation de double SIMD, et de 128 bits packed integers par rapport à SSE1
+  - SSE3 :
+    - Pentium 4 Prescott (2004)
+    - cpuid : eax == 1, ecx[0] doit être == 1.
+  - SSE4.1 : 
+    - Intel Core 2 (2006)
+  - SSE4.2 : 
+    - Intel Atom, i3/i5/i7, AMD Phenom (2008)
+  - SSSE3 :
+    - Intel Atom, i3/i5/i7, AMD Phenom (2008)
+    - cpuid : eax == 1, ecx[9] doit être == 1.
+  - SSE5 :
+    - Intel Sandybridge/Ivy Bridge (2011)
+Tout CPU x86_64 peut utiliser au moins MMX, SSE1 et SSE2
+    
+
+                    /=+===============================+=\ 
+                   /  :                               :  \  
+                   )==:           REGISTRES           :==(   
+                   \  :_______________________________:  /    
+                    \=+===============================+=/
+
+mm* et xmm* : 
+  - leur interprétation (array de words, de dwords, etc.) dépend de l'instruction
+  - chaque membre d'un array est appelé un "champs"
+  - les opérations ont lieu sur chaque champs séparément, de manière parallèle
+  - les champs d'integers sont "saturated" (par opposition à "wrapped around") :
+    - lors d'un overflow, la nouvelle valeur n'est pas "wrapped around", mais reste à la valeur max du type courant
+    - lors d'un underflow, la nouvelle valeur == valeur min du type courant
+    - la saturation peut donc signed ou unsigned
+    - utile pour applications multimedia : ajouter trop de brightness à un pixel ne devrait pas le rendre noir par exemple
+
+mm* :
+  - 64 bits
+  - mm0 à mm7
+  - Champs possibles : Ûb, Ûw, Ûd, Ûq.
+  - alias des 64 premiers bits des registres x87 st* :
+    - attention lorsque l'on mix les deux : 
+      - exécuter emms après tout bloc d'instruction mmx (sauf si sûr et certain qu'aucune instruction x87 ne précédera la prochaine instruction mmx)
+      - si besoin de sauvegarder précédent état x87, utiliser fsave/fxsave
+
+xmm* :
+  - 128 bits
+  - xmm0 à xmm7
+  - Champs possibles : Žb, Žw, Žd, Žq, Žo, Žf ou Žg.
+  - pas des alias vers les st* ni vers les mm*
+
+mxcsr : 
+  - sorte de fstat + fctrl pour Z
+  - 32 bits :
+    - bit 0 : IE, DE, ZE, OE, UE, PE : comme exception flags de fstat, mais pour les xmm*
+    - bit 6 : DAZ, "denormalized are zeros", les denormalized numbers deviennent des zeros
+    - bit 7 : IM, DM, ZM, OM, UM et PM : comme masques bits 0 à 5 de fctrl, mais pour les xmm*
+    - bit 13 et 14 : RC, comme RC-bit de x87, mais pour les xmm*
+    - bit 15 : FZ, "flush-to-zero" : les underflow deviennent des zeros
+    - autres bits : réservés
+  - par défaut tout à 0, sauf les masques tous à 1
+  - flags possibles :
+    - masquant les interruptions : IM, DM, ZM, OM, UM, PM
+  - manipulé avec ldmxcsr et stmxcsr
+
+                    /=+===============================+=\ 
+                   /  :                               :  \  
+                   )==:          DATA TYPES           :==(   
+                   \  :_______________________________:  /    
+                    \=+===============================+=/
+
+MMX :
+  - U : désigne un registre mm* (64 bits)
+    - ULETTRE : désigne un U contenant un ÛLETTRE, et donc désigne les différents champs de ce U
+  - Û : version en mémoire d'un U (64 bits) :
+    - Ûb, packed bytes : array de 8 octets
+    - Ûw, packed words : array de 4 words
+    - Ûd, packed dwords : array de 2 dwords
+    - Ûq, qword
+
+SSE : 
+  - Z : désigne un registre xmm* (128 bits)
+    - ZLETTRE : désigne un Z contenant un ŽLETTRE, et donc désigne les différents champs de ce Z
+  - Ž : version en mémoire d'un Z (doivent être alignés sur 0x10) :
+    - SSE1+ :
+      - Žf, packed floats : array de 4 single-precision floats
+    - SSE2+ :
+      - Žb, packed bytes : array de 16 octets
+      - Žw, packed words : array de 8 words
+      - Žd, packed dwords : array de 4 dwords
+      - Žq, packed qwords : array de 2 qwords
+      - Žo, un double qword
+      - Žg, packed doubles : array de 2 double-precision floats
+
+Scalar/packed LETTRE :
+  - đ, ʠ, ʃ et ƍ : 
+    - comme f, q, f et g, sauf qu'ils sont "scalar" et non "packed" 
+    - seul les premier champs de $2 et $1 sont utilisés
+    - Ŝʃ et Ŝƍ équivalent à Ŝf et Ŝg
+
+                    /=+===============================+=\ 
+                   /  :                               :  \  
+                   )==:      CONVENTION FONCTION      :==(   
+                   \  :_______________________________:  /    
+                    \=+===============================+=/
+
+Pour passer un argument U, Û, Z ou Ž :
+  - le mettre dans mm0/xmm0 (puis mm1/xmm1, etc.)
+
+Pour retourner un U, Û, Z ou Ž :
+  - le mettre dans mm0/xmm0
+
+Appel à une fonction dans un bloc utilisant des mm*/xmm* :
+  - les callee ont le droit de modifier l'état mm*/xmm* : le caller doit donc sauvegarder/restaurer (f[x]save/f[x]rstor) s'il veut conserver des mm*/xmm* particulières après l'appel à une fonction.
+
+Si utilisation des mm* :
+  - faire un emms après dernière utilisation des mm* dans une fonction donnée, ou avant utilisation d'instructions x87
+
+                    /=+===============================+=\ 
+                   /  :                               :  \  
+                   )==:          COMPILATION          :==(   
+                   \  :_______________________________:  /    
+                    \=+===============================+=/
+
+Pour que le compilateur produise des instructions MMX/SSE* ("vector optimization"), trois alternatives :
+  - "auto-vectorization" donner flags -ftree-vectorize (compris dans -O3), -msse/-msse2, -ffast-math, et le laisser optimiser lui-même :
+     - marche peu et sur des cas très précis
+  - utiliser les builtins de gcc :
+    - ne marche qu'avec gcc, mais pas que sur x86
+  - utiliser le header *mmintrin.h :
+    - marche avec plusieurs compilateurs (au moins gcc 3.x/linux, msvc++ 7.x, Intel C/C++ / Linux/Windows), mais que sur x86
+Est entre 2 à 4 fois plus rapide qu'en instructions normales.
+
+                    /=+===============================+=\ 
+                   /  :                               :  \  
+                   )==:           NOTATION            :==(   
+                   \  :_______________________________:  /    
+                    \=+===============================+=/
+
+INSTRUCTION suivi de :
+  - [LETTRE...] :
+    - signifie "l'une de ces lettres"
+    - La lettre indique le type * de $1 et (en général) $2 : 
+      - b  -> b
+      - w  -> w
+      - d  -> d 
+      - q  -> q
+      - dq -> o
+      - s  -> f, si précédé de p (packed), ʃ, si précédé de s (scalar)
+      - d  -> g, si précédé de p (packed), ƍ, si précédé de s (scalar)
+  - [LETTRE...]+ :
+    - signifie que LETTRE doit en plus être suivie par la LETTRE du type supérieur. 
+    - Ce sera la première lettre qui indiquera le type * de $1 et (en général) de $2, sauf contre-indication.
+    - *+ signifiera le type supérieur à *
+
+Utilisation d'une seule moitié :
+  - +(x) "deuxième moitié"
+  - -(x) signifie : "première moitié"
+  - x(x) "un champs sur deux"
+  - xx(x) "un champs sur deux", mais opposé de x(x)
+  - Utilisé comme $1 ou $2, cela signifie que seule une moitié est utilisée, mais qu'il faut fournir l'entiereté.
+
+                    /=+===============================+=\ 
+                   /  :                               :  \  
+                   )==:         INSTRUCTIONS          :==(   
+                   \  :_______________________________:  /    
+                    \=+===============================+=/
+
+SIG : indique la saturation en cas d'overflow/underflow également :
+  - S : Signed
+  - U : Unsigned
+  - - : pas de saturation
+  - ! : indique, pour une opération scalar, que les autres champs de $1 seront réinitialisés.
+
+EXTENS :
+  - mmx/sse2 : sse2 exigé pour utiliser des Z
+  - sse1/2   : sse2 exigé pour utiliser des Zg et Zƍ
+
++-----------+-------+-------+-------+---+------+----------------------------------------------------------------------------+
+| NOM       | ARG1  | ARG2  | ARG3  |SIG|EXTENS| EXPLICATIONS                                                               |
++-----------+-------+-------+-------+---+------+----------------------------------------------------------------------------+
+| movd      | RMd   | ZUđ   |       |  |mmx/sse2|$1 = $2                                                                    |
+|           | ZUđ   | RMd   |       | ! |      |                                                                            |
+| movq      | UÛʠ   | Uʠ    |       |  |mmx/sse2| (64 bits uniquement)                                                      |
+|           | Zʠ    | ZÛʠ   |       |   |      |                                                                            |
+|           | Uʠ    | Ûʠ    |       | ! |      |                                                                            |
+|           | Ûʠ    | Zʠ    |       | ! |      |                                                                            |
+| lddqu     | Zo    | Žo    |       |   | sse3 |                                                                            |
+| movdqu    | ZŽo   | Zo    |       |   | sse2 |                                                                            |
+|           | Zo    | Žo    |       |   |      |                                                                            |
+| movdqa    | ZŽo   | Zo    |       |   | sse2 | (doit être aligné sur 0x10, mais 4 fois plus rapide)                       |
+|           | Zo    | Žo    |       |   |      |                                                                            |
+| movq2dq   | Zq    | Uq    |       | ! | sse2 |                                                                            |
+| movdq2q   | Uq    | Zq    |       |   | sse2 |                                                                            |
+| movshdup  | Zd    | Zd    |       |   | sse3 | $1 = x($1)x($2) (entrelacés)                                               |
+|           | Zd    | Ûd    |       |   |      | $1 = x($1)$2 (entrelacés)                                                  |
+| movsldup  | Zd    | Zd    |       |   | sse3 | $1 = xx($1)xx($2) (entrelacés)                                             |
+|           | Zd    | Ûd    |       |   |      | $1 = xx($1)$2 (entrelacés)                                                 |
+| movddup   | Zq    | Zq    |       |   | sse3 | $1 = x($1)x($2) (entrelacés)                                               |
+|           | Zq    | Ûq    |       |   |      | $1 = x($1)$2 (entrelacés)                                                  |
++-----------+-------+-------+-------+---+------+----------------------------------------------------------------------------+
+| movup[sd] | Z*    | ZŽ*   |       |   |sse1/2| $1 = $2                                                                    |
+|           | Ž*    | Z*    |       |   |      |                                                                            |
+| movap[sd] | Z*    | ZŽ*   |       |   |sse1/2| (doit être aligné sur 0x10, mais 4 fois plus rapide)                       |
+|           | Ž*    | Z*    |       |   |      |                                                                            |
+| movhp[sd] | +(Z*) | Û*    |       |   |sse1/2|                                                                            |
+|           | Û*    | +(Z*) |       |   |      |                                                                            |
+| movlp[sd] | -(Z*) | Û*    |       |   |sse1/2|                                                                            |
+|           | Û*    | -(Z*) |       |   |      |                                                                            |
+| movhlps   | -(Zf) | +(Zf) |       |   | sse1 |                                                                            |
+| movlhps   | +(Zf) | -(Zf) |       |   | sse1 |                                                                            |
+| movs[sd]  | Z*    | Ŝ*    |       | ! |sse1/2|                                                                            |
+|           | ZŜ*   | Z*    |       |   |      |                                                                            |
++-----------+-------+-------+-------+---+------+----------------------------------------------------------------------------+
+|packss[wd]+|    U* | UÛ*   |       | S | mmx  | Les champs de $1 et $2 (type *+) sont entrelacés, transtypés vers *, et    |
+|           |    Z* | ZŽ*   |       |   | sse2 | et placés dans les champs de $1 (type *)                                   |
+| packuswb  |    Ub | UÛw   |       | U | mmx  |                                                                            |
+|           |    Zb | ZŽw   |       |   | sse2 |                                                                            |
+|punpckh[bwd]+|  U* | UÛ*   |       |   | mmx  | $1 = +($2)+($1)                                                            |
+|           |    Z* | ZŽ*   |       |   | sse2 |                                                                            |
+|punpckhqdq |    Zq | ZŽq   |       |   | sse2 |                                                                            |
+|punpckl[bwd]+|  U* | UÛ*   |       |   | mmx  | $1 = -($2)-($1)                                                            |
+|           |    Z* | ZŽ*   |       |   | sse2 |                                                                            |
+|punpcklqdq |    Zq | ZŽq   |       |   | sse2 |                                                                            |
+|unpckhp[sd]| Z*    | ZŜ*   |       |   |sse1/2| $1 = +($1)+($2) (entrelacés)                                               |
+|unpcklp[sd]| Z*    | ZŜ*   |       |   |sse1/2| $1 = -($1)-($2) (entrelacés)                                               |
++-----------+-------+-------+-------+---+------+----------------------------------------------------------------------------+
+| pextrw    | Rd    | ZUw   | Ib    |   | sse1 | $1 = $2[$3]                                                                |
+| pinsrw    | ZUw   | Rd    | Ib    |   | sse1 | $2[$3] = $1                                                                |
++-----------+-------+-------+-------+---+------+----------------------------------------------------------------------------+
+| cvt**2**  | *     | *     |       | S |sse1/2| $1 = $2                                                                    |
+|           |       |       |       |   |      | ** signifie deux lettres, désignant un type :                              |
+|           |       |       |       |   |      | +------+-------+-------+-------++-------+-------+-------+-------+          |
+|           |       |       |       |   |      | |  **  |  si   |  ss   |  sd   ||  pi   |  dq   |  ps   |  pd   |          |
+|           |       |       |       |   |      | +------+-------+-------+-------++-------+-------+-------+-------+          |
+|           |       |       |       |   |      | | ARG1 |  Rd   |  Zʃ   |  Zƍ   ||  Ud   |-(Zd)  |-(Zf)  |  Zg   |          |
+|           |       |       |       |   |      | | ARG2 |  RMd  |  ZŜʃ  |  ZŜƍ  ||  UÛd  |-(ZŽd) |-(ZŽf) |  ZŽg  |          |
+|           |       |       |       |   |      | +------+-------+-------+-------++-------+-------+-------+-------+          |
+|           |       |       |       |   |      | Le deuxième ** est $1 (ARG1), le premier ** $2 (ARG2).                     |
+|           |       |       |       |   |      | Il n'y a pas de -( ) autour de $1 ni $2 pour une conversion entre dq et ps.|
+|           |       |       |       |   |      | Conversions impossibles :                                                  |
+|           |       |       |       |   |      |   - entre un s* et un p*                                                   |
+|           |       |       |       |   |      |   - entre un ** et lui-même                                                |
+|           |       |       |       |   |      |   - entre un pi et un dq                                                   |
+|           |       |       |       |   |      |   - avec un si si 32 bits                                                  |
++-----------+-------+-------+-------+---+------+----------------------------------------------------------------------------+
+| cvtt**2** | *     | *     |       | S |sse1/2| Pareil, sauf que :                                                         |
+|           |       |       |       |   |      |   - RC == troncature                                                       |
+|           |       |       |       |   |      |   - le deuxième ** doit être un float, et le premier un integer            |
++-----------+-------+-------+-------+---+------+----------------------------------------------------------------------------+
+| addp[sd]  | Z*    | ZŽ*   |       |   |sse1/2| $1 += $2. Ne modifie pas eflags.                                           |
+| adds[sd]  | Z*    | ZŜ*   |       |   |sse1/2|                                                                            |
+| padd[bwdq]| U*    | UÛ*   |       | - | mmx  |                                                                            |
+|           | Z*    | ZŽ*   |       |   | sse2 |                                                                            |
+| padds[wd] | U*    | UÛ*   |       | S | mmx  |                                                                            |
+|           | Z*    | ZŽ*   |       |   | sse2 |                                                                            |
+| paddus[wd]| U*    | UÛ*   |       | U | mmx  |                                                                            |
+|           | Z*    | ZŽ*   |       |   | sse2 |                                                                            |
+| subp[sd]  | Z*    | ZŽ*   |       |   |sse1/2| $1 -= $2. Ne modifie pas eflags.                                           |
+| subs[sd]  | Z*    | ZŜ*   |       |   |sse1/2|                                                                            |
+| psub[bwdq]| U*    | UÛ*   |       | - | mmx  |                                                                            |
+|           | Z*    | ZŽ*   |       |   | sse2 |                                                                            |
+| psubs[bw] | U*    | UÛ*   |       | S | mmx  |                                                                            |
+|           | Z*    | ZŽ*   |       |   | sse2 |                                                                            |
+| psubus[bw]| U*    | UÛ*   |       | U | mmx  |                                                                            |
+|           | Z*    | ZŽ*   |       |   | sse2 |                                                                            |
+| mulp[sd]  | Z*    | ZŽ*   |       |   |sse1/2| $1 *= $2                                                                   |
+| muls[sd]  | Z*    | ZŜ*   |       |   |sse1/2|                                                                            |
+| pmullw    | Ud    | UÛd   |       |   | mmx  | $1 = -($1 * $2). A compléter avec pmulh[u]w                                |
+|           | Zw    | ZŽw   |       |   | sse2 |                                                                            |
+| pmulhw    | Ud    | UÛd   |       | S | mmx  | $1 = +($1 * $2).                                                           |
+|           | Zw    | ZŽw   |       |   | sse2 |                                                                            |
+| pmulhuw   | Ud    | UÛd   |       | U | mmx  | $1 = +($1 * $2).                                                           |
+|           | Zw    | ZŽw   |       |   | sse2 |                                                                            |
+| pmuludq   | Zq    | ZŽd   |       | U | sse2 | $1 = x($1 * $2)                                                            |
+|           | Uq    | UÛd   |       |   | sse2 |                                                                            |
+| divp[sd]  | Z*    | ZŽ*   |       |   |sse1/2| $1 /= $2                                                                   |
+| divs[sd]  | Z*    | ZŜ*   |       |   |sse1/2|                                                                            |
++-----------+-------+-------+-------+---+------+----------------------------------------------------------------------------+
+|addsubp[sd]| Z*    | ZŽ*   |       |   | sse3 | $1 ±= $2 (+= et -= alternent une fois sur deux)                            |
+| haddps    | Zf    | ZŽf   |       |   | sse3 | $1[0] = $2[0] + $2[1] ; $1[1] = $2[2] + $2[3] ;                            |
+|           |       |       |       |   |      | $1[2] = $1[0] + $1[1] ; $1[3] = $1[2] + $1[3]                              |
+| haddpd    | Zg    | ZŽg   |       |   | sse3 | $1[0] = $2[0] + $2[1] ; $1[1] = $1[0] + $2[1]                              |
+| hsubps    | Zf    | ZŽf   |       |   | sse3 | $1[0] = $2[1] - $2[0] ; $1[1] = $2[3] - $2[2] ;                            |
+|           |       |       |       |   |      | $1[2] = $1[1] - $1[0] ; $1[3] = $1[3] - $1[2]                              |
+| hsubpd    | Zg    | ZŽg   |       |   | sse3 | $1[0] = $2[1] - $2[0] ; $1[1] = $1[1] - $2[0]                              |
++-----------+-------+-------+-------+---+------+----------------------------------------------------------------------------+
+| andp[sd]  | Z*    | ZŽ*   |       |   |sse1/2| $1 &= $2                                                                   |
+| pand      | Uq    | UÛq   |       |   | mmx  |                                                                            |
+|           | Zq    | ZŽq   |       |   | sse2 |                                                                            |
+| andnp[sd] | Z*    | ZŽ*   |       |   |sse1/2| $1 &= ~$2                                                                  |
+| pandn     | Uq    | UÛq   |       |   | mmx  |                                                                            |
+|           | Zq    | ZŽq   |       |   | sse2 |                                                                            |
+| orp[sd]   | Z*    | ZŽ*   |       |   |sse1/2| $1 |= $2                                                                   |
+| por       | Uq    | UÛq   |       |   | mmx  |                                                                            |
+|           | Zq    | ZŽq   |       |   | sse2 |                                                                            |
+| xorp[sd]  | Z*    | ZŽ*   |       |   |sse1/2| $1 ^= $2                                                                   |
+| pxor      | Uq    | UÛq   |       |   | mmx  |                                                                            |
+|           | Zq    | ZŽq   |       |   | sse2 |                                                                            |
+| psll[wd]  | U*    | Ib    |       |   | mmx  | $1 <<= $2                                                                  |
+| psll[wdq] | Z*    | IZŽb  |       |   | sse2 |                                                                            |
+| pslldq    | Zo    | Ib    |       |   | sse2 |                                                                            |
+| psrl[bwd] | U*    | Ib    |       |   | mmx  | $1 >>= $2 (unsigned)                                                       |
+| psrl[wdq] | Z*    | IZŽb  |       |   | sse2 |                                                                            |
+| psrldq    | Zo    | Ib    |       |   | sse2 |                                                                            |
+| psra[wd]  | U*    | Ib    |       |   | mmx  | $1 >>= $2 (signed)                                                         |
+| psra[wd]  | Z*    | IZŽb  |       |   | sse2 |                                                                            |
++-----------+-------+-------+-------+---+------+----------------------------------------------------------------------------+
+| sqrtp[sd] | Z*    | ZŽ*   |       |   |sse1/2| $1 = √$2                                                                   |
+| sqrts[sd] | Z*    | ZŜ*   |       |   |sse1/2|                                                                            |
+| rcpps     | Zf    | ZŽf   |       |   | sse1 | $1 = $2^-1                                                                 |
+| rcpss     | Zʃ    | ZŜʃ   |       |   | sse1 |                                                                            |
+| rsqrtps   | Zf    | ZŽf   |       |   | sse1 | $1 = (√$2)^-1                                                              |
+| rsqrtss   | Zʃ    | ZŜʃ   |       |   | sse1 |                                                                            |
++-----------+-------+-------+-------+---+------+----------------------------------------------------------------------------+
+| pavg[bw]  | U*    | UÛ*   |       | U | mmx  | $1 = moyenne($1,$2)                                                        |
+|           | Z*    | ZŽ*   |       |   | sse1 |                                                                            |
+| minp[sd]  | Z*    | ZŽ*   |       |   |sse1/2| $1 = min($1,$2)                                                            |
+| mins[sd]  | Z*    | ZŜ*   |       |   |sse1/2|                                                                            |
+| pminub    | Ub    | UÛb   |       | U | sse1 |                                                                            |
+|           | Zb    | ZŽb   |       |   |      |                                                                            |
+| pminsw    | Uw    | UÛw   |       | S | sse1 |                                                                            |
+|           | Zw    | ZŽw   |       |   |      |                                                                            |
+| maxp[sd]  | Z*    | ZŽ*   |       |   |sse1/2| $1 = max($1,$2)                                                            |
+| maxs[sd]  | Z*    | ZŜ*   |       |   |sse1/2|                                                                            |
+| pmaxub    | Ub    | UÛb   |       | U | sse1 |                                                                            |
+|           | Zb    | ZŽb   |       |   |      |                                                                            |
+| pmaxsw    | Uw    | UÛw   |       | S | sse1 |                                                                            |
+|           | Zw    | ZŽw   |       |   |      |                                                                            |
+| psadbw    | Ub    | UÛb   |       | U | sse1 | $1 = somme(abs($1 - $2), pour chaque 8 champs). Le $1 recevant le résultat |
+|           | Zb    | ZŽb   |       |   |      | est interprété comme un Uq/Zq (unsigned)                                   |
+| pmaddwd   | Ud    | UÛd   |       |   | mmx  | $1 = +($1 * $2) + -($1 * $2)                                               |
+|           | Zd    | ZŽd   |       |   | sse2 |                                                                            |
++-----------+-------+-------+-------+---+------+----------------------------------------------------------------------------+
+| comis[sd] |  Z*   | ZŜ*   |       |   |sse1/2| cmp $1, $2                                                                 |
+| ucomis[sd]|  Z*   | ZŜ*   |       |   |sse1/2| cmp $1, $2 (unordered)                                                     |
+|pcmpeq[bwd]|  U*   | UÛ*   |       |   | mmx  | Si $1 == $2, $1 = -1, sinon $1 = 0                                         |
+|           |  Z*   | ZŽ*   |       |   | sse2 |                                                                            |
+|pcmpgt[bwd]|  U*   | UÛ*   |       |   |m/sse2| Si $1 > $1, $1 = -1, sinon $1 = 0                                          |
+|           |  Z*   | ZŽ*   |       |   | sse2 |                                                                            |
+| cmpp[sd]  |  Z*   | ZŽ*   | Ib    |   |sse1/2| $1 = -1 si $1 TEST $2 est vrai, sinon $1 = 0. TEST dépend de $3 :          |
+| cmps[sd]  |  Z*   | ZŜ*   | Ib    |   |sse1/2| +------+----+---+----+-----------------+----+---+----+-------------------+ |
+|           |       |       |       |   |      | |  $3  | 0  | 1 | 2  |       3         | 4  | 5 | 6  |        7          | |
+|           |       |       |       |   |      | +------+----+---+----+-----------------+----+---+----+-------------------+ |
+|           |       |       |       |   |      | | TEST | == | < | <= | $1 ou $2 == NaN | != | > | >= | ni $1 ni $2 == NaN| |
+|           |       |       |       |   |      | +------+----+---+----+-----------------+----+---+----+-------------------+ |
+|           |       |       |       |   |      | Le $1 recevant le résultat est interprété comme un Zd/ZD;Zq/ZQ             |
+| movmskps  | Rd    | Zd    |       |   | sse1 | $1 = concaténation du MSB des 2/4 champs de $2.                            |
+| movmskpd  | Rd    | Zq    |       |   | sse2 | Utile après un cmpps/cmpss/cmppd/cmpsd                                     |
+| pmovmskb  | Rd    | ZUd   |       |   | sse1 | $1 = concaténation des 8 MSB des 4 champs de $2. Utile après un cmpps/cmpss|
++-----------+-------+-------+-------+---+------+----------------------------------------------------------------------------+
+| shufps    | Zf    | ZŽf   | Ib    |   | sse1 | Soit $3 découpé en quatre groupes de 2 bits i0...i3,                       |
+|           |       |       |       |   |      | $1[0] = $1[i0] ; $1[1] = $1[i1] ; $1[2] = $2[i2] ; $1[3] = $2[i3]          |
+| shufpd    | Zg    | Zžg   | Ib    |   | sse2 | $1[0] = $1[$3[0]] ; $1[1] = $2[$3[1]]                                      |
+| pshufw    | Uw    | UÛw   | Ib    |   | sse1 | Soit $3 découpé en quatre groupes de 2 bits i0...i3,                       |
+| pshufd    | Zd    | Zžd   | Ib    |   | sse2 | $1[0] = $2[i0] ; $1[1] = $2[i1] ; $1[2] = $2[i2] ; $1[3] = $2[i3]          |
+| pshuflw   | -(Zw) | -(Zžw)| Ib    |   | sse2 |                                                                            |
+| pshufhw   | +(Zw) | +(Zžw)| Ib    |   | sse2 |                                                                            |
++-----------+-------+-------+-------+---+------+----------------------------------------------------------------------------+
+| maskmovq  | Uq    | Uq    |       |   | mmx  |[edi] = $1, mais pour $1[n], si $2[n] == 1, il n'y a pas d'écriture (masque)|
+| maskmovdqu| Zo    | Zžo   |       |   | sse1 |                                                                            |
++-----------+-------+-------+-------+---+------+----------------------------------------------------------------------------+
+| stmxcsr   | Md    |       |       |   | sse1 | $1 = mxcsr                                                                 |
+| ldmxcsr   | Md    |       |       |   | sse1 | mxcsr = $1                                                                 |
++-----------+-------+-------+-------+---+------+----------------------------------------------------------------------------+
+| emms      |       |       |       |   | mmx  | Réinitialise registres st*/mm*                                             |
+| fxsave    | M512  |       |       |   | sse1 | $1 = x87/MMX state + SSE state                                             |
+| fxrstor   | M512  |       |       |   | sse1 | x87/MMX state + SSE state = $1                                             |
+| fxsave64  | M512  |       |       |   | sse1 | Pareil, mais dump légèrement différent (64 bits uniquement)                |
+| fxrstor64 | M512  |       |       |   | sse1 |                                                                            |
++-----------+-------+-------+-------+---+------+----------------------------------------------------------------------------+

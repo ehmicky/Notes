@@ -1,0 +1,347 @@
+
+             
+   ROUTE53   
+             
+
+
+GOAL ==>											#Instead of using the OS DNS serving functionality, use distributed network like CloudFront for 
+															#low latency and to avoid DNS traffic on EC2 instances.
+															#Includes functions for balancing load according to weight, 
+															
+DELEGATIONSET ==>							#  - network of 4 DNS servers, usually as ns-NUM.awsdns-NUM.TLD
+															#  - distributed across 4 different TLDs for high availability
+															#  - automatically assigned when creating a HostedZone, including as NS field (TTL 48 hours)
+															#  - Must notify domain name registrar so it updates NS fields to the AWS name servers 
+															#    (DelegationSet) (automatically done when using Route53 Domains)
+
+HOSTEDZONE ==>	 							#Like a DNS zone file, for a single domain name (and subdomains)
+															
+ALIASTARGET ==>								#"Alias RR sets": 
+                              #  - can only target another RR (of type A/AAAA), or a ELB, S3 website or CloudFront URL
+															#  - Type must be A or (ELB only) AAAA
+                              #  - not a real RR. When querying NAME, will translate target into the current IP, with a 
+                              #    TTL of 60.
+                              #  - so is like CNAME but:
+															#     - can be done on zone apex (i.e. registered domain) 
+															#     - cannot target a domain in another HostedZone
+															#     - DNS "translation" is free, where a new DNS query based on CNAME would not be
+															#     - not visible in normal DNS records, meaning only work inside Amazon
+
+SOA ==> 											#ns-2048.awsdns-64.net. hostmaster.awsdns.com. 1 7200 900 1209600 86400, 
+															#automatically created with HostedZone (2 hours, 15 mins, two weeks, 1 day) (TTL 15 mins)
+															
+ROUTING POLICY ==>						#Choosing among several RRs with same NAME and TYPE but different value according to:
+															#  - weight: can be used to achieve LoadBalancing at the DNS-level
+															#  - lowest latency region (for targets distributed in several Amazon Regions)
+															#  - GeoLocation
+															#  - Failover: specifies a second target if the first target is not available anymore
+															#     - Uses HealthChecks, i.e. config for the health checks to perform
+                              #       (UserAgent: "Amazon Route 53 Health Check Service; ref:NUM")
+															#     - should set lower TTL (1 min. or less) to allow quick failover
+															#        - Can also perform HealthChecks for any routing policy with EvaluateTargetHealth true,
+															#          removing RRs when unhealthy.
+															#        - E.g. a weight routing policy with HealthCheck allow using all resources, whereas a
+															#          usual Failover requires an idle standy.
+															#        - Only works on AliasTargets, and not targeting CloudFront
+															#Can use CNAME or AliasTargets to create several levels of routing, e.g. first lowest latency, 
+															#then weight
+															
+CLOUDWATCH ==>								#  - METRIC:
+															#     - HealthCheckStatus 1|0
+                              #     - HealthCheckStatusPercentage: if several Checkpoints targeting the same instance
+															#  - Dimension: InstanceId
+                              #  - It seems that for the moment can be only be seen on Route53 AWS console
+
+ARN ==>												#  - arn:aws:route53:::hostedzone|healthcheck|change/ID
+															
+PRICING ==>										#  - 0.5$/HostedZone/month
+															#  - 1$/NUM queries/month according to routing policy:
+															#     - normal, failover or weight: 2.5M
+															#     - lowest latency: 1.7M
+															#     - geolocation: 1.4M
+															#  - 0.5$/HealtCheck/month (0.75$ if URL is not AWS) (first 50 free unless URL not AWS)
+															#     - additional 1$/HealtCheck/month (2$ if URL not AWS) if (for each):
+															#        - Type "HTTPS[_STR_MATCH]" (HTTPS)
+															#        - Type "HTTP[S]_STR_MATCH" (string matching)
+															#        - RequestInterval 10 (instead of 30)
+		 
+LIMITS ==>										#  - 500 HostedZone
+                              #  - 10 domains
+															#  - 10000 ResourceRecords by HostedZone
+															#     - 100 with same name and type (for geolocation and weighted)
+															#  - 50 health checks
+															#  - 5 requests/seconds
+	 															
+
+																						 /=+===============================+=\ 
+																						/  :                               :  \  
+							 														  )==:              API              :==(   
+																						\  :_______________________________:  /    
+																						 \=+===============================+=/
+
+
+API ==>										    #Version from 2014-07-31
+															#Unusual REST API.
+															#Domain: https://route53.amazonaws.com/APIVERSION (APIVERSION is "2013-04-01")
+															#XML, not JSON. Englobbing XML tag (request and response bodies) is not removed in SDKs.
+															#If:
+															#  - HZONE_ID -> request variable Id or (for *ResourceRecordSets()) HostedZoneId
+                              #     - HostedZoneId on the CLI
+															#  - CHANGE_ID -> request variable Id
+															#  - HEALTCHECK_ID -> request variable HealthCheckId
+															#  - RES_TYPE -> request variable ResourceType
+															#  - RES_ID -> request variable ResourceId
+															
+PAGINATION ==>								#ListHostedZones(), ListHealthChecks():
+															#  - Request variables Marker	STR, MaxItems NUM (def|max: 100)
+															#  - Response body IsTruncated BOOL, Marker STR, MaxItems NUM, NextMarker STR 
+															#ListResourceRecordSets():
+															#  - Request variables StartRecordName|Type|Indentifier STR, MaxItems NUM
+															#  - Response body IsTruncated BOOL, NextRecordName|Type|Indentifier STR, MaxItems NUM
+															#ListGeoLocations():
+															#  - Request variables StartContinent|Country|SubdivisionCode STR, MaxItems NUM
+															#  - Response body IsTruncated BOOL, NextContinent|Country|SubdivisionCode STR, MaxItems NUM
+
+
+																						 /=+===============================+=\ 
+																						/  :                               :  \  
+							 														  )==:            METHODS            :==(   
+																						\  :_______________________________:  /    
+																						 \=+===============================+=/
+
+															
+POST .../hostedzone						#Request parameters:
+CreateHostedZone()						#  - CallerReference STR
+															#  - Name DOMAIN
+															#  - HostedZoneConfig: Comment STR
+															#Response body:
+															#  - HostedZone HZONE:
+															#     - Id STR
+															#     - Name DOMAIN
+															#     - CallerReference STR
+															#     - Config: Comment STR
+															#     - ResourceRecordSetCount NUM
+															#  - ChangeInfo CHANGE_INFO:
+															#     - Id STR
+															#     - Status "PENDING|INSYNC"
+															#     - SubmittedAt DATE
+															#     - Comment STR
+															#  - DelegationSet DELEGATION_SET:
+															#     - NameServers STR_ARR
+															#  - Location STR
+DELETE .../hostedzone/HZONE_ID		
+DeleteHostedZone()						#Response body: ChangeInfo CHANGE_INFO
+GET .../hostedzone/HZONE_ID		#Response body:
+GetHostedZone()								#  - HostedZone HZONE
+															#  - DelegationSet DELEGATION_SET
+GET .../hostedzone						#Response body: HostedZones HZONE_ARR
+ListHostedZones()							#Paginates
+
+POST 													#Request parameters: ChangeBatch (max 32000 chars):
+.../hostedzone/HZONE_ID/rrset	#  - Comment STR (max 256 chars)
+ChangeResourceRecordSets()		#  - Changes OBJ_ARR (max 100):
+															#     - Action "CREATE|DELETE|UPSERT" 
+															#        - UPSERT means CREATE if not exist, update otherwise providing same Name, Type and
+															#          SetIdentifier
+															#     - ResourceRecordSet RECORD_SET (max 1000):
+															#        - Name DOMAIN
+															#        - Type 'A|AAAA|SOA|TXT|NS|CNAME|MX|PTR|SRV|SPF'
+															#        - ResourceRecords OBJ_ARR: Value STR
+															#        - TTL NUM
+															#        - AliasTarget:
+															#           - DNSName STR
+															#           - HostedZoneId STR
+															#           - EvaluateTargetHealth BOOL: use HealthCheckId.
+															#        - SetIdentifier STR (unique ID only when using routing, must be different across routed
+                              #          RRs)
+															#        - Weight NUM (if weighted routing) (0-255)
+															#        - Region REGION (if latency routing)
+															#        - GeoLocation GEOLOCATION (if geolocation routing)
+															#           - ContinentCode "AF|AN|AS|EU|OC|NA|SA"
+															#           - CountryCode STR (2 letters uppercase)
+															#           - SubdivisionCode STR (US state, 2 letters uppercase)
+															#           - priority:
+															#              - goes to lowest geographical scale
+															#              - all members optional
+															#              - CountryCode can be "*" for catch-all (should be done)
+															#        - Failover "PRIMARY|SECONDARY" (if failover routing)
+															#        - HealthCheckId STR (if failover routing)
+															#Response body: ChangeInfo CHANGE_INFO
+															#Takes few minutes to propagate.
+GET 													#Request parameters:
+.../hostedzone/HZONE_ID/rrset	#Response body:
+ListResourceRecordSets()			#  - ResourceRecordSets RECORD_SET_ARR
+															#Paginates
+
+GET .../change/CHANGE_ID			#Response body: ChangeInfo OBJ:
+GetChange()										#  - Id STR
+															#  - Status "PENDING|INSYNC"
+															#  - SubmittedAt DATE
+															#  - Comment STR
+
+GET .../geolocation						#Request parameters GEOLOCATION
+GetGeoLocation()							#Response body: GeoLocationDetails GEOLOCATION_DETAIL:
+															#  - Same members as GEOLOCATION
+															#  - ContinentName "Africa|Antarctica|Asia|Europe|Oceania|North America|South America"
+															#  - CountryName STR
+															#  - SubdivisionName STR
+GET .../geolocations					#Response body: GeoLocationDetailsList GEOLOCATION_DETAIL_ARR
+ListGeoLocations()						#Paginates
+
+POST .../healthcheck					#Request parameters HEALTHCHECK (without Id)
+CreateHealthCheck()						#Response body HEALTHCHECK:
+															#  - Id STR
+															#  - CallerReference STR: unique ID for idempotence
+															#  - HealthCheckConfig HEALTHCHECK_CONF:
+															#     - FullyQualifiedDomainName DOMAIN: URL to check and Host [C] to set
+															#       Must reply with 2xx or 3xx status code. Timeout cannot be specified.
+															#     - IPAddress IPv4: 
+															#        - uses URL's IP instead of DOMAIN for the health check
+															#        - if FullyQualifiedDomainName, put Host: DOMAIN [C]
+															#     - ResourcePath STR: URL path
+															#     - Port NUM
+															#     - Type: 'HTTP[S][_STR_MATCH]|TCP'
+															#        - if _STR_MATCH, check if response body == SearchString
+															#     - SearchString STR (max 5KB)
+															#     - RequestInterval 10|30 (def: 30 sec)
+															#     - FailureThreshold NUM (def: 3): number of failures to consider unhealthy
+															#  - HealthCheckVersion NUM
+POST .../healthcheck/HCHECK_ID#Request parameters:
+UpdateHealthCheck()						#  - Same members as HEALTHCHECK_CONF without Type nor RequestInterval
+															#  - HealthCheckVersion NUM
+															#Response body HEALTHCHECK
+DELETE 												
+.../healthcheck/HCHECK_ID			
+DeleteHealthCheck()						#
+GET .../healthcheck/HCHECK_ID	
+GetHealthCheck()							#Response body HEALTHCHECK
+GET .../healthcheck						#Response body: HealthChecks HEALTHCHECK_ARR
+ListHealthChecks()						#Paginates
+GET .../healthcheckcount			
+GetHealthCheckCount()					#Response body: HealthCheckCount NUM
+GET .../checkerIpRanges				
+GetCheckerIpRanges()					#Response body: CheckerIpRanges STR_ARR
+
+POST .../tags/RES_TYPE/RES_ID	#Request parameters:
+ChangeTagsForResource()				#  - AddTags OBJ_ARR: Key STR, Value STR
+															#  - RemoveTagKeys STR_ARR
+GET .../tags/RES_TYPE/RES_ID	#Response body: ResourceTagSet RESOURCE_TAG_SET:
+ListTagsForResource()					#  - ResourceType STR
+															#  - ResourceId STR
+															#  - Tags OBJ_ARR: Key STR, Value STR
+GET .../tags/RES_TYPE					#Request parameters: ResourceIds STR_ARR
+ListTagsForResources()				#Response body: ResourceTagSets RESOURCE_TAG_SET_ARR
+
+
+
+                    
+   ROUTE53DOMAINS   
+                    
+
+
+GOAL ==>											#Buying and managing domain names (through Gandy)
+	
+API ==>						            #Version from 2014-07-31
+															#Normal REST API. Uses JSON, not XML.
+															#Use x-amz-target: Route53Domains_vAPIVERSION.ACTION [C] instead of Action: ACTION query variable
+															#(APIVERSION is 20140515)
+
+PRICING ==>										#No charge over Gandi price. Gandi charges according to TLD.
+															
+PAGINATION ==>								#  - request variable Marker STR, MaxItems STR
+															#  - response body NextPageMarker STR
+
+
+																						 /=+===============================+=\ 
+																						/  :                               :  \  
+							 														  )==:            METHODS            :==(   
+																						\  :_______________________________:  /    
+																						 \=+===============================+=/
+
+
+CheckDomainAvailability()			#Request parameters: DomainName STR
+															#Response body: 
+															#  - Availability "AVAILABLE[_RESERVED|PREORDER]|UNAVAILABLE[_PREMIUM|RESTRICTED]|RESERVED"
+															
+RegisterDomain()							#Must then use the HostedZone automatically created (takes few minutes).
+                              #Request parameters DOMAIN:
+															#  - DomainName STR
+															#  - DurationInYears NUM (1 to 10)
+															#  - AutoRenew BOOL (def: true)
+															#  - Admin|Registrant|TechContact CONTACT:
+															#     - AddressLine1|2 STR
+															#     - City STR
+															#     - ContactType "PERSON|COMPANY|ASSOCIATION|PUBLIC_BODY|RESELLER"
+															#     - CountryCode STR
+															#     - Email STR
+															#     - ExtraParams OBJ_ARR: 
+															#        - Name "DUNS_NUMBER|BRAND_NUMBER|BIRTH_DEPARTMENT|BIRTH_DATE_IN_YYYY_MM_DD|
+															#          BIRTH_COUNTRY|BIRTH_CITY|DOCUMENT_NUMBER|AU_ID_NUMBER|AU_ID_TYPE|CA_LEGAL_TYPE|
+															#          FI_BUSINESS_NUMBER|FI_ID_NUMBER|IT_PIN|RU_PASSPORT_DATA|SE_ID_NUMBER|SG_ID_NUMBER|
+															#          VAT_NUMBER"
+															#        - Value STR
+															#     - Fax STR
+															#     - First|LastName STR
+															#     - OrganizationName STR
+															#     - PhoneNumber STR
+															#     - State STR
+															#     - ZipCode STR
+															#  - PrivacyProtectAdmin|Registrant|TechContact BOOL (def: false): conceling info for WHOIS
+															#Response body: OperationId STR
+UpdateDomainContact()					#Request parameters:
+															#  - DomainName STR
+															#  - Admin|Registrant|TechContact CONTACT
+															#Response body: OperationId STR
+UpdateDomainContactPrivacy()	#Request parameters:
+															#  - DomainName STR
+															#  - Admin|Registrant|TechPrivacy BOOL
+															#Response body: OperationId STR
+UpdateDomainNameservers()			#Request parameters:
+															#  - DomainName DOMAIN
+															#  - NameServers NAMESERVER_ARR:
+															#     - Name NS_DOMAIN
+															#     - GlueIps STR_ARR (only if NS_DOMAIN is subdomain of DOMAIN)
+															#Response body: OperationId STR
+															
+ListDomains()									#Response body: Domains OBJ_ARR
+															#  - AutoRenew BOOL
+															#  - DomainName STR
+															#  - Expiry DATE_NUM
+															#  - TransferLock BOOL (see TransferDomain())
+															#Paginates
+GetDomainDetail()							#Request parameters: DomainName STR
+															#Response body:
+															#  - Same members as DOMAIN, but Privacy*TYPE -> TYPEPrivacy, and no DurationInYears
+															#  - AbuseContactEmail|Phone STR
+															#  - Creation|Expiration|UpdatedDate DATE_NUM
+															#  - NameServers NAMESERVER_ARR
+															#  - RegistrarName STR
+															#  - RegistrarUrl STR 
+															#  - WhoIsServer DOMAIN
+															#  - Reseller STR (e.g. "Amazon")
+															#  - StatusList [ "clientTransferProhibited" ] (optional)
+
+ListOperations()							#Response body: Operations OPERATION_ARR:
+															#  - OperationId STR
+															#  - Status "IN_PROGRESS|COMPLETE|ERROR|SUCCESSFUL|FAILED"
+															#  - SubmittedDate DATE
+															#  - Type "REGISTER_DOMAIN|DELETE_DOMAIN|TRANSFER_IN_DOMAIN|UPDATE_DOMAIN_CONTACT|
+															#    UPDATE_NAMESERVER|CHANGE_PRIVACY_PROTECTION|DOMAIN_LOCK"
+															#Paginates
+GetOperationDetail()					#Request parameters: OperationId STR
+															#Response body OPERATION, with also:
+															#  - DomainName STR
+															#  - Message STR
+																														
+RetrieveDomainAuthCode()			#Request parameters: DomainName STR
+															#Response body: AuthCode STR
+TransferDomain()							#Transfer from another DNS registrar to Gandi:
+															#  - must DisableDomainTransferLock() first, then re-enable it
+															#  - 2 months since last transfer or creation of domain
+															#  - to avoid losing money, should do it be end of other registrar period
+															#Request parameters:
+															#  - Same members as DOMAIN
+															#  - AuthCode STR
+															#Response body: OperationId STR
+Enable|Disable								#Request parameters: DomainName STR
+DomainTransferLock()					#Response body: OperationId

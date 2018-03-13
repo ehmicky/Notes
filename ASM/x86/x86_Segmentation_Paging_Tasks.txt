@@ -1,0 +1,633 @@
+
+                                     
+   X86_SEGMENTATION_PAGING_MEMOIRE   
+                                     
+
+                    /=+===============================+=\ 
+                   /  :                               :  \  
+                   )==:         SEGMENTATION          :==(   
+                   \  :_______________________________:  /    
+                    \=+===============================+=/
+
+Registre gdtr (48 bits) :
+  - taille de GDT (16 bits)
+  - puis base adresse physique de GDT (32 bits)
+  - manipulation avec instructions lgdt, sgdt
+Même chose pour idtr, pour l'IDT, et les instructions lidt et sidt.
+Le ldtr, pour la LDT (instructions lldt et ldtr) est lui seulement un segment selector (16 bits) indiquant le segment descriptor de la LDT dans la GDT, permettant donc d'avoir sa taille (20 bits) et base adresse physique (32 bits).
+
+GDT et LDT sont des arrays de taille variable, mais de taille maximale pour 8192 segment descriptors (index 0 pas utilisé), donc 512Ko
+LDT : 1 par process, est désignée par un segment descriptor de la GDT ; GDT : 1 seule pour tout process, contient shared memory et kernel memory, est désigné par sa linear adress.
+Si paging, en général seul LDT est utilisée.
+Les LDT, GDT et IDT doivent être passées au MMU au tout début du lancement par le kernel, via lldt, lgdt et lidt.
+
+Logical adress : segment-selector:offset
+
+segment register (cs, etc.) : contient un segment selector
+
+Segment selector : 16 bits :
++--------------------------+--+----+
+|           index          |TI|RPL |
++--------------------------+--+----+
+    - index (13 bits) : index dans la GDT ou LDT. Si index == 0 ("null selector"), et que tentative de lecture dans la GDT ou LDT, provoque exception. Utilisé pour initialisé des selectors non-utilisés à 0.
+    - Table indicator : 0, GDT, 1, LDT
+    - RPL : Requestor Privilege Level, degré de privilège
+
+Un segment selector est suivi d'un cache du segment descriptor designé par "index". Ce cache est la "part invisible du segment selector", car pas manipulable : seul le CPU la manipule (cache pour raisons d'efficience).
+
+CPL :
+  - DPL du "hidden descriptor" du cs courant. Contient le current privilege level.
+  - niveaux (idem pour RPL et DPL) :
+    - 0 : kernel mode
+    - 1 : system services
+    - 2 : custom extensions
+    - 3 : user mode
+  - sous Linux, niveaux 1 et 2 ne sont pas utilisés.
+  - quand on modifie un selector (avec mov S, R), CPL de S doit être >= max(RPL,DPL) du segment désigné par R.
+    - exception : ce check n'est pas effectué si S est un code segment, et que le segment désigné par R à son Conforming bit == 1 (conforming-segment).
+
+Segment descriptor (64 bits) : désigne un segment :
++-------------+-+-+-+-+-------+-+---+-------+-+---------------+-----------------------------+-------------------------------+
+|    BASE3    |G|X|L|A|LIMIT2 |P|DPL| TYPE  |Â|    BASE2      |             BASE1           |            LIMIT1             |
++-------------+-+-+-+-+-------+-+---+-------+-+---------------+-----------------------------+-------------------------------+
+
+  - BASE3BASE2BASE1 (8 + 8 + 16 = 32 bits) : base adress du segment
+  - LIMIT2LIMIT1 (16 + 4 = 20 bits) : taille du segment, multiplié par 4Ko si granularity bit == 1, sinon pas multiplié. Max taille donc : 1Go. Cf dessous, "limit checking"
+  - G (1 bit) : granularity bit.
+  - DPL (2 bits) : Descriptor Privilege Level, degré de privilège (0 kernel mode, 3 user mode)
+  - TYPE (4 bits) : type du descriptor :
+    - bit 3 :
+      - si 1, il s'agit d'un executable segment (ex : désigné par cs), ou readable segment (ex : désigne par ds, es, fs, gs ou ss)
+      - si 0, il s'agit d'un system segment, utilisé par l'OS ou pour un gate segment
+    - Pour les executable et data segments :
+      - bit 2 : toujours 0
+    - Pour les executable segments :
+      - bit 1 : conforming bit (cf dessus)
+      - bit 0 : droit de lecture du segment. Jamais de droit d'écriture.
+    - Pour les data segments :
+      - bit 1 : expand-down bit (cf dessous)
+      - bit 0 : droit d'écriture du segment. Jamais de droit d'exécution.
+    - Pour les system segments, "mange" le bit Â (bit -1), donc 5 bits :
+      - bits 2 à -1 :
+        - 0 : pas utilisé
+        - 1 : Available 286 TSS : comme dessous, mais pour 286
+        - 2 : LDT
+        - 3 : Busy 286 TSS : comme dessous, mais pour 286
+        - 4 : 286 Call Gate : comme dessous, mais pour 286
+        - 5 : Task Gate : cf dessous
+        - 6 : 286 Interrupt Gate : comme dessous, mais pour 286
+        - 7 : 286 Trap Gate : comme dessous, mais pour 286
+        - 8 : pas utilisé
+        - 9 : Non-busy TSS : cf dessous
+        - A : pas utilisé
+        - B : Busy TSS : cf dessous
+        - C : Call Gate : cf dessus
+        - D : pas utilisé
+        - E : Interrupt Gate
+        - F : Trap Gate
+  - P (1 bit) : segment-present bit. Si 0, cela signifie que :
+    - le segment n'est pas présent en mémoire
+    - l'adresse linéaire n'est pas "maped by the paging mechanism"
+  - Â (1 bit) : Accessed bit, indique si ce segment est actuellement utilisé par un segment selector
+  - A (1 bit) : pas utilisé
+  - L (1 bit) : quand x86_64, 0 indique compatibility mode, 1 64-bit mode
+  - X (1 bit) :
+    - pour data segment : Big bit, cf dessous "Limit checking"
+    - pour executable segment : D (???)
+    - pour system segment : X (???)
+
+Instructions :
+  - lsl R, R=M16 :
+    - $2 est un segment selector
+    - $1 = LIMIT du segment descriptor de $2
+    - ZF = 1 si $2 :
+      - désigne segment null ou incorrect
+      - désigne segment en dehors de la GDT ou LDT
+      - est inaccessible étant donné le CPL actuel
+      - n'est pas une call gate, interrupt gate, trap gate ou task gate (mais peut être une TSS)
+      ZF = 0 sinon
+  - lar : comme lsl, mais non pas pour LIMIT, mais pour les champs G,X,O,A,P,DPL, TYPE et Â.
+
+Le premier segment descriptor de la GDT est forcément un null descriptor.
+
+near jump (jmp, call, ret) : adresse est dans le même segment, donc seulement limit-checking.
+far jump (jmp, call, ret) : adresse est dans un autre segment, en ayant dans le segment selector ou :
+  - celui d'un autre code segment, ou d'un call gate descriptor via far jmp : CPL doit être == (et non < ou >) au DPL du segment selector dans lequel on jumpe. Le CPL ne change donc pas.
+    - Exception : si nouveau segment est un conforming-segment, pas de check. Utilité des conforming-segment : code pouvant être exécuté par du code de tout privilège, sans modifier son privilège actuel (ex : math library, exception handlers, etc.). Le nouveau code a le même CPL que précédemment.
+  - celui d'un call gate descriptor via far call : CPL doit être <= au DPL du segment selector dans lequel on jumpe. Le nouveau code a alors un CPL == nouveau DPL.
+  - celui d'un far ret : checke le RPL du cs:eip popped par ret avec le CPL actuel :
+    - si égal, pas de problème
+    - sinon, nouveau CPL = RPL du nouveau cs. Cependant, les DPL des data segments actuels (ds, es, fs, gs) étant > nouveau CPL rendent ce segment selector null (index == 0), rendant impossible son accès.
+
+Gate segment, lié à un gate descriptor :
+  - peut être :
+    - call gate descriptor :
+      - peut être dans GDT ou LDT, mais pas IDT
+      - format :
++-----------------------------+-+---+---------+------+--------+-----------------------------+-------------------------------+
+|              OFFSET2        |P|DPL|0 1 1 0 0| 0 0 0| COUNT  |           SELECTOR          |            OFFSET1            |
++-----------------------------+-+---+---------+------+--------+-----------------------------+-------------------------------+
+      - OFFSET1, OFFSET2, SELECTOR : 16 bits chacun ; COUNT : 4 bits.
+      - SELECTOR:OFFSET1OFFSET2 désigne une logical adress, un entry point. Cela permet de s'assurer que le far jmp n'aille pas au milieu d'un code par erreur, mais bien un entry point spécifié. L'exécution saute à cet entry point.
+      - un call sur une call gate utilise donc seulement le segment selector de la logical adress initial, pas son offset.
+    - trap gate : cf dessous
+    - interrupt gate : cf dessous
+    - task gate descriptor : cf dessous
+
+Changement de privilège : call gate, ou interruption (exception, IRQ ou logicielle).
+
+Type checking :
+  - après un mov S,  R, exception levée si :
+    - S est cs, et R ne désigne pas un exécutable segment
+    - S désigne un data segment, et R désigne un executable segment non-readable
+    - S est ss, et R ne désigne pas un writable data segment
+verr et verw mettent ZF = 1 (0 sinon), si le segment $1 est respectivement readable ou writable, en checkant qu'il existe bien, son status readable ou writable, et que le CPL actuel soit >= RPL du segment selector.
+
+Limit checking :
+  - toute tentative d'accès mémoire ([M]) est liée à un segment selector (lui-même associé à un segment descriptor), explicite ([S:M]) ou non. Si l'offset indiqué sort de la zone autorisée pour ce descriptor, une exception Protection Fault est levée. Pour chaque segment descriptor, sa zone autorisée est indiquée par :
+    - lower bound (incluse) :
+      - si data segment et Expand-Down Bit == 1 : LIMIT (* 4Ko si Granularity bit) + 1
+      - sinon : 0
+    - upper bound (excluse) :
+      - si data segment, Expand-Down Bit == 1 et LIMIT == 0 : 64Ko (* 4Ko si Granularity bit) - 1
+      - sinon : LIMIT
+Autres checks :
+  - stack fault (#SF) :
+    - stack underflow : esp < limites du segment SS
+    - stack overflow : 
+      - esp + 7 > limites du segment SS
+      - esp + $1 + 15 > limites du segment SS, après un ret $1
+    - SS segment est présent
+  - General Protection fault (#GP) :
+    - problème de privilège
+    - saut vers un segment non-exécutable
+    - utiliser un segment selector null, ou en dehors de la limite de la GDT ou LDT
+
+Base adress du segment + offset = linear adress (32 bits, taille max donc : 4Go)
+
+Flat memory : les segment selectors ont tous un index 0, seul l'offset est utilisé (permet de faire que la segmentation ne doit pas utilisé, à défaut de pouvoir être désactivée en x86) : adresse logique == adresse linéaire donc. On parle alors souvent simplement d'adresse virtuelle.
+
+                    /=+===============================+=\ 
+                   /  :                               :  \  
+                   )==:            PAGING             :==(   
+                   \  :_______________________________:  /    
+                    \=+===============================+=/
+
+Linear adress (32 bits), si paging :
+  - 10 derniers bits : offset dans page directory
+  - 10 bits précédant : offset dans page table
+  - 12 premiers bits : offset final dans 4K page.
+
+Paging enabled si PG flag (cr0, bit n°31) est == 1.
+
+Page directory (PD) : 
+  - page table (même taille et structure), mais désignant d'autres pages tables
+  - base adress du page directory actuel est stockée dans registre cr3.
+  - Elle peut donc contenir 1024 page tables : elle adresse donc jusqu'à 4Go (pour un cr3 donné).
+Page table (PT) :
+  - array de page entries (32 bits) désignant des 4K pages.
+  - elle est elle-même une 4K page, et donc contient 1024 entrées maximum : elle adresse donc jusqu'à 4Mo.
+
+cr3 : 32 bits, aussi appelé PDBR (PD base register). Toujours % Page size (2^12), donc 12 derniers bits toujours 0.
+
+Une page entry (PE, 32 bits) :
++---------------------------------------+-----+-+-+-+-+-+-+-+-+-+
+|            PAGE FRAME ADDRESS         |AVAIL|G|T|D|A|p|w|U|W|P|
++---------------------------------------+-----+-+-+-+-+-+-+-+-+-+
+  - page frame address (20 bits) : physical base address de la 4K page. Comme une 4K page commence tous les 4K, en partant de l'adresse physique 0, les 12 premiers bits sont toujours == 0.
+  - P (1 bit) : Present bit. Si 0, indique que la page n'est pas présente dans la mémoire physique primaire, ce qui lance une exception Page fault, l'OS se chargeant de la mettre dans la mémoire physique primaire, de mettre à jour la page table, et de relancer la lecture.
+  - D (1 bit) : dirty bit. Mit à 1 lorsqu'une écriture sur la page a lieu. Mit à 0 par l'OS quand il veut. Permet de déterminer les pages les moins récemment utilisées, afin de les mettre en mémoire secondaire. Utilisé que par une page table normale, pas par le page directory.
+  - A (1 bit) : accessed bit. Comme dirty bit, sauf que prend en compte écriture ou lecture. Utilisé par le page directory également.
+  - U (1 bit) : user(1)/superuser(0) bit. Si U == 0, CPL doit être < 3 pour pouvoir y accéder (sinon Page Fault). Ne marche pas pour instructions relatives à LDT, GDT, IDT et TSS, ainsi que call et int.
+  - W (1 bit) : write bit. Si 0 et que CPL == 3, pas de droit d'écriture. Même chose que dessus pour instructions sur LDT, etc.
+  - p : PCD-bit, si 1, cache enabled
+  - w : PWT-bit, si 1, write-back cache
+  - G : Global-bit (ignoré pour une PDE)
+  - T : PAT-bit (pour une PTE), a un rapport avec le caching ; PageSize (pour une PDE) : 0 -> 4Mo
+  - AVAIL : pas utilisé, mais pas réservé
+
+Page Fault : lorsqu'une adresse linéaire cible une page pas disponible dans la mémoire primaire, l'OS se charge de mettre la page (en swap) dans la mémoire primaire ("demand paging"), ce qui implique souvent d'abord libérer une page de la mémoire primaire. Cette dernière est souvent la page la moins récemment utilisée : le mécanisme précis de sélection dépend de l'OS.
+
+Pinned page : page qui peut pas être paged out, doit rester accessible dans la mémoire primaire. Ex : besoin d'efficience ; table des interruptions, noyau, drivers des périph. memoire, etc. ; buffer en cours d'utilisation.
+
+Un CPU a un on-chip cache contenant les 4K pages les plus utilisées. Ce cache est flushed par l'OS à chaque changement de page directory.
+Un segment peut être étalé sur plusieurs pages (par exemple si > 4Ko). Dès que 4K premiers octets seront lus, on passera à la page dont l'index est suivant -> linéaire et transparent pour la linear address. De même, il peut commencer à la fin d'une page utilisé par un autre segment, et commencé au début d'une page utilisé par un autre segment (après lui).
+Plusieurs segments peuvent aussi avoir la même page, il faut juste qu'ils utilisent des bits différents de cette page. Les semaphores font cela par exemple.
+
+Autres types :
+  - Avec des pages 4M : pas de page tables, seulement page directory. 22 premiers bits de linear adresses = offset dans la page finale => 4M Page
+  - PAE : un "page directory de page directory" avec 4 entrées, dont l'index = 2 derniers bits de linear adress (=> index dans page directory et page table est 9 pas 10 bits chacun). Sa base adress = cr3, et il permet de désigner base adresse de page directory suivant.
+
+Ajuster le RPL d'un segment que l'on rajoute à un segment via un mov S, R : prendre un segment selector déjà existant du programme SEGSEL1 (en général cs), et celui du segment à introduire SEGSEL2. Utilise :
+  - arpl SEGSEL2, SEGSEL1.
+Si SEGSEL2 a des privilèges > SEGSEL1, ils deviennent == SEGSEL1 et ZF = 1. Sinon pas de changement et ZF = 0.
+Permet notamment d'introduire des buffers pointant vers des zones privilégiées, comme le kernel, afin d'écrire dessus avec une application en user-mode.
+
+                    /=+===============================+=\ 
+                   /  :                               :  \  
+                   )==:   SEGMENATION VS PAGINATION   :==(   
+                   \  :_______________________________:  /    
+                    \=+===============================+=/
+
+C'est le MMU qui fait la segmentation + pagination :
+  - Segment translation : Logical adress -> linear adress
+  - Page translation : Linear adress -> Physical adress
+  - Si pas paging : linear = physical adress
+
+                     (16b) (32b)
+                   SEGMENT:OFFSET    Logical adress
+                         |    +------------------------+
+                         v                             |
++----------------------------------+                   |
+|           index          |TI|RPL | Segment selector  |
++--------------------------+--+----+  (16b)            |
+             |                                         |
+             v                                         |
++--------+--------+--------+--------+                  |
+|        |Seg des.|        |        | GDT/LDT          |
+|        | (64 b) |        |        | (8192 entrées)   |
++--------+--------+--------+--------+                  |
+             |                                         |
+             +-----------------+-----------------------+
+                               v
++-----------------------------------------+------------------------+
+|        10b         |      10b           |         12b (début)    | Linear adr.
++--------------------+--------------------+------------------------+
+           | (Index)                   |                 |
+cr3 -------+                           |                 |
+(adress de |                           |(Index)          |
+ page dir) v                           |                 | (offset)
++--------+--------+--------+--------+  |                 |
+|        |  PDE   |        |        | Page directory (PD)|
+|        | (32 b) |        |        | (1024 entrées)     |
++--------+--------+--------+--------+  |                 |
+           | (adresse de page table)   |                 |
+           +---------------------------+                 |
+           v                                             |
++--------+--------+--------+--------+                    |
+|        |  PTE   |        |        | Page table (PTE)   |
+|        | (32 b) |        |        | (1024 entrées)     |
++--------+--------+--------+--------+                    |
+           | (adresse de 4K page)                        |
+           +---------------------------------------------+
+           v
++-----------------------------------+                   
+|          + Physical adress        | 4K page           
++-----------------------------------+                   
+
+  - segmentation ne permet pas d'utiliser une mémoire swap.
+  - les segments sont rajoutés de manière contigus les uns après les autres (ou en occupant la place de segments désalloués) mais de taille variable, donc ne commencent pas à des intervalles réguliers (contrairement aux pages) : au gré des suppression et rajouts, il y aura une fragmentation de la mémoire.
+
+                    /=+===============================+=\ 
+                   /  :                               :  \  
+                   )==:         MULTITASKING          :==(   
+                   \  :_______________________________:  /    
+                    \=+===============================+=/
+
+Task = 1 contexte d'exécution (état des registres) + 1 adress space (LDTR et page tables utilisées)
+Chaque task switch change ldt et cr3 -> chaque task a son propre address space.
+Multitasking :
+  - possibilité d'exécuter plusieurs tasks en même temps
+  - en fait chaque CPU exécute une seule task
+
+tr                        : TSSS de la task courante
+TSS selector (TSSS)       : segment selector d'un TSSD
+TSS descriptor (TSSD)     : descriptor d'un TSS
+TSS (Task Switch Segment) : segment sauvegardant le contexte d'une task
+Task Gate [descriptor]    : segment désignant de manière indirecte un TSS, via un TSSS
+
++-------------------------+-----------------------------------------------------------+---------------------------+
+|        ACTION           |                      PARCOURS                             |     PRIVILEGE CHECK       |  
++-------------------------+-----------------------------------------------------------+---------------------------+
+| call/jmp vers TSSS      |                   call/jmp --+                            | RPL du TSSS + DPL du TSSD |
+| int vers Task Gate      | Interruption -+-> Task Gate -+-> TSSS -+-> TSSD --> TSS   | DPL de la Task Gate       |
+| call/jmp vers Task Gate | call/jmp -----+              |         |                  | RPL du TSSS + DPL du TSSD |
+| iret                    |                   iret ------+         |                  | Rien                      |
+| accéder TSS courante    |                                  tr --+                  | RPL de tr + DPL du TSSD   |
++-------------------------+-----------------------------------------------------------+---------------------------+
+  - le RPL de la nouvelle task est seulement celui sauvegardé dans la nouvelle TSS : il n'a pas de rapport avec l'ancien RPL
+
+Pour switcher la task :
+  - faire un far jmp ou call vers un TSSD
+  - faire un far jmp ou call vers une task gate
+  - faire un interruption vers une task gate 
+  - faire un iret, avec le flag NT activé
+L'ensemble des ces actions désigne au bout du compte le TSS de la task vers laquelle switcher, et effectue le switch.
+
+Lors d'un switch :
+  - les valeurs dynamiques de la TSS courante sont modifiées/sauvegardées avec le contexte actuel (et marquée non-busy)
+  - si la nouvelle TSS est déjà busy, provoque une exception (permet d'éviter les récursions, car les tasks ne sont pas réentrantes)
+  - le contexte est actualisé en fonction des valeurs dynamiques et statiques de la nouvelle TSS (marquée alors busy)
+  - tr est modifié en conséquence
+
+Quand on switch une task via un call ou une interruption :
+  - le TSS selector de la précédente task est écrite sur le champs "ts-" du nouveau TSS
+  - le flag NT (nested task), pour le nouveau contexte, est activé
+  - la nouvelle task peut invoquer iret qui, lorsque le flag NT est activé :
+    - clear le flag NT du contexte présent
+    - switch back vers la précédente task via le champs "ts-" de la TSS présente
+  - ainsi une task interrompue par un call ou interruption est automatiquement switched back.
+
+TSSS :
+  - index dans la GDT d'un TSSD
+
+tr :
+  - TSSS de la task courante
+  - ltr et str permettent de manipuler ce registre :
+    - utiliser ltr modifiera le TSS utilisé pour sauvegarder le contexte actuel lors du prochain switch, mais ne provoque pas de task switch
+
+TSSD :
+  - désigne un TSS
+  - comme un system descriptor normal et :
+    - X bit == 0
+    - bits 2 à -1 peuvent être :
+      - 1001b (0x9) : si task n'est pas busy
+      - 1011b (0xb) : si task est busy
+    - LIMIT doit être >= 103
+  - essayer de load un TSSS dans un segment selector provoque un exception
+  - ne peut être que dans la GDT : donc maximum 8191 tasks (et donc threads) en même temps.
+
+TSS :
+  - contient :
+    - une structure de 104 bits sauvegardant le contexte d'une task
+    - l'I/O permission map de la task courante
+  - peut être alloué n'importe où en mémoire (du moment que la page est présente)
+
+(+---+ : 4 bits ; +-------+ : 8 bits) :
+
++---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+
+| IO| T | 0 |ldt| 0 |gs | 0 |fs | 0 |ds | 0 |ss | 0 |cs | 0 |es |
++---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+---+
++-------+-------+-------+-------+-------+-------+-------+-------+-------+
+|  edi  |  esi  |  ebp  |  esp  |  ebx  |  ecx  |  eax  | eflags|  eip  |
++-------+-------+-------+-------+-------+-------+-------+-------+-------+
++-------+---+---+-------+---+---+-------+---+---+-------+---+---+
+|  cr3  | 0 |ss2|  esp2 | 0 |ss1|  esp1 | 0 |ss0|  esp0 | 0 |ts-|
++-------+---+---+-------+---+---+-------+---+---+-------+---+---+
+
+  - dynamic (read/write) :
+    - 0 : remplis de zeros, réservé
+    - valeurs des registres généraux et segments, eflags, eip
+    - ts- : cf dessus
+  - static (read-only) :
+    - cr3
+    - ss{0..2} et esp{0..2} : ss0:esp0 désigne par exemple l'adresse du task stack si le CPL est 0, ss1:esp1 si CPL est 1, etc.
+    - IO :
+      - IO-permission map OFFSET.
+      - l'IO-permission map se trouve dans le TSS :
+        - elle commence à TSS_BASE_ADRESS + OFFSET
+        - elle s'achève, ou n'est plus accessible, à TSS_BASE_ADRESS + TSS_LIMIT
+        - sa taille est donc == | LIMIT - OFFSET |
+    - T : que des 0 réservés, avec cependant le premier bit étant le T-bit (debug trap bit). Si activé, un task switch lance une debug exception.
+
+Task Gate descriptor :
++-----------------------------+-+---+---------+---------------+-----------------------------+-------------------------------+
+|               0             |P|DPL|0 0 1 0 1|       0       |           TSSS              |               0               |
++-----------------------------+-+---+---------+---------------+-----------------------------+-------------------------------+
+
+  - il s'agit d'un system segment descriptor :
+    - 0 : remplis de zeros, réservé
+    - P : Presence Bit
+    - DPL : Privilèges
+    - TSSS : désigne de manière indirecte un TSS, via un TSSS
+  - peut résider dans la LDT ou l'IDT : on peut donc restreindre un context switch à une interruption précise ou à une task précise.
+
+                    /=+===============================+=\ 
+                   /  :                               :  \  
+                   )==:      INTERRUPT_CONCEPTS       :==(   
+                   \  :_______________________________:  /    
+                    \=+===============================+=/
+
+Types :
+  1) Exceptions :
+    - déclenché par le CPU suite à une erreur dans l'instruction courante
+    - pas déclenchées explicitement
+    - synchrones
+    - 0x00 à 0x1f
+    - trois catégories :
+      - faults, n'exécute pas l'instruction fautive et revient ensuite à celle-ci
+      - traps, passent à l'instruction qui suit
+      - abort, exécute instruction fautive et interrompt la task, sans possibilité directe de savoir quelle était l'instruction
+  Puis se partagent 0x20 à 0xff :
+  2) Interruptions materielles (IRQ, Interrupt ReQuest) :
+    - déclenchées par les périphériques (clavier, carte réseau, DD, etc.)
+    - pas déclenchées explicitement
+    - asynchrones (events)
+  3) Interruptions logicielles :
+    - synchrones
+    - déclenchées explicitement
+
+Exception :
+  - F (Fault), T(Trap), A(Abort)
+Signaux : signaux lancés par un OS Unix
+00   F   SIGFPE    #DE : Divide Error : division par 0 par [f][i]div*
+01   T/F SIGTRAP   #DB : Debug Exceptions : hardware breakpoint trap (int 0x01 ; Trap Flag ; T-bit d'un TSS ; breakpoint via registres dr* (est alors une fault, pour permettre d'inspecter l'instruction qui va être exécutée))
+02                 NMI (non-maskable Interrupt)
+03   T   SIGTRAP   #BP : Breakpoint : software breakpoint trap. Les debuggers, pour mettre un software breakpoint, remplacent le début de l'instruction par "int 3", puis, lors de l'interruption, remettent le début de l'instruction.
+04   T   SIGSEGV   #OF : Overflow Exception, déclenchée par into
+05   F   SIGSEGV   #BR : Range Exception, déclenchée par bound
+06   F   SIGILL    #UD : Invalid Opcode/opérande
+07   F   SIGFPE    #NM : Coprocessor Not Available : tentative d'accéder à un 
+                   coprocesseur x87, mais il n'y en a pas : permet donc 
+                   d'exécuter une émulation logicielle de x87. Ou lancée pour mettre à jour l'état du x87 après un task 
+                   switch
+08   A             #DF : Double Fault / Double Exception
+09   A   SIGSEGV   Coprocessor Segment Overrun
+0a   F             #TS : Invalid TSS lors d'un task switch
+0b   F             #NP : Segment Not Present : tentative d'accéder un segment non
+                   présent
+0c   F   SIGSEGV   #SS : Stack Fault : stack overflow/underflow
+0d   F/A SIGSEGV   #GP : General Protection : instruction privilégiée exécutée
+                    sans les privilèges requis ; ou accès mémoire d'un segment
+                    ou page pas autorisé par les privilèges actuels.
+0e   F   SIGSEGV   #PF : Page Fault
+0f                 (Réservées)
+10   F   SIGFPE    #MF : Coprocessor Error : pour les émulations de x87
+11   F             #AC : problème d'alignement d'un M
+12                 #MC : machine-check exception
+13                 #XF : SIMD floating-point exception
+14-20              (Réservées)
+
+IRQ standards : 1 PIC maître (Programmable Interrupt Controller) avec 8 "fils" branchés au CPU, dont le numéro 2 est branché à un deuxième PIC esclave de 8 fils. De manière standard :
+IRQ0 : Timer
+IRQ1 : Clavier
+IRQ2 : Connexion avec l'esclave
+  > IRQ9 à IRQ12 : réservés
+  > IRQ13 : FPU
+  > IRQ14 : Contrôleur disque
+  > IRQ15 : Réservé
+IRQ3 : Port série 2
+IRQ4 : Port série 1
+IRQ5 : Port parallèle 2
+IRQ6 : Contrôleur disquette
+IRQ7 : Port parallèle 1
+C'est la version standard (8259A). Aurjoud'hui avec les APIC (A pour Advanced), il y a 256 IRQ possibles.
+L'OS associe une interruption (0x20 à 0xff) à lancer pour chaque IRQ, si elle survient.
+IRQ désactivables avec cli/sti.
+
+Les IRQ peuvent être :
+  - non-masquables : NMI
+  - masquables (INTR) : tout sauf NMI
+Si IF (Interrupt enabled flag) == 0, impossibilité de lancer des INTR. Modifié par cli, sti et popf.
+Lors d'une NMI, impossibilité de lancer une nouvelle NMI.
+
+Interruption logicielles :
+21                 appelle MS-DOS API, syscall numéro ah. Les arguments sont dans divers registres génériques, en fonction du syscall.
+80                 sous Linux, appelle le syscall numéro ah, avec ebx comme premier argument, puis ecx comme 2ème, puis edx comme 3ème (ou - si moins d'arguments).
+
+                    /=+===============================+=\ 
+                   /  :                               :  \  
+                   )==:   INTERRUPT_IMPLEMENTATION    :==(   
+                   \  :_______________________________:  /    
+                    \=+===============================+=/
+
+Interrupt descriptor table (IDT) : 
+  - array de 256 IDTE (IDT Entry), 0x00 à 0xff
+  - peut être à tout endroit de la mémoire (base adresse est dans idtr), mais souvent vers le début
+
+Chaque IDTE :
+  - contient un segment descriptor (8 octets).
+  - lance donc un interrupt handler (ou Interrupt Service Routine, ISR), implémenté par l'OS
+  - peut être :
+    - trap gate :
+      - un peu comme call gate, mais :
+        1) push sur le stack du contexte d'environnement puis (pour exceptions 0x08 et 0xa à 0xe) push d'un numéro d'exception.
+        2) exécution de l'interrupt handler
+        3) l'interrupt handler doit popper le numéro d'exception puis le contexte d'environnement (sauf eip, cs et eflags)
+        4) il doit être quitter avec iret, qui pop eip et cs pour revenir, et restare eflags
+    - interrupt gate : comme trap gate, mais clear IF avant jumpe (désactivant les IRQ).
+    - task gate
+
+Double Faults :
+  - Pendant trap ou interrupt gate, si :
+    - nouvelle interruption pendant étape 1
+    - "contributory exception" (0x0, 0x9 à 0xd) ou Page Fault (0xe) interrompue par une contributory exception
+    - Page Fault interrompue par un page fault
+  - Alors : double fault
+  - Sinon : pas de pb, interruptions imbriquées.
+  - l'error code est rempli de zeros
+  - Si double fault sur un double faut -> triple fault, interruption du PC et reboot.
+
+Page Fault :
+  - l'error code a un format particulier :
+    - bit 0 : Si 0, fault est dû à une page non-présente, sinon à un problème de privilège
+    - bit 1 : Si 0, l'accès était une lecture, sinon une écriture
+    - bit 2 : Si 0, l'accès était en mode superuser, sinon en mode user.
+    - bit 3 à 31 : inutilisés
+  - De plus le registre cr2 prend l'adresse linéaire qui a posé le problème, afin de pouvoir mettre à jour les tables
+
+Trap gate et interrupt gate :
++-----------------------------+-+---+---------+---------------+-----------------------------+-------------------------------+
+|          OFFSET2            |P|DPL|  TYPE   |       0       |          SELECTOR           |           OFFSET1             |
++-----------------------------+-+---+---------+---------------+-----------------------------+-------------------------------+
+  - system segment descriptor normal
+  - leur TYPE est 1111b (0xf) et 1110b (0xe) respectivement
+  - SELECTOR:OFFSET1OFFSET2 désigne l'adresse du segment.
+
+Numéro d'exception (32 bits) :
++----------------------------------+-------------------------+--+--+--+
+|                 0                |           index         |TI| I|EX|
++----------------------------------+-------------------------+--+--+--+
+    - EX : 1 si asynchrone, 0 si synchrone
+    - I  : 1 si interruption a été lancée à partir d'une autre interruption (double fault), auquel cas TI et index ne sont pas utilisés
+    - TI : 0 si GDT, 1 si LDT
+    - index : index dans la GDT/LDT du segment ayant lancé l'interruption
+    - 0 : réservé, pas utilisé
+
+Syscalls :
+  - fonctions de l'API (interface) principale du kernel.
+  - Elles sont appelées en ASM (non en C) : les fonctions glibc comme exit() ou write() ne sont pas des syscalls, elles sont des wrappers appelant les syscalls sys_exit(), sys_write(), etc.
+
+Liste des syscalls Linux :
+  - Sont tous précédés de "sys_"
+  - s* signifie "sched_"
+
+     +--------------+--------------+--------------+--------------+--------------+--------------+--------------+-------------+
+     |      0       |       1      |      2       |      3       |      4       |      5       |      6       |      7      |
+     |      8       |       9      |      a       |      b       |      c       |      d       |      e       |      f      |
++----+--------------+--------------+--------------+--------------+--------------+--------------+--------------+-------------+
+|  0 |setup         |exit          |fork          |read          |write         |open          |close         |waitpid      |
+|    |creat         |link          |unlink        |execve        |chdir         |time          |mknod         |chmod        |
+|  1 |lchown        |break         |oldstat       |lseek         |getpid        |mount         |umount        |setuid       |
+|    |getuid        |stime         |ptrace        |alarm         |oldfstat      |pause         |utime         |stty         |
+|  2 |gtty          |access        |nice          |ftime         |sync          |kill          |rename        |mkdir        |
+|    |rmdir         |dup           |pipe          |times         |prof          |brk           |setgid        |getgid       |
+|  3 |signal        |geteuid       |getegid       |acct          |umount2       |lock          |ioctl         |fcntl        |
+|    |mpx           |setpgid       |ulimit        |oldolduname   |umask         |chroot        |ustat         |dup2         |
+|  4 |getppid       |getpgrp       |setsid        |sigaction     |sgetmask      |ssetmask      |setreuid      |setregid     |
+|    |sigsuspend    |sigpending    |sethostname   |setrlimit     |getrlimit     |getrusage     |gettimeofday  |settimeofday |
+|  5 |getgroups     |setgroups     |select        |symlink       |oldlstat      |readlink      |uselib        |swapon       |
+|    |reboot        |readdir       |mmap          |munmap        |truncate      |ftruncate     |fchmod        |fchown       |
+|  6 |getpriority   |setpriority   |profil        |statfs        |fstatfs       |ioperm        |socketcall    |syslog       |
+|    |setitimer     |getitimer     |stat          |lstat         |fstat         |olduname      |iopl          |vhangup      |
+|  7 |idle          |vm86old       |wait4         |swapoff       |sysinfo       |ipc           |fsync         |sigreturn    |
+|    |clone         |setdomainname |uname         |modify_ldt    |adjtimex      |mprotect      |sigprocmask   |create_module|
+|  8 |init_module   |delete_module |get_kernel_syms|quotactl     |getpgid       |fchdir        |bdflush       |sysfs        |
+|    |personality   |afs_syscall   |setfsuid      |setfsgid      |_llseek       |getdents      |_newselect    |flock        |
+|  9 |msync         |readv         |writev        |getsid        |fdatasync     |_sysctl       |mlock         |munlock      |
+|    |mlockall      |munlockall    |s*setparam    |s*getparam    |s*setscheduler|s*getscheduler|s*yield  |s*get_priority_max|
+|  a |s*get_priority_min|s*rr_get_interval|nanosleep|mremap      |setresuid     |getresuid     |vm86          |query_module |
+|    |poll          |nfsservctl    |setresgid     |getresgid     |prctl         |rt_sigreturn  |rt_sigaction  rt_sigprocmask|
+|  b |rt_sigpending|rt_sigtimedwait|rt_sigqueueinfo|rt_sigsuspend|pread         |pwrite        |chown         |getcwd       |
+|    |capget        |capset        |sigaltstack   |sendfile      |getpmsg       |putpmsg       |vfork         |             |
++----+--------------+--------------+--------------+--------------+--------------+--------------+--------------+-------------+
+
+                    /=+===============================+=\ 
+                   /  :                               :  \  
+                   )==:      GENERALITES MEMOIRE      :==(   
+                   \  :_______________________________:  /    
+                    \=+===============================+=/
+
+Les M sont recherchées via un bus 32 bits. C'est pourquoi le stack est aligné sur 32 bits (et donc qu'il y a le widening des char et short en C), ou les membres d'une structure aussi (via le padding).
+
+Caches (dans l'ordre du plus rapide au plus lent) :
+  - Trace cache : cache la traduction opcodes --> micro-opcodes (instruction decoder)
+  - L1 cache : data cache
+  - L2 cache : data et instruction caches
+  - L3 cache : data et instruction caches
+  - Instruction et Data TLB : cache les Page table et Page table entries
+  - Store buffer ???
+Vocabulaire :
+  - Cache line : entrée d'un cache
+  - Data cache : cache d'une opérande M
+  - Instruction cache : cache d'un opcode ???
+  - Si opérande est cacheable -> cache line fill. Conséquence : Si déjà cached -> cache hit ; sinon, devient cached -> write hit
+  - speculative read : ???
+Lors d'un write hit, deux possibilité :
+  - si cache est "writeback" : pas d'écriture en mémoire tout de suite de celle courante ; et écriture de celle remplacée.
+  - sinon : écriture en mémoire directe.
+
+La mémoire swap (ou secondaire) est celle stockant les pages non présentes dans la RAM, mais pouvant le devenir après un page fault (en général stockée sur le Disque dur)
+Ainsi cela donne :
+
+                    Capacité de stockage
+-------------------------------------------------------------->
+
+             Registres < Caches < RAM < Mémoire swap
+
+<--------------------------------------------------------------
+                      Vitesse d'accès
+
+Flush des caches L1, L2 et L3 :
+  - instructions invd et wbinvd flushent ces caches.
+  - La seconde instruction, contrairement à la première, oblige les caches à être écrits avant de les vider.
+Le MMU conserve aussi un cache des dernières traductions adresse linéaire -> adresse physique, dans le TLB (Translation Lookaside Buffer).
+Lorsque les page tables changent, il faut mettre à jour le TLB, pour ce faire ou :
+  - remettre tout à jour, en modifiant cr3 (avec la même valeur si l'on veut)
+  - remettre seulement l'entrée de la TLB concernée à jour, via l'instruction invlpg :
+    - invlpg M : flush l'entrée de la TLB prévue pour la traduction de l'adresse linéaire M
+
+                    /=+===============================+=\ 
+                   /  :                               :  \  
+                   )==:           I/O PORTS           :==(   
+                   \  :_______________________________:  /    
+                    \=+===============================+=/
+
+Il existe un I/O adress space, en plus du physical adress space ???
+Cet I/O adress space fait 64Ko, chaque M de cet adress space :
+  - divisible par 1, peut être compris comme un port d'1 octet
+  - divisible par 2, peut être compris comme un port de 2 octets
+  - divisible par 4, peut être compris comme un port de 4 octets
+
+Pour écrire et lire ces ports : utiliser in, out, ins*, outs*.
+Ces opérations génère #GP exception si, pendant une opération sur le port n°X, le bit numéro X de l'IO-permission map (cf TSS) est inacessible ou == 1. Permet de restreindre les I/O disponibles en fonction des tasks.

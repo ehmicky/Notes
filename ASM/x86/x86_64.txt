@@ -1,0 +1,150 @@
+
+            
+   X86_64   
+            
+
+                    /=+===============================+=\ 
+                   /  :                               :  \  
+                   )==:           HISTOIRE            :==(   
+                   \  :_______________________________:  /    
+                    \=+===============================+=/
+
+Premier CPU 64 bits sont en fait les Alpha en 1992.
+Extension de x86, provient d'AMD, qui l'a licencié à Intel.
+Noms :
+  - AMD64 (utilisé par AMD)
+  - EM64T ("Enhanced-Memory 64 bits technology", utilisé par Intel)
+  - x86_64, x86-64, x64
+
+                    /=+===============================+=\ 
+                   /  :                               :  \  
+                   )==:    BACKWARD COMPATIBILITY     :==(   
+                   \  :_______________________________:  /    
+                    \=+===============================+=/
+
+Deux modes :
+  - 1 complètement backward-compatible 32-bit "compatibility mode", ne pouvant pas exécuter de code 64 bits.
+    - Un OS détectant un exécutable 32 bits switche vers ce mode. 
+  - 1 avec quelques incompatibilités 32-bits "64-bits mode", le seul qu'on évoque ici.
+    - Utilise le REX prefixe pour l'encodage des instructions.
+  - le switch s'effectue au niveau du bit-L du segment descriptor du code segment
+
+64-bit mode ne peut pas exécuter code x86 (process pur 32 bits, dont ses libraries) car :
+  - plusieurs instructions ne sont plus supportées
+  - certaines instructions ont leur comportement changé
+Conséquence :
+  - doit switcher en compatibility mode
+  - Il faut donc maintenir des libraries 32 bits pour pouvoir lancer des processes 32 bits sur un OS x86_64
+    => différence entre /lib32/ et /lib64/, /usr/lib32/ et /usr/lib64/, etc.
+
+Mais CPU x86 ne peut pas exécuter code x86_64, car possibilité de tomber sur :
+  - nouvelles instructions x86_64
+  - utilisation d'opérande 64 bits
+  - parfois même instruction, mais utilisant le REX prefix
+  - nouveaux registres (r8, etc.) (utilisant le REX prefix)
+  - possible utilisation de la "red zone"
+
+Programme x86 ou x86_64 ne peut pas (sauf en bidouillant) appeler des bibliothèques de l'autre type, car :
+  - les conventions d'appel de fonction diffèrent (stack-based vs register-based).
+  - types haut-niveau diffèrent (ADR, long double, long int)
+
+Code compilé pour x86_64 prend des présupposés moins vieux sur la question de la rétro-compatibilité, car le CPU doit être au moins P8. Donc le compiler se permet d'utiliser :
+  - des cmov* et fcmov* dès que possible, plutôt que jmp, permettant un meilleur parallélisme  :
+    - pour un if TEST { A = X } else { A = Y }, avec des jmp, le CPU attend d'évaluer TEST pour évaluer X et Y. Cette attente bloque la "speculative execution". Avec des cmov*, il les évalue avant TEST, à condition qu'ils puissent être connus à coup sûr avant (-> pas de M), et être évalués avant sans side-effects (-> pas de var++ par exemple)
+  - SSE1 et SSE2
+  - ret précédés par un jmp sont parfois compilés par des "rep ret", ce qui produit le même effet, mais permet une meilleur "speculative exécution"
+
+                    /=+===============================+=\ 
+                   /  :                               :  \  
+                   )==:           REGISTRES           :==(   
+                   \  :_______________________________:  /    
+                    \=+===============================+=/
+
+Registres :
+  - registres 64 bits, étendus des anciens : rax, rbx, rcx, rdx, rsi, rdi, rbp, rsp, rflags, rip
+  - nouveaux general-purpose registers 64 bits : r8, r9, r10, r11, r12, r13, r14, r15
+    - ils ont aussi r8d, r8w, r8b, etc. de même que rax a eax, ax, al
+  - spl, bpl, dil et dil (lower octet d'esp, ebp, edi et esi)
+  - nouveaux registres xmm* : xmm8 à xmm15
+  - nouveaux registres ymm* : ymm8 à ymm15
+  - gdtr et idtr font 80 bits. ldtr aussi.
+  - cr* (dont tr) et dr* font 64 bits, mais extra est pas utilisé
+  - nouveau registre cr8/tpr (task priority register) :
+    - bit 0 à 3 : TPL (Task priority level) : priorité d'une task, les interruptions avec une priorité inférieure au tpr courant ne peuvent pas interrompre la task
+    - reste : réservé
+
+                    /=+===============================+=\ 
+                   /  :                               :  \  
+                   )==:     CHANGEMENT CONVENTION     :==(   
+                   \  :_______________________________:  /    
+                    \=+===============================+=/
+
+La non-utilisation de rbp, l'utilisation de registres pour les variables locales, l'utilisation de la red zone semblent être activées que lors d'une optimisation avec gcc.
+
+Fonctions :
+  - Appel de fonction :
+    - Paramètres TOUINT (sauf ADR) sont passés par registre, et non plus sur le stack :
+      - jusqu'à 6 arguments passés ainsi, dans cet ordre : rdi, rsi, rdx, rcx, r8, r9 (ou di, dl, etc.$), puis push sur le stack
+    - Si return type de fonction est ADR (ou struct/class/array), passe comme premier argument dans rdi un ADR pointant vers une zone mémoire pouvant accueillir la return value déréférencée. 
+    - Si fonction variadique : rax contient le nombre d'arguments
+  - Entrée de fonction :
+    - Variables locales : 
+      - registres utilisés pour les variables locales, plutôt que d'utiliser le stack, à moins que cela ne suffise pas (trop de variables locales ; utilisation d'arrays ou de structures/classes ; utilisation de &VAR sur une variable locale ; doit passer des variables locales en argument sur le stack à une fonction à appeler ; utilisation d'un registre dont il faudra restaurer l'état)
+      - les 0x80 prochains octets du stack ("red zone") toujours réservés pour des éventuelles variables locales, ce qui évite de faire un "sub rbp, X" si X <= 0x80. Du coup pas besoin d'ajuster esp à chaque niveau de frame, moins fréquemment donc.
+    - Frame pointer :
+      - rbp jamais utilisé comme frame pointer, c'est rsp qui est utilisé pour accéder aux éventuels variables locales ou arguments sur le stack, ce qui implique que rsp doit rester fixe pendant la frame (sauf entrée et sortie), ce qui implique qu'on évite de faire des push/pop au milieu (on utilise plutôt des mov directs) => jamais d'"enter"
+    - r11 est utilisé pour linking ???
+    - call push rip, non eip
+    - DF doit être == 0
+  - Fin de fonction : 
+    - les registres rbx, rbp, r12, r13, r14, r15, fstat et mxcsr doit être restaurés dans le même état que ceux lors de l'appel de la fonction par le caller
+    - si pas de frame pointer ni d'espace pour variables locales -> pas de "leave"
+    - restaurer les mmx* aussi ?
+    - Return value :
+      - rax, non eax.
+      - Si return est un ADR, rax sera égal au rdi passé en argument.
+  - Retour de fonction :
+    - Si pas de paramètres sur le stack, pas besoin de modifier rsp
+
+Types :
+  - long int et ADR : compilé avec, et alignés sur, 8 octets, non 4 octets (sauf Windows ???)
+  - long double : compilé avec, et alignés sur, 16 octets et non 12
+  - size_t est un unsigned long
+  - array de taille supérieure à 0x10 a un alignement de 0x10
+  - Floats :
+    - utilise SSE3 et non x87, pour les floats, double
+    - les long double utilisent x87
+
+ASM :
+  - valeur maximale d'un I : 64 bits et non 32.
+
+Syscall via int 0x80 utilisent les même 6 "argument register" que décrit ci-dessus, non plus eax...edx
+
+Macros déclarant qu'il s'agit d'un OS x86_64 : __amd64__ et __x86_64__ (préférer deuxième ?)
+
+                    /=+===============================+=\ 
+                   /  :                               :  \  
+                   )==:           ADRESSING           :==(   
+                   \  :_______________________________:  /    
+                    \=+===============================+=/
+
+Segmentation / adresse :
+  - OFFSET d'une adresse logical sont 64-bits, et non 32-bits
+  - par conséquent plus de 4Go addressable : 2^64 bits (16 Eo, exaoctets) possibles, mais aujourd'hui implémentation se limitent à 2^48 (256 To), suffisant
+  - cs, ds, es, ss plus utilisés (== 0) : seuls fs et gs le restent => logical adress == linear adress == virtual adress ("flat adress space")
+  - virtual adress :
+    - souvent seulement 48 premiers bits sont utilisés
+    - les bits suivant jusqu'au bit 63 doivent être mis tous à 1 ou 0 ("canonical form")
+  - interrupt descriptors et segment descriptors (dont system segment descriptors) sont changés (mais pas agrandis) pour pouvoir contenir des adresses 64 bits
+  - CPL du code segment toujours checké
+  - ne checke pas les LIMIT via les segment descriptors
+  - plus de segment descriptor null
+  - les TSS ne sont plus utilisées : le task switching se fait de manière software, plus supporté hardware
+
+Page Size :
+  - 4, 16, 32 ou 64Ko
+
+Loading :
+  - les text segments commencent  à 0x40000
+  - le stack et les dynamic segments commencent à 0x80000000000 (fin)
+  - r15 contient la base adress de la GOT, non ebx

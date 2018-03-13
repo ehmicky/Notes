@@ -1,0 +1,1368 @@
+
+             
+   GOBJECT   
+             
+
+                                             /=+===============================+=\ 
+                                            /  :                               :  \  
+                                            )==:            GENERAL            :==(   
+                                            \  :_______________________________:  /    
+                                             \=+===============================+=/
+
+BUT ==>                 #  - Avoir de l'objet-oriented avec C, avec reference counting, interfaces et signaux
+                        #  - Permettre binding plus simple de C vers d'autres langages :
+                        #    - transtypage d'un type C vers type d'un autre language (génération de "glue code" simple pour
+                        #      cela)
+
+GENERAL ==>             #Header : <glib-object.h>
+                        #Librairie : libgobject-$VERSION
+                        #Compilation : $( pkg-config gobject-$VERSION --cflags --libs )
+                        #Il s'agit de C, pas de C++.
+                        #Fait partie de Glib.
+
+g_type_init()           #Initialise GObject, à toujours faire au début.
+
+Tout GTYPE (normalement appelé NamespaceMytype) ayant des méthodes est divisé en deux struct :
+  - GTYPE ayant les CLASSDT :
+    - un GTYPE de la classe parente
+    - les CLASSDT nouveaux de l'enfant.
+  - GTYPEClass ayant les CLASSFK : 
+    - un GTYPEClass de la classe parente
+    - les CLASSFK de l'enfant. Ces CLASSFK sont des pointeurs de fonction prenant au moins comme premier argument un
+      GTYPE_ADR. En général, une CLASSFK fonction() sera mise privée, et accédée via helper namespace_mytype_fonction()
+  - GTYPEClass est un singleton partagé par toutes les instances de GTYPE.
+De plus :
+  - Il faut manipuler les GTYPE via des GTYPE_ADR, qu'on utilise ensuite via :
+    - macro NAMESPACE_MYTYPE( )->membre pour les CLASSDT
+    - macro NAMESPACE_MYTYPE_GET_CLASS(  )->fonction() pour les CLASSFK
+    - les deux macros s'occupant du transtypage et polymorphisme d'héritage.
+    - Si l'on possède un GTYPEClass_ADR, on peut faire équivalent de NAMESPACE_MYTYPE_GET_CLASS avec NAMESPACE_MYTYPE_CLASS
+Par ailleurs :
+  - GObject (et GObjectClass) est un GTYPE avec reference counting + properties, utilisé comme base de la plupart des GTYPE de
+    GNOME (mis à part plusieurs classes de Glib dérivant de GBoxed)
+  - GValue est un type générique (type-erasure) utilisé pour l'assignement des GTYPE et la manipulation des paramètres des getters/setters des GObject
+
+GIO ==>                 #Le namespace en C est g, pas gio : donc par exemple GIOCondition a comme macro G_TYPE_IO_CONDITION
+
+CONVENTION DE NOM ==>   #NamespaceMyVeryLongType -> namespace_my_very_long_type
+                        #Ex : G_IS_PARAM_SPEC pour GParamSpec
+
+COMPATIBILITE C++ ==>   #Plusieurs fonctions :  
+                        #  - prennent des void* en arguments (type-erasure), mais je marque sous-jacent, par exemple Mytype*
+                        #  - utilisent des macros pour des enums-flags étant en fait expanded vers des int
+                        #Dans les deux cas, un typecast explicite est nécessaire pour être compatible C++ : je marque alors
+                        #"Typecast explicite : Compatibilité C++"
+
+                                             /=+===============================+=\ 
+                                            /  :                               :  \  
+                                            )==:             GTYPE             :==(   
+                                            \  :_______________________________:  /    
+                                             \=+===============================+=/
+
+DÉFINIR SON PROPRE       #  - définir une struct GTYPE et ses membres (cf dessus)
+NAMESPACEMYTYPE ==>     #  - définir une struct GTYPEclass et ses membres
+                        #  - définir macros nécessaires. 
+                        #    - Coeur de l'info est dans GTypeInfo de namespace_mytype_get_type()
+
+MACROS NECESSAIRES ==>  #Voici :
+NAMESPACE_TYPE_MYTYPE   #Renvoie un GTYPE initialisé avec NAMESPACEMYTYPE. Ex : GTK_TYPE_LABEL
+                        #Doit être expanded par "(namespace_gtype_get_type())", à définir ensuite.
+                        #Par exemple, pour un enfant de GObject, namespace_gtype_get_type() : 
+                        #  - GType namespace_mytype_get_type( void )
+                        #    {
+                        #      static GType type = 0;
+                        #      static const GTypeInfo info = { ... };
+                        #      if ( ! type ) // static + cela -> pour éviter de faire deux fois
+                        #        type = g_type_register_static( GTYPE_PARENT, "NamespaceMytype", &info, ( GTypeFlags )0 );
+                        #          // Ou g_type_register_static_simple()
+                        #      return type;
+                        #    }
+                        #  - inialiser quelque part un static namespace_mytype_parent_class = NULL, puis le définir au début de
+                        #    class_init() :
+                        #      namespace_mytype_parent_class = g_type_class_peek_parent( NAMESPACEMYTYPECLASS_ADR );
+                        #    Cette variable sert à utiliser classes du parent (comme le fait *this)
+                        #G_DEFINE_TYPE( NamespaceMytype, namespace_mytype, GTYPE_PARENT ) définit namespace_gtype_get_type() 
+                        #automatiquement :
+                        #  - mais il faut définir :
+                        #     - le namespace_mytype_class_init( NamespaceMytypeClass* )
+                        #     - le namespace_mytype_init( NamespaceMytype* ) pour l'instance_init
+                        #     - Ne définie pas de base_init, ni de flags particuliers (utilise g_type_register_static_simple)
+                        #  - Ne pas mettre de guillemets autour des arguments de G_DEFINE_TYPE
+
+MACRO SUITE ==>         #Ces Trois macros prennent un type en input et le transtype vers un autre enfant (polymorphisme 
+                        #d'héritage). S'il y a un deuxième type en input, cela signifie qu'il peut être mis, et sera converti 
+                        #implicitement vers le premier. Des valeurs de macros, bonnes pour la plupart des cas, sont décrites :
+NAMESPACE_MYTYPE(obj)   #GTYPEINSTANCE_ADR / GTYPE_ADR -> NAMESPACEMYTYPE_ADR
+                        #Valeur macro possible : (G_TYPE_CHECK_INSTANCE_CAST ((obj), NAMESPACE_TYPE_MYTYPE, NamespaceMytype))
+NAMESPACE_MYTYPE_GET_   #GTYPEINSTANCE_ADR / GTYPE_ADR -> NAMESPACEMYTYPECLASS_ADR
+CLASS(obj)              #Macro possible : (G_TYPE_INSTANCE_GET_CLASS ((obj), NAMESPACE_TYPE_MYTYPE, NamespaceMytypeClass))
+NAMESPACE_MYTYPE_CLASS  #GTYPECLASS_ADR -> NAMESPACEMYTYPECLASS_ADR
+(klass)                 #Macro possible : (G_TYPE_CHECK_CLASS_CAST ((klass), NAMESPACE_TYPE_MYTYPE, NamespaceMytypeClass))
+
+MACRO SUITE (2) ==>     #Ces deux macros renvoient true si type en input est de type MYTYPE.
+                        #Les mettre dans : 
+                        #  - toute fonction hors-property, prenant donc des MYTYPE_ADR ou autre ADR enfant de GTYPE, en 
+                        #    argument, pour tester que pointeur passé est du bon type.
+NAMESPACE_IS_MYTYPE(obj)#GTYPEINSTANCE_ADR / GTYPE_ADR
+                        #Macro possible : (G_TYPE_CHECK_INSTANCE_TYPE ((obj), NAMESPACE_TYPE_MYTYPE))
+NAMESPACE_IS_MYTYPE_    #GTYPECLASS_ADR
+CLASS(klass)            #Macro possible : (G_TYPE_CHECK_CLASS_TYPE ((klass), NAMESPACE_TYPE_MYTYPE))
+
+AUTRES MACROS ==>       #Ces macros sont déjà définies :
+G_TYPE_FROM_INSTANCE
+( obj )                 #GTYPEINSTANCE_ADR -> GTYPE_ADR
+G_TYPE_FROM_CLASS(klass)#GTYPECLASS_ADR -> GTYPE_ADR
+
+GType                   #Type dynamique (défini runtime), au centre de GObject. 
+                        #Tous les GType ont les macros définies plus haut.
+g_type_register_static  #Créer un nouveau GTYPE et le renvoie (à utiliser dans namespace_mytype_get_type())
+( GTYPE2, STR,          #Ne pas faire deux fois.
+GTYPEINFOADR,GTYPEFLAGS)#GTYPE2 est le type dont hérite ce nouveau GTYPE. 
+                        #STR est le nom du type, par exemple "NamespaceMytype"
+                        #GTYPEINFO a les infos du type (par défaut chaque membre == celui du type hérité).
+                        #GTYPEFLAGS : typecast explicite, compatibilité C++. Peut être 0, sinon est G_TYPE_FLAG_ABSTRACT :
+                        #cf plus bas.
+g_type_register_static_
+simple( GTYPE2, STR, 
+UINT_VAL1, FONC_ADR1,   #Comme g_type_register_static, sauf qu'utilise quatre arguments au lieu de GTYPEINFO_ADR, pour 
+UINT_VAL2, FONC_ADR2,   #désigner membres class_size, class_init, instance_size et instance_init. Plus rapide donc, mais pas
+GTYPEFLAGS )            #de finalize, de base_*, ni de value_table.
+g_type_create_instance  #
+( GTYPE )               #Renvoie une GTYPEINSTANCE_ADR.
+g_type_free_instance    #
+( GTYPEINSTANCE_ADR )   #Libère mémoire allouée : penser à le faire.
+
+GTypeInstance           #Pointeur vers une struct contenant un GType. Par conséquent, il est possible de le transtyper vers
+                        #GType et l'utiliser comme tel.
+                        #A un membre g_class contenant le GTYPECLASS_ADR correspondant, mais pas utile de l'utiliser :
+                        #manipuler cette classe comme un GTYPE.
+
+GTypeClass              #*Class correspondant pour GType.
+                        #A un membre g_type contenant le GTYPE correspondant, mais pas utile de l'utiliser : préférer macros.
+
+GTypeInfo               #Struct définissant un Gtype.
+                        #Il y a trois constructors :
+                        #  - deux construisent le singleton GTYPECLASS, lors du premier g_type_create_instance()
+                        #    - class_init() est appelé s'il s'agit du type final de l'inheritance tree, sinon base_init est
+                        #      appelé
+                        #    - base_init() est inutile
+                        #    - les base_init sont invoqués avant les class_init, les parents en premier : cf ci-dessous
+                        #    - class_init doit initialiser les CLASSFK (pointeurs de fonction), dont les *et_property des 
+                        #      GObject
+                        #  - instance_init() construit le GTYPE (les CLASSDT), à chaque g_type_create_instance()
+                        #Il y a deux destructors *_finalize miroirs de base_init et class_init (mêmes signatures), qui ne sont 
+                        #invoqués que lors du dernier g_type_free_instance(), car il y a un système de pool :
+                        #  - class_finalize() est possible qu'avec type dynamique (g_type_register_dynamic)
+                        #  - base_finalize() : pour le mettre, faire exactement comme constructor() de GObject :
+                        #      - dans class_init() :
+                        #          NAMESPACEMYTYPECLASS_ADR->finalize = FONC_ADR;
+                        #        où FONC_ADR prend un GOBJECT_ADR et renvoie rien
+                        #      - FONC_ADR doit appeler le finalize du parent, à la fin (fait donc de l'enfant au parent) :
+                        #          G_OBJECT_CLASS( namespace_mytype_parent_class )->finalize( ARGS );
+                        #        Cf plus haut pour namespace_mytype_parent_class
+                        #      - est appelé par g_type_free_instance()
+                        #Tous peuvent être NULL si pas de destructor ou constructor.
+                        #La fonction vers laquelle pointe ces constructors et destructors est souvent NAMESPACE_MYTYPE_*,
+                        #avec "base_" en moins pour base_init()
+                        #Pointeurs de fonctions : si pas signature avec que des void*, transtypage explicite, compatibilité C++
+GTYPEINFO.class_size    #UINT16_VAL représentant la taille du GTYPEClass en nombre d'octets : faire sizeof( GTYPEClass )
+GTYPEINFO.base_init     #FONC_ADR renvoyant rien et prenant void* (le GTYPECLASS_ADR ).
+GTYPEINFO.base_finalize #
+GTYPEINFO.class_*       #Comme base_*, mais prend un void* supplémentaire en argument (le CLASS_DATA_ADR de ce GTYPECLASS)
+GTYPEINFO.class_data    #const VOID_ADR passée comme argument à class_init()
+GTYPEINFO.instance_size #UINT16_VAL représentant la taille du GTYPE : mettre sizeof( GTYPE )
+GTYPEINFO.n_preallocs   #Utilisé pour allouer des MYTYPE en cache par avance, mais déprécié : mettre 0.
+GTYPEINFO.instance_init #FONC_ADR renvoyant rien et prenant ( GTypeInstance*, void* ) ( le GType, puis son GTypeClass )
+GTYPEINFO.value_table   #GTypeValueTable du type. Peut être 0 si pas intention de redéfinir celle par défaut.
+
+g_type_[q]name( GTYPE ) #Renvoie name STR de GTYPE (ou si qname, GQUARK)
+g_type_from_[q]name(STR)#Renvoie le GTYPE dont le name est STR (ou si qname, GQUARK)
+g_type_parent( GTYPE )  #Renvoie parent GTYPE2 de GTYPE, ou 0 si type fondamental.
+g_type_depth( GTYPE )   #Renvoie nombre de parents
+g_type_is_a             #
+( GTYPE, GTYPE2 )       #Renvoie true si GTYPE2 est un ancestre de GTYPE
+
+FUNDAMENTAL TYPES ==>   #Types ne dérivant de rien, pas même de GType. Pour en définir un, cf doc (je pense pas que ça me soit
+                        #jamais nécessaire).
+                        #Types fondamentaux : 
+                        #  - none (void)
+                        #  - boolean, [u]{char,int,long,int64}, float, double
+                        #  - pointer (void*)
+                        #  - unichar (gunichar)
+                        #  - enums : GEnumValue
+                        #  - flags : GFlagsValue
+                        #  - gtype (GType)
+                        #  - interface (GInterface)
+                        #  - object (void*, mais doit être GObject*)
+                        #  - param (GParamSpec), value_array (array de GParamSpec)
+                        #  - boxed (const void*, mais doit être GBoxed*)
+                        #  - variant (GVariant, défini par Glib)
+                        #Comme GType, ils ont les "macros nécessaires", notamment par exemple G_TYPE_CHAR, G_CHAR( ), etc.
+                        #G_TYPE_IS_DERIVED( GTYPE ) et G_TYPE_IS_FUNDAMENTAL( GTYPE ) renvoie true ou false si GTYPE est
+                        #fondamental.
+
+DYNAMIC LOADING ==>     #g_type_register_dynamic(), g_type_add_interface_dynamic et GTypePlugin (et GTypeModule) permette de 
+                        #faire en sorte que les GType puissent être unregistered après registered. Permet de mettre un système 
+                        #de plugins pour les GType, avec différents plugins avec définitions différentes pour un même GType. 
+                        #Cf doc en ligne.
+
+ABSTRACT GTYPE ==>      #Ne peuvent pas être instantiées : utiliser GTYPEFLAGS G_TYPE_FLAG_ABSTRACT
+                        #Macros dispo :
+                        #  - G_IS_ABSTRACT( GTYPE )
+                        #  - G_DEFINE_TYPE* -> G_DEFINE_ABTRACT_TYPE* //Rajoute G_TYPE_FLAG_ABSTRACT
+
+PRIVATE MEMBRES ==>     #Utiliser tant que possible les private membres, partout où on encapsulerait en C++.
+                        #Mettre donc notamment en private tous les membres accédés via des properties.
+                        #Mettre struct *Private dans fichiers mytype-private.{h,c}, et ne pas installer cet header.
+                        #Faire comme cela :
+                        #
+                        #             PRIVATE CLASSDT                    |                     PRIVATE CLASSFK
+                        #                                                |
+                        #  typedef _NamespaceMytype NamespaceMytype;     |  typedef _NamespaceMytypeClass NamespaceMytypeClass;
+                        #  struct _NamespaceMytype                       |  struct _NamespaceMytypeClass
+                        #  {                                             |  {
+                        #    // Membre parent                            |    // Membre parent
+                        #    // Membres publiques                        |    // Classfk publiques
+                        #    NamespaceMytypePrivate* priv;               |    NamespaceMytypeClassPrivate* priv;
+                        #  }                                             |  }
+                        #  typedef _NamespaceMytypePrivate               |  typedef _NamespaceMytypeClassPrivate
+                        #  NamespaceMytypePrivate;                       |  NamespaceMytypeClassPrivate;
+                        #  struct _NamespaceMytypePrivate                |  struct _NamespaceMytypeClassPrivate
+                        #  { CLASSDT... }                                |  { CLASSFK... }
+                        #  namespace_mytype_class_init                   |  namespace_mytype_get_type()
+                        #  ( NamespaceMytypeClass* klass )               |  {
+                        #  {                                             |    // Soit type la return value de g_type_register_*
+                        #    g_type_class_add_private                    |    g_type_add_class_private( type,
+                        #    ( klass, sizeof( NamespaceMytypePrivate ) );|    sizeof( NamespaceMytypeClassPrivate ) );
+                        #  }                                             |  }
+                        #                                                |  //Autre solution : 
+                        #                                                |  // #define ADD_CLASS_PRIVATE( size )
+                        #                                                |  // (g_type_add_class_private( g_define_type_id ),
+                        #                                                |  // (size))
+                        #                                                |  // G_DEFINE_TYPE_WITH_CODE( ..., ADD_CLASS_PRIVATE
+                        #                                                |  // ( sizeof( NamespaceMytypeClassPrivate ) ) )
+                        #  namespace_mytype_instance_init                |  namespace_mytype_class_init
+                        #  ( NamespaceMytype* obj ) //Non constructor    |  ( NamespaceMytypeClass* klass )
+                        #  {                                             |  {
+                        #    NAMESPACE_MYTYPE( obj )->priv =             |    klass->priv = G_TYPE_CLASS_GET_PRIVATE( klass,
+                        #    G_TYPE_INSTANCE_GET_PRIVATE( obj,           |    NAMESPACE_TYPE_MYTYPE,  
+                        #    NAMESPACE_TYPE_MYTYPE,                      |    NamespaceMytypeClassPrivate );
+                        #    NamespaceMytypePrivate );                   |    ...
+                        #  }                                             |    klass->priv->fonction = namespace_mytype_fonctio;
+                        #                                                |  }
+                        #Utilisation (pas pour l'utilisateur final) :    |Utilisation :
+                        #  NAMESPACEMYTYPE_ADR->priv->membre             |  NAMESPACEMYTYPECLASS_ADR->priv->fonction()
+
+                                             /=+===============================+=\ 
+                                            /  :                               :  \  
+                                            )==:          INTERFACES           :==(   
+                                            \  :_______________________________:  /    
+                                             \=+===============================+=/
+
+INTERFACES ==>          #L'héritage des GType est single-inherited. Pour avoir d'autres parents, les définir en Interface.
+                        #Il s'agit en gros d'une classe C++ abstraite.
+                        #Une Interface ne peut pas être instantiée et son NamespaceMytype ne doit pas contenir d'autres membres
+                        #que le premier.
+                        #Enfant n'hérite en fait pas de l'interface, mais rajoute ses fonctions que l'on peut utiliser
+                        #via NAMESPACE_MYIFACE_GET_IFACE( Enfant )->Fonction().
+                        #L'interface peut ou non définir ses fonctions, mais l'enfant devrait le faire lors de son 
+                        #initialisation (mais peut garder définition de l'interface). Même chose pour properties virtuelles.
+                        #Dans tous les cas, les fonctions doivent être implémentées par l'un ou l'autre.
+
+DEFINITION ==>          #Classe interface Mytype : comme GType normal, sauf que manipule non des *Class, mais des *Interface :
+                        # - remplacer tout "Class" par "Interface" :
+                        #   - NamespaceMytypeClass -> NamespaceMytypeInterface
+                        #     - avec comme premier membre non le GTYPECLASS, mais le GTYPEINTERFACE de la classe parente (par 
+                        #       exemple GTypeInterface).
+                        #     - GObjectInterface n'existe pas : utiliser GTypeInterface
+                        #   - Pas de macros *CLASS, mais macro NAMESPACE_MYTYPE_GET_IFACE( obj )
+                        #     - GTYPEINSTANCE_ADR / GTYPE_ADR -> GTYPEINTERFACE_ADR
+                        #     - Macro possible : (G_TYPE_INSTANCE_GET_INTERFACE ((obj), NAMESPACE_TYPE_MYTYPE, 
+                        #       NamespaceMytypeInterface))
+                        #   - Autres macros disponibles :
+                        #     - G_TYPE_IS_INTERFACE( GTYPE ) renvoie true s'il s'agit d'une interface
+                        #     - G_TYPE_FROM_INTERFACE( GTYPEINTERFACE_ADR ) : comme G_TYPE_FROM_CLASS
+                        # - namespace_mytype_get_type() :
+                        #    - pas mettre d'instance_* et mettre 0 en instance_size (pas instantiable)
+                        #    - utiliser sizeof( NamespaceMytypeInterface ) et non sizeof( NamespaceMytypeClass )
+                        #    - pour le parent :
+                        #       - si parent est lui même interface, rien de particulier
+                        #       - sinon, faire dériver de G_TYPE_INTERFACE, et rajouter parent en prerequesite
+                        #    - G_DEFINE_TYPE( ARGS ) -> G_DEFINE_INTERFACE( ARGS ) :
+                        #       - fait dériver de G_TYPE_INTERFACE, avec le 3ème argument en parent prerequesite
+                        #       - ne définie pas d'instance_init
+                        #       - doit définir non namespace_mytype_class_init, mais namespace_mytype_default_init (même chose,
+                        #         seul nom diffère). Il est appelé juste avant le class_init de l'enfant l'implémentant, et
+                        #         juste après le base_init de cet enfant.
+                        #    - prerequesites :
+                        #       - immédiatement après g_type_register_static, faire un g_type_interface_add_prerequisite
+                        #         ( GTYPE, GTYPE2 ), GTYPE étant le type venant d'être renvoyé par g_type_register_static,
+                        #         signifie que si un enfant veut utiliser cette interface, il doit aussi utiliser l'interface 
+                        #         GTYPE2.  
+                        #         L'enfant devra donc utiliser plusieurs G_IMPLEMENT_INTERFACE()/g_type_add_interface_static,
+                        #         en commençant par GTYPE2.
+                        # - pour donner des implémentations par défaut aux fonctions de l'interface (CLASSFK virtuelles 
+                        #   non-pure), initialiser pointeurs dans le class_init :
+                        #     NAMESPACEMYTYPEINTERFACE_ADR->fonction = namespace_mytype_default_fonction; //Définir ensuite
+                        #     l'implémentation de ce dernier
+                        # - une interface peut aussi contenir des properties virtuelles pures :
+                        #    - ne pas implémenter la property (virtual pure), pas même d'ENUM pour le nom
+                        #    - utiliser seulement g_object_interface_install_property( obj, g_param_spec_"type"( ARGS ) ) dans
+                        #      le class_init
+                        #    - l'enfant doit implémenter la property. Pareil que d'habitude, sauf que utilise 
+                        #      g_object_class_override_property( obj, PROP_NAME, "nom-de-paramètre" ) et non 
+                        #      g_object_class_install_property
+                        #    - Modification de noms :
+                        #       - g_object_find_property() -> g_object_interface_find_property()
+                        #       - g_object_list_properties() -> g_object_interface_list_properties()
+
+ENFANT ==>              #Pour un enfant Child souhaitant implémenter les fonctions de l'interface Mytype :
+                        #  - dans namespace_child_get_type() :
+                        #    - immédiatement après g_type_register_static, faire un :
+                        #        g_type_add_interface_static( GTYPE, NAMESPACE_TYPE_MYTYPE, GINTERFACEINFO_ADR )
+                        #          - GTYPE est celui qui a été renvoyé par g_type_register_static
+                        #          - GInterfaceInfo a comme membre :
+                        #            - interface_init, interface_finalize et interface_data, équivaut à class_*, mais avec des
+                        #              NAMESPACEMYTYPEINTERFACE_ADR
+                        #            - interface_init peut par exemple être appelée namespace_child_mytype_interface_init
+                        #              Elle est appelée juste après le class_init de Child
+                        #    - G_DEFINE_TYPE( ARGS ) -> G_DEFINE_TYPE_WITH_CODE( ARGS, 
+                        #      G_IMPLEMENT_INTERFACE( NAMESPACE_TYPE_MYTYPE, namespace_child_mytype_interface_init )... )
+                        #      Revient à G_DEFINE_TYPE(), mais rajoute après g_type_register_static des add_interface_static
+                        #      ( GTYPE, NAMESPACE_TYPE_MYTYPE, ... ) dont le GINTERFACEINFO_ADR n'a pas d'interface_finalize ni
+                        #      interface_data, mais une interface_finalize nommée namespace_child_mytype_interface_init
+                        #  - interface_init doit redéfinir l'ensemble des CLASSFK de Mytype :
+                        #      NAMESPACEMYTYPEINTERFACE_ADR->fonction = namespace_child_mytype_fonction //Définir ensuite
+                        #      l'implémentation de ce dernier
+                        #Utilisation des fonctions de l'interface par Child :
+                        #  - NAMESPACE_MYTYPE_GET_IFACE( NAMESPACECHILD_ADR )->fonction();
+                        #  - possibilité de mettre un helper namespace_mytype_fonction( NamespaceMytype* obj ) appelant
+                        #    NAMESPACE_MYTYPE_GET_IFACE( obj )->fonc();
+                        #    Appeler ensuite avec namespace_mytype_fonction( NAMESPACE_MYTYPE( NAMESPACECHILD_ADR ) );
+
+ONCE ==>                #Entourer code du base_init et base_finalize de Mytype par une static BOOL_VAL pour que celui-ci ne 
+                        #s'exécute qu'une fois.
+                        #Mais les destructors d'interfaces sont peu utilisés.
+
+                                             /=+===============================+=\ 
+                                            /  :                               :  \  
+                                            )==:            GOBJECT            :==(   
+                                            \  :_______________________________:  /    
+                                             \=+===============================+=/
+
+GObject                 #GType rajoutant des fonctionnalités de reference counting, de paramètres pour constructors et de
+                        #getters/setters. 
+                        #Possède un pointeur de fonction nommé constructor( GTYPE, UINT_VAL, GObjectConstructParam* ), 
+                        #équivalent à l'instance_init (et l'appelant). 
+                        #Il faut :
+                        #  - initialiser ce pointeur dans le class_init vers son propre constructor :
+                        #      G_OBJECT_CLASS( NAMESPACEMYTYPECLASS_ADR )->constructor = namespace_mytype_constructor;
+                        #  - définir ce dernier, qui doit lui-même appeler le constructor de son parent :
+                        #      GObject* namespace_mytype_constructor( GType a, guint b, GObjectConstructParam* c )
+                        #      {
+                        #        GObject* obj;
+                        #        // Modification des properties initialisée pour le parent, équivalent CONSTRCT : PARENT( VAL )
+                        #        { obj = G_OBJECT_CLASS( namespace_mytype_parent_class )->constructor( a, b, c ); }
+                        #            //Et non G_PARENT_CLASS( )
+                        #        // Initialisation des properties et CLASSDT...
+                        #        return obj;
+                        #      }
+                        #    guint est le nombre de GObjectConstructParam (array). GObjectConstructParam désigne une property
+                        #    et a deux membres : pspec (le GPARAMSPEC_ADR) et value (la GVALUE_ADR). Il s'agit de l'ensemble
+                        #    des properties (G_PARAM_CONSTRUCT ou non), pour enfants et parents du type courant. Leur valeur
+                        #    est initilialisée à la valeur par défaut. 
+                        #    Pour modifier construction du parent, modifier donc ces properties avant appel du constructor()
+                        #    du parent. Pour que cela ait un sens, la manipulation des properties (lecture/écriture) après
+                        #    constructor() doit manipuler GObjectConstructParam* directement, et non autres moyens.
+                        #    Pour namespace_mytype_parent_class : cf plus haut
+                        #    Si on appelle constructor() du parent dès le début de chaque constructor(), appelle du parent
+                        #    éloigné à Mytype dans l'ordre : 
+                        #      - pour chaque type, du parent à l'enfant :
+                        #        - appel de base_init des parents, du parent à l'enfant
+                        #        - puis appel de class_init de ce type
+                        #        - par conséquent, appel de class_init une fois par classe + appel de base_init une ou
+                        #          plusieurs fois (deux fois pour parent, trois fois pour grand-parent, etc.) par classe
+                        #        - Exemple : 
+                        #            base_init GrandPa ; class_init GrandPa ;
+                        #            base_init GrandPa ; base_init Pa       ; class_init Pa   ;
+                        #            base_init GrandPa ; base_init Pa       ; base_init Child ; class_init Child
+                        #      - instance_init, du parent à l'enfant
+                        #      - constructor(), du parent à l'enfant
+                        #    Pour g_type_create_instance, ordre est inverse. class_init en plus construit les constructor
+                        #    properties.
+                        #    Par conséquent :
+                        #      - utilisation de class_init pour initialiser mytype_parent_class, pointeurs vers constructor,
+                        #        *et_property, et fonctions virtuelles, puis pour initialiser les properties. Ne pas utiliser 
+                        #        membres des parents, pas forcément construits par leur constructor()
+                        #      - utilisation de constructor() pour initialiser les CLASSDT. Utilisation possible des membres 
+                        #        parents
+                        #      - instance_init() inutile
+                        #  - définir fonction dispose(). Est l'équivalent destructor de constructor(). Exécuté avant finalize()
+                        #    Faire même chose que pour finalize() : initialization dans class_init(), appel récursif du
+                        #    dispose() parent (cf finalize())
+                        #      - dispose() doit faire des unref() sur les GObject* membres, tandis que finalize() doit libérer
+                        #        mémoire allouée
+                        #      - le dernier unref() appelle dispose() puis finalize()
+                        #      - go_object_run_dispose( GOBJECT_ADR ) effectue dispose()
+g_object_new(GTYPE      #Renvoie un GOBJECT_ADR (en fait void* : conversion explicite, compatibilité C++)
+[, STR, VAL]..., NULL)  #Appelle le namespace_mytype_constructor() de GTYPE.
+                        #Pour chaque STR, appelle g_object_set_property( GOBJECT_ADR, STR, VAL )
+g_object_newv( GTYPE, 
+UINT_VAL,GPARAMETER_ARR)#Pareil, mais utilise une array de UINT_VAL GPARAMETER pour les properties.
+
+REFERENCES ==>          #Un object dont le reference counting functionality est désactivé est dit "floating"
+                        #GObject est par défaut non-floating, et GInitiallyUnowned est un alias de GObject, mais qui est par
+                        #défaut "floating".
+g_object_ref            #
+( NAMESPACEMYTYPE_ADR ) #Rajoute une référence (reference counting), et renvoie NAMESPACEMYTYPE_ADR. Appelé par g_object_new()
+g_object_ref_sink
+( NAMESPACEMYTYPE_ADR ) #Pareil, mais rend non-floating (à faire si objet est floating)
+g_object_unref          #Enlève une référence. Si 0, appelle les finalize functions puis g_type_free_instance(). Le faire donc
+( NAMESPACEMYTYPE_ADR ) #pour tout objet créé via g_object_new()
+g_object_is_floating
+( NAMESPACEMYTYPE_ADR ) #Renvoie true si "floating"
+g_object_force_floating
+( GOBJECT_ADR )         #Rend "floating"
+GTYPE REF ==>           #g_type[_default_interface]_[un]ref() existent aussi, appelant finalize functions aussi, mais préférer 
+                        #g_object_*
+WEAK POINTERS ==>       #Cf doc pour utiliser weak_[un]ref() si besoin de cela.
+
+g_object_*_qdata*       #Comme g_param_spec_*_qdata, mais avec un GOBJECT_ADR
+g_object_*_data*        #Pareil, mais utilise une clé STR associée aux data VOID_ADR, et non un GQUARK
+
+GObjectClass            #"GTYPEClass" de GObject.
+
+G_TYPE_IS_OBJECT( GTYPE)#Renvoie true si GTYPE est un GObject ou un dérivé de GObject.
+G_OBJECT_TYPE
+( GOBJECT_ADR )         #Renvoie le GTYPE de GOBJECT_ADR
+G_OBJECT_CLASS_TYPE
+( GOBJECTCLASS_ADR )    #Renvoie le GTYPE de GOBJECTCLASS_ADR
+G_OBJECT_*TYPE_NAME*    #Comme G_OBJECT_TYPE*, mais renvoie le nom STR du GTYPE
+
+CREER UN GOBJECT DERIVE #  - Créer un GTYPE dont le parent est GObject (Possible d'utiliser G_DEFINE_TYPE pour aller plus vite)
+ ==>                    #  - définir namespace_mytype_constructor( GType, guint, GObjectConstructParam* ) et l'assigner : cf
+                        #    plus haut. Pareil pour dispose()
+
+HERITAGE ==>            #Seuls endroits où mettre le type du parent ou une macro pour le parent :
+                        #  - premier membre de Mytype et MytypeClass
+                        #  - dans g_type_register_static
+                        #Accéder aux membres d'un parent : 
+                        #  - utiliser la bonne macro : G_MYPARENT( ) ou G_MYPARENT_CLASS( ), et non macro d'un enfant.
+                        #Fonction virtuelle :
+                        #  - redéfinir fonction du parent : redéfinir son pointeur de fonction, dans class_init()
+                        #      NAMESPACE_PARENT_CLASS( NAMESPACEMYTYPECLASS_ADR )->fonction = FONC_ADR;
+                        #    FONC_ADR est en général namespace_mytype_fonction()
+                        #  - fonction virtuelle pure sont initialisées par parent lui-même à NULL, fonction virtuelle non-pure
+                        #    sont initialisées à une fonction par défaut
+                        #      NAMESPACEPARENTCLASS_ADR->fonction = FONC_ADR;
+                        #  - il y a en général un helper namespace_myparent_fonction( ARGS ) qui appelle :
+                        #      NAMESPACE_MYPARENT_GET_CLASS( NAMESPACEMYPARENT_ADR )->fonction( ARGS )
+                        #    Pour utiliser, faire namespace_myparent_fonction( NAMESPACE_MYPARENT( NAMESPACEMYTYPE_ADR ), ARGS)
+                        #  - "chaining up" : redéfinir fonction virtuelle, puis appeler implémentation du parent à la fin ou
+                        #    au début (ex: ce que fait constructor(), finalize() et dispose()). Définir membre "fonction" 
+                        #    virtuelle dans MytypeClass, lui assigner namespace_mytype_fonction, qui lui appelle :
+                        #      NAMESPACE_PARENT_CLASS( namespace_mytype_parent_class )->fonction( ARGS )
+                        #Properties :
+                        #  - possibilité d'utiliser g_object_*et_property, ou g_object_new des properties des parents.
+                        #  - pour initialiser une property du parent à la construction : modifier celle-ci via 
+                        #    GObjectConstructParam*, dans constructor() enfant, avant appel du constructor() parent.
+                        #Signaux : sont hérités par les enfants
+
+HERITAGE MULTIPLE ==>   #Deux solutions :
+                        #  - interface
+                        #  - mettre deuxième parent comme un membre, et pour accéder à ses membres/fonctions, au lieu 
+                        #    d'utiliser macros, accéder à ce membre directement
+
+                                             /=+===============================+=\ 
+                                            /  :                               :  \  
+                                            )==:          PROPERTIES           :==(   
+                                            \  :_______________________________:  /    
+                                             \=+===============================+=/
+
+PROCEDES ==>            #Une property est une CLASSDT manipulé par un couple setter/getter le plus simple possible.
+                        #g_object_*et_property( GOBJECT_ADR, STR, GVALUE_ADR ) modifie GOBJECT_ADR (set) ou GVALUE_ADR (get)
+                        #pour la property STR.
+                        #Il invoque *et_property(), qu'il faut initialiser avec sa propre fonction
+                        #namespace_mytype_*et_property(), avec comme argument ENUM et GPARAMSPEC ceux désignés par l'argument
+                        #STR (param_name) de g_object_*et_property() (dont classes parentes).
+                        #GObject connaît lien entre le param_name, l'ENUM et le GPARAMSPEC via g_object_class_install_property.
+                        #g_object_*et_property() émet de plus une erreur runtime si utilisation contredit l'un des arguments 
+                        #de GPARAMSPEC.
+                        #GParamSpec pouvant prendre tous les types fondamentaux, on peut mettre des properties sur tout type :
+                        #  - utiliser GParamSpecObject ou GParamSpecGType pour property dont la valeur est un GOBJECT ou un
+                        #    GTYPE
+                        #  - utiliser GParamSpecBoxed pour property dont la valeur est une GDATE, GREGEX, etc.
+
+DEFINIR *ET_PROPERTY ==>#  - définir enum PROP_NAME
+                        #      enum { PROP_0_MYTYPE, PROP_NAME... } //Ou mettre PROP_0 toujours, mais déclaré et défini dans 
+                        #                                             les fichiers .c et non les headers
+                        #  - définir namespace_mytype_*et_property() qui, en fonction de cet ENUM, modifie GOBJECT_ADR avec
+                        #    GVALUE_ADR, et donne infos sur property modifiée avec GPARAMSPEC :
+                        #      void namespace_mytype_{s,g}et_property( GObject* a, uint b, const GValue* c, GParamSpec* d )
+                        #      {                                                      //get_property a un GValue non-const
+                        #        switch ( b )
+                        #        { 
+                        #          case PROP_NAME:
+                        #            //Setter : Mettre c dans a. Ex : NAMESPACE_MYTYPE( a )->membre = g_value_get_"type"( c );
+                        #            //Getter : Mettre a dans c. Ex : g_value_set_"type"( c, NAMESPACE_MYTYPE( a )->membre );
+                        #            break;
+                        #          etc.
+                        #          default:
+                        #            G_OBJECT_WARN_INVALID_PROPERTY_ID( a, b, d ); //Affiche avertissement si property inconnue
+                        #            break;
+                        #        }
+                        #      }
+
+INITIALISATION ==>      #Dans le class_init(), après le constructor, faire (une seule fois par classe) :
+                        #  GObjectClass* obj = G_OBJECT_CLASS( NAMESPACEMYTYPECLASS_ADR );
+                        #  obj->set_property = namespace_mytype_set_property;
+                        #  obj->get_property = namespace_mytype_get_property;
+                        #Puis (une fois par property) :
+                        #  - g_object_class_install_property ( obj, PROP_NAME, g_param_spec_"type"( ARGS ) );
+                        #  - ou g_object_class_install_properties ( obj, PROP_NAME, G_PARAM_SPEC_ADR_ARR );
+                        #Pour ce dernier, souvent le G_PARAM_SPEC_ADR_ARR utilise le PROP_NAME comme index, avec comme dernier
+                        #dernier membre de l'enum N_PROPERTIES :
+                        #  - static GParamSpec* obj_properties[N_PROPERTIES] = { NULL, };
+                        #    ...
+                        #    obj_properties[PROP_NAME] = g_param_spec_"type"( ARGS )
+
+UTILISATION ==>         #Utiliser avec :
+                        #  g_object_{g,s}et_property( GOBJECT_ADR, "nom-de-paramètre", GVALUE_ADR );
+                        #get_property modifie GVALUE_ADR, set_property modifie GOBJECT_ADR (cf plus haut)
+                        #Ou, plus simple :
+                        #  g_object_{g,s}et( GOBJECT_ADR[, "nom-de-paramètre", TYPE_ADR]..., NULL ) //TYPE_VAL pour "set"
+
+NOTIFICATION ==>        #GObject a un signal "notify::property-name" émis à chaque set_property().
+                        #La closure par défaut est GOBJECTCLASS_ADR->notify(), mais est invoqué aussi lors des get_property()
+                        #Désactiver émission du signal "notify" : 
+                        #  - g_object_freeze_notify( GOBJECT_ADR ); //Incrémente compteur : si > 0, pas d'émission
+                        #    g_object_thaw_notify( GOBJECT_ADR ); //Décrémente compteur
+                        #Emettre signal "notify::property-name" (pas affecté par g_object_freeze_notify()) :
+                        #  - g_object_notify( GOBJECT_ADR, STR ) //STR est le "property-name"
+                        #  - ou g_object_notify_by_spec( GOBJECT_ADR, GPARAMSPEC_ADR )
+
+INFORMATIONS ==>        #Voici :
+g_object_find_property
+( GOBJECTCLASS_ADR, STR)#Renvoie le GPARAMSPEC_ADR de la property dont le name est STR
+g_object_list_properties
+( GOBJECTCLASS_ADR,     #Renvoie ensemble des properties de GOBJECTCLASS, sous forme de GPARAMSPEC_ADR_ARR, dont la taille est
+UINT_ADR )              #mise dans UINT_ADR
+
+GParameter              #Désigne un paramètre.
+....name                #Name, sous forme de STR
+....value               #Valeur, sous forme de GVALUE
+
+GParamSpec              #GType désignant un argument d'un setter ou getter. Possède :
+....g_type_instance     #GTYPEINSTANCE du parent
+....name                #Nom (STR)
+....flags               #Flags, sous forme de GPARAMFLAGS
+....value_type          #Type de l'argument, sous forme de GTYPE
+....owner_type          #Type de la classe ayant un setter/getter utilisant cet argument, sous forme de GTYPE
+
+GParamSpecClass         #GTypeClass correspondant
+....g_type_class        #Parent
+....value_type          #Comme GPARAMSPEC
+....finalize            #
+( GPARAMSPEC_ADR )      #Destructor (n'arrive pas à l'invoquer)
+....value_set_default   #
+( ARGS )                #Renvoie void. Cf g_param_set_default()
+....validate( ARGS )    #Cf g_param_value_validate
+
+G_PARAM_SPEC_TYPE
+( GPARAMSPEC_ADR )      #Renvoie le GTYPE sous-jacent de GPARAMSPEC
+G_PARAM_SPEC_TYPE_NAME
+( GPARAMSPEC_ADR )      #Même chose, mais utilise le nom du GTYPE
+G_PARAM_SPEC_VALUE_TYPE
+( GPARAMSPEC_ADR )      #Renvoie le GTYPE de value_type
+
+g_param_type_register_  #Un peu comme g_type_register_static, mais pour un GPARAMSPEC. STR est le nom, par exemple 
+static( STR,            #"GParamSpecMytype". GParamSpecTypeInfo contient membres :
+GPARAMSPECTYPEINFO )    #  - instance_size : UINT16_VAL, mettre sizeof( MYTYPE )
+                        #  - n_preallocs : cf n_preallocs de g_type_register_static
+                        #  - instance_init : comme pour g_type_register_static
+                        #  - value_type : GTYPE, mettre G_TYPE_MYTYPE
+                        #  - finalize, value_set_default, value_validate puis values_cmp : pointeurs de fonctions, ceux de
+                        #    GPARAMSPECCLASS
+g_param_spec_internal   #
+( GTYPE, 3 STR,         #Renvoie un GPARAMSPEC_ADR avec name STR1, nick STR2, blurb STR3, flags GPARAMFLAGS et value_type GTYPE
+GPARAMFLAGS )           #Localiser STR2 et STR3 (gettext)
+g_param_spec_get_name() #Renvoie name sous forme de STR.
+g_param_spec_get_nick() #Pareil pour le titre.
+g_param_spec_get_blurb()#Pareil pour la description.
+
+g_param_spec_[un]ref    #
+( GPARAMSPEC_ADR )      #Reference counting : au début est à 0 (pas de reference counting).
+g_param_spec_sink
+( GPARAMSPEC_ADR )      #Active le reference counting : le faire après le premier g_param_spec_ref
+g_param_spec_ref_sink
+( GPARAMSPEC_ADR )      #Fait un g_param_spec_ref suivi d'un g_param_spec_sink
+
+g_param_value_defaults  #
+( GPARAMSPEC_ADR,       #Renvoie true si un appel à g_param_set_default() ne modifierait pas GVALUE_ADR (donc si elle a la
+GVALUE_ADR )            #valeur par défaut)
+g_param_set_default     #Soit GVALUE_ADR contenant le mêm type-jacent que GPARAMSPEC.value_type, affecte à GVALUE sa valeur
+( GPARAMSPEC_ADR,       #par défaut. Pour cela appelle GPARAMSPECCLASS.value_set_default( ARGS ), qui invoque par défaut
+GVALUE_ADR )            #g_value_reset()
+g_param_value_validate  #Comme g_param_set_default(), mais ici n'affecte pas valeur par défaut, mais renvoie false si 
+( GPARAMSPEC_ADR,       #valeur de GVALUE pose un problème. Pour cela appelle GPARAMSPECCLASS.validate( ARGS ). Exemple :
+GVALUE_ADR )            #vérifier pour un GParamSpecInt qu'il est entre son minimum et son maximum.
+g_param_values
+( GPARAMSPEC_ADR,       #Même principe, mais ici compare deux valeurs, et renvoie -1, 0 ou 1 selon. Pour cela appelle
+2 GVALUE const* )       #GPARAMSPECCLASS.values_cmp( ARGS ), par défaut memcmp().
+g_param_value_convert   #
+( GPARAMSPEC_ADR,       #Soient des GVALUE de type GPARAMSPEC.value_type, si g_value_type_transformable(), effectue un 
+GVALUE1 const*,GVALUE2*,#g_value_transform() dessus, puis renvoie résultat de g_param_value_validate() sur GVALUE2. Si BOOL_VAL
+BOOL_VAL )              #est true, renvoie également false, si g_param_value_validate() a effectué une modification.
+
+g_param_spec_set_qdata  #
+( GPARAMSPEC_ADR,       
+GQUARK, VOID_ADR )      #Associe une data VOID_ADR dont l'identifiant est GQUARK (cf Glib) à GPARAMSPEC_ADR.
+g_param_spec_set_qdata_ #
+full( GPARAMSPEC_ADR,       
+GQUARK, VOID_ADR,       #Pareil, mais en plus invoque FONC_ADR (renvoie void, prend VOID_ADR) lors du finalize de GPARAMSPEC
+FONC_ADR )              #ou d'un appel de g_param_spec_set_qdata avec le même identifiant (overwrite donc).
+g_param_spec_get_qdata
+( GPARAMSPEC_ADR,GQUARK)#Renvoie la data VOID_ADR associé à cet identifiant.
+g_param_spec_steal_qdata
+( GPARAMSPEC_ADR,GQUARK)#Renvoie la data VOID_ADR associé à cet identifiant, et le supprime de GPARAMSPEC_ADR
+
+GParamSpecPool          #Memory pool de GPARAMSPEC, pour améliorer performances : cf doc si besoin.
+
+GParamSpec"type"        #Enfants de GParamSpec. Chaque "type" parmi les types fondamentaux, avec en plus :
+                        #  - GParamSpecString + type "string", correspondant à STR (mais pas à GString) 
+                        #  - GParamSpecValueArray pour type "GValueArray"
+                        #  - sans "none"
+g_param_spec_"type"     #Renvoie un GParamSpec"type" sous type (pour polymorphisme) GPARAMSPEC_ADR. STR1 est le "name",
+( STR1, STR2, STR3,     #STR2 le name mais sous forme plus intelligible, STR3 la description. ARGS est l'ensemble des membres
+ARGS, GPARAMFLAGS )     #de GParamSpec"type", sauf :
+                        #  - parent_instance
+                        #  - membres de "string", "float" et "double".
+                        #  - membre fixed_n_elements de "valuearray"
+                        #GPARAMFLAGS : conversion explicite, compatibilité C++.
+                        #Localiser STR2 et STR3 (gettext)
+....parent_instance     #Le GPARAMSPEC parent, pour tous
+....default_value       #Une valeur de type "type", pour tous, sauf "param", "boxed", "pointer", "object", "gtype"
+....minimum
+....maximum             #Valeurs minimales et maximales, pour uniquement [u]{char,int,long,int64}, float, double
+....epsilon             #Pour uniquement float, double
+....enum_class          #Sous forme de GENUMCLASS, pour "enum"
+....flags_class         #Sous forme de GFLAGSCLASS, pour "flags"
+cset_{first,nth}        #STR contenant char possibles pour premier, ou non-premier caractères, pour "string"
+substitutor             #char remplaçant si hors de cset_*, pour "string"
+null_fold_if_empty      #Bit field d'un seul bit : si 1, remplace "" par NULL
+ensure_non_null         #Inverse : si 1, remplace NULL par ""
+is_a_type               #GTYPE, pour "gtype"
+type                    #GVARIANTTYPE, pour "gvariant"
+element_spec            #GPARAMSPEC_ADR, pour "valuearray"
+fixed_n_elements        #UINT_VAL, pour "valuearray"
+
+GParamFlags             #Enum (or'd) parmi :
+                        #  - G_PARAM_READABLE : possibilité d'utiliser g_object_get_property()
+                        #  - G_PARAM_WRITABLE : possibilité d'utiliser g_object_set_property()
+                        #  - G_PARAM_READWRITE : macro pour G_PARAM_READABLE | G_PARAM_WRITABLE
+                        #  - G_PARAM_CONSTRUCT[_ONLY] : fait que g_object_constructor invoque g_invoque_set_property avec la
+                        #    default value. Si ONLY, rend non readable, ni writable après cela.
+                        #  - G_PARAM_LAX_VALIDATION : ???
+                        #  - G_PARAM_STATIC_NAME : name
+                        #  - G_PARAM_STATIC_NICK : name plus intelligible
+                        #  - G_PARAM_STATIC_BLURB : description
+                        #  - G_PARAM_STATIC_STRINGS : macro pour G_PARAM_STATIC_NAME | G_PARAM_STATIC_NICK | 
+
+BINDINGS ==>            #Permettre de lier la modification de la property d'un objet avec une autre property, éventuellement
+                        #d'un autre objet. A metre en général dans le constructor
+g_object_bind_property  #Soient la property dont le name est STR1 pour l'objet GOBJECT_ADR1 la source, et l'autre la 
+( GOBJECT_ADR1, STR1,   #destination, en fonction de GBINDINGFLAGS (or'd) :
+GOBJECT_ADR2, STR2,     #  - G_BINDING_DEFAULT : si la source fait l'objet d'un set(), la destination fait l'objet du même set
+GBINDINGFLAGS )         #  - G_BINDING_BIDIRECTIONAL : dans les deux sens
+                        #  - G_BINDING_SYNC_CREATE : synchronise dès instantiation de GOBJECT_ADR1 (semble déjà par défaut)
+                        #  - G_BINDING_INVERT_BOOLEAN : avec des properties BOOL_VAL, fait que mettre l'un à true, met l'autre
+                        #    à false, et inversement (ne fonctionne pas avec g_object_bind_property_full())
+                        #Renvoie un GBinding* (struct opaque)
+g_object_bind_property_ #Comme g_object_bind_property( ARGS ), sauf que :
+full( ARGS, FONC_ADR1,  #  - FONC_ADR1, prenant ( GBinding*, GValue const*, Gvalue*, void* ) est invoqué lors de la
+FONC_ADR2, VOID_ADR,    #    synchronisation de GOBJECT_ADR1 vers GOBJECT_ADR2 (et FONC_ADR2 pour l'inverse). La première 
+FONC_ADR3 )             #    Gvalue* est la valeur venant d'être utilisée sur GOBJECT_ADR1, et il faut modifier la deuxième
+                        #    Gvalue*, qui sera celle utilisée sur GOBJECT_ADR2. void* est VOID_ADR.
+                        #    La Gvalue n'est utilisée que si FONC_ADR1 renvoie true. Si renvoie false, utilise la Gvalue const.
+                        #    Permet d'établir une relation autre que l'identité entre deux properties, par exemple de faire 
+                        #    qu'une property soit toujours le double d'une autre, qu'une soit la clef STR d'une value VAL
+                        #    d'un tableau associatif, etc.
+                        #  - FONC_ADR3 prend void* (VOID_ADR) et est invoqué lorsque le GBINDING_ADR rendu a son dernier 
+                        #    unref(), ou lorsque GOBJECT_ADR1 ou GOBJECT_ADR2 est finalized
+g_object_bind_property_
+with_closure( ARGS, 
+2 GCLOSURE_ADR )        #Comme g_object_bind_property_full(), mais avec des GCLOSURE_ADR.
+g_object_get_[source|   #Renvoie le GOBJECT_ADR1 ou 2 du g_object_bind_property() de GBINDING_ADR
+target]( GBINDING_ADR ) #GBinding a également une property "source" et "target"
+g_object_get_[source|
+target]_property
+( GBINDING_ADR )        #Pareil pour le STR1 ou STR2. GBinding a également une property "source-property" et "target-property"
+g_object_get_flags
+( GBINDINGFLAGS )       #Pareil pour le GBINDINGFLAGS. GBinding a également une property "flags"
+
+                                             /=+===============================+=\ 
+                                            /  :                               :  \  
+                                            )==:            GVALUE             :==(   
+                                            \  :_______________________________:  /    
+                                             \=+===============================+=/
+
+GBoxed                  #GType générique de type void* (type-erasure : void* est l'interface, mais un type sous-jacent GType*
+                        #doit être manipulé et compris), ne contenant en général que des CLASSDT, parent de GValue. 
+                        #Est manipulé via g_boxed_copy() et g_boxed_free() :
+                        #  - lors d'un type dérivé, utiliser non g_type_register_static, mais :
+                        #      g_boxed_type_register_static( STR[, FONC_ADR1, FONC_ADR2] )
+                        #    FONC_ADR1 prend void* et renvoie void*, implémentant g_boxed_copy()
+                        #    FONC_ADR2 prend void* et renvoie rien, implémentant g_boxed_free()
+                        #  - g_boxed_copy( GType, void* ) : renvoie une copie de l'argument VOID_ADR, de type GTYPE, sous forme
+                        #    de VOID_ADR2.
+                        #  - g_boxed_free( GType, void* ) : libère mémoire de void*, étant de type GTYPE. Ne renvoie rien.
+                        #  - le FONC_ADR invoqué par ces deux fonctions dépend de GTYPE, et des STR registered via 
+                        #    g_boxed_type_register_static
+                        #Pour déclarer nouvel enfant, utiliser non G_DEFINE_TYPE mais 
+                        #G_DEFINE_BOXED_TYPE( NamespaceMytype, namespace_mytype, copy_func, free_func )
+                        #( ou G_DEFINE_BOXED_TYPE_WITH_CODE si implémente une interface )
+                        #Enfants de GBoxed : 
+                        #  - utilisé par GObject : GStrv (char**)
+                        #  - utilisé par Glib : GHashTable, GDate, GString, GRegex, GMatchInfo, GArray, GByteArray, GPtrArray,
+                        #    GVariantType, GError, GDateTime, GVariantBuilder, GMainContext, GMainLoop, GSource
+                        #  - utilisé par GIO : GIOChannel, GIOCondition
+
+GValue                  #GType générique (type-erasure), pour les assignements et copy construction, et les properties.
+                        #Enfant de GBoxed. A initialiser avec G_VALUE_INIT, puis faire g_value_init() au début, et
+                        #g_value_unset à la fin.
+                        #Pour utiliser son propre MYTYPE avec une GValue :
+                        #  - initialiser avec g_value_init( GVALUE_ADR, MYTYPE ) //Initialisé avec un MYTYPE_ADR NULL
+                        #  - manipuler avec g_value_*et_object()
+                        #  - on *peut* définir la GTYPEVALUETABLE via g_type_register_static() (semble pas nécessaire)
+                        #    - G_TYPE_IS_VALUE( GTYPE ) renvoie false si pas de GTYPEVALUETABLE (renvoie true si 0 cependant)
+                        #    - G_TYPE_IS_VALUE_ABSTRACT( GTYPE ) renvoie true si a elle a été définie, mais qu'il s'agit d'un
+                        #      type abstrait, ne pouvant donc pas être utilisé.
+g_value_init            #
+( GVALUE_ADR, GTYPE )   #Initialise GVALUE avec le type GTYPE, puis effectue comme un g_value_reset()
+g_value_reset(GVALUEADR)#Assigne la default value du type sous-jacent. Renvoie le GVALUE_ADR.
+g_value_unset(GVALUEADR)#Défait g_value_init()
+g_value_copy(GVALUE_ADR,#
+GVALUE2_ADR )           #GVALUE& = GVALUE2 (doivent être de même type GTYPE)
+g_value_get_"type"      #
+( GVALUE_ADR )          #Renvoie GVALUE sous forme de TYPE_VAL
+g_value_dup_"type"*     #Comme g_value_get_"type", sauf que rajoute 1 au reference counting.
+                        #Pour "variant", "string", "param", "boxed", "object" uniquement.
+                        #Pour "string" en plus, renvoie une valeur non-const. 
+g_value_set_"type"      #
+( GVALUE_ADR, TYPE_VAL )#GVALUE = TYPE_VAL. Pour "type", cf GParamSpec"type", sauf "value_array"
+g_value_set_instance
+( GVALUE_ADR,MYTYPE_ADR)#GVALUE = MYTYPE_ADR (en fait VOID_ADR : transtypage explicite, compatibilité C++) ???
+g_value_take_"type"*    #Comme g_value_set_"type", sauf que prend ownership : ne rajoute rien au reference counting, mais
+                        #enlève besoin de faire *unref() pour l'ancien propriétaire. Pour mêmes que dup_* uniquement.
+g_value_set_static_     #Comme g_value_set_string*, sauf que considère que TYPE_VAL est const, par exemple s'il s'agit d'un 
+string*                 #STR_LIT
+
+G_VALUE_HOLDS_"type"    #
+( GVALUE_ADR )          #Renvoie true si GVALUE contient un type "type"
+G_VALUE_TYPE(GVALUE_ADR)#Renvoie le GTYPE sous-jacent de GVALUE.
+G_VALUE_TYPE_NAME
+( GVALUE_ADR )          #Même chose, mais renvoie le nom du GTYPE, sous forme de STR.
+G_IS_VALUE( GVALUE_ADR )#Renvoie true si GVALUE a été initialisé
+
+g_value_type_compatible #
+( 2 GTYPE )             #Renvoie true si GVALUE ont des type sous-jacents identiques
+g_value_type_           #
+transormable( 2 GTYPE ) #Renvoie true si un g_value_transform( ARGS ) existe
+g_value_transform       #Effectue GVALUE2 = GVALUE1 si une fonction de transformation a été registered. Pour le faire, faire
+( GVALUE1 const*,       #g_value_register_transform_func( ARGS, FONC_ADR ), où FONC_ADR prend ARGS et renvoie rien. 
+GVALUE2* )              #Des fonctions de transformation existent déjà entre plusieurs types fondamentaux, par exemple entre 
+                        #GInt et GShort ou GInt et GFloat.
+
+GTypeValueTable         #Struct avec infos pour l'utilisation d'un GTYPE donné via une GValue.
+                        #Il y en a une par défaut, qui devrait aller pour plupart des cas (mettre 0 dans le champs de 
+                        #GTypeInfo), sauf si l'on veut par exemple avoir une copie en reference counting, ou un système de 
+                        #memory pool.
+                        #Pour tous les MYTYPE_ADR : transtypage explicite, compatibilité C++.
+....value_init          #FONC_ADR prenant MYTYPE_ADR et renvoyant MYTYPE_ADR
+                        #Invoqué lors de g_value_init, g_value_reset
+....value_free          #FONC_ADR prenant MYTYPE_ADR* et renvoyant MYTYPE_ADR*
+                        #Invoqué lors de g_value_unset, g_value_reset (avant value_init), g_value_copy (avant value_copy)
+....value_copy          #FONC_ADR prenant ( GValue const*, GValue* ) et renvoyant MYTYPE_ADR*
+                        #Invoqué lors de g_value_copy
+VA_ARGS =>              #Les membres suivants concernent l'utilisation des va_list, et sont optionnels (valeur 0 possible)
+                        #Les macros G_VALUE_COLLECT_* et G_VALUE_LCOPY extraient un par un les éléments d'une va_list et les
+                        #met dans une GVALUE. Les membres suivants value_peek_pointer, collect_format, collect_value et 
+                        #lcopy_* servent à contrôler comportement de ces macros. Cf doc si besoin de va_args donc.
+
+GValueArray             #Array de GValue. Membres : n_values (UINT_VAL) et values (GVALUE_ARR)
+g_value_array_new       #Crée un GVALUEARRAY_ADR, de taille 0, mais avec un buffer de UINT_VAL éléments. 
+( UINT_VAL )            #Libérer ensuite via g_value_array_free( GVALUEARRAY_ADR )
+g_value_array_copy
+( GVALUEARRAY_ADR )     #Renvoie une copie GVALUEARRAY_ADR2
+g_value_array_
+[ap|pre]pend            #Rajoute un élément GVALUE_ADR (peut être NULL), à la fin ou au début, augmentant la taille de 1, et
+(GVALUEARAYADR,GVALUADR)#renvoie GVALUEARRAY_ADR
+g_value_array_insert
+( GVALUEARRAY_ADR,
+UINT_VAL, GVALUE_ADR )  #Pareil, mais le rajoute à l'index UINT_VAL
+g_value_array_remove
+(GVALUEARRAYADR,UINTVAL)#Supprime l'élément dont l'index est UINT_VAL
+g_value_array_get_nth
+( GVALUEARRAY_ADR,      #
+UINT_VAL )              #Renvoie le GVALUE_ADR numéro UINT_VAL.
+g_value_array_sort
+( GVALUEARRAY_ADR,      #Trie GVALUEARRAY_ADR selon FONC_ADR prenant deux void const*, et renvoyant int.
+FONC_ADR )              #Renvoie GVALUEARRAYADR.
+g_value_array_sort_with_
+data( GVALUEARRAY_ADR,  #Trie GVALUEARRAY_ADR selon FONC_ADR prenant deux void const* + void* (VOID_ADR) et renvoyant int.
+FONC_ADR, VOID_ADR )    #Renvoie GVALUEARRAYADR.
+
+                                             /=+===============================+=\ 
+                                            /  :                               :  \  
+                                            )==:   GENUMVALUE ET GFLAGSVALUE   :==(   
+                                            \  :_______________________________:  /    
+                                             \=+===============================+=/
+
+GEnumValue              #Type fondamental, désignant un membre d'un enum associé à un nom STR. 
+                        #Membres : value (int), value_name (STR) et value_nick (STR)
+                        #N'a pas la macro G_TYPE_ENUM_VALUE, mais une macro G_ENUM_CLASS_TYPE( GENUMCLASS_ADR ), qui renvoie
+                        #le GTYPE correspondant, et G_ENUM_CLASS_TYPE_NAME( GENUMCLASS_ADR ), qui renvoie le nom STR de ce
+                        #GTYPE.
+
+GEnumClass              #*Class correspondant
+....minimum             #Valeur minimal d'un GENUMVALUE.value
+....maximum             #Valeur maximum d'un GENUMVALUE.value
+....n_values            #Nombre de valeurs maximales
+....values              #Ensemble des GENUMVALUE jusqu'ici créées, sous forme de GENUMVALUE_ARR
+
+g_enum_register_static  #
+( STR, GENUMVALUE_ARR ) #Crée un GTYPE STR, enfant de GEnumValue, dont les valeurs sont dans l'array GENUMCLASS_ARR.
+g_enum_get_value        #
+(GENUMCLASS_ADR,INT_VAL)#Renvoie la GENUMVALUE_ADR de GENUMCLASS dont la value est INT_VAL.
+g_enum_get_value_by_name#
+( GENUMCLASS_ADR, STR ) #Même chose avec la value_name
+g_enum_get_value_by_nick#
+( GENUMCLASS_ADR, STR ) #Même chose avec la value_nick
+
+GFlags*                 #Comme GEnum*, sauf :
+                        #  - value est uint, non int
+                        #  - GFlagsClass n'a pas de minimum, ni de maximum, mais un mask (UINT_VAL) couvrant l'ensemble des
+                        #    valeurs possibles.
+                        #  - g_*_get_value s'appelle g_flags_get_first_value
+
+                                             /=+===============================+=\ 
+                                            /  :                               :  \  
+                                            )==:           CLOSURES            :==(   
+                                            \  :_______________________________:  /    
+                                             \=+===============================+=/
+
+INTERET DES GCLOSURE ==>#Avoir une interface de callback générale, GClosure, avec des enfants pour un language donné, par
+                        #exemple GCClosure pour C/C++.
+                        #invoke() un GClosure utilise des GValue en argument, que le marshaller converti et effectue l'appel
+                        #au callback selon la convention du language donné : par conséquent, pour utiliser un autre
+                        #language, il suffit d'utiliser d'autres marshallers.
+
+GClosure                #Représente une sorte de fonctor, appelée closure, déclenché par un second callback, appelé marshaller.
+                        #Le marshaller renvoie rien et prend comme argument :
+                        #  - GClosure*   : closure à invoquer
+                        #  - GVALUE_ADR1 : GVALUE où mettre la return value de la closure
+                        #  - UINT_VAL    : nombre de valeurs de l'array suivant
+                        #  - GVALUE_ARR2 const : array de GVALUE étant les arguments de la closure
+                        #  - VOID_ADR1   : argument optionnel passé par invoke()
+                        #  - VOID_ADR2   : second argument optionnel, callback à invoquer au lieu de celui de la closure, à
+                        #                  transtyper vers FONC_ADR
+                        #GClosure contient parmi ses membres un pointeur de fonction vers la fonction à appeler. Cette
+                        #fonction peut être de tout type. Le pointeur vers cette fonction est privé : utiliser donc GCClosure, 
+                        #enfant de GClosure, qui définit ce membre en public.
+                        #GCClosure n'est pas un "enfant" au sens de GObject, il contient seulement un GClosure en premier 
+                        #membre 
+                        #Tout GClosure a également des "data associées", i.e. un membre "data" void* contenant des data.
+GCClosure               #Deux membres : closure (GCLOSURE) et callback (VOID_ADR). Pour utiliser callback, le transtyper donc
+                        #vers le type de fonction souhaité. De plus GCCLOSURE est souvent manipulé via un GCLOSURE_ADR, il
+                        #faut donc faire :
+                        #  - ((TYPE(*)(TYPE))((GCClosure*)GCLOSURE)->callback)( ARGS )
+                        #mais en général invoke() est utilisé plutôt.
+
+g_cclosure_new[_swap]   #Renvoie un GCCLOSURE_ADR dont la fonction est FONC_ADR1. Les "data associées" sont VOID_ADR.
+( G_CALLBACK(FONC_ADR1),#FONC_ADR2, renvoyant rien et prenant ( void*, GCLOSURE_ADR ), void* étant les "data associées", est
+VOID_ADR, FONC_ADR2 )   #invoqué lors du dernier unref() sur GCCLOSURE_ADR : il s'agit du "finalize notifier".
+                        #Il est en effet possible de faire des g_closure_[un]ref( GCLOSURE_ADR ). g_closure_new* n'effectue
+                        #pas de ref(). g_closure_sink( GCLOSURE_ADR ) doit avoir été appelé après le premier ref().
+                        #Si "_swap", closure est "swapped" (cf plus haut) et G_CCLOSURE_SWAP_DATE( GCCLOSURE_ADR ) renvoie true
+g_cclosure_new_object   #Comme g_cclosure_new*, sauf que le VOID_ADR est un GOBJECT_ADR, et pas de FONC_ADR2.
+[_swap]( G_CALLBACK     #Appelle g_object_watch_closure( GOBJECT_ADR, GCLOSURE_ADR ), qui a pour effet :
+(FONC_ADR),GOBJECT_ADR )#  - de rajouter des marshal guards (cf plus bas) invoquant ref() avant le callback et unref() après
+                        #    pour être sûr que la closure existe lors du callback
+                        #  - d'invoquer g_closure_invalidate() lors du finalize() du GObject
+
+INVOCATION ==>          #Ne pas invoquer le callback de la closure directement mais via g_closure_invoke() : 
+                        #  - g_closure_invoke( ARGS ) invoque le marshaller avec ARGS (sauf VOID_ADR2, absent)
+                        #  - Le marshaller doit avoir été indiqué via : 
+                        #     - g_closure_set_meta_marshal( GCLOSURE_ADR, VOID_ADR, FONC_ADR ), VOID_ADR étant 
+                        #       l'argument VOID_ADR2 du marshaller, et FONC_ADR le marshaller
+                        #     - g_closure_set_marshal( GCLOSURE_ADR, FONC_ADR ) est pareil, avec NULL comme VOID_ADR
+
+MARSHALLERS ==>         #Il existe des marshallers déjà définies disponibles nommées g_cclosure_marshal_TYPE__TYPE2, qui :
+                        #  - fait un typedef GMarshalFunc_TYPE__TYPE2 vers le type du callback :
+                        #      - Le callback prend un void* supplémentaire au début et à la fin.
+                        #      - TYPE est la return value, TYPE2 l'argument, et un TYPE3_ supplémentaire optionnel le
+                        #        second argument
+                        #      - par exemple pour g_cclosure_marshal_INT__FLOAT_LONG : ((int(*))(void*, float, lonf, void))
+                        #  - invoquent le callback de GCLOSURE_ADR avec : 
+                        #     - les UINT_VAL arguments de GVALUE_ARR2
+                        #        - le premier doit être void* (UINT_VAL est donc au moins == 1), en général l'objet ayant
+                        #          invoqué la closure, transtypé en void*
+                        #        - ceux qui suivent sont du type TYPE2, et optionnellement TYPE3.
+                        #     - puis les "data associées" void* avec GCLOSURE
+                        #     - si GCLOSURE est "swapped" (cf dessous), inversion des deux void* dans l'invocation du 
+                        #       callback
+                        #  - place la return value dans GVALUE_ADR1
+                        #  - si VOID_ADR2, l'invoque à la place du callback (transtypé vers le type du callback)
+                        #  - ignorent VOID_ADR1
+                        #Marshallers disponibles : 
+                        #  -    _VOID__TYPE, pour tout TYPE fondamental
+                        #  -  _STRING__OBJECT_POINTER                       
+                        #  -    _VOID__UINT_POINTER                       
+                        #  - _BOOLEAN__FLAGS
+                        #  - _BOOLEAN__BOXED_BOXED
+                        #Les GString, GParam, GBoxed, GObject, GVariant sont des void* dans la signature du callback, mais
+                        #sont bien manipulés selon leur type.
+                        #Il existe aussi un marshaller nommé g_cclosure_marshal_generic qui prend tout type et nombre 
+                        #d'arguments et toute return value (la devine à partir des GVALUE_ADR), bien plus simple.
+                        #Dans tous les cas, tous ces marshallers marchent pour des GCCLOSURE_ADR uniquement.
+
+GLIB-GENMARSHAL ==>     #Cette utility génère des définitions/déclarations de predefined marshallers comme ceux ci-dessus.
+                        #  - Créer fichier FILE.list avec des lignes sous la forme TYPE:TYPE2[,TYPE3]..., où TYPE est l'un des 
+                        #    types fondamentaux GObject, en capital, pour créer un g_cclosure_marshal_TYPE__TYPE2_TYPE3
+                        #  - exécuter glib-genmarshal --nostdinc --body FILE pour imprimer définitions ou --header pour 
+                        #    déclarations + header guard
+                        #  - mettre cela dans fichiers gmarshal.c et gmarshal.h séparés
+
+g_closure_invalidate    #Dissocie GCLOSURE_ADR de sa fonction. Appelé lors du dernier unref(), ou à appeler par sûreté si
+( GCLOSURE_ADR )        #objet associé à cette closure a cessé d'exister. 
+                        #Juste avant et juste après invalidate() sont invoqués les "invalidate notifiers".
+
+g_closure_add_marshal_
+guards( GCLOSURE_ADR,   
+VOID_ADR1, FONC_ADR1,   #Fait que FONC_ADR1 sera invoqué avant chaque invocation du callback de GCLOSURE, et FONC_ADR2 après
+VOID_ADR2, FONC_ADR2 )  #cette invocation. FONC_ADR* prend ( void*, GClosure* ), void* étant le VOID_ADR* 
+g_{add,remove}_finalize_
+notifier( GCLOSURE_ADR, 
+VOID_ADR, FONC_ADR )    #Ajoute/supprime un "finalize notifier"
+g_{add,remove}_
+invalidate_notifier*    #Pareil, mais pour les "invalidate notifier"
+
+CREER NOUVEAU GCLOSURE  #Pour créer un nouvel pseudo-enfant de GClosure (comme GCClosure, qui est juste pour le C/C++) :
+ ==>                    #  typedef struct _MyClosure MyClosure;
+                        #  struct _MyClosure
+                        #  {
+                        #    GClosure closure;
+                        #    TYPE* my_data;
+                        #  };
+                        #  MyClosure* my_closure_new( TYPE* my_data )
+                        #  {
+                        #    MyClosure* my_closure = g_closure_new_simple( sizeof( MyClosure ), my_data );
+                        #    my_closure->my_data = my_data;
+                        #    return my_closure;
+                        #  }
+                        #Il faudrait aussi rajouter un finalize notifier pour free my_data
+                        #Il existe aussi g_closure_new_object( sizeof( MyClosure ), obj ), qui utilise non un VOID_ADR mais
+                        #un GOBJECT_ADR et appelle g_object_watch_closure().
+
+                                             /=+===============================+=\ 
+                                            /  :                               :  \  
+                                            )==:            SIGNAUX            :==(   
+                                            \  :_______________________________:  /    
+                                             \=+===============================+=/
+
+PRINCIPE ==>            #Un signal a : un signal-name (ex: "released"), une closure associée avec indication des types à 
+                        #employer, un gtype associé (par exemple GtkButton) et un signal-id (ENUM_VAL, par exemple RELEASED).
+                        #Les types associés représente un type, mais aussi toute sa descendance (les signaux sont donc
+                        #hérités)
+                        #Une closure associée peut avoir un closure-name STR, se présentant sous la forme :
+                        #  - d'un GQUARK associé au signal-id
+                        #  - ou concaténée au signal-name via "::" (ex : "notify::width"). Une telle STR est appelée 
+                        #    "signal-closure-name".
+                        #Pour avoir une closure-name, un signal doit avoir le flag G_SIGNAL_DETAILED
+                        #Une closure peut ne pas avoir de closure-name, auquel cas elle sera invoquée par les g_signal_emit* 
+                        #sur tout closure-name ou sur des g_signal_emit* sans closure-name.
+                        #Une closure est également identifié par un nombre ULONG, un "closure-id" ou "closure-handler"
+
+COMMENT ==>             #Création de l'ensemble des signaux-ids pour une classe Mytype donnée, hors de toute fonction :
+                        #  enum
+                        #  {
+                        #    MY_SIGNAL,    //Mêmes remarques que PROP_NAME pour choix des noms
+                        #    ...
+                        #    LAST_SIGNAL
+                        #  }
+                        #  static guint mytype_signals[LAST_SIGNAL] = { 0 };
+                        #Création d'un signal (dont éventuellement closure par défaut), dans le class_init() :
+                        #  mytype_signals[MY_SIGNAL] = g_signal_new*
+                        #Ajout d'une closure lié à un signal déjà créé :
+                        #  g_signal_connect*
+                        #Invocation de la closure lié à un signal :
+                        #  g_signal_emit*
+                        #En général, le signal "mysignal" d'une classe Mytype a une closure par défaut, invoquant une FONC_ADR 
+                        #"mysignal()" de MytypeClass, cette dernière étant initialisée lors du class_init() :
+                        #  NAMESPACEMYTYPECLASS_ADR->mysignal = namespace_mytype_mysignal;
+                        #API publique ou non :
+                        #  - closure par default : publique
+                        #  - callback invoquée par la closure par default : pas forcément public
+                        #  - souvent un mytype_emit_mysignal( MYTYPE_ADR, ... ) invoque la closure par default avec un plus
+                        #    haut niveau (déduit des arguments, etc.), et est alors utilisé également en interne pour
+                        #    l'émission de ce signal
+
+EXEMPLE ==>             #  typedef struct _NamespaceMytypeClass NamespaceMytypeClass;
+                        #  struct _NamespaceMytypeClass
+                        #  {
+                        #    ...
+                        #    void (*mysignal)( void*, TYPE, void* );
+                        #  };
+                        #  
+                        #  enum
+                        #  {
+                        #    MY_SIGNAL,
+                        #    LAST_SIGNAL
+                        #  };
+                        #  static guint mytype_signals[LAST_SIGNAL] = { 0 };
+                        #  
+                        #  void namespace_mytype_mysignal( void* a, TYPE f, void* c ) { ... }   
+                        #  void namespace_mytype_mysignal_deux( void* a, TYPE f, void* c ) { ... }
+                        #  void namespace_mytype_class_init( NamespaceMytypeClass* a )
+                        #  { 
+                        #    ...
+                        #    a->mysignal = namespace_mytype_mysignal;
+                        #    mytype_signals[MY_SIGNAL] = namespace_signal_new( "mysignal", G_TYPE_MYTYPE, G_SIGNAL_RUN_FIRST, 
+                        #    G_STRUCT_OFFSET( NamespaceMytypeClass, mysignal ), NULL, NULL, NULL, G_TYPE_NONE, 1, G_TYPE_TYPE);
+                        #  }
+                        #  
+                        #  int main( void )
+                        #  { 
+                        #    GObject* obj = namespace_object_new( G_TYPE_MYTYPE, 0 );
+                        #    g_signal_connect_after( obj, "mysignal", G_CALLBACK( namespace_mytype_mysignal_deux ), NULL );
+                        #    g_signal_emit_by_name( obj, "mysignal", VAL );
+                        #  }
+
+GTK ==>                 #Je pense que GTK+ intercepte les X events via Xlib (qui lui-même repose sur les drivers des
+                        #périphériques et les signaux hardware async.), et crée des signaux *_event qui sont émis lors de 
+                        #ces events. Les autres signaux sont contruits à partir de ces premiers : par exemple signal toggled
+                        #est l'effet d'un signal handler sur button_press_event et key_press_event qui, si l'on est au-dessus
+                        #du bon endroit, émette signal "toggled".
+
+CREATION ==>            #Voici :
+g_signal_newv( STR,     #Crée un signal :
+GTYPE, GSIGNALFLAGS,    #  - STR est le signal-name
+GCLOSURE_ADR, FONC_ADR1,#  - GTYPE est le "gtype associé"
+VOID_ADR, FONC_ADR2,    #  - GCLOSURE_ADR est la closure invoquée par le signal. Un g_closure_set_marshal( GCLOSURE_ADR,
+GTYPE2, UINT_VAL,       #    FONC_ADR2 ) est effectué : FONC_ADR2 étant donc le marshaller (si NULL -> 
+GTYPE_ARR )             #    g_cclosure_marshal_generic). Il s'agit de la closure par défaut.
+                        #  - le GVALUE_ADR1 de la closure (return type du callback) doit être de type GTYPE2, et le GVALUE_ARR2
+                        #    (arguments du callback) GTYPE_ADR suivi par chaque GTYPE de GTYPE_ARR. La taille de GTYPE_ARR
+                        #    est indiquée par UINT_VAL.
+                        #  - les flags GSIGNALFLAGS :
+                        #      - Spécifie quand la closure est invoquée (au moins un doit être présent) :
+                        #        G_SIGNAL_RUN_FIRST : avant toute nouvelle closure connected (ne peut être utilisé que si 
+                        #        GTYPE2 == G_TYPE_NONE)
+                        #        G_SIGNAL_RUN_LAST : après nouvelle closure connected sans le flag G_CONNECT_AFTER
+                        #        G_SIGNAL_RUN_CLEANUP : après toute nouvelle closure connected
+                        #      - G_SIGNAL_NO_HOOKS : g_signal_add_emission_hook() impossible
+                        #      - G_SIGNAL_NO_RECURSE : désactive émission récursive du signal
+                        #      - G_SIGNAL_MUST_COLLECT : si g_signal_emit_valist et que pas de closure associée, arguments sont
+                        #        malgré tout retirés de la va_list
+                        #  - FONC_ADR1 est un accumulator et VOID_ADR ses accumulator data associées :
+                        #     - si non-NULL et que GTYPE2 non-G_TYPE_NONE, invoqué après chaque closure
+                        #     - prend comme argument :
+                        #        - GSignalInvocationHint*, struct ayant des infos sur la closure juste invoquée :
+                        #          - signal_id (UINT_VAL), le signal-id et detail (GQUARK), le closure-name
+                        #          - run_type, le G_SIGNAL_RUN_*
+                        #        - GVALUE_ADR1 et const GVALUE_ADR2 : GVALUE_ADR2 contient la return value de la closure. Il
+                        #          faut modifier GVALUE_ADR1 (même type sous-jacent) en conséquence, afin de combiner les
+                        #          return values si plusieurs closures sont invoquées. La valeur de GVALUE_ADR1 est persistente
+                        #          entre les multiples closures, mais pas entre deux g_signal_emit*
+                        #          La valeur retournée par chaque ensemble de closures invoquées par un g_signal_emit* sera
+                        #          la dernière mise dans un G_VALUE_ADR1
+                        #        - void*, les accumulator data associées
+                        #     - renvoie BOOL_VAL : si false, n'invoque pas les closure suivants
+                        #     - des accumulators déjà disponibles existent : 
+                        #        - g_signal_accumulator_first_wins renvoie false, renvoyant donc résultat du premier uniquement
+                        #          et n'exécutant pas les autres closures
+                        #        - g_signal_accumulator_true_handled : renvoie false si la closure courante renvoie true. A
+                        #          utiliser avec des closures renvoyant BOOL_VAL, indiquant par true l'arrêt de l'émission du
+                        #          signal donc.
+g_signal_newvalist(ARGS)#Comme g_signal_newv, sauf :
+                        #  - pas un GTYPE_ARR, mais une va_list (contenant des GTYPE)
+g_signal_new( ARGS )    #Comme g_signal_newv sauf que :
+                        #  - pas un GTYPE_ARR, mais ..., soit une suite de GTYPE
+                        #  - pas une GCLOSURE_ADR, mais G_STRUCT_OFFSET( GTYPEclass, FONC_ADR ), où FONC_ADR est un pointeur
+                        #    de fonction dans GTYPEclass, qui devient le callback appelé par la closure par défaut.
+                        #Pour avoir un effet similaire avec g_signal_newv, utiliser g_signal_type_cclosure_new
+                        #( GTYPE, G_STRUCT_OFFSET( GTYPEclass, FONC_ADR ) ), qui renvoie un GCCLOSURE_ADR dont le callback
+                        #est FONC_ADR.
+                        #Ne semble pas pouvoir être utilisé avec un NamespaceMytypeClassPrivate : utiliser alors les autres
+                        #g_signal_new*
+                        #Renvoie le signal-id du signal créé sous forme d'UINT_VAL
+g_signal_new_class_     #
+handler( ARGS )         #Comme g_signal_new, sauf qu'il utilise un G_CALLBACK( FONC_ADR ), et non un G_STRUCT_OFFSET( ... )
+
+g_signal_override_class_#Modifie la closure par défaut du signal dont le signal-name est STR, pour le type associé GTYPE.
+handler( STR, GTYPE,    #Pour ne pas override, mais "extend" (rajouter action, puis appeler ancien closure par default), 
+G_CALLBACK( FONC_ADR ) )#utiliser aussi g_signal_chain_from_overriden*. Utile si un enfant veut rajouter des choses au
+                        #closure par default d'un signal, tout en continuant d'invoquant celui-ci.
+g_signal_override_class_#
+closure( UINT_VAL,GTYPE, 
+GCLOSURE_ADR )          #Pareil, mais avec un signal-id, et modifie avec un GCLOSURE_ADR, non un FONC_ADR.
+
+AJOUT D'UNE CLOSURE ==> #Voici :
+g_signal_connect_data   #Rajoute une closure, dont :
+( VOID_ADR1, STR,       #  - le type associé est celui de VOID_ADR1
+G_CALLBACK( FONC_ADR1 ),#  - le signal-closure-name est STR
+VOID_ADR2, FONC_ADR2,   #  - le callback associé est FONC_ADR1, avec VOID_ADR2 comme data associées
+GCONNECTFLAGS )         #  - FONC_ADR2, prenant ( void*, GClosure* ), void* étant les data associées, est invoqué si la
+                        #    closure est disconnected
+                        #  - GCONNECTFLAGS peut être :
+                        #      G_CONNECT_AFTER : cf plus haut
+                        #      G_CONNECT_SWAPPED : la closure devient swapped (cf plus haut)
+                        #Renvoie le closure-id de la closure rajoutée.
+g_signal_connect_closure#
+( VOID_ADR, STR,        #Comme g_signal_connect_data(), mais utilise un GCLOSURE_ADR au lieu des trois avant-derniers arguments
+GCLOSURE_ADR, BOOL_VAL )#et un BOOL_VAL indiquant présence ou absence de G_CONNECT_AFTER
+g_signal_connect_
+closure_by_id( VOID_ADR,
+UINT_VAL, GQUARK,       #Comme g_signal_connect_closure(), mais utilise un signal-id + closure-name et non un 
+GCLOSURE_ADR, BOOL_VAL )#signal-closure-name
+g_signal_connect
+[_after|_swapped]
+( VOID_ADR, STR, 
+G_CALLBACK( FONC_ADR1 ),#Comme g_signal_connect_closure(), avec NULL comme FONC_ADR2, et GCONNECTFLAGS dépend de présence de
+VOID_ADR2 )             #_after ou _swapped.
+
+g_object_connect        #STR est "[swapped_]signal[_after]::signal-closure-name" : invoque une série de 
+( GOBJECT_ADR, [STR,    #g_signal_connect[_after|_swapped] avec la série d'arguments
+FONC_ADR1, VOIDADR2]...,#Typecast explicite GObject* -> void* : compatibilité C++
+NULL )                  #Renvoie GOBJECT_ADR
+
+g_signal_add_emission_  #Rajoute un callback invoqué pour toute émission de la closure dont le signal-id est UINT_VAL est la 
+hook( UINT_VAL, GQUARK, #closure-name GQUARK. FONC_ADR1 est le callback et prend GSIGNALINVOCATIONHINT (cf plus haut), 
+FONC_ADR1, VOID_ADR,    #UINT_VAL (taille de l'array suivant), const GVALUE_ARR (arguments dont le premier void*), VOID_ADR, 
+FONC_ADR2 )             #les data associées VOID_ADR. 
+                        #Est donc invoqué pour tout type associé. Renvoie BOOL_VAL : si false, ce callback est détruit.
+                        #FONC_ADR2 est invoqué lors de la destruction du callback, renvoie rien et prend VOID_ADR (les data
+                        #associées). 
+                        #Est invoqué après G_SIGNAL_RUN_FIRST et avant les autres.
+                        #Renvoie un ULONG_VAL, "hook-id" à utiliser avec g_signal_remove_emission_hook()
+g_signal_remove_
+emission_hook           
+( UINT_VAL, ULONG_VAL ) #Détruit le callback dont l'hook-id est ULONG_VAL et le signal-id UINT_VAL
+
+EMISSION ==>            #Voici :
+g_signal_emit( VOID_ADR,#Invoque la closure liée au signal dont le signal-id est UINT_VAL, le closure-name GQUARK, et associé 
+UINT_VAL, GQUARK, ... ) #au GTYPE sous-jacent à VOID_ADR.
+                        #L'invoque avec :
+                        #  - comme GVALUE_ARR2 (arguments du callback) :
+                        #     - VOID_ADR (l'objet invoquant le signal en général) 
+                        #     - suivi de ...
+                        #  - comme GVALUE_ADR1 le dernier argument (sous son type originel + _ADR) dans ... (rien si void)
+                        #    Attention, le type de retour doit être celui de g_signal_new*. 
+                        #    Si plusieurs closures, c'est la return value de la dernière invoquée qui est renvoyée.
+g_signal_emitv
+( GVALUE_ARR1, UINT_VAL,
+GQUARK, GVALUE_ADR2 )   #Pareil, mais utilise GVALUE_ARR1 pour les arguments et GVALUE_ADR2 pour la return value.
+g_signal_emit_valist    #
+( VOID_ADR, UINT_VAL,   #
+GQUARK, VA_LIST )       #Comme g_signal_emit, mais utilise une VA_LIST au lieu de ...
+g_signal_emit_by_name   #
+( VOID_ADR, STR, ... )  #Comme g_signal_emit, mais utilise un signal-closure-name au lieu d'un signal-id + closure-name
+
+g_signal_chain_from_    #Equivaut à g_signal_emit() sans les arguments du milieu, sauf que :
+overriden_handler       #  - ne peut être mis quand dans un callback du signal d'une classe dont le closure par default a été 
+( VOID_ADR, ... )       #    override par g_signal_override_class_*, pour ce signal
+                        #  - appelle cet ancien closure par default
+g_signal_chain_from_    #
+overriden( GVALUE_ARR1  #
+GVALUE_ADR2 )           #Pareil, mais pour g_signal_emitv()
+
+g_signal_stop_emission_ #A mettre dans le callback d'une closure dont le type associé est celui de VOID_ADR, et le 
+by_name( VOID_ADR, STR )#signal-closure-name STR (mettre celui de la closure courante) : fait que les prochaines closures 
+                        #éventuellement attachées à l'émission courante ne seront pas déclenchées pour l'émission courante.
+g_signal_stop_emission
+( VOID_ADR, UINT_VAL,   #
+GQUARK )                #Pareil avec un signal-id + closure-name
+
+CONTROLE DES CLOSURES 
+  ==>                   #Manipule les closures via leur closure-id :
+g_signal_handler_
+[un]block( VOID_ADR, 
+ULONG_VAL )             #Bloque/débloque la closure dont le closure-id est ULONG_VAL, et le type associé celui de VOID_ADR.
+g_signal_handler_
+disconnect( VOID_ADR, 
+ULONG_VAL )             #Pareil, mais ici supprime la closure.
+g_signal_handler_is_
+connected( VOID_ADR, 
+ULONG_VAL )             #Renvoie false si la closure a été supprimée par g_signal_handler_disconnect()
+g_signal_handlers_
+[[un]block|disconnect]_ #Comme g_signal_handlers_*, mais utilise non un closure-id, mais le membre callback VOID_ADR2 
+by_func( VOID_ADR1,     #d'une GCCLOSURE, et ses data associées VOID_ADR3. Peut donc désigner plusieurs closures utilisant un 
+VOID_ADR2, VOID_ADR3 )  #même callback.
+g_signal_handlers_      #Block/débloque/détruit une closure dont le type associé est celui de VOID_ADR et dont :
+[[un]block|disconnect]_ #  - ou le signal-id est UINT_VAL
+matched( VOID_ADR,      #  - ou le closure-name est GQUARK
+GSIGNALMATCHTYPE,UINTVL,#  - ou la closure est GCLOSURE_ADR
+GQUARK, GCLOSURE_ADR,   #  - ou le membre callback de GCCLOSURE_ADR est VOID_ADR2
+VOID_ADR2, VOID_ADR3 )  #  - ou les data associées sont VOID_ADR3
+                        #  - ou les closures unblocked
+                        #Le ou dépend des flags or'd de GSignalMatchType, parmi :
+                        #G_SIGNAL_MATCH_{ID,DETAIL,CLOSURE,FUNC,DATA,UNBLOCKED}
+                        #Renvoie le nombre de matches.
+g_object_disconnect
+( VOID_ADR1[, STR,      #STR : "any_signal[::signal-closure-name]" ("any_signal" est littéral).
+GCALLBACK( FONC_ADR ),  #Comme g_signal_handlers_disconnect_by_func, mais effectue une série d'entre eux, et utilise non
+VOID_ADR3]..., NULL )   #un closure-id mais STR.
+
+INFOS ==>               #Infos optionnelles sur les signaux :
+g_signal_handler_find   #Mêmes arguments et fonctionnement que g_signal_handler_*_matched, mais ici renvoie le closure-id
+( ARGS )                #du premier closure trouvé, ou 0.
+g_signal_has_handler_
+pending( VOID_ADR, 
+UINT_VAL, GQUARK,       #Renvoie false si la closure dont le signal-id est UINT_VAL, le closure-name GQUARK et le type
+BOOL_VAL )              #associé VOID_ADR n'existe pas. Si BOOL_VAL est false, renvoie false également s'il est blocked.
+g_signal_lookup
+( STR, GTYPE )          #Renvoie le signal-id (UINT_VAL) du signal sont le signal-name est STR et le type associé GTYPE
+g_signal_name( UINT_VAL)#Renvoie le signal-name (STR) du signal dont le signal-id est UINT_VAL.
+g_signal_list_ids       #Renvoie l'ensemble des signaux associés au type GTYPE, sous la forme d'une array de signal-id
+( GTYPE, UINT_ADR )     #UINT_ARR (la mémoire de l'array est alloué automatiquement), dont la taille est mise dans UINT_ADR.
+g_signal_query(UINT_VAL,#Remplis GSIGNALQUERY d'infos sur le signal dont le signal-id est UINT_VAL.
+GSIGNALQUERY_ADR )      #Membres de GSignalQuery (ne pas modifier) :
+                        #  - signal_id (UINT_VAL) : 0 si UINT_VAL ne correspondait à aucun signal
+                        #  - signal_name (STR) : signal-name
+                        #  - itype (GTYPE) : type associé
+                        #  - signal_flags (GSIGNALFLAGS)
+                        #  - return_type (GTYPE), n_params (UINT_VAL) et param_types (GTYPE_ARR) : comme derniers arguments
+                        #    de g_signal_newv()
+g_signal_get_invocation_#
+hint( VOID_ADR )        #Renvoie le GSIGNALINVOCATIONHINT_ADR du premier signal lié au type associé à VOID_ADR
+
+                                             /=+===============================+=\ 
+                                            /  :                               :  \  
+                                            )==:            EXAMPLE            :==(   
+                                            \  :_______________________________:  /    
+                                             \=+===============================+=/
+
+#include  <glib-object.h>
+#include  <stdio.h>
+
+#define _( String )   ( String )
+
+typedef struct _GMytypePrivate GMytypePrivate;
+struct _GMytypePrivate
+{
+  int membre;
+};
+
+typedef struct _GMytype GMytype;
+struct _GMytype
+{
+  GObject parent;
+  GMytypePrivate* priv;
+};
+
+typedef struct _GMytypeClass GMytypeClass;
+struct _GMytypeClass
+{
+  GObjectClass parent_class;
+  void (*action)( GMytype* );
+  void (*mysignal)( void*, float, void* );
+};
+
+enum 
+{
+  PROP_0,
+  PROP_MYPROP
+};
+
+#define G_TYPE_MYTYPE   ( g_mytype_get_type() )
+G_DEFINE_TYPE( GMytype, g_mytype, G_TYPE_OBJECT )
+#define G_MYTYPE( obj )          (G_TYPE_CHECK_INSTANCE_CAST ((obj), G_TYPE_MYTYPE, GMytype))
+#define G_MYTYPE_CLASS(klass)    (G_TYPE_CHECK_CLASS_CAST ((klass), G_TYPE_MYTYPE, GMytypeClass))
+#define G_IS_MYTYPE(obj)         (G_TYPE_CHECK_INSTANCE_TYPE ((obj), G_TYPE_MYTYPE))
+#define G_IS_MYTYPE_CLASS(klass) (G_TYPE_CHECK_CLASS_TYPE ((klass), G_TYPE_MYTYPE))
+#define G_MYTYPE_GET_CLASS(obj)  (G_TYPE_INSTANCE_GET_CLASS ((obj), G_TYPE_MYTYPE, GMytypeClass))
+
+void g_mytype_set_property( GObject* a, guint b, GValue const* c, GParamSpec* d )
+{
+  switch ( b )
+  {
+    case PROP_MYPROP:
+      G_MYTYPE( a )->priv->membre = g_value_get_int( c );
+      break;
+    default:
+      G_OBJECT_WARN_INVALID_PROPERTY_ID( a, b, d );
+      break;
+  }
+}
+
+void g_mytype_get_property( GObject* a, guint b, GValue* c, GParamSpec* d )
+{
+  switch ( b )
+  {
+    case PROP_MYPROP:
+      g_value_set_int( c, G_MYTYPE( a )->priv->membre );
+      break;
+    default:
+      G_OBJECT_WARN_INVALID_PROPERTY_ID( a, b, d );
+      break;
+  }
+}
+
+void g_mytype_action( GMytype* a )
+{ puts( "Action" ); }   
+
+GObject* g_mytype_constructor( GType a, guint b, GObjectConstructParam* c )
+{
+  GObject* obj;
+  { obj = G_OBJECT_CLASS( g_mytype_parent_class )->constructor( a, b, c ); }
+  return obj;
+}
+
+enum
+{
+  MY_SIGNAL,
+  LAST_SIGNAL
+};
+static guint mytype_signals[LAST_SIGNAL] = { 0 };
+
+void g_mytype_mysignal( void* a, float f, void* c )
+{ printf( "My signal handler : %f\n", f ); }    
+void g_mytype_mysignal_deux( void* a, float f, void* c )
+{ printf( "My second signal handler : %f\n", f ); }   
+
+void g_mytype_finalize( GObject* a ) 
+{ G_OBJECT_CLASS( g_mytype_parent_class )->finalize( a ); }
+void g_mytype_dispose( GObject* a ) 
+{ G_OBJECT_CLASS( g_mytype_parent_class )->dispose( a ); }
+void g_mytype_init( GMytype* a ) 
+{
+  a->priv = G_TYPE_INSTANCE_GET_PRIVATE( a, G_TYPE_MYTYPE, GMytypePrivate );
+}
+void g_mytype_class_init( GMytypeClass* a ) 
+{
+  GObjectClass* aa = G_OBJECT_CLASS( a );
+  g_type_class_add_private( a, sizeof( GMytypePrivate ) );
+  aa->constructor = g_mytype_constructor;
+  aa->dispose = g_mytype_dispose;
+  aa->finalize = g_mytype_finalize;
+  a->action = g_mytype_action;
+  aa->set_property = g_mytype_set_property;
+  aa->get_property = g_mytype_get_property;
+  g_object_class_install_property( aa, PROP_MYPROP, g_param_spec_int( "myprop", _("MyProp"), _("Description de Myprop"), 0, 10, 4, ( GParamFlags )( G_PARAM_READWRITE | G_PARAM_CONSTRUCT ) ) );
+  a->mysignal = g_mytype_mysignal;
+  mytype_signals[MY_SIGNAL] = g_signal_new( "mysignal", G_TYPE_MYTYPE, G_SIGNAL_RUN_FIRST, G_STRUCT_OFFSET( GMytypeClass, mysignal ), NULL, NULL, NULL, G_TYPE_NONE, 1, G_TYPE_FLOAT );
+}
+
+int main(void)
+{
+  GObject* obj;
+  int a;
+  g_type_init();
+  obj = ( GObject* )g_object_new( G_TYPE_MYTYPE, 0 );
+  g_mytype_action( G_MYTYPE( obj ) );
+  g_object_get( obj, "myprop", &a, NULL );
+  printf( "%d\n", a );
+  g_signal_connect_after( obj, "mysignal", G_CALLBACK( g_mytype_mysignal_deux ), NULL );
+  g_signal_emit_by_name( obj, "mysignal", 4.0 );
+  return 0; 
+}
