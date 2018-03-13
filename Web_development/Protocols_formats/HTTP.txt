@@ -333,9 +333,6 @@ Method:
            - body:
               - request: none
               - response: not specified, but Content-Type "message/http"
-           - if Max-Forwards [C] and decremented to 0:
-              - the current server|proxy should echo request
-              - used to debug proxy infinite loop, together with proxy-specific headers
      - unsafe:
         - idempotent:
            - PUT: 
@@ -446,7 +443,7 @@ Status codes:
      - 414 (URI too long)                                                                                             See request|response length
      - 415 (Unsupported Media Type)           server does not support request body media type (inverse of 406)        See wrong request|response
      - 416 (Range Not Satisfiable)            wrong Range [C]                                                         See Range [C]
-     - 417 (Expectation failed)               wrong Expect [C]                                                        See Expect [C]
+     - 417 (Expectation failed)               Expect [C] failed                                                       See Expect [C]
      - 419 (Authentication timeout)           like 401 but for authentication timeout                                 See web authentication
      - 421 (Misredirected request)            request picked wrong server                                             See alternative services
      - 426 (Upgrade Required)                 switch protocol denied                                                  See Upgrade [C]
@@ -578,7 +575,9 @@ Software identity:
      - used with IE, e.g. IE=NUM|edge
 
 Client identity:
-  - From: EMAIL_ADDRESS [C]: often used with bots for support email
+  - From: EMAIL_ADDRESS [C]: 
+     - often used with bots for support email
+     - privacy concern
 
 Content transformation:
   - possible transformations:
@@ -629,10 +628,14 @@ Content negotiation:
         - only GET|HEAD
         - Accept* [C]:
            - accepted variants:
-              - Accept:         MIME_TYPE[;q=NUM],... [C]
-              - Accept-Charset:   CHARSET[;q=NUM],... [C]
-              - Accept-language: LANGUAGE[;q=NUM],... [C] 
-              - Accept-features:  FEATURE[;q=NUM],... [C]
+              - Accept:                 MIME_TYPE[;q=NUM],... [C]
+                 - can use * for TYPE and|or SUBTYPE
+              - Accept-Charset:           CHARSET[;q=NUM],... [C]
+                 - can use *
+              - Accept-Language:         LANGUAGE[;q=NUM],... [C] 
+              - Accept-Encoding: COMPRESSION_ALGO[;q=NUM],... [C] (see compression)
+              - A-IM:              ALGO[;VAR=VAL][;q=NUM],... [C] (see delta encoding)
+              - Accept-Features:          FEATURE[;q=NUM],... [C]
                  - FEATURE: FEAT, FEAT=|!=VAL, FEAT=[NUM-NUM2], !FEAT, *
                  - anything not covered by MIME_TYPE, CHARSET or LANGUAGE: MEDIAQUERYLIST, web API support, speed vs graphics, etc.
                  - should be x-FEATURE if not standard
@@ -658,6 +661,8 @@ Content negotiation:
                  - Content-Type: MIME_TYPE[; charset=CHARSET] [S]
                     - def: either application/octet-stream of content sniffing
                  - Content-Language: LANGUAGE,... [S]
+                 - Content-Encoding: COMPRESSION_ALGO,... [S] (see compression)
+                 - IM: ALGO[;VAR=VAL],... [S] (see delta encoding)
               - 406 (Not Acceptable): wrong Accept-* [C]
            - list[, re-choose]: 
               - provides client only with possible variants:
@@ -678,11 +683,15 @@ Content negotiation:
                        - description "STR". Use %xXX for Unicode encoding.
                        - any other x-ATTR
                     - NUM (0-1):
-                       - quality
+                       - quality value ("qvalue")
+                          - represents both the preference, and the min resource quality (in percentage)
+                          - def: 1
+                          - 0 is "not acceptable"
+                          - max 3 decimals
                        - calculated by remote variant selection algorithm:
                           - it also selects whether to use list or choice
                           - e.g. RVSA 1.0:
-                             - NUM = product of all matching Accept*;q preferences (def: 1 for each)
+                             - NUM = product of all matching Accept*;q preferences
                              - should use list if no NUM > 0, or only used wildcards (e.g. Accept-Features: * or Accept: */*)
                  - <URI>: fallback
                  - proxy-rvsa="VERSION,...": remote variant selection algorithm versions
@@ -709,9 +718,6 @@ Content negotiation:
         - puts work on the client
         - might yield better guess
         - one more request
-  - might also be used with content negotiation: 
-     - compression: Accept-Encoding [C], Content-Encoding [S]
-     - delta encoding: A-IM [C], IM [S]
 
 Links:
   - Location: URI [S]
@@ -1019,14 +1025,14 @@ Delta encoding:
                  - COMPRESSION_ALGO
                  - range
            - VAR: ALGO params
-           - q=NUM: like content negotation
+           - q=NUM: see content negotation
      - server:
         - 226 (IM Used)
-        - IM: ALGO[;VAR=VAL],... [S]
+        - IM: ALGO[;VAR=VAL],... [S] (see content negotiation)
         - Delta-base: "ETAG" [S]
            - source of the diff
            - mandatory when several "ETAG" specified in If-None-Match [C], recommended otherwise
-        - 406 (Not acceptable): ALGO not supported
+        - 406 (Not acceptable): see content negotiation
   - caching:
      - can cache 226 responses either as full entity (200 or 206) or as diff (226)
      - Vary: A-IM [S]:
@@ -1151,9 +1157,10 @@ Request|response length:
         - sending header before sending body:
            - client: Expect: "100-continue" [C], no request body
            - server:
-              - 100 (Continue) if success
-              - 417 (Expectation Failed) if failure
-           - client: request body
+              - 100 (Continue): client should continue with request body
+              - 3|4|5**: client should not continue with request body
+              - 417 (Expectation Failed) if Expect [C] not supported
+           - client (if 100): request body
         - request too large:
            - 414 (Request URI too long)
            - 431 (Request header fields too large)
@@ -1255,6 +1262,9 @@ Response processing:
            - x-VAR
      - server:
         - Preference-Applied: VAR[="VAL"] ,... [S]: which Prefer [C] were honored
+  - Expect: VAL,... [C]
+     - generic expectation on how server should handle request
+     - 417 (Expectation Failed) if expectation not met
 
 Content location:
   - Content-Location: URL [C|S]:
@@ -1339,7 +1349,10 @@ Proxies:
         - Via: [HTTP/]HTTP_VERSION HOST[:PORT]|CUSTOM_NAME [(DESCRIPTION)] ,... [C|S]: current node info
      - optional for each proxy in the chain (can even remove existing ones)
      - when several, the leftmost is the closest to origin
-  - Max-Forwards: NUM [C]: max number of proxies
+  - Max-Forwards: NUM [C]: 
+     - max number of proxies
+     - each proxy decrements NUM. When 0, proxy should respond as if it was final recipient.
+     - can be used to target a proxy with a OPTIONS|TRACE request
   - Warning: NUM - "DESCRIPTION" "DATE" [S]
      - 1**: caching-related, should be updated by 403:
         - 110 "Response is Stale": proxy served stale resource instead of retrieving fresh one from server
@@ -1490,44 +1503,46 @@ Cookies:
 
 Compression:
   - how:
-     - client: Accept-Encoding: COMPRESSION_ALGO,... [C]:
-        (standard)
-        - "identity" (none)
-        - "compress":
-           - worst compression, older
-           - older: not supported anymore
-        - "deflate":
-           - DEFLATE/INFLATE algorithm
-           - inconsistent support: either without a wrapper format (IE) or with zlib wrapper format (other browsers)
-        - "gzip":
-           - DEFLATE/INFLATE algorithm, with gzip wrapper format
-        - "exi":
-           - better compression than DEFLATE, for XML files
-           - w3c standard but no browser support
-        (not standard)
-        - "bzip2" 
-           - better compression than DEFLATE but slower
-           - browser support: Firefox only with specific build flag
-        - "lzma":
-           - better compression than DEFLATE but slower
-           - better compression than bzip2, but slower, faster at decompressing but slower at compressing 
-           - browser support: Opera
-        - "xz":
-           - LZMA2
-           - browser support: Firefox only with specific build flag
-        - "sdch": 
-           - based on VCDIFF
-           - does not seem really maintained anymore
-           - browser support: Opera, Chrome
-        - "br"
-           - best compression. Same decompression speed as DEFLATE but slower at compressing.
-           - browser support: Firefox, Chrome
+     - client: 
+        - Accept-Encoding: COMPRESSION_ALGO[;q=NUM],... [C] (see content negotiation)
+        - COMPRESSION_ALGO:
+           - standard:
+              - "*": any
+              - "identity" (none)
+              - "compress":
+                 - worst compression, older
+                 - older: not supported anymore
+              - "deflate":
+                 - DEFLATE/INFLATE algorithm
+                 - inconsistent support: either without a wrapper format (IE) or with zlib wrapper format (other browsers)
+              - "gzip":
+                 - DEFLATE/INFLATE algorithm, with gzip wrapper format
+              - "exi":
+                 - better compression than DEFLATE, for XML files
+                 - w3c standard but no browser support
+           - not standard:
+              - "bzip2" 
+                 - better compression than DEFLATE but slower
+                 - browser support: Firefox only with specific build flag
+              - "lzma":
+                 - better compression than DEFLATE but slower
+                 - better compression than bzip2, but slower, faster at decompressing but slower at compressing 
+                 - browser support: Opera
+              - "xz":
+                 - LZMA2
+                 - browser support: Firefox only with specific build flag
+              - "sdch": 
+                 - based on VCDIFF
+                 - does not seem really maintained anymore
+                 - browser support: Opera, Chrome
+              - "br"
+                 - best compression. Same decompression speed as DEFLATE but slower at compressing.
+                 - browser support: Firefox, Chrome
+           - server should offer in order: br, [sdch,] lzma, gzip, identity
      - server: 
-        - Content-Encoding: COMPRESSION_ALGO,... [S]: which one picked
+        - Content-Encoding: COMPRESSION_ALGO,... [S] or 406 (see content negotiation)
            - can also use Transfer-Encoding: COMPRESSION_ALGO [S]: more proper but less support, and forbidden by HTTP/2
         - Accept-Encoding: COMPRESSION_ALGO,... [S]: which one could have been possible
-        - 406 (Not accepted): none could be picked
-  - summary: server should offer in order: br, [sdch,] lzma, gzip, identity
   - server should cache compression
 
 Push technologies:
