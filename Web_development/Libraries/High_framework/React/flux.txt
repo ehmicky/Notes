@@ -8,28 +8,85 @@ VERSION ==>                       #2.1.1
 
 DEVELOPMENT MODE ==>              #Like React
 
-FLOW ==>                          #Setup:
-                                  #  - STORE = new FluxStore(DISPATCHER) (calls DISPATCHER.register())
-                                  #  - STORE.addListener(SFUNC)
-                                  #Trigger:
-                                  #  - DISPATCHER.dispatch(VAL)
-                                  #  - fires STORE.__onDispatch(VAL)
-                                  #     - fires SFUNC() if change
+FLOW ==>                          #Specific case of MVC architecture.
+                                  #Design:
+                                  #  - steps:
+                                  #     - one 'action', i.e. view event (i.e. anything changing state) notifying all models
+                                  #     - if event relevant, models update
+                                  #     - then whole view tree re-rendered with new models state
+                                  #  - abstract APPSTATE as a layer set by views, get by models:
+                                  #     - views do not update models directly, they update APPSTATE
+                                  #  - one-way data binding: always models -> views
+                                  #Implementation:
+                                  #  - Views notify singleton Dispatcher that app state changed
+                                  #  - Dispatcher triggers all Stores __onDispatch() listener
+                                  #     - Dispatcher's goal is to manage dependencies (see e.g. DISPATCHER.waitFor())
+                                  #  - Stores __onDispatch() do model logic, optionally notifying they changed
+                                  #     - are one or several models, associated to a common purpose/domain
+                                  #  - Views associated with a Store that changed are re-rendered:
+                                  #     - those View should be only few (e.g. only one root) because:
+                                  #        - if two Views are associated with same Store and they have common children,
+                                  #          children will be re-rendered twice, with potentially different props|state
+                                  #        - with two-way data binding, this cannot be solved easily
+                                  #     - are called "Controller-Views"
+                                  #     - can pass all the Stores state to descendants as props, to simplify code
+                                  #Steps (+ are done once, - at each dispatch)
+                                  #  + DISPATCHER = new Dispatcher()
+                                  #     - should be an app singleton
+                                  #  - DISPATCHER.dispatch(APPSTATE):
+                                  #     - notify new app state
+                                  #     - done on events, e.g. user interaction in views
+                                  #     - can be abstracted by an interface ("action creator") calling relevant DISPATCHER.dispatch()
+                                  #     - APPSTATE should be a self-contained command object:
+                                  #        - `type` so that STORE can know if it's relevant for them
+                                  #        - enough information for the action to be performed
+                                  #  + STORE = new FluxStore(DISPATCHER)
+                                  #     - calls DISPATCHER.register(), i.e. DISPATCHER.dispatch(APPSTATE) will fire 
+                                  #       STORE.__onDispatch(APPSTATE)
+                                  #  - STORE.__onDispatch(APPSTATE): 
+                                  #     - do model logic according to APPSTATE
+                                  #     - STORE.__emitChange() if model has changed
+                                  #  + STORE.addListener(SFUNC()): 
+                                  #     - fire SFUNC() on STORE.__emitChange()
+                                  #  + Ftype.getStores(): 
+                                  #     - associate view with stores
+                                  #  - Ftype.calculateState(): 
+                                  #     - update view when stores change, i.e. on SFUNC()
+
+
+																						 /=+===============================+=\ 
+																						/  :                               :  \  
+							 														  )==:          DISPATCHER           :==(   
+																						\  :_______________________________:  /    
+																						 \=+===============================+=/
 
 
 new Dispatcher()                  #DISPATCHER
 DISPATCHER.register(FUNC)         #Register a DFUNC. Returns DFUNC_ID
 DISPATCHER.unregister(DFUNC_ID)   #
-DISPATCHER.dispatch(VAL)          #Fires each DFUNC(VAL)
+DISPATCHER.dispatch(APPSTATE)     #Fires each DFUNC(APPSTATE)
                                   #Cannot be done if on-going DISPATCHER.dispatch()
 DISPATCHER.isDispatching()->BOOL  #
 DISPATCHER.waitFor(DFUNC_ID_ARR)  #To be fired while DISPATCHER.isDispatching(), i.e. in a DFUNC2.
                                   #Fire those DFUNC right away (unless already fired), to make sure they are fired first.
 
 
+new FluxStoreGroup                #Return FLUXSTOREGROUP
+(STORE_ARR, FUNC())               #All STORE must have the same DISPATCHER
+                                  #When DISPATCHER.dispatch() is called, fires FUNC() when all STORE.__onDispatch(APPSTATE) have been called.
+FLUXSTOREGROUP.release()          #Cleanup
+
+
+																						 /=+===============================+=\ 
+																						/  :                               :  \  
+							 														  )==:             STORE             :==(   
+																						\  :_______________________________:  /    
+																						 \=+===============================+=/
+
+
 new FluxStore(DISPATCHER)         #STORE
-                                  #Calls DISPATCHER.register(STORE.__onDispatch(VAL))
-STORE.__onDispatch(VAL)           #
+                                  #Calls DISPATCHER.register(STORE.__onDispatch(APPSTATE))
+STORE.__onDispatch(APPSTATE)      #
 
 STORE.addListener(SFUNC())        #Returns OBJ: remove()
 STORE.__emitChange()              #Fires SFUNC(), providing called within STORE.__onDispatch(), itself called through DISPATCHER.
@@ -42,7 +99,7 @@ STORE.getDispatchToken()->DFUNC_ID#
 new FluxReduceStore(DISPATCHER)   #REDUCESTORE, child of STORE, with a state object.
 REDUCESTORE.getInitialState()     #Called at construction, must be overriden.
 REDUCESTORE.getState()            #OBJ
-REDUCESTORE.__onDispatch(VAL)     #Overriden to call REDUCESTORE.reduce(STATE, VAL)->STATE2
+REDUCESTORE.__onDispatch(APPSTATE)#Overriden to call REDUCESTORE.reduce(STATE, APPSTATE)->STATE2
                                   #  - STATE2 is new STATE, and cannot be undefined
                                   #  - calls __emitChange() if STATE changed
                                   #     - checked using REDUCESTORE.areEqual(STATE, STATE2) (def: ===)
@@ -56,24 +113,24 @@ MAPSTORE.getAll(STR_ARR           #Returns IMMUTABLE-MAP2 (def: new one) with on
 [, IMMUTABLE-MAP2])               #specified by keys STR_ARR
 
 
-new FluxStoreGroup                #Return FLUXSTOREGROUP
-(STORE_ARR, FUNC())               #All STORE must have the same DISPATCHER
-                                  #When DISPATCHER.dispatch() is called, fires FUNC() when all STORE.__onDispatch(VAL) have been called.
-FLUXSTOREGROUP.release()          #Cleanup
+																						 /=+===============================+=\ 
+																						/  :                               :  \  
+							 														  )==:             VIEW              :==(   
+																						\  :_______________________________:  /    
+																						 \=+===============================+=/
 
 
-FluxContainer.create(CTYPE[, OBJ])#Return FTYPE, i.e. child of CTYPE where:
-                                  #  - 'change':
-                                  #     - FTYPE.state = Ftype.calculateState(PREV_STATE[, PROPS])->NEW_STATE:
-                                  #     - PROPS is defined only if OBJ.withProps true
-                                  #  - 'change' is performed:
-                                  #     - at initialization (PREV_STATE is null)
-                                  #     - on componentWillReceiveProps:
-                                  #        - if OBJ.withProps true 
-                                  #        - unless OBJ.pure true (def) and PREV_PROPS != NEXT_PROPS (shallow comparison)
-                                  #     - on STORE changes:
-                                  #        - STORE_ARR = Ftype.getStores(), where all STORE must have same DISPATCHER
-                                  #        - each time all STORE.__onDispatch(VAL) have been called, if a STORE.hasChanged()
-                                  #  - do so by monkey-patching (calling original function first) componentDidMount, 
-                                  #    componentWillReceiveProps, componentDidUnmount
-                                  #  - if OBJ.pure true (def), replace shouldComponentUpdate with PURERENDERMIXIN
+FluxContainer.create(CTYPE[, OBJ])#Return FTYPE, i.e. child of CTYPE, which:
+                                  #  - associate CTYPE with STOREs
+                                  #  - updates it when aSTORE.__emitChange()
+Ftype.getStores()->STORE_ARR      #Associated STORE. Much all have same DISPATCHER
+Ftype.calculateState              #Assigned to FTYPE.state:
+(PREV_STATE[, PROPS])->NEW_STATE  #  - at initialization (PREV_STATE is null)
+                                  #  - each time a DISPATCHER.dispatch() ends, if a STORE.hasChanged()
+                                  #  - on componentWillReceiveProps:
+                                  #     - if OBJ.withProps true 
+                                  #     - unless OBJ.pure true (def) and PREV_PROPS != NEXT_PROPS (shallow comparison)
+                                  #PROPS is defined only if OBJ.withProps true
+                                  #Works by monkey-patching (calling original function first) componentDidMount, 
+                                  #componentWillReceiveProps, componentDidUnmount
+FTYPE.shouldComponentUpdate()     #If OBJ.pure true (def), PURERENDERMIXIN
