@@ -7,31 +7,42 @@
 
 VERSION ==>                       #2.0.0
 
-
-
-ERROR-STACK-PARSER ==>            #
-
-parse(ERROR)->FRAME_ARR           #Gets FRAME_ARR from ERROR.stack
-                                  #FRAME has (each optional): source, fileName, functionName, args, lineNumber, columnNumber
-                                  #Automatically detect whether on IE, Chrome, Firefox, Safari, Opera or Node
+GOAL ==>                          #  - parse ERROR.stack into OBJ_ARR (Node/browser)
+                                  #  - source map support for stack traces (browser only) (see node-source-map-support for alternatives)
+                                  #  - retrieve stack trace in old IE lacking ERROR.stack (browser only)
 
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:           GENERATOR           :==(
+                                            )==:             CORE              :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
-STACK-GENERATOR ==>               #Version 2.0.2
-                                  #Retrieve current stack trace.
-                                  #Does not work well with strict mode
+get([OPTS])->PROMISE_FRAME_ARR    #Retrieve current stack as FRAME_ARR
+                                  #Automatically translate locations using source maps (see below)
+                                  #Calls either:
+                                  #  - if current browser supports ERROR.stack: fromError(new Error, OPTS)
+                                  #  - otherwise: generateArtificially(OPTS)
+getSync([OPTS])->FRAME_ARR        #Same but sync and does not call STACKTRACE-GPS() (i.e. no source maps handling)
 
-backtrace([OPTS])->FRAME_ARR      #Get current stack trace as FRAME_ARR (with functionName and args)
-                                  #Use arguments.callee then iterate over arguments.caller:
-                                  #  - i.e. first parent function in 'strict mode' will stop iteration
-                                  #OPTS:
-                                  #  - maxStackSize NUM (def: 10)
+fromError(ERROR[, OPTS])          #Same as:
+ ->PROMISE_FRAME_ARR              #  - ERROR-STACK-PARSER.parse() (see below)
+                                  #  - new STACKTRACE-GPS(OPTS) + GPS.pinpoint() on each FRAME
+generateArtificially([OPTS])
+ ->PROMISE_FRAME_ARR              #Same as STACK-GENERATOR.backtrace() (see below)
+
+OPTS.filter                       #Apply FRAME_ARR.filter(FUNC) for any of the above functions
+                                  #Def: removes function of stacktrace.js library itself
+
+instrument(FUNC, FUNC2(FRAME_ARR),#Calls FUNC2(FRAME_ARR) (or FUNC3 is problem):
+ FUNC3(ERROR)[, THIS])->FUNC      #  - each time FUNC(...) is called (using get())
+                                  #  - each time FUNC(...) throws an ERROR (using fromError(ERROR)) (except on old browsers)
+deinstrument(FUNC)->FUNC          #Removes
+
+report(FRAME_ARR, 'URI'[, STR]    #Sends an HTTP request (using XMLHttpRequest, i.e. only in browsers) to URI
+ [, XHR_OPTS])                    #with JSON payload { stack: FRAME_ARR, message STR }.
+                                  #Can set XHR_OPTS.headers OBJ
 
 
                                              /=+===============================+=\
@@ -48,7 +59,7 @@ new StackFrame([OPTS])            #By default its members have no logic except t
                                   #is only the intended meaning for calling code.
                                   #OPTS:
                                   #  - source STR: original stack stack single line
-                                  #  - fileName 'PATH'
+                                  #  - fileName 'URI|PATH'
                                   #  - functionName 'FUNC' (def during toString(): '<anonymous>')
                                   #  - args 'VAR'_ARR: function parameters
                                   #  - lineNumber NUM
@@ -61,3 +72,82 @@ new StackFrame([OPTS])            #By default its members have no logic except t
 FRAME.get*()->VAL                 #Getter for each OPT
 FRAME.set*(VAL)                   #Setter for each OPT
 FRAME.toString()->STR             #Returns 'FUNCTION_NAME(ARG,...)[@FILENAME][:LINE][:COLUMN]'
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:            PARSER             :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+ERROR-STACK-PARSER ==>            #2.0.1
+                                  #Parses ERROR.stack to FRAME_ARR
+
+parse(ERROR)->FRAME_ARR           #Gets FRAME_ARR from ERROR.stack
+                                  #FRAME has (each optional): source, fileName, functionName, args, lineNumber, columnNumber
+                                  #Automatically detect whether on IE, Chrome, Firefox, Safari, Opera or Node
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:           GENERATOR           :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+STACK-GENERATOR ==>               #Version 2.0.2
+                                  #Retrieve current stack trace.
+                                  #Does not work well with strict mode, i.e. only meant as a fallback of ERROR-STACK-PARSER for
+                                  #old IE that lacks ERROR.stack
+
+backtrace([OPTS])->FRAME_ARR      #Get current stack trace as FRAME_ARR (with functionName and args)
+                                  #Use arguments.callee then iterate over arguments.caller:
+                                  #  - i.e. first parent function in 'strict mode' will stop iteration
+                                  #OPTS:
+                                  #  - maxStackSize NUM (def: 10)
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:          SOURCE MAPS          :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+STACKTRACE-GPS ==>                #3.0.2
+                                  #Source map support in stack traces
+                                  #Browser only
+
+new STACKTRACE-GPS([OPTS])        #
+
+FRAME.fileName|functionName|
+ args|lineNumber|columnNumber     #Are the only members kept in the methods below
+
+GPS.pinpoint(FRAME)
+ ->PROMISE_FRAME                  #Same as getMappedLocation() + findFunctionName()
+GPS.getMappedLocation(FRAME)      #Modifies FRAME.fileName|functionName|lineNumber|columnNumber from compiled to source file's position.
+ ->PROMISE_FRAME                  #Do it by:
+                                  #  - fetching FRAME.fileName
+                                  #  - retrieving source map sourceMappingURL (must exist)
+                                  #  - fetching source map (if normal URI) or decode it (if data URI)
+                                  #  - parsing it with mozilla source-map's CONSUMER.originalPositionFor() (see its doc)
+GPS.findFunctionName(FRAME)       #Modifies FRAME.functionName using source map's information
+ ->PROMISE_FRAME                  #Do it by:
+                                  #  - fetching FRAME.fileName
+                                  #  - guess in which function a specific FRAME is by applying REGEXPs on source code
+
+OPTS.sourceMapConsumerCache       #OBJ (def: {}):
+                                  #Customize cache for source map parsing
+OPTS.sourceCache                  #OBJ (def: {}):
+                                  #Customize cache for HTTP requests
+OPTS.offline                      #BOOL (def: false):
+                                  #Forces using sourceCache instead of making HTTP requests
+                                  #I.e. OPTS.sourceCache must be already filled
+
+OPTS.ajax                         #FUNC('URI')->PROMISE_STR:
+                                  #Customize HTTP request
+                                  #Def: use XMLHttpRequest (i.e. does not work in Node)
+OPTS.atob                         #FUNC('BASE64')->STR:
+                                  #Customize base64 decoding
+                                  #Def: use window.atob() (i.e. does not work in Node)
