@@ -1,213 +1,4 @@
 
-__Bash_Unix__
-- __Commandes__
-  - [7z](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/7z.txt)
-  - [agrep](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/agrep.txt)
-  - [abs_makepkg](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/abs_makepkg.txt)
-  - [alias_unalias](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/alias_unalias.txt)
-  - [anacron](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/anacron.txt)
-  - [at_atq_atrm_batch](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/at_atq_atrm_batch.txt)
-  - [awk](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/awk.txt)
-  - [base64](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/base64.txt)
-  - [basename_dirname](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/basename_dirname.txt)
-  - [cal_ncal](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/cal_ncal.txt)
-  - [cat_tac](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/cat_tac.txt)
-  - [cd](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/cd.txt)
-  - [chkdupexe](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/chkdupexe.txt)
-  - [chmod](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/chmod.txt)
-  - [clear](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/clear.txt)
-  - [cloud-init](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/cloud-init.txt)
-  - [command_builtin_enable](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/command_builtin_enable.txt)
-  - [cp_mv](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/cp_mv.txt)
-  - [cron_crontab](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/cron_crontab.txt)
-  - [csplit](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/csplit.txt)
-  - [cut](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/cut.txt)
-  - [date](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/date.txt)
-  - [dd](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/dd.txt)
-  - [df](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/df.txt)
-  - [dmesg](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/dmesg.txt)
-  - [du](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/du.txt)
-  - [echo](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/echo.txt)
-  - [env_printenv](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/env_printenv.txt)
-  - [expand_unexpand](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/expand_unexpand.txt)
-  - [factor](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/factor.txt)
-  - [find](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/find.txt)
-  - [fold](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/fold.txt)
-  - [getopts_getopt](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/getopts_getopt.txt)
-  - [grep_egrep_fgrep_rgrep](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/grep_egrep_fgrep_rgrep.txt)
-  - [hash](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/hash.txt)
-  - [head_tail](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/head_tail.txt)
-  - [help](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/help.txt)
-  - [history](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/history.txt)
-  - [iconv](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/iconv.txt)
-  - [id](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/id.txt)
-  - [info](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/info.txt)
-  - [kill](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/kill.txt)
-  - [less](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/less.txt)
-  - [line](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/line.txt)
-  - [ln_link](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/ln_link.txt)
-  - [locate](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/locate.txt)
-  - [look](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/look.txt)
-  - [ls_dir_vdir](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/ls_dir_vdir.txt)
-  - [lsattr_chattr](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/lsattr_chattr.txt)
-  - [man](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/man.txt)
-  - [mapfile_readarray](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/mapfile_readarray.txt)
-  - [mesg](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/mesg.txt)
-  - [mkdir](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/mkdir.txt)
-  - [mkfifo](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/mkfifo.txt)
-  - [mknod](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/mknod.txt)
-  - [mktemp](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/mktemp.txt)
-  - [more](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/more.txt)
-  - [mount](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/mount.txt)
-  - [ncat](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/ncat.txt)
-  - [mtrace](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/mtrace.txt)
-  - [nice_renice](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/nice_renice.txt)
-  - [nohup](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/nohup.txt)
-  - [od_hexdump_hd](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/od_hexdump_hd.txt)
-  - [pacman](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/pacman.txt)
-  - [passwd](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/passwd.txt)
-  - [paste_join](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/paste_join.txt)
-  - [pathchk](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/pathchk.txt)
-  - [popd_pushd_dirs](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/popd_pushd_dirs.txt)
-  - [printf](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/printf.txt)
-  - [pwd](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/pwd.txt)
-  - [read](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/read.txt)
-  - [readlink](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/readlink.txt)
-  - [rev](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/rev.txt)
-  - [rm_unlink](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/rm_unlink.txt)
-  - [rmdir](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/rmdir.txt)
-  - [sed](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/sed.txt)
-  - [seq](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/seq.txt)
-  - [shopt](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/shopt.txt)
-  - [shopt.txt~](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/shopt.txt~)
-  - [shred](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/shred.txt)
-  - [shuf](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/shuf.txt)
-  - [sleep](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/sleep.txt)
-  - [sort](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/sort.txt)
-  - [split](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/split.txt)
-  - [stat](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/stat.txt)
-  - [sync](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/sync.txt)
-  - [ipcalc](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/ipcalc.txt)
-  - [stdbuf](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/stdbuf.txt)
-  - [sum_cksum_md5sum_shasum](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/sum_cksum_md5sum_shasum.txt)
-  - [tar](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/tar.txt)
-  - [tee](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/tee.txt)
-  - [time_times](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/time_times.txt)
-  - [top](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/top.txt)
-  - [touch](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/touch.txt)
-  - [tr](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/tr.txt)
-  - [trap](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/trap.txt)
-  - [truncate](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/truncate.txt)
-  - [tsort](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/tsort.txt)
-  - [tty](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/tty.txt)
-  - [type_which](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/type_which.txt)
-  - [ulimit](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/ulimit.txt)
-  - [umask](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/umask.txt)
-  - [uname_arch](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/uname_arch.txt)
-  - [uniq](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/uniq.txt)
-  - [updatedb](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/updatedb.txt)
-  - [upstart](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/upstart.txt)
-  - [uptime](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/uptime.txt)
-  - [watch](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/watch.txt)
-  - [wc](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/wc.txt)
-  - [whatis_apropos](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/whatis_apropos.txt)
-  - [whereis](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/whereis.txt)
-  - [write_wall](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/write_wall.txt)
-  - [xargs](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/xargs.txt)
-  - [xdotool](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/xdotool.txt)
-  - [yes](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/yes.txt)
-  - [zdump](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/zdump.txt)
-- [Options_avec_ou_sans_whitespace](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Options_avec_ou_sans_whitespace.txt)
-- __Bash__
-  - [bash_synthese](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Bash/bash_synthese.txt)
-  - [batch_bash_equivalences](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Bash/batch_bash_equivalences.txt)
-  - [bash_variables](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Bash/bash_variables.txt)
-  - [colorisation_shell](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Bash/colorisation_shell.txt)
-  - [common_options](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Bash/common_options.txt)
-  - [differences_bash_sh](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Bash/differences_bash_sh.txt)
-  - [differences_versions_bash](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Bash/differences_versions_bash.txt)
-  - [expansion_susbitution](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Bash/expansion_susbitution.txt)
-  - [fichiers_configuration](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Bash/fichiers_configuration.txt)
-  - [history](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Bash/history.txt)
-  - [hotkeys_console](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Bash/hotkeys_console.txt)
-  - [prompt_bash](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Bash/prompt_bash.txt)
-  - [shell_options](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Bash/shell_options.txt)
-- [afaire_unix](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/afaire_unix.txt)
-- [atime_ctime_mtime](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/atime_ctime_mtime.txt)
-- [buffering](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/buffering.txt)
-- [droits_d_acces](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/droits_d_acces.txt)
-- [character_block_special_files](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/character_block_special_files.txt)
-- [classe_posix](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/classe_posix.txt)
-- [fifo_unamedpipe](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/fifo_unamedpipe.txt)
-- [human_readable_sizes](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/human_readable_sizes.txt)
-- [lock](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/lock.txt)
-- [newline](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/newline.txt)
-- [packets_essentiels](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/packets_essentiels.txt)
-- [regexps](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/regexps.txt)
-- [repertoire_dev](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/repertoire_dev.txt)
-- [sequence_echappement_backslash](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/sequence_echappement_backslash.txt)
-- [sequence_echappement_date](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/sequence_echappement_date.txt)
-- [signaux](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/signaux.txt)
-- [specifications](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/specifications.txt)
-- [taille_des_fichiers](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/taille_des_fichiers.txt)
-- [users_and_groups](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/users_and_groups.txt)
-
-__C__
-- __Glibc__
-  - [IO_filedescriptors](//github.com/ehmicky/Koi/blob/dev/C/Glibc/IO_filedescriptors.txt)
-  - [IO_memoire](//github.com/ehmicky/Koi/blob/dev/C/Glibc/IO_memoire.txt)
-  - [IO_normale](//github.com/ehmicky/Koi/blob/dev/C/Glibc/IO_normale.txt)
-  - [TODO](//github.com/ehmicky/Koi/blob/dev/C/Glibc/TODO.txt)
-  - [attributs_fichiers](//github.com/ehmicky/Koi/blob/dev/C/Glibc/attributs_fichiers.txt)
-  - [caracteres](//github.com/ehmicky/Koi/blob/dev/C/Glibc/caracteres.txt)
-  - [communication_interprocess](//github.com/ehmicky/Koi/blob/dev/C/Glibc/communication_interprocess.txt)
-  - [dynamic_allocation](//github.com/ehmicky/Koi/blob/dev/C/Glibc/dynamic_allocation.txt)
-  - [encodage_crypto](//github.com/ehmicky/Koi/blob/dev/C/Glibc/encodage_crypto.txt)
-  - [erreurs](//github.com/ehmicky/Koi/blob/dev/C/Glibc/erreurs.txt)
-  - [extension_64_bits](//github.com/ehmicky/Koi/blob/dev/C/Glibc/extension_64_bits.txt)
-  - [fichiers_temporaires](//github.com/ehmicky/Koi/blob/dev/C/Glibc/fichiers_temporaires.txt)
-  - [goto](//github.com/ehmicky/Koi/blob/dev/C/Glibc/goto.txt)
-  - [limites](//github.com/ehmicky/Koi/blob/dev/C/Glibc/limites.txt)
-  - [options_programme](//github.com/ehmicky/Koi/blob/dev/C/Glibc/options_programme.txt)
-  - [program_execution](//github.com/ehmicky/Koi/blob/dev/C/Glibc/program_execution.txt)
-  - [repertoires](//github.com/ehmicky/Koi/blob/dev/C/Glibc/repertoires.txt)
-  - [signaux](//github.com/ehmicky/Koi/blob/dev/C/Glibc/signaux.txt)
-  - [strings](//github.com/ehmicky/Koi/blob/dev/C/Glibc/strings.txt)
-  - [systeme_de_fichier](//github.com/ehmicky/Koi/blob/dev/C/Glibc/systeme_de_fichier.txt)
-  - [time](//github.com/ehmicky/Koi/blob/dev/C/Glibc/time.txt)
-  - [wchar_wstr](//github.com/ehmicky/Koi/blob/dev/C/Glibc/wchar_wstr.txt)
-- __OpenGL__
-  - [opengl](//github.com/ehmicky/Koi/blob/dev/C/OpenGL/opengl.txt)
-- __SDL__
-  - [sdl](//github.com/ehmicky/Koi/blob/dev/C/SDL/sdl.txt)
-- __Standard_library__
-  - __C89__
-    - [assert](//github.com/ehmicky/Koi/blob/dev/C/Standard_library/C89/assert.txt)
-    - [ctype](//github.com/ehmicky/Koi/blob/dev/C/Standard_library/C89/ctype.txt)
-    - [errno](//github.com/ehmicky/Koi/blob/dev/C/Standard_library/C89/errno.txt)
-    - [float](//github.com/ehmicky/Koi/blob/dev/C/Standard_library/C89/float.txt)
-    - [limits](//github.com/ehmicky/Koi/blob/dev/C/Standard_library/C89/limits.txt)
-    - [locale](//github.com/ehmicky/Koi/blob/dev/C/Standard_library/C89/locale.txt)
-    - [math](//github.com/ehmicky/Koi/blob/dev/C/Standard_library/C89/math.txt)
-    - [setjmp](//github.com/ehmicky/Koi/blob/dev/C/Standard_library/C89/setjmp.txt)
-    - [signal](//github.com/ehmicky/Koi/blob/dev/C/Standard_library/C89/signal.txt)
-    - [stdarg](//github.com/ehmicky/Koi/blob/dev/C/Standard_library/C89/stdarg.txt)
-    - [stddef](//github.com/ehmicky/Koi/blob/dev/C/Standard_library/C89/stddef.txt)
-    - [stdio](//github.com/ehmicky/Koi/blob/dev/C/Standard_library/C89/stdio.txt)
-    - [stdlib](//github.com/ehmicky/Koi/blob/dev/C/Standard_library/C89/stdlib.txt)
-    - [string](//github.com/ehmicky/Koi/blob/dev/C/Standard_library/C89/string.txt)
-    - [time](//github.com/ehmicky/Koi/blob/dev/C/Standard_library/C89/time.txt)
-  - __C95__
-    - [iso646](//github.com/ehmicky/Koi/blob/dev/C/Standard_library/C95/iso646.txt)
-    - [wchar](//github.com/ehmicky/Koi/blob/dev/C/Standard_library/C95/wchar.txt)
-    - [wctype](//github.com/ehmicky/Koi/blob/dev/C/Standard_library/C95/wctype.txt)
-  - __C99__
-    - [stdbool](//github.com/ehmicky/Koi/blob/dev/C/Standard_library/C99/stdbool.txt)
-    - [inttypes](//github.com/ehmicky/Koi/blob/dev/C/Standard_library/C99/inttypes.txt)
-    - [stdint](//github.com/ehmicky/Koi/blob/dev/C/Standard_library/C99/stdint.txt)
-  - [feature_test_macro](//github.com/ehmicky/Koi/blob/dev/C/Standard_library/feature_test_macro.txt)
-- [c_synthese](//github.com/ehmicky/Koi/blob/dev/C/c_synthese.txt)
-
 __ASM__
 - [BCD](//github.com/ehmicky/Koi/blob/dev/ASM/BCD.txt)
 - __Debugging_Desassemblage__
@@ -246,15 +37,224 @@ __ASM__
   - [x86_synthese](//github.com/ehmicky/Koi/blob/dev/ASM/x86/x86_synthese.txt)
   - [x87_synthese](//github.com/ehmicky/Koi/blob/dev/ASM/x86/x87_synthese.txt)
 
+__C__
+- __Glibc__
+  - [IO_filedescriptors](//github.com/ehmicky/Koi/blob/dev/C/Glibc/IO_filedescriptors.txt)
+  - [IO_memoire](//github.com/ehmicky/Koi/blob/dev/C/Glibc/IO_memoire.txt)
+  - [IO_normale](//github.com/ehmicky/Koi/blob/dev/C/Glibc/IO_normale.txt)
+  - [TODO](//github.com/ehmicky/Koi/blob/dev/C/Glibc/TODO.txt)
+  - [attributs_fichiers](//github.com/ehmicky/Koi/blob/dev/C/Glibc/attributs_fichiers.txt)
+  - [caracteres](//github.com/ehmicky/Koi/blob/dev/C/Glibc/caracteres.txt)
+  - [communication_interprocess](//github.com/ehmicky/Koi/blob/dev/C/Glibc/communication_interprocess.txt)
+  - [dynamic_allocation](//github.com/ehmicky/Koi/blob/dev/C/Glibc/dynamic_allocation.txt)
+  - [encodage_crypto](//github.com/ehmicky/Koi/blob/dev/C/Glibc/encodage_crypto.txt)
+  - [erreurs](//github.com/ehmicky/Koi/blob/dev/C/Glibc/erreurs.txt)
+  - [extension_64_bits](//github.com/ehmicky/Koi/blob/dev/C/Glibc/extension_64_bits.txt)
+  - [fichiers_temporaires](//github.com/ehmicky/Koi/blob/dev/C/Glibc/fichiers_temporaires.txt)
+  - [goto](//github.com/ehmicky/Koi/blob/dev/C/Glibc/goto.txt)
+  - [limites](//github.com/ehmicky/Koi/blob/dev/C/Glibc/limites.txt)
+  - [options_programme](//github.com/ehmicky/Koi/blob/dev/C/Glibc/options_programme.txt)
+  - [program_execution](//github.com/ehmicky/Koi/blob/dev/C/Glibc/program_execution.txt)
+  - [repertoires](//github.com/ehmicky/Koi/blob/dev/C/Glibc/repertoires.txt)
+  - [signaux](//github.com/ehmicky/Koi/blob/dev/C/Glibc/signaux.txt)
+  - [strings](//github.com/ehmicky/Koi/blob/dev/C/Glibc/strings.txt)
+  - [systeme_de_fichier](//github.com/ehmicky/Koi/blob/dev/C/Glibc/systeme_de_fichier.txt)
+  - [time](//github.com/ehmicky/Koi/blob/dev/C/Glibc/time.txt)
+  - [wchar_wstr](//github.com/ehmicky/Koi/blob/dev/C/Glibc/wchar_wstr.txt)
+- __OpenGL__
+  - [opengl](//github.com/ehmicky/Koi/blob/dev/C/OpenGL/opengl.txt)
+- __SDL__
+  - [sdl](//github.com/ehmicky/Koi/blob/dev/C/SDL/sdl.txt)
+- __Standard_library__
+  - __C95__
+    - [iso646](//github.com/ehmicky/Koi/blob/dev/C/Standard_library/C95/iso646.txt)
+    - [wchar](//github.com/ehmicky/Koi/blob/dev/C/Standard_library/C95/wchar.txt)
+    - [wctype](//github.com/ehmicky/Koi/blob/dev/C/Standard_library/C95/wctype.txt)
+  - __C89__
+    - [ctype](//github.com/ehmicky/Koi/blob/dev/C/Standard_library/C89/ctype.txt)
+    - [errno](//github.com/ehmicky/Koi/blob/dev/C/Standard_library/C89/errno.txt)
+    - [float](//github.com/ehmicky/Koi/blob/dev/C/Standard_library/C89/float.txt)
+    - [assert](//github.com/ehmicky/Koi/blob/dev/C/Standard_library/C89/assert.txt)
+    - [limits](//github.com/ehmicky/Koi/blob/dev/C/Standard_library/C89/limits.txt)
+    - [locale](//github.com/ehmicky/Koi/blob/dev/C/Standard_library/C89/locale.txt)
+    - [math](//github.com/ehmicky/Koi/blob/dev/C/Standard_library/C89/math.txt)
+    - [setjmp](//github.com/ehmicky/Koi/blob/dev/C/Standard_library/C89/setjmp.txt)
+    - [signal](//github.com/ehmicky/Koi/blob/dev/C/Standard_library/C89/signal.txt)
+    - [stdarg](//github.com/ehmicky/Koi/blob/dev/C/Standard_library/C89/stdarg.txt)
+    - [stddef](//github.com/ehmicky/Koi/blob/dev/C/Standard_library/C89/stddef.txt)
+    - [stdio](//github.com/ehmicky/Koi/blob/dev/C/Standard_library/C89/stdio.txt)
+    - [stdlib](//github.com/ehmicky/Koi/blob/dev/C/Standard_library/C89/stdlib.txt)
+    - [string](//github.com/ehmicky/Koi/blob/dev/C/Standard_library/C89/string.txt)
+    - [time](//github.com/ehmicky/Koi/blob/dev/C/Standard_library/C89/time.txt)
+  - __C99__
+    - [inttypes](//github.com/ehmicky/Koi/blob/dev/C/Standard_library/C99/inttypes.txt)
+    - [stdbool](//github.com/ehmicky/Koi/blob/dev/C/Standard_library/C99/stdbool.txt)
+    - [stdint](//github.com/ehmicky/Koi/blob/dev/C/Standard_library/C99/stdint.txt)
+  - [feature_test_macro](//github.com/ehmicky/Koi/blob/dev/C/Standard_library/feature_test_macro.txt)
+- [c_synthese](//github.com/ehmicky/Koi/blob/dev/C/c_synthese.txt)
+
+__Bash_Unix__
+- __Bash__
+  - [bash_synthese](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Bash/bash_synthese.txt)
+  - [bash_variables](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Bash/bash_variables.txt)
+  - [batch_bash_equivalences](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Bash/batch_bash_equivalences.txt)
+  - [colorisation_shell](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Bash/colorisation_shell.txt)
+  - [common_options](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Bash/common_options.txt)
+  - [differences_bash_sh](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Bash/differences_bash_sh.txt)
+  - [differences_versions_bash](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Bash/differences_versions_bash.txt)
+  - [expansion_susbitution](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Bash/expansion_susbitution.txt)
+  - [fichiers_configuration](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Bash/fichiers_configuration.txt)
+  - [history](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Bash/history.txt)
+  - [hotkeys_console](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Bash/hotkeys_console.txt)
+  - [prompt_bash](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Bash/prompt_bash.txt)
+  - [shell_options](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Bash/shell_options.txt)
+- __Commandes__
+  - [7z](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/7z.txt)
+  - [abs_makepkg](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/abs_makepkg.txt)
+  - [agrep](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/agrep.txt)
+  - [alias_unalias](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/alias_unalias.txt)
+  - [anacron](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/anacron.txt)
+  - [at_atq_atrm_batch](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/at_atq_atrm_batch.txt)
+  - [awk](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/awk.txt)
+  - [base64](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/base64.txt)
+  - [basename_dirname](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/basename_dirname.txt)
+  - [cal_ncal](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/cal_ncal.txt)
+  - [cat_tac](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/cat_tac.txt)
+  - [cd](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/cd.txt)
+  - [chkdupexe](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/chkdupexe.txt)
+  - [chmod](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/chmod.txt)
+  - [clear](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/clear.txt)
+  - [cloud-init](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/cloud-init.txt)
+  - [command_builtin_enable](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/command_builtin_enable.txt)
+  - [cp_mv](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/cp_mv.txt)
+  - [cron_crontab](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/cron_crontab.txt)
+  - [csplit](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/csplit.txt)
+  - [cut](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/cut.txt)
+  - [date](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/date.txt)
+  - [dd](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/dd.txt)
+  - [df](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/df.txt)
+  - [dmesg](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/dmesg.txt)
+  - [du](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/du.txt)
+  - [echo](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/echo.txt)
+  - [env_printenv](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/env_printenv.txt)
+  - [expand_unexpand](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/expand_unexpand.txt)
+  - [factor](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/factor.txt)
+  - [find](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/find.txt)
+  - [fold](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/fold.txt)
+  - [getopts_getopt](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/getopts_getopt.txt)
+  - [grep_egrep_fgrep_rgrep](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/grep_egrep_fgrep_rgrep.txt)
+  - [hash](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/hash.txt)
+  - [head_tail](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/head_tail.txt)
+  - [help](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/help.txt)
+  - [history](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/history.txt)
+  - [iconv](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/iconv.txt)
+  - [id](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/id.txt)
+  - [info](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/info.txt)
+  - [ipcalc](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/ipcalc.txt)
+  - [kill](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/kill.txt)
+  - [less](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/less.txt)
+  - [line](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/line.txt)
+  - [ln_link](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/ln_link.txt)
+  - [locate](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/locate.txt)
+  - [look](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/look.txt)
+  - [ls_dir_vdir](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/ls_dir_vdir.txt)
+  - [lsattr_chattr](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/lsattr_chattr.txt)
+  - [man](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/man.txt)
+  - [mapfile_readarray](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/mapfile_readarray.txt)
+  - [mesg](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/mesg.txt)
+  - [mkdir](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/mkdir.txt)
+  - [mkfifo](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/mkfifo.txt)
+  - [mknod](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/mknod.txt)
+  - [mktemp](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/mktemp.txt)
+  - [more](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/more.txt)
+  - [mount](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/mount.txt)
+  - [mtrace](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/mtrace.txt)
+  - [ncat](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/ncat.txt)
+  - [nice_renice](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/nice_renice.txt)
+  - [nohup](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/nohup.txt)
+  - [od_hexdump_hd](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/od_hexdump_hd.txt)
+  - [pacman](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/pacman.txt)
+  - [passwd](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/passwd.txt)
+  - [paste_join](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/paste_join.txt)
+  - [pathchk](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/pathchk.txt)
+  - [popd_pushd_dirs](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/popd_pushd_dirs.txt)
+  - [printf](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/printf.txt)
+  - [pwd](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/pwd.txt)
+  - [read](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/read.txt)
+  - [readlink](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/readlink.txt)
+  - [rev](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/rev.txt)
+  - [rm_unlink](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/rm_unlink.txt)
+  - [rmdir](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/rmdir.txt)
+  - [sed](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/sed.txt)
+  - [seq](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/seq.txt)
+  - [shopt](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/shopt.txt)
+  - [shopt.txt~](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/shopt.txt~)
+  - [shred](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/shred.txt)
+  - [shuf](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/shuf.txt)
+  - [sleep](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/sleep.txt)
+  - [sort](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/sort.txt)
+  - [split](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/split.txt)
+  - [stat](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/stat.txt)
+  - [stdbuf](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/stdbuf.txt)
+  - [sum_cksum_md5sum_shasum](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/sum_cksum_md5sum_shasum.txt)
+  - [sync](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/sync.txt)
+  - [tar](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/tar.txt)
+  - [tee](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/tee.txt)
+  - [time_times](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/time_times.txt)
+  - [top](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/top.txt)
+  - [touch](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/touch.txt)
+  - [tr](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/tr.txt)
+  - [trap](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/trap.txt)
+  - [truncate](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/truncate.txt)
+  - [tsort](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/tsort.txt)
+  - [tty](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/tty.txt)
+  - [type_which](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/type_which.txt)
+  - [ulimit](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/ulimit.txt)
+  - [umask](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/umask.txt)
+  - [uname_arch](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/uname_arch.txt)
+  - [uniq](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/uniq.txt)
+  - [updatedb](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/updatedb.txt)
+  - [upstart](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/upstart.txt)
+  - [uptime](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/uptime.txt)
+  - [watch](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/watch.txt)
+  - [wc](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/wc.txt)
+  - [whatis_apropos](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/whatis_apropos.txt)
+  - [whereis](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/whereis.txt)
+  - [write_wall](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/write_wall.txt)
+  - [xargs](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/xargs.txt)
+  - [xdotool](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/xdotool.txt)
+  - [yes](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/yes.txt)
+  - [zdump](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Commandes/zdump.txt)
+- [Options_avec_ou_sans_whitespace](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/Options_avec_ou_sans_whitespace.txt)
+- [afaire_unix](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/afaire_unix.txt)
+- [atime_ctime_mtime](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/atime_ctime_mtime.txt)
+- [buffering](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/buffering.txt)
+- [character_block_special_files](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/character_block_special_files.txt)
+- [classe_posix](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/classe_posix.txt)
+- [droits_d_acces](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/droits_d_acces.txt)
+- [fifo_unamedpipe](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/fifo_unamedpipe.txt)
+- [human_readable_sizes](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/human_readable_sizes.txt)
+- [lock](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/lock.txt)
+- [newline](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/newline.txt)
+- [packets_essentiels](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/packets_essentiels.txt)
+- [regexps](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/regexps.txt)
+- [repertoire_dev](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/repertoire_dev.txt)
+- [sequence_echappement_backslash](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/sequence_echappement_backslash.txt)
+- [sequence_echappement_date](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/sequence_echappement_date.txt)
+- [signaux](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/signaux.txt)
+- [specifications](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/specifications.txt)
+- [taille_des_fichiers](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/taille_des_fichiers.txt)
+- [users_and_groups](//github.com/ehmicky/Koi/blob/dev/Bash_Unix/users_and_groups.txt)
+
 __C++__
 - __Boost__
-  - [any](//github.com/ehmicky/Koi/blob/dev/C++/Boost/any.txt)
+  - __Images__
+    - [random.jpg](//github.com/ehmicky/Koi/blob/dev/C++/Boost/Images/random.jpg)
   - [array](//github.com/ehmicky/Koi/blob/dev/C++/Boost/array.txt)
+  - [any](//github.com/ehmicky/Koi/blob/dev/C++/Boost/any.txt)
   - [boost](//github.com/ehmicky/Koi/blob/dev/C++/Boost/boost.txt)
   - [boost_uuid](//github.com/ehmicky/Koi/blob/dev/C++/Boost/boost_uuid.txt)
   - [call_traits](//github.com/ehmicky/Koi/blob/dev/C++/Boost/call_traits.txt)
-  - __Images__
-    - [random.jpg](//github.com/ehmicky/Koi/blob/dev/C++/Boost/Images/random.jpg)
   - [compressed_pair](//github.com/ehmicky/Koi/blob/dev/C++/Boost/compressed_pair.txt)
   - [concept_check_assert](//github.com/ehmicky/Koi/blob/dev/C++/Boost/concept_check_assert.txt)
   - [crc](//github.com/ehmicky/Koi/blob/dev/C++/Boost/crc.txt)
@@ -280,10 +280,10 @@ __C++__
 - __Gnome__
   - __Atkmm__
     - [atkmm](//github.com/ehmicky/Koi/blob/dev/C++/Gnome/Atkmm/atkmm.txt)
-  - __Cairomm__
-    - [cairomm](//github.com/ehmicky/Koi/blob/dev/C++/Gnome/Cairomm/cairomm.txt)
   - __GObject__
     - [GObject](//github.com/ehmicky/Koi/blob/dev/C++/Gnome/GObject/GObject.txt)
+  - __Cairomm__
+    - [cairomm](//github.com/ehmicky/Koi/blob/dev/C++/Gnome/Cairomm/cairomm.txt)
   - __Gdkmm__
     - [gdkmm](//github.com/ehmicky/Koi/blob/dev/C++/Gnome/Gdkmm/gdkmm.txt)
   - __Giomm__
@@ -299,19 +299,20 @@ __C++__
     - [libsigc++](//github.com/ehmicky/Koi/blob/dev/C++/Gnome/libsigc++/libsigc++.txt)
 - __SFML__
   - [sfml](//github.com/ehmicky/Koi/blob/dev/C++/SFML/sfml.txt)
-  - [sfml_graphics](//github.com/ehmicky/Koi/blob/dev/C++/SFML/sfml_graphics.txt)
   - [sfml_audio](//github.com/ehmicky/Koi/blob/dev/C++/SFML/sfml_audio.txt)
+  - [sfml_graphics](//github.com/ehmicky/Koi/blob/dev/C++/SFML/sfml_graphics.txt)
   - [sfml_network](//github.com/ehmicky/Koi/blob/dev/C++/SFML/sfml_network.txt)
   - [sfml_system](//github.com/ehmicky/Koi/blob/dev/C++/SFML/sfml_system.txt)
   - [sfml_window](//github.com/ehmicky/Koi/blob/dev/C++/SFML/sfml_window.txt)
 - __Standard_library__
   - [bitset](//github.com/ehmicky/Koi/blob/dev/C++/Standard_library/bitset.txt)
   - [algorithm](//github.com/ehmicky/Koi/blob/dev/C++/Standard_library/algorithm.txt)
+  - [exception](//github.com/ehmicky/Koi/blob/dev/C++/Standard_library/exception.txt)
   - [containers](//github.com/ehmicky/Koi/blob/dev/C++/Standard_library/containers.txt)
   - [functional](//github.com/ehmicky/Koi/blob/dev/C++/Standard_library/functional.txt)
   - [iterator](//github.com/ehmicky/Koi/blob/dev/C++/Standard_library/iterator.txt)
-  - [locale](//github.com/ehmicky/Koi/blob/dev/C++/Standard_library/locale.txt)
   - [limits](//github.com/ehmicky/Koi/blob/dev/C++/Standard_library/limits.txt)
+  - [locale](//github.com/ehmicky/Koi/blob/dev/C++/Standard_library/locale.txt)
   - [memory](//github.com/ehmicky/Koi/blob/dev/C++/Standard_library/memory.txt)
   - [new](//github.com/ehmicky/Koi/blob/dev/C++/Standard_library/new.txt)
   - [streams](//github.com/ehmicky/Koi/blob/dev/C++/Standard_library/streams.txt)
@@ -319,7 +320,6 @@ __C++__
   - [typeinfo](//github.com/ehmicky/Koi/blob/dev/C++/Standard_library/typeinfo.txt)
   - [utility](//github.com/ehmicky/Koi/blob/dev/C++/Standard_library/utility.txt)
   - [valarray](//github.com/ehmicky/Koi/blob/dev/C++/Standard_library/valarray.txt)
-  - [exception](//github.com/ehmicky/Koi/blob/dev/C++/Standard_library/exception.txt)
 - [argument_dependent_lookup](//github.com/ehmicky/Koi/blob/dev/C++/argument_dependent_lookup.txt)
 - [c++_synthese](//github.com/ehmicky/Koi/blob/dev/C++/c++_synthese.txt)
 - [exception_safety](//github.com/ehmicky/Koi/blob/dev/C++/exception_safety.txt)
@@ -340,6 +340,8 @@ __Database__
 - [mongodb](//github.com/ehmicky/Koi/blob/dev/Database/mongodb.txt)
 - [redis](//github.com/ehmicky/Koi/blob/dev/Database/redis.txt)
 
+[LICENSE](//github.com/ehmicky/Koi/blob/dev/LICENSE)
+
 __Formats__
 - __Encodage__
   - [comparatif_encodage](//github.com/ehmicky/Koi/blob/dev/Formats/Encodage/comparatif_encodage.txt)
@@ -357,21 +359,21 @@ __Non-dev__
   - __Compression__
     - [compression](//github.com/ehmicky/Koi/blob/dev/Non-dev/Crypto_Stego_Compression/Compression/compression.txt)
   - __Crypto__
+    - __Lois_Societe__
+      - [certifications](//github.com/ehmicky/Koi/blob/dev/Non-dev/Crypto_Stego_Compression/Crypto/Lois_Societe/certifications.txt)
+      - [crypto_lois](//github.com/ehmicky/Koi/blob/dev/Non-dev/Crypto_Stego_Compression/Crypto/Lois_Societe/crypto_lois.txt)
+    - __Algos__
+      - [algo_mac](//github.com/ehmicky/Koi/blob/dev/Non-dev/Crypto_Stego_Compression/Crypto/Algos/algo_mac.txt)
+      - [algos_classiques](//github.com/ehmicky/Koi/blob/dev/Non-dev/Crypto_Stego_Compression/Crypto/Algos/algos_classiques.txt)
     - __Autres__
       - [histoire_crypto](//github.com/ehmicky/Koi/blob/dev/Non-dev/Crypto_Stego_Compression/Crypto/Autres/histoire_crypto.txt)
     - __Cryptanalyse__
       - [crypta_attacks](//github.com/ehmicky/Koi/blob/dev/Non-dev/Crypto_Stego_Compression/Crypto/Cryptanalyse/crypta_attacks.txt)
-      - [cryptanalyse](//github.com/ehmicky/Koi/blob/dev/Non-dev/Crypto_Stego_Compression/Crypto/Cryptanalyse/cryptanalyse.txt)
       - [crypta_classique_attacks](//github.com/ehmicky/Koi/blob/dev/Non-dev/Crypto_Stego_Compression/Crypto/Cryptanalyse/crypta_classique_attacks.txt)
-    - __Lois_Societe__
-      - [certifications](//github.com/ehmicky/Koi/blob/dev/Non-dev/Crypto_Stego_Compression/Crypto/Lois_Societe/certifications.txt)
-      - [crypto_lois](//github.com/ehmicky/Koi/blob/dev/Non-dev/Crypto_Stego_Compression/Crypto/Lois_Societe/crypto_lois.txt)
+      - [cryptanalyse](//github.com/ehmicky/Koi/blob/dev/Non-dev/Crypto_Stego_Compression/Crypto/Cryptanalyse/cryptanalyse.txt)
     - __Pratique__
       - [logiciels_crypto](//github.com/ehmicky/Koi/blob/dev/Non-dev/Crypto_Stego_Compression/Crypto/Pratique/logiciels_crypto.txt)
       - [applications](//github.com/ehmicky/Koi/blob/dev/Non-dev/Crypto_Stego_Compression/Crypto/Pratique/applications.txt)
-    - __Algos__
-      - [algos_classiques](//github.com/ehmicky/Koi/blob/dev/Non-dev/Crypto_Stego_Compression/Crypto/Algos/algos_classiques.txt)
-      - [algo_mac](//github.com/ehmicky/Koi/blob/dev/Non-dev/Crypto_Stego_Compression/Crypto/Algos/algo_mac.txt)
     - __Theorie__
       - [asymetric_crypto](//github.com/ehmicky/Koi/blob/dev/Non-dev/Crypto_Stego_Compression/Crypto/Theorie/asymetric_crypto.txt)
       - [authentication](//github.com/ehmicky/Koi/blob/dev/Non-dev/Crypto_Stego_Compression/Crypto/Theorie/authentication.txt)
@@ -379,22 +381,22 @@ __Non-dev__
       - [crypto_general](//github.com/ehmicky/Koi/blob/dev/Non-dev/Crypto_Stego_Compression/Crypto/Theorie/crypto_general.txt)
       - [crypto_hardware](//github.com/ehmicky/Koi/blob/dev/Non-dev/Crypto_Stego_Compression/Crypto/Theorie/crypto_hardware.txt)
       - [crypto_key](//github.com/ehmicky/Koi/blob/dev/Non-dev/Crypto_Stego_Compression/Crypto/Theorie/crypto_key.txt)
-      - [crypto_padding](//github.com/ehmicky/Koi/blob/dev/Non-dev/Crypto_Stego_Compression/Crypto/Theorie/crypto_padding.txt)
-      - [crypto_systems](//github.com/ehmicky/Koi/blob/dev/Non-dev/Crypto_Stego_Compression/Crypto/Theorie/crypto_systems.txt)
       - [hash_function](//github.com/ehmicky/Koi/blob/dev/Non-dev/Crypto_Stego_Compression/Crypto/Theorie/hash_function.txt)
       - [information_security](//github.com/ehmicky/Koi/blob/dev/Non-dev/Crypto_Stego_Compression/Crypto/Theorie/information_security.txt)
+      - [crypto_padding](//github.com/ehmicky/Koi/blob/dev/Non-dev/Crypto_Stego_Compression/Crypto/Theorie/crypto_padding.txt)
+      - [crypto_systems](//github.com/ehmicky/Koi/blob/dev/Non-dev/Crypto_Stego_Compression/Crypto/Theorie/crypto_systems.txt)
       - [mac_digital_signature](//github.com/ehmicky/Koi/blob/dev/Non-dev/Crypto_Stego_Compression/Crypto/Theorie/mac_digital_signature.txt)
       - [random](//github.com/ehmicky/Koi/blob/dev/Non-dev/Crypto_Stego_Compression/Crypto/Theorie/random.txt)
       - [stream_ciphers](//github.com/ehmicky/Koi/blob/dev/Non-dev/Crypto_Stego_Compression/Crypto/Theorie/stream_ciphers.txt)
   - __Information_Theory__
     - [information_theory_general](//github.com/ehmicky/Koi/blob/dev/Non-dev/Crypto_Stego_Compression/Information_Theory/information_theory_general.txt)
   - __Stego__
-    - [stego](//github.com/ehmicky/Koi/blob/dev/Non-dev/Crypto_Stego_Compression/Stego/stego.txt)
     - [stego_logiciels](//github.com/ehmicky/Koi/blob/dev/Non-dev/Crypto_Stego_Compression/Stego/stego_logiciels.txt)
+    - [stego](//github.com/ehmicky/Koi/blob/dev/Non-dev/Crypto_Stego_Compression/Stego/stego.txt)
 - __Maths__
+  - [algebre](//github.com/ehmicky/Koi/blob/dev/Non-dev/Maths/algebre.txt)
   - [combinatoire](//github.com/ehmicky/Koi/blob/dev/Non-dev/Maths/combinatoire.txt)
   - [calculus](//github.com/ehmicky/Koi/blob/dev/Non-dev/Maths/calculus.txt)
-  - [algebre](//github.com/ehmicky/Koi/blob/dev/Non-dev/Maths/algebre.txt)
   - [equations_polynomes](//github.com/ehmicky/Koi/blob/dev/Non-dev/Maths/equations_polynomes.txt)
   - [financial_math](//github.com/ehmicky/Koi/blob/dev/Non-dev/Maths/financial_math.txt)
   - [fonctions](//github.com/ehmicky/Koi/blob/dev/Non-dev/Maths/fonctions.txt)
@@ -407,8 +409,6 @@ __Non-dev__
   - [big_data](//github.com/ehmicky/Koi/blob/dev/Non-dev/Statistics/big_data.txt)
   - [statistics_theory](//github.com/ehmicky/Koi/blob/dev/Non-dev/Statistics/statistics_theory.txt)
   - [survey](//github.com/ehmicky/Koi/blob/dev/Non-dev/Statistics/survey.txt)
-
-[LICENSE](//github.com/ehmicky/Koi/blob/dev/LICENSE)
 
 __Python__
 - [python](//github.com/ehmicky/Koi/blob/dev/Python/python.txt)
@@ -427,63 +427,29 @@ __To_sort__
 - [shields.io](//github.com/ehmicky/Koi/blob/dev/To_sort/shields.io.txt)
 - [standards](//github.com/ehmicky/Koi/blob/dev/To_sort/standards.txt)
 
-__VBA__
-- [Excel_Formulas](//github.com/ehmicky/Koi/blob/dev/VBA/Excel_Formulas.txt)
-- [Excel_objet_model](//github.com/ehmicky/Koi/blob/dev/VBA/Excel_objet_model.txt)
-- [PowerPoint_object_model](//github.com/ehmicky/Koi/blob/dev/VBA/PowerPoint_object_model.txt)
-- [VBA](//github.com/ehmicky/Koi/blob/dev/VBA/VBA.txt)
-
-__Vim__
-- [raccourcis_bash_vim_plugin](//github.com/ehmicky/Koi/blob/dev/Vim/raccourcis_bash_vim_plugin.txt)
-- [raccourcis_c_gdb_plugin](//github.com/ehmicky/Koi/blob/dev/Vim/raccourcis_c_gdb_plugin.txt)
-- [raccourcis_c_vim_plugin](//github.com/ehmicky/Koi/blob/dev/Vim/raccourcis_c_vim_plugin.txt)
-- [raccourcis_css_plugin](//github.com/ehmicky/Koi/blob/dev/Vim/raccourcis_css_plugin.txt)
-- [raccourcis_csv_plugin](//github.com/ehmicky/Koi/blob/dev/Vim/raccourcis_csv_plugin.txt)
-- [raccourcis_html_plugin](//github.com/ehmicky/Koi/blob/dev/Vim/raccourcis_html_plugin.txt)
-- [raccourcis_javascript_vim_plugin](//github.com/ehmicky/Koi/blob/dev/Vim/raccourcis_javascript_vim_plugin.txt)
-
-[create_index.sh](//github.com/ehmicky/Koi/blob/dev/create_index.sh)
-
 __Web_development__
 - __Accessibility__
   - [accessibility_general](//github.com/ehmicky/Koi/blob/dev/Web_development/Accessibility/accessibility_general.txt)
   - [mousetrap](//github.com/ehmicky/Koi/blob/dev/Web_development/Accessibility/mousetrap.txt)
 - __Analytics__
-  - [angulartics](//github.com/ehmicky/Koi/blob/dev/Web_development/Analytics/angulartics.txt)
   - [analytics_general](//github.com/ehmicky/Koi/blob/dev/Web_development/Analytics/analytics_general.txt)
+  - [angulartics](//github.com/ehmicky/Koi/blob/dev/Web_development/Analytics/angulartics.txt)
   - [google_analytics](//github.com/ehmicky/Koi/blob/dev/Web_development/Analytics/google_analytics.txt)
 - __Animations__
   - __CSS_libraries__
     - [animate.css](//github.com/ehmicky/Koi/blob/dev/Web_development/Animations/CSS_libraries/animate.css.txt)
   - __Scrolling__
-    - [scrollreveal](//github.com/ehmicky/Koi/blob/dev/Web_development/Animations/Scrolling/scrollreveal.txt)
     - [skrollr](//github.com/ehmicky/Koi/blob/dev/Web_development/Animations/Scrolling/skrollr.txt)
-    - [stroll](//github.com/ehmicky/Koi/blob/dev/Web_development/Animations/Scrolling/stroll.txt)
+    - [scrollreveal](//github.com/ehmicky/Koi/blob/dev/Web_development/Animations/Scrolling/scrollreveal.txt)
     - [waypoints](//github.com/ehmicky/Koi/blob/dev/Web_development/Animations/Scrolling/waypoints.txt)
-- __Async__
-  - __Control_flow__
-    - [async](//github.com/ehmicky/Koi/blob/dev/Web_development/Async/Control_flow/async.txt)
-    - [orchestrator](//github.com/ehmicky/Koi/blob/dev/Web_development/Async/Control_flow/orchestrator.txt)
-  - __Events__
-    - [eventemitter2](//github.com/ehmicky/Koi/blob/dev/Web_development/Async/Events/eventemitter2.txt)
-    - [propagate](//github.com/ehmicky/Koi/blob/dev/Web_development/Async/Events/propagate.txt)
-  - __Promises__
-    - __Redux__
-      - [redux-promise-middleware](//github.com/ehmicky/Koi/blob/dev/Web_development/Async/Promises/Redux/redux-promise-middleware.txt)
-    - [_q](//github.com/ehmicky/Koi/blob/dev/Web_development/Async/Promises/_q.txt)
-    - [bluebird](//github.com/ehmicky/Koi/blob/dev/Web_development/Async/Promises/bluebird.txt)
-  - __Streams__
-    - [event-stream](//github.com/ehmicky/Koi/blob/dev/Web_development/Async/Streams/event-stream.txt)
-    - [through](//github.com/ehmicky/Koi/blob/dev/Web_development/Async/Streams/through.txt)
+    - [stroll](//github.com/ehmicky/Koi/blob/dev/Web_development/Animations/Scrolling/stroll.txt)
 - __Architecture__
-  - __Modelling__
-    - [design_patterns](//github.com/ehmicky/Koi/blob/dev/Web_development/Architecture/Modelling/design_patterns.txt)
   - __Paradigms__
-    - [compatibility](//github.com/ehmicky/Koi/blob/dev/Web_development/Architecture/Paradigms/compatibility.txt)
     - [abstraction](//github.com/ehmicky/Koi/blob/dev/Web_development/Architecture/Paradigms/abstraction.txt)
-    - [concurring_programming](//github.com/ehmicky/Koi/blob/dev/Web_development/Architecture/Paradigms/concurring_programming.txt)
-    - [extensibility](//github.com/ehmicky/Koi/blob/dev/Web_development/Architecture/Paradigms/extensibility.txt)
     - [functional_programming](//github.com/ehmicky/Koi/blob/dev/Web_development/Architecture/Paradigms/functional_programming.txt)
+    - [concurring_programming](//github.com/ehmicky/Koi/blob/dev/Web_development/Architecture/Paradigms/concurring_programming.txt)
+    - [compatibility](//github.com/ehmicky/Koi/blob/dev/Web_development/Architecture/Paradigms/compatibility.txt)
+    - [extensibility](//github.com/ehmicky/Koi/blob/dev/Web_development/Architecture/Paradigms/extensibility.txt)
     - [interactivity](//github.com/ehmicky/Koi/blob/dev/Web_development/Architecture/Paradigms/interactivity.txt)
     - [maintainability](//github.com/ehmicky/Koi/blob/dev/Web_development/Architecture/Paradigms/maintainability.txt)
     - [modularity](//github.com/ehmicky/Koi/blob/dev/Web_development/Architecture/Paradigms/modularity.txt)
@@ -496,10 +462,27 @@ __Web_development__
     - [software_rot](//github.com/ehmicky/Koi/blob/dev/Web_development/Architecture/Paradigms/software_rot.txt)
     - [stability](//github.com/ehmicky/Koi/blob/dev/Web_development/Architecture/Paradigms/stability.txt)
     - [usability](//github.com/ehmicky/Koi/blob/dev/Web_development/Architecture/Paradigms/usability.txt)
+  - __Modelling__
+    - [design_patterns](//github.com/ehmicky/Koi/blob/dev/Web_development/Architecture/Modelling/design_patterns.txt)
   - __Types__
     - [types](//github.com/ehmicky/Koi/blob/dev/Web_development/Architecture/Types/types.txt)
   - __Algorithms__
     - [time_complexity](//github.com/ehmicky/Koi/blob/dev/Web_development/Architecture/Algorithms/time_complexity.txt)
+- __Async__
+  - __Promises__
+    - [_q](//github.com/ehmicky/Koi/blob/dev/Web_development/Async/Promises/_q.txt)
+    - __Redux__
+      - [redux-promise-middleware](//github.com/ehmicky/Koi/blob/dev/Web_development/Async/Promises/Redux/redux-promise-middleware.txt)
+    - [bluebird](//github.com/ehmicky/Koi/blob/dev/Web_development/Async/Promises/bluebird.txt)
+  - __Streams__
+    - [through](//github.com/ehmicky/Koi/blob/dev/Web_development/Async/Streams/through.txt)
+    - [event-stream](//github.com/ehmicky/Koi/blob/dev/Web_development/Async/Streams/event-stream.txt)
+  - __Events__
+    - [propagate](//github.com/ehmicky/Koi/blob/dev/Web_development/Async/Events/propagate.txt)
+    - [eventemitter2](//github.com/ehmicky/Koi/blob/dev/Web_development/Async/Events/eventemitter2.txt)
+  - __Control_flow__
+    - [async](//github.com/ehmicky/Koi/blob/dev/Web_development/Async/Control_flow/async.txt)
+    - [orchestrator](//github.com/ehmicky/Koi/blob/dev/Web_development/Async/Control_flow/orchestrator.txt)
 - __Authentication__
   - [web_authentication](//github.com/ehmicky/Koi/blob/dev/Web_development/Authentication/web_authentication.txt)
   - [passport](//github.com/ehmicky/Koi/blob/dev/Web_development/Authentication/passport.txt)
@@ -507,8 +490,8 @@ __Web_development__
 - __Authorization__
   - [connect-roles](//github.com/ehmicky/Koi/blob/dev/Web_development/Authorization/connect-roles.txt)
 - __Beautify__
-  - [_perfectionist](//github.com/ehmicky/Koi/blob/dev/Web_development/Beautify/_perfectionist.txt)
   - [_stylefmt](//github.com/ehmicky/Koi/blob/dev/Web_development/Beautify/_stylefmt.txt)
+  - [_perfectionist](//github.com/ehmicky/Koi/blob/dev/Web_development/Beautify/_perfectionist.txt)
   - [css-declaration-sorter](//github.com/ehmicky/Koi/blob/dev/Web_development/Beautify/css-declaration-sorter.txt)
   - [csscomb](//github.com/ehmicky/Koi/blob/dev/Web_development/Beautify/csscomb.txt)
   - [postcss-sorting](//github.com/ehmicky/Koi/blob/dev/Web_development/Beautify/postcss-sorting.txt)
@@ -523,21 +506,21 @@ __Web_development__
   - __Redux__
     - [redux-simple-router](//github.com/ehmicky/Koi/blob/dev/Web_development/Browser_routing/Redux/redux-simple-router.txt)
 - __Build_automation__
-  - [_grunt](//github.com/ehmicky/Koi/blob/dev/Web_development/Build_automation/_grunt.txt)
   - [autotools](//github.com/ehmicky/Koi/blob/dev/Web_development/Build_automation/autotools.txt)
+  - [_grunt](//github.com/ehmicky/Koi/blob/dev/Web_development/Build_automation/_grunt.txt)
   - [gulp](//github.com/ehmicky/Koi/blob/dev/Web_development/Build_automation/gulp.txt)
   - [cmake](//github.com/ehmicky/Koi/blob/dev/Web_development/Build_automation/cmake.txt)
   - [make](//github.com/ehmicky/Koi/blob/dev/Web_development/Build_automation/make.txt)
 - __Caching__
   - [etag](//github.com/ehmicky/Koi/blob/dev/Web_development/Caching/etag.txt)
-  - [fresh](//github.com/ehmicky/Koi/blob/dev/Web_development/Caching/fresh.txt)
   - [lru-cache](//github.com/ehmicky/Koi/blob/dev/Web_development/Caching/lru-cache.txt)
+  - [fresh](//github.com/ehmicky/Koi/blob/dev/Web_development/Caching/fresh.txt)
   - [versionator](//github.com/ehmicky/Koi/blob/dev/Web_development/Caching/versionator.txt)
 - __Checksum__
   - [luhn](//github.com/ehmicky/Koi/blob/dev/Web_development/Checksum/luhn.txt)
 - __Command_line__
-  - [bytes](//github.com/ehmicky/Koi/blob/dev/Web_development/Command_line/bytes.txt)
   - [chalk](//github.com/ehmicky/Koi/blob/dev/Web_development/Command_line/chalk.txt)
+  - [bytes](//github.com/ehmicky/Koi/blob/dev/Web_development/Command_line/bytes.txt)
   - [inquirer](//github.com/ehmicky/Koi/blob/dev/Web_development/Command_line/inquirer.txt)
   - [minimist](//github.com/ehmicky/Koi/blob/dev/Web_development/Command_line/minimist.txt)
   - [ms](//github.com/ehmicky/Koi/blob/dev/Web_development/Command_line/ms.txt)
@@ -545,13 +528,13 @@ __Web_development__
   - [debug](//github.com/ehmicky/Koi/blob/dev/Web_development/Compatibility/debug.txt)
 - __Compression__
   - [compression](//github.com/ehmicky/Koi/blob/dev/Web_development/Compression/compression.txt)
-  - [gulp-gzip-gunzip-tar](//github.com/ehmicky/Koi/blob/dev/Web_development/Compression/gulp-gzip-gunzip-tar.txt)
   - [compression_algos](//github.com/ehmicky/Koi/blob/dev/Web_development/Compression/compression_algos.txt)
   - [vary](//github.com/ehmicky/Koi/blob/dev/Web_development/Compression/vary.txt)
+  - [gulp-gzip-gunzip-tar](//github.com/ehmicky/Koi/blob/dev/Web_development/Compression/gulp-gzip-gunzip-tar.txt)
 - __Concurrency__
-  - [_forever](//github.com/ehmicky/Koi/blob/dev/Web_development/Concurrency/_forever.txt)
-  - [pm2](//github.com/ehmicky/Koi/blob/dev/Web_development/Concurrency/pm2.txt)
   - [signal_handler](//github.com/ehmicky/Koi/blob/dev/Web_development/Concurrency/signal_handler.txt)
+  - [pm2](//github.com/ehmicky/Koi/blob/dev/Web_development/Concurrency/pm2.txt)
+  - [_forever](//github.com/ehmicky/Koi/blob/dev/Web_development/Concurrency/_forever.txt)
 - __Configuration__
   - [rc](//github.com/ehmicky/Koi/blob/dev/Web_development/Configuration/rc.txt)
 - __Continuous_integration__
@@ -570,10 +553,10 @@ __Web_development__
 - __Debugging__
   - __Express__
     - [errorhandler](//github.com/ehmicky/Koi/blob/dev/Web_development/Debugging/Express/errorhandler.txt)
-  - __React__
-    - [react-devtools](//github.com/ehmicky/Koi/blob/dev/Web_development/Debugging/React/react-devtools.txt)
   - __Redux__
     - [redux-devtools](//github.com/ehmicky/Koi/blob/dev/Web_development/Debugging/Redux/redux-devtools.txt)
+  - __React__
+    - [react-devtools](//github.com/ehmicky/Koi/blob/dev/Web_development/Debugging/React/react-devtools.txt)
   - [about](//github.com/ehmicky/Koi/blob/dev/Web_development/Debugging/about.txt)
   - [createerror](//github.com/ehmicky/Koi/blob/dev/Web_development/Debugging/createerror.txt)
   - [express-debug](//github.com/ehmicky/Koi/blob/dev/Web_development/Debugging/express-debug.txt)
@@ -584,9 +567,9 @@ __Web_development__
   - [12_factor](//github.com/ehmicky/Koi/blob/dev/Web_development/Deploying/12_factor.txt)
   - [installating_files](//github.com/ehmicky/Koi/blob/dev/Web_development/Deploying/installating_files.txt)
 - __Desktop_automation__
-  - [copy-paste](//github.com/ehmicky/Koi/blob/dev/Web_development/Desktop_automation/copy-paste.txt)
-  - [open](//github.com/ehmicky/Koi/blob/dev/Web_development/Desktop_automation/open.txt)
   - [webshot](//github.com/ehmicky/Koi/blob/dev/Web_development/Desktop_automation/webshot.txt)
+  - [open](//github.com/ehmicky/Koi/blob/dev/Web_development/Desktop_automation/open.txt)
+  - [copy-paste](//github.com/ehmicky/Koi/blob/dev/Web_development/Desktop_automation/copy-paste.txt)
 - __Desktop_notifications__
   - [growl](//github.com/ehmicky/Koi/blob/dev/Web_development/Desktop_notifications/growl.txt)
 - __Device_identification__
@@ -595,8 +578,8 @@ __Web_development__
 - __Diff__
   - [cmp](//github.com/ehmicky/Koi/blob/dev/Web_development/Diff/cmp.txt)
   - [comm](//github.com/ehmicky/Koi/blob/dev/Web_development/Diff/comm.txt)
-  - [diff3](//github.com/ehmicky/Koi/blob/dev/Web_development/Diff/diff3.txt)
   - [diff_sdiff](//github.com/ehmicky/Koi/blob/dev/Web_development/Diff/diff_sdiff.txt)
+  - [diff3](//github.com/ehmicky/Koi/blob/dev/Web_development/Diff/diff3.txt)
   - [patch](//github.com/ehmicky/Koi/blob/dev/Web_development/Diff/patch.txt)
   - [vcdiff](//github.com/ehmicky/Koi/blob/dev/Web_development/Diff/vcdiff.txt)
   - [xdelta](//github.com/ehmicky/Koi/blob/dev/Web_development/Diff/xdelta.txt)
@@ -610,8 +593,8 @@ __Web_development__
 - __Filesystem__
   - [file_uri_scheme](//github.com/ehmicky/Koi/blob/dev/Web_development/Filesystem/file_uri_scheme.txt)
   - [glob-stream](//github.com/ehmicky/Koi/blob/dev/Web_development/Filesystem/glob-stream.txt)
-  - [vinyl](//github.com/ehmicky/Koi/blob/dev/Web_development/Filesystem/vinyl.txt)
   - [glob](//github.com/ehmicky/Koi/blob/dev/Web_development/Filesystem/glob.txt)
+  - [vinyl](//github.com/ehmicky/Koi/blob/dev/Web_development/Filesystem/vinyl.txt)
 - __Format_negotiation__
   - [mime](//github.com/ehmicky/Koi/blob/dev/Web_development/Format_negotiation/mime.txt)
   - [negotiator_accepts](//github.com/ehmicky/Koi/blob/dev/Web_development/Format_negotiation/negotiator_accepts.txt)
@@ -627,75 +610,75 @@ __Web_development__
 - __Geolocation__
   - [geoip-lite](//github.com/ehmicky/Koi/blob/dev/Web_development/Geolocation/geoip-lite.txt)
 - __Headless_browser__
-  - [casperjs](//github.com/ehmicky/Koi/blob/dev/Web_development/Headless_browser/casperjs.txt)
   - [jsdom](//github.com/ehmicky/Koi/blob/dev/Web_development/Headless_browser/jsdom.txt)
   - [rackt_history](//github.com/ehmicky/Koi/blob/dev/Web_development/Headless_browser/rackt_history.txt)
   - [phantomjs](//github.com/ehmicky/Koi/blob/dev/Web_development/Headless_browser/phantomjs.txt)
+  - [casperjs](//github.com/ehmicky/Koi/blob/dev/Web_development/Headless_browser/casperjs.txt)
 - __Icons__
   - [zocial](//github.com/ehmicky/Koi/blob/dev/Web_development/Icons/zocial.txt)
 - __Identifiers__
   - __Decentralized__
-    - [uuid](//github.com/ehmicky/Koi/blob/dev/Web_development/Identifiers/Decentralized/uuid.txt)
     - [node-uuid](//github.com/ehmicky/Koi/blob/dev/Web_development/Identifiers/Decentralized/node-uuid.txt)
-  - __Human-friendly__
-    - [nih](//github.com/ehmicky/Koi/blob/dev/Web_development/Identifiers/Human-friendly/nih.txt)
-    - [tag](//github.com/ehmicky/Koi/blob/dev/Web_development/Identifiers/Human-friendly/tag.txt)
-  - __Hash__
-    - [sigmund](//github.com/ehmicky/Koi/blob/dev/Web_development/Identifiers/Hash/sigmund.txt)
-    - [ni](//github.com/ehmicky/Koi/blob/dev/Web_development/Identifiers/Hash/ni.txt)
+    - [uuid](//github.com/ehmicky/Koi/blob/dev/Web_development/Identifiers/Decentralized/uuid.txt)
   - __Full-content__
     - [data_uri](//github.com/ehmicky/Koi/blob/dev/Web_development/Identifiers/Full-content/data_uri.txt)
+  - __Human-friendly__
+    - [tag](//github.com/ehmicky/Koi/blob/dev/Web_development/Identifiers/Human-friendly/tag.txt)
+    - [nih](//github.com/ehmicky/Koi/blob/dev/Web_development/Identifiers/Human-friendly/nih.txt)
+  - __Hash__
+    - [ni](//github.com/ehmicky/Koi/blob/dev/Web_development/Identifiers/Hash/ni.txt)
+    - [sigmund](//github.com/ehmicky/Koi/blob/dev/Web_development/Identifiers/Hash/sigmund.txt)
   - __Others__
+    - [publicid_fpi](//github.com/ehmicky/Koi/blob/dev/Web_development/Identifiers/Others/publicid_fpi.txt)
+    - [oid](//github.com/ehmicky/Koi/blob/dev/Web_development/Identifiers/Others/oid.txt)
     - [doi](//github.com/ehmicky/Koi/blob/dev/Web_development/Identifiers/Others/doi.txt)
     - [urn](//github.com/ehmicky/Koi/blob/dev/Web_development/Identifiers/Others/urn.txt)
-    - [oid](//github.com/ehmicky/Koi/blob/dev/Web_development/Identifiers/Others/oid.txt)
-    - [publicid_fpi](//github.com/ehmicky/Koi/blob/dev/Web_development/Identifiers/Others/publicid_fpi.txt)
   - __URI__
-    - [qs](//github.com/ehmicky/Koi/blob/dev/Web_development/Identifiers/URI/qs.txt)
     - [URI](//github.com/ehmicky/Koi/blob/dev/Web_development/Identifiers/URI/URI.txt)
-    - [uri.js](//github.com/ehmicky/Koi/blob/dev/Web_development/Identifiers/URI/uri.js.txt)
+    - [qs](//github.com/ehmicky/Koi/blob/dev/Web_development/Identifiers/URI/qs.txt)
     - [uri-templates](//github.com/ehmicky/Koi/blob/dev/Web_development/Identifiers/URI/uri-templates.txt)
+    - [uri.js](//github.com/ehmicky/Koi/blob/dev/Web_development/Identifiers/URI/uri.js.txt)
   - [identifiers_summary](//github.com/ehmicky/Koi/blob/dev/Web_development/Identifiers/identifiers_summary.txt)
 - __Image_manipulation__
   - [image-size](//github.com/ehmicky/Koi/blob/dev/Web_development/Image_manipulation/image-size.txt)
   - [resemble.js](//github.com/ehmicky/Koi/blob/dev/Web_development/Image_manipulation/resemble.js.txt)
 - __Internationalization__
   - [angular_translate](//github.com/ehmicky/Koi/blob/dev/Web_development/Internationalization/angular_translate.txt)
+  - [gettext](//github.com/ehmicky/Koi/blob/dev/Web_development/Internationalization/gettext.txt)
   - [c++_internationalization](//github.com/ehmicky/Koi/blob/dev/Web_development/Internationalization/c++_internationalization.txt)
   - [gtk_internationalization](//github.com/ehmicky/Koi/blob/dev/Web_development/Internationalization/gtk_internationalization.txt)
   - [i18n](//github.com/ehmicky/Koi/blob/dev/Web_development/Internationalization/i18n.txt)
   - [jed](//github.com/ehmicky/Koi/blob/dev/Web_development/Internationalization/jed.txt)
   - [locales](//github.com/ehmicky/Koi/blob/dev/Web_development/Internationalization/locales.txt)
   - [po2json](//github.com/ehmicky/Koi/blob/dev/Web_development/Internationalization/po2json.txt)
-  - [gettext](//github.com/ehmicky/Koi/blob/dev/Web_development/Internationalization/gettext.txt)
 - __Languages__
   - [DOM](//github.com/ehmicky/Koi/blob/dev/Web_development/Languages/DOM.txt)
   - [CSS](//github.com/ehmicky/Koi/blob/dev/Web_development/Languages/CSS.txt)
   - [HTML](//github.com/ehmicky/Koi/blob/dev/Web_development/Languages/HTML.txt)
   - [JavaScript](//github.com/ehmicky/Koi/blob/dev/Web_development/Languages/JavaScript.txt)
   - [PHP](//github.com/ehmicky/Koi/blob/dev/Web_development/Languages/PHP.txt)
+- __Lazy_loading__
+  - [jquery.lazyload](//github.com/ehmicky/Koi/blob/dev/Web_development/Lazy_loading/jquery.lazyload.txt)
 - __Legal__
   - [licences](//github.com/ehmicky/Koi/blob/dev/Web_development/Legal/licences.txt)
 - __Load_handling__
-  - [connect-timeout](//github.com/ehmicky/Koi/blob/dev/Web_development/Load_handling/connect-timeout.txt)
   - [toobusy](//github.com/ehmicky/Koi/blob/dev/Web_development/Load_handling/toobusy.txt)
-- __Lazy_loading__
-  - [jquery.lazyload](//github.com/ehmicky/Koi/blob/dev/Web_development/Lazy_loading/jquery.lazyload.txt)
+  - [connect-timeout](//github.com/ehmicky/Koi/blob/dev/Web_development/Load_handling/connect-timeout.txt)
 - __Loaders__
-  - [UMD](//github.com/ehmicky/Koi/blob/dev/Web_development/Loaders/UMD.txt)
-  - [browserify](//github.com/ehmicky/Koi/blob/dev/Web_development/Loaders/browserify.txt)
-  - [loader_comparison](//github.com/ehmicky/Koi/blob/dev/Web_development/Loaders/loader_comparison.txt)
   - [requirejs](//github.com/ehmicky/Koi/blob/dev/Web_development/Loaders/requirejs.txt)
+  - [loader_comparison](//github.com/ehmicky/Koi/blob/dev/Web_development/Loaders/loader_comparison.txt)
+  - [browserify](//github.com/ehmicky/Koi/blob/dev/Web_development/Loaders/browserify.txt)
+  - [UMD](//github.com/ehmicky/Koi/blob/dev/Web_development/Loaders/UMD.txt)
   - [systemjs](//github.com/ehmicky/Koi/blob/dev/Web_development/Loaders/systemjs.txt)
 - __Logging__
   - [_morgan](//github.com/ehmicky/Koi/blob/dev/Web_development/Logging/_morgan.txt)
   - [_log4js](//github.com/ehmicky/Koi/blob/dev/Web_development/Logging/_log4js.txt)
   - [winston](//github.com/ehmicky/Koi/blob/dev/Web_development/Logging/winston.txt)
 - __Minify__
-  - [_cleancss](//github.com/ehmicky/Koi/blob/dev/Web_development/Minify/_cleancss.txt)
-  - [_csso](//github.com/ehmicky/Koi/blob/dev/Web_development/Minify/_csso.txt)
-  - [_mincss](//github.com/ehmicky/Koi/blob/dev/Web_development/Minify/_mincss.txt)
   - [Uglify](//github.com/ehmicky/Koi/blob/dev/Web_development/Minify/Uglify.txt)
+  - [_csso](//github.com/ehmicky/Koi/blob/dev/Web_development/Minify/_csso.txt)
+  - [_cleancss](//github.com/ehmicky/Koi/blob/dev/Web_development/Minify/_cleancss.txt)
+  - [_mincss](//github.com/ehmicky/Koi/blob/dev/Web_development/Minify/_mincss.txt)
   - [cssnano](//github.com/ehmicky/Koi/blob/dev/Web_development/Minify/cssnano.txt)
   - [imagemin](//github.com/ehmicky/Koi/blob/dev/Web_development/Minify/imagemin.txt)
   - [tidy-html5](//github.com/ehmicky/Koi/blob/dev/Web_development/Minify/tidy-html5.txt)
@@ -712,10 +695,10 @@ __Web_development__
 - __Offline__
   - [offline](//github.com/ehmicky/Koi/blob/dev/Web_development/Offline/offline.txt)
 - __Packaging__
-  - [bower](//github.com/ehmicky/Koi/blob/dev/Web_development/Packaging/bower.txt)
-  - [deb_packaging](//github.com/ehmicky/Koi/blob/dev/Web_development/Packaging/deb_packaging.txt)
   - __Package_manager__
     - [npm](//github.com/ehmicky/Koi/blob/dev/Web_development/Packaging/Package_manager/npm.txt)
+  - [bower](//github.com/ehmicky/Koi/blob/dev/Web_development/Packaging/bower.txt)
+  - [deb_packaging](//github.com/ehmicky/Koi/blob/dev/Web_development/Packaging/deb_packaging.txt)
 - __Pagination__
   - __Express__
     - [express-paginate](//github.com/ehmicky/Koi/blob/dev/Web_development/Pagination/Express/express-paginate.txt)
@@ -723,24 +706,24 @@ __Web_development__
 - __Parsing__
   - [gonzales-pe](//github.com/ehmicky/Koi/blob/dev/Web_development/Parsing/gonzales-pe.txt)
   - [parsing](//github.com/ehmicky/Koi/blob/dev/Web_development/Parsing/parsing.txt)
-  - [reworkcss](//github.com/ehmicky/Koi/blob/dev/Web_development/Parsing/reworkcss.txt)
   - [parser-lib](//github.com/ehmicky/Koi/blob/dev/Web_development/Parsing/parser-lib.txt)
+  - [reworkcss](//github.com/ehmicky/Koi/blob/dev/Web_development/Parsing/reworkcss.txt)
 - __Phones__
   - [tel_uri_scheme](//github.com/ehmicky/Koi/blob/dev/Web_development/Phones/tel_uri_scheme.txt)
 - __Pooling__
   - [generic-pool](//github.com/ehmicky/Koi/blob/dev/Web_development/Pooling/generic-pool.txt)
 - __Portability__
-  - __ORM__
-    - [waterline](//github.com/ehmicky/Koi/blob/dev/Web_development/Portability/ORM/waterline.txt)
   - __Cross-browser__
     - [_feature.js](//github.com/ehmicky/Koi/blob/dev/Web_development/Portability/Cross-browser/_feature.js.txt)
     - [autoprefixer](//github.com/ehmicky/Koi/blob/dev/Web_development/Portability/Cross-browser/autoprefixer.txt)
     - [browserslist](//github.com/ehmicky/Koi/blob/dev/Web_development/Portability/Cross-browser/browserslist.txt)
     - [caniuse](//github.com/ehmicky/Koi/blob/dev/Web_development/Portability/Cross-browser/caniuse.txt)
-    - [cssnext](//github.com/ehmicky/Koi/blob/dev/Web_development/Portability/Cross-browser/cssnext.txt)
     - [doiuse](//github.com/ehmicky/Koi/blob/dev/Web_development/Portability/Cross-browser/doiuse.txt)
-    - [modernizr](//github.com/ehmicky/Koi/blob/dev/Web_development/Portability/Cross-browser/modernizr.txt)
+    - [cssnext](//github.com/ehmicky/Koi/blob/dev/Web_development/Portability/Cross-browser/cssnext.txt)
     - [normalize.css](//github.com/ehmicky/Koi/blob/dev/Web_development/Portability/Cross-browser/normalize.css.txt)
+    - [modernizr](//github.com/ehmicky/Koi/blob/dev/Web_development/Portability/Cross-browser/modernizr.txt)
+  - __ORM__
+    - [waterline](//github.com/ehmicky/Koi/blob/dev/Web_development/Portability/ORM/waterline.txt)
 - __Project_management__
   - [Pivotal Tracker](//github.com/ehmicky/Koi/blob/dev/Web_development/Project_management/Pivotal Tracker.txt)
 - __Promotion__
@@ -748,10 +731,10 @@ __Web_development__
     - [SEO_general](//github.com/ehmicky/Koi/blob/dev/Web_development/Promotion/SEO/SEO_general.txt)
 - __Protocols__
   - __Application_layer__
-    - [DNS](//github.com/ehmicky/Koi/blob/dev/Web_development/Protocols/Application_layer/DNS.txt)
-    - [FTP](//github.com/ehmicky/Koi/blob/dev/Web_development/Protocols/Application_layer/FTP.txt)
     - [DHCP](//github.com/ehmicky/Koi/blob/dev/Web_development/Protocols/Application_layer/DHCP.txt)
+    - [DNS](//github.com/ehmicky/Koi/blob/dev/Web_development/Protocols/Application_layer/DNS.txt)
     - [HTTP](//github.com/ehmicky/Koi/blob/dev/Web_development/Protocols/Application_layer/HTTP.txt)
+    - [FTP](//github.com/ehmicky/Koi/blob/dev/Web_development/Protocols/Application_layer/FTP.txt)
     - [HTTPS](//github.com/ehmicky/Koi/blob/dev/Web_development/Protocols/Application_layer/HTTPS.txt)
     - [SSH](//github.com/ehmicky/Koi/blob/dev/Web_development/Protocols/Application_layer/SSH.txt)
     - [WebSocket](//github.com/ehmicky/Koi/blob/dev/Web_development/Protocols/Application_layer/WebSocket.txt)
@@ -765,25 +748,25 @@ __Web_development__
   - [protocols](//github.com/ehmicky/Koi/blob/dev/Web_development/Protocols/protocols.txt)
   - [protocols.txt~](//github.com/ehmicky/Koi/blob/dev/Web_development/Protocols/protocols.txt~)
 - __Realtime__
-  - [express.io](//github.com/ehmicky/Koi/blob/dev/Web_development/Realtime/express.io.txt)
-  - [engine.io](//github.com/ehmicky/Koi/blob/dev/Web_development/Realtime/engine.io.txt)
   - [socket.io](//github.com/ehmicky/Koi/blob/dev/Web_development/Realtime/socket.io.txt)
+  - [engine.io](//github.com/ehmicky/Koi/blob/dev/Web_development/Realtime/engine.io.txt)
+  - [express.io](//github.com/ehmicky/Koi/blob/dev/Web_development/Realtime/express.io.txt)
   - [ws](//github.com/ehmicky/Koi/blob/dev/Web_development/Realtime/ws.txt)
 - __Relations__
+  - [normalizr](//github.com/ehmicky/Koi/blob/dev/Web_development/Relations/normalizr.txt)
   - __Backbone__
     - [backbone-relational](//github.com/ehmicky/Koi/blob/dev/Web_development/Relations/Backbone/backbone-relational.txt)
-  - [normalizr](//github.com/ehmicky/Koi/blob/dev/Web_development/Relations/normalizr.txt)
 - __Security__
+  - [csurf](//github.com/ehmicky/Koi/blob/dev/Web_development/Security/csurf.txt)
+  - [helmet](//github.com/ehmicky/Koi/blob/dev/Web_development/Security/helmet.txt)
   - __Brute_force__
     - [express-brute](//github.com/ehmicky/Koi/blob/dev/Web_development/Security/Brute_force/express-brute.txt)
   - [cors](//github.com/ehmicky/Koi/blob/dev/Web_development/Security/cors.txt)
-  - [csurf](//github.com/ehmicky/Koi/blob/dev/Web_development/Security/csurf.txt)
-  - [helmet](//github.com/ehmicky/Koi/blob/dev/Web_development/Security/helmet.txt)
 - __Serialization__
   - __JSON__
+    - [cson](//github.com/ehmicky/Koi/blob/dev/Web_development/Serialization/JSON/cson.txt)
     - [eson](//github.com/ehmicky/Koi/blob/dev/Web_development/Serialization/JSON/eson.txt)
     - [json](//github.com/ehmicky/Koi/blob/dev/Web_development/Serialization/JSON/json.txt)
-    - [cson](//github.com/ehmicky/Koi/blob/dev/Web_development/Serialization/JSON/cson.txt)
   - __Redux__
     - [redux-storage](//github.com/ehmicky/Koi/blob/dev/Web_development/Serialization/Redux/redux-storage.txt)
   - __XML__
@@ -791,18 +774,18 @@ __Web_development__
 - __Static_analysis__
   - __General__
     - [_cssstats](//github.com/ehmicky/Koi/blob/dev/Web_development/Static_analysis/General/_cssstats.txt)
-    - [plato](//github.com/ehmicky/Koi/blob/dev/Web_development/Static_analysis/General/plato.txt)
     - [codeclimate](//github.com/ehmicky/Koi/blob/dev/Web_development/Static_analysis/General/codeclimate.txt)
     - [stylestats_analyze-css](//github.com/ehmicky/Koi/blob/dev/Web_development/Static_analysis/General/stylestats_analyze-css.txt)
+    - [plato](//github.com/ehmicky/Koi/blob/dev/Web_development/Static_analysis/General/plato.txt)
   - __Linting__
     - [bootlint](//github.com/ehmicky/Koi/blob/dev/Web_development/Static_analysis/Linting/bootlint.txt)
-    - [hound](//github.com/ehmicky/Koi/blob/dev/Web_development/Static_analysis/Linting/hound.txt)
     - [csslint](//github.com/ehmicky/Koi/blob/dev/Web_development/Static_analysis/Linting/csslint.txt)
     - [htmlhint](//github.com/ehmicky/Koi/blob/dev/Web_development/Static_analysis/Linting/htmlhint.txt)
-    - [immutable-css](//github.com/ehmicky/Koi/blob/dev/Web_development/Static_analysis/Linting/immutable-css.txt)
-    - [jshint](//github.com/ehmicky/Koi/blob/dev/Web_development/Static_analysis/Linting/jshint.txt)
+    - [hound](//github.com/ehmicky/Koi/blob/dev/Web_development/Static_analysis/Linting/hound.txt)
     - [nu_html_checker](//github.com/ehmicky/Koi/blob/dev/Web_development/Static_analysis/Linting/nu_html_checker.txt)
     - [postcss-bem-linter](//github.com/ehmicky/Koi/blob/dev/Web_development/Static_analysis/Linting/postcss-bem-linter.txt)
+    - [jshint](//github.com/ehmicky/Koi/blob/dev/Web_development/Static_analysis/Linting/jshint.txt)
+    - [immutable-css](//github.com/ehmicky/Koi/blob/dev/Web_development/Static_analysis/Linting/immutable-css.txt)
     - [scss-lint](//github.com/ehmicky/Koi/blob/dev/Web_development/Static_analysis/Linting/scss-lint.txt)
     - [stylelint](//github.com/ehmicky/Koi/blob/dev/Web_development/Static_analysis/Linting/stylelint.txt)
     - [w3cjs](//github.com/ehmicky/Koi/blob/dev/Web_development/Static_analysis/Linting/w3cjs.txt)
@@ -810,207 +793,207 @@ __Web_development__
   - [range-parser](//github.com/ehmicky/Koi/blob/dev/Web_development/Streaming/range-parser.txt)
 - __Templates__
   - [classnames](//github.com/ehmicky/Koi/blob/dev/Web_development/Templates/classnames.txt)
-  - [consolidate](//github.com/ehmicky/Koi/blob/dev/Web_development/Templates/consolidate.txt)
   - [mustache_hogan_handlebars](//github.com/ehmicky/Koi/blob/dev/Web_development/Templates/mustache_hogan_handlebars.txt)
+  - [consolidate](//github.com/ehmicky/Koi/blob/dev/Web_development/Templates/consolidate.txt)
 - __Testing__
   - __Browser_testing__
     - [browserstack](//github.com/ehmicky/Koi/blob/dev/Web_development/Testing/Browser_testing/browserstack.txt)
     - [selenium_webdriver](//github.com/ehmicky/Koi/blob/dev/Web_development/Testing/Browser_testing/selenium_webdriver.txt)
     - [saucelabs](//github.com/ehmicky/Koi/blob/dev/Web_development/Testing/Browser_testing/saucelabs.txt)
   - __CSS__
-    - [_phantomcss](//github.com/ehmicky/Koi/blob/dev/Web_development/Testing/CSS/_phantomcss.txt)
     - [argus-eyes](//github.com/ehmicky/Koi/blob/dev/Web_development/Testing/CSS/argus-eyes.txt)
+    - [_phantomcss](//github.com/ehmicky/Koi/blob/dev/Web_development/Testing/CSS/_phantomcss.txt)
     - [_wraith](//github.com/ehmicky/Koi/blob/dev/Web_development/Testing/CSS/_wraith.txt)
   - __Performance__
     - [phantomas](//github.com/ehmicky/Koi/blob/dev/Web_development/Testing/Performance/phantomas.txt)
     - [tsung](//github.com/ehmicky/Koi/blob/dev/Web_development/Testing/Performance/tsung.txt)
   - __Stress__
-    - [big-list-of-naughty-strings](//github.com/ehmicky/Koi/blob/dev/Web_development/Testing/Stress/big-list-of-naughty-strings.txt)
     - [gremlins.js](//github.com/ehmicky/Koi/blob/dev/Web_development/Testing/Stress/gremlins.js.txt)
-  - __Test_runners__
-    - [_jasmine](//github.com/ehmicky/Koi/blob/dev/Web_development/Testing/Test_runners/_jasmine.txt)
-    - [mocha](//github.com/ehmicky/Koi/blob/dev/Web_development/Testing/Test_runners/mocha.txt)
-    - [_qunit](//github.com/ehmicky/Koi/blob/dev/Web_development/Testing/Test_runners/_qunit.txt)
-    - [karma](//github.com/ehmicky/Koi/blob/dev/Web_development/Testing/Test_runners/karma.txt)
+    - [big-list-of-naughty-strings](//github.com/ehmicky/Koi/blob/dev/Web_development/Testing/Stress/big-list-of-naughty-strings.txt)
   - __Unit_tests__
     - __Coverage__
       - [coveralls](//github.com/ehmicky/Koi/blob/dev/Web_development/Testing/Unit_tests/Coverage/coveralls.txt)
       - [istanbul](//github.com/ehmicky/Koi/blob/dev/Web_development/Testing/Unit_tests/Coverage/istanbul.txt)
     - __Data-driven__
       - [faker.js](//github.com/ehmicky/Koi/blob/dev/Web_development/Testing/Unit_tests/Data-driven/faker.js.txt)
+    - __Expectations__
+      - [chai](//github.com/ehmicky/Koi/blob/dev/Web_development/Testing/Unit_tests/Expectations/chai.txt)
+      - [supertest](//github.com/ehmicky/Koi/blob/dev/Web_development/Testing/Unit_tests/Expectations/supertest.txt)
     - __Mocking__
       - __React__
         - [enzyme](//github.com/ehmicky/Koi/blob/dev/Web_development/Testing/Unit_tests/Mocking/React/enzyme.txt)
       - [jest](//github.com/ehmicky/Koi/blob/dev/Web_development/Testing/Unit_tests/Mocking/jest.txt)
-      - [node-mocks-http](//github.com/ehmicky/Koi/blob/dev/Web_development/Testing/Unit_tests/Mocking/node-mocks-http.txt)
-      - [nock](//github.com/ehmicky/Koi/blob/dev/Web_development/Testing/Unit_tests/Mocking/nock.txt)
       - [sinon](//github.com/ehmicky/Koi/blob/dev/Web_development/Testing/Unit_tests/Mocking/sinon.txt)
-    - __Expectations__
-      - [chai](//github.com/ehmicky/Koi/blob/dev/Web_development/Testing/Unit_tests/Expectations/chai.txt)
-      - [supertest](//github.com/ehmicky/Koi/blob/dev/Web_development/Testing/Unit_tests/Expectations/supertest.txt)
+      - [nock](//github.com/ehmicky/Koi/blob/dev/Web_development/Testing/Unit_tests/Mocking/nock.txt)
+      - [node-mocks-http](//github.com/ehmicky/Koi/blob/dev/Web_development/Testing/Unit_tests/Mocking/node-mocks-http.txt)
+  - __Test_runners__
+    - [_jasmine](//github.com/ehmicky/Koi/blob/dev/Web_development/Testing/Test_runners/_jasmine.txt)
+    - [_qunit](//github.com/ehmicky/Koi/blob/dev/Web_development/Testing/Test_runners/_qunit.txt)
+    - [karma](//github.com/ehmicky/Koi/blob/dev/Web_development/Testing/Test_runners/karma.txt)
+    - [mocha](//github.com/ehmicky/Koi/blob/dev/Web_development/Testing/Test_runners/mocha.txt)
   - [testing_summary](//github.com/ehmicky/Koi/blob/dev/Web_development/Testing/testing_summary.txt)
 - __Text__
+  - __Manipulation__
+    - [gulp-concat](//github.com/ehmicky/Koi/blob/dev/Web_development/Text/Manipulation/gulp-concat.txt)
+    - [gulp-header-footer](//github.com/ehmicky/Koi/blob/dev/Web_development/Text/Manipulation/gulp-header-footer.txt)
+    - [underscore.string](//github.com/ehmicky/Koi/blob/dev/Web_development/Text/Manipulation/underscore.string.txt)
   - __Pattern_matching__
     - [minimatch](//github.com/ehmicky/Koi/blob/dev/Web_development/Text/Pattern_matching/minimatch.txt)
     - [gulp-replace](//github.com/ehmicky/Koi/blob/dev/Web_development/Text/Pattern_matching/gulp-replace.txt)
   - __Sanitation__
     - [sprintf.js](//github.com/ehmicky/Koi/blob/dev/Web_development/Text/Sanitation/sprintf.js.txt)
-  - __Manipulation__
-    - [gulp-concat](//github.com/ehmicky/Koi/blob/dev/Web_development/Text/Manipulation/gulp-concat.txt)
-    - [underscore.string](//github.com/ehmicky/Koi/blob/dev/Web_development/Text/Manipulation/underscore.string.txt)
-    - [gulp-header-footer](//github.com/ehmicky/Koi/blob/dev/Web_development/Text/Manipulation/gulp-header-footer.txt)
 - __To_sort__
+  - __CSV__
+    - [dsv_tsv_csv](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/CSV/dsv_tsv_csv.txt)
+    - [csv](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/CSV/csv.txt)
+    - [xlsx](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/CSV/xlsx.txt)
   - __CSS__
-    - __PostCSS__
-      - [postcss](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/CSS/PostCSS/postcss.txt)
     - __JavaScript__
       - [_aphrodite](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/CSS/JavaScript/_aphrodite.txt)
-      - [cssx](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/CSS/JavaScript/cssx.txt)
       - [jss](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/CSS/JavaScript/jss.txt)
+      - [cssx](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/CSS/JavaScript/cssx.txt)
+    - __PostCSS__
+      - [postcss](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/CSS/PostCSS/postcss.txt)
     - ___Sass__
       - [_compass](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/CSS/_Sass/_compass.txt)
       - [_sass](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/CSS/_Sass/_sass.txt)
     - __React__
       - [react-css](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/CSS/React/react-css.txt)
-    - [_less](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/CSS/_less.txt)
     - [_stylus](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/CSS/_stylus.txt)
-  - __Compiling__
-    - [gcc_optimization](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Compiling/gcc_optimization.txt)
-    - [gcc](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Compiling/gcc.txt)
-    - [cpp](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Compiling/cpp.txt)
+    - [_less](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/CSS/_less.txt)
   - __DOM__
     - [jQuery_cheerio](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/DOM/jQuery_cheerio.txt)
-  - __CSV__
-    - [dsv_tsv_csv](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/CSV/dsv_tsv_csv.txt)
-    - [csv](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/CSV/csv.txt)
-    - [xlsx](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/CSV/xlsx.txt)
+  - __Compiling__
+    - [cpp](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Compiling/cpp.txt)
+    - [gcc_optimization](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Compiling/gcc_optimization.txt)
+    - [gcc](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Compiling/gcc.txt)
+  - __General__
+    - [network](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/General/network.txt)
+    - [oauth](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/General/oauth.txt)
+    - [web_architecture](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/General/web_architecture.txt)
+    - [Web_security](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/General/Web_security.txt)
   - __Framework__
+    - __Web_client__
+      - __MVC__
+        - __Backbone__
+          - [backbone.collectionsubset](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Framework/Web_client/MVC/Backbone/backbone.collectionsubset.txt)
+          - [backbone_marionette](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Framework/Web_client/MVC/Backbone/backbone_marionette.txt)
+        - __Angular__
+          - [angular](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Framework/Web_client/MVC/Angular/angular.txt)
+      - __State__
+        - __Flux__
+          - [flux](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Framework/Web_client/State/Flux/flux.txt)
+          - [react-refetch](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Framework/Web_client/State/Flux/react-refetch.txt)
+          - [react-refetch.txt~](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Framework/Web_client/State/Flux/react-refetch.txt~)
+        - __Redux__
+          - [redux-actions](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Framework/Web_client/State/Redux/redux-actions.txt)
+          - [redux-thunk](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Framework/Web_client/State/Redux/redux-thunk.txt)
+          - [redux](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Framework/Web_client/State/Redux/redux.txt)
+          - [redux-undo](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Framework/Web_client/State/Redux/redux-undo.txt)
+      - __View__
+        - __React__
+          - [react](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Framework/Web_client/View/React/react.txt)
+          - [backbone-react-component](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Framework/Web_client/View/React/backbone-react-component.txt)
+          - [react-engine](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Framework/Web_client/View/React/react-engine.txt)
+          - [react-helmet](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Framework/Web_client/View/React/react-helmet.txt)
     - __HTTP_server__
       - __Node__
         - [nodejs](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Framework/HTTP_server/Node/nodejs.txt)
       - __Express__
-        - [express-state.txt~](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Framework/HTTP_server/Express/express-state.txt~)
         - [express](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Framework/HTTP_server/Express/express.txt)
+        - [express-state.txt~](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Framework/HTTP_server/Express/express-state.txt~)
       - __Sails__
         - [sails](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Framework/HTTP_server/Sails/sails.txt)
-    - __Web_client__
-      - __State__
-        - __Flux__
-          - [react-refetch](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Framework/Web_client/State/Flux/react-refetch.txt)
-          - [react-refetch.txt~](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Framework/Web_client/State/Flux/react-refetch.txt~)
-          - [flux](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Framework/Web_client/State/Flux/flux.txt)
-        - __Redux__
-          - [redux-actions](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Framework/Web_client/State/Redux/redux-actions.txt)
-          - [redux-thunk](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Framework/Web_client/State/Redux/redux-thunk.txt)
-          - [redux-undo](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Framework/Web_client/State/Redux/redux-undo.txt)
-          - [redux](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Framework/Web_client/State/Redux/redux.txt)
-      - __MVC__
-        - __Angular__
-          - [angular](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Framework/Web_client/MVC/Angular/angular.txt)
-        - __Backbone__
-          - [backbone_marionette](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Framework/Web_client/MVC/Backbone/backbone_marionette.txt)
-          - [backbone.collectionsubset](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Framework/Web_client/MVC/Backbone/backbone.collectionsubset.txt)
-      - __View__
-        - __React__
-          - [backbone-react-component](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Framework/Web_client/View/React/backbone-react-component.txt)
-          - [react-engine](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Framework/Web_client/View/React/react-engine.txt)
-          - [react-helmet](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Framework/Web_client/View/React/react-helmet.txt)
-          - [react](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Framework/Web_client/View/React/react.txt)
-  - __General__
-    - [Web_security](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/General/Web_security.txt)
-    - [network](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/General/network.txt)
-    - [oauth](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/General/oauth.txt)
-    - [web_architecture](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/General/web_architecture.txt)
   - [Google_APIs](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Google_APIs.txt)
   - __HTTP__
     - __Body__
       - __Express__
         - [body-parser_multiparty_multer](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/HTTP/Body/Express/body-parser_multiparty_multer.txt)
-    - __Client__
-      - __Crawler__
-        - [simplecrawler](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/HTTP/Client/Crawler/simplecrawler.txt)
-      - [curl](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/HTTP/Client/curl.txt)
-      - [download](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/HTTP/Client/download.txt)
-      - [superagent](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/HTTP/Client/superagent.txt)
-      - [request](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/HTTP/Client/request.txt)
     - __Methods__
       - __Express__
         - [method-override](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/HTTP/Methods/Express/method-override.txt)
+    - __Client__
+      - [download](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/HTTP/Client/download.txt)
+      - [curl](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/HTTP/Client/curl.txt)
+      - __Crawler__
+        - [simplecrawler](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/HTTP/Client/Crawler/simplecrawler.txt)
+      - [request](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/HTTP/Client/request.txt)
+      - [superagent](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/HTTP/Client/superagent.txt)
+    - __Proxy__
+      - [http-proxy](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/HTTP/Proxy/http-proxy.txt)
+      - [proxy-addr](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/HTTP/Proxy/proxy-addr.txt)
     - __Headers__
       - [content-disposition](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/HTTP/Headers/content-disposition.txt)
     - __REST__
       - [swagger](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/HTTP/REST/swagger.txt)
-    - __Proxy__
-      - [http-proxy](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/HTTP/Proxy/http-proxy.txt)
-      - [proxy-addr](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/HTTP/Proxy/proxy-addr.txt)
     - __Server__
       - __Static__
         - [serve-favicon](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/HTTP/Server/Static/serve-favicon.txt)
-        - [http-server](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/HTTP/Server/Static/http-server.txt)
-        - [serve-index](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/HTTP/Server/Static/serve-index.txt)
-        - [_st](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/HTTP/Server/Static/_st.txt)
         - [serve-static](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/HTTP/Server/Static/serve-static.txt)
+        - [http-server](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/HTTP/Server/Static/http-server.txt)
+        - [_st](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/HTTP/Server/Static/_st.txt)
+        - [serve-index](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/HTTP/Server/Static/serve-index.txt)
       - [send](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/HTTP/Server/send.txt)
     - __State__
       - __Express__
         - [connect-flash](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/HTTP/State/Express/connect-flash.txt)
         - [express-state](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/HTTP/State/Express/express-state.txt)
-    - __Statuses__
-      - [statuses](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/HTTP/Statuses/statuses.txt)
     - __URI__
       - __Express__
         - [vhost](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/HTTP/URI/Express/vhost.txt)
+    - __Statuses__
+      - [statuses](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/HTTP/Statuses/statuses.txt)
     - [normalizr.txt~](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/HTTP/normalizr.txt~)
-  - __Hosting__
-    - __AWS__
-      - [AWS](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Hosting/AWS/AWS.txt)
-      - [IAM_STS](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Hosting/AWS/IAM_STS.txt)
-      - [beanstalk](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Hosting/AWS/beanstalk.txt)
-      - [autoscaling](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Hosting/AWS/autoscaling.txt)
-      - [cloudformation](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Hosting/AWS/cloudformation.txt)
-      - [cloudfront](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Hosting/AWS/cloudfront.txt)
-      - [cognito](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Hosting/AWS/cognito.txt)
-      - [directconnect](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Hosting/AWS/directconnect.txt)
-      - [cloudtrail](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Hosting/AWS/cloudtrail.txt)
-      - [cloudwatch](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Hosting/AWS/cloudwatch.txt)
-      - [ec2](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Hosting/AWS/ec2.txt)
-      - [elasticache](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Hosting/AWS/elasticache.txt)
-      - [opswork](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Hosting/AWS/opswork.txt)
-      - [rds](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Hosting/AWS/rds.txt)
-      - [elb](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Hosting/AWS/elb.txt)
-      - [glacier](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Hosting/AWS/glacier.txt)
-      - [route53](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Hosting/AWS/route53.txt)
-      - [s3](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Hosting/AWS/s3.txt)
-      - [swf](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Hosting/AWS/swf.txt)
-      - [sns](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Hosting/AWS/sns.txt)
-      - [sqs](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Hosting/AWS/sqs.txt)
-  - __SSL__
-    - [express-enforces-ssl](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/SSL/express-enforces-ssl.txt)
   - __State__
     - [_cookie](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/State/_cookie.txt)
     - [_jquery-cookie](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/State/_jquery-cookie.txt)
-    - [cookie-signature](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/State/cookie-signature.txt)
     - [cookie-parser](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/State/cookie-parser.txt)
+    - [cookie-signature](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/State/cookie-signature.txt)
     - [express-session](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/State/express-session.txt)
     - [js-cookie](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/State/js-cookie.txt)
+  - __SSL__
+    - [express-enforces-ssl](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/SSL/express-enforces-ssl.txt)
+  - __Hosting__
+    - __AWS__
+      - [IAM_STS](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Hosting/AWS/IAM_STS.txt)
+      - [AWS](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Hosting/AWS/AWS.txt)
+      - [cloudformation](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Hosting/AWS/cloudformation.txt)
+      - [autoscaling](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Hosting/AWS/autoscaling.txt)
+      - [cloudfront](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Hosting/AWS/cloudfront.txt)
+      - [beanstalk](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Hosting/AWS/beanstalk.txt)
+      - [cloudtrail](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Hosting/AWS/cloudtrail.txt)
+      - [cloudwatch](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Hosting/AWS/cloudwatch.txt)
+      - [cognito](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Hosting/AWS/cognito.txt)
+      - [directconnect](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Hosting/AWS/directconnect.txt)
+      - [ec2](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Hosting/AWS/ec2.txt)
+      - [elasticache](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Hosting/AWS/elasticache.txt)
+      - [elb](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Hosting/AWS/elb.txt)
+      - [glacier](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Hosting/AWS/glacier.txt)
+      - [opswork](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Hosting/AWS/opswork.txt)
+      - [rds](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Hosting/AWS/rds.txt)
+      - [route53](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Hosting/AWS/route53.txt)
+      - [s3](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Hosting/AWS/s3.txt)
+      - [sns](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Hosting/AWS/sns.txt)
+      - [sqs](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Hosting/AWS/sqs.txt)
+      - [swf](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Hosting/AWS/swf.txt)
   - __Syntax__
-    - [jade](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Syntax/jade.txt)
     - [babel](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Syntax/babel.txt)
-    - [flow](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Syntax/flow.txt)
-    - [markdown](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Syntax/markdown.txt)
     - [coffeescript](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Syntax/coffeescript.txt)
+    - [flow](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Syntax/flow.txt)
+    - [jade](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Syntax/jade.txt)
+    - [markdown](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/Syntax/markdown.txt)
   - __UI_components__
     - [_chosen](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/UI_components/_chosen.txt)
     - [_avgrund](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/UI_components/_avgrund.txt)
     - [_cycle2](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/UI_components/_cycle2.txt)
     - [_ngtable](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/UI_components/_ngtable.txt)
     - [_redactor](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/UI_components/_redactor.txt)
-    - [angular_growl_2](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/UI_components/angular_growl_2.txt)
     - [_slimscroll](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/UI_components/_slimscroll.txt)
+    - [angular_growl_2](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/UI_components/angular_growl_2.txt)
     - [autosize](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/UI_components/autosize.txt)
     - [bootstrap-datepicker](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/UI_components/bootstrap-datepicker.txt)
-    - [ckeditor](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/UI_components/ckeditor.txt)
     - [bootstrap](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/UI_components/bootstrap.txt)
+    - [ckeditor](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/UI_components/ckeditor.txt)
     - [favico.js](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/UI_components/favico.js.txt)
     - [fullpage.js](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/UI_components/fullpage.js.txt)
     - [headroom.js](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/UI_components/headroom.js.txt)
@@ -1021,46 +1004,63 @@ __Web_development__
     - [meny](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/UI_components/meny.txt)
     - [ng-grid](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/UI_components/ng-grid.txt)
     - [nginfinitescroll](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/UI_components/nginfinitescroll.txt)
-    - [nicescroll](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/UI_components/nicescroll.txt)
     - [nprogress](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/UI_components/nprogress.txt)
     - [select2](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/UI_components/select2.txt)
     - [slick](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/UI_components/slick.txt)
     - [spinkit](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/UI_components/spinkit.txt)
     - [torturial](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/UI_components/torturial.txt)
     - [typeahead.js](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/UI_components/typeahead.js.txt)
-  - [localforage](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/localforage.txt)
+    - [nicescroll](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/UI_components/nicescroll.txt)
   - [on-headers](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/on-headers.txt)
+  - [localforage](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/localforage.txt)
   - [snap.js](//github.com/ehmicky/Koi/blob/dev/Web_development/To_sort/snap.js.txt)
 - __Typography__
   - [typography_theory](//github.com/ehmicky/Koi/blob/dev/Web_development/Typography/typography_theory.txt)
 - __UX__
-  - [UX_animations](//github.com/ehmicky/Koi/blob/dev/Web_development/UX/UX_animations.txt)
   - [UX_consent](//github.com/ehmicky/Koi/blob/dev/Web_development/UX/UX_consent.txt)
+  - [UX_animations](//github.com/ehmicky/Koi/blob/dev/Web_development/UX/UX_animations.txt)
   - [UX_forms](//github.com/ehmicky/Koi/blob/dev/Web_development/UX/UX_forms.txt)
   - [UX_general](//github.com/ehmicky/Koi/blob/dev/Web_development/UX/UX_general.txt)
-  - [UX_interactions](//github.com/ehmicky/Koi/blob/dev/Web_development/UX/UX_interactions.txt)
   - [UX_mobile](//github.com/ehmicky/Koi/blob/dev/Web_development/UX/UX_mobile.txt)
-  - [UX_performance](//github.com/ehmicky/Koi/blob/dev/Web_development/UX/UX_performance.txt)
+  - [UX_interactions](//github.com/ehmicky/Koi/blob/dev/Web_development/UX/UX_interactions.txt)
   - [content_strategy](//github.com/ehmicky/Koi/blob/dev/Web_development/UX/content_strategy.txt)
+  - [UX_performance](//github.com/ehmicky/Koi/blob/dev/Web_development/UX/UX_performance.txt)
 - __Validation__
-  - [backbone-validation](//github.com/ehmicky/Koi/blob/dev/Web_development/Validation/backbone-validation.txt)
   - __Redux__
     - [redux-form](//github.com/ehmicky/Koi/blob/dev/Web_development/Validation/Redux/redux-form.txt)
+  - [backbone-validation](//github.com/ehmicky/Koi/blob/dev/Web_development/Validation/backbone-validation.txt)
   - [joi](//github.com/ehmicky/Koi/blob/dev/Web_development/Validation/joi.txt)
   - [validator.js](//github.com/ehmicky/Koi/blob/dev/Web_development/Validation/validator.js.txt)
 - __Versioning__
-  - [changelog](//github.com/ehmicky/Koi/blob/dev/Web_development/Versioning/changelog.txt)
   - [VCS](//github.com/ehmicky/Koi/blob/dev/Web_development/Versioning/VCS.txt)
   - [git_github](//github.com/ehmicky/Koi/blob/dev/Web_development/Versioning/git_github.txt)
   - [versioning](//github.com/ehmicky/Koi/blob/dev/Web_development/Versioning/versioning.txt)
-- __Watchers__
-  - __Reloading__
-    - [livereload](//github.com/ehmicky/Koi/blob/dev/Web_development/Watchers/Reloading/livereload.txt)
-    - [nodemon](//github.com/ehmicky/Koi/blob/dev/Web_development/Watchers/Reloading/nodemon.txt)
-  - [gaze](//github.com/ehmicky/Koi/blob/dev/Web_development/Watchers/gaze.txt)
+  - [changelog](//github.com/ehmicky/Koi/blob/dev/Web_development/Versioning/changelog.txt)
 - __Virtual_DOM__
   - __React__
     - [react-templates](//github.com/ehmicky/Koi/blob/dev/Web_development/Virtual_DOM/React/react-templates.txt)
+- __Watchers__
+  - __Reloading__
+    - [nodemon](//github.com/ehmicky/Koi/blob/dev/Web_development/Watchers/Reloading/nodemon.txt)
+    - [livereload](//github.com/ehmicky/Koi/blob/dev/Web_development/Watchers/Reloading/livereload.txt)
+  - [gaze](//github.com/ehmicky/Koi/blob/dev/Web_development/Watchers/gaze.txt)
+
+[create_index.sh](//github.com/ehmicky/Koi/blob/dev/create_index.sh)
+
+__VBA__
+- [Excel_Formulas](//github.com/ehmicky/Koi/blob/dev/VBA/Excel_Formulas.txt)
+- [Excel_objet_model](//github.com/ehmicky/Koi/blob/dev/VBA/Excel_objet_model.txt)
+- [PowerPoint_object_model](//github.com/ehmicky/Koi/blob/dev/VBA/PowerPoint_object_model.txt)
+- [VBA](//github.com/ehmicky/Koi/blob/dev/VBA/VBA.txt)
+
+__Vim__
+- [raccourcis_bash_vim_plugin](//github.com/ehmicky/Koi/blob/dev/Vim/raccourcis_bash_vim_plugin.txt)
+- [raccourcis_c_gdb_plugin](//github.com/ehmicky/Koi/blob/dev/Vim/raccourcis_c_gdb_plugin.txt)
+- [raccourcis_c_vim_plugin](//github.com/ehmicky/Koi/blob/dev/Vim/raccourcis_c_vim_plugin.txt)
+- [raccourcis_css_plugin](//github.com/ehmicky/Koi/blob/dev/Vim/raccourcis_css_plugin.txt)
+- [raccourcis_csv_plugin](//github.com/ehmicky/Koi/blob/dev/Vim/raccourcis_csv_plugin.txt)
+- [raccourcis_html_plugin](//github.com/ehmicky/Koi/blob/dev/Vim/raccourcis_html_plugin.txt)
+- [raccourcis_javascript_vim_plugin](//github.com/ehmicky/Koi/blob/dev/Vim/raccourcis_javascript_vim_plugin.txt)
 
 [index.md](//github.com/ehmicky/Koi/blob/dev/index.md)
 
