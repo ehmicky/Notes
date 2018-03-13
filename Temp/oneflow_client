@@ -651,7 +651,7 @@ AGREEMENT: /agreements/AGREEMENT
   | hasExpireDatePassed(): now one day after expire_date
   - period_end_timestamp TIMESTAMP
   | inNoticePeriod(): state signed, type recurring[_w_initial], now is after ( period_end_timestamp - notice_period )
-  - _is_international BOOL: true when different (B2B) AGREEMENT_COMPANY.company_country or (B2C) PARTICIPANT.consumer_country (among ones with state enabled and consumer 0)
+  - _is_international BOOL: true when different (B2B) AGREEMENT_COMPANY.company_country or (B2C) PARTICIPANT.consumer_country (among sellers with state enabled)
   | isInternational() 
   - cancel_timestamp TIMESTAMP
   | isCanceled()
@@ -664,12 +664,10 @@ AGREEMENT: /agreements/AGREEMENT
   - parent AGREEMENT
   | isCopy()
   - checksum STR
-  - discard(): calls destroy()
-  - layoutmode:
-     - get: inLayout|ViewMode()
-     - set: setViewMode(Agreement.LAYOUT|VIEW_MODE)
-     - when changes, rerenders
   + triggers "counterparts:change" on many changes on AGREEMENT_COMPANY|PARTICIPANT: added|removed, enabled|disabled, sign|decline, change type|orgnr
+  x "agreements:request"(OBJ): /agreements/request with data OBJ: subject, message, email, save (buyer request of an agreement)
+  x "agreements:position:get:email"(AGREEMENT, EMAIL, 1|0): /agreements/AGREEMENT/participants/lookup_emails with data { email EMAIL, consumer 1|0 }
+    Returns matching POSITION_COLL
   - companies AGREEMENT_COMPANY_ARR /agreements/AGREEMENT/companies/
      - agreement AGREEMENT
      | getEnabledDecisionMakers|Influencers(): AGREEMENT.participants subcollection with state enabled and type decisionmaker|influencer
@@ -683,7 +681,7 @@ AGREEMENT: /agreements/AGREEMENT
      - company_orgnr [V]
      - company_country [V]
      + updates Flow.company.company_* on save|patch()
-     - consumer 0|1
+     - consumer 0|1: seller|buyer
      | isConsumer()
      | hasInfoMatching(COMPANY|ACCOUNT): same company_*
   - owner POSITION
@@ -726,7 +724,7 @@ AGREEMENT: /agreements/AGREEMENT
     || getByCompany(AGREEMENT_COMPANY): subcollection on same AGREEMENT_COMPANY
     || enabledByCompanyArray(AGREEMENT_COMPANY): non-subcollection COLL on same AGREEMENT_COMPANY, and state enabled
      | isConsumer(): AGREEMENT_COMPANY.isConsumer()
-    || disabledConsumers(): subcollection on state disabled and isConsumer()
+    || disabledConsumers(): subcollection on buyers with state disabled
      - visits DATETIME_ARR: to this agreement
      - prev_visit DATETIME: to this agreement
      - fullname [V]
@@ -751,10 +749,14 @@ AGREEMENT: /agreements/AGREEMENT
   | get[My]Participant([POSITION[, BOOL]])->PARTICIPANT: with same position (def: Flow.position)
     If false (def), must be state enabled.
   | isParticipant([POSITION])
-  | hasSigned|Declined|Concluded(): Flow.position.state signed|declined (or both)
+  | hasSigned|Declined|isConcluded(): Flow.position.state signed|declined (or both)
   | hasVisibility(VAL): current PARTICIPANT has state disabled* or visiblity VAL
   | isVisible|Hidden(): same for visibility visible
   | hide|unhide(): sets current PARTICIPANT visibility hidden_with_notifications|visible
+  - discard(): calls destroy()
+  | hideOrDiscard(): if state:
+     - template|draft|pending|expired: calls destroy(), if isOwner() and is seller
+     - signinprogress|signed|expired: calls hide(), unless isGuest()
   | hasCounterparts(): min 2 PARTICIPANT with state enabled and type decisionmaker
   | hasEnabledDecisionMakers([POSITION]): at least one PARTICIPANT with type decisionmaker, state enabled and same AGREEMENT_COMPANY
   | hasEveryoneSigned(): all PARTICIPANT with type decisionmaker have state signed|disabled
@@ -791,11 +793,13 @@ AGREEMENT: /agreements/AGREEMENT
      + permissions:
         (if:
           1) is PARTICIPANT and not AGREEMENT type declined|signed|signinprogress
-          2) if AGREEMENT type pending|expired, AGREEMENT_COMPANY enabled and with a company_orgnr
-          3) not isManagerLocked() (unless PARTICIPANT.is_manager))
+          2) not AGREEMENT type template (except allow-disable)
+          3) if AGREEMENT type pending|expired, AGREEMENT_COMPANY enabled and with a company_orgnr
+          4) not isManagerLocked() (unless PARTICIPANT.is_manager))
+          5) is AGREEMENT.owner
         + allow-update[-shared]: -shared only needs condition 1)
-        + allow-set-read-only: if PARTICIPANT.is_manager
-        + allow-disable: if type draft or state enable. If AGREEMENT.isTemplate(), do not need all conditions above
+        + allow-set-read-only: PARTICIPANT.is_manager
+        + allow-disable: type draft or state enable
         (if type draft and not AGREEMENT type draft|template)
         + visible-publish
         + allow-publish: unless isEmpty()
@@ -968,7 +972,6 @@ AGREEMENT: /agreements/AGREEMENT
      - created_ts TIMESTAMP: used as sort comparator for the SUBCOLLs
      - isNewUpdate()->BOOL: compare "created" with last visit time (current PARTICIPANT.prev_visit, or if not PARTICIPANT localStorage item)
      | updates(): subcollection on isNewUpdate()+isParent()
-  x "agreements:request"(AGREEMENT): /agreements/request with AGREEMENT as data
   - setFilter(FILTER): make fetch() use OBJ.data FILTER.fetchQueryArray(), which returns FILTER, without [_]name|_cols or null|"" values
     FILTER[_DRAFT|OPEN|CLOSED] (only local) are search criteria:
       + Single instances at AgreementFilter.PRESET_FILTERS.all|draft|open|closed
@@ -992,6 +995,30 @@ AGREEMENT: /agreements/AGREEMENT
       + AgreementsFilter.COLUMNS.STR: name of _cols (e.g. COLUMNS.magicDate)
       - name|_name "all|draft|open|closed"
       | asRoutePart()->"/f/_NAME"
+  + permissions:
+     (all must be AGREEMENT PARTICIPANT, except state template)
+       + visible-post-message
+     (draft)
+       + visible-publish: is AGREEMENT.owner
+     (draft|pending|expired)
+       + visible-delegate: decisionmaker and not signed|declined, seller
+     (template|draft|pending|expired)
+       + visible-sign: (unless template) decisionmaker and not signed|declined
+       + allow-edit-layout, allow-update[-shared]: isOwner()
+       + allow-discard: isOwner(), seller
+     (pending|expired)
+       + allow-publish: is AGREEMENT.owner, there are enabled decisionmakers with same AGREEMENT_COMPANY, not beyond expire_date, there is company_orgnr, no box with type draft, 
+         not guest (unless no company_name or PARTICIPANT fullname)
+     (pending|expired|signinprogress|signed|expired)
+       + allow-post-message
+       + allow-add-participants: seller
+     (signinprogress|signed|expired)
+       + allow-sign: decisionmaker, not beyond expire_date, there are enabled decisionmakers with same AGREEMENT_COMPANY, one AGREEMENT_COMPANY with state enabled and company_orgnr, 
+         min 2 PARTICIPANT with state enabled and type decisionmaker, if isOwner() no box with type draft, POSITION not already signed|declined
+       + allow-decline: same except: seller, isOwner(), ok if draft box
+       + allow-delegate: same except: seller, POSITION not signed|declined
+       + allow-cancel: decisionmaker and not lifecycle ended, type recurring
+       + allow-hide: not guest
  
 
 																						 /=+===============================+=\ 
@@ -1001,8 +1028,11 @@ AGREEMENT: /agreements/AGREEMENT
 																						 \=+===============================+=/
 
 
-
-
+Agreement:
+  - layoutmode:
+     - get: inLayout|ViewMode()
+     - set: setViewMode(Agreement.LAYOUT|VIEW_MODE)
+     - when changes, rerenders
 
 Agreement Toolbar:
   - MDL_EVENT "toolbar-view"(AGREEMENT)->MVIEW
