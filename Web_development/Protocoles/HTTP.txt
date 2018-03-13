@@ -33,7 +33,7 @@ Architecture:
            - 6 (depends on client) per hostname
            - hostname sharding: using different domains on a server to overcome limit
      - parallel requests per TCP socket: 
-        - HTTP/2: multiplexing: unlim (can be configured with SETTINGS frame) with no order
+        - HTTP/2: multiplexing: SETTINGS_MAX_CONCURRENT_STREAMS (def: unlim) with no default order (but client can ask for specific order)
         - HTTP/1.1: pipelining: 4-8 (depends on client) with head-of-line blocking (answers in same order as requests)
         - HTTP/1.0: serial: one
      - how long:
@@ -51,25 +51,49 @@ Request/response:
            - 1 stream = several frames connected by stream ID
               - is what makes multiplexing possible
               - stream ID is odd when started by client, even by server
+           - prioritization:
+              - initiated by client, server might ignore
+              - dependency:
+                 - Exclusive ID [C]: current stream must only start once stream ID is done
+              - priority:
+                 - Weight NUM [C]: how much resources server should allocate
+                 - can be changed with PRIORITY frame
+           - flow control:
+              - how:
+                 - first endpoint request more than SETTINGS_INITIAL_WINDOW_SIZE bytes (def: 65535)
+                 - first endpoint has not acknowledged second endpoint response yet, so second endpoint need to buffer request
+                 - first endpoint needs to send WINDOW_UPDATE frame before response continues
+              - only for DATA frames
         - frames:
-           - size (max: 16MB)
+           - size (max: SETTINGS_MAX_FRAME_SIZE (def: 16MB))
            - type:
-              - e.g. SETTINGS
-              - check other types???
+              - RST_STREAM: stops current stream
+              - GOAWAY: stops any new stream
+              - PING: used to calculate round-trip time
+              - see below for other types
               - can send non-standard one (extension). If one end does not support, should ignore.
            - flags
            - stream ID
-        - init:
+        - init (for each endpoint):
            - start:
                PRI * HTTP/2.0
 
                SM
 
-           - SETTINGS frame
+           - SETTINGS frame:
+              - options, noted SETTINGS_* in this doc
         - normal (request/response) stream:
-           - client HEADERS frame
-              - binary compressed (algo is 'HPACK')
-              - must contain: :method METHOD [C], :authority URL [C], :path PATH [C], :scheme PROTOCOL [C]
+           - client HEADERS frame:
+              - max size: SETTINGS_MAX_HEADER_LIST_SIZE (def: unlim)
+              - binary compressed:
+                 - algo is 'HPACK'
+                 - common HEADER or HEADER: VAL have predefined numbers
+              - each endpoint caches HEADER: VAL in a dynamic table of SETTINGS_HEADER_TABLE_SIZE (def: 4KB)
+              - must contain pseudo-headers: 
+                  :method METHOD [C] 
+                  :authority URL [C] 
+                  :path PATH [C] 
+                  :scheme PROTOCOL [C]
               - end:
                  - if this frame too small, send extra CONTINUATION frames with extra headers
                  - last frame should have flag END_HEADERS
@@ -78,10 +102,16 @@ Request/response:
               - end:
                  - last DATA frame (or last HEADERS frame if no DATA) should have flag END_STREAM
            - server HEADERS frame:
-              - like client except must contain :status UINT [S]
+              - like client except must contain pseudo-header :status UINT [S]
            - server DATA frames: like client
         - server push stream:
-           - PUSH_PROMISE frame
+           - enabled by SETTINGS_ENABLE_PUSH (def: true)
+           - server: PUSH_PROMISE frame:
+              - contains HEADERS frames that client would send if it was to request all streams
+           (cached)
+           - client: RST_STREAM frame to cancel request
+           (not cached)
+           - server: HEADERS, DATA: like normal response
      - HTTP/1.*:
         - request:
             METHOD URL HTTP/1.*
@@ -388,13 +418,16 @@ Prefetching (resource hints, server push):
 +--------------+--------------------+------------+------------+-----------+-------------------------+-------+---------+-------------+------------------------------------+
   - server push:
      - send additional resources in a single response:
-        - first send pseudo-client request to client
-        - then response header then response body
+        - first send pseudo-client request to client (see PUSH_PROMISE)
+        - if cached, client sends RST_STREAM
+        - otherwise response header then response body
      - performance:
         - less roundtrips than resource hints
         - but should push only resources that would have been requested
+     - caching:
+        - uses pseudo-client request for caching, so works the same as normal request
+        - client request must be cacheable, i.e. GET with cache headers
      - not actual prefetching (it loads resource)
-     - client caching works the same as normal request
      - need to be initiated by a request (so not realtime)
      - as opposed to resource hints, initiated by server so cannot be used if:
         - client needs knowledge about fetching: resource path, load|error event
@@ -431,18 +464,32 @@ Prefetching (resource hints, server push):
         - security: website make decision (not user) to trust content by browsing it
 
 Long request:
-  - sends only header with Expect: "100-continue" [C]
-  - server sends 100 (Continue) if success, 417 (Expectation Failed) if failure
-  - client sends body
+  - 100-continue:
+     - sends only header with Expect: "100-continue" [C]
+     - server sends 100 (Continue) if success, 417 (Expectation Failed) if failure
+     - client sends body
+  - Content-Length [C|S]: BODY length:
+     - can use 411 (Length Required)
+  - request too large:
+     - 414 (Request URI too long)
+     - 431 (Request header fields too large)
+     - 413 (Request Entity too large)
 
 Long response:
-  - Content-Length [C|S]: nombre d'octets du BODY:
-      - If required, server can send status-code 411 (Length Required) or 413 (Request Entity too large). 
-      - There is also (for the URL) 414 (Request URI too long) and 431 (Request header fields too large).
-  - Can use byte serving: knowing size but dividing it:
-     - Range: bytes=NUM-NUM2 [C], and If-Range: ETAG [C] (sends rest if still the same). 
-       Accept-Ranges: bytes [S] and Content-Range: bytes NUM-NUM2/TOTAL [S] with status code 206 (Partial content)
-       Server can use 416 (Requested Range Not Satisfiable)
+  - byte serving:
+     - allow client to request specific ranges:
+     - init: Accept-Ranges: bytes [S] 
+     - each range:
+        - client:
+           - Range: bytes=NUM-NUM2 [C]
+           - If-Range: ETAG|MDATE [C]:
+              - if content changed, sends entire file (not only RANGE)
+              - otherwise, sends RANGE
+        - server success:
+           - Content-Range: bytes NUM-NUM2/TOTAL [S] 
+             206 (Partial content)
+        - server failure:
+           - 416 (Requested Range Not Satisfiable)
   (HTTP/1.* only)
   - Can use Transfer-Encoding: chunked [S] instead:
       - send BODY in several times, signalling end by sending empty BODY
