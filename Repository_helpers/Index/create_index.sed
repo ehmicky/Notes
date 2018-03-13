@@ -30,6 +30,9 @@ s/\.txt\]/]/
 s/___/__/
 s/\([[]\)_/\1/
 
+# Put technology between parenthesis
+s/\.\([^.]\)\+\.\([^.]\+\)/.\2 (\1)/
+
 # Replace _ by spaces.
 s/\(\[[^]]\+\)_/\1 /
 s/\(\[[^]]\+\)_/\1 /
