@@ -26,6 +26,7 @@ TODO:
      - including https://stripe.com/docs/disputes#disputes-on-connect-platforms
   - go through all undocumented endpoints, see if they are documented elsewhere
   - pricing
+     - including differences based on where the Stripe account was created
   - go through Stripe dashboard
      - including https://stripe.com/docs/receipts#automatically-send-receipts-when-using-billing
   - compare with other providers like PayPal
@@ -355,14 +356,49 @@ Request-Id [S]                    #Request/response ID, for debugging
 NOTATION ==>                    CU#Updatable on create|update
                                  R#Only on create|update, not in responses
                                  *#Required on create|update
-                                 ?#Optional field (null or undefined if not present)
+                                 ?#Optional field (null or undefined if not present). I have not documented all optional fields as such yet.
 
 MONEY                             #INT. In the currency's smallest unit (e.g. cents for USD).
                                   #Can be negative.
 PMONEY                            #Like MONEY but >= 0
-RESOURCE.currency                 #Always as a sibling on OBJ with MONEY.
-                                  #Also present on CUSTOMER|CARD|BANK_ACCOUNT|SKU|REPORT_RUN_PARAMS
-                                  #STR (ISO 4217) (e.g. 'usd')
+
+RESOURCE.currency                 #STR (ISO 4217) (e.g. 'usd')
+                                  #Available:
+                                  #  - as sibling on any RESOURCE with MONEY properties.
+                                  #  - on CUSTOMER|CARD|BANK_ACCOUNT|SKU|REPORT_RUN_PARAMS
+CURRENCY CONVERSION ==>           #Conversion is automatic and has three stages:
+                                  #  - customer's currency (specified by SOURCE, i.e. customer input)
+                                  #     - used during CHARGE
+                                  #  - CHARGE.currency ("presentment" currency) (specified by our code)
+                                  #     - stored in BALANCE, currency-wise
+                                  #  - destination's currency (our bank account)
+                                  #     - used during PAYOUT
+                                  #        - not when money is re-used with a REFUND or a Connect transaction
+AVAILABLE CURRENCIES ==>          #Customer's currency and CHARGE.currency:
+                                  #  - see full list at https://stripe.com/docs/currencies
+                                  #  - credit cards with JCB, Discover and Diners Club can only be 'usd'
+                                  #Destination currency:
+                                  #  - must match main currency of STRIPE_ACCOUNT.country
+                                  #  - but PAYOUT can be to another country with same currency (e.g. Eurozone)
+EXCHANGE FEE ==>                  #Conversion exchange fee (if conversion needed):
+                                  #  - customer to presentment: paid by customer (bank fee)
+                                  #  - presentment to destination: 1% Stripe fee
+                                  #I.e. CHARGE.currency should either use:
+                                  #  - customer's currency (preferred): fee is paid by us, if PAYOUT
+                                  #  - destination's currency: fee is paid by customer, always
+                                  #There is also an unrelated fee when customer's bank's country is different from destination's:
+                                  #  - paid by customer (bank fee)
+                                  #  - we also pay 1-1.5% Stripe fee (depending on country)
+                                  #Can set several bank accounts with different currencies|countries to avoid those fees.
+                                  #Conversion happens at rate when CHARGE|REFUND is created:
+                                  #  - the difference between REFUND and its CHARGE is paid by destination not customer
+                                  #     - i.e. customer always get back exactly what they paid
+                                  #Currency rates are shown in dashboard.
+SOURCE.default_for_currency       #BOOL (def: false).
+                                  #When making payout to multiple SOURCEs:
+                                  #  - use the SOURCE with same currency
+                                  #  - if multiple ones, use the one with BOOL true
+
 DATE_NUM                          #Unix timestamp in seconds.
 COUNTRY                           #STR (2-letters ISO code)
 
@@ -437,12 +473,9 @@ balance.available                 #'EVENT_TYPE' when your Stripe balance has bee
 BALANCE.available                 #BALANCE_SUB_ARR. Money available.
 BALANCE.pending                   #BALANCE_SUB_ARR. Money not available yet due to 7-day rolling pay cycle.
 BALANCE.connect_reserved          #BALANCE_SUB_ARR. Money held.
-BALANCE_SUB                       #Subdivision of BALANCE for each currency and bank account
+BALANCE_SUB                       #Subdivision of BALANCE for each currency and SOURCE
 BALANCE_SUB.amount                #MONEY
-BALANCE_SUB.source_types.TYPE     #INT. How amount is divided between account TYPE:
-                                  #  - 'bank_account'
-                                  #  - 'bitcoin_receiver'
-                                  #  - 'card'
+BALANCE_SUB.source_types.TYPE     #INT. How amount is divided between account TYPE 'bank_account' or 'card'.
 
 GET /balance/history[/ID]         #BALANCE_TRANSACTION.
                                   #BALANCE's single transaction
@@ -496,9 +529,9 @@ GET /charges[/ID]
 POST /charges[/ID]                #
 STRIPE.charges.retrieve|list|
  create|update()                  #
-charge.refunded                   #'EVENT_TYPE' when a charge is refunded, including partial refunds.
 CHARGE.amount                   *C#PMONEY
-CHARGE.amount_refunded            #PMONEY refunded, if any, or 0.
+                                  #Have a currency-specific minimum (around $0.5).
+                                  #  - see https://stripe.com/docs/currencies#minimum-and-maximum-charge-amounts
 CHARGE.application_fee_amount    C#PMONEY
 CHARGE.application_fee            #STRIPE_ACCOUNT_FEE.id
 CHARGE.balance_transaction        #BALANCE_TRANSACTION.id
@@ -506,6 +539,9 @@ CHARGE.paid                       #BOOL for success
 CHARGE.status                     #First 'pending' then either 'succeeded' or 'failed'.
                                   #EVENTS 'charge.pending|succeeded|failed' fired but not needed since response
                                   #status is never 'pending'.
+CHARGE.refunds                    #REFUND_LIST
+CHARGE.refunded                   #BOOL. False if only partially refunded.
+CHARGE.amount_refunded            #PMONEY. 0 if none.
 CHARGE.source                   *C#Can be:
                                   #  - SOURCE|CARD|BANK_ACCOUNT: requires CHARGE.customer
                                   #  - STRIPE_ACCOUNT
@@ -521,12 +557,20 @@ CHARGE.on_behalf_of              C#STRIPE_ACCOUNT.id
                                   #When one made transaction of another's behalf
 CHARGE.statement_descriptor      C#STR. Shown to customer's bank transaction statement.
                                   #Only ASCII. Cannot contain <>"'*. Must contain a letter.
-                                  #Prefixed by PAYMENTS_SETTINGS.statement_descriptor + '* '.
+                                  #Prefixed by:
+                                  #  - (credit card) STRIPE_ACCOUNT.settings.card_payments.statement_descriptor_prefix + '* '.
+                                  #  - (otherwise) STRIPE_ACCOUNT.settings.payments.statement_descriptor + '* '.
                                   #Total max length 22.
+STRIPE_ACCOUNT.settings.
+ card_payments.
+ statement_descriptor_prefix    CU#STR
+STRIPE_ACCOUNT.settings.payments.
+ statement_descriptor           CU#STR
 CHARGE.description              CU#STR. Shown in receipts.
 CHARGE.receipt_email            CU#'EMAIL' to send a receipt to.
                                   #Defaults to CHARGE.customer.email
                                   #Can be resent|previewed from the dashboard.
+                                  #There is a dashboard setting to let Stripe fill this automatically.
 CHARGE.receipt_url                #'URI'. Kept up-to-date.
 CHARGE.receipt_number             #STR. Unique number appearing on receipts.
 CHARGE.outcome                    #OUTCOME. Whether payment was accepted.
@@ -565,8 +609,6 @@ CHARGE.transfer                   #TRANSFER.id. Only applicable if the charge wa
 CHARGE.source_transfer            #TRANSFER.id. Only present if the charge came from another Stripe account.
 CHARGE.billing_details            #BILL_DETAILS.
 CHARGE.shipping                 CU#SHIPPING.
-CHARGE.refunded                   #BOOL. False if not refunded or partially refunded.
-CHARGE.refunds                    #REFUND_LIST. Refunds that have been applied.
 CHARGE.transfer_data             C#TRANSFER_DATA.
 TRANSFER_DATA.amount             C#MONEY (def: CHARGE.amount).
 TRANSFER_DATA.destination        C#STR. Stripe account to transfer funds to if CHARGE.transfer_data was defined.
@@ -585,48 +627,186 @@ CHARGE.capture                  RC#BOOL. Delayed payment:
                                   #  - if more than 7 days, CHARGE fails
                                   #     - EVENT 'charge.expired'
                                   #  - to cancel it, should create a REFUND
+                                  #Goal: delaying payment when it might look fraudulent (see below)
                                   #Some banks show not-processed yet (but authorized) payments as if it was processed, which
                                   #can confuse some customers.
                                   #Only works with card* payment methods.
 CHARGE.captured                   #BOOL
 
-CUSTOMER                          #Entity/person paying.
-                                  #Can be used to re-use information accross payments (such as payment methods, etc.)
-GET /customers[/ID]
-POST /customers[/ID]
-DELETE /customers/ID              #
-STRIPE.customers.
- retrieve|list|create|update|del()#
-CUSTOMER.email                  CU#STR.
-?email=STR                        #
-CUSTOMER.description            CU#STR.
-CUSTOMER.shipping               CU#BILL_DETAILS Mailing and shipping address for the customer. Appears on invoices emailed to this customer.
-CUSTOMER.payment_method         RC#PAYMENT_METHOD.id to attach to the customer
-CUSTOMER.sources                  #TOKEN|SOURCE|BANK_ACCOUNT|CARD_LIST
-CUSTOMER.default_source          U#TOKEN|SOURCE|BANK_ACCOUNT|CARD
-CUSTOMER.source                RCU#Change default_source.
-                                  #Also creates the TOKEN|SOURCE|BANK_ACCOUNT|CARD.
-CUSTOMER.tax_info               CU#TAX_INFO. Shown on email invoices. Verified by Stripe.
-TAX_INFO.tax_id                   #Tax ID number.
-TAX_INFO.type                     #Tax ID number type.
-CUSTOMER.tax_info_verification    #TAX_INFO_VERIFICATION
-TAX_INFO_VERIFICATION.status      #From 'pending' to 'verified' or 'unverified'.
-TAX_INFO_VERIFICATIN.verified_name#STR. Customer's official tax name.
-CUSTOMER.account_balance        CU#integer Current balance, if any, being stored on the customer's account.
-                                  #If negative, the customer has credit to apply to the next invoice.
-                                  #If positive, the customer has an amount owed that will be added to the next invoice.
-                                  #The balance does not refer to any unpaid invoices; it solely takes into account amounts that have yet to be successfully applied to any invoice.
-                                  #This balance is only taken into account as invoices are finalized. Note that the balance does not include unpaid invoices.
-CUSTOMER.coupon                RCU#If you provide a coupon code, the customer will have a discount applied on all recurring charges.
-                                  #Charges you create through the API will not have the discount.
-CUSTOMER.discount                 #DISCOUNT
-CUSTOMER.delinquent               #boolean When the customer's latest invoice is billed by charging automatically, delinquent is true if the invoice's latest charge is failed.
-                                  #When the customer's latest invoice is billed by sending an invoice, delinquent is true if the invoice is not paid by its due date.
-CUSTOMER.invoice_prefix         CU#string The prefix for the customer used to generate unique invoice numbers.
-CUSTOMER.invoice_settings       CU#INVOICE_SETTINGS. The customer's default invoice settings.
-INVOICE_SETTINGS.custom_fields
-INVOICE_SETTINGS.footer          U#Like INVOICE.*
-CUSTOMER.subscriptions            #LIST The customer's current subscriptions, if any.
+GET /payment_intents[/ID]
+POST /payment_intents[/ID]        #
+POST /payment_intents/ID/confirm  #Set payment's method and start payment.
+                                  #If additional authentication required, set PINTENT.status to 'requires_action' and use PINTENT.next_action
+                                  #If failure, set PINTENT.status 'requires_payment_method'
+                                  #If success, set PINTENT.status 'succeeded' (or 'requires_capture' if PINTENT.capture_methd 'manual')
+                                  #Payload attributes: client_secret, payment_method, receipt_email, return_url, shipping, source, save_payment_method
+POST /payment_intents/ID/capture  #Gets money if PINTENT.status 'requires_capture'
+                                  #Payload attributes: amount_to_capture MONEY, application_fee_amount
+POST /payment_intents/ID/cancel   #From PINTENT.status 'requires*' to 'canceled'.
+                                  #If PINTENT.status 'requires_capture', PINTENT.amount_capturable is refunded.
+                                  #Payload attributes: cancellation_reason
+STRIPE.paymentIntents.retrieve|
+ list|create|update|confirm|
+ capture|cancel()                 #
+payment_intent.                   #'EVENT_TYPE' when a PaymentIntent has funds to be captured.
+ amount_capturable_updated        #Check the amount_capturable property on the PaymentIntent to determine the amount that can be captured.
+                                  #You may capture the PaymentIntent with an amount_to_capture value up to the specified amount.
+payment_intent.payment_failed     #'EVENT_TYPE' when a PaymentIntent has failed the attempt to create a source or a payment.
+payment_intent.succeeded          #'EVENT_TYPE' when a PaymentIntent has been successfully fulfilled.
+PINTENT                           #Ongoing flow to pay by a CUSTOMER.
+PINTENT.amount                 *CU#
+PINTENT.application               #
+PINTENT.application_fee_amount  CU#
+PINTENT.customer                CU#
+PINTENT.description             CU#
+PINTENT.invoice                   #
+PINTENT.on_behalf_of             C#
+PINTENT.payment_method          CU#
+PINTENT.receipt_email           CU#
+PINTENT.review                    #
+PINTENT.shipping                CU#
+PINTENT.source                  CU#
+PINTENT.statement_descriptor    CU#
+PINTENT.transfer_data            C#
+PINTENT.transfer_group          CU#Like CHARGE.*
+PINTENT.amount_capturable         #MONEY Amount that can be captured from this PaymentIntent.
+PINTENT.amount_received           #MONEY Amount that was collected by this PaymentIntent.
+PINTENT.canceled_at               #timestamp Populated when status is canceled, this is the time at which the PaymentIntent was canceled. Measured in seconds since the Unix epoch.
+PINTENT.cancellation_reason       #string User-given reason for cancellation of this PaymentIntent, one of duplicate, fraudulent, requested_by_customer, or failed_invoice.
+PINTENT.capture_method           C#string Capture method of this PaymentIntent, one of automatic or manual.
+PINTENT.charges                   #CHARGE_LIST
+PINTENT.client_secret             #string The client secret of this PaymentIntent.
+                                  #Used for client-side retrieval using a publishable key.
+                                  #Please refer to dynamic authentication guide on how client_secret should be handled.
+PINTENT.last_payment_error        #The payment ERROR encountered in the previous PaymentIntent confirmation.
+PINTENT.next_action               #NEXT_ACTION. If present, this property tells you what actions you need to take in order for your customer to fulfill a payment using the provided source.
+NEXT_ACTION.redirect_to_url       #REDIRECT_TO_URL. Contains instructions for authenticating a payment by redirecting your customer to another page or application.
+REDIRECT_TO_URL.return_url        #string If the customer does not exit their browser while authenticating, they will be redirected to this specified URL after completion.
+REDIRECT_TO_URL.url               #string The URL you must redirect your customer to in order to authenticate the payment.
+NEXT_ACTION.type                  #string Type of the next action to perform, one of redirect_to_url or use_stripe_sdk.
+NEXT_ACTION.use_stripe_sdk        #OBJ. When confirming a PaymentIntent with Stripe.js, Stripe.js depends on the contents of this object to invoke authentication flows.
+                                  #The shape of the contents is subject to change and is only intended to be used by Stripe.js.
+PINTENT.payment_method_types    CU#array containing strings The list of payment method types (e.g. card) that this PaymentIntent is allowed to use.
+PINTENT.save_payment_method    RCU#Set to true to save the PaymentIntent's payment method (either source or payment_method) to the associated customer.
+                                  #If the payment method is already attached, this parameter does nothing.
+                                  #This parameter defaults to false and applies to the payment method passed in the same request or the current payment method attached to the PaymentIntent and must be
+                                  #specified again if a new payment method is added.
+PINTENT.status                    #string Status of this PaymentIntent, one of requires_payment_method, requires_confirmation, requires_action, processing, requires_authorization, requires_capture,
+                                  #canceled, or succeeded.
+PINTENT.confirm                 RC#Set to true to attempt to confirm this PaymentIntent immediately.
+                                  #This parameter defaults to false.
+                                  #If the payment method attached is a card, a return_url may be provided in case additional authentication is required.
+PINTENT.confirmation_method      C#string Confirmation method of this PaymentIntent, one of manual or automatic.
+                                  #When the confirmation method is automatic, a PaymentIntent can be confirmed using a publishable key.
+                                  #After next_actions are handled, no additional confirmation is required to complete the payment.
+                                  #When the confirmation method is manual, all payment attempts must be made using a secret key.
+                                  #The PaymentIntent will return to the requires_confirmation state after handling next_actions, and requires your server to initiate each payment attempt with an explicit
+                                  #confirmation.
+
+GET /refunds[/ID]
+POST /refunds[/ID]                #
+STRIPE.refunds.
+ list|retrieve|create|update()    #
+REFUND                            #Reverting a CHARGE.
+                                  #As opposed to CHARGE, do not incur a fee
+                                  #  - but original CHARGE's Stripe fee is not reversed
+                                  #Takes 5-10 days for customer to see credit.
+                                  #Stripe send email to customer providing:
+                                  #  - dashboard setting is enabled for this
+                                  #  - CHARGE.customer.email is defined.
+                                  #Reuses same SOURCE as CHARGE's.
+                                  #Can fail:
+                                  #  - e.g. if customer's SOURCE is not valid anymore.
+                                  #  - refund is reversed under 30 days.
+REFUND.charge                   *C#CHARGE.id that was refunded.
+?charge=CHARGE.id                 #
+REFUND.amount                    C#MONEY.
+                                  #Can be partial:
+                                  #  - in that case, refund_application_fee|reverse_transfer will be proportional.
+                                  #  - can do several REFUNDs per CHARGE, but sum cannot exceed total CHARGE amount
+REFUND.balance_transaction        #BALANCE_TRANSACTION.id of the refund
+REFUND.refund_application_fee   RC#BOOL (def: false). Whether should refund application_fee as well.
+REFUND.reverse_transfer         RC#BOOL (def: false). Whether should reverse TRANSFER.
+REFUND.source_transfer_reversal   #TRAVERSAL.id if was using Connect.
+REFUND.transfer_reversal          #TRAVERSAL.id if was using Connect and used 'destination'.
+REFUND.reason                   ?C#STR among 'duplicate', 'fraudulent', 'requested_by_customer'.
+REFUND.description                #STR. Shown to users. Only for non-card payments.
+REFUND.receipt_number             #Like CHARGE.*
+REFUND.status                     #STR among:
+                                  #  - 'pending'
+                                  #  - 'canceled', 'succeeded' or 'failed'
+                                  #     - EVENT 'charge.refunded'
+                                  #Card refunds are synchronous, i.e. never 'pending' nor 'canceled'.
+REFUND.failure_balance_transaction#If refund failed, BALANCE_TRANSACTION.id reversing refund itself.
+REFUND.failure_reason             #If refund failed, STR among 'lost_or_stolen_card', 'expired_or_canceled_card', 'unknown'.
+
+GET /payouts[/ID]
+POST /payouts[/ID]                #
+POST /payouts/ID/cancel           #Set PAYOUT.status to 'canceled'
+STRIPE.payouts.list|retrieve|
+ create|update|cancel()           #
+PAYOUT                            #Transfer money from STRIPE_ACCOUNT to bank account / credit card
+                                  #Stripe fee:
+                                  #  - 'standard': $0.25
+                                  #  - 'instant': 1.5% (or minimum $0.5)
+PAYOUT.amount                   *C#MONEY
+                                  #Minimum of around €1-2 (currency-specific) (only for EU countries).
+                                  #Can be negative, in which case bank account / credit card is debited instead.
+                                  #  - done to put negative BALANCE back to normal
+PAYOUT.method                    C#Either:
+                                  #  - 'standard':
+                                  #     - takes several days (country-specific)
+                                  #        - 7-10 days the first time it's done
+                                  #  - 'instant':
+                                  #     - takes few minutes
+                                  #     - only for Connect, for debit cards and not for all banks (but most)
+                                  #     - higher Stripe fee
+PAYOUT.source_type               C#'bank_account' or 'card' (source)
+                                  #Decides which BALANCE_SUB to pick.
+PAYOUT.type                       #'bank_account' or 'card' (destination)
+PAYOUT.destination               C#CARD|BANK_ACCOUNT.id. Where to send.
+?destination=CARD|BANK_ACCOUNT.id #
+PAYOUT.status                     #STR among:
+                                  #  - 'pending': not submitted to bank yet
+                                  #  - 'in_transit'
+                                  #  - 'paid', 'failed' or 'canceled'
+                                  #     - EVENT 'payout.paid|failed|canceled'
+?status=STR                       #
+PAYOUT.arrival_date               #Expected|actual DATE_NUM
+?arrival_date=CMP_FILTER          #
+PAYOUT.description               C#Like CHARGE.*
+PAYOUT.statement_descriptor      C#Like CHARGE.*
+PAYOUTS_SETTINGS.
+ statement_descriptor           CU#STR prefixing statement_descriptor (same as for CHARGE.*)
+PAYOUT.balance_transaction        #BALANCE_TRANSACTION.id
+PAYOUT.                          ?#If failed|canceled, BALANCE_TRANSACTION.id reversing it.
+ failure_balance_transaction      #Takes up to 5 days to receive money back.
+PAYOUT.failure_message           ?#STR
+PAYOUT.failure_code              ?#STR among:
+                                  #  - 'insufficient_funds': not enough money to make payout
+                                  #  - 'unsupported_card': invalid card
+                                  #  - 'invalid_account_number'
+                                  #  - 'incorrect_account_holder_name'
+                                  #  - 'no_account': invalid bank account details.
+                                  #  - 'account_closed|frozen': bank account has been closed|frozen
+                                  #  - 'bank_ownership_changed': bank account no longer valid because of ownership change.
+                                  #  - 'invalid_currency': bank does not handle this currency.
+                                  #  - 'bank_account_restricted':
+                                  #      - bank account does not handle payout type|amount.
+                                  #      - usually because it's a savings account.
+                                  #  - 'debit_not_authorized': bank account does not handle debit transactions.
+                                  #  - 'could_not_process': generic problem with bank
+                                  #  - 'declined': declined by bank.
+PAYOUT.automatic                  #BOOL. True if created by an automated payout SCHEDULE.
+STRIPE_ACCOUNT.settings.payouts CU#PAYOUTS_SETTINGS.
+PAYOUTS_SETTINGS.schedule       CU#SCHEDULE. Automatically create PAYOUTs.
+SCHEDULE.interval               CU#Automatic PAYOUTs frequency among 'manual' (never), 'daily', 'weekly', 'monthly'.
+SCHEDULE.weekly_anchor          CU#STR ('monday', etc.). Day of the week if SCHEDULE.interval 'weekly'.
+SCHEDULE.monthly_anchor         CU#NUM. Days of the month if SCHEDULE.interval 'monthly'.
+                                  #If 29-31 and month has fewer days, send on last day.
+SCHEDULE.delay_days             CU#Wait for INT days before any CHARGE is included in automatic PAYOUTs.
+PAYOUTS_SETTINGS.               CU#BOOL (def: true for Express, false for Custom accounts).
+ debit_negative_balances          #Automatically create negative PAYOUT if BALANCE is negative.
 
 DISPUTE ==>                       #When a CUSTOMER questions our CHARGE. Also called "chargebacks".
                                   #Possible causes:
@@ -635,10 +815,20 @@ DISPUTE ==>                       #When a CUSTOMER questions our CHARGE. Also ca
                                   #  - wrong billing (e.g. transaction sent twice to bank)
                                   #  - technical (e.g. expired authorization)
                                   #Should prefer using the Dashboard instead of API for this.
-                                  #Cannot create a REFUND on a disputed CHARGE.
-                                  #If dispute rate is over 0.75% per CHARGE:
+
+DISPUTE AND REFUNDS ==>           #  - cannot create a REFUND on a disputed CHARGE
+                                  #  - cannot create a DISPUTE on a refunded CHARGE
+                                  #  - should avoid refunding through a different way than Stripe:
+                                  #     - it would allow disputing both the refund and the charge, and losing both
+
+HIGH DISPUTE RATE ==>             #If dispute rate (won or lost) is over 0.75% per CHARGE:
                                   #  - Stripe (and competitors) might cancel account
-                                  #  - Credit card companies might charge higher dispute fees
+                                  #  - Credit card companies might:
+                                  #     - charge higher dispute fees
+                                  #     - blacklist wth TMFs (Terminated Merchant Files)
+                                  #        - MATCH is Mastercard's one and is commonly used
+                                  #         - can happen too if:
+                                  #            - failing to protect payment method data or comply to PCI
 
 DISPUTE LIFECYCLE ==>             #Created by Stripe on CUSTOMER's request
                                   #  - EVENT 'charge.dispute.created'
@@ -680,13 +870,21 @@ AVOIDING DISPUTES ==>             #Billing:
                                   #  - provide a good CHARGE.statement_descriptor
                                   #  - send receipts
                                   #  - should always collect: name, email, card CVC, full billing address (including ZIP), shipping address (if different)
-                                  #  - use STRIPE_ACCOUNT.settings.card_payments.decline_on.avs_failure|cvc_failure true
+                                  #  - use STRIPE_ACCOUNT.settings.card_payments.decline_on.cvc_failure true
                                   #  - do not refund on a different credit card / bank account (to avoid frauds)
+                                  #Fraudulent-looking payments:
+                                  #  - should delay it:
+                                  #     - delay payment by capturing it (CHARGE.capture)
+                                  #     - delay shipping by 1-2 days
+                                  #  - if already accepted, should refund it
+                                  #Identification:
+                                  #  - auth with social media accounts or bank services (e.g. BankID)
                                   #Communication:
                                   #  - good communication / customer service
                                   #  - clear refund and cancellation policies
                                   #     - should be agreed on (as part of terms of service)
                                   #     - should be presented in full text (not just link)
+                                  #  - reach out to user through the contact information verified by bank
                                   #Shipping:
                                   #  - choose delivery service that:
                                   #     - requires signature on delivery
@@ -709,6 +907,21 @@ TYPICAL FRAUDS ==>                #  - stolen cards
                                   #  - card testing:
                                   #     - trying a stolen card on a website that allow very small purchases (e.g.  donations)
                                   #     - should prevent with CAPTCHAs or rate limiting
+
+SIGNS OF FRAUD ==>                #  - fake information (emails, phone numbers)
+                                  #  - different information across purchases (emails, payment methods, shipping|billing addresses, IP)
+                                  #  - scripted communication
+                                  #     - should google sentences
+                                  #  - expensive or very frequent purchases
+                                  #  - splitting purchases (including refunds) over several payment methods
+                                  #  - asking us to process payment manually (so that IP address / responsability is ours)
+                                  #  - amount higher than required
+                                  #  - wrong CVC
+                                  #  - addresses mismatches
+                                  #     - shipping vs billing vs card|bank account's owner (AVS check)
+                                  #     - often legitimate (gift purchase), but raise warnings
+                                  #  - change of address after purchase
+                                  #  - ask for different shipping
 
 GET /disputes[/ID]
 POST /disputes/ID                 #
@@ -808,185 +1021,43 @@ EVIDENCE.                         #FILE.id uniquely identifying the charge, such
 EVIDENCE.uncategorized_file       #Any other FILE.id
 EVIDENCE.uncategorized_text       #Any other STR.
 
-GET /payment_intents[/ID]
-POST /payment_intents[/ID]        #
-POST /payment_intents/ID/confirm  #Set payment's method and start payment.
-                                  #If additional authentication required, set PINTENT.status to 'requires_action' and use PINTENT.next_action
-                                  #If failure, set PINTENT.status 'requires_payment_method'
-                                  #If success, set PINTENT.status 'succeeded' (or 'requires_capture' if PINTENT.capture_methd 'manual')
-                                  #Payload attributes: client_secret, payment_method, receipt_email, return_url, shipping, source, save_payment_method
-POST /payment_intents/ID/capture  #Gets money if PINTENT.status 'requires_capture'
-                                  #Payload attributes: amount_to_capture MONEY, application_fee_amount
-POST /payment_intents/ID/cancel   #From PINTENT.status 'requires*' to 'canceled'.
-                                  #If PINTENT.status 'requires_capture', PINTENT.amount_capturable is refunded.
-                                  #Payload attributes: cancellation_reason
-STRIPE.paymentIntents.retrieve|
- list|create|update|confirm|
- capture|cancel()                 #
-payment_intent.                   #'EVENT_TYPE' when a PaymentIntent has funds to be captured.
- amount_capturable_updated        #Check the amount_capturable property on the PaymentIntent to determine the amount that can be captured.
-                                  #You may capture the PaymentIntent with an amount_to_capture value up to the specified amount.
-payment_intent.payment_failed     #'EVENT_TYPE' when a PaymentIntent has failed the attempt to create a source or a payment.
-payment_intent.succeeded          #'EVENT_TYPE' when a PaymentIntent has been successfully fulfilled.
-PINTENT                           #Ongoing flow to pay by a CUSTOMER.
-PINTENT.amount                 *CU#
-PINTENT.application               #
-PINTENT.application_fee_amount  CU#
-PINTENT.customer                CU#
-PINTENT.description             CU#
-PINTENT.invoice                   #
-PINTENT.on_behalf_of             C#
-PINTENT.payment_method          CU#
-PINTENT.receipt_email           CU#
-PINTENT.review                    #
-PINTENT.shipping                CU#
-PINTENT.source                  CU#
-PINTENT.statement_descriptor    CU#
-PINTENT.transfer_data            C#
-PINTENT.transfer_group          CU#Like CHARGE.*
-PINTENT.amount_capturable         #MONEY Amount that can be captured from this PaymentIntent.
-PINTENT.amount_received           #MONEY Amount that was collected by this PaymentIntent.
-PINTENT.canceled_at               #timestamp Populated when status is canceled, this is the time at which the PaymentIntent was canceled. Measured in seconds since the Unix epoch.
-PINTENT.cancellation_reason       #string User-given reason for cancellation of this PaymentIntent, one of duplicate, fraudulent, requested_by_customer, or failed_invoice.
-PINTENT.capture_method           C#string Capture method of this PaymentIntent, one of automatic or manual.
-PINTENT.charges                   #CHARGE_LIST
-PINTENT.client_secret             #string The client secret of this PaymentIntent.
-                                  #Used for client-side retrieval using a publishable key.
-                                  #Please refer to dynamic authentication guide on how client_secret should be handled.
-PINTENT.last_payment_error        #The payment ERROR encountered in the previous PaymentIntent confirmation.
-PINTENT.next_action               #NEXT_ACTION. If present, this property tells you what actions you need to take in order for your customer to fulfill a payment using the provided source.
-NEXT_ACTION.redirect_to_url       #REDIRECT_TO_URL. Contains instructions for authenticating a payment by redirecting your customer to another page or application.
-REDIRECT_TO_URL.return_url        #string If the customer does not exit their browser while authenticating, they will be redirected to this specified URL after completion.
-REDIRECT_TO_URL.url               #string The URL you must redirect your customer to in order to authenticate the payment.
-NEXT_ACTION.type                  #string Type of the next action to perform, one of redirect_to_url or use_stripe_sdk.
-NEXT_ACTION.use_stripe_sdk        #OBJ. When confirming a PaymentIntent with Stripe.js, Stripe.js depends on the contents of this object to invoke authentication flows.
-                                  #The shape of the contents is subject to change and is only intended to be used by Stripe.js.
-PINTENT.payment_method_types    CU#array containing strings The list of payment method types (e.g. card) that this PaymentIntent is allowed to use.
-PINTENT.save_payment_method    RCU#Set to true to save the PaymentIntent's payment method (either source or payment_method) to the associated customer.
-                                  #If the payment method is already attached, this parameter does nothing.
-                                  #This parameter defaults to false and applies to the payment method passed in the same request or the current payment method attached to the PaymentIntent and must be
-                                  #specified again if a new payment method is added.
-PINTENT.status                    #string Status of this PaymentIntent, one of requires_payment_method, requires_confirmation, requires_action, processing, requires_authorization, requires_capture,
-                                  #canceled, or succeeded.
-PINTENT.confirm                 RC#Set to true to attempt to confirm this PaymentIntent immediately.
-                                  #This parameter defaults to false.
-                                  #If the payment method attached is a card, a return_url may be provided in case additional authentication is required.
-PINTENT.confirmation_method      C#string Confirmation method of this PaymentIntent, one of manual or automatic.
-                                  #When the confirmation method is automatic, a PaymentIntent can be confirmed using a publishable key.
-                                  #After next_actions are handled, no additional confirmation is required to complete the payment.
-                                  #When the confirmation method is manual, all payment attempts must be made using a secret key.
-                                  #The PaymentIntent will return to the requires_confirmation state after handling next_actions, and requires your server to initiate each payment attempt with an explicit
-                                  #confirmation.
-
-GET /payouts[/ID]
-POST /payouts[/ID]                #
-POST /payouts/ID/cancel           #Set PAYOUT.status to 'in_transit' then 'canceled'
-STRIPE.payouts.list|retrieve|
- create|update|cancel()           #
-payout.canceled                   #'EVENT_TYPE' when a payout is canceled.
-payout.failed                     #'EVENT_TYPE' when a payout attempt fails.
-payout.paid                       #'EVENT_TYPE' when a payout is expected to be available in the destination account. If the payout fails, a payout.failed notification is also sent, at a later time.
-PAYOUT                            #Transfer money from STRIPE_ACCOUNT to bank account
-PAYOUT.amount                   *C#MONEY Amount to be transferred to your bank account or debit card.
-PAYOUT.arrival_date               #timestamp Date the payout is expected to arrive in the bank. This factors in delays like weekends or bank holidays.
-?arrival_date=CMP_FILTER          #
-PAYOUT.automatic                  #boolean Returns true if the payout was created by an automated payout schedule, and false if it was requested manually.
-PAYOUT.balance_transaction        #BALANCE_TRANSACTION.id Impact of this payout on your account balance.
-PAYOUT.description               C#string An arbitrary string attached to the object. Often useful for displaying to users.
-PAYOUT.destination               C#CARD|BANK_ACCOUNT.id Where it was sent to.
-?destination=CARD|BANK_ACCOUNT.id #
-PAYOUT.failure_balance_transaction#BALANCE_TRANSACTION.id If the payout failed or was canceled, this will be the ID of the balance transaction that reversed the initial balance transaction, and puts the
-                                  #funds from the failed payout back in your balance.
-PAYOUT.failure_code               #STR among:
-                                  #  - account_closed The bank account has been closed.
-                                  #  - account_frozen The bank account has been frozen.
-                                  #  - bank_account_restricted The bank account has restrictions on either the type, or the number, of payouts allowed.
-                                  #    This normally indicates that the bank account is a savings or other non-checking account.
-                                  #  - bank_ownership_changed The destination bank account is no longer valid because its branch has changed ownership.
-                                  #  - could_not_process The bank could not process this payout.
-                                  #  - debit_not_authorized Debit transactions are not approved on the bank account. (Stripe requires bank accounts to be set up for both credit and debit payouts.)
-                                  #  - declined The bank has declined this transfer. Please contact the bank before retrying.
-                                  #  - insufficient_funds Your Stripe account has insufficient funds to cover the payout.
-                                  #  - invalid_account_number The routing number seems correct, but the account number is invalid.
-                                  #  - incorrect_account_holder_name Your bank notified us that the bank account holder name on file is incorrect.
-                                  #  - invalid_currency The bank was unable to process this payout because of its currency.
-                                  #    This is probably because the bank account cannot accept payments in that currency.
-                                  #  - no_account The bank account details on file are probably incorrect. No bank account could be located with those details.
-                                  #  - unsupported_card The bank no longer supports payouts to this card.
-PAYOUT.failure_message            #string Message to user further explaining reason for payout failure if available.
-PAYOUT.method                    C#string The method used to send this payout, which can be standard or instant.
-                                  #instant is only supported for payouts to debit cards. (See Instant payouts for marketplaces for more information.)
-PAYOUT.source_type               C#string The source balance this payout came from. One of card or bank_account.
-PAYOUT.statement_descriptor      C#string Extra information about a payout to be displayed on the user's bank statement.
-PAYOUT.status                     #string Current status of the payout (paid, pending, in_transit, canceled or failed).
-                                  #A payout will be pending until it is submitted to the bank, at which point it becomes in_transit.
-                                  #It will then change to paid if the transaction goes through. If it does not go through successfully, its status will change to failed or canceled.
-?status=STR                       #
-PAYOUT.type                       #string Can be bank_account or card.
-
-GET /products[/ID]
-POST /products[/ID]
-DELETE /products/ID               #
-STRIPE.products.
- list|retrieve|create|update|del()#
-PRODUCT                           #Products being sold
-?ids=STR_ARR                      #
-PRODUCT.active                  CU#boolean Whether the product is currently available for purchase.
-?active=BOOL                      #
-PRODUCT.attributes              CU#array containing strings A list of up to 5 attributes that each SKU can provide values for (e.g., ["color", "size"]). Only applicable to products of type=good.
-PRODUCT.caption                 CU#string A short one-line description of the product, meant to be displayable to the customer. Only applicable to products of type=good.
-PRODUCT.deactivate_on           CU#array containing strings An array of connect application identifiers that cannot purchase this product. Only applicable to products of type=good.
-PRODUCT.description             CU#string The product's description, meant to be displayable to the customer. Only applicable to products of type=good.
-PRODUCT.images                  CU#array containing strings A list of up to 8 URLs of images for this product, meant to be displayable to the customer. Only applicable to products of type=good.
-PRODUCT.name                   *CU#string The product's name, meant to be displayable to the customer. Applicable to both service and good types.
-PRODUCT.package_dimensions      CU#PACKAGE_DIMENSIONS. The dimensions of this product for shipping purposes.
-                                  #A SKU associated with this product can override this value by having its own package_dimensions.
-                                  #Only applicable to products of type=good.
-PACKAGE_DIMENSIONS.
- height|length|weight|width       #NUM (inches)
-PRODUCT.shippable               CU#boolean Whether this product is a shipped good. Only applicable to products of type=good.
-?shippable=BOOL                   #
-PRODUCT.statement_descriptor     U#string Extra information about a product which will appear on your customer's credit card statement.
-                                  #In the case that multiple products are billed at once, the first statement descriptor will be used.
-                                  #Only available on products of type=service.
-PRODUCT.type                    *C#string The type of the product.
-                                  #The product is either of type good, which is eligible for use with Orders and SKUs, or service, which is eligible for use with Subscriptions and Plans.
-?type=STR                         #
-PRODUCT.unit_label               U#string A label that represents units of this product, such as seat(s), in Stripe and on customers' receipts and invoices. Only available on products of type=service.
-PRODUCT.updated                   #timestamp
-PRODUCT.url                     CU#string A URL of a publicly-accessible webpage for this product. Only applicable to products of type=good.
-?url=STR                          #
-
-GET /refunds[/ID]
-POST /refunds[/ID]                #
-STRIPE.refunds.
- list|retrieve|create|update()    #
-REFUND                            #Reverting a CHARGE
-REFUND.amount                    C#MONEY
-REFUND.balance_transaction        #BALANCE_TRANSACTION.id Balance transaction that describes the impact on your account balance.
-REFUND.charge                   *C#CHARGE.id that was refunded.
-?charge=CHARGE.id                 #
-REFUND.description                #string An arbitrary string attached to the object. Often useful for displaying to users. (Available on non-card refunds only)
-REFUND.failure_balance_transaction#BALANCE_TRANSACTION.id
-                                  #If the refund failed, this balance transaction describes the adjustment made on your account balance that reverses the initial balance transaction.
-REFUND.failure_reason             #string If the refund failed, the reason for refund failure if known. Possible values are lost_or_stolen_card, expired_or_canceled_card, or unknown.
-REFUND.reason                    C#string Reason for the refund. If set, possible values are duplicate, fraudulent, and requested_by_customer.
-REFUND.receipt_number             #string This is the transaction number that appears on email receipts sent for this refund.
-REFUND.source_transfer_reversal   #TRAVERSAL.id The transfer reversal that is associated with the refund.
-                                  #Only present if the charge came from another Stripe account.
-                                  #See the Connect documentation for details.
-REFUND.status                     #string Status of the refund. For credit card refunds, this can be succeeded or failed.
-                                  #For other types of refunds, it can be pending, succeeded, failed, or canceled. Refer to our refunds documentation for more details.
-REFUND.transfer_reversal          #TRAVERSAL.id If the accompanying transfer was reversed, the transfer reversal object. Only applicable if the charge was created using the destination parameter.
-REFUND.refund_application_fee   RC#Optional, default is false
-                                  #Boolean indicating whether the application fee should be refunded when refunding this charge.
-                                  #If a full charge refund is given, the full application fee will be refunded.
-                                  #Otherwise, the application fee will be refunded in an amount proportional to the amount of the charge refunded.
-                                  #An application fee can be refunded only by the application that created the charge.
-REFUND.reverse_transfer         RC#Optional, default is false
-                                  #Boolean indicating whether the transfer should be reversed when refunding this charge.
-                                  #The transfer will be reversed proportionally to the amount being refunded (either the entire or partial amount).
-                                  #A transfer can be reversed only by the application that created the charge.
+CUSTOMER                          #Entity/person paying.
+                                  #Can be used to re-use information accross payments (such as payment methods, etc.)
+GET /customers[/ID]
+POST /customers[/ID]
+DELETE /customers/ID              #
+STRIPE.customers.
+ retrieve|list|create|update|del()#
+CUSTOMER.email                  CU#STR.
+?email=STR                        #
+CUSTOMER.description            CU#STR.
+CUSTOMER.shipping               CU#BILL_DETAILS Mailing and shipping address for the customer. Appears on invoices emailed to this customer.
+CUSTOMER.payment_method         RC#PAYMENT_METHOD.id to attach to the customer
+CUSTOMER.sources                  #TOKEN|SOURCE|BANK_ACCOUNT|CARD_LIST
+CUSTOMER.default_source          U#TOKEN|SOURCE|BANK_ACCOUNT|CARD
+CUSTOMER.source                RCU#Change default_source.
+                                  #Also creates the TOKEN|SOURCE|BANK_ACCOUNT|CARD.
+CUSTOMER.tax_info               CU#TAX_INFO. Shown on email invoices. Verified by Stripe.
+TAX_INFO.tax_id                   #Tax ID number.
+TAX_INFO.type                     #Tax ID number type.
+CUSTOMER.tax_info_verification    #TAX_INFO_VERIFICATION
+TAX_INFO_VERIFICATION.status      #From 'pending' to 'verified' or 'unverified'.
+TAX_INFO_VERIFICATIN.verified_name#STR. Customer's official tax name.
+CUSTOMER.account_balance        CU#integer Current balance, if any, being stored on the customer's account.
+                                  #If negative, the customer has credit to apply to the next invoice.
+                                  #If positive, the customer has an amount owed that will be added to the next invoice.
+                                  #The balance does not refer to any unpaid invoices; it solely takes into account amounts that have yet to be successfully applied to any invoice.
+                                  #This balance is only taken into account as invoices are finalized. Note that the balance does not include unpaid invoices.
+CUSTOMER.coupon                RCU#If you provide a coupon code, the customer will have a discount applied on all recurring charges.
+                                  #Charges you create through the API will not have the discount.
+CUSTOMER.discount                 #DISCOUNT
+CUSTOMER.delinquent               #boolean When the customer's latest invoice is billed by charging automatically, delinquent is true if the invoice's latest charge is failed.
+                                  #When the customer's latest invoice is billed by sending an invoice, delinquent is true if the invoice is not paid by its due date.
+CUSTOMER.invoice_prefix         CU#string The prefix for the customer used to generate unique invoice numbers.
+CUSTOMER.invoice_settings       CU#INVOICE_SETTINGS. The customer's default invoice settings.
+INVOICE_SETTINGS.custom_fields
+INVOICE_SETTINGS.footer          U#Like INVOICE.*
+CUSTOMER.subscriptions            #LIST The customer's current subscriptions, if any.
 
 GET /sources/ID
 POST /sources[/ID]
@@ -1034,14 +1105,18 @@ SOURCE.card*.funding              #STR. Card funding type among 'credit', 'debit
 SOURCE.card.                      #Checks performed by the bank.
  checks.CHECK_TYPE_check          #Even when 'failed', bank still sometimes allows payment.
                                   #  - however this might indicate fraud, so we should not use this SOURCE
-                                  #  - see STRIPE_ACCOUNT.settings.card_payments.decline_on.avs_failure|cvc_failure to automatically deny
                                   #Can be 'pass', 'failed', 'unavailable' (could not check), 'unchecked' (did not provide enough information)
                                   #CHECK_TYPE are:
                                   #  - cvc: CVC. Guarantees customer physically possesses the card.
                                   #  - address_line1 and address_postal_code ("AVS check"):
                                   #     - address matches the credit card owner's
                                   #     - does not work in every country
+                                  #     - might not necessarily be an issue, e.g. when making a gift, billing address might differ. Or people might have moved.
                                   #Requires SOURCE.card*.cvc|address_line1|address_postal_code to be provided.
+STRIPE_ACCOUNT.settings.
+ card_payments.decline_on       CU#DECLINE_ON. Automatically declines CHARGES when SOURCE.card.checks is 'failed'.
+DECLINE_ON.avs_failure          CU#BOOL. For SOURCE.card.checks.address_*_check
+DECLINE_ON.cvc_failure          CU#BOOL. For SOURCE.card.checks.cvc_check
 SOURCE.card.three_d_secure       ?#Populated if this transaction used 3D Secure authentication. OBJ:
                                   #  - supported BOOL
 SOURCE.card.wallet               ?#WALLET. Card's wallet.
@@ -1196,9 +1271,7 @@ CARD.*_check                      #Same as CARD.checks.*
 CARD.account                      #STRIPE_ACCOUNT.id This attribute will not be in the card object if the card belongs to a customer or recipient instead.
 CARD.customer                     #CUSTOMER.id This attribute will not be in the card object if the card belongs to an account or recipient instead.
 CARD.recipient                    #CUSTOMER.id This attribute will not be in the card object if the card belongs to a customer or account instead.
-CARD.available_payout_methods     #array containing strings A set of available payout methods for this card.
-                                  #Will be either ["standard"] or ["standard", "instant"].
-                                  #Only values from this set should be passed as the method when creating a transfer.
+CARD.available_payout_methods     #Available PAYOUT.method as STR_ARR of 'standard', 'instant'
 CARD.tokenization_method          #Same as WALLET.type
 CARD.dynamic_last4                #Same as WALLET.dynamic_last4
 
@@ -1728,6 +1801,8 @@ STRIPE.accounts.retrieve|list|
 PAYLOAD.reason                    #STR. The reason for rejecting the account. Can be fraud, terms_of_service, or other.
 STRIPE_ACCOUNT.type             *C#Can be 'standard', 'express', or 'custom'.
 STRIPE_ACCOUNT.country           C#COUNTRY. Cannot be changed.
+                                  #Must match the bank account / credit card's country.
+                                  #Impacts pricing and which currency are available for payouts.
 STRIPE_ACCOUNT.email            CU#STR.
 STRIPE_ACCOUNT.
  business_profile               CU#BUSINESS_PROFILE. Information shown to customers.
@@ -1791,31 +1866,12 @@ BRANDING.icon                   CU#FILE.id. Icon logo. Square and min 128x128. J
 BRANDING.logo                   CU#FILE.id. Full logo. Min 128x128. Max 512KB. JPG/PNG/GIF.
 BRANDING.primary_color          CU#'#CSS_HEX_COLOR'
 STRIPE_SETTINGS.card_payments   CU#CARD_SETTINGS. Settings specific to card charging on the account.
-CARD_SETTINGS.decline_on        CU#DECLINE_ON. Automatically declines CHARGES when SOURCE.card.checks is 'failed'.
-DECLINE_ON.avs_failure          CU#BOOL. For SOURCE.card.checks.address_*_check
-DECLINE_ON.cvc_failure          CU#BOOL. For SOURCE.card.checks.cvc_check
-CARD_SETTINGS.                    #string The default text that appears on credit card statements when a charge is made.
- statement_descriptor_prefix    CU#This field prefixes any dynamic statement_descriptor specified on the charge.
-                                  #statement_descriptor_prefix is useful for maximizing descriptor space for the dynamic portion.
+CARD_SETTINGS.decline_on        CU#DECLINE_ON (see above).
 STRIPE_SETTINGS.dashboard         #DASHBOARD_SETTINGS. Settings used to configure the account within the Stripe dashboard.
 DASHBOARD_SETTINGS.display_name   #string The display name for this account. This is used on the Stripe Dashboard to differentiate between accounts.
 DASHBOARD_SETTINGS.timezone       #string The timezone used in the Stripe Dashboard for this account. A list of possible time zone values is maintained at the IANA Time Zone Database.
-STRIPE_SETTINGS.payments        CU#PAYMENTS_SETTINGS. Settings that apply across payment methods for charging on the account.
-PAYMENTS_SETTINGS.
- statement_descriptor           CU#STR shown as prefix to credit card statements. 2-10 length. Same validation as CHARGE.statement_description.
-STRIPE_SETTINGS.payouts         CU#PAYOUTS_SETTINGS. Settings specific to the account's payouts.
-PAYOUTS_SETTINGS.                 #boolean A Boolean indicating if Stripe should try to reclaim negative balances from an attached bank account.
- debit_negative_balances        CU#See our Understanding Connect Account Balances documentation for details. Default value is true for Express accounts and false for Custom accounts.
-PAYOUTS_SETTINGS.schedule       CU#SCHEDULE. Details on when funds from charges are available, and when they are paid out to an external account.
-                                  #See our Setting Bank and Debit Card Payouts documentation for details.
-SCHEDULE.delay_days             CU#positive integer or zero The number of days charges for the account will be held before being paid out.
-SCHEDULE.interval               CU#string How frequently funds will be paid out. One of manual (payouts only created via API call), daily, weekly, or monthly.
-SCHEDULE.monthly_anchor         CU#positive integer or zero The day of the month funds will be paid out.
-                                  #Only shown if interval is monthly.
-                                  #Payouts scheduled between the 29th and 31st of the month are sent on the last day of shorter months.
-SCHEDULE.weekly_anchor          CU#string The day of the week funds will be paid out, of the style ‘monday', ‘tuesday', etc. Only shown if interval is weekly.
-PAYOUTS_SETTINGS.
- statement_descriptor           CU#string The text that appears on the bank account statement for payouts. If not set, this defaults to the platform's bank descriptor as set in the Dashboard.
+STRIPE_SETTINGS.payments        CU#PAYMENTS_SETTINGS (see above).
+STRIPE_SETTINGS.payouts         CU#PAYOUTS_SETTINGS (see above).
 STRIPE_ACCOUNT.tos_acceptance   CU#TOS_ACCEPTANCE. Details on the acceptance of the Stripe Services Agreement
 TOS_ACCEPTANCE.date             CU#timestamp The Unix timestamp marking when the Stripe Services Agreement was accepted by the account representative
 TOS_ACCEPTANCE.ip               CU#string The IP address from which the Stripe Services Agreement was accepted by the account representative
@@ -2231,6 +2287,39 @@ STRIPE.terminal.connectionTokens.
 CONNECTION_TOKEN.
  operator_account               RC#Like READER.*
 CONNECTION_TOKEN.secret           #string Your application should pass this token to the Stripe Terminal SDK.
+
+GET /products[/ID]
+POST /products[/ID]
+DELETE /products/ID               #
+STRIPE.products.
+ list|retrieve|create|update|del()#
+PRODUCT                           #Products being sold
+?ids=STR_ARR                      #
+PRODUCT.active                  CU#boolean Whether the product is currently available for purchase.
+?active=BOOL                      #
+PRODUCT.attributes              CU#array containing strings A list of up to 5 attributes that each SKU can provide values for (e.g., ["color", "size"]). Only applicable to products of type=good.
+PRODUCT.caption                 CU#string A short one-line description of the product, meant to be displayable to the customer. Only applicable to products of type=good.
+PRODUCT.deactivate_on           CU#array containing strings An array of connect application identifiers that cannot purchase this product. Only applicable to products of type=good.
+PRODUCT.description             CU#string The product's description, meant to be displayable to the customer. Only applicable to products of type=good.
+PRODUCT.images                  CU#array containing strings A list of up to 8 URLs of images for this product, meant to be displayable to the customer. Only applicable to products of type=good.
+PRODUCT.name                   *CU#string The product's name, meant to be displayable to the customer. Applicable to both service and good types.
+PRODUCT.package_dimensions      CU#PACKAGE_DIMENSIONS. The dimensions of this product for shipping purposes.
+                                  #A SKU associated with this product can override this value by having its own package_dimensions.
+                                  #Only applicable to products of type=good.
+PACKAGE_DIMENSIONS.
+ height|length|weight|width       #NUM (inches)
+PRODUCT.shippable               CU#boolean Whether this product is a shipped good. Only applicable to products of type=good.
+?shippable=BOOL                   #
+PRODUCT.statement_descriptor     U#string Extra information about a product which will appear on your customer's credit card statement.
+                                  #In the case that multiple products are billed at once, the first statement descriptor will be used.
+                                  #Only available on products of type=service.
+PRODUCT.type                    *C#string The type of the product.
+                                  #The product is either of type good, which is eligible for use with Orders and SKUs, or service, which is eligible for use with Subscriptions and Plans.
+?type=STR                         #
+PRODUCT.unit_label               U#string A label that represents units of this product, such as seat(s), in Stripe and on customers' receipts and invoices. Only available on products of type=service.
+PRODUCT.updated                   #timestamp
+PRODUCT.url                     CU#string A URL of a publicly-accessible webpage for this product. Only applicable to products of type=good.
+?url=STR                          #
 
 GET /skus[/ID]
 POST /skus[/ID]
