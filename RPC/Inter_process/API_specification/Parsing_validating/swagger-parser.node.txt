@@ -10,6 +10,7 @@ VERSION ==>                   #4.0.2
 FEATURES ==>                  #  - OpenAPI 2.0 only
                               #  - dereference JSON references
                               #  - spec validation: official JSON schema, some extra checks
+                              #  - see swagger-express-middleware below for more
 
 
 SWAGGERPARSER.*               #Inherits from JSON-SCHEMA-REF-PARSER (i.e. dereferences JSON references)
@@ -21,6 +22,13 @@ SwaggerParser|SWAGGERPARSER   #Like REFPARSER.dereference(...) except validates:
                               #     - duplicate PARAM
                               #     - PARAM: multiple body|formData, missing|undeclared path, right MIME with file
 POPTS.validate.schema|spec    #To either turn off (false) or customize (FUNC(SPEC)) the validation
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:          SWAGGER-CLI          :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
 
 
 SWAGGER-CLI ==>               #CLI around Swagger-parser
@@ -38,7 +46,20 @@ swagger-cli bundle FILE       #Fires SWAGGERPARSER.bundle(...)
 --format NUM                  #JSON.stringify() spaces argument (def: 2)
 
 
-SWAGGER-EXPRESS-MIDDLEWARE ==>#
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:  SWAGGER-EXPRESS-MIDDLEWARE   :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+SWAGGER-EXPRESS-MIDDLEWARE ==>#Features:
+                              #  - validates, assigns default and parses REQ according to PARAM
+                              #  - throw 4** when REQ does not match SPEC
+                              #  - mock responses according to RESP.headers and RESP.schema.default|example
+                              #  - static file serving of OpenAPI specification
+                              #  - set current PATHDEF|OPERATION|PARAM|SECURITY_USES to REQ.swagger
+                              #  - CORS handling using SPEC
                               #Based on Swagger-parser
                               #Version 1.0.0-alpha.12
 
@@ -73,6 +94,63 @@ SMDW.metadata([APP])->MDW_ARR #Express middlewares that adds REQ.swagger:
                               #Nothing is set if current request URL is not under SPEC.basePath.
                               #Must be used before SMDW.CORS|parseRequest|mock()
 
+SMDW.parseRequest([APP, ]OPTS)#Calls:
+ ->MDW_ARR                    #  - COOKIE-PARSER(OPTS.cookie.secret, OPTS.cookie) (see its doc)
+                              #  - BODY-PARSER.json|text|urlencoded|raw(OPTS.json|text|urlencoded|raw) (see its doc)
+                              #     - OPTS.limit '1mb' ('5mb' for 'raw')
+                              #     - sets OPTS.type
+                              #     - OPTS.extended true
+                              #  - MULTER(OPTS.multipart) (see its doc)
+                              #For each PARAM:
+                              #  - in REQ.query|headers|files|body|pathParams.VAR, REQ.body according to PARAM's [SMALL_]SCHEMA
+                              #  - validates (with tv4)
+                              #  - assigns SCHEMA.default|example
+                              #  - parses from STR to right type
+                              #  - including SCHEMA.format|collectionFormat
+
+SMDW.validateRequest()        #Throw ERRORs:
+ ->MDW_ARR                    #  - ERROR.status 500: wrong SPEC
+                              #  - ERROR.status 401, WWW-Authenticate: Basic realm="HOSTNAME" [S] according to current SECURITY_DEF:
+                              #     - basic: no Authorization: Basic [C]
+                              #     - apiKey: missing in REQ.headers|query
+                              #  - ERROR.status 404: current URL not in SPEC.paths.*
+                              #  - ERROR.status 405, Allow [S]: current METHOD not in PATHDEF
+                              #  - ERROR.status 406: Accept [C] not in API|OPERATION.produces
+                              #  - ERROR.status 413: request body but no body|formData PARAM
+                              #  - ERROR.status 415: Content-Type [C] not in API|OPERATION.consumes
+
+SMDW.mock([APP][, STORE])     #Send a mock response according to RESP.headers and RESP.schema.default|example
+ ->MDW_ARR                    #Based on:
+                              #  - RESP according to:
+                              #     - RES.statusCode
+                              #     - first RESP with priority order: 2**, 3**, default, 4**|5**
+                              #  - REQ.method
+                              #Does:
+                              #  - if first 2** RESP is array (according to RESP.schema), uses collections
+                              #  - GET|HEAD|OPTIONS returns (in priority):
+                              #     - empty if RESP.schema true
+                              #     - RES.body if set by previous middleware
+                              #     - model saved by previous request
+                              #     - RESP.schema.default|example
+                              #  - POST|PATCH|DELETE|PUT saves REQ
+                              #  - PARAM named "file" with target file path
+                              #Identifies resources using MODEL.id|key|code|num[ber]|nbr|[user]name or first required scalar property
+                              #Calls RES.json|send()
+                              #Sets headers:
+                              #  - according to RESP.headers
+                              #     - value is automatically generated from RESP.headers.NAME.default|schema
+                              #  - Content-Type [S] according to SPEC|OPERATION.consumes|produces
+                              #  - Location [S], Last-Modified [S], Content-Disposition [S]
+                              #  - Set-Cookie [S] randomly generated
+                              #STORE:
+                              #  - persists mock data between requests
+                              #  - can be:
+                              #     - new MemoryDataStore() (def): in-memory
+                              #     - new FileDataStore(['DIR']) (def 'DIR': process.cwd())
+                              #Can use:
+                              #  - APP.set('mock', false): disables
+                              #  - APP.get('mock data store')->STORE
+
 SMDW.CORS()->MDW_ARR          #Set CORS response headers (on both preflight requests and final request):
                               #  Access-Control-Allow-Origin: 'ORIGIN|*' [S]
                               #   - using Origin [C]
@@ -93,59 +171,3 @@ SMDW.CORS()->MDW_ARR          #Set CORS response headers (on both preflight requ
                               #  - does not set 204 status nor Content-Length: 0 [S] (although should)
                               #Prefer CORS (see its doc)
 
-SMDW.parseRequest([APP, ]OPTS)#Calls:
- ->MDW_ARR                    #  - COOKIE-PARSER(OPTS.cookie.secret, OPTS.cookie) (see its doc)
-                              #  - BODY-PARSER.json|text|urlencoded|raw(OPTS.json|text|urlencoded|raw) (see its doc)
-                              #     - OPTS.limit '1mb' ('5mb' for 'raw')
-                              #     - sets OPTS.type
-                              #     - OPTS.extended true
-                              #  - MULTER(OPTS.multipart) (see its doc)
-                              #For each PARAM:
-                              #  - in REQ.query|headers|files|body|pathParams.VAR, REQ.body according to PARAM's [SMALL_]SCHEMA
-                              #  - validates (with tv4)
-                              #  - assigns SCHEMA.default|example
-                              #  - parses from STR to right type
-                              #  - including SCHEMA.format|collectionFormat
-
-SMDW.validateRequest()        #Throw ERRORs:
- ->MDW_ARR                    #  - ERROR.status 500: wrong SPEC
-                              #  - ERROR.status 401, WWW-Authenticate: Basic realm="HOSTNAME" [S] according to current SECURITY_DEF:
-                              #     - basic: no Authorization: Basic [C]
-                              #     - apiKey: missing in REQ.headers|query
-                              #  - ERROR.status 404: current URL not in SPEC
-                              #  - ERROR.status 405, Allow [S]: current METHOD not in SPEC
-                              #  - ERROR.status 406: Content-Type [C] not in SPEC
-                              #  - ERROR.status 413: request body but not allowed in SPEC
-                              #  - ERROR.status 415: Accept [C] not in SPEC
-
-SMDW.mock([APP][, STORE])     #Send a mock response according to RESP.headers and RESP.schema.default|example
- ->MDW_ARR                    #Based on:
-                              #  - RESP according to:
-                              #     - RES.statusCode
-                              #     - first RESP with priority order: 2**, 3**, default, 4**|5**
-                              #  - REQ.method
-                              #Does:
-                              #  - if first 2** RESP is array (according to RESP.schema), uses collections
-                              #  - GET|HEAD|OPTIONS returns (in priority):
-                              #     - empty if RESP.schema true
-                              #     - RES.body if set by previous middleware
-                              #     - model saved by previous request
-                              #     - RESP.schema.default|example
-                              #  - POST|PATCH|DELETE|PUT saves REQ
-                              #Calls:
-                              #  - RES.json|send()
-                              #  - sending files using file path???
-                              #Sets headers:
-                              #  - according to RESP.headers
-                              #     - value is automatically generated from RESP.headers schema
-                              #  - Content-Type [S] according to SPEC|OPERATION.consumes|produces
-                              #  - Location [S], Last-Modified [S], Content-Disposition [S]
-                              #  - Set-Cookie [S] randomly generated
-                              #STORE:
-                              #  - persists mock data between requests
-                              #  - can be:
-                              #     - new MemoryDataStore() (def): in-memory
-                              #     - new FileDataStore(['DIR']) (def 'DIR': process.cwd())
-                              #Can use:
-                              #  - APP.set('mock', false): disables
-                              #  - APP.get('mock data store')->STORE
