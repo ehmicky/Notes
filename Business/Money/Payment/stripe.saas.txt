@@ -626,52 +626,72 @@ INVOICE_SETTINGS.custom_fields
 INVOICE_SETTINGS.footer          U#Like INVOICE.*
 CUSTOMER.subscriptions            #LIST The customer's current subscriptions, if any.
 
-GET /disputes[/ID]
-POST /disputes/ID                 #
-POST /disputes/ID/close           #Change DISPUTE.status from 'needs_response' to 'lost'
-STRIPE.disputes.
- retrieve|list|update|close()     #
-DISPUTE                           #When a CUSTOMER questions our CHARGE. Also called "chargebacks".
-                                  #Lifecycle:
-                                  #  - created by Stripe on CUSTOMER's request
-                                  #     - EVENT 'charge.dispute.created'
-                                  #     - status 'needs_response'
-                                  #  - money is taken from STRIPE_ACCOUNT:
-                                  #     - CHARGE is provisionally refunded
-                                  #     - 15 USD fee
-                                  #     - EVENT 'charge.dispute.funds_withdrawn'
-                                  #  - either:
-                                  #     - submit DISPUTE.evidence
-                                  #        - usually banks only allow one submission.
-                                  #        - status 'under_review'
-                                  #        - should still submit even if customer withdrew dispute
-                                  #        - often takes around 10 weeks to get answer.
-                                  #     - "accept" a DISPUTE
-                                  #        - i.e. no submission
-                                  #  - either:
-                                  #     - status 'lost'
-                                  #     - status 'won'
-                                  #        - both CHARGE refund and fee are reversed if bank resolves in favor
-                                  #          (which happens only 20-40% of times)
-                                  #           - fee is actually charged by credit card company, but reversed by Stripe
-                                  #           - EVENT 'charge.dispute.funds_reinstated'
-                                  #  - email is sent with summary
-                                  #     - EVENT 'charge.dispute.closed' on status 'charge_refunded', 'warning_closed', 'won' or 'lost'
-                                  #Inquiries/retrievals:
-                                  #  - DISPUTE early stage where money was not taken from STRIPE_ACCOUNT yet
-                                  #  - only done by American Express and Discover, not Mastercard nor Visa
-                                  #  - should handle like a normal DISPUTE
-                                  #  - status 'warning_needs_response', 'warning_under_review' and 'warning_closed'
+DISPUTE ==>                       #When a CUSTOMER questions our CHARGE. Also called "chargebacks".
                                   #Possible causes:
                                   #  - they did not authorize it (e.g. done with a stolen card)
                                   #  - they did not receive the product/service
                                   #  - wrong billing (e.g. transaction sent twice to bank)
                                   #  - technical (e.g. expired authorization)
-                                  #Using 3D secure makes us less liable to disputes.
                                   #Should prefer using the Dashboard instead of API for this.
+                                  #Cannot create a REFUND on a disputed CHARGE.
                                   #If dispute rate is over 0.75% per CHARGE:
                                   #  - Stripe (and competitors) might cancel account
                                   #  - Credit card companies might charge higher dispute fees
+
+DISPUTE LIFECYCLE ==>             #Created by Stripe on CUSTOMER's request
+                                  #  - EVENT 'charge.dispute.created'
+                                  #  - status 'needs_response'
+                                  #Money is taken from STRIPE_ACCOUNT:
+                                  #  - CHARGE is provisionally refunded
+                                  #  - 15 USD fee
+                                  #  - EVENT 'charge.dispute.funds_withdrawn'
+                                  #Should either:
+                                  #  - submit DISPUTE.evidence
+                                  #     - usually banks only allow one submission.
+                                  #     - status 'under_review'
+                                  #     - should still submit even if customer withdrew dispute
+                                  #     - often takes around 10 weeks to get answer.
+                                  #  - "accept" a DISPUTE
+                                  #     - i.e. no submission
+                                  #Either:
+                                  #  - status 'lost'
+                                  #  - status 'won'
+                                  #     - both CHARGE refund and fee are reversed if bank resolves in favor
+                                  #       (which happens only 20-40% of times)
+                                  #        - fee is actually charged by credit card company, but reversed by Stripe
+                                  #        - EVENT 'charge.dispute.funds_reinstated'
+                                  #Email is sent with summary
+                                  #  - EVENT 'charge.dispute.closed'
+
+INQUIRIES/RETRIEVALS ==>          #  - DISPUTE early stage where money was not taken from STRIPE_ACCOUNT yet
+                                  #  - only done by American Express and Discover, not Mastercard nor Visa
+                                  #  - should handle like a normal DISPUTE
+                                  #  - status 'warning_needs_response', 'warning_under_review' and either 'warning_closed' or 'charge_refunded'
+                                  #     - equivalent of 'needs_response', 'under_review', 'won' or 'lost'
+
+WITHDRAWAL ==>                    #Should always talk to customer, and try to fix the problem and make them withdraw the dispute.
+                                  #If customer wants to withdraw, should consider approving dispute and charging them again instead
+                                  #  - like this, faster process (no need to wait 10 weeks to settle the dispute)
+
+AVOIDING DISPUTES ==>             #Billing:
+                                  #  - using 3D secure makes us less liable to disputes.
+                                  #  - provide a good CHARGE.statement_descriptor
+                                  #  - clear refund policy
+                                  #  - clear cancellation policy
+                                  #  - send receipts
+                                  #  - should always collect: name, email, card CVC, full billing address (including ZIP), shipping address (if different)
+                                  #Shipping:
+                                  #  - choose delivery service that requires signature on delivery
+                                  #  - ship to the exact same address provided by customer
+                                  #  - be fast to ship, and communicate delays
+                                  #  - save shipping labels
+                                  #  - protective packaging
+
+GET /disputes[/ID]
+POST /disputes/ID                 #
+POST /disputes/ID/close           #Change DISPUTE.status from 'needs_response' to 'lost'
+STRIPE.disputes.
+ retrieve|list|update|close()     #
 DISPUTE.charge                    #CHARGE.id
 DISPUTE.amount                    #PMONEY. Disputed amount.
                                   #Usually CHARGE.amount, but could be slightly different because of:
@@ -679,27 +699,37 @@ DISPUTE.amount                    #PMONEY. Disputed amount.
                                   #  - only part of charge is disputed
                                   #  - CHARGE was transmitted to bank several times (or similar)
 DISPUTE.balance_transactions      #BALANCE_TRANSACTION_ARR of money taken (and potentially eventually reversed) from STRIPE_ACCOUNT.
-DISPUTE.is_charge_refundable      #boolean If true, it is still possible to refund the disputed payment.
-                                  #Once the payment has been fully refunded, no further funds will be withdrawn from your Stripe account as a result of this dispute.
 DISPUTE.status                    #STR among:
                                   #  - '[warning_]needs_response'
                                   #  - '[warning_]under_review'
-                                  #  - 'warning_closed', 'won', 'lost' or 'charge_refunded'
+                                  #  - 'won', 'lost', 'warning_closed' or 'charge_refunded'
+DISPUTE.is_charge_refundable      #BOOL. True if inquiry/retrieval and can still refund.
 DISPUTE.reason                    #STR given by customer among:
+                                  #  - credit_not_processed:
+                                  #     - product/service was returned/canceled, but not refund was done
+                                  #     - should show that refund was done, or that not eligible for refund
+                                  #  - subscription_canceled:
+                                  #     - same for subscription
+                                  #  - duplicate:
+                                  #     - charged multiple times for same product/service
+                                  #     - should show that each charge was for different product/service
+                                  #  - fraudulent:
+                                  #     - did not authorize (e.g. card stolen)
+                                  #     - should show customer was the real customer (e.g. IP address, shipping)
+                                  #  - product_not_received
+                                  #     - product/service was never received
+                                  #     - should show product was shipped, or that service was used
+                                  #  - product_unacceptable
+                                  #     - product defective or not as described
+                                  #     - should show product delivered as described at time of purchase
+                                  #  - unrecognized: does not recognize payment on bank statement
+                                  #  - general: others
                                   #  - bank_cannot_process
                                   #  - check_returned
-                                  #  - credit_not_processed
                                   #  - customer_initiated
                                   #  - debit_not_authorized
-                                  #  - duplicate
-                                  #  - fraudulent
-                                  #  - general
                                   #  - incorrect_account_details
                                   #  - insufficient_funds
-                                  #  - product_not_received
-                                  #  - product_unacceptable
-                                  #  - subscription_canceled
-                                  #  - unrecognized
 DISPUTE.submit                  RU#BOOL (def: true). Whether to submit DISPUTE.evidence to the bank.
 DISPUTE.evidence_details          #EVIDENCE_DETAILS. Submission information.
 EVIDENCE_DETAILS.submission_count #NUM of submissions.
@@ -708,7 +738,7 @@ EVIDENCE_DETAILS.due_by           #DATE_NUM. Deadline to submit. Usually 1-3 wee
                                   #null if bank does not allow submitting evidences at all.
 EVIDENCE_DETAILS.past_due         #BOOL. True if evidence submission happened after EVIDENCE_DETAILS.due_by.
 DISPUTE.evidence                 U#EVIDENCE. Evidence to solve dispute in our favor.
-                                  #Best practices:
+                                  #Best practices for evidences:
                                   #  - self-contained, i.e. no dynamic content nor external links.
                                   #     - include screenshots instead
                                   #  - contain all possible information, but not more.
@@ -722,11 +752,6 @@ DISPUTE.evidence                 U#EVIDENCE. Evidence to solve dispute in our fa
                                   #     - >=12 point font size
                                   #     - no colors highlighting
                                   #     - A4 portrait
-                                  #Best shipping practices:
-                                  #  - choose delivery service that requires signature on delivery
-                                  #  - ship to the exact same address provided by customer
-                                  #Best billing practices:
-                                  #  - provide a good CHARGE.statement_descriptor
 EVIDENCE.customer_name            #STR
 EVIDENCE.customer_email_address   #'EMAIL'
 EVIDENCE.customer_purchase_ip     #'IP'
