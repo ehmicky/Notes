@@ -5,76 +5,64 @@
 
 
 
-ALTERNATIVES ==>              #MULTER is simpler, but MULTIPARTY:
-                              #  - allow multipart/form-data without filename
-                              #  - don't want to pollute tmpDir
-                              #  - want to see hash
-                              #  - streams
+ALTERNATIVES ==>              #  - multiparty
+                              #  - multer
 
 VERSION ==>                   #4.2.1
-                              #"multipart/form-data|related" body parsing
 
-FILES                         #{ VAR: FILE_ARR }
-FILE                          #Part with filename
-                              #STR[_ARR] (ARR if several with same filename)
-
-FIELDS                        #{ VAR: FIELD_ARR }
-FIELD                         #Part without filename
-                              #OBJ_ARR:
-                              #  - fieldName VAR
-                              #  - originalFilename STR: in request body
-                              #  - path PATH: in uploadDir
-                              #  - headers OBJ:
-                              #     - content-disposition STR
-                              #     - content-type STR
-                              #  - ws OSTREAM
-                              #  - size NUM
-                              #  - hash STR: only if OBJ.hash "sha1|md5" (in MULTIPARTY.Form() OBJ)
+GOAL ==>                      #"multipart/form-data|related" body parsing
+                              #Can use Content-Transfer-Encoding: "binary|base64"
 
 new MULTIPARTY.Form([OPTS])   #OPTS:
                               #  - encoding STR (def: 'utf8'): of the input
-                              #  - maxFieldsSize NUM (def: 2MB): max size of each FIELD (emits error event otherwise)
-                              #  - maxFields NUM (def: 1000): max numbers of keys in each FIELD (emits error)
-                              #  - maxFilesSize NUM (def: Infinity): max size of each FILE (emits error)
+                              #  - maxFields NUM (def: 1000): max numbers of FIELD|FILEs
+                              #  - maxFieldsSize NUM (def: 2MB): max size of all FIELDs together
+                              #  - maxFilesSize NUM (def: Infinity): max size of all FILEs together
+                              #  - autoFields|autoFiles BOOL:
+                              #     - if false, fires FORM.on('part') instead of FORM.on('file|field')
+                              #     - def: true if using FORM.parse() FUNC or FORM.on('file|field')
                               #  - uploadDir (def: OS.tmpDir())
-                              #  - autoFields|autoFiles BOOL
-                              #     - def: true if FORM.on('file|field') called, or if FUNC() used with FORM.parse()
-FORM                          #Is an OSTREAM
-FORM.parse(REQ                #Parse REQ body as multipart/form-data.
-[, FUNC(ERROR, FIELD, FILE)]) #If FUNC():
-                              #  - called on FORM.on('error|close')
-                              #  - will populate uploadDir (should clean it at some point)
-FORM.on("part", FUNC(ISTREAM))#Emitted when receiving a FILE|FIELD member. ISTREAM also has:
-                              #  - resume(): must be eventually called
-                              #  - filename STR: only if FIELD
-                              #  - name STR
-                              #  - headers OBJ: content-disposition, content-type
+FORM.parse(REQ                #FUNC() is called on FORM.on('error|close')
+[, FUNC(ERROR, FIELDS,FILES)])#FIELDS is { NAME: 'FIELD'_ARR }
+                              #FILES is { NAME: FILE_ARR }
+
+FORM.on                       #When parsing a part with filename. FILE:
+ ('file', FUNC("NAME", FILE)) #  - fieldName "NAME" (from Content-Disposition: ...; name="NAME")
+                              #  - originalFilename "FILENAME" (from Content-Disposition: ...; filename="FILENAME")
+                              #  - headers OBJ: names are lowercased
+                              #  - path "DIR/RANDOM_ID.EXT"
+                              #     - where file is persisted (not cleaned up except on error)
+                              #     - EXT is from "FILENAME"
+                              #     - DIR is OPTs.uploadDir
+                              #  - size NUM
+FORM.on('field',
+ FUNC("NAME", 'FIELD'))       #When parsing a part without filename.
+FORM.on('part', FUNC(ISTREAM))#When parsing a part and OPTS.autoFields|Fields false
+                              #ISTREAM has also:
+                              #  - name "NAME", filename, headers: like above
                               #  - byteOffset|Count NUM
-FORM.on
- ("file", FUNC(NAME, FILE))   #Emitted when receiving a FILE member.
-FORM.on
- ("field", FUNC(NAME, FIELD)) #Emitted when receiving a FIELD member.
-FORM.on("progress",
- FUNC(FORM.bytesReceived,
- FORM.bytesExpected))         #
-FORM.on("close", FUNC())      #
-FORM.on("error", FUNC(ERROR)) #Also sets FORM.error ERROR
-                              #Cleanup files that were created.
+                              #Should call ISTREAM.resume() after handling
+
+FORM.on("close", FUNC())      #End without error.
+FORM.on("error", FUNC(ERROR)) #End with error.
+                              #Also sets FORM.error ERROR
                               #Use HTTP-ERRORS (see its doc):
                               #  - 400: parsing ended unexpectedly
                               #  - 400: wrong request payload syntax
                               #  - 400: missing ;boundary in 'multipart/form-data|related;boundary'
+                              #  - 413: above OPTS.maxFields|maxFieldsSize|maxFilesSize
                               #  - 415: missing Content-Type [C]
                               #  - 415: Content-Type [C] not 'multipart/form-data|related[;...]'
                               #Any 'error' event on REQ is forwarded to FORM.
-FORM.on("aborted", FUNC())    #REQ was aborted
+FORM.on("aborted", FUNC())    #REQ was aborted.
+                              #Also emits FUNC.on('error')
 
-FORM.bytesReceived            #Currently parsed amount of bytes
+FORM.on("progress",
+ FUNC(FORM.bytesReceived,
+ FORM.bytesExpected))         #
 FORM.bytesExpected            #Total amount of bytes, using Content-Length [C]
                               #0 if Transfer-Encoding [C]
                               #null if neither
-FORM.totalFieldSize           #NUM
-FORM.totalFieldCount          #NUM
-FORM.totalFileSize            #NUM
-
-partHeaders OBJ (names are lowercased)
+FORM.bytesReceived            #Currently parsed amount of bytes
+FORM.totalField|FileSize      #Currently parsed amounf of bytes, by type
+FORM.totalFieldCount          #NUM of FIELD|FILEs
