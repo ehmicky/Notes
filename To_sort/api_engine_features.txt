@@ -200,71 +200,6 @@ Pagination:
         - only first and last cursor are calculated. The others simply append an offset to the first cursor.
            - it is not as isolation-safe, but is much faster and only meant for Relay.js
 
-Orphans:
-  - maybe keep dead links dangling???
-     - but either:
-        - silently filter them on find
-        - also remove them (in a separate thread|promise) on find
-     - what if validation fails???
-        - request fails???
-        - model is deleted???
-  - is it worth the performance penalty and the validation constraints???
-     - although delete probably do want to remove dead links anyway???
-     - removing dead links when being populated???
-     - removing dead links in a separate promise, e.g. not affecting current query???
-  - validation:
-     - attribute targeting another model have limited validation:
-        - the reason: they might be deleted|modified when the model they target is deleted, and that model deletion
-          should not have to care about it, but in the same time we don't want invalid models
-        - forbidden: required, minItems, dependencies, contains, custom validation, being part of
-          $data cross-attributes validation
-     - maybe instead:
-        - if model being invalid after attribute removal, delete the model altogether???
-  - find dead links and remove dead links:
-     - should bypass authorization and pagination (using args.internal true)
-     - actions should have no args.select, so they are not in output
-     - make sure it does not impact "topLevel" action logic, since that logic might imply there is only one topLevel action
-     - do not merge their "results" with other "results", to avoid authorization issue
-     - after action performed (i.e. after db query for "remove dead links", and after 404 validation for "find dead links"),
-       response.data should be [] to avoid extra computation
-  - find dead links:
-     - for create|patch|upsert actions
-     - find all ids+modelName of attributes that:
-        - have attr.target !== undefined
-        - are defined in args.data
-        - are a "leaf", e.g. in args.data { childA, childB: { ... } }, childA, not childB (since it will be created,
-          it cannot be a dead link)
-        - are not one of the models already being written, i.e. the id of one the models in:
-           - (create|upsert) args.data
-           - (patch) currentData results
-     - timing:
-        - create: run|started just before currentData middleware
-        - patch|upsert:
-           - run|started just after currentData middleware
-           - only args.data that are being modified, i.e. defined in args.data and different from currentData results
-        - create|patch|upsert: await the promise only just before write actions start, i.e. can be run in parallel
-          of all middleware until then
-     - goal: firing 404 if dead link
-  - remove dead links:
-     - for delete actions
-     - silently skipped if target model's database adapter if does not have features "filter:eq|in|some"
-     - timing:
-        - run|started just after currentData middleware
-        - await it, i.e. mergePatchData middleware must not start until this is done
-     - first search for source models with dead links:
-        - do find actions with args.filter { attr: { in: ids } } (isArray false) or { attr: { some: { in: ids } } }
-          (isArray true) where ids are the models being deleted, on the models that might target them
-        - group by source model type:
-           - e.g. if two different model types have same parent model type but different parent model attribute,
-             just use args.filter OBJ_ARR alternative
-        - merge per source model attribute:
-           - e.g. if two models have same parent model attribute, merge their ids in "in", removing duplicates
-        - add args.filter { id: { neq: ids } } to exclude models already being deleted, i.e. already present in delete actions
-          results
-     - then create patch actions to remove dead links
-        - do not fire those patch actions, only stack them up at the end, and resolveWriteAction will take care of them
-     - should bypass 404, just in case the model got deleted in-between
-
 Aggregation:
   - args.group:
      - in findMany commands
@@ -338,53 +273,6 @@ Aggregation:
      - database feature "aggregate:group"
      - args.aggregate can be empty, if want to obtain a result similar to SQL "distinct"
 
-Compatibility layer:
-  - reporting deprecation
-  - breaking changes:
-     - notify when schema change introduces breaking change (e.g. graphql.js provides that)
-  - think about how to version schema file
-  - autoversioning:
-     - might be related to breaking changes feature
-  - migrations helpers
-     - when changing schema constraints, should migrate data so they conform to new constraints
-     - when adding default|value, should migrate data, otherwise when doing patch with empty data,
-       or find followed by upsert, both should be idempotent, but default|value would actually be applied
-  - should it generate redirects when name has changed?
-  - feature flags
-
-Versioning/changes:
-  - can probably link together versioning, changes and undelete features
-  - versioning:
-     - on any model modification
-     - should allow restoring
-        - including undeleting:
-           - use query parameter "show_deleted" and model attribute "deleted"
-     - should allow searching
-     - maybe, instead of introducing new goals/commands, use special attributes to search or modify
-  - listening for changes:
-     - should emit change events, but not know how they are used, i.e. not know the subscriber side
-        - alternative is to emit events on ApiServer eventemitter for local consumption.
-          Less decoupling, but easier to implement and consume.
-          Might even be able to do both, e.g. add a module that translate local events into remote events.
-     - should allow listeners to catch up if they missed some events because of network problems
-     - should allow listeners to target specific: model, attribute, value, condition on value (e.g. value < 5),
-       request context, request user, etc.
-       Does not mean emitter perform those checks, but that it allows them to be performed
-     - make it easy to integrate with SaaS integrations, e.g. "use this service to send an email"
-        - standardize/simplify the interface to make it easy to create integrations
-  - separate from rest:
-     - done after the request was handed back to client, i.e. no impact on performance
-     - done in different database
-        - could be single table with streams of changes
-  - can problably use standard diff format, e.g. JSON patch or JSON merge patch.
-    Could also store models in full
-  - can limit max number of versioned models by time or by absolute number or a combination
-     - need to make sure change listeners can still get all events without model being removed from their reach
-  - maybe use HTTP memento
-  - maybe use semantic links, e.g. Link: <URI>; rel="alternate|canonical|latest-version|working-copy|predecessor-version|
-    successor-version|version-history" [S]
-  - must version schema file format itself, and also apiEngine itself
-
 Static assets:
   - take inspiration from existing ones, probably reusing one
   - take inspiration from Express sendFile()
@@ -441,6 +329,118 @@ inputValidation middleware:
      - gives 4** client-side errors, while dataValidation middleware gives 5** server-side errors
      - input only (like dataValidation middleware)
      - should try to memoize|reuse per request (to avoid memory leaks) between inputValidation and dataValidation middlewars
+
+Orphans:
+  - maybe keep dead links dangling???
+     - but either:
+        - silently filter them on find
+        - also remove them (in a separate thread|promise) on find
+     - what if validation fails???
+        - request fails???
+        - model is deleted???
+  - is it worth the performance penalty and the validation constraints???
+     - although delete probably do want to remove dead links anyway???
+     - removing dead links when being populated???
+     - removing dead links in a separate promise, e.g. not affecting current query???
+  - validation:
+     - attribute targeting another model have limited validation:
+        - the reason: they might be deleted|modified when the model they target is deleted, and that model deletion
+          should not have to care about it, but in the same time we don't want invalid models
+        - forbidden: required, minItems, dependencies, contains, custom validation, being part of
+          $data cross-attributes validation
+     - maybe instead:
+        - if model being invalid after attribute removal, delete the model altogether???
+  - find dead links and remove dead links:
+     - should bypass authorization and pagination (using args.internal true)
+     - actions should have no args.select, so they are not in output
+     - make sure it does not impact "topLevel" action logic, since that logic might imply there is only one topLevel action
+     - do not merge their "results" with other "results", to avoid authorization issue
+     - after action performed (i.e. after db query for "remove dead links", and after 404 validation for "find dead links"),
+       response.data should be [] to avoid extra computation
+  - find dead links:
+     - for create|patch|upsert actions
+     - find all ids+modelName of attributes that:
+        - have attr.target !== undefined
+        - are defined in args.data
+        - are a "leaf", e.g. in args.data { childA, childB: { ... } }, childA, not childB (since it will be created,
+          it cannot be a dead link)
+        - are not one of the models already being written, i.e. the id of one the models in:
+           - (create|upsert) args.data
+           - (patch) currentData results
+     - timing:
+        - create: run|started just before currentData middleware
+        - patch|upsert:
+           - run|started just after currentData middleware
+           - only args.data that are being modified, i.e. defined in args.data and different from currentData results
+        - create|patch|upsert: await the promise only just before write actions start, i.e. can be run in parallel
+          of all middleware until then
+     - goal: firing 404 if dead link
+  - remove dead links:
+     - for delete actions
+     - silently skipped if target model's database adapter if does not have features "filter:eq|in|some"
+     - timing:
+        - run|started just after currentData middleware
+        - await it, i.e. mergePatchData middleware must not start until this is done
+     - first search for source models with dead links:
+        - do find actions with args.filter { attr: { in: ids } } (isArray false) or { attr: { some: { in: ids } } }
+          (isArray true) where ids are the models being deleted, on the models that might target them
+        - group by source model type:
+           - e.g. if two different model types have same parent model type but different parent model attribute,
+             just use args.filter OBJ_ARR alternative
+        - merge per source model attribute:
+           - e.g. if two models have same parent model attribute, merge their ids in "in", removing duplicates
+        - add args.filter { id: { neq: ids } } to exclude models already being deleted, i.e. already present in delete actions
+          results
+     - then create patch actions to remove dead links
+        - do not fire those patch actions, only stack them up at the end, and resolveWriteAction will take care of them
+     - should bypass 404, just in case the model got deleted in-between
+
+Compatibility layer:
+  - reporting deprecation
+  - breaking changes:
+     - notify when schema change introduces breaking change (e.g. graphql.js provides that)
+  - think about how to version schema file
+  - autoversioning:
+     - might be related to breaking changes feature
+  - migrations helpers
+     - when changing schema constraints, should migrate data so they conform to new constraints
+     - when adding default|value, should migrate data, otherwise when doing patch with empty data,
+       or find followed by upsert, both should be idempotent, but default|value would actually be applied
+  - should it generate redirects when name has changed?
+  - feature flags
+
+Versioning/changes:
+  - can probably link together versioning, changes and undelete features
+  - versioning:
+     - on any model modification
+     - should allow restoring
+        - including undeleting:
+           - use query parameter "show_deleted" and model attribute "deleted"
+     - should allow searching
+     - maybe, instead of introducing new goals/commands, use special attributes to search or modify
+  - listening for changes:
+     - should emit change events, but not know how they are used, i.e. not know the subscriber side
+        - alternative is to emit events on ApiServer eventemitter for local consumption.
+          Less decoupling, but easier to implement and consume.
+          Might even be able to do both, e.g. add a module that translate local events into remote events.
+     - should allow listeners to catch up if they missed some events because of network problems
+     - should allow listeners to target specific: model, attribute, value, condition on value (e.g. value < 5),
+       request context, request user, etc.
+       Does not mean emitter perform those checks, but that it allows them to be performed
+     - make it easy to integrate with SaaS integrations, e.g. "use this service to send an email"
+        - standardize/simplify the interface to make it easy to create integrations
+  - separate from rest:
+     - done after the request was handed back to client, i.e. no impact on performance
+     - done in different database
+        - could be single table with streams of changes
+  - can problably use standard diff format, e.g. JSON patch or JSON merge patch.
+    Could also store models in full
+  - can limit max number of versioned models by time or by absolute number or a combination
+     - need to make sure change listeners can still get all events without model being removed from their reach
+  - maybe use HTTP memento
+  - maybe use semantic links, e.g. Link: <URI>; rel="alternate|canonical|latest-version|working-copy|predecessor-version|
+    successor-version|version-history" [S]
+  - must version schema file format itself, and also apiEngine itself
 
 Schema strictness/polymorphism:
   - think about additional properties (not specified in schema), and whether to allow them in input, and in output:
@@ -1075,18 +1075,23 @@ Positioning:
 
  25  MUST HAVE FEATURES
  1   File formats
+
  0.5 Sibling filtering
  2   Patch operators
  2   Pagination
- 2   Orphans
+
  4   Aggregation
-?7   Compatibility layer
-?7   Versioning/changes
- 4   Static assets
+
  1   Exception handling
  1   Error reporting
  0.5 JSON schema $data
  1   inputValidation
+
+ 4   Static assets
+
+ 2   Orphans
+?7   Compatibility layer
+?7   Versioning/changes
 
  10  DATA MODEL
 ?5   Schema strictness/polymorphism
