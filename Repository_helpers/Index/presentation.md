@@ -17,6 +17,12 @@ This covers:
   - _[Automating](Non_functional_requirements/Maintainability/Operability/Automation)_: [build automation](Non_functional_requirements/Maintainability/Operability/Automation/Build_automation), [continuous integration](Non_functional_requirements/Maintainability/Operability/Automation/Continuous_integration)
   - _Others_: [analytics](Functional_requirements/Analytics), [realtime](Functional_requirements/Realtime)
 
+# Size #
+
+_Number of files_: NUMBER_OF_FILES
+_Number of lines_: NUMBER_OF_LINES
+_Number of pages (if it was a printed book)_: NUMBER_OF_PAGES
+
 # Structure #
 
 The directory structure reflects how I [design](Theory) systems:
