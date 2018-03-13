@@ -4,8 +4,6 @@
           
 
 
-To check: 426, HTTP/2 "how long"
-
 To finish:
   - write RFCs number here
   - HTTP-related RFCs
@@ -22,8 +20,7 @@ HTTP-related RFCs:
      - MIME text/plain: 3676, 5147
      - MIME charset: 2231, 5987, 6657
   - URI: https://daniel.haxx.se/blog/2016/05/11/my-url-isnt-your-url/?utm_source=webopsweekly&utm_medium=email, WHATWG URL spec
-  - HTTP/1.*: 1945, 7231
-  - Compression, chunked encoding: 7230
+  - HTTP/1.1: 7231
   - Accept-Datetime [C]: 7089, http://timetravel.mementoweb.org/
 
 Architecture:
@@ -100,6 +97,7 @@ Architecture:
         - HTTP/2: 
            - until GOAWAY frame
            - timeout not mandatory nor forbidden
+           - can check if connection not broken with PING frames
         - HTTP/1.*: 
            - until Connection: close [C|S]
            - until timeout:
@@ -222,7 +220,9 @@ Limits (HTTP/2):
      - can be for a stream, or whole connection (if stream ID is 0)
 
 PING frame (HTTP/2):
-  - used to calculate round-trip time
+  - use cases:
+     - calculating round-trip time
+     - check connection to endpoint is not broken
   - contains 8 bytes of arbitrary data
   - have priority over other frame types
   - must respond with another PING frame with flag ACK
@@ -275,15 +275,16 @@ Format extensions:
 
 Switching protocols:
   - starting a session in HTTP then continuing in another protocol
+  - allowed in HTTP/1.1 (e.g. to upgrade to HTTP/2), but not in HTTP/2
   - how:
      - client: 
-        - Upgrade: PROTOCOL[/VERSION],... [C]
+        - Upgrade: PROTOCOL[/VERSION],... [C]: requested ones
         - Connection: Upgrade [C]
      - server:
-        - Upgrade: PROTOCOL[/VERSION],... [S]
+        - 101 (Switching Protocols)
+        - Upgrade: PROTOCOL[/VERSION],... [S]: picked ones
         - Connection: Upgrade [S]
-        - success: 101 (Switching Protocols)
-        - failure: 426 (Upgrade Required)
+        - 426 (Upgrade Required) if missing Upgrade [C]
 
 Method:
   - concepts:
@@ -353,7 +354,9 @@ Method:
      - goal is to overcome proxies HTTP methods restrictions
 
 Headers:
-  - name is case insensitive
+  - case:
+     - name: case insensitive. Capitalized often used
+     - value: depends on header, but many define it as case insensitive when value is token
   - order is not significant
   - no duplicates, except Set-Cookie [S]. Should use commas for multiple header values
   - should use (...) for comments inside values
@@ -394,7 +397,7 @@ Status codes:
      - 403 (Forbidden)                        authorization problem (and location not secret)                         See web authentication
      - 404 (Not Found)                        wrong URL, but correct domain (or auth problem with secret location)    See wrong request|response
      - 405 (Method not allowed)               HTTP method not implemented or not allowed                              See HTTP methods
-     - 406 (Not Acceptable)                   wrong requested media type or ALGO (compression, delta encoding)        See Accept-* [C], delta encoding, compression
+     - 406 (Not Acceptable)                   wrong requested media type or encoding (compression, delta encoding)    See Accept-* [C], delta encoding, compression
      - 407 (Proxy authentication required)    like 401 but for application proxy                                      See web authentication
      - 408 (Request Timeout)                  as opposed to response timeout                                          See request|response speed
      - 409 (Conflict)                         multi-client conflict                                                   See PATCH
@@ -408,7 +411,6 @@ Status codes:
      - 417 (Expectation failed)               wrong Expect [C]                                                        See Expect [C]
      - 419 (Authentication timeout)           like 401 but for authentication timeout                                 See web authentication
      - 421 (Misredirected request)            request picked wrong server                                             See alternative services
-     - 422 (Unprocessable Entity)             payload has correct syntax and media type, but wrong instructions       See wrong request|response
      - 426 (Upgrade Required)                 switch protocol denied                                                  See Upgrade [C]
      - 428 (Precondition required)            must use If-* [C]                                                       See conditional caching
      - 429 (Too many requests)                throttle. May include Retry-After [S]                                   See load
@@ -555,7 +557,7 @@ Content transformation:
   - content can be:
      - resource: highest-level
      - variant
-     - instance: a variant inside a request/response payload
+     - instance/representation: a variant inside a request/response payload
      - entity: an instance after content-encoding, then transfer-encoding
 
 Content:
@@ -614,7 +616,8 @@ Content negotiation:
               - should use:
                  - Content-Location: URI [S]
                  - Content-Type: MIME_TYPE[; charset=CHARSET] [S]
-                 - Content-language: LANGUAGE [S]
+                    - def: either application/octet-stream of content sniffing
+                 - Content-Language: LANGUAGE,... [S]
               - 406 (Not Acceptable): wrong Accept-* [C]
            - list[, re-choose]: 
               - provides client only with possible variants:
@@ -1201,25 +1204,32 @@ Response processing:
 Wrong request|response:
   - request:
      - syntax:
-        - HTTP method: see 405
+        - HTTP method: 405 (see HTTP methods)
         - URL
-           - size: see 414
+           - size: 414 (see request|response length)
            - 404 (Not Found): wrong and never was right 
            - 410 (Gone): wrong but used to be right 
         - headers:
-           - size: see 431
+           - size: 431 (see request|response length)
+           - missing headers:
+              - 411 (Length Required): Content-Length [C]
+              - 426 (Upgrade Required): Upgrade [C]
+              - 428 (Precondition Required): If-* [C]
         - body:
-           - size: see 413
-           - 422 (Unprocessable Entity): correct syntax and media type, but wrong instructions
+           - size: 413 (see request|response length)
+           - 406 (Not Acceptable): wrong media type or encoding (See content negotiation, delta encoding, compression)
         - any:
            - 400 (Bad request): syntax error
-     - other:
-        - 402 (Payment required): financial reason
-        - 451 (Unavailable for Legal Reasons):
-           - censorship, copyright, privacy. 
-           - can include Link [S] with rel="blocked-by"
+     - semantic:
+         - 409 (Conflict): multi-client conflict (see PATCH)
+     - authentication: 401|407, 403, 419, 511 (see web authentication)
+     - financial: 402 (Payment required)
+     - legal: 451 (Unavailable for Legal Reasons):
+        - censorship, copyright, privacy. 
+        - can include Link [S] with rel="blocked-by"
   - response:
-     - 500 (Internal server error)
+     - syntax: 500 (Internal server error)
+     - not implemented: 501, 510 (see extensions), 505 (see architecture/versions)
 
 Proxies:
   - types:
@@ -1447,7 +1457,7 @@ Compression:
            - best compression. Same decompression speed as DEFLATE but slower at compressing.
            - browser support: Firefox, Chrome
      - server: 
-        - Content-encoding: COMPRESSION_ALGO [S]: which one picked
+        - Content-Encoding: COMPRESSION_ALGO,... [S]: which one picked
            - can also use Transfer-Encoding: COMPRESSION_ALGO [S]: more proper but less support, and forbidden by HTTP/2
         - Accept-Encoding: COMPRESSION_ALGO,... [S]: which one could have been possible
         - 406 (Not accepted): none could be picked
