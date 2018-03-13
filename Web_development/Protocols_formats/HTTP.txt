@@ -8,6 +8,22 @@
   - URI scheme
   - architecture
   - session
+  - syntax (HTTP/1.*)
+  - syntax (HTTP/2)
+  - server push stream (HTTP/2)
+  - error codes (HTTP/2)
+  - limits (HTTP/2)
+  - PING frame (HTTP/2)
+  - stream prioritization (HTTP/2)
+  - charset
+  - extensions
+  - switching protocols
+  - HTTP methods: GET, HEAD, OPTIONS, TRACE, PUT, DELETE, POST, PATCH, CONNECT
+  - headers syntax
+  - status codes
+  - redirects: client-side, server-side, alternative services
+  - timestamp
+  - browser HTTP requests
 
 To finish:
   - HTTP-related RFCs
@@ -63,6 +79,8 @@ Goal:
      - semantics (HTTP methods, status codes, etc.) represent any kind of resource
      - no assumption on resource type|format|purpose
   - but oriented towards document-like resources
+  - client-server
+  - stateless
 
 Version:
   - current: 2. 
@@ -149,7 +167,23 @@ Session:
         - until NUM requests: Keep-Alive: max=NUM [S]
      - HTTP/1.0: requires Connection: Keep-Alive [C|S] to remain open
 
-Format (HTTP/2):
+Syntax (HTTP/1.*):
+  - newline is CRLF
+  - request:
+      METHOD URI HTTP/1.*
+      HEADER: VAL
+      ...
+
+      [BODY]
+  - response:
+      HTTP/1.* STATUS_NUM STATUS_STR
+      [HEADER: VAL
+      ...]
+
+      [BODY]
+  - Host [C] is mandatory
+
+Syntax (HTTP/2):
   - stream: one request+response, or server push:
      - several ordered frames connected by stream ID
      - is what makes multiplexing possible
@@ -199,18 +233,6 @@ Format (HTTP/2):
            - last frame should have flag END_HEADERS
      - response:
         - same but HEADERS must contain instead pseudo-header :status UINT [S]
-  - server push stream:
-     - enabled by SETTINGS_ENABLE_PUSH (0x2) (def: true)
-     - initiated by server, in reaction to client request
-     - server: PUSH_PROMISE frame:
-        - contains HEADERS frame information that client would send if it was to request this stream
-        - the original request cannot contain request body
-        - the pushed request must be cacheable, e.g. use safe method
-     - client:
-        - RST_STREAM frame to cancel request, e.g. if cached
-        - server reacts to RST_STREAM but does not wait for client to send next frames
-     - server: 
-        - HEADERS, DATA: like normal response
   - end:
      - END_STREAM flag:
         - normal stream end
@@ -224,6 +246,19 @@ Format (HTTP/2):
         - contains last stream ID that will be processed
         - can contain arbitrary debug info
         - should respond with another GOAWAY
+
+Server push stream (HTTP/2):
+  - enabled by SETTINGS_ENABLE_PUSH (0x2) (def: true)
+  - initiated by server, in reaction to client request
+  - server: PUSH_PROMISE frame:
+     - contains HEADERS frame information that client would send if it was to request this stream
+     - the original request cannot contain request body
+     - the pushed request must be cacheable, e.g. use safe method
+  - client:
+     - RST_STREAM frame to cancel request, e.g. if cached
+     - server reacts to RST_STREAM but does not wait for client to send next frames
+  - server: 
+     - HEADERS, DATA: like normal response
 
 Error codes (HTTP/2):
   - types:
@@ -278,22 +313,6 @@ Stream prioritization (HTTP/2):
      - Parent stream ID field (def: 0, i.e. none): current stream must only start once stream ID is done
      - Exclusive field: make siblings become children of current stream
 
-Format (HTTP/1.*):
-  - newline is CRLF
-  - request:
-      METHOD URI HTTP/1.*
-      HEADER: VAL
-      ...
-
-      [BODY]
-  - response:
-      HTTP/1.* STATUS_NUM STATUS_STR
-      [HEADER: VAL
-      ...]
-
-      [BODY]
-  - Host [C] is mandatory
-
 Charset: 
   - ASCII
   - headers:
@@ -304,8 +323,13 @@ Charset:
         - in values only
         - \" or \( or \) to escape delimiters inside
   - escaping of body depends on MIME type
+  - case:
+     - HTTP methods: uppercase
+     - headers:
+        - name: case insensitive. Capitalized often used
+        - value: depends on header, but many define it as case insensitive when value is token
 
-Format extensions:
+Extensions:
   - new headers
   - HTTP/2:
      - new frame type
@@ -348,7 +372,6 @@ Method:
      - idempotency:
         - resource state afterwards is always same if called again (with same parameters)
         - mean client can repeat|retry request without risk
-  - uppercase
   - types:
      - safe:
         - GET:
@@ -434,10 +457,7 @@ Method:
      - request should be interpreted as if HTTP METHOD had been used
      - goal is to overcome proxies HTTP methods restrictions
 
-Headers:
-  - case:
-     - name: case insensitive. Capitalized often used
-     - value: depends on header, but many define it as case insensitive when value is token
+Headers syntax:
   - order is not significant
   - no duplicates, except Set-Cookie [S]. Should use commas for multiple header values
   - should use (...) for comments inside values
@@ -447,6 +467,9 @@ Headers:
      - common HEADER or HEADER: VAL have predefined numbers
      - each endpoint caches HEADER: VAL in a dynamic table
   - :HEADER are called pseudo-headers: same as headers but with extra restrictions on when can be used (HTTP/2)
+  - <meta http-equiv="HEADER" content="VAL">:
+     - add HTTP header client-side
+     - only ones that are crossbrowser: refresh, Content-Security-Policy
 
 Status codes:
   - WebDAV-only: 102, 207, 208, 422, 423, 424, 507, 508
@@ -509,12 +532,8 @@ Status codes:
      - 510 (Not Extended)                     HTTP extension not implemented                                          See extensions
      - 511 (Network Authentication Required)  like 401 but for network proxy, containing link where to authenticate   See web authentication
 
-<meta http-equiv="HEADER" content="VAL">:
-  - add HTTP header client-side
-  - only ones that are crossbrowser: refresh, Content-Security-Policy
-
 Redirects:
-  - common redirect:
+  - client-side:
      - status code is 3**:
         - general cases:
            - use GET (even if HTTP method was not GET, but should ask first)
@@ -536,6 +555,11 @@ Redirects:
         - Refresh: NUM[, url=URI] [S]: in future, same URI or not. Can be used as <meta http-equiv>
      - 5+ redirects is considered infinite loop
      - keep #HASH
+  - server-side:
+     - Content-Location: URL [S]:
+        - notifies client of URL, so it can be used for caching, or future requests
+        - status code is not 3**
+        - similar to alternative services, but for single URL and less features
   - alternative service:
      - like redirects but:
         - for an ORIGIN not URI
@@ -574,22 +598,14 @@ Redirects:
               - checked when creating new connections, i.e. does not terminate current ones
            - persist=1:
               - if not present, should invalidate cache on server network configuration change
-  - server-side redirects:
-     - Content-Location: URL [S]:
-        - notifies client of URL, so it can be used for caching, or future requests
-        - status code is not 3**
-        - similar to alternative services, but for single URL and less features
   - Retry-After: NUM|DATE [S]: client should request same URI again in the future
-  - open redirect: see webs security doc
 
-Time:
+Timestamp:
   - DATE: 
      - e.g. Sun 01 Nov 1900 12:00:00 GMT
      - should be UTC
      - case-sensitive
   - Date: DATE [C|S]: when request|response body was generated (i.e. just before request|response sent)
-  - X-Response-Time: NUM [S]: time taken by server to process answer
-  - Accept-Datetime [C]: ask for past|present versions
 
 Browser HTTP requests:
   - by changing current URL:
@@ -600,21 +616,6 @@ Browser HTTP requests:
      - programatically:
         - WINDOW.location|history
   - XHR.send(), FETCH
-
-Query strings:
-  - use URI?VAR=VAL&...: 
-     - instead of request body 
-     - like 'application/x-www-form-urlencoded' but:
-        - %20 instead of +
-        - nesting support: Express REQ.query
-  - advantages:
-     - recommended way to send request body with GET|HEAD
-     - easier to set non-programatically (e.g. by typing URI)
-     - stateful URI, e.g. for bookmarks
-  - disadvantages:
-     - non-separation of concern between resource location and request body
-     - longer URI
-     - SEO
 
 Software identity:
   - all come with fingerprint and|or privacy concern
@@ -1299,6 +1300,7 @@ Request|response speed:
      - Prefer: wait=NUM [C]
         - should not wait more than NUM seconds to process async
         - can be combined with Prefer: respond-async [C]
+     - X-Response-Time: NUM [S]: time taken by server to process answer
 
 Load:
   - errors:
@@ -1701,7 +1703,7 @@ MIME TYPES ==>                                  #For { VAR: VAL, ... }:
                                                 #  - "text/plain": 
 																								#     - VAR=VAL, newline-separated
 																								#  - "application/x-www-form-urlencoded" (def): 
-																								#     - VAR=VAL, &-separated, percent-encoded, but space converted to + instead of %20
+																								#     - VAR=VAL, &-separated, URI-encoded, but space converted to + instead of %20
                                                 #     - for nesting, can use VAR[VAR2]=VAL, but must be supported by server (e.g. Express BODY-PARSER)
 																								#  - "multipart/form-data; boundary=STR": 
 																								#         STR	
