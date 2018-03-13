@@ -72,13 +72,11 @@ TAP                               #Is also a TEST except:
 new Test(...)
 
 TEST                              #Is an ISTREAM, piped to their parent
+                                  #TAP is piped to stdout
 
-TEST.test(['TEST_TITLE', ][TOPTS, ][FUNC(TEST2)])->PROMISE_TEST
-                                  #Def 'TEST_TITLE': FUNC.name, or ''
+TEST.test(['TEST_TITLE', ][TOPTS,]#Define a test
+ [FUNC(TEST2)])->PROMISE_TEST     #Def 'TEST_TITLE': FUNC.name, or ''
                                   #If no FUNC: like TOPTS.todo true
-                                  #Exceptions in FUNC or rejected PROMISE make test fail???
-                                  #  - what's the TAP output???
-                                  #  - does that mean other assertion libraries can be used???
 TEST.end()                        #Automatically done when test's FUNC() return a PROMISE
 TEST.plan(NUM[, 'COMMENT'])       #Automatically calls TEST.end() after NUM assertions
                                   #Make test fail if wrong assertions count
@@ -86,9 +84,10 @@ TEST|TOPTS.autoend                #BOOL. Automatically call TEST.end() on next m
                                   #Def: false except on TAP when TAP.tearDown() is defined
 TEST.endAll()                     #Call TEST.end() on all children then itself
 
-mocha.describe|context(...)       #Same as TEST.test(...) except using FUNC()???
-mocha.it(...)                     #Same as TEST.test(...) except using FUNC([FUNC2])???
-mocha.before|after(...)           #beforeAll|afterAll()
+mocha.describe|context(...)       #Same as TEST.test(...) except using FUNC() (TEST is not available)
+mocha.it(...)                     #Same as TEST.test(...) except using FUNC([FUNC2]) with TEST as `this`
+mocha.before|after(...)           #
+mocha.beforeEach|afterEach(...)   #
 mochaGlobals()                    #Assign mocha.* to global.*
 
 --timeout|t NUM
@@ -104,27 +103,27 @@ TEST.bailout(['COMMENT'])         #Stops all tests
 
 TEST.tearDown(FUNC())             #Called after TEST.end()
 TEST.beforeEach|afterEach         #Called before|after each child
- (FUNC([FUNC2]))                  #Async: FUNC2([ERROR]) or return PROMISE
+ (FUNC([FUNC2]))                  #Must be async: FUNC2([ERROR]) or return PROMISE
 
 TOPTS.buffered                    #BOOL (def: TOPS.jobs > 1): whether TAP child is buffered or not (see TAP format doc)
-ENVVAR TAP_BUFFER=0|1             #If not buffered, child will be output before its parent
-                                  #Must be true if TOP.jobs > 1
-
---jobs|j NUM                      #Are executed out of order, but are buffered so they remain in order in the output
-TEST|TOPTS.jobs NUM               #CPU parallelism or I/O parallelism???
-                                  #With CLI, if an empty file named 'test-parallel-[not-]ok' exists, use it to enable|disable
-                                  #parallelism on all sibling files recursively
-                                  #Only for test children, but not descendants???
---jobs-auto|J                     #Same as --jobs NUMBER_OF_CPUS ???
+ENVVAR TAP_BUFFER=0|1             #Must be true if TOP.jobs > 1
 
 TEST RUN ==>                      #Test functions are run as they are defined (i.e. synchronously)
+                                  #Tests are performed serially, i.e. each test wait for previous one to end.
 
-new Spawn(...) ???
+--jobs|j NUM                      #I/O parallelism:
+TEST|TOPTS.jobs NUM               #  - run test children in parallel, with maximum NUM tests running at once
+                                  #CPU parallelism:
+                                  #  - run test files in parallel, in different processes, with maximum NUM processes at once
+                                  #  - if an empty file named 'test-parallel-[not-]ok' exists, use it to enable|disable
+                                  #    parallelism on all sibling files recursively
+                                  #Tests are executed out of order, but are buffered so they remain in order in the output
+--jobs-auto|J                     #Same as --jobs NUMBER_OF_CPUS
+
 TEST.spawn(..., 'TEST_TITLE')     #Uses CHILD_PROCESS.spawn(...) as TAP input for this TEST
  ->PROMISE_TEST                   #Can specify TOPTS.* in spawn() OPTS
 
-new Stdin(...) ???
-TEST.stdin()->PROMISE_TEST        #Use stdin as TAP input for this TEST
+TEST.stdin()->PROMISE_TEST        #Use stdin as TAP input for this TEST, with 'ASSERT_TITLE' '/dev/stdin'
 
 TEST.todo(...)
 TOPTS|AOPTS.todo BOOL             #Pending test
@@ -132,41 +131,68 @@ TOPTS|AOPTS.todo BOOL             #Pending test
 TEST.skip(...)
 TOPTS|AOPTS.skip BOOL             #Skipped test
 
---grep|g REGEXP                   #Only include tests with matching title
-TEST|TOPTS.grep REGEXP_ARR        #Other tests are marked as skipped in TAP output:
-ENVVAR TAP_GREP 'REGEXP\n...'     #  - directive # SKIP filter: /REGEXP/ after the test
-                                  #  - comment # skip: NUM at end of the parent
+--grep|g REGEXP
+TEST|TOPTS.grep REGEXP_ARR
+ENVVAR TAP_GREP 'REGEXP\n...'     #Only include tests with matching title
 
 --invert|i
 ENVVAR TAP_GREP_INVERT 1|0        #Inverts --grep
 
-TEST|TOPS.runOnly BOOL            #Must be set for the following to work
-                                  #Not recursive
+TEST|TOPS.runOnly BOOL            #Def: false. For children, not recursively.
+                                  #See TEST.only()
 --only|O
 TAP_ONLY 1|0                      #Same as setting TAP.runOnly BOOL
 TEST.only(...)                    #Only run that test
-TEST|TOPTS.only BOOL              #Use directive # SKIP filter: only and comment # skip: NUM like --grep
+TEST|TOPTS.only BOOL              #Noop if direct parent TEST.runOnly false
 
 TEST.comment(STR)                 #TAP comment
 
 TEST.pragma({ VAR: BOOL, ... })   #TAP pragma
                                   #Including pragma strict (see TAP-PARSER doc)
 
-TAP OUTPUT ==>                    #  - TAP version 13
-                                  #  - DIRECTIVEs: TODO|SKIP
+TAP OUTPUT ==>                    #  (beginning)
+                                  #  - TAP version 13
+                                  #  (each assertion)
                                   #  - '- ' prepended to all 'ASSERT_TITLE'
-                                  #  - TEST.test(): assertion with children
-                                  #     - use # Subtest: TEST_TITLE
+                                  #  - child assertions:
+                                  #     - either:
+                                  #        - buffered
+                                  #        - not buffered:
+                                  #           - use # Subtest: PARENT_TEST_TITLE
                                   #  - plan 1..NUM [# COMMENT]
-                                  #  - Bail out!
+                                  #     - at beginning if TEST.plan(), automatically added at end otherwise
+                                  #  - YAML error properties:
+                                  #     - at|stack STR
+                                  #     - source STR
+                                  #     - found|wanted|doNotWant|pattern|error|type VAL
+                                  #     - compare '===|!=='
+                                  #  - DIRECTIVE # time=NUMms, providing it has children
+                                  #  (TEST.only|skip(), grep)
+                                  #  - directive # SKIP filter: /REGEXP/ (or only)
+                                  #  - comment # skip: NUM at end of parent
+                                  #  (TEST.todo())
+                                  #  - directive # TODO
+                                  #  (TEST.comment())
+                                  #  - # COMMENT
+                                  #  (TEST.bailout())
+                                  #  - Bail out! [COMMENT]
+                                  #  (TEST.pragma())
+                                  #  - pragma
+                                  #  (end)
+                                  #  - comment # time=NUMms
 
-DURATION ==>                      #Added as a DIRECTIVE # time=NUMms to each assertion that has children
-                                  #Added as a comment # time=NUMms at end of each test
+DURATION ==>                      #Tests each|total duration added to TAP output (see TAP format doc for details)
 
 TAP'S YAML ERROR PROPERTIES ==>   #  - at STR, stack STR: using (new Error).stack
                                   #  - source STR: source line of code
-                                  #  - found|wanted VAL|VAL2 (expected|actual): with all but TEST.pass|fail|threw()
-TOPTS|AOPTS.diagnostic BOLL
+                                  #  - found VAL: with TEST.equal|notEqual|strictSame|strictNotSame|same|notSame|error|match|notMatch|type|snapshot()
+                                  #  - wanted VAL2: with TEST.equal|strictSame|same|type|snapshot()
+                                  #  - doNotWant VAL2: with TEST.notEqual|strictNotSame|notSame()
+                                  #  - pattern VAL2: with TEST.match|notMatch()
+                                  #  - error ERROR: with TEST.doesNotThrow()
+                                  #  - type ERROR_TYPE: with TEST.doesNotReject
+                                  #  - compare STR: '===' for TEST.equal|type|snapshot(), '!==' for TEST.notEqual()
+TOPTS|AOPTS.diagnostic BOOL
 ENVVAR TAP_DIAG=0|1               #Set YAML error properties even if assertion passes
 
 EXCEPTIONS ==>                    #Assertions only report: they do not throw (i.e. control flow continues)
@@ -181,10 +207,13 @@ TEST.*                            #Can be passed for all assertion functions
  (...[, 'ASSERT_TITLE'][, AOPTS]) #Def 'ASSERT_TITLE':
                                   #  - TEST.pass|fail|skip(): '(unnamed test)'
                                   #  - TEST.threw|error(): ERROR.message
+                                  #  - TEST.throws|doesNotThrow|rejects|resolve*(): FUNC.name
+                                  #  - custom assertion: none
                                   #  - others: 'should|expect ...'
 
 TEST.pass()                       #
 TEST.fail()                       #
+
 TEST.threw(ERROR)                 #Like TEST.fail() but using information from ERROR:
                                   #  - 'ASSERT_TITLE': ERROR.message
                                   #  - stack|at|source: ERROR.stack
@@ -226,7 +255,6 @@ TEST.match(STR, STR2)             #STR.includes(STR2)
 
 
 TEST.throws(FUNC[, VAL])          #FUNC() throws, and TEST.match(ERROR, VAL)
-                                  #Check detail of this ???
                                   #Aliases: TEST.throw()
 TEST.doesNotThrow(FUNC[, VAL])    #Inverse
                                   #Aliases: TEST.notThrow()
@@ -237,9 +265,10 @@ TEST.resolveMatch
 TEST.resolves(PROMISE[()])        #PROMISE resolved
 TEST.rejects|resolve*()           #Actually create a sub-TEST, i.e. behave like TEST.test()
 
-Test.prototype.addAssert('FUNC', NUM, FUNC(ARGS..., 'ASSERT_TITLE', OBJ)->BOOL)
-                                  #Custom assertion
-                                  #NUM is ARGS length
+Test.prototype.addAssert
+ ('FUNC', NUM,
+ FUNC(ARGS..., 'ASSERT_TITLE',OBJ)#Custom assertion
+ ->BOOL)                          #NUM is ARGS length
 
 
 ./tap-snapshots/FILE-TAP.test.js  #Snapshot files
