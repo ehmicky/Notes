@@ -6,19 +6,20 @@
 
 
 VERSION ==>                       #Spec from 7 Feb 2017
-                                 !#Not in spec, but at least in graphQL.js
+                                 !#Not in spec, but in graphQL.js
 
 SUMMARY ==>                       #This is for the format itself, not implementation
                                   #  - IDL, resource-oriented like REST
                                   #  - properties:
                                   #     - client-oriented (attribute-oriented), good|declarative query language
+                                  #     - read-oriented (as opposed to write)
                                   #     - good support for nested resources
                                   #     - semantics left to implementation, except for generic read|write (Query|Mutation)
                                   #     - geared towards HTTP and JSON
                                   #  - types: String, Int, Float, Boolean, ID, Enum, Object, InputObject, [Array], NonOptional!
                                   #  - definitions:
                                   #     - all types, plus interfaces, unions, custom scalar, custom objects
-                                  #     - top-level METHOD (query|mutation)
+                                  #     - top-level METHOD (query|mutation|subscription)
                                   #     - query can pass arguments to attributes
                                   #  - resolver: 
                                   #     - ATTR(RPARENT, ARGS, CONTEXT)->RATTR
@@ -33,8 +34,8 @@ SUMMARY ==>                       #This is for the format itself, not implementa
                                   #  - introspection: get metaprogramming info, i.e. available types, 
                                   #    type name|description|signature, deprecation status
                                   #  - validation: can be done client|server-side
-                                  #  - implementation-specific: programming language, CONTEXT, protocol (usually HTTP), 
-                                  #    format (usually JSON)
+                                  #  - implementation-specific: programming language, CONTEXT, initial value, default resolver, 
+                                  #    protocol (usually HTTP), format (usually JSON), return value extensions
 
 
                                              /=+===============================+=\ 
@@ -180,6 +181,9 @@ union TYPE = TYPE2 | ...          #Mixed type definition:
                                  
 scalar TYPE                       #New scalar type definition:
                                   #  - must be serializable as string
+                                  #  - must be implemented|defined by server as well
+
+extend type ...                  !#Like type ..., but meant as a mixin to existing type
 
 
                                              /=+===============================+=\ 
@@ -201,7 +205,8 @@ RESOLVER ==>                      #GraphQL from|to backend layer
   }                               #  - i.e. shape of return value and TYPE are the same
 }                                 #  - null is treated same as undefined, i.e. is nothing
                                   #     - TYPE must be nullable
-                                  #  - for top-level attributes, implementation can allow client to provide "initial value"
+                                  #  - for top-level attributes, implementation can allow client to provide "initial|root value"
+                                 !#  - server implementation often provide default resolver, e.g. returning RPARENT.ATTR
                                   #ARGS: the ones passed by query, as OBJ
                                   #CONTEXT:
                                   #  - request-long object, i.e. holding request info
@@ -209,9 +214,10 @@ RESOLVER ==>                      #GraphQL from|to backend layer
 
 RESOLVER ERROR ==>                #Can arise on:
                                   #  - result coercion error
-                                  #  - any general exception|error during ATTR()
+                                  #  - any general exception|error thrown or returned during ATTR()
                                   #Effect:
                                   #  - same as if resolver returned null
+                                  #  - will be appended to return value "errors"
 
 
                                              /=+===============================+=\ 
@@ -249,7 +255,7 @@ RESOLVER ERROR ==>                #Can arise on:
 DOCUMENT ==>                      #Is the file containing 0-n operations|fragments
                                   #  - providing they do not have same names
 
-QUERY ERROR ==>                   #Produces { error ... } return value
+QUERY ERROR ==>                   #Produces { errors ... } return value
 
 
                                              /=+===============================+=\ 
@@ -287,16 +293,19 @@ fragment FRAGMENT on TYPE { ... } #Named fragment
 
 ... @DIRECTIVE(ARG: VAL,...)...   #Same as ... { ... } except:
  { ... }                          #  - possibly change shape of data, implementation-defined
-                                  #Possibly used after:
-                                  #  - METHOD QUERY[(...)]
-                                  #  - ATTR[(...)]
-                                  #  - fragment FRAGMENT on TYPE
-                                  #  - ... [on TYPE]
 
 @include|skip(if: BOOL)           #Spec-defined DIRECTIVE.
                                   #Skips field if false|true
-@deprecated([reason: STR])       !#Used by introspection.
-                                 !#STR can contain Markdown (def: 'No longer supported')
+                                  #Possibly used after:
+                                  #  - ATTR[(...)]
+                                  #  - fragment FRAGMENT on TYPE
+                                  #  - ... [on TYPE]
+@deprecated([reason: STR])       !#STR can contain Markdown (def: 'No longer supported')
+                                 !#Shown in introspection
+                                 !#Only used by graphql.js when parsing with build[AST]Schema() not with normal SCHEMA methods
+                                 !#Possibly used after:
+                                 !#  - ATTR[(...)]
+                                 !#  - ENUM_VAL
 
 
                                              /=+===============================+=\ 
@@ -309,12 +318,18 @@ fragment FRAGMENT on TYPE { ... } #Named fragment
 RETURN RESPONSE ==>               #  - data OBJ
                                   #     - absent if error before operation starts
                                   #     - null if error during operation
-                                  #  - errors OBJ_ARR:
+                                  #  - errors OBJ_ARR (both query errors and resolver errors)
                                   #     - message STR
                                   #     - locations OBJ_ARR (within GraphQL document):
                                   #        - line NUM
                                   #        - column NUM
                                   #     - any custom
+                                 !#     - stack STR
+                                 !#     - originalError ERROR
+                                 !#     - path 'VAR'|NUM_ARR
+                                 !#     - positions NUM_ARR
+                                 !#     - nodes AST_NODE_ARR
+                                 !#     - source SOURCE
                                   #  - extensions OBJ (any custom)
 
 
@@ -335,7 +350,7 @@ __typename                        #'TYPE'
 __schema                          #SCHEMA:
                                   #  - types TYPEINFO_ARR:
                                   #     - all supported types, including scalar and __TYPE
-                                  #  - queryType|mutationType TYPEINFO (top-level types METHOD)
+                                  #  - queryType|mutationType|subscriptionType TYPEINFO (top-level types METHOD)
                                   #  - directives DIRECTIVEINFO_ARR
 
 DIRECTIVEINFO                     #  - name 'DIRECTIVE'
@@ -400,8 +415,7 @@ VALIDATION ==>                    #Since query has explicit typing, can validate
                                              \=+===============================+=/
 
 
-subcription                      !#METHOD ???
-__schema.subscriptionType        !#
+subcription                      !#METHOD ??? Behaves like normal query???
 
 
                                              /=+===============================+=\ 
@@ -409,7 +423,6 @@ __schema.subscriptionType        !#
                                             )==:    IMPLEMENTATION-SPECIFIC    :==(   
                                             \  :_______________________________:  /    
                                              \=+===============================+=/
-
 
 
 PROTOCOL ==>                      #Single endpoint, usually /graphql

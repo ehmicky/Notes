@@ -7,212 +7,63 @@
 
 VERSION ==>                       #0.9.1
                                   #Node.js implementation of GraphQL
-
-GRAPHQL.*                         #Namespaces everything
-
-buildSchema('DEFINITIONS')->SCHEMA
-
-graphql(SCHEMA, 'QUERY'[, RESOLVERS][, CONTEXT][, VARIABLES][, 'OPERATION'])
-                                  #  - RESOLVERS.ATTR(...)->VAL: resolve function
-                                  #  - CONTEXT: request-wide object. Can be anything
-                                  #  - VARIABLES OBJ: list of $VAR
-                                  #  - 'OPERATION': operationName
-
-
-RESOLVE(RPARENT, ARGS, CONTEXT,   #Resolve function. Can be specified|overriden:
- RESINFO)->VAL                    #  - in schema definition
-                                  #  - in query, server-side
-                                  #  - in query, client-side, by some clients
-
-RESINFO                           #OBJ:
-                                  #  - schema, rootValue, variableValues, operation: from graphql() arguments
-                                  #  - fieldName 'ATTR'
-                                  #  - fieldASTs
-                                  #  - returnType OUTPUTTYPE
-                                  #  - parentType TYPE (composite???)
-                                  #  - fragments.FRAGMENT FRAGMENTDEFINITION???
-
-
-
-assertValidName('TYPE'[, BOOL])   #Used internally to check against all names, including 'TYPE', 'ATTR', 'ENUM_VAL', 'DIRECTIVE', 'ARG', etc:
-                                  #  - check regexp /^[_a-zA-Z][_a-zA-Z0-9]*$/
-                                  #  - check does not start with __, unless BOOL true 
-                                  #     - can ignore error with OPTS.isIntrospection true for OBJTYPE|ENUMTYPE
-                                  #  - throws exception if error
+                                  #Does not include web server, performs everything server-side
+                                  #Core:
+                                  #  - performs operation according to spec
+                                  #  - must:
+                                  #     - provide definition as SCHEMA:
+                                  #        - using either:
+                                  #           - JavaScript (e.g. GraphQLInt)
+                                  #           - 'DEFINITIONS' string (can use comments as description, and @deprecated as deprecationReason)
+                                  #           - DOCUMENT_NODE
+                                  #        - can be printed back to 'DEFINITIONS'
+                                  #     - provide 'QUERY' (and VARIABLES, 'OPERATION'), which is lexed and parsed into plain object DOCUMENT_NODE (which includes AST_NODEs)
+                                  #  - resolvers:
+                                  #     - default one returns RPARENT.FIELD[(ARGS, CONTEXT, RESINFO)]
+                                  #     - can provide INITIALVALUE, CONTEXT
+                                  #     - provides fourth argument RESINFO with extra info
+                                  #  - lots of validation:
+                                  #     - including anything that can be done before performing operation
+                                  #     - can perform it manually
+                                  #     - can validate against deprecation
+                                  #  - can check if schema changes introduce breaking changes
 
 
                                              /=+===============================+=\ 
                                             /  :                               :  \  
-                                            )==:            PARSING            :==(   
+                                            )==:           EXECUTION           :==(   
                                             \  :_______________________________:  /    
                                              \=+===============================+=/
 
 
-new Source('QUERY'[, 'FILE'])     #'FILE' is for debugging (def: 'GraphQL')
+graphql(SCHEMA, 'QUERY', ...)     #Same as:
+->PROMISE(OBJ)                    #  DOCUMENT_NODE = parse('QUERY')
+                                  #  validate(SCHEMA, DOCUMENT_NODE)
+                                  #  execute(SCHEMA, DOCUMENT_NODE, ...)
 
-getLocation(SOURCE, NUM)->OBJ     #Returns OBJ: line NUM, column NUM
-                                  #I.e. after taking into account newlines as formatting
+execute(SCHEMA, DOCUMENT_NODE     #Perform query DOCUMENT_NODE, against definitions SCHEMA
+[, INITIALVALUE][, CONTEXT]       #Parameters:
+[, VARIABLES][, 'OPERATION'])     #  - CONTEXT: request-wide object passed to resolvers. Can be anything
+->PROMISE(OBJ)                    #  - VARIABLES OBJ: list of $VAR values
+                                  #  - 'OPERATION': operationName (if query contains several possible)
+                                  #Resolve functions:
+                                  #  - specified in SCHEMA, i.e. in OBJTYPE.FIELD.resolve(...)
+                                  #  - leaves|scalar return values are rendered by TYPE.serialize(VAL)
+                                  #  - def: returns RPARENT.FIELD[(ARGS, CONTEXT, RESINFO)]
+                                  #Can throw GraphQLError if something wrong in query
 
-lex(SOURCE)->FUNC([NUM])->        #Calling FUNC repeatedly returns next AST_TOKEN, or EOF if none
- AST_TOKEN                        #NUM is position to seek (def: next one)
-ASK_TOKEN.kind                    #Among Kind.*:
-                                  #  - SOF|EOF (start|end)
-                                  #  - BANG|DOLLAR|PAREN_L|PAREN_R|COLON|EQUALS|AT|BRACKET_L|BRACKET_R|BRACE_L|BRACE_R|PIPE: ! $ ( ) : = @ [ ] { } |
-                                  #  - SPREAD: ...
-                                  #  - COMMENT: #COMMENT
-                                  #  - NAME: 'ATTR', etc.
-                                  #  - INT|FLOAT|STRING
-ASK_TOKEN.value                   #STR
-ASK_TOKEN.start|end               #Position NUM
-ASK_TOKEN.line|column             #NUM
-ASK_TOKEN.prev|next               #ASK_TOKEN2|null
-
-parse*(SOURCE|'QUERY')            #Parses into AST tree.
- ->AST_DOCUMENT                   #There are also subcommands for each subkind of values, e.g. directives, fragments, etc.
-                                  #Throws SyntaxError if problem
-
-
-
-AST_NODE (any of following *_NODE)
-  kind: CamelCase, e.g. OPERATION_DEFINITION_NODE has kind 'OperationDefinition'
-  location
-    start|end NUM
-    start|endToken AST_TOKEN
-    source SOURCE
-
-NAME_NODE: value STR
-
-TYPE_NODE (any of the following *_TYPE_NODE)
-NAMED_TYPE_NODE: name NAME_NODE
-LIST_TYPE_NODE: type TYPE_NODE
-NON_NULL_TYPE_NODE: type NAMED_TYPE_NODE|LIST_TYPE_NODE
-
-VALUE_NODE (any of the following *_VALUE_NODE or VARIABLE_NODE)
-VARIABLE_NODE: name NAME_NODE
-INT_VALUE_NODE: value STR
-FLOAT_VALUE_NODE: value STR
-STRING_VALUE_NODE: value STR
-BOOLEAN_VALUE_NODE: value BOOL
-NULL_VALUE_NODE (no attributes apart from name)
-ENUM_VALUE_NODE: value STR
-LIST_VALUE_NODE: values VALUE_NODE_ARR
-OBJECT_VALUE_NODE: fields OBJECT_FIELD_NODE_ARR: name NAME_NODE, value VALUE_NODE
-
-ARGUMENT_NODE
-  name NAME_NODE
-  value VALUE_NODE
-
-INPUT_VALUE_DEFINITION_NODE_ARR
-  name NAME_NODE
-  type TYPE_NODE
-  defaultValue VALUE_NODE
-  directives DIRECTIVE_NODE_ARR
-
-DIRECTIVE_NODE
-  name NAME_NODE
-  arguments ARGUMENT_NODE_ARR
-
-DOCUMENT_NODE
-  definitions OBJ_ARR, of either:
-    (OPERATION_DEFINITON_NODE)
-    (FRAGMENT_DEFINITION_NODE)
-    (TYPE_SYSTEM_DEFINITION_NODE), of either
-      (SCHEMA_DEFINITION_NODE)
-      (TYPE_DEFINITION_NODE), of either
-        (SCALAR_TYPE_DEFINITION_NODE)
-        (OBJECT_TYPE_DEFINITION_NODE)
-        (INTERFACE_TYPE_DEFINITION_NODE)
-        (UNION_TYPE_DEFINITION_NODE)
-        (ENUM_TYPE_DEFINITION_NODE)
-        (INPUT_OBJECT_TYPE_DEFINITION_NODE)
-      (TYPE_EXTENSION_DEFINITION_NODE)
-      (DIRECTIVE_DEFINITION_NODE)
-
-OPERATION_DEFINITON_NODE
-  operation 'METHOD'
-  name NAME_NODE
-  variableDefinitions VARIABLE_DEFINITION_NODE_ARR
-    variable VARIABLE_NODE
-    type TYPE_NODE
-    defaultValue VALUE_NODE
-  directives DIRECTIVE_NODE_ARR
-  selectionSet SELECTION_SET_NODE
-    selections SELECTION_NODE_ARR, of either
-    (FIELD_NODE)
-      alias NAME_NODE
-      name NAME_NODE
-      arguments ARGUMENT_NODE_ARR
-      directives DIRECTIVE_NODE_ARR
-      selectionSet SELECTION_SET_NODE
-    (FRAGMENT_SPREAD_NODE)
-      name NAME_NODE
-      directives DIRECTIVE_NODE_ARR
-    (INLINE_FRAGMENT_NODE)
-      typeCondition NAMED_TYPE_NODE
-      directives DIRECTIVE_NODE_ARR
-      selectionSet SELECTION_SET_NODE
-
-FRAGMENT_DEFINITION_NODE
-  name NAME_NODE
-  typeCondition NAMED_TYPE_NODE
-  directives DIRECTIVE_NODE_ARR
-  selectionSet SELECTION_SET_NODE
-
-SCHEMA_DEFINITION_NODE
-  directives DIRECTIVE_NODE_ARR
-  operationTypes OPERATION_TYPE_DEFINITION_NODE_ARR
-    operation: 'METHOD'
-    type NAMED_TYPE_NODE
-
-SCALAR_TYPE_DEFINITION_NODE
-  name NAME_NODE
-  directives DIRECTIVE_NODE_ARR
-
-OBJECT_TYPE_DEFINITION_NODE
-  name NAME_NODE
-  interfaces NAMED_TYPE_NODE_ARR
-  directives DIRECTIVE_NODE_ARR
-  fields FIELD_DEFINITION_NODE_ARR
-    name NAME_NODE
-    arguments INPUT_VALUE_DEFINITION_NODE_ARR
-    type TYPE_NODE
-    directives DIRECTIVE_NODE_ARR
-
-INTERFACE_TYPE_DEFINITION_NODE
-  name NAME_NODE
-  directives DIRECTIVE_NODE_ARR
-  fields FIELD_DEFINITION_NODE_ARR (see above)
-
-UNION_TYPE_DEFINITION_NODE
-  name NAME_NODE
-  directives DIRECTIVE_NODE_ARR
-  types NAMED_TYPE_NODE_ARR
-
-ENUM_TYPE_DEFINITION_NODE
-  name NAME_NODE
-  directives DIRECTIVE_NODE_ARR
-  values ENUM_VALUE_DEFINITION_NODE_ARR
-    name NAME_NODE
-    directives DIRECTIVE_NODE_ARR
-
-INPUT_OBJECT_TYPE_DEFINITION_NODE
-  name NAME_NODE
-  directives DIRECTIVE_NODE_ARR
-  fields INPUT_VALUE_DEFINITION_NODE_ARR
-
-TYPE_EXTENSION_DEFINITION_NODE
-  definition OBJECT_TYPE_DEFINITION_NODE (see above)
-
-DIRECTIVE_DEFINITION_NODE
-  name NAME_NODE
-  arguments INPUT_VALUE_DEFINITION_NODE_ARR
-  locations NAME_NODE_ARR
-
-
-
-visit(AST???, OBJ, KEYMAP)
+RESINFO                           #Extra fourth argument passed to resolve functions.
                                   #OBJ:
-                                  #  - enter|leave(NODE, KEY, PARENT, PATH, ANCESTORS)
+                                  #  - schema SCHEMA
+                                  #  - rootValue INITIALVALUE
+                                  #  - variableValues VARIABLES: after coercion
+                                  #  - operation OPERATION_DEFINITION_NODE: from DOCUMENT_NODE + 'OPERATION'
+                                  #  - fragments.FRAGMENT FRAGMENT_DEFINITION_NODE: from DOCUMENT_NODE
+                                  #  - fieldName 'ATTR'
+                                  #  - fieldNodes FIELD_NODE_ARR (siblings)
+                                  #  - returnType OUTPUTTYPE (field's type)
+                                  #  - parentType COMPOSITETYPE (parent field's type)
+                                  #  - path null or { prev PATH, key NUM|'VAR' }
 
 
                                              /=+===============================+=\ 
@@ -222,27 +73,39 @@ visit(AST???, OBJ, KEYMAP)
                                              \=+===============================+=/
 
 
-TYPES ==>                         #The following members only models graphQL definition format in JavaScript, without adding anything more.
+GOAL ==>                          #The following members only models graphQL definition format in JavaScript (SCHEMA), without adding anything more.
                                   
+
+buildSchema('DEFINITIONS')->SCHEMA#Shortcut.
+buildASTSchema(DOCUMENT_NODE)     #Instead of using new GraphQL*Type(...), let graphql.js create them by parsing 'DEFINITIONS' or DOCUMENT_NODE
+  ->SCHEMA                        #Will also add:
+                                  #  - comments before anything -> description
+                                  #  - @deprecated REASON -> deprecationReason
+                                  #Problem: 
+                                  #  - does not add resolvers
+                                  #  - does not add resolveType(), so cannot use interface|union
+
+
 CATEGORIES ==>                    #  +-----------------+---------------+---------+---------------+-----------+------------+----------+--------------+
-																	#  | NonNullModifier | ArrayModifier | OBJTYPE | INTERFACETYPE | UNIONTYPE | SCALARTYPE | ENUMTYPE | INPUTOBJTYPE |
-																	#  +-------------------------------------------+---------------------------+-----------------------+--------------+
-																	#  |-------------------------------------------| ABSTRACTYPE               | LEAFTYPE              |--------------|
-																	#  +---------------------------------+---------+---------------------------+-----------------------+--------------+
-																	#  | INPUTTYPE-1                     | COMPOSITETYPE                       | INPUTTYPE-2                          |
-																	#  +---------------------------------+-------------------------------------+-----------------------+--------------+
-																	#  |                                   OUTPUTTYPE                                                  |--------------|
-																	#  +---------------------------------+-------------------------------------------------------------+--------------+
-																	#  |---------------------------------| NAMEDTYPE                                                                  |
-																	#  +-----------------+---------------+----------------------------------------------------------------------------+
-																	#  |-----------------| NULLABLETYPE                                                                               |
-																	#  +-----------------+--------------------------------------------------------------------------------------------+
-																	#  | TYPE                                                                                                         |
-																	#  +--------------------------------------------------------------------------------------------------------------+
+                                  #  | NonNullModifier | ArrayModifier | OBJTYPE | INTERFACETYPE | UNIONTYPE | SCALARTYPE | ENUMTYPE | INPUTOBJTYPE |
+                                  #  +-------------------------------------------+---------------------------+-----------------------+--------------+
+                                  #  |-------------------------------------------| ABSTRACTYPE               | LEAFTYPE              |--------------|
+                                  #  +---------------------------------+---------+---------------------------+-----------------------+--------------+
+                                  #  | INPUTTYPE-1                     | COMPOSITETYPE                       | INPUTTYPE-2                          |
+                                  #  +---------------------------------+-------------------------------------+-----------------------+--------------+
+                                  #  |                                   OUTPUTTYPE                                                  |--------------|
+                                  #  +---------------------------------+-------------------------------------------------------------+--------------+
+                                  #  |---------------------------------| NAMEDTYPE                                                                  |
+                                  #  +-----------------+---------------+----------------------------------------------------------------------------+
+                                  #  |-----------------| NULLABLETYPE                                                                               |
+                                  #  +-----------------+--------------------------------------------------------------------------------------------+
+                                  #  | TYPE                                                                                                         |
+                                  #  +--------------------------------------------------------------------------------------------------------------+
 is[Input|Output|Leaf|Composite|
 Abstract|Named]Type(VAL)->BOOL    #
 assert[Input|Output|Leaf|Composite
 |Abstract|Named]Type(VAL)         #Throws exceptions if not
+isEqualType(TYPE, TYPE2)->BOOL    #Recursively
 
 TYPE.name                         #'TYPE'. Provided by TYPE constructor's OPTS.name
                                   #Returned by TYPE.toString(), which also adds potential [] or ! modifiers
@@ -290,11 +153,10 @@ new GraphQLObjectType(OPTS)       #OPTS:
                                   #     - description STR
                                   #     - deprecationReason STR
                                   #  - interfaces[()] INTERFACETYPE_ARR
-                                  #  - isTypeOf(VAL, RESINFO)->BOOL
+                                  #  - isTypeOf(VAL, RESINFO)->[PROMISE_]BOOL: VAL is RESOLVER return value
 
 new GraphQLSchema(OPTS)           #OPTS:
-                                  #  - query|mutation OBJTYPE
-                                  #  - subscription OBJTYPE ???
+                                  #  - query|mutation|subscription OBJTYPE
                                   #  - types NAMEDTYPE_ARR: 
                                   #     - all possible types, used by introspection __schema.types
                                   #     - guessed by default by going through schema
@@ -309,6 +171,7 @@ new GraphQLInterfaceType(OPTS)    #OPTS:
                                   #  - fields: like OBJTYPE
                                   #  - resolveType(VAL, RESINFO)->OBJTYPE
                                   #     - used to determine which child type to pick
+                                  #     - def: call each defined OBJTYPE.isTypeOf()
 
 new GraphQLUnionType(OPTS)        #OPTS:
                                   #  - types OBJTYPE_ARR[()]
@@ -330,3 +193,292 @@ __Schema|__Type|__Directive|
 __Field|__InputValue|__EnumValue|
 __TypeKind|__Directive|           #
 __DirectiveLocation               #OBJTYPE, related to introspection, with default resolvers
+
+
+extendSchema(SCHEMA,DOCUMENT_NODE)#Proper way to add new definitions (DOCUMENT_NODE) to existing SCHEMA
+ ->SCHEMA                         #
+
+
+                                             /=+===============================+=\ 
+                                            /  :                               :  \  
+                                            )==:            LEXING             :==(   
+                                            \  :_______________________________:  /    
+                                             \=+===============================+=/
+
+
+new Source('QUERY'[, 'FILE'])     #'FILE' is for debugging (def: 'GraphQL')
+
+getLocation(SOURCE, NUM)->OBJ     #Returns OBJ: line NUM, column NUM
+                                  #I.e. after taking into account newlines as formatting
+
+
+lex(SOURCE)->LEXER                #Calling LEXER repeatedly returns next AST_TOKEN, or EOF if none
+LEXER([NUM])->AST_TOKEN           #NUM is position to seek (def: next one)
+AST_TOKEN.kind                    #Among Kind.*:
+                                  #  - SOF|EOF (start|end)
+                                  #  - BANG|DOLLAR|PAREN_L|PAREN_R|COLON|EQUALS|AT|BRACKET_L|BRACKET_R|BRACE_L|BRACE_R|PIPE: ! $ ( ) : = @ [ ] { } |
+                                  #  - SPREAD: ...
+                                  #  - COMMENT: #COMMENT
+                                  #  - NAME: 'ATTR', etc.
+                                  #  - INT|FLOAT|STRING
+AST_TOKEN.value                   #STR
+AST_TOKEN.start|end               #Position NUM
+AST_TOKEN.line|column             #NUM
+AST_TOKEN.prev|next               #AST_TOKEN2|null
+
+
+                                             /=+===============================+=\ 
+                                            /  :                               :  \  
+                                            )==:            PARSING            :==(   
+                                            \  :_______________________________:  /    
+                                             \=+===============================+=/
+
+
+GOAL ==>                          #The following members only models graphQL query format in JavaScript, without adding anything more.
+
+
+parse*(LEXER)->*_NODE             #Parse at current LEXER position, advancing it
+                                  #Throws SyntaxError if problem
+parse(STR|SOURCE)->DOCUMENT_NODE  
+parseValue(STR|SOURCE)->VALUE_NODE
+parseType(STR|SOURCE)->TYPE_NODE  #Same (for those types) but internally creates LEXER
+
+getOperationAST
+(DOCUMENT_NODE[, 'OPERATION'])
+ ->OPERATION_DEFINITION_NODE      #
+
+typeFromAST(SCHEMA,TYPE_NOD)->TYPE#
+valueFromAST(SCHEMA, TYPE_NODE
+[, VARIABLES])->VAL               #
+astFromValue(VAL, TYPE)->VALUE_NOD#
+
+
+AST_NODE                          #Any of following *_NODE
+                                  #  - kind: CamelCase, e.g. OPERATION_DEFINITION_NODE has kind 'OperationDefinition'
+                                  #  - loc
+                                  #     - start|end NUM
+                                  #     - start|endToken AST_TOKEN
+                                  #     - source SOURCE
+
+TYPE_NODE                         #Any of the following *_TYPE_NODE
+NAMED_TYPE_NODE                   #  - name NAME_NODE
+LIST_TYPE_NODE                    #  - type TYPE_NODE
+NON_NULL_TYPE_NODE                #  - type NAMED_TYPE_NODE|LIST_TYPE_NODE
+         
+VALUE_NODE                        #Any of the following *_VALUE_NODE or VARIABLE_NODE
+VARIABLE_NODE                     #  - name NAME_NODE
+INT_VALUE_NODE                    #  - value STR
+FLOAT_VALUE_NODE                  #  - value STR
+STRING_VALUE_NODE                 #  - value STR
+BOOLEAN_VALUE_NODE                #  - value BOOL
+NULL_VALUE_NODE                   #No attributes apart from name
+ENUM_VALUE_NODE                   #  - value STR
+LIST_VALUE_NODE                   #  - values VALUE_NODE_ARR
+OBJECT_VALUE_NODE                 #  - fields OBJECT_FIELD_NODE_ARR
+                                  #     - name NAME_NODE
+                                  #     - value VALUE_NODE
+
+NAME_NODE                         #  - value STR
+
+ARGUMENT_NODE                     #  - name NAME_NODE
+                                  #  - value VALUE_NODE
+
+INPUT_VALUE_DEFINITION_NODE_ARR   #  - name NAME_NODE
+                                  #  - type TYPE_NODE
+                                  #  - defaultValue VALUE_NODE
+                                  #  - directives DIRECTIVE_NODE_ARR
+
+DIRECTIVE_NODE                    #  - name NAME_NODE
+                                  #  - arguments ARGUMENT_NODE_ARR
+
+DOCUMENT_NODE                     #  - definitions OBJ_ARR, of either:
+                                  #     (OPERATION_DEFINITON_NODE)
+                                  #     (FRAGMENT_DEFINITION_NODE)
+                                  #     (TYPE_SYSTEM_DEFINITION_NODE), of either
+                                  #        (SCHEMA_DEFINITION_NODE)
+                                  #        (TYPE_DEFINITION_NODE), of either
+                                  #          (SCALAR_TYPE_DEFINITION_NODE)
+                                  #          (OBJECT_TYPE_DEFINITION_NODE)
+                                  #          (INTERFACE_TYPE_DEFINITION_NODE)
+                                  #          (UNION_TYPE_DEFINITION_NODE)
+                                  #          (ENUM_TYPE_DEFINITION_NODE)
+                                  #          (INPUT_OBJECT_TYPE_DEFINITION_NODE)
+                                  #       (TYPE_EXTENSION_DEFINITION_NODE)
+                                  #       (DIRECTIVE_DEFINITION_NODE)
+
+OPERATION_DEFINITON_NODE          #  - operation 'METHOD'
+                                  #  - name NAME_NODE
+                                  #  - variableDefinitions VARIABLE_DEFINITION_NODE_ARR
+                                  #     - variable VARIABLE_NODE
+                                  #     - type TYPE_NODE
+                                  #     - defaultValue VALUE_NODE
+                                  #  - directives DIRECTIVE_NODE_ARR
+                                  #  - selectionSet SELECTION_SET_NODE
+
+SELECTION_SET_NODE                #  - selections SELECTION_NODE_ARR, of either
+                                  #      (FIELD_NODE)
+                                  #      (FRAGMENT_SPREAD_NODE)
+                                  #      (INLINE_FRAGMENT_NODE)
+
+FIELD_NODE                        #  - alias NAME_NODE
+                                  #  - name NAME_NODE
+                                  #  - arguments ARGUMENT_NODE_ARR
+                                  #  - directives DIRECTIVE_NODE_ARR
+                                  #  - selectionSet SELECTION_SET_NODE
+
+FRAGMENT_SPREAD_NODE              #  - name NAME_NODE
+                                  #  - directives DIRECTIVE_NODE_ARR
+
+INLINE_FRAGMENT_NODE              #  - typeCondition NAMED_TYPE_NODE
+                                  #  - directives DIRECTIVE_NODE_ARR
+                                  #  - selectionSet SELECTION_SET_NODE
+
+FRAGMENT_DEFINITION_NODE          #  - name NAME_NODE
+                                  #  - typeCondition NAMED_TYPE_NODE
+                                  #  - directives DIRECTIVE_NODE_ARR
+                                  #  - selectionSet SELECTION_SET_NODE
+
+SCHEMA_DEFINITION_NODE            #  - directives DIRECTIVE_NODE_ARR
+                                  #  - operationTypes OPERATION_TYPE_DEFINITION_NODE_ARR
+                                  #     - operation: 'METHOD'
+                                  #     - type NAMED_TYPE_NODE
+
+SCALAR_TYPE_DEFINITION_NODE       #  - name NAME_NODE
+                                  #  - directives DIRECTIVE_NODE_ARR
+
+OBJECT_TYPE_DEFINITION_NODE       #  - name NAME_NODE
+                                  #  - interfaces NAMED_TYPE_NODE_ARR
+                                  #  - directives DIRECTIVE_NODE_ARR
+                                  #  - fields FIELD_DEFINITION_NODE_ARR
+                                  #     - name NAME_NODE
+                                  #     - arguments INPUT_VALUE_DEFINITION_NODE_ARR
+                                  #     - type TYPE_NODE
+                                  #     - directives DIRECTIVE_NODE_ARR
+
+INTERFACE_TYPE_DEFINITION_NODE    #  - name NAME_NODE
+                                  #  - directives DIRECTIVE_NODE_ARR
+                                  #  - fields FIELD_DEFINITION_NODE_ARR (see above)
+
+UNION_TYPE_DEFINITION_NODE        #  - name NAME_NODE
+                                  #  - directives DIRECTIVE_NODE_ARR
+                                  #  - types NAMED_TYPE_NODE_ARR
+
+ENUM_TYPE_DEFINITION_NODE         #  - name NAME_NODE
+                                  #  - directives DIRECTIVE_NODE_ARR
+                                  #  - values ENUM_VALUE_DEFINITION_NODE_ARR
+                                  #     - name NAME_NODE
+                                  #     - directives DIRECTIVE_NODE_ARR
+
+INPUT_OBJECT_TYPE_DEFINITION_NODE #  - name NAME_NODE
+                                  #  - directives DIRECTIVE_NODE_ARR
+                                  #  - fields INPUT_VALUE_DEFINITION_NODE_ARR
+
+TYPE_EXTENSION_DEFINITION_NODE    #  - definition OBJECT_TYPE_DEFINITION_NODE (see above)
+
+DIRECTIVE_DEFINITION_NODE         #  - name NAME_NODE
+                                  #  - arguments INPUT_VALUE_DEFINITION_NODE_ARR
+                                  #  - locations NAME_NODE_ARR
+
+
+visit(AST_NODE, OPTS[, MAP])      #Iterates over AST_NODE and descendants
+->AST_NODE2                       #OPTS visitor function return values can modify|skip part of the tree, returning new AST_NODE2
+                                  #OPTS:
+                                  #  - enter|leave[.KIND](AST_NODE, KEY, PARENT_AST_NODE, PATH, ANCESTORS_AST_NODE_ARR)
+                                  #     - KIND is NODE.kind (def: any)
+                                  #     - KEY is NUM (if iterating over ARR) or 'VAR' (if iterating over OBJ)
+                                  #     - PATH is KEY_ARR, including ancestors
+                                  #     - enter|leave is when starting|stopping to iterate over the AST_NODE and its descendants
+                                  #     - can return:
+                                  #        - undefined: no action
+                                  #        - VAL: replace node by VAL
+                                  #        - null: erase node
+                                  #        - false: skips visiting current node, but keep what has been output so far
+                                  #        - BREAK: skips visiting every node, but keep what has been output so far
+                                  #  - KIND[.enter|leave](...): same (def: enter)
+                                  #  - can creates OPTS with:
+                                  #     - visitInParallel(OPTS_ARR)->OPTS: apply several
+                                  #     - visitWithTypeInfo(OBJ, OPTS)->OPTS: also fire OBJ.enter|leave(AST_NODE), for debugging
+                                  #KIND is AST_NODE.kind
+                                  #MAP:
+                                  #  - KIND 'ATTR'_ARR: 
+                                  #     - attributes to iterate over, in each AST_NODE
+                                  #     - e.g. for 'Directive', ['name', 'value']
+                                  #     - default one is QueryDocumentKeys. Only need to change if adding custom AST_NODEs
+
+
+                                             /=+===============================+=\ 
+                                            /  :                               :  \  
+                                            )==:        REVERSE PARSING        :==(   
+                                            \  :_______________________________:  /    
+                                             \=+===============================+=/
+
+
+print(AST_NODE)->STR              #Serialize AST_NODE to graphQL query format
+print[Introspection]Schema(SCHEMA)#Serialize SCHEMA into graphQL query format, underlyingly using print(...)
+ ->STR                            #Automaically sorts
+                                  #Includes:
+                                  #  - no "Introspection": not @DIRECTIVE nor builtin scalar types nor introspection types
+                                  #  - "Introspection": only introspection types
+
+
+                                             /=+===============================+=\ 
+                                            /  :                               :  \  
+                                            )==:          VALIDATION           :==(   
+                                            \  :_______________________________:  /    
+                                             \=+===============================+=/
+
+
+validate(SCHEMA, DOCUMENT_NODE)   #Validates query (not against deprecation)
+->GRAPHQLERROR_ARR|null           #Using spec-defined validation rules
+
+findDeprecatedUsages
+(SCHEMA, DOCUMENT_NODE)
+->GRAPHQL_ERROR_ARR               #Validates against deprecation
+
+assertValidName('TYPE'[, BOOL])   #Used internally to check against all names, including 'TYPE', 'ATTR', 'ENUM_VAL', 'DIRECTIVE', 'ARG', etc:
+                                  #  - check regexp /^[_a-zA-Z][_a-zA-Z0-9]*$/
+                                  #  - check does not start with __, unless BOOL true 
+                                  #     - can ignore error with OPTS.isIntrospection true for OBJTYPE|ENUMTYPE
+                                  #  - throws exception if error
+isValidJSValue(VAL, TYPE)->BOOL   #From server to client
+isValidLiteralValue
+(TYPE, VALUE_NODE)->BOOL          #From client to server
+
+
+                                             /=+===============================+=\ 
+                                            /  :                               :  \  
+                                            )==:           MIGRATION           :==(   
+                                            \  :_______________________________:  /    
+                                             \=+===============================+=/
+
+
+findBreakingChanges               #Returns possible breaking changes from one schema to another
+(OLD_SCHEMA, NEW_SCHEMA)->OBJ_ARR #OBJ:
+                                  #  - type STR
+                                  #  - description STR
+                                  #Possible:
+                                  #  - 'TYPE|ARG_REMOVED[_FROM_UNION|ENUM]'
+                                  #  - 'TYPE|FIELD|ARG_CHANGED_KIND'
+findDangerousChanges(...)         #Same but for non-breaking changes but still dangerous:
+                                  #  - 'ARG_DEFAULT_VALUE_CHANGE'
+
+
+                                             /=+===============================+=\ 
+                                            /  :                               :  \  
+                                            )==:            ERRORS             :==(   
+                                            \  :_______________________________:  /    
+                                             \=+===============================+=/
+
+
+GraphQLError                      #Every exception|error is of that type, including the ones below
+                                  #OBJ:
+                                  #  - message STR
+                                  #  - stack STR
+                                  #  - originalError ERROR
+                                  #  - locations OBJ_ARR: line|column
+                                  #  - path 'VAR'|NUM_ARR
+                                  #  - nodes AST_NODE_ARR
+                                  #  - source SOURCE
+                                  #  - positions NUM_ARR
+syntaxError                       #On parsing|lexing
+locatedError                      #During resolvers
