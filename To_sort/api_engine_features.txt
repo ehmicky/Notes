@@ -10,6 +10,7 @@ Authorization:
         - top-level *One
         - nested actions, except with a nested filter (feature we don't have)
      - how:
+        - filter node.isAuthorizeFilter in getSimpleIds() instead of considering that any "and" node is authorization-related
         - if some "modelId" is not present in response:
            - if there was no extra filter applied, i.e. if each args.filter OBJ was only { id: { eq|in } }, throw 404
            - otherwise, query database with args.filter { id: { in "missingIds" } }, using getSimpleFilter()
@@ -19,7 +20,6 @@ Authorization:
      - OBJ[_ARR] is same format as args.filter:
         - leaves values can be schema functions, but are not given $val/$model
         - OBJ keys are either system variables, user variables or "$model.ATTR"
-           - cannot be "$model.id"
      - schema validate this is good format and possible keys.
      - how it is checked:
         - in action layer, after validateStableIds middleware:
@@ -28,21 +28,23 @@ Authorization:
            - if some $model keys, keep them as "authorizeFilter"
         - in currentData midleware, merge authorizeFilter with args.filter, using top-level "and" node
            - must check it does not messes up the "extractSimpleIds" logic
-           - maybe flag autorization nodes with a property on the node, and filter those in getSimpleIds() instead of 
-             considering any "and" node is authorization-related
+           - flag authorizeFilter nodes with node.isAuthorizeFilter true
         - after patchData middleware, check authorizeFilter against args.newData, i.e. for create|replace|patch
      - no more need for args.internal flag that bypasses authorization and pagination, except for orphans
      - requires database features "search"
-  - model.authorize.COMMAND,... VAL:
-     - behaves like model.authorize VAL except action-wise
-     - if any is specified, others default to false
-     - patch action uses both "find" and "replace" permissions, with an "and" node
-        - no "and" node needed if "find,replace" VAL was specified together
-     - model.authorize VAL is normalized (during schema normalization) to { "find,replace,create,delete" VAL }
+  - $action is handled differently:
+     - can only use operators eq|in|neq|nin
+     - "patch":
+        - $action is never === 'patch' (schema validate that), instead:
+           - requires one OBJ for "find" and one OBJ for "replace" (and not or)???
      - remove schema|model.actions
+     - user-document action-wise authorization
   - Fobidden actions:
-     - calculate forbiddenActions at compile-time, using any model.authorize.COMMAND === false, for each model
-        - add "patch" if either "find" or "replace" is included
+     - calculate forbiddenActions at compile-time:
+        - if some model.authorize OBJ do not specify $action, it is []
+        - otherwise any action present in no $action.eq|in
+           - neq|nin are inverted, e.g. neq 'find' -> in [create, ...]
+        - "patch" is included if either "find" or "replace" is
      - at beginning of first authorization middleware, if forbiddenActions.includes(action):
         - throw 405
         - set header X-Api-Engine-Allowed-Actions: find, ... [S] (depending on forbiddenActions)
@@ -76,7 +78,7 @@ Orphans:
      - actions should have no args.select, so they are not in output
      - are those actions topLevel???
   - find dead links:
-     - for create|patch|replace commands
+     - for create|patch|replace actions
      - find all ids+modelName that:
         - have attr.target !== undefined
         - are defined in args.data
@@ -94,13 +96,13 @@ Orphans:
      - goal: firing 404 if dead link
   - remove dead links:
      - middleware fired after currentData middleware, before mergePatchData middleware
-     - on delete commands
+     - on delete actions
      - first search for models with dead links:
-        - do find commands with args.filter { attr: { containsOrIs: ids } } where ids are the models being deleted, on the models that might target them
-           - if the model being deleted contains bidirectional links, can optimize with faster command (i.e. filter directly by id) because the models ids are known
+        - do find actions with args.filter { attr: { containsOrIs: ids } } where ids are the models being deleted, on the models that might target them
+           - if the model being deleted contains bidirectional links, can optimize with faster action (i.e. filter directly by id) because the models ids are known
         - add args.filter { id: { neq: ids } } to exclude models already being deleted, i.e. already present in delete actions
           results
-     - merge the find commands results to results
+     - merge the find actions results to results
      - then create patch actions to remove dead links
         - do not fire those patch actions, only stack them up at the end, and resolveWriteAction will take care of them
   - bidirectional links:
@@ -114,13 +116,13 @@ Orphans:
            - attr.target and attr2.target must be defined and point at each others models
            - attr.reverse "attr2" and attr2.reverse "attr" must be defined and point at each other (using also attr[2].target)
      - middleware:
-        - on create|patch|replace commands
+        - on create|patch|replace actions
         - after currentData middleware, before removeDeadLinks middleware
         - fired for any attribute:
            - with attr.reverse defined
            - and that is being modified, i.e. defined in args.data and different from results
-        - first merges into results some find commands results:
-           - all ids being modified should trigger find commands
+        - first merges into results some find actions results:
+           - all ids being modified should trigger find actions
               - except if already present in results.
                 This should cover all ids being added, since findDeadLinks middleware already searched for them.
         - then create patch actions to modify all the reverse ids
