@@ -14,6 +14,9 @@ TODO:
         - https://stripe.com/docs/recipes
         - https://stripe.com/docs/development/checklist
         - https://stripe.com/docs/stripe-js/reference
+           - https://stripe.com/docs/amex-express-checkout#integrating
+           - https://stripe.com/docs/masterpass#integrating
+           - https://stripe.com/docs/visa-checkout#integrating
         - https://stripe.com/docs/payments/checkout
            - including the Checkout section on https://stripe.com/docs/receipts
         - https://stripe.com/docs/payments/3d-secure
@@ -24,13 +27,15 @@ TODO:
      - it seems like they are used with Stripe.js client library
   - difference Connect custom vs express vs standard
      - including in API it sometimes shows "Custom only" or "Custom and Express only"
-     - including https://stripe.com/docs/disputes#disputes-on-connect-platforms
+     - including:
+        - https://stripe.com/docs/disputes#disputes-on-connect-platforms
+        - https://stripe.com/docs/ach#connect
   - go through all undocumented endpoints, see if they are documented elsewhere
   - pricing
      - including differences based on where the Stripe account was created
   - go through Stripe dashboard
      - including https://stripe.com/docs/receipts#automatically-send-receipts-when-using-billing
-  - compare with other providers like PayPal
+  - compare with other providers like PayPal, authorize.net and Klarna
   - https://stripe.com/works-with
 
 Undocumented:
@@ -544,12 +549,11 @@ CHARGE.balance_transaction        #BALANCE_TRANSACTION.id
 CHARGE.paid                       #BOOL for success
 CHARGE.status                     #First 'pending' then either 'succeeded' or 'failed'.
                                   #EVENTS 'charge.pending|succeeded|failed' fired:
-                                  #  - most SOURCEs are sync:
+                                  #  - 'card' SOURCEs are sync:
                                   #     - response status is never 'pending'
                                   #     - no need to use webhooks
-                                  #  - some SOURCEs are async
+                                  #  - other SOURCEs are async
                                   #     - must use webhooks
-                                  #     - only SOURCE.type 'ach_*', 'sepa_debit' and 'sofort'
 CHARGE.refunds                    #REFUND_LIST
 CHARGE.refunded                   #BOOL. False if only partially refunded.
 CHARGE.amount_refunded            #PMONEY. 0 if none.
@@ -733,8 +737,7 @@ REFUND                            #Reverting a CHARGE.
                                   #  - refund is reversed under 30 days.
                                   #Payment-method specifics:
                                   #  - alipay: within 90 days
-                                  #  - ach_credit_transfer, bancontact, eps, giropay, ideal, multibanco, p24: within 180 days
-                                  #  - sepa_debit: done through DISPUTEs instead
+                                  #  - all others: within 180 days
 REFUND.charge                   *C#CHARGE.id that was refunded.
 ?charge=CHARGE.id                 #
 REFUND.amount                    C#MONEY.
@@ -833,17 +836,27 @@ DISPUTE ==>                       #When a CUSTOMER questions our CHARGE. Also ca
                                   #  - technical (e.g. expired authorization)
                                   #Should prefer using the Dashboard instead of API for this.
                                   #Payment method-specific:
-                                  #  - 'bancontact', 'eps', 'giropay', 'ideal', 'multibanco', 'p24': no DISPUTE possible
+                                  #  - card*: provider-specific and reason-specific, but usually 120 days
+                                  #  - alipay, wechat: only for problem with quality of goods
+                                  #  - 'ach_credit_transfer', 'bancontact', 'eps', 'giropay', 'ideal', 'multibanco', 'p24', 'sofort': no DISPUTE possible
                                   #  - 'sepa_debit':
-                                  #     - before 8 weeks, always won by CUSTOMER
-                                  #     - within 8-13 weeks, only if fraud
+                                  #     - within 13 weeks
+                                  #        - after 8 weeks, only fo authorization/fraud reasons
+                                  #     - includes customer-side issues like account frozen or not enough funds
+                                  #     - fee a little lower (10 USD instead of 15 USD)
+                                  #  - 'ach_debit':
+                                  #     - cannot provide EVIDENCE
+                                  #     - within 60 days
 
 DISPUTE AND REFUNDS ==>           #  - cannot create a REFUND on a disputed CHARGE
                                   #  - cannot create a DISPUTE on a refunded CHARGE
                                   #  - should avoid refunding through a different way than Stripe:
                                   #     - it would allow disputing both the refund and the charge, and losing both
 
-HIGH DISPUTE RATE ==>             #If dispute rate (won or lost) is over 0.75% per CHARGE:
+HIGH DISPUTE RATE ==>             #If for one month, for >5000 USD, either:
+                                  #  - dispute rate (won or lost) >1% per CHARGE count
+                                  #  - dispute rate lost to fraud >8% per CHARGE money, for >10 transactions
+                                  #Then:
                                   #  - Stripe (and competitors) might cancel account
                                   #  - Credit card companies might:
                                   #     - charge higher dispute fees
@@ -1095,6 +1108,7 @@ SOURCE.type 'TYPE'              *C#Specific payment method among:
                                   #  - 'card':
                                   #      - credit card
                                   #      - fast
+                                  #      - can use CARD entity
                                   #  - 'card' with CARD.wallet.type:
                                   #      - digital wallets
                                   #      - put money on it usually with credit card
@@ -1117,6 +1131,15 @@ SOURCE.type 'TYPE'              *C#Specific payment method among:
                                   #         - 'debit': we pull money from customer's account
                                   #            - more automated but more trust to other account
                                   #         - 'credit': customer puts money to our account
+                                  #      - 'debit' requires bank account to verified:
+                                  #         - done either through:
+                                  #            - using another paid tool Plaid: https://stripe.com/docs/ach#using-plaid
+                                  #               - instant
+                                  #            - otherwise, 2 microdeposits are made by Stripe to account
+                                  #               - bank statement is "AMTS:" followed by a secret number
+                                  #               - customer needs to tell us those two numbers
+                                  #               - we then call POST /customers/ID/sources/ID/verify
+                                  #         - can use BANK_ACCOUNT entity
                                   #  - 'sepa_debit':
                                   #     - similar to ACH but for EU
                                   #     - uses IBAN (bank account number)
@@ -1153,14 +1176,16 @@ SOURCE.type 'TYPE'              *C#Specific payment method among:
                                   #     - no possible refunds
                                   #     - high fees
                                   #Availability:
-                                  #  - right away: 'card', 'ach*', 'stripe_account', 'apple_pay', 'google_pay', 'microsoft_pay', 'samsung_pay'
+                                  #  - right away: 'card', 'stripe_account', 'apple_pay', 'google_pay', 'microsoft_pay', 'samsung_pay'
                                   #  - must have processed payments for 30 days: 'sepa_debit'
                                   #  - behind feature toggles in dashboard settings, and agree to additional terms of service:
+                                  #     - 'ach*'
                                   #     - 'visa_checkout', 'masterpass', 'amex_express_checkout'
                                   #     - 'sofort', 'giropay', 'eps', 'ideal', 'bancontact', 'multibanco', 'p24'
                                   #     - 'alipay', 'wechat'
                                   #Country availability:
                                   #  - US (destination): 'ach*'
+                                  #  - Germany|Austria|Netherlands|Belgium|Italy|Spain (customer), US/EU (destination): 'sofort'
                                   #  - Germany (customer), US/EU (destination): 'giropay'
                                   #  - Netherlands (customer), US/EU (destination): 'ideal'
                                   #  - Austria (customer), US/EU (destination): 'eps'
@@ -1195,8 +1220,8 @@ SOURCE.card*.funding              #STR. Card funding type among:
                                   #  - 'credit': money is borrowed
                                   #  - 'prepaid': money has already been prepaid. Does not require bank account.
                                   #  - 'unknown'
-SOURCE.card.                      #Checks performed by the bank.
- checks.CHECK_TYPE_check          #Even when 'failed', bank still sometimes allows payment.
+SOURCE.card.CHECK_TYPE_check      #Checks performed by the bank.
+                                  #Even when 'failed', bank still sometimes allows payment.
                                   #  - however this might indicate fraud, so we should not use this SOURCE
                                   #Can be:
                                   #  - 'unchecked' (pending)
@@ -1210,9 +1235,9 @@ SOURCE.card.                      #Checks performed by the bank.
                                   #     - might not necessarily be an issue, e.g. when making a gift, billing address might differ. Or people might have moved.
                                   #Requires SOURCE.card*.cvc|address_line1|address_postal_code to be provided.
 STRIPE_ACCOUNT.settings.
- card_payments.decline_on       CU#DECLINE_ON. Automatically declines CHARGES when SOURCE.card.checks is 'failed'.
-DECLINE_ON.avs_failure          CU#BOOL. For SOURCE.card.checks.address_*_check
-DECLINE_ON.cvc_failure          CU#BOOL. For SOURCE.card.checks.cvc_check
+ card_payments.decline_on       CU#DECLINE_ON. Automatically declines CHARGES when SOURCE.card.*_check is 'failed'.
+DECLINE_ON.avs_failure          CU#BOOL. For SOURCE.card.address_*_check
+DECLINE_ON.cvc_failure          CU#BOOL. For SOURCE.card.cvc_check
 SOURCE.card.three_d_secure       ?#OBJ:
                                   #  - supported BOOL
 SOURCE.card.wallet               ?#WALLET. Digital wallet.
@@ -1248,10 +1273,11 @@ CARD_RECEIPT.
 SOURC.card_present.generated_card?#CARD.id
 SOURCE.card*|ach_debit|sepa_debit.
  last4                            #STR. Last four digits of the bank account or card number.
-SOURCE.card*|ach_debit|alipay.
- fingerprint                      #STR. Checksum|fingerprint of the bank account or card number.
+SOURCE.card*|ach*|sepa_debit|
+ alipay.fingerprint               #STR. Checksum|fingerprint of the bank account or card number.
 SOURCE.bank_account|card*|
- ach_debit|sofort.country       *C#Bank account or credit card's COUNTRY.
+ ach_debit|sofort|sepa_debit.
+ country                        *C#Bank account or credit card's COUNTRY.
 SOURCE.bank_account.
  account_holder_name           RCU#STR. Name of the owner (person/business).
 SOURCE.bank_account|ach*.
@@ -1273,8 +1299,8 @@ SOURCE.bancontact|sofort|ideal.
 SOURCE.
  bancontact|giropay|sofort|ideal.
  bic                              #STR. Bank Identifier Code.
-SOURCE.bancontact|giropay|sofort.
- bank_code                        #STR. Code of the bank.
+SOURCE.bancontact|giropay|sofort|
+ sepa_debit.bank_code             #STR. Code of the bank.
 SOURCE.multibanco|p24.reference   #STR. Unique reference for this payment.
                                   #For multibanco, should be communicated to user as they will need it to initiate payment.
                                   #For p24, should be communicated to user as they help them finding the payment transaction.
@@ -1283,8 +1309,9 @@ SOURCE.multibanco.entity          #STR. Entity number.
 SOURCE.ideal.bank                C#STR. Bank name among 'abn_amro', 'asn_bank', 'bunq', 'handelsbanken', 'ing', 'knab',
                                   #'moneyou', 'rabobank', 'regiobank', 'sns_bank', 'triodos_bank', 'van_lanschot'.
                                   #If not provided, user is redirected to a page asking for it.
-SOURCE.bancontact.
- preferred_language              C#STR. Customer's preferred language among 'en', 'de', 'fr', 'nl'.
+SOURCE.bancontact|sofort.        C#STR. Customer's preferred language among 'en', 'de', 'fr', 'nl' or (sofort only) 'es', 'it', 'pl'.
+ preferred_language               #Used to redirect user to correct language.
+SOURCE.sepa_debit.sofort         C#Reuse a 'sofort' SOURCE2.id
 SOURCE.sepa_debit.mandate_url     #'URL' to download copy of MANDATE
 SOURCE.sepa_debit.
  mandate_reference                #STR. MANDATE reference to communicate to customer.
@@ -1293,6 +1320,10 @@ SOURCE.alipay.username            #STR.
 SOURCE.alipay.reusable            #BOOL. False if it's one-time payment method.
 SOURCE.alipay.used                #BOOL. True if it's one-time payment method and has been used.
 SOURCE.alipay.payment_amount      #PMONEY if one-time payment.
+SOURCE.wechat.qr_code_url         #QR code as 'URL' with weixin:// protocol, to redirect users to.
+SOURCE.masterpass.cart_id       *C#Unique STR of the current purchase session
+SOURC.masterpass.transaction_id *C#Passed after redirect as query variable ?oauth_verifier
+SOURC.card.visa_checkout.callid *C#Passed by Visa Checkout library as FUNC callback
 
 SOURCE.token                    RC#TOKEN.id. Use TOKEN to populate properties.
 SOURCE.usage                     C#Either:
@@ -1309,18 +1340,21 @@ SOURCE.status                     #STR among:
                                   #  - 'chargeable': can charge SOURCE (EVENT 'source.chargeable')
                                   #  - 'failed': cannot charge SOURCE anymore (EVENT 'source.failed')
                                   #  - 'canceled':
-                                  #      - not used, with SOURCE.usage 'single_use' (EVENT 'source.canceled')
+                                  #      - if SOURCE.usage 'single_use' (EVENT 'source.canceled')
                                   #      - cannot charge SOURCE anymore
-                                  #      - for:
-                                  #         - 'alipay', 'bancontact', 'eps', 'giropay', 'ideal', 'multibanco', 'p24':
-                                  #            - SOURCE.status must be 'chargeable' within 6 hours
-                                  #            - CHARGE must be created then within 1 hour
+                                  #      - done if:
+                                  #         - SOURCE.status takes more than 6 hours to become 'chargeable'
+                                  #         - CHARGE is not created within 1 hour after being 'chargeable'
                                   #  - 'consumed': already charge, with SOURCE.usage 'single_use'
 SOURCE.flow                      C#How the SOURCE is authenticated among:
                                   #  - 'none':
                                   #      - for SOURCE.type:
                                   #         - 'card*' (no 3D secure): nothing required
                                   #         - 'sepa_debit': through a MANDATE
+                                  #         - 'card' with 'amex_express_checkout': SMS code
+                                  #         - 'card' with 'masterpass', 'visa_checkout': redirect
+                                  #         - 'card' with 'apple_pay', 'google_pay', 'microsoft_pay', 'samsung_pay':
+                                  #           either through mobile SDK or using W3C Payment Request API on web
                                   #  - 'redirect':
                                   #      - redirected to payment provider's URL, then payment provider redirects back
                                   #      - for SOURCE.type 'card*' (3D secure), 'ach_debit', 'alipay', 'bancontact', 'eps', 'giropay', 'ideal', 'p24', 'wechat', 'sofort', 'multibanco'
@@ -1331,15 +1365,41 @@ SOURCE.flow                      C#How the SOURCE is authenticated among:
                                   #         - 'ach_credit_transfer'
                                   #         - 'multibanco' (can also use 'redirect instead')
                                   #Can test by using:
-                                  #   - SOURCE.TYPE.iban:
-                                  #      - for 'sepa_debit':
-                                  #         - 'DE89370400440532013000': success CHARGE
-                                  #         - 'DE62370400440532013001': failed CHARGE
-                                  #         - 'DE35370400440532013002': success CHARGE but creates DISPUTE
-                                  #   - SOURCE.owner.email:
-                                  #      - for 'ach_credit_transfer': 'amount_AMOUNT@example.com'
-                                  #      - for 'multibanco': 'ANYTHING+fill_never|now@ANY_DOMAIN' (user never initiate, or does it right away)
+                                  #  - 'sepa_debit':
+                                  #     - SOURCE.TYPE.iban:
+                                  #        - 'DE89370400440532013000': success CHARGE
+                                  #        - 'DE62370400440532013001': failed CHARGE
+                                  #        - 'DE35370400440532013002': success CHARGE but creates DISPUTE
+                                  #  - 'ach_credit_transfer':
+                                  #     - SOURCE.owner.email 'amount_AMOUNT@example.com'
+                                  #  - 'multibanco':
+                                  #     - SOURCE.owner.email 'ANYTHING+fill_never|now@ANY_DOMAIN' (user never initiate, or does it right away)
+                                  #  - 'sofort':
+                                  #     - SOURCE.owner.name: 'succeeding_charge|failing_charge'
+                                  #  - 'ach_debit':
+                                  #     - SOURCE.type.routing_number: 110000000
+                                  #     - SOURCE.type.account_number:
+																	#        - 000123456789: success
+																	#        - 000111111116: failure upon use
+																	#        - 000111111113: account closed
+																	#        - 000222222227: insufficient funds
+																	#        - 000333333335: debit not authorized
+																	#        - 000444444440: invalid currency
+                                  #     - PAYLOAD.amounts (verify endpoint):
+                                  #        - [32, 45]: success
+                                  #        - [any other]: failure
+                                  #  - 'amex_express_checkout':
+                                  #     - username: test_user
+                                  #     - password: password
+                                  #     - access code: 123456
+                                  #  - 'masterpass': https://developer.mastercard.com/page/masterpass-sandbox-testing-guidelines#new-web-experience
+                                  #  - 'visa checkout': https://developer.visa.com/capabilities/visa_checkout/docs#adding_visa_checkout_to_your_web_page
+W3C PAYMENT REQUEST API ==>       #Users save payment information in browser:
+                                  #  - can be synced cross-device
+                                  #Supported by all browsers but IE, Android browser.
+
 SOURCE.redirect                  C#REDIRECT. If SOURCE.flow 'redirect'
+                                  #For 'wechat', uses SOURCE.wechat.qr_code_url instead
 REDIRECT.url                      #'URL' of payment provider to redirect user to.
 REDIRECT.return_url              C#'URL' to redirect after successful authentication.
                                   #Will pass the following query variables:
@@ -1400,7 +1460,6 @@ ACCEPTANCE[_ONLINE].ip         *CU#'IP'
 ACCEPTANCE[_ONLINE].user_agent *CU#'USER_AGENT'
 ACCEPTANCE_OFFLN.contact_email *CU#'EMAIL' to contact us if a copy is requested.
 
-
 SOURCE RENEWAL ==>                #For some countries, Stripe automatically updates SOURCE.* when information is updated (e.g. new card).
                                   #EVENT 'customer.source.updated' is emitted.
                                   #EVENT 'customer.source.expiring' is also emitted.
@@ -1432,7 +1491,7 @@ STRIPE.sources.list|retrieve|
  create|update|deleteSource()     #
 CARD                              #Similar to PAYMENT_METHOD.
 CARD.*                            #Same properties as SOURCE.card
-CARD.*_check                      #Same as CARD.checks.*
+CARD.*_check                      #Same as CARD.*
 CARD.tokenization_method          #Same as WALLET.type
 CARD.dynamic_last4                #Same as WALLET.dynamic_last4
 CARD.account                      #STRIPE_ACCOUNT.id (Connect)
@@ -1447,6 +1506,7 @@ POST /customers/ID/sources[/ID]
 DELETE /customers/ID/sources/ID   #
 POST
  /customers/ID/sources/ID/verify  #Set BANK_ACCOUNT.status to 'verified'
+                                  #PAYLOAD is { amounts NUM_ARR } where NUM_ARR are the two secrets from customers (see above)
 STRIPE.sources.list|retrieve|
  create|update|delete|
  verifySource()                   #
@@ -1456,10 +1516,11 @@ BANK_ACCOUNT.account              #STRIPE_ACCOUNT.id (Connect)
 BANK_ACCOUNT.customer             #CUSTOMER.id (not Connect)
 BANK_ACCOUNT.status               #STR among:
                                   #  - 'new': just created
-                                  #  - 'validated': Stripe validates it exists, or that it does not have enough info to validate.
-                                  #  - 'verified': bank validates it exists
+                                  #  - 'validated': Stripe validates it exists. Next step is to verify.
+                                  #  - 'verified': either Plaid validates it exists, or we manually use POST /customers/ID/sources/ID/verify
                                   #  - 'verification_failed': bank denies it exists. Will not be usable until updated.
                                   #  - 'errored': a previous transfer failed. Will not be usable until updated.
+                                  #EVENT 'customer.source.updated' is emitted when 'verified' or 'verification_failed'
 
 GET /accounts/ID/external_accounts
  /ID
@@ -2387,7 +2448,7 @@ REQUEST_HISTORY.reason            #string One of authorization_controls, card_ac
 AUTHORIZATION.status              #string One of pending, reversed, or closed.
 ?status=STR                       #
 AUTHORIZATION.transactions        #ISSUING_TRANSACTION_ARR
-AUTHORIZATION.verification_data   #Same as SOURCE.card.checks, except values are 'match', 'mismatch' or 'not_provided'
+AUTHORIZATION.verification_data   #Same as SOURCE.card.*_check, except values are 'match', 'mismatch' or 'not_provided'
 AUTHORIZATION.wallet_provider     #string What, if any, digital wallet was used for this authorization. One of apple_pay, google_pay, or samsung_pay.
 
 GET /issuing/disputes[/ID]
