@@ -93,9 +93,6 @@ Nested actions:
      - fix __typename
      
 Waterline ORM:
-  - add a layer just before database action layer, where:
-     - if actionType replace|upsert, replace arg.data.id by arg.filter { id } (for *One)
-       or arg.data[*].id by arg.filter OBJ_ARR { id } (for *Many)
   - add Waterline ORM:
      - parse arg.filter as ORM object (see arg.filter normalization)
      - equality must be deep equality for ARR|OBJ, so people can do { filter: { attr: ARR|OBJ } }
@@ -109,7 +106,7 @@ arg.filter normalization:
      - is to be determined??? But basically MongoDB/Waterline-like, client-friendly
      - is converted to actual Waterline object at the database layer
      - should include "or" (alternatives), e.g. with ARR
-  - think is some dataValidation makes sense for args.filter, e.g. minimum|maximum or type
+  - think if some dataValidation makes sense for args.filter, e.g. minimum|maximum or type
 
 Authorization:
   - IDL functions for idl|model|attr.authorize:
@@ -295,7 +292,7 @@ Error reporting:
   - request timeout error includes very little information (e.g. does not include protocol) because it is fired in
     an early middleware
 
-Data validation:
+JSON schema $data:
   - $data notation is a bit cryptic and prone to error with JSON pointers.
      - should replace to something more user-friendly, where user just need to specify the sibling model's attribute name
      - at the moment, $data is removed before IDL validation, this would need to be changed
@@ -311,24 +308,6 @@ inputValidation middleware:
      - gives 4** client-side errors, while dataValidation middleware gives 5** server-side errors
      - input only (like dataValidation middleware)
      - should try to memoize|reuse per request (to avoid memory leaks) between inputValidation and dataValidation middlewars
-
-Nested models:
-  - rethink nested models: need to think about which value gets overriden when copying refered model,
-    which value does not get overriden, and which value cannot get copied (e.g. description)
-  - nested arrays+objects in IDL definition do not really work
-  - what happens when a recursive action is applied twice to same model?
-     - E.g. top-level action update model.attr to 1, but nested action update same model.attr to 2, i.e. the return value
-       will show two copies of model, but with different value for attr, which is confusing and inconsistent.
-     - also problematic for deletions.
-     - this can also happen when the nested action of a Many action is the same accross invocations,
-       e.g. deletePets() { deleteBestFriend() } where all pets have same bestFriend
-  - nested create|replace|upsert:
-     - if createPet's data.best_friend is missing and (nested) createBestFriend() is specified in query:
-        - fill data.best_friend with dummy values, e.g. "", 0 (depending on type), single or array
-        - do not pass any data.id in createBestFriend()
-        - after createBestFriend(), update parent.best_friend using the response
-           - that update should not be affected by def.actions restrictions
-        - parent.best_friend resolver should wait for parent.createBestFriend resolver to end, and use its value
 
 No orphans:
   - allow no orphans, considering that:
@@ -353,18 +332,7 @@ Data correctness:
   - code makes assumptions about database correctness:
      - e.g. that created_time is defined
      - should list those assumptions
-     - should have a way to check and report database incorrectness
-
-ACID:
-  - Atomicity:
-     - if any supermodel|submodel fails, make whole action fail, and revert previous changes
-  - Isolation:
-     - when writing on several models, do a snapshot so that the return value is consistent. Not sure if worth.
-     - problem on multi-queries actions:
-        - update -> A finds model, then updates it, but B deleted it in-between
-        - upsert -> A finds model, then updates it, but B deleted it in-between.
-          Or A does not find model, then creates it, but B created it in-between
-  - Durabillity
+     - should have a way to check and report database incorrectness
 
 Schema strictness/polymorphism:
   - think about additional properties (not specified in schema), and whether to allow them in input, and in output:
@@ -388,15 +356,6 @@ Schema strictness/polymorphism:
      - in GraphQL, use "interface" maybe
      - add the moment GraphQL fragment "on TYPE" are noop, i.e. always return true whatever TYPE is
 
-Async actions/tasks:
-  - task management (restarting, retrieval, etc.)
-  - Async actions must be well thought as they slow down requests:
-     - there should be jobs reported to users and users should be able to control max wait time.
-     - when this is figured out, think of how async IDL functions would work within that
-        - consider that paramsRef is directly mutated, i.e. might not be thread-safe
-     - try to think if need generic async actions output (e.g. HTTP 202, Prefer: respond-async [C], Prefer: wait=NUM [C])
-  - see REST doc for more info
-
 Upsert command:
   - at the moment there's a fifth command "upsert":
      - the reason is to avoid launching two separate commands "create" and "update":
@@ -409,7 +368,7 @@ Upsert command:
           i.e. $COMMAND idlFunc variable need to be among 4 CRUD commands only
      - possible solution:
         - having a model-wise command, instead of action-wise
-        - since upsert does a first read command, it is possible to know if each model is a "create" or "update"
+        - since we fetch currentData, it is possible to know if each model is a "create" or "update"
 
 API base types:
   - attributes that are objects (or array of objects) but not models:
@@ -432,7 +391,16 @@ API base types:
      - e.g. undefined, function, Infinity|NaN
      - allow custom types
 
-Alrernate ids:
+Async actions/tasks:
+  - task management (restarting, retrieval, etc.)
+  - Async actions must be well thought as they slow down requests:
+     - there should be jobs reported to users and users should be able to control max wait time.
+     - when this is figured out, think of how async IDL functions would work within that
+        - consider that paramsRef is directly mutated, i.e. might not be thread-safe
+     - try to think if need generic async actions output (e.g. HTTP 202, Prefer: respond-async [C], Prefer: wait=NUM [C])
+  - see REST doc for more info
+
+Alternate ids:
   - e.g. a query can either use machine-friendly `id` attribute, or human-friendly `name` attribute
 
 Static file serving:
@@ -451,7 +419,7 @@ Realtime:
   - subscriptions (on-demand or automatic after a query|mutation)
   - maybe something like:
      - create an endpoint to setup connection, where specify if want automatic or on-demand
-     - if on-demand, must then pass extra parameter to operations (via params) or actions (via arguments)
+     - if on-demand, must then pass extra parameter to operations (via arguments)
        to specify want to subscribe
 
 Concurrency conflicts:
@@ -467,6 +435,19 @@ Concurrency conflicts:
         saves it as { oldA: 2, newA: 2 }, then clientA saves it as { oldA: 1, newA: 2 }.
         clientA intents here to chamge variant using "newA", but "oldA" will be used instead
 
+Rate limiting:
+  - should be shared between server instances
+  - maybe at API gateway-level
+  - see HTTP doc for standard headers and status codes
+
+Security:
+  - TLS
+  - CORS
+  - XSS
+  - CSRF
+  - general utilities, like "helmet"
+  - should be protocol-agnostic as much as possible
+
 Protocols:
   - HTTP server events "checkContinue" (for 100-continue [C]), "connect" (for CONNECT), "upgrade" (for Upgrade [C])
   - HTTP/2
@@ -475,9 +456,11 @@ Protocols:
 HTTP details:
   - Add support for 204 status code, with any write goal
 
-HEAD:
-  - add support for HEAD method, different from noOutput settings:
-     - Content-Length should not be 0.
+args.silent:
+  - HEAD should be like GET but should force args.silent true 
+  - args.silent true should instead:
+     - return totally empty content, not even emoty object 
+     - Content-Length should not be 0.
      - it should be at protocol level, just sending the same response headers but no content
 
 Direct database access:
@@ -507,19 +490,6 @@ Database transformation layer:
   - should allow single server to use multiple databases with different technologies (e.g. MongoDB + Redis) too
   - possibility: using variants.ATTR.ATTR2 (instead of variants.ATTR) with ATTR being a nested model
      - in that case, need to think about consequences on $$ IDL function variable
-
-Rate limiting:
-  - should be shared between server instances
-  - maybe at API gateway-level
-  - see HTTP doc for standard headers and status codes
-
-Security:
-  - TLS
-  - CORS
-  - XSS
-  - CSRF
-  - general utilities, like "helmet"
-  - should be protocol-agnostic as much as possible
 
 Custom actions:
   - must be declared in IDL file
@@ -583,26 +553,6 @@ Caching:
   - delta encoding
 
 Optimization:
-  - *Many actions should not spawn one sub-action per result:
-     - e.g. if findModels return 5 models, at the moment, there will be 5 individual findSubModel,
-       but they could be regrouped.
-     - ideally, they should span only one action per sub-action, no matter the size of the returned array
-        - this would imply that one action requested by client === single one action fired by server, even deeply nested
-        - i.e. nesting has linear impact on performance
-        - this also will make performance logging clearer, i.e. less items and less concurrent runs
-     - do this operation-independant.
-     - do this action-wise
-     - see facebook data-loader for inspiration
-     - possible implementation:
-        - middleware just after executeGraphQL (or executeREST), i.e. operation-independant
-        - middleware waits for next macrotask (setTimeout(..., 0))
-        - on next macrotask:
-           - see if other instance of that middleware are waiting too, for the same request and the same fullAction path
-           - if so, run all of them as a single action
-        - this would mean runs of that middleware would need to share a shared state (per request) to communicate with each
-          other:
-           - the middleware that trigger single action could communicate the promise of that action to the others.
-             The others would not trigger anything, just wait for that promise to end, then pick the result they need.
   - size of array returned by *Many actions should not impact too much response time:
      - e.g. at the moment many things (e.g. attr.transform) is run once per model, where it could instead be run once for
        all models
@@ -914,22 +864,21 @@ Positioning:
 ?7   Compatibility layer
 ?7   Versioning/changes
  1   Exception handling
- 0.5 Data validation
- 1   Error reporting
+ 0.5 JSON schema $data 
+ 1   Error reporting
  1   inputValidation
 
- 20  DATA MODEL
-?2   Nested models
-?1   No orphans
+ 10  DATA MODEL
+?1   No orphans
 ?0.5 Data correctness
-?3   ACID
-?7   Schema strictness/polymorphism
+?5   Schema strictness/polymorphism
 ?0.5 Upsert command
 ?3   API base types
 
  15  NICE TO HAVE FEATURES
-?3   Async actions/tasks
- 2   Static file serving
+?3   Async actions/tasks
+?0.5 Alrernate ids 
+ 2   Static file serving
  1   Server routing
 ?4   Realtime
 ?2   Concurrency conflicts
@@ -939,8 +888,8 @@ Positioning:
  10  NOT ESSENTIAL FEATURES
  1   Protocols
  0.5 HTTP details
- 0.5 HEAD
-?1   Direct database access
+ 0.5 args.silent 
+?1   Direct database access
 ?0.5 Database constraints
  1   Model naming
 ?3   Database transformation layer
@@ -951,8 +900,8 @@ Positioning:
 ?1   Callbacks/events
 
  40  SOFTWARE QUALITY
-?6   Caching
-?7   Optimization
+?5   Caching
+?5   Optimization
  1   Streaming
  15  Testing
  2   CI/CD
