@@ -6,7 +6,7 @@
 
 
 TODO:
-  - stopped at https://stripe.com/docs/billing/quickstart
+  - stopped at https://stripe.com/docs/billing/invoices
   - go back to:
      - https://stripe.com/docs/billing/webhooks
      - https://stripe.com/docs/building-extensions
@@ -450,9 +450,11 @@ Idempotency-Key: RANDOM [C]       #Memoize using:
                                   #Only for 24 hours.
                                   #Only memoize requests that passed input validation layer.
                                   #Only for `POST`
-                                  #Recommended for POST /charges|payment_intents
-                                  #  - using the order ID, or the SOURCE.id (unless reusable), etc.
-                                  #  - to avoid DISPUTEs on duplicated charges
+                                  #Recommended for:
+                                  #  - POST /charges|payment_intents
+                                  #     - using the order ID, or the SOURCE.id (unless reusable), etc.
+                                  #     - to avoid DISPUTEs on duplicated charges
+                                  #  - POST /subscription_items/ID/usage_records
 
 RESOURCE.id                       #STR
 RESOURCE.object                   #Either:
@@ -2409,12 +2411,17 @@ SUBSCRIPTION.                   CU#DATE_NUM (def: 'now') used to define on which
  billing_cycle_anchor             #Reset when:
                                   #  - changing PLAN or period settings
                                   #  - status goes from 'trial' to 'active'
+                                  #  - BILLING_THRESHOLDS.reset_billing_cycle_anchor true
                                   #When reset to 'now', new INVOICE will be created right away.
-SUBSCRIPTION.billing_thresholds CU#BILLING_THRESHOLDS. When to send emails with INVOICEs.
-                                  #Only with SUBSCRIPTION.billing 'send_invoice'
-                                  #Def: when INVOICE is created
-BILLING_THRESHOLDS.amount_gte   CU#PMONEY
-BILLING_THRESHOLDS.             CU#BOOL (def: false). When sending an INVOICE, update SUBSCRIPTION.billing_cycle_anchor to now
+SUBSCRIPTION.billing_thresholds CU#BILLING_THRESHOLDS.
+                                  #Create INVOICE each time quantity (modulo'd) passes some threshold for a given period.
+                                  #Goal: ensuring big quantity are paid by splitting them into several INVOICEs
+                                  #Only with PLAN.usage_type 'metered'
+                                  #Not if:
+                                  #  - status 'trialing'
+                                  #  - 24 hours before period end (to avoid confusion with 2 INVOICEs)
+BILLING_THRESHOLDS.amount_gte   CU#PMONEY, excluding taxes
+BILLING_THRESHOLDS.             CU#BOOL (def: false). Reset SUBSCRIPTION.billing_cycle_anchor.
  reset_billing_cycle_anchor       #Not allowed if PLAN.aggregate_usage 'last_ever'.
 SUBSCRIPTION.start                #DATE_NUM. "Last update" timestamp, but only for significant fields.
 SUBSCRIPTION.ended_at            ?#DATE_NUM
@@ -2515,7 +2522,8 @@ STRIPE.usageRecords.create()      #
 USAGE_RECORD                      #CUSTOMER's single consumption for PLAN.usage_type 'metered' or PLAN.tiers
 USAGE_RECORD.subscription_item  *C#SUBSCRIPTION_ITEM.id
 USAGE_RECORD.quantity           *C#INT (>=0)
-USAGE_RECORD.timestamp          *C#DATE_NUM
+USAGE_RECORD.timestamp          *C#DATE_NUM.
+                                  #Must be within current period (+|- 5 minutes, for clock drift)
 USAGE_RECORD.action              C#If USAGE_RECORD with same subscription_item|timestamp, either:
                                   #  - 'increment' (default): do not overwrite it
                                   #  - 'set': overwrite it. Not allowed if SUBSCRIPTION.billing_thresholds defined
