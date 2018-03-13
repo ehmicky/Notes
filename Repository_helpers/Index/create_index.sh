@@ -19,4 +19,4 @@ sed "
   s/NUMBER_OF_PAGES/$numberOfPages/
 " "$dir/presentation.md" |
   # Updates README.md
-  cat "$dir/index.md" > README.md
+  cat - "$dir/index.md" > README.md
