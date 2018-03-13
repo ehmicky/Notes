@@ -43,12 +43,14 @@ LAYERS ==>                        #New images are created from existing containe
                                   #New images use the directory of their parent by reference:
                                   #  - uses union filesystems for this (fs that merge several directories together)
 
-BEST PRACTICES ==>                #Containers should:
-                                  #  - be ephemeral, i.e. can be immediately stopped at any time
+CONTAINERS BEST PRACTICES ==>     #Containers should:
+                                  #  - make it easy to scale:
+                                  #     - be ephemeral, i.e. can be immediately stopped at any time
                                   #  - keep it small:
                                   #     - only include necessary packages
                                   #     - limit number of layers
-                                  #  - sort long list of packages alphabetically, with trailing newlines
+                                  #  - decouple:
+                                  #     - only one purpose/process per container
 
 
                                              /=+===============================+=\ 
@@ -77,12 +79,12 @@ DOCKERCONF                        #Either:
                                              \=+===============================+=/
 
 
-docker deamon/server:
+docker daemon/server:
   - binds to Unix socket:
      - owned by "docker" group if it exists, "root" (avoid) otherwise
   - client is connected to daemon (client-server architecture)
 
-Start deamon:
+Start daemon:
   - once: sudo service docker start
   - all the time: sudo systemctl enable docker
 
@@ -102,6 +104,188 @@ docker info ???
 Memory and swap accouting:
   - must be enabled on the OS: performance impact, but better OS memory management
   - see online doc for how to enable it
+
+
+                                             /=+===============================+=\ 
+                                            /  :                               :  \  
+                                            )==:           BUILDING            :==(   
+                                            \  :_______________________________:  /    
+                                             \=+===============================+=/
+
+
+IMAGE ==>                         #Are basically a tree of files, with metadata (e.g. COMMANDs)
+
+BUILD LAYERS ==>                  #Each Dockerfile instruction creates a new "layer":
+                                  #  - i.e. a new image
+                                  #     - by docker committing the new CONTAINER
+                                  #  - intermediate IMAGE are removed at the end
+                                  #  - each layer creates a new shell, e.g. $PWD will be reset 
+                                  #     - should limit number of layers, i.e. combine instructions as much as possible
+                                  #  - max 127 layers
+
+BUILD CONTEXT ==>                 #Directories:
+                                  #  - BUILD_DIR: specified by docker build
+                                  #  - CONTEXT_DIR: temporary, copied from BUILD_DIR
+                                  #  - IMAGE_DIR: when image is created
+                                  #CONTEXT_DIR:
+                                  #  - sent by client to server:
+                                  #     - should keep it minimal
+                                  #  - can be used by Dockerfile instructions: COPY|ADD, COMMANDs
+                                  #     - path resolution:
+                                  #        - absolute path: relative to CONTEXT_DIR
+                                  #        - relative path: 
+                                  #           - relative to current dir, which is initially CONTEXT_DIR
+                                  #           - can be changed by WORKDIR (see below)
+                                  #  - copied from BUILD_DIR:
+                                  #     - minus files matching BUILD_DIR/.dockerignore:
+                                  #        - recommended
+                                  #        - newline-separated, similar to .gitignore
+                                  #        - # COMMENT, first line only
+                                  #        - globbing: * ? ** !
+
+BUILD CACHE ==>                   #Each layer + next instruction is cached:
+                                  #  - by def reused if matched
+                                  #  - specified in output log "Using cache"
+                                  #Invalidates cache:
+                                  #  - ADD|COPY of new|newer files
+                                  #     - i.e. should be as late as possible, in order to invalidate fewer cache
+                                  #  - ARG with different value
+                                  #Does not invalidate cache:
+                                  #  - COMMANDs, even if takes input from some global/changing state (e.g. apt-get update)
+                                  #  - this can create problem, but can be disabled with docker build --no-cache
+
+PERMISSIONS ==>                   #Default user is dockerd's, but can change with USER
+                                  #Containers are always unprivileged:
+                                  #  - can do apt-get install -y
+                                  #  - but apt-get upgrade will fail on some core packages
+                                  #  - apt-get update:
+                                  #     - on its own, creates cache problems (avoid)
+                                  #     - creates non-predictability unless pinning version, e.g. apt-get install -y PACKAGE=VERSION
+                                  #     - recommended: apt-get update && apt-get install + version pinning && rm -rf
+
+docker build DIR|URL              #URL is Git repo
+                                  #Builds an IMAGE using a DOCKERFILE
+
+
+DOCKERFILE                        #Main configuration file, with commands below
+                                  #Def: BUILD_DIR/Dockerfile, or docker build -f DOCKERFILE
+                                  #Can concanate several Dockerfiles into one
+
+
+# COMMENT                         #
+
+# escape=CHAR                     #Changes escape character (def: \)
+                                  #Can use escaped newlines, and should use them to sort long list alphabetically (e.g.  packages)
+                                  #Must be at top of file, before any instruction, comment or blank line
+
+
+FROM IMAGE                        #Pull another IMAGE, and use it as base
+                                  #Must be first instruction. Mandatory.
+                                  #Can be done several times (will merge several IMAGEs) but should avoid
+                                  #Prefer Docker official images
+
+
+COMMAND                           #Means a CLI command, either:
+                                  #  - same syntax as in a CLI
+                                  #     - run with /bin/sh -c, i.e. subcommand (unless COMMAND is "exec ...")
+                                  #        - subcommands are not terminated when parent is (e.g. with docker stop)
+                                  #        - can be changed with SHELL ["COMMAND",...]
+                                  #     - only uses escape character for escaped newlines
+                                  #  - as JSON array ["STR",...]
+                                  #     - run with exec, i.e. same shell (not subcommand)
+                                  #     - does not do shell expansion (e.g. $VAR)
+                                  #     - preferred
+                                  #Different timing:
+                                  #  - build-time: during docker build, e.g. RUN
+                                  #  - runtime: during docker exec, e.g. "default command/argument" (ENTRYPOINT|CMD)
+
+RUN COMMAND                       #Run command
+
+ENTRYPOINT COMMAND                #If COMMAND uses:
+                                  #  - CLI syntax: like CMD
+                                  #  - JSON array syntax: sets default command, that can take args
+                                  #Only last ENTRYPOINT will be used.
+                                  #At least one CMD or ENTRYPOINT required per Dockerfile
+
+CMD COMMAND                       #If ENTRYPOINT was:
+                                  #  - not called before: sets default command, that cannot take args. 
+                                  #  - called before: 
+                                  #     - sets default args
+                                  #     - both ENTRYPOINT and CMD must use JSON array syntax
+                                  #Only last CMD will be used.
+                                  #At least one CMD or ENTRYPOINT required per Dockerfile
+
+HEALTHCHECK [--OPT] CMD COMMAND   #Adds a "health status" to a CONTAINER, in addition to its running status:
+                                  #  - checked by COMMAND at regular intervals
+                                  #  - COMMAND exit code must be 0 (success) or 1 (failure)
+                                  #  - COMMAND stdout|stderr will be kept in logs
+                                  #Can be inspected with:
+                                  #  - docker inspect, ps, etc.
+                                  #  - health_status event (with "docker events")
+                                  #Only last HEALTHCHECK will be used
+--interval=NUM                    #Def: 30 (in secs)
+--timeout=NUM                     #Def: 30 (in secs)
+--retries=NUM                     #Def: 3
+
+ONBUILD [...]                     #Same as ... but delayed: 
+                                  #  - fired when another Dockerfile calls FROM for this image
+                                  #  - only for direct children, not grandchildren
+                                  #Allows using CONTEXTDIR of downstream image
+                                  #Can see list of delayed instructions with docker inspect ("OnBuild")
+
+
+$VAR                              #Expands. Defined by ENV or ARG
+${VAR}                            #Should not be used for confidential information, as docker history shows it
+${VAR:-VAL}
+${VAR:+VAL}                       #Like in Bash
+
+ENV VAR VAL                       #Sets ENVVAR
+                                  #E.g. to append to $PATH
+ENV VAR=VAL ...                   #Can be used in following instructions, except:
+                                  #  - COMMAND-related: CMD, RUN, ENTRYPOINT, SHELL, HEALTHCHECK
+                                  #  - ARG
+                                  #  - MAINTAINER
+                                  #The first form does not parse/expanse VAL
+
+ARG VAR[=VAL]                     #Like ENV, but as build argument, i.e. docker build --build-arg VAR=VAL
+                                  #VAL is default value
+                                  #Information is not persisted in final built IMAGE. If needs to persist, can put ARG variable inside an ENV
+
+
+USER STR                          #Sets current user, used:
+                                  #  - in following instructions, e.g. COMMANDs
+                                  #  - runtime, i.e. docker exec
+
+WORKDIR DIR                       #Changes $PWD in CONTEXT_DIR for following instructions
+                                  #DIR created with mkdir -p if not existing
+                                  #Prefer over "cd"
+                                  #Avoid relative DIR
+
+LABEL VAR="VAL" ...               #Sets labels (metadata). Can override.
+                                  #It is recommended to do one pair per line (using trailing newlines)
+                                  #Can be viewed with docker inspect
+
+MAINTAINER NAME <EMAIL>           #Metadata about author
+
+
+COPY|ADD SRC... DEST              #Copy files from CONTEXT_DIR to IMAGE_DIR
+COPY|ADD ["SRC",..., "DEST"]      #SRC:
+                                  #  - can contain globbing * ?
+                                  #  - cannot be outside of CONTEXT_DIR
+                                  #DEST:
+                                  #  - must include trailing / if want to copy inside DIR
+                                  #  - if not existing, is created using mkdir -p
+                                  #New files/directories created with dockerd user/group (permission-wise)
+                                  #ADD has extra features:
+                                  #  - SRC can be URL
+                                  #  - SRC can be a *.tar (unless it is a URL), which is unpacked
+
+EXPOSE PORT ...                   #Expose port, for docker create -P (see above)
+
+VOLUME ...                        #See above
+
+STOPSIGNAL SIG_NAME|NUM           #Sets signal sent to container to terminate it (def: SIGKILL)
+
 
 
                                              /=+===============================+=\ 
@@ -197,16 +381,25 @@ docker rm CONTAINER               #Deletes a CONTAINER
                                              \=+===============================+=/
 
 
-docker run IMAGE                  #Does:
- [COMMAND [ARGS...]]              #  - docker create IMAGE
-                                  #  - run COMMAND from within the container (def: container's default command)
-                                  #Shares all options from docker create, plus extra, following.
+docker exec CONTAINER COMMAND     
+ [ARGS...]                        #Run COMMAND from within the container (def: container's default command/arguments)
 -d                                #Run in the background of current terminal
 --detach                          #Returns container ID
 --detach-keys                     #???
+--privileged                      
+-i
+--interactive                     
+-t
+--tty
+-u USER
+--user USER                       #Like docker create
+
+docker run IMAGE [...]            #Does:
+                                  #  - docker create IMAGE
+                                  #  - docker exec CONTAINER ...
+                                  #Shares all options from docker create+exec, plus extra, following.
 --sig-proxy                       #???
 --rm                              #???
-
 
 docker attach CONTAINER ???
 
@@ -328,8 +521,8 @@ docker network inspect NETWORK    #Prints verbose debug information, as JSON
 docker create IMAGE
 --network NETWORK                 #Associate to NETWORK
 -p HOST_PORT:CONTAINER_PORT       #Forward ports
--P
---publish-all                     #Forward any opened CONTAINED_PORT to a random HOST_PORT (ephemeral port range, i.e. 32768-61000)
+-P                                #Forward any exposed CONTAINER_PORT to a random HOST_PORT (ephemeral port range, i.e. 32768-61000)
+--publish-all                     #See EXPOSE instruction
 
 
                                              /=+===============================+=\ 
@@ -379,6 +572,8 @@ docker volume create              #Creates data volume
 --opt OPT                         #Driver-specific options
 --name VOLUME_NAME                #
 
+VOLUME CONTAINER_DIR ...          #Dockerfile instruction
+VOLUME ["CONTAINER_DIR",...]      #Similar to -v CONTAINER_DIR with docker run, but build-time
 
 docker volume rm VOLUME_NAME      #
 
@@ -408,92 +603,6 @@ docker import FILE|URL [IMAGE]    #FILE|URL can be - for stdin
 docker load ???
 
 docker save IMAGE... ???
-
-
-                                             /=+===============================+=\ 
-                                            /  :                               :  \  
-                                            )==:           BUILDING            :==(   
-                                            \  :_______________________________:  /    
-                                             \=+===============================+=/
-
-
-BUILD LAYERS ==>                  #Each Dockerfile instruction creates a new "layer":
-                                  #  - i.e. a new CONTAINER, then docker commit it to a new IMAGE
-                                  #  - intermediate IMAGE are removed at the end
-                                  #  - each layer creates a new shell, e.g. $PWD will be reset
-                                  #  - max 127 layers
-
-BUILD CONTEXT ==>                 #Directories:
-                                  #  - BUILD_DIR: specified by docker build
-                                  #  - CONTEXT_DIR: temporary, copied from BUILD_DIR
-                                  #  - IMAGE_DIR: when image is created
-                                  #CONTEXT_DIR:
-                                  #  - sent by client to server:
-                                  #     - should keep it minimal
-                                  #  - can be used by Dockerfile instructions (e.g. COPY|ADD)
-                                  #     - path resolution:
-                                  #        - absolute path: relative to CONTEXT_DIR
-                                  #        - relative path: relative to current dir, which is initially CONTEXT_DIR
-                                  #  - copied from BUILD_DIR:
-                                  #     - minus files matching BUILD_DIR/.dockerignore:
-                                  #        - recommended
-                                  #        - newline-separated, similar to .gitignore
-                                  #        - # COMMENT, first line only
-                                  #        - globbing: * ? ** !
-
-BUILD CACHE ==>                   #Each layer + next instruction is cached:
-                                  #  - by def reused if matched
-                                  #  - specified in output log "Using cache"
-                                  #Can be disabled with docker build --no-cache:
-                                  #  - e.g. when this would create problems before of instructions with weird side effects
-
-docker build DIR|URL              #URL is Git repo
-                                  #Builds an IMAGE using a DOCKERFILE
-
-
-DOCKERFILE                        #Main configuration file, with commands below
-                                  #Def: BUILD_DIR/Dockerfile, or docker build -f DOCKERFILE
-
-# COMMENT                         #
-
-# escape=CHAR                     #Changes escape character (def: \)
-                                  #Can use escaped newlines
-                                  #Must be at top of file, before any instruction, comment or blank line
-
-FROM IMAGE                        #Pull another IMAGE, and use it as base
-                                  #Must be first instruction. Mandatory.
-
-COMMAND                           #Means a CLI command, either:
-                                  #  - same syntax as in a CLI
-                                  #    Run with /bin/sh -c
-                                  #  - as array of words ["STR",...]
-                                  #    Run with exec, i.e. new environment
-
-RUN COMMAND                       #Run command
-
-ENTRYPOINT COMMAND                #If COMMAND uses:
-                                  #  - array of words: like CMD
-                                  #  - CLI syntax: sets default command, that can take args.
-
-CMD COMMAND                       #If ENTRYPOINT was:
-                                  #  - not called before: sets default command, that cannot take args. 
-                                  #  - called before: sets default args.
-                                  #Only last CMD will be used.
-
-ENV VAR VAL                       #Sets ENVVAR
-ENV VAR=VAL ...                   #Can be used in following instructions, except:
-                                  #  - COMMAND-related: CMD, RUN, ENTRYPOINT, SHELL, HEALTHCHECK
-                                  #  - ARG
-                                  #  - MAINTAINER
-$VAR
-${VAR}                            #Expand ENVVAR
-${VAR:-VAL}
-${VAR:+VAL}                       #Like in Bash
-
-LABEL VAR="VAL" ...               #Sets LABEL (metadata)
-
-MAINTAINER NAME <EMAIL>           #Metadata
-
 
                                              /=+===============================+=\ 
                                             /  :                               :  \  
