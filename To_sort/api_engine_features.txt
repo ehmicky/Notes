@@ -1,7 +1,3 @@
-Code quality:
-  - auto-beautifier
-  - escomplex
-
 Transform|compute|value|readonly:
   - remove attr.compute, in code, user doc, Google notes and eda.
      - check if anything in doc/code would be relevant for attr.value as well
@@ -63,6 +59,106 @@ Limits:
      - to limit the hassle it is for end-user. E.g. pagination size too slow means paying for several requests, and longer overall request, which is frustrating.
      - while still having an ok processing time for average big requests
 
+Database:
+  - waterline ORM:
+     - add Waterline ORM:
+        - parse arg.filter as ORM object (see arg.filter normalization)
+        - equality must be deep equality for ARR|OBJ, so people can do { filter: { attr: ARR|OBJ } }
+        - should throw DATABASE_NOT_FOUND and DATABASE_MODEL_CONFLICT errors
+     - fake ORMs:
+        - in-memory: use pSetTimeout(0) to emulate async
+        - in-filesystem: as JSON file
+        - both should be atomic, i.e. all models in a *Many commands should be written at once
+     - each ORM should have a specific "defaultId" function, used in defaultId middleware:
+        - e.g. new ObjectId() for MongoDB
+  - arg.filter normalization:
+     - small normalization done during normalization middleware:
+        - does not change format, just add defaults, e.g. VAR: VAL becomes VAR: { eq: VAL }
+        - also validate that arg.filter.id is defined and is the only one, when command findOne|deleteOne
+     - format:
+        - is to be determined??? But basically MongoDB/Waterline-like, client-friendly
+        - is converted to actual Waterline object at the database layer
+        - should include "or" (alternatives), e.g. with ARR
+        - "and" is just using several OBJ fields
+        - "not" should probably not be top-level, i.e. { KEY: { not: ... } instead of { not: { KEY: ... }
+           - reason: easier to validate unknown attrs in args.filter if all KEY are top-level
+        - normalize it so that it's easier to write database adapters, and is easier to manipulate in middleware too
+        - should at least include: in, nin, startsWith, endsWith, contains
+     - think if some dataValidation makes sense for args.filter, e.g. minimum|maximum or type
+     - fix GraphQL schema
+  
+Orphans:
+  - validation:
+     - attribute targeting another model have limited validation:
+        - the reason: they might be deleted|modified when the model they target is deleted, and that model deletion should not have to care about it, but in the same time we don't want invalid models
+        - forbidden: required, minItems, dependencies, contains, custom validation, being part of $data cross-attributes validation
+  - find dead links:
+     - for create|patch|replace commands
+     - find all ids+modelName that:
+        - have attr.target !== undefined
+        - are being modified, i.e. defined in args.data and different from currentData
+        - are a "leaf", e.g. in args.data { childA, childB: { ... } }, childA, not childB (since it will be created, it cannot be a dead link)
+     - run in parallel of currentData middleware:
+        - how can it be in parallel since it needs currentData???
+        - merged to same output, i.e. to currentData
+        - should reuse each other (results and pendingPromises)
+        - start at same time. end when both are over.
+     - goal: firing 404 if dead link
+        - the extra currentData is just an added bonus to speed up next middleware
+  - remove dead links:
+     - middleware fired after currentData middleware, before mergePatchData middleware
+     - on delete commands
+     - first search for models with dead links:
+        - do find commands with args.filter { attr: { containsOrIs: ids } } where ids are the models being deleted, on the models that might target them
+           - if the model being deleted contains bidirectional links, can optimize with faster command (i.e. filter directly by id) because the models ids are known
+        - add args.filter { id: { $ne: ids } } to exclude models already being deleted, i.e. already present in delete actions currentData
+     - merge the find commands results to currentData
+     - then create patch actions to remove dead links
+        - do not fire those patch actions, only stack them up at the end, and resolveWriteAction will take care of them
+        - those actions should bypass authorization, i.e. be "internal"
+  - bidirectional links:
+     - attr.reverse "attr2"
+        - IDL validate (before normalization)
+           - forbid attr.reverse if attr.target is not defined
+        - IDL pre-normalization:
+           - attr2.reverse "attr" is added, unless already present. I.e. link is truly the same on both ends.
+        - IDL validation (after normalization):
+           - model2.attr2 must exist, and have attr2.target defined
+           - attr.target and attr2.target must be defined and point at each others models
+           - attr.reverse "attr2" and attr2.reverse "attr" must be defined and point at each other (using also attr[2].target)
+     - middleware:
+        - on create|patch|replace commands
+        - after currentData middleware, before removeDeadLinks middleware
+        - fired for any attribute:
+           - with attr.reverse defined
+           - and that is being modified, i.e. defined in args.data and different from currentData
+        - first merges into currentData some find commands results:
+           - all ids being modified should trigger find commands
+              - except if alread present in currentData. This should cover all ids being addes, since findDeadLinks middleare already searched for them.
+        - then create patch actions to modify all the reverse ids
+           - both the ones being added, and the ones being removed
+           - do not fire those patch actions, only stack them up at the end, and resolveWriteAction will take care of them
+           - those actions should bypass authorization, i.e. be "internal"
+
+Atomicity/rollbacks:
+  - in resolveWriteActions(), replace Promise.all() by something that waits for all promises to complete,
+    even on failure, and return all of them
+  - add rollbackInfoBefore and rollbackInfoAfter middleware just before and after databaseExecute,
+    which uses a variable "rollbackInfo" shared by all write commands
+  - if any command throws, set rollbackInfo.hasFailed true
+  - in rollbackInfoBefore middleware, if rollbackInfo.hasFailed true, throw error
+  - in rollbackInfoAfter middleware, do rollbackInfo.completedCommands.push(modelName)
+  - resolveWriteActions() waits for completion of all commands, failure or not. Then, if any failed, it:
+       - does a rollback on each rollbackInfo.completedCommands
+       - wait for rollback completion
+       - rethrow initial error
+       - if rollback itself threw an error, set rollback error stack trace to initial error.failedRollback STR,
+         using error.extra
+  - rollback reverse the command, i.e.:
+       - create -> delete
+       - patch|replace -> replace with currentData
+       - delete -> create with currentData
+    
 REST:
   - including:
      - selecting
@@ -87,119 +183,8 @@ JSON-RPC:
 Operations:
   - implement other operations, beyond GraphQL, REST and JSON-RPC
 
-Atomicity/rollbacks:
-  - in resolveWriteActions(), replace Promise.all() by something that waits for all promises to complete,
-    even on failure, and return all of them
-  - add rollbackInfoBefore and rollbackInfoAfter middleware just before and after databaseExecute,
-    which uses a variable "rollbackInfo" shared by all write commands
-  - if any command throws, set rollbackInfo.hasFailed true
-  - in rollbackInfoBefore middleware, if rollbackInfo.hasFailed true, throw error
-  - in rollbackInfoAfter middleware, do rollbackInfo.completedCommands.push(modelName)
-  - resolveWriteActions() waits for completion of all commands, failure or not. Then, if any failed, it:
-       - does a rollback on each rollbackInfo.completedCommands
-       - wait for rollback completion
-       - rethrow initial error
-       - if rollback itself threw an error, set rollback error stack trace to initial error.failedRollback STR,
-         using error.extra
-  - rollback reverse the command, i.e.:
-       - create -> delete
-       - patch|replace -> replace with currentData
-       - delete -> create with currentData
-    
-Waterline ORM:
-  - add Waterline ORM:
-     - parse arg.filter as ORM object (see arg.filter normalization)
-     - equality must be deep equality for ARR|OBJ, so people can do { filter: { attr: ARR|OBJ } }
-     - should throw DATABASE_NOT_FOUND and DATABASE_MODEL_CONFLICT errors
-  - fake ORMs:
-     - in-memory: use pSetTimeout(0) to emulate async
-     - in-filesystem: as JSON file
-     - both should be atomic, i.e. all models in a *Many commands should be written at once
-  - each ORM should have a specific "defaultId" function, used in defaultId middleware:
-     - e.g. new ObjectId() for MongoDB
-
-arg.filter normalization:
-  - small normalization done during normalization middleware:
-     - does not change format, just add defaults, e.g. VAR: VAL becomes VAR: { eq: VAL }
-     - also validate that arg.filter.id is defined and is the only one, when command findOne|deleteOne
-  - format:
-     - is to be determined??? But basically MongoDB/Waterline-like, client-friendly
-     - is converted to actual Waterline object at the database layer
-     - should include "or" (alternatives), e.g. with ARR
-     - "and" is just using several OBJ fields
-     - "not" should probably not be top-level, i.e. { KEY: { not: ... } instead of { not: { KEY: ... }
-        - reason: easier to validate unknown attrs in args.filter if all KEY are top-level
-     - normalize it so that it's easier to write database adapters, and is easier to manipulate in middleware too
-     - should at least include: in, nin, startsWith, endsWith, contains
-  - think if some dataValidation makes sense for args.filter, e.g. minimum|maximum or type
-  - fix GraphQL schema
-  
 Complex patches:
   - provide MongoDB-like patch syntax for patch command, including array manipulation
-
-Authorization:
-  - IDL functions for idl|model|attr.authorize:
-     - FUNC[_ARR]: ARR is && (normalized during IDL transformation)
-     - can use IDL functions variables|helpers
-  - command "patch" cannot be user-specified. Instead it checks both "find" and "replace" permissions
-  - idl.authorize FUNC[_ARR]:
-     - for all models, performed once per request, just before main operation middleware
-     - i.e. less IDL functions variables, and no partial evaluation
-     - if resolves to false, do not perform query and returns 403
-  - model.authorize FUNC[_ARR]:
-     - model-wise
-     - if fails, returns 403 (except for find|delete commands which might augment arg.filter)
-     - according to command:
-        - find|delete: $/$$: augment arg.filter (see below)
-        - create: $/$$: use arg.data
-        - replace: $/$$: use both arg.data and args.currentData (tried after another)
-        - replace|create: if command.multiple, check model.authorize for each arg.data and each args.currentData.
-          If any fails, 403.
-     - in authorization middleware, just before dataValidation middleware
-     - find|delete commands use partial evaluation:
-        - exception during partial evaluation should throw 5** not 4**
-        - use resulting database query object, if there is one, by && it
-           - if resolves to false, do not perform query and returns 403
-        - must try partial evaluation during IDL validation to make sure it works runtime
-        - do not pass $/$$ to non-inline functions, because cannot be partially evaluated
-     - find commands of replace command should not be affected (using args.authorization false)
-  - attr.authorize FUNC[_ARR]:
-     - same as model.authorize, except:
-        - can use $ (same as $$.ATTR)
-        - command when not authorized differs. Depending on command:
-           - find:
-              - silently removed in output
-              - only checked if defined in output (i.e. key is present)
-              - on all commands
-           - create|replace|delete:
-              - silently replace new value (arg.newData.ATTR) by current value (args.currentData.ATTR)
-              - only checked if new value !== current value
-              - in order: if current value is empty, use "create". If new value is empty, use "delete".
-                Otherwise, use "replace".
-              - on replace value only???
-  - model|attr.authorize.COMMANDS:
-     - like authorize, but applied according to current command
-     - authorize VAL is normalized (by IDL transformation) to authorize.all VAL
-     - COMMANDS can be find|replace|create|delete|all. Can be comma-separated list.
-        - command.multiple does not matter, i.e. no authorization mismatch possible on nested commands
-     - replaces idl.commands and model.commands (which must be removed):
-        - forbidden commands:
-           - are commands whose authorize always return false for a
-             given set of protocol/operation IDL functions variables + $COMMAND param (e.g. without $/$$)
-              - how to know? partial evaluation?
-           - 403 becomes 405 on forbidden commands
-           - forbidden commands not shown in GraphQL schema
-        - add Allow [S] on every response:
-           - does not show forbidden commands
-
-Aggregating:
-  - are just other commands, following similar logic as the others
-     - should also think of which other commands it requires, and which one it implies
-  - e.g. countUsers, groupUsers, etc.
-  - arg.distinct "ATTR": no duplicates
-  - is basically asking for server-side multi/single-ATTR/OBJ operations, so maybe try to allow client to specify
-    it as JavaScript, parsed as MongoDB aggregate object???
-  - think of interaction with pagination
 
 Pagination:
   - problems (should document them in code):
@@ -309,6 +294,70 @@ Pagination:
         - for GraphQL, need to put query in the URL query string
         - also as HTTP Link: <URL>; rel="first|last|prev|next|self[ ...]"
 
+Authorization:
+  - IDL functions for idl|model|attr.authorize:
+     - FUNC[_ARR]: ARR is && (normalized during IDL transformation)
+     - can use IDL functions variables|helpers
+  - command "patch" cannot be user-specified. Instead it checks both "find" and "replace" permissions
+  - idl.authorize FUNC[_ARR]:
+     - for all models, performed once per request, just before main operation middleware
+     - i.e. less IDL functions variables, and no partial evaluation
+     - if resolves to false, do not perform query and returns 403
+  - model.authorize FUNC[_ARR]:
+     - model-wise
+     - if fails, returns 403 (except for find|delete commands which might augment arg.filter)
+     - according to command:
+        - find|delete: $/$$: augment arg.filter (see below)
+        - create: $/$$: use arg.data
+        - replace: $/$$: use both arg.data and args.currentData (tried after another)
+        - replace|create: if command.multiple, check model.authorize for each arg.data and each args.currentData.
+          If any fails, 403.
+     - in authorization middleware, just before dataValidation middleware
+     - find|delete commands use partial evaluation:
+        - exception during partial evaluation should throw 5** not 4**
+        - use resulting database query object, if there is one, by && it
+           - if resolves to false, do not perform query and returns 403
+        - must try partial evaluation during IDL validation to make sure it works runtime
+        - do not pass $/$$ to non-inline functions, because cannot be partially evaluated
+     - find commands of replace command should not be affected (using args.authorization false)
+  - attr.authorize FUNC[_ARR]:
+     - same as model.authorize, except:
+        - can use $ (same as $$.ATTR)
+        - command when not authorized differs. Depending on command:
+           - find:
+              - silently removed in output
+              - only checked if defined in output (i.e. key is present)
+              - on all commands
+           - create|replace|delete:
+              - silently replace new value (arg.newData.ATTR) by current value (args.currentData.ATTR)
+              - only checked if new value !== current value
+              - in order: if current value is empty, use "create". If new value is empty, use "delete".
+                Otherwise, use "replace".
+              - on replace value only???
+  - model|attr.authorize.COMMANDS:
+     - like authorize, but applied according to current command
+     - authorize VAL is normalized (by IDL transformation) to authorize.all VAL
+     - COMMANDS can be find|replace|create|delete|all. Can be comma-separated list.
+        - command.multiple does not matter, i.e. no authorization mismatch possible on nested commands
+     - replaces idl.commands and model.commands (which must be removed):
+        - forbidden commands:
+           - are commands whose authorize always return false for a
+             given set of protocol/operation IDL functions variables + $COMMAND param (e.g. without $/$$)
+              - how to know? partial evaluation?
+           - 403 becomes 405 on forbidden commands
+           - forbidden commands not shown in GraphQL schema
+        - add Allow [S] on every response:
+           - does not show forbidden commands
+
+Aggregating:
+  - are just other commands, following similar logic as the others
+     - should also think of which other commands it requires, and which one it implies
+  - e.g. countUsers, groupUsers, etc.
+  - arg.distinct "ATTR": no duplicates
+  - is basically asking for server-side multi/single-ATTR/OBJ operations, so maybe try to allow client to specify
+    it as JavaScript, parsed as MongoDB aggregate object???
+  - think of interaction with pagination
+
 Compatibility layer:
   - reporting deprecation
   - breaking changes:
@@ -406,59 +455,6 @@ inputValidation middleware:
      - gives 4** client-side errors, while dataValidation middleware gives 5** server-side errors
      - input only (like dataValidation middleware)
      - should try to memoize|reuse per request (to avoid memory leaks) between inputValidation and dataValidation middlewars
-
-Orphans:
-  - validation:
-     - attribute targeting another model have limited validation:
-        - the reason: they might be deleted|modified when the model they target is deleted, and that model deletion should not have to care about it, but in the same time we don't want invalid models
-        - forbidden: required, minItems, dependencies, contains, custom validation, being part of $data cross-attributes validation
-  - find dead links:
-     - for create|patch|replace commands
-     - find all ids+modelName that:
-        - have attr.target !== undefined
-        - are being modified, i.e. defined in args.data and different from currentData
-        - are a "leaf", e.g. in args.data { childA, childB: { ... } }, childA, not childB (since it will be created, it cannot be a dead link)
-     - run in parallel of currentData middleware:
-        - how can it be in parallel since it needs currentData???
-        - merged to same output, i.e. to currentData
-        - should reuse each other (results and pendingPromises)
-        - start at same time. end when both are over.
-     - goal: firing 404 if dead link
-        - the extra currentData is just an added bonus to speed up next middleware
-  - remove dead links:
-     - middleware fired after currentData middleware, before mergePatchData middleware
-     - on delete commands
-     - first search for models with dead links:
-        - do find commands with args.filter { attr: { containsOrIs: ids } } where ids are the models being deleted, on the models that might target them
-           - if the model being deleted contains bidirectional links, can optimize with faster command (i.e. filter directly by id) because the models ids are known
-        - add args.filter { id: { $ne: ids } } to exclude models already being deleted, i.e. already present in delete actions currentData
-     - merge the find commands results to currentData
-     - then create patch actions to remove dead links
-        - do not fire those patch actions, only stack them up at the end, and resolveWriteAction will take care of them
-        - those actions should bypass authorization, i.e. be "internal"
-  - bidirectional links:
-     - attr.reverse "attr2"
-        - IDL validate (before normalization)
-           - forbid attr.reverse if attr.target is not defined
-        - IDL pre-normalization:
-           - attr2.reverse "attr" is added, unless already present. I.e. link is truly the same on both ends.
-        - IDL validation (after normalization):
-           - model2.attr2 must exist, and have attr2.target defined
-           - attr.target and attr2.target must be defined and point at each others models
-           - attr.reverse "attr2" and attr2.reverse "attr" must be defined and point at each other (using also attr[2].target)
-     - middleware:
-        - on create|patch|replace commands
-        - after currentData middleware, before removeDeadLinks middleware
-        - fired for any attribute:
-           - with attr.reverse defined
-           - and that is being modified, i.e. defined in args.data and different from currentData
-        - first merges into currentData some find commands results:
-           - all ids being modified should trigger find commands
-              - except if alread present in currentData. This should cover all ids being addes, since findDeadLinks middleare already searched for them.
-        - then create patch actions to modify all the reverse ids
-           - both the ones being added, and the ones being removed
-           - do not fire those patch actions, only stack them up at the end, and resolveWriteAction will take care of them
-           - those actions should bypass authorization, i.e. be "internal"
 
 Data correctness:
   - code makes assumptions about database correctness:
@@ -709,6 +705,10 @@ Callbacks/events:
   - not sure if this is a good idea
   - on new|finished layers
   - while events are async, callbacks are sync and allow modification of input/output
+
+Code quality:
+  - auto-beautifier
+  - escomplex
 
 Caching:
   - protocol-level caching, including HTTP caching
@@ -1008,23 +1008,20 @@ Positioning:
 1 month for quality
 1 month for infrastructure
 
- 5   SHORT-TERM
- 1   code quality
- 0.5 nested actions
- 0.5 Upgrades
- 0.5 Limits
+ 30  MUST HAVE FEATURES
+ 0.3 Transform|compute|value|readonly
+ 0.3 Dependencies
+ 0.3 Limits
+ 3   Database
+ 2   Orphans
+ 1   Atomicity/rollbacks
  1   REST
  0.5 JSON-RPC
  0.5 Other operations
- 1   Atomicity/rollbacks
-
- 30  MUST HAVE FEATURES
- 3   Waterline ORM
- 4   arg.filter normalization
- 3   Authorization
  1   Complex patches
- 5   Aggregating
  2   Pagination
+ 3   Authorization
+ 4   Aggregating
 ?7   Compatibility layer
 ?7   Versioning/changes
  4   Static assets
@@ -1034,7 +1031,6 @@ Positioning:
  1   inputValidation
 
  10  DATA MODEL
- 2   Orphans
 ?2   Data correctness
 ?5   Schema strictness/polymorphism
 ?3   API base types
@@ -1065,6 +1061,7 @@ Positioning:
 ?1   Callbacks/events
 
  55  SOFTWARE QUALITY
+ 1   code quality
 ?5   Caching
 ?5   Optimization
  1   Streaming
