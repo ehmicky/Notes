@@ -106,7 +106,6 @@ Test declaration:
      - no more test() allowed (throw "worker error")
      - run tests
   - i.e. all test() must be defined at once. Reasons:
-     - cannot know if a test was renamed if we don't know if some other tests might be defined later on
      - separating test definition step from test running step can help with other features
   - but test() do not need to be defined during file load
      - reason: allows beforeAll() without each test awaiting a top-level promise
@@ -141,7 +140,7 @@ Any Node flags should be allowed as CLI flags:
   - including --inspect[-brk]:
      - make sure it works
      - document it
-  - --experimental-repl-await should always be passed
+  - --experimental-repl-await should always be passed (unless Node<10.0.0)
 
 CONF.timeout NUM (in secs):
   - def: 10 minutes
@@ -186,7 +185,7 @@ Process errors:
   - use log-process-errors
      - does not make process exit
   - reported as failed tests:
-     - at end of test run
+     - at end of test run, but before "worker errors"
      - filepath ""
      - title: first line of ERROR.message "uncaughtException|unhandledRejection|..." + explanation
      - use log-process-errors ERROR (except first line) as if it had been thrown
@@ -195,21 +194,26 @@ Process errors:
      - def: ["uncaughtException", "unhandledRejection"]
         - default is conservative to avoid annoying users
 
-t.snapshot(VAL[, STR])
-  - comparison result:
-     - "same": success
-     - "different|new": depends on CONF.update
-  - on failure, throws ERROR with ERROR.message containing:
-     - snapshot name (if defined)
-     - description message, e.g. "New snapshot:", "Snapshot changed:", etc.
-     - snapshot content
-  - on success, returns true
-     - reason: allowing shortcut notation assert.throws(FUNC, t.snapshot)
-  - VAL is not awaited even if PROMISE: user must explicity use t.snapshot(await VAL)
-  - no way to catch FUNC exceptions: user must explictly use assert.throws(FUNC, t.snapshot)
-  - STR is snapshot name
-     - required if two snapshots in same test
-        - so we know which one to diff
+Underlying snapshot repository:
+  - test runner adapters (including difftest itself) should abstract:
+     - retrieving __filename and 'TITLE'_ARR:
+        - ideally by using global variables
+        - but can also monkey patch it|test() (including .only|skip())
+     - running init() and done()
+     - passing SNAPSHOTS and "TITLE" to snapshot()
+  - difftest:
+     - __filename and 'TITLE'_ARR: known by core
+     - init(): done before worker starts and passed to it via IPC
+     - done(): done after worker end and passed from it via IPC
+     - snapshot(SNAPSHOTS, "TITLE", VAL) -> t.snapshot(VAL)
+     - ENVVAR SNAPSHOT_MODE=test|update|remove|input -> CONF.update|remove|input BOOL (-u|--update|-r|--remove|-i|--input)
+        - not compatible with each other
+  - "TITLE" should include data if data-driven testing
+     - including for snapshot() and done()
+
+Snapshots file:
+  - persisted at `./snapshots/TEST_FILENAME.EXT.snap`
+  - use the top-level test file, not the current one
 
 Snapshot key:
   - use filepath + test title + data + STR (snapshot name)
@@ -219,16 +223,56 @@ Snapshot key:
      - data should be serialized with the same logic as the content
   - can use same key several times:
      - used when NUM as data dimension, since test title repeats
-     - with CONF.update true, only first one is persisted
-     - if two t.snapshot() with same key differ, it should just work:
-        - with CONF.update true, different snapshots will be ignored
-        - with CONF.update false, one of the snapshots will fail, stopping test iteration
+     - with SNAPSHOT_MODE=update, only first one is persisted
+     - if two snapshot() with same key differ, it should just work:
+        - with SNAPSHOT_MODE=update, different snapshots will be ignored
+        - otherwise, one of the snapshots will fail, stopping test iteration
 
-CI:
-  - if CI, cannot use CONF.update|remove|input true
+init(__filename)->PROMISE_SNAPSHOTS:
+  - SNAPSHOTS contains state:
+     - __filename
+     - content of corresponding snapshot (of any)
+  - for most test runners, done during beforeAll() hook
+  - serializable so it can be passed to workers using structured clone algorithm
+     - ideally should be JSON serializable
 
-CONF.update BOOL (-u|--update):
-  - what t.snapshot() should do on "new|different" snapshots
+snapshot(SNAPSHOTS, "TITLE", VAL[, STR]):
+  - comparison result:
+     - "same": success
+     - "different|new": depends on SNAPSHOT_MODE=update
+  - on failure, throws ERROR with ERROR.message containing:
+     - snapshot name (if defined)
+     - description message, e.g. "New snapshot:", "Snapshot changed:", etc.
+     - snapshot content
+  - on success, returns true
+     - reason: allowing shortcut notation assert.throws(FUNC, snapshot)
+  - record result (including "TITLE") in SNAPSHOTS
+  - synchronous
+  - VAL is not awaited even if PROMISE: user must explicity use snapshot(await VAL)
+  - no way to catch FUNC exceptions: user must explictly use assert.throws(FUNC, snapshot)
+  - STR is snapshot name
+     - required if two snapshots in same test
+        - so we know which one to diff
+
+done(SNAPSHOTS, "TITLE"_ARR)->PROMISE
+  - if SNAPSHOT_MODE=update:
+     - persists snapshots
+        - create snapshot file if it does not exist yet
+     - prune snapshot files and snapshots
+  - done only once per file instead of incrementally as tests go, in order to limit I/O and risks of concurrency
+  - should not be called if test() definitions (not test runs) might have failed
+  - if any snapshot() recorded in SNAPSHOTS is not among "TITLE" throw error
+     - this means user forgot to specify it
+     - however not the other way around since tests might have used skip()
+  - for most test runners, done during afterAll() hook
+
+ENVVAR SNAPSHOT_MODE=test:
+  - default value
+  - in CI, can only be 'test'
+
+ENVVAR SNAPSHOT_MODE=update:
+  - what snapshot() should do on "new|different" snapshots
+  - also whether to prune
   - if false (def):
      - do not add|prune|modify inside snapshot files
      - throw ERROR
@@ -236,40 +280,127 @@ CONF.update BOOL (-u|--update):
      - add|prune|modify inside snapshot files
      - do not throw ERROR
 
-CONF.remove BOOL (-r|--remove):
-  - make t.snapshot():
-     - remove snapshot in snapshot file
-     - not throw ERROR
-  - not compatible with CONF.update|input true
+ENVVAR SNAPSHOT_MODE=remove:
+  - make snapshot():
+     - remove snapshots in snapshot file
+     - throw ERROR "Removed snapshot"
+        - do not show snapshot content
 
-Pruning snapshots:
-  - for removed files|tests|t.snapshot()
-  - never run, i.e. not reported
-  - removed in snapshot files (with no reporting) during CONF.update true
-  - only prune files selected by file selection:
-     - including removing snapshot files of test files that have been removed but match the file selection
-
-Snapshots in renamed files|tests:
-  - no special treatment, they are just removed + new snapshots
-
-CONF.input BOOL (-i|--input):
+ENVVAR SNAPSHOT_MODE=input:
   - goal: test-first development for snapshots
-  - not compatible with CONF.update|remove true
-  - make t.snapshot():
-     - if there already is a snapshot, print it
-     - prompt for snapshot:
-        - if submit something:
-           - updates snapshot in snapshot file with it
-        - if submit without entering anything:
-           - keep current snapshot (including none)
-           - must distinguish from explicitely entering undefined
-     - not throw any ERROR
+  - done after test run:
+     - does not modify test run itself:
+        - including snapshot()
+        - including exit code
+     - reasons:
+        - easier to understand for end-user
+        - easier to combine with test runners, because does not mix with their reporting or run
+        - separation of concerns: no issues mixing with reporting
+        - prompt would be slow if CPU is fully used by running tests
+  - prompt for every snapshot() executed during test run:
+     - passing or not
+        - i.e. can update existing snapshots, not only new ones
+     - unreachable snapshot() are not prompted:
+        - e.g. when assertion fails before them
+           - including when having several snapshot() in same test and one throws
+        - workaround: move the snapshot() temporarily, then move it back
+  - prompt for snapshot:
+     - if submit something:
+        - updates snapshot in snapshot file with it
+     - if submit without entering anything:
+        - keep current snapshot (including none)
+        - must distinguish from explicitely entering undefined
+        - same as n/next
+  - if there is an existing snapshot, print it before each prompt
   - prompt:
      - use Node REPL ("readline" or "repl" core module)
      - can multiple statements (use the last one)
      - can use history (arrow up) to re-use previous inputs
      - retry if invalid input
      - not erased after submit
+  - n/next, u/undo, q/quit, ?/help actions
+     - if REPL does not allow raw input without quotes, can define those actions as variables with SYM as values instead
+  - how should reporting look like??? Similar to pretty reporter???
+     - clearly separate from test run with a big header???
+  - end()->PROMISE in underlying snapshot utlity
+     - how to do this with test runners without that concept like ava???
+        - however possible with all other test runners
+        - maybe???
+           - endEach() that persists state in temporary files, to do in after() for each worker
+           - then CLI utility that uses it
+
+Snapshots in renamed files|tests:
+  - no special treatment, they are just removed + new snapshots
+
+Pruning:
+  - only if SNAPSHOT_MODE=update
+  - done() performs the three kinds of pruning specified below
+  - removing orphan snapshot files:
+     - for each test file that is run:
+        - `readdir('parent/')` -> sibling test files
+        - `readdir('parent/snapshots/')` (if exists) -> sibling snapshot files
+        - remove any orphan snapshot file
+     - if remove fails, ignore silently. Reasons:
+        - each sibling test file will try removing the same file in parallel, which leads to race condition
+        - pruning is not priority, it's ok if it fails
+     - when removing last test file in a directory, won't prune its snapshot file:
+        - i.e. users should do it themselves, but most users will probably do it naturally
+     - reasons:
+        - it works even when specific test files are being selected
+           - in which case, it restricts pruning to the siblings (as opposed to pruning completely unrelated files)
+        - it does not require any global index file
+        - it does not require knowing what the root directory is, or recursing over many files
+        - it does not require knowing what the current test selection is
+  - removing orphan snapshots for whole tests in a given file:
+     - remove any snapshot if no test defined (not run) with the same "TITLE"
+     - if it|test() is inside an if block, will always be pruned. Possible workarounds:
+        - add else block with it|test.skip()
+        - use OPTS.skip BOOL instead
+        - move if block inside the test function
+     - when removing the last it|test() from a test file, but not removing the file itself, snapshots won't be pruned
+        - because file would stop being considered a test file, i.e. cannot be selected as top-level test file anymore
+        - i.e. users should do it themselves, but this is an edge case
+     - reasons:
+        - it allows not pruning snapshots when:
+           - an error thrown before reaching snapshot()
+           - snapshot() is done conditionally, e.g. only on older Node versions
+           - test was skipped with it.only|skip() or global --only|skip
+        - it allows pruning snapshots when:
+           - removing last snapshot test from test file
+        - it does not require monkey-patching it|test()
+  - pruning after snapshot() was removed in a test but test itself was not removed
+     - whether this was the only snapshot() or not in the test
+     - by default, snapshots inside tests are never pruned
+        - unless the whole test or file was pruned, in which case the following is not needed
+     - user must manually change snapshot(SNAPSHOTS, "TITLE", VAL) to snapshot(SNAPSHOTS, "TITLE") (with no VAL):
+        - different from snapshot(SNAPSHOTS, "TITLE", undefined). Can distinguish by using variadic ...args.length
+        - this removes all snapshots for current "TITLE" except for any other snapshot() performed in current run (before or after)
+        - doing it twice in same test is noop
+        - pruning is only persisted once done() is called
+        - once pruning is persisted, user can then remove that line of code
+     - reasons:
+        - it allows not pruning snapshots when:
+           - an error thrown before reaching snapshot()
+           - snapshot() is done conditionally, e.g. only on older Node versions
+        - it works with multiple snapshot() in same test
+        - it favors possibly leaving orphan snapshots (if user forgets the extra step) over removing used snapshots (by adding an explicit extra step)
+        - it does not require wrapping test|it()
+        - it does not require user manually doing SNAPSHOT_MODE=remove
+        - it does not require figuring out if a test function has thrown, rejected or not called callback
+
+Snapshots directory creation|deletion:
+  - when creating a new snapshot file:
+      1) check if snapshot directory exists. If it does, skip 2)
+      2) create snapshot directory
+          - can error if another worker did 2) at same time. In that case, ignore error and move on.
+      3) create snapshot file
+          - can error if another worker removed snapshot directory (6)) between 2) and 3). In that case, ignore and error and go back to 2)
+  - when deleting a snapshot file:
+      4) remove snapshot file
+      5) check if snapshot directory is empty. If not, skip 6)
+      6) delete snapshot directory
+          - should error if not empty, which could happen if another worker created a snapshot file (3)) between 5) and 6). In that case, ignore error and move on.
+          - can error if another worker did 6) at same time. In that case, ignore error and move on.
 
 Color highlighting in snapshots:
   - use a syntax highlighting library
@@ -287,27 +418,27 @@ Color highlighting in snapshots:
      - use ellipsis in-between parts
 
 Normalization:
-   - to normalize snapshots, user needs to transform the value passed to t.snapshot()
-   - create a separate package with some common normalization methods:
-      - separate some of those methods to own package if makes sense, including deep(), compose(), error(), duration()
-      - deep(FUNC(VAL)->VAL)->FUNC(OBJ)->OBJ:
-         - make a mapping FUNC recursive
-         - avoid infinite recursions
-         - only enumerated own properties
-         - applied to all methods in the package
-      - compose(FUNC,...)->FUNC: functional compose
-      - trim(STR)->STR
-      - error(STR)->STR: replace stack traces (lines starting with \s+at ...) by single "at STACK TRACE"
-         - should work on ERROR since error() is deep and should be applied to error.stack
-         - should work on CLI error output (i.e. there is no available ERROR instance)
-         - should work for any browser
-      - colors(STR)->STR: remove colors
-      - duration(STR[, STR2])->STR: replace anything that looks like durations by STR2 (def: "100ms")
-      - timestamp(STR[, STR2])->STR: replace anything that looks like timestamps by STR2 (with a default of epoch)
-      - newline(STR)->STR: CRLF or LF
-      - removePath(STR)->STR: remove anything that looks like a path (including Windows PATH)
-      - normalizePath(STR)->STR: normalize Windows paths to Unix paths
-      - replace(REGEXP, STR)
+  - to normalize snapshots, user needs to transform the value passed to snapshot()
+  - create a separate package with some common normalization methods:
+     - separate some of those methods to own package if makes sense, including deep(), compose(), error(), duration()
+     - deep(FUNC(VAL)->VAL)->FUNC(OBJ)->OBJ:
+        - make a mapping FUNC recursive
+        - avoid infinite recursions
+        - only enumerated own properties
+        - applied to all methods in the package
+     - compose(FUNC,...)->FUNC: functional compose
+     - trim(STR)->STR
+     - error(STR)->STR: replace stack traces (lines starting with \s+at ...) by single "at STACK TRACE"
+        - should work on ERROR since error() is deep and should be applied to error.stack
+        - should work on CLI error output (i.e. there is no available ERROR instance)
+        - should work for any browser
+     - colors(STR)->STR: remove colors
+     - duration(STR[, STR2])->STR: replace anything that looks like durations by STR2 (def: "100ms")
+     - timestamp(STR[, STR2])->STR: replace anything that looks like timestamps by STR2 (with a default of epoch)
+     - newline(STR)->STR: CRLF or LF
+     - removePath(STR)->STR: remove anything that looks like a path (including Windows PATH)
+     - normalizePath(STR)->STR: normalize Windows paths to Unix paths
+     - replace(REGEXP, STR)
 
 Reporting:
   - should take as input UI information: titles, filepaths, data, error, etc.
@@ -328,7 +459,7 @@ Reporting ordering:
   - run in parallel but buffer and report in order (like test-openapi)
      - should stream it
   - order should be (by priority):
-     - process errors at end
+     - most errors > process errors > worker errors
      - lexicographical ordering of "shortest filepath"
      - when test() was called
      - argument order in parameters
@@ -399,23 +530,14 @@ Default reporter:
            - non-first errors with CONF.level "warn"
      - test iteration with content:
         - no newline before, but newline after
-  - tests with no data iteration:
-     - single line:
-        - "PASS|FAIL" (backgroundGreen|Red)
+  - each test:
+     - first line:
+        - "PASS|FAIL": backgroundGreen|Red
         - "shortest filepath" + test title: no background color, normal foreground color
-     - ERROR (if any)
-  - tests with data iteration:
-     - header:
-        - once per test
-        - 3 lines: bottom-filled color, full-filled color, up-filled color (like test-openapi)
-        - color is inverted auto
-        - "shortest filepath" + test title
-     - subheader:
-        - once per test iteration
-        - "PASS|FAIL" (backgroundGreen|Red)
-        - data:
-           - use info.title from test-each
-           - no background color, normal foreground color
+        - we repeat the first line for each data so that users don't need to scroll up
+     - second line (if data)
+        - use info.title from test-each
+        - no background color, normal foreground color
      - ERROR (if any)
 
 Use itself for unit testing, but its latest release (not direct require())
@@ -449,7 +571,21 @@ Executing commands:
   - always use opts.reject false
   - with correct normalization
   - allow using current package CLI name (finds it in `package.json`)
-      - see https://github.com/sindresorhus/execa/issues/281
+     - see https://github.com/sindresorhus/execa/issues/281
+
+Snapshots???
+  - should ideally:
+     - use a single file per snapshot
+     - be a simple human-friendly flat text file
+     - be resistant to linter/IDE/text editors modifications
+     - be diff friendly
+  - have both Markdown and binary files like ava???
+     - use v8.serialize() on binary files???
+     - use brotli on binary files???
+     - maybe should be normal text file instead of Markdown, because users will look at it in IDE, not browser
+  - use sourcemaps to figure out where to put snapshots
+     - or only allow overidding snapshot dir instead???
+  - should try to keep existing sorting, so that git diff do not show changes due to sorting
 
 Watch mode:
   - CONF.watch BOOL (-w|--watch)
@@ -475,30 +611,6 @@ Watch mode:
 
 Config:
   - test OPTS can also be set as global defaults on CONF
-
-Snapshots???
-  - should ideally:
-     - use a single file per snapshot
-     - be a simple human-friendly flat text file
-     - be resistant to linter/IDE/text editors modifications
-     - be diff friendly
-  - have both Markdown and binary files like ava???
-     - use v8.serialize() on binary files???
-     - use brotli on binary files???
-     - maybe should be normal text file instead of Markdown, because users will look at it in IDE, not browser
-  - use sourcemaps to figure out where to put snapshots
-     - or only allow overidding snapshot dir instead???
-  - should try to keep existing sorting, so that git diff do not show changes due to sorting
-
-Separate snapshot testing into own project that can be used with other test runners???
-  - t.snapshot() needs to know about current file:
-     - so that can get snapshot file path
-     - so should pass __filename as argument or as initialization option
-     - adapters should hide that from consumers:
-        - difftest can use worker thread info to know about current file
-  - should use ENVVARs for test-run-wide options
-     - including CONF.update|remove|input true
-     - adapters should try to set those themselves, so that user does not need to do that
 
 Should run in browsers too
 
