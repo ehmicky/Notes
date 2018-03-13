@@ -17,9 +17,10 @@ TODO:
            - https://stripe.com/docs/amex-express-checkout#integrating
            - https://stripe.com/docs/masterpass#integrating
            - https://stripe.com/docs/visa-checkout#integrating
+           - https://stripe.com/docs/payments/payment-intents/quickstart#viewport-meta-requirements
+           - https://stripe.com/docs/payments/3d-secure-iframe
         - https://stripe.com/docs/payments/checkout
            - including the Checkout section on https://stripe.com/docs/receipts
-        - https://stripe.com/docs/payments/3d-secure
   - go through each attribute, edit and try to make sense of them
   - check https://raw.githubusercontent.com/stripe/openapi/master/openapi/spec3.yaml
   - what do publishable keys do?
@@ -29,6 +30,7 @@ TODO:
      - including in API it sometimes shows "Custom only" or "Custom and Express only"
      - including:
         - https://stripe.com/docs/sources/connect
+        - https://stripe.com/docs/payments/payment-intents/usage#connected-accounts
         - https://stripe.com/docs/ach#connect
         - https://stripe.com/docs/disputes#disputes-on-connect-platforms
   - go through all undocumented endpoints, see if they are documented elsewhere
@@ -344,7 +346,7 @@ Idempotency-Key: RANDOM [C]       #Memoize using:
                                   #Only for 24 hours.
                                   #Only memoize requests that passed input validation layer.
                                   #Only for `POST`
-                                  #Recommended for POST /charges
+                                  #Recommended for POST /charges|payment_intents
                                   #  - using the order ID, or the SOURCE.id (unless reusable), etc.
                                   #  - to avoid DISPUTEs on duplicated charges
 
@@ -567,10 +569,12 @@ CHARGE.source                   *C#Can be:
                                   #     - requires CHARGE.customer
                                   #  - STRIPE_ACCOUNT
                                   #On create, must be ID
+                                  #Prefer STRIPE.paymentMethod.create() + CHARGE.payment_method*
 CHARGE.payment_method             #PAYMENT_METHOD.id
 CHARGE.payment_method_details     #Like SOURCE.type + SOURCE.TYPE.*
 CHARGE.customer                 CU#CUSTOMER.id
 ?customer=CUSTOMER.id             #
+CHARGE.shipping                 CU#SHIPPING.
 CHARGE.application                #STRIPE_ACCOUNT.id
 CHARGE.on_behalf_of              C#STRIPE_ACCOUNT.id
                                   #When one made transaction of another's behalf
@@ -629,7 +633,6 @@ CHARGE.review                     #REVIEW.id
 CHARGE.transfer                   #TRANSFER.id. Only applicable if the charge was created using the destination parameter.
 CHARGE.source_transfer            #TRANSFER.id. Only present if the charge came from another Stripe account.
 CHARGE.billing_details            #BILL_DETAILS.
-CHARGE.shipping                 CU#SHIPPING.
 CHARGE.transfer_data             C#TRANSFER_DATA.
 TRANSFER_DATA.amount             C#MONEY (def: CHARGE.amount).
 TRANSFER_DATA.destination        C#STR. Stripe account to transfer funds to if CHARGE.transfer_data was defined.
@@ -648,7 +651,9 @@ CHARGE.capture                  RC#BOOL. Delayed payment:
                                   #  - if more than 7 days, CHARGE fails
                                   #     - EVENT 'charge.expired'
                                   #  - to cancel it, should create a REFUND
-                                  #Goal: delaying payment when it might look fraudulent (see below).
+                                  #Goal:
+                                  #  - delaying payment when it might look fraudulent (see below).
+                                  #  - lightweight refund by holding money (cannot be spent by customer) without withdrawing it
                                   #Some banks show not-processed yet (but authorized) payments as if it was processed, which
                                   #can confuse some customers.
                                   #Only works with card* SOURCEs
@@ -656,30 +661,23 @@ CHARGE.captured                   #BOOL
 
 GET /payment_intents[/ID]
 POST /payment_intents[/ID]        #
-POST /payment_intents/ID/confirm  #Set payment's method and start payment.
-                                  #If additional authentication required, set PINTENT.status to 'requires_action' and use PINTENT.next_action
-                                  #If failure, set PINTENT.status 'requires_payment_method'
-                                  #If success, set PINTENT.status 'succeeded' (or 'requires_capture' if PINTENT.capture_methd 'manual')
+POST /payment_intents/ID/confirm  #Like PINTENT.confirm true
                                   #Payload attributes: client_secret, payment_method, receipt_email, return_url, shipping, source, save_payment_method
-POST /payment_intents/ID/capture  #Gets money if PINTENT.status 'requires_capture'
-                                  #Payload attributes: amount_to_capture MONEY, application_fee_amount
-POST /payment_intents/ID/cancel   #From PINTENT.status 'requires*' to 'canceled'.
-                                  #If PINTENT.status 'requires_capture', PINTENT.amount_capturable is refunded.
+POST /payment_intents/ID/cancel   #Set PINTENT.status 'canceled'.
                                   #Payload attributes: cancellation_reason
-STRIPE.paymentIntents.retrieve|
- list|create|update|confirm|
- capture|cancel()                 #
-payment_intent.                   #'EVENT_TYPE' when a PaymentIntent has funds to be captured.
- amount_capturable_updated        #Check the amount_capturable property on the PaymentIntent to determine the amount that can be captured.
-                                  #You may capture the PaymentIntent with an amount_to_capture value up to the specified amount.
-payment_intent.payment_failed     #'EVENT_TYPE' when a PaymentIntent has failed the attempt to create a source or a payment.
-payment_intent.succeeded          #'EVENT_TYPE' when a PaymentIntent has been successfully fulfilled.
-PINTENT                           #Ongoing flow to pay by a CUSTOMER.
+STRIPE.paymentIntents.
+ retrieve|list|create|update|
+ confirm|cancel()                 #
+PINTENT                           #SOURCE authentication + CHARGE creation
+                                  #Can re-use SOURCE|PAYMENT_METHOD (CUSTOMER.sources|payment_method), but must re-authenticate for each CHARGE.
+                                  #Meant to be used with PAYMENT_METHOD and replace SOURCE over time:
+                                  #  - PINTENT.status|next_action is similar to SOURCE.flow
 PINTENT.amount                 *CU#
 PINTENT.application_fee_amount  CU#
 PINTENT.source                  CU#
 PINTENT.payment_method          CU#
 PINTENT.customer                CU#
+PINTENT.shipping                CU#
 PINTENT.application               #
 PINTENT.on_behalf_of             C#
 PINTENT.statement_descriptor    CU#
@@ -687,47 +685,80 @@ PINTENT.description             CU#
 PINTENT.receipt_email           CU#
 PINTENT.invoice                   #
 PINTENT.review                    #
-PINTENT.shipping                CU#
 PINTENT.transfer_data            C#
 PINTENT.transfer_group          CU#Like CHARGE.*
 PINTENT.charges                   #CHARGE_LIST
+                                  #Contains all failed CHARGEs + an final successful CHARGE (if any).
+                                  #Sorted in reverse order.
 PINTENT.payment_method_types    CU#STR_ARR of allowed SOURCE.type
 PINTENT.save_payment_method    RCU#BOOL (def: false). Save PINTENT.payment_method|source to CUSTOMER.sources.
                                   #Must be specified again if PINTENT.payment_method|source changes.
-PINTENT.amount_capturable         #MONEY that can be captured.
-PINTENT.amount_received           #MONEY that was collected.
-PINTENT.capture_method           C#Either 'automatic' or 'manual'.
 PINTENT.status                    #STR among:
-                                  #  - 'requires_payment_method'
-                                  #  - 'requires_confirmation'
-                                  #  - 'requires_action'
-                                  #  - 'processing'
-                                  #  - 'requires_authorization'
-                                  #  - 'requires_capture'
-                                  #  - 'canceled'
-                                  #  - 'succeeded'
-PINTENT.next_action               #NEXT_ACTION. If present, this property tells you what actions you need to take in order for your customer to fulfill a payment using the provided source.
-NEXT_ACTION.redirect_to_url       #REDIRECT_TO_URL. Contains instructions for authenticating a payment by redirecting your customer to another page or application.
-REDIRECT_TO_URL.return_url        #string If the customer does not exit their browser while authenticating, they will be redirected to this specified URL after completion.
-REDIRECT_TO_URL.url               #string The URL you must redirect your customer to in order to authenticate the payment.
-NEXT_ACTION.type                  #string Type of the next action to perform, one of redirect_to_url or use_stripe_sdk.
-NEXT_ACTION.use_stripe_sdk        #OBJ. When confirming a PaymentIntent with Stripe.js, Stripe.js depends on the contents of this object to invoke authentication flows.
-                                  #The shape of the contents is subject to change and is only intended to be used by Stripe.js.
-PINTENT.client_secret             #string The client secret of this PaymentIntent.
-                                  #Used for client-side retrieval using a publishable key.
-                                  #Please refer to dynamic authentication guide on how client_secret should be handled.
+                                  #  - 'requires_payment_method':
+                                  #      - initial state
+                                  #      - must add PINTENT.source|payment_method
+                                  #  - 'requires_confirmation': must PINTENT.confirm true
+                                  #  - 'requires_action':
+                                  #      - ask for customer to authenticate using PINTENT.next_action (abstraction of SOURCE.flow)
+                                  #      - if not needed, directly goes to 'requires_capture|succeeded'
+                                  #  - 'processing': on-going PINTENT.next_action
+                                  #  - 'requires_capture': must STRIPE.capture() (with PINTENT.capture_method 'manual')
+                                  #  - 'succeeded': success
+                                  #     - EVENT 'payment_intent.succeeded'
+                                  #  - 'canceled':
+                                  #     - cannot be done when status is 'processing' or 'succeeded'
+                                  #     - refunded if partial captured (see amount_to_capture)
+                                  #On failure:
+                                  #  - goes back to 'requires_payment_method'
+                                  #  - EVENT 'payment_intent.payment_failed'
+                                  #  - can try again
+                                  #PINTENT should be:
+                                  #  - created as soon as possible, i.e. when CUSTOMER start adding products/services
+                                  #  - re-used if CUSTOMER does not finish, then comes back later
 PINTENT.confirm                 RC#BOOL (def: false).
-                                  #If true, attempt to confirm payment.
-                                  #If the payment method attached is a card, a return_url may be provided in case additional authentication is required.
-PINTENT.confirmation_method      C#string Confirmation method of this PaymentIntent, one of manual or automatic.
-                                  #When the confirmation method is automatic, a PaymentIntent can be confirmed using a publishable key.
-                                  #After next_actions are handled, no additional confirmation is required to complete the payment.
-                                  #When the confirmation method is manual, all payment attempts must be made using a secret key.
-                                  #The PaymentIntent will return to the requires_confirmation state after handling next_actions, and requires your server to initiate each payment attempt with an explicit
-                                  #confirmation.
+                                  #Set status to 'requires_action'
+PINTENT.confirmation_method      C#Either:
+                                  #  - 'manual':
+                                  #     - manually set PINTENT.payment_method|confirm in the server
+                                  #     - manually perform PINTENT.next_action in the client
+                                  #     - sync|async SOURCEs: like CHARGEs
+                                  #  - 'automatic' (def) (preferred):
+                                  #     - let Stripe.js handle PINTENT.payment_method|confirm|next_action automatically
+                                  #     - must pass PINTENT.client_secret to Stripe.js before it asks for payment method
+                                  #     - must use webhooks even for sync SOURCEs
+                                  #     - does not require passing TOKENs to server (since PINTENT.payment_method is set by Stripe.js)
+PINTENT.next_action              ?#NEXT_ACTION
+NEXT_ACTION.type                  #Either:
+                                  #  - 'redirect_to_url': with confirmation_method 'manual'
+                                  #  - 'use_stripe_sdk': with confirmation_method 'automatic'
+NEXT_ACTION.redirect_to_url       #REDIRECT_TO_URL
+REDIRECT_TO_URL.url               #'URL' to redirect CUSTOMER to, for payment authorization
+REDIRECT_TO_URL.return_url        #'URL' CUSTOMER will be redirected to, after payment authorization
+                                  #Will pass the following query variables:
+                                  #  - ?payment_intent ID
+                                  #  - ?payment_intent_client_secret STR: should be same as PINTENT.client_secret
+PINTENT.return_url              RC#Can only be set if PINTENT.confirm true, PINTENT.confirmation_method 'manual' and SOURCE.type is 'card*'
+PINTENT.client_secret             #PINTENT-specific STR.
+                                  #?payment_intent_client_secret is added to REDIRECT_TO_URL.return_url redirection.
+                                  #Should match PINTENT.client_secret to ensure this is the same customer.
+NEXT_ACTION.use_stripe_sdk        #Internal OBJ used by Stripe.js
 PINTENT.last_payment_error       ?#Confirmation ERROR
 PINTENT.canceled_at              ?#DATE_NUM
 PINTENT.cancellation_reason      ?#STR among: 'duplicate', 'fraudulent', 'requested_by_customer', 'failed_invoice'.
+
+POST /payment_intents/ID/capture  #Similar to CHARGE capturing.
+                                  #PINTENT.status remains 'requires_capture' before reaching 'succeeded' until fully captured.
+                                  #Can capture in several times until reaching PINTENT.amount_capturable.
+                                  #Payload attributes:
+                                  #  - amount_to_capture MONEY (def: full)
+                                  #  - application_fee_amount MONEY
+STRIPE.capture()                  #
+PINTENT.capture_method           C#Either:
+                                  #  - 'automatic' (def): no capturing
+                                  #  - 'manual': capturing
+PINTENT.amount_capturable         #How much can be withdrawn. When changes, EVENT 'payment_intent.amount_capturable_updated'
+                                  #Eventually reaches PINTENT.amount
+PINTENT.amount_received           #Sums of all PAYLOAD.amount_to_capture so far.
 
 GET /refunds[/ID]
 POST /refunds[/ID]                #
@@ -839,13 +870,15 @@ PAYOUTS_SETTINGS.               CU#BOOL (def: true for Express, false for Custom
 
 DISPUTE ==>                       #When a CUSTOMER questions our CHARGE. Also called "chargebacks".
                                   #Possible causes:
-                                  #  - they did not authorize it (e.g. done with a stolen card)
+                                  #  - they did not authorize it (e.g. done with a stolen card) (most common cause)
                                   #  - they did not receive the product/service
                                   #  - wrong billing (e.g. transaction sent twice to bank)
                                   #  - technical (e.g. expired authorization)
                                   #Should prefer using the Dashboard instead of API for this.
                                   #Payment method-specific:
-                                  #  - card*: provider-specific and reason-specific, but usually 120 days
+                                  #  - card*:
+                                  #     - provider-specific and reason-specific, but usually 120 days
+                                  #     - if 3D secure, cannot be dispute for "not authorized" reasons (but other reasons still possible)
                                   #  - alipay, wechat: only for problem with quality of goods
                                   #  - 'ach_credit_transfer', 'bancontact', 'eps', 'giropay', 'ideal', 'multibanco', 'p24', 'sofort': no DISPUTE possible
                                   #  - 'sepa_debit':
@@ -966,6 +999,11 @@ SIGNS OF FRAUD ==>                #  - fake information (emails, phone numbers)
                                   #     - often legitimate (gift purchase), but raise warnings
                                   #  - change of address after purchase
                                   #  - ask for different shipping
+
+PSD2 ==>                          #EU directive. Includes SCA (Strong Customer Authentication):
+                                  #  - requires 2-factor auth on payments
+                                  #     - among knowledge (e.g. password), possession (e.g. device), inherence (e.g. biometrics)
+                                  #  - 3D secure is SCA-compliant
 
 GET /disputes[/ID]
 POST /disputes/ID                 #
@@ -1129,11 +1167,21 @@ SOURCE TYPES ==>                  #Differences between source types:
                                   #  - country availability (see below)
                                   #  - currencies availability (see above)
                                   #  - how testing is done
+                                  #  - whether capturing is supported (see above)
                                   #Credit card companies controlled (banks are clients):
                                   #  - 'card':
                                   #      - credit card
                                   #      - fast
                                   #      - can use CARD entity
+                                  #  - 'card' with 3D secure:
+                                  #      - extra authorization:
+                                  #         - redirects to bank website
+                                  #         - banks asks for online password, on-device code or biometric
+                                  #      - also called 'Visa Secure' or 'Mastercard Identity Check'
+                                  #      - version 2:
+                                  #         - allows banks to not perform extra authorization based on contextual data sent
+                                  #         - contextual data: device ID, transaction history, address, etc.
+                                  #      - automatically triggered when using 'card' PAYMENT_METHOD with PINTENT
                                   #  - 'card' with CARD.wallet.type:
                                   #      - digital wallets
                                   #      - put money on it usually with credit card
@@ -1256,8 +1304,8 @@ STRIPE_ACCOUNT.settings.
  card_payments.decline_on       CU#DECLINE_ON. Automatically declines CHARGES when SOURCE.card.*_check is 'failed'.
 DECLINE_ON.avs_failure          CU#BOOL. For SOURCE.card.address_*_check
 DECLINE_ON.cvc_failure          CU#BOOL. For SOURCE.card.cvc_check
-SOURCE.card.three_d_secure       ?#OBJ:
-                                  #  - supported BOOL
+SOURCE.card.three_d_secure       ?#If not attempted, undefined.
+                                  #OBJ: succeeded BOOL
 SOURCE.card.wallet               ?#WALLET. Digital wallet.
 WALLET.type                       #STR. 'amex_express_checkout', 'apple_pay', 'google_pay', 'microsoft_pay', 'masterpass', 'samsung_pay', 'visa_checkout'
 WALLET.dynamic_last4              #STR. Last four digits of the device account number.
@@ -1495,7 +1543,14 @@ GET /payment_methods?
 POST /payment_methods[/ID]        #
 STRIPE.paymentMethods.
  retrieve|list|create|update()    #
-PAYMENT_METHOD                    #Credit card SOURCE + CUSTOMER
+PAYMENT_METHOD                    #SOURCE + CUSTOMER
+                                  #Prefer using PINTENT + PAYMENT_METHOD (new APIs) instead of SOURCE (older API).
+                                  #  - including CHARGE.source vs CHARGE.payment_method[_details]
+                                  #SOURCE.TYPEs support:
+                                  #  - 'card' without 3D secure: both
+                                  #  - 'card_present' and 'card' with 3D secure: only PINTENT + PAYMENT_METHOD
+                                  #  - all others: SOURCE
+                                  #More SOURCE.TYPEs will be added in future.
 PAYMENT_METHOD.type             *C#Like SOURCE.*
 PAYMENT_METHOD.card[_present]   CU#Like SOURCE.*
 PAYMENT_METHOD.TYPE.generated_from#GENERATED
