@@ -112,7 +112,8 @@ NODEINFO.Description.Platform.
 
 
 docker create ...
---sysctl VAR=VAL                  #Linux kernel options (using sysctl)
+--sysctl VAR=VAL                  
+HOSTCONF.Sysctls.VAR              #Linux kernel options (using sysctl)
 
 
 HOSTINFO.ConsoleSize              #[NUM, NUM2]. Only for Windows
@@ -155,7 +156,7 @@ DOCKERDIR                         #Runtime directory for high-level dockerd with
 dockerd ...                       #  - containers/CONTAINER_ID/:
 -g DOCKERDIR                      #     - log files
 --graph DOCKERDIR                 #     - config, including routing
-                                  #  - images/
+SYSINFO."Docker Root Dir"         #  - images/
                                   #  - network/
                                   #  - volumes/: data volumes
                                   #  - swarm/: swarm state
@@ -163,8 +164,7 @@ dockerd ...                       #  - containers/CONTAINER_ID/:
                                   #Def: /var/lib/docker/
 
 RUNDOCKERDIR                      
---exec-root DIR                   
-SYSINFO."Docker Root Dir"         #Runtime directory for low-level dockerd with notably: containerd, networking
+--exec-root DIR                   #Runtime directory for low-level dockerd with notably: containerd, networking
 
 DOCKERPIDFILE                     #PID of dockerd. Def: /var/run/docker.pid
 dockerd ...
@@ -363,7 +363,8 @@ BUILD LAYERS ==>                  #Works in layers:
                                   #  - uses "storage drivers" (see above)
                                   #Each Dockerfile instruction (docker build) or commit (docker commit) creates a new layer:
                                   #  - intermediate IMAGE are removed at the end
-                                  #  - each layer creates a new shell, e.g. $PWD will be reset 
+                                  #  - each layer creates a new shell
+                                  #     - e.g. $PWD will be reset, unless set with WORKDIR
                                   #     - should limit number of layers, i.e. combine instructions as much as possible
                                   #  - max 127 layers
                                   #  - prefer Dockerfile over commit
@@ -602,14 +603,13 @@ CONTAINERINFO.State.Status        #Can be:
                                   #  - created: after docker create
                                   #  - running: after docker start
                                   #  - paused: after docker pause
-                                  #  - restarting: during new docker start
+                                  #  - restarting: during restarting (see --restart)
                                   #  - exited
                                   #  - dead: trying to kill|stop, and it failed, so cannot restart
 CONTAINERINFO.Running|Paused|
  Restarting|OOMKilled|Dead        #BOOL
 SYSINFO.Containers.
  Running|Paused|Stopped           #NUM
-CONTAINERINFO.RestartCount        #NUM
 CONTAINERINFO.State.
  StartedAt|FinishedAt             #"DATE"
 
@@ -622,12 +622,11 @@ CONTAINERINFO.State.
 
 
 docker exec EXIT CODE ==>         #Is:
-                                  #  - 125: dockerd error
+DOCKERINFO.State.ExitCode         #  - 1: cannot connect to dockerd
+DOCKERINFO.State.Error            #  - 125: dockerd error
                                   #  - 126: cannot run COMMAND
                                   #  - 127: cannot find COMMAND
                                   #  - otherwise: COMMAND exit code
-DOCKERINFO.State.ExitCode         #
-DOCKERINFO.State.Error            #
 
 docker wait CONTAINER...          #Waits until CONTAINER stops, then prints exit code
 
@@ -643,6 +642,7 @@ docker create|update ...
                                   #  - multiply by 2 each time
                                   #  - for a maximum of "window" (def: unlim)
                                   #Should not be used if a process manager is used, e.g. systemd, forever or pm2
+                                  #Always restart detached (see --detach)
 docker service create ...
 --restart-condition STR           
 HOSTCONF.RestartPolicy.Name       
@@ -655,6 +655,7 @@ TASKIMPINFO.RestartPolicy.Attempts#Like NUM above for "on-failure"
 TASKIMPINFO.RestartPolicy.Delay   #Like "delay" above
 --restart-window NUM        
 TASKIMPINFO.RestartPolicy.Window  #Like "window" above
+CONTAINERINFO.RestartCount        #NUM
 
 
 docker run ...
@@ -680,26 +681,40 @@ dockerd ...
                                              \=+===============================+=/
 
 
-HEALTHCHECK [--OPT] CMD COMMAND   #Dockerfile instruction. Adds a "health status" to a CONTAINER, in addition to its running status:
+HEALTHCHECK [--OPT] CMD COMMAND   #First is Dockerfile instruction. 
+                                  #Adds a "health status" to a CONTAINER, in addition to its running status:
                                   #  - checked by COMMAND at regular intervals
                                   #  - COMMAND exit code must be 0 (success) or 1 (failure)
                                   #  - COMMAND stdout|stderr will be kept in logs
                                   #Can be inspected with:
-                                  #  - docker inspect, ps, etc.
+                                  #  - docker inspect, ps, etc.: see below
                                   #  - health_status event (with "docker events")
                                   #Used by:
                                   #  - swarm (to maintain number of replicas)
                                   #Only last HEALTHCHECK will be used
---interval=NUM                    #Def: 30 (in secs)
---timeout=NUM                     #Def: 30 (in secs)
+--interval=NUMs                   #Def: 30s
+--timeout=NUMs                    #Def: 30s
 --retries=NUM                     #Def: 3
 
 docker create ...
---no-healtcheck                   #Overrides HEALTHCHECK
 --health-cmd CMD
---health-interval NUM
---health-timeout NUM
---health-retries NUM              #Overrides|specifies HEALTHCHECK
+IMAGEINFO.Config.Healthcheck.Test
+--health-interval NUMs
+IMAGIF.Config.Healthcheck.Interval
+--health-timeout NUMs
+IMAGINF.Config.Healthcheck.Timeout
+--health-retries NUM              
+IMAGINF.Config.Healthcheck.Retries#
+
+HEALTHCHECK NONE
+docker create ...
+--no-healtcheck                   #
+
+CONTAINERINFO.State.Health.Status #"healthy" or "unhealthy"
+CONTAINERINFO.State.Health.
+ FailingStreak                    #NUM
+CONTAINERINFO.State.Health.Log    #OBJ_ARR: Start|End "DATE", ExitCode NUM, Output STR
+
 
 
 dockerd ...
@@ -758,16 +773,22 @@ IMAGEINFO.Config.Entrypoint       #  - JSON array syntax:
                                   #At least one CMD or ENTRYPOINT required per Dockerfile
 
 
-docker create IMAGE               
- [COMMAND [ARGS...]]              #COMMAND [ARGS...]: see docker exec???
+docker create IMAGE [...]         #If IMAGE:
+                                  #  - can take args (i.e. uses ENTRYPOINT [+ CMD]):
+                                  #     - runs default command
+                                  #     - ... are extra arguments (def: CMD)
+                                  #  - otherwise (i.e. uses only CMD):
+                                  #     - ... is command + arguments (def: CMD)
 
 docker run IMAGE [...]            #Does:
-                                  #  - docker create IMAGE ...
-                                  #  - docker start -i CONTAINER
-                                  #Shares all options from docker create+exec, plus extra, specified in this doc.
+                                  #  - docker create -a stdout -a stderr IMAGE ...
+                                  #  - docker start CONTAINER
+                                  #Shares all options from docker create+exec, plus few extra, specified in this doc.
 
-docker exec CONTAINER COMMAND     #Run COMMAND from within the container (def: container's default command/arguments)
+docker exec CONTAINER COMMAND     #Run COMMAND [ARGS...] from within the container
  [ARGS...]                        #CONTAINER must be running
+
+
 CONTAINERINFO.Path                
 CONTAINERSPEC.Command             #COMMAND
 CONTAINERINFO|CONTAINERSPEC.Args  #"ARG"_ARR
@@ -781,45 +802,44 @@ CONTAINERINFO.ExecIDs             #Linux kernel syscall "exec" IDs
                                              \=+===============================+=/
 
 
-docker exec ...
--d                                #Run in the background of current terminal
---detach                          #Returns container ID
-                                  #Container exits when COMMAND exits
-docker exec|start ...
---detach-keys "KEY,..."           #Sequence of keys to put currently foreground container to background
-                                  #Def: "ctrl-p,ctrl-q"
-                                  #Can also use DOCKERCONF.detachKeys STR
-
-docker attach CONTAINER           #Bring container foreground, either:
-                                  #  - it is in background in current terminal|process
-                                  #  - it is running in another terminal|process, e.g. several terminals can attach to same container
---no-stdin                        #Brings stdout|stderr in foreground, but not stdin
---detach-keys                     #Like docker exec
-
-
 docker create ...
--a stdin|stdout|stderr            
---attach stdin|stdout|stderr      #Redirects COMMAND's standard streams to|from current process|terminal
-IMAGEINFO.Config.                 #Can be done several time.
- AttachStdin|Stdout|Stderr        #Def: all for docker run|exec, but none for docker start|run
+-a stdin|stdout|stderr            #Redirects COMMAND's standard streams to|from current process|terminal
+--attach stdin|stdout|stderr      #Can be done several time.
+IMAGEINFO.Config.                 #Def:
+ AttachStdin|Stdout|Stderr        #  - docker exec: stdin+stdout+stderr
+                                  #  - docker run: stdout+stderr
+                                  #  - docker start: none
+                                  #docker create -a seems to have no effect (overriden by docker start), but not docker run
+                                  #COMMAND will remain open if waiting on stdin
 docker start ...
 -a
 --attach                          #Same as -a stdin -a stdout -a stderr --sig-proxy=true
+docker exec ...
+-d                                
+--detach                          #Opposite of --attach
+
+docker exec|start|attach ...
+--detach-keys "KEY,..."           #Sequence of keys to put currently foreground container to background
+DOCKERCONF.detachKeys             #Def: "ctrl-p,ctrl-q"
+
+docker attach CONTAINER           #Like --attach, but for a running container, which might be in another terminal|process (or not)
+--no-stdin                        #Attach stdout|stderr, but not stdin
+
 
 docker create|exec ...
 -t
---tty                             
-IMAGEINFO.Config.Tty              #Allocate a pseudo-TTY. Required if starting interactive shell
+--tty                             #Use a pseudo-TTY. Required if starting interactive shell
+IMAGEINFO.Config.Tty              #Does not have impact on standard streams redirections
 docker create|exec|start ...
 -i
---interactive                     
-IMAGEINFO.Config.OpenStdin        #Keep stdin opened even if --detach. Should be used for interactive shells
-IMAGEINFO.Config.StdinOnce        #Like --interactive, but close stdin after the last client closes.
-                                  #Can only be set through REST API
+--interactive                     #Similar to --attach, but meant for interactive shells:
+IMAGEINFO.Config.OpenStdin        #  - does not conflict with --detach, although --detach nullifies -i
+IMAGEINFO.Config.StdinOnce        #  - closes stdin after last client closes
 
 
 docker run|attach ...
 --sig-proxy=false                 #Do not redirect all signals from current process|terminal to the container it runs
+                                  #No effect if --tty
 
 
                                              /=+===============================+=\ 
@@ -829,26 +849,26 @@ docker run|attach ...
                                              \=+===============================+=/
 
 
-SHELL EXPANSION ==>               #E.g. $VAR, is done only when COMMAND uses CLI syntax
+SHELL EXPANSION ==>               #E.g. $VAR or globbing, is done only in COMMAND using CLI syntax
 
-$VAR                              #Expands in Dockerfile. Defined by ENV or ARG
-${VAR}                            #Should not be used for confidential information, as docker history shows it
+$VAR                              #Expands in Dockerfile VAR that was defined by ENV or ARG
+${VAR}                            #Cannot be used in:
+                                  #  - COMMAND-related: CMD, RUN, ENTRYPOINT, SHELL, HEALTHCHECK
+                                  #     - but does normal shell expansion if using JSON syntax
+                                  #  - ARG
+                                  #  - MAINTAINER
+                                  #Should not be used for confidential information, as docker history shows it
 ${VAR:-VAL}
 ${VAR:+VAL}                       #Like in Bash
 
 
-ENV VAR VAL                       #Dockerfile instruction. Sets ENVVAR
-                                  #E.g. to append to $PATH
-ENV VAR=VAL ...                   #Can be used as $VAR in following instructions, except:
-                                  #  - COMMAND-related: CMD, RUN, ENTRYPOINT, SHELL, HEALTHCHECK
-                                  #  - ARG
-                                  #  - MAINTAINER
-                                  #The first form does not parse/expanse VAL
+ENV VAR VAL                       
+ENV VAR=VAL ...                   
 docker create ...
 -e ENVVAR=VAL
 --env ENVVAR=VAL                  
-IMAGEINFO.Config.ENV              
-CONTAINERSPEC.Env                 #Overrides|specifies ENV
+IMAGEINFO.Config.ENV              #Sets ENVVAR
+CONTAINERSPEC.Env                 #First two are Dockerfile instruction. First one does not parse/expanse VAL
 --env-file FILE                   #Same with newline-separated ENVVAR=VAL file
 
 
@@ -883,11 +903,10 @@ BUILD CONTEXT ==>                 #Directories:
                                   #  - sent by client to server:
                                   #     - should keep it minimal
                                   #  - can be used by Dockerfile instructions: COPY|ADD, COMMANDs
-                                  #     - path resolution:
-                                  #        - absolute path: relative to CONTEXT_DIR
-                                  #        - relative path: 
-                                  #           - relative to current dir, which is initially CONTEXT_DIR
-                                  #           - can be changed by WORKDIR (see below)
+                                  #     - but files are not copied to IMAGE_DIR by default
+                                  #  - path resolution:
+                                  #     - absolute path: relative to CONTEXT_DIR
+                                  #     - relative path: relative to $PWD
                                   #  - copied from BUILD_DIR:
                                   #     - minus files matching BUILD_DIR/.dockerignore:
                                   #        - recommended
@@ -895,24 +914,22 @@ BUILD CONTEXT ==>                 #Directories:
                                   #        - # COMMENT, first line only
                                   #        - globbing: * ? ** !
 
+$PWD                              #If unset (def), CONTEXT_DIR
+                                  #Can only be changed by WORKDIR instruction
 
-WORKDIR DIR                       #Dockerfile instruction. Changes $PWD in CONTEXT_DIR for following instructions
-                                  #DIR created with mkdir -p if not existing
-                                  #Prefer over "cd"
-                                  #Avoid relative DIR
+WORKDIR DIR                       #First is Dockerfile instruction. 
+docker create ...                 #Changes ENVVAR $PWD, like "cd" would do
+-w DIR                            #As opposed to "cd":
+--workdir DIR                     #  - persisted across instructions
+IMAGEINFO.Config.WorkingDir       #  - DIR created with mkdir -p if not existing
+CONTAINERSPEC.Dir                 #Avoid relative DIR
                                   #Def: /
-docker create ...
--w DIR
---workdir DIR                     
-IMAGEINFO.Config.WorkingDir       
-CONTAINERSPEC.Dir                 #Overrides|specifies WORKDIR
 
 
 ONBUILD [...]                     #Dockerfile instruction. Same as ... but delayed: 
 IMAGEINFO.Config.OnBuild          #  - fired when another Dockerfile calls FROM for this image
                                   #  - only for direct children, not grandchildren
                                   #Allows using CONTEXTDIR of downstream image
-                                  #Can see list of delayed instructions with docker inspect ("OnBuild")
 
 
                                              /=+===============================+=\ 
@@ -929,15 +946,16 @@ COPY|ADD ["SRC",..., "DEST"]      #SRC:
                                   #DEST:
                                   #  - must include trailing / if want to copy inside DIR
                                   #  - if not existing, is created using mkdir -p
-                                  #New files/directories created with dockerd user/group (permission-wise)
+                                  #New files/directories created with root user|group
                                   #ADD has extra features:
                                   #  - SRC can be URL
                                   #  - SRC can be a *.tar (unless it is a URL), which is unpacked
 
 docker cp                         #Copy files recursively:
-[CONTAINER:]PATH [CONTAINER:]PATH2#  - permissions are kept
-                                  #  - user|group owner is container's user (if in container), current user|group (otherwise)
-                                  #CONTAINER must be specified in one (and only one) of either source|dest
+[CONTAINER:]PATH [CONTAINER:]PATH2#Permissions are kept
+                                  #Can be:
+                                  #  - container -> host: user|group will be (host's) current's
+                                  #  - host -> container: user|group is (container's) root
                                   #PATH can be - for stdin, which can be .tar archive
                                   #PATH in containers is relative to BUILD_DIR
 -L
@@ -963,24 +981,36 @@ docker save IMAGE...              #Similar as docker export, but for an IMAGE
 DATA VOLUME ==>                   #Container directory that is connected to host, i.e.:
                                   #  - synced (bidirectional) with a directory of the host
                                   #     - must ensure that operations are atomic (to avoid filesystem conflicts)
-                                  #     - several containers can share same host directory, by specifying same HOST_DIR (absolute path or VOLUME_NAME)
+                                  #     - several containers can share same host directory, by specifying same HOST_DIR
                                   #  - not saved in images nor container layers
                                   #     - should be used for any data not meant to be persisted in an image, e.g. temp runtime data
                                   #  - faster performance because do not use storage driver
-                                  #HOST_DIR can be:
+HOST_DIR                          #Can be:
                                   #  - absolute path: 
                                   #     - specific path, random VOLUME_NAME
                                   #     - cannot be manipulated with "docker volume"
                                   #     - called "bind mount"
-                                  #     - can create portability problem (path must exist, permissions/user/group must be same, etc.)
+                                  #     - can create portability problem (path must exist, users/groups)
                                   #  - [[:alnum:]_.-] VOLUME_NAME: 
-                                  #     - random path (e.g. somewhere in DOCKERDIR), specific VOLUME_NAME
+                                  #     - somewhere in DOCKERDIR, specific VOLUME_NAME
                                   #     - called "named volume"
-                                  #  - nothing: random path, random VOLUME_NAME
-                                  #CONTAINER_DIR: absolute path
-                                  #Instead of DIR can also be FILE:
+                                  #  - nothing: 
+                                  #     - somewhere in DOCKERDIR, random VOLUME_NAME
+CONTAINER_DIR                     #Absolute path
+FILE LINK ==>                     #HOST|CONTAINER_DIR can also be FILE:
                                   #  - similar to hardlink
-                                  #  - but inode must not changed (e.g. mv, sed -i, vim)
+                                  #  - if inode changes:
+                                  #     - e.g. mv, or commands can actually do "mv", like sed -i or vim
+                                  #     - the link is sometimes broken, but each side keeps its file
+USERS/GROUPS ==>                  #Will be created under user|group root, unless already existing
+                                  #Share permissions, user and group:
+                                  #  - bidirectional
+                                  #  - might create portability issues, when using something different than root
+EXISTING HOST DIR ==>             #If HOST_DIR already exist, reuses its:
+                                  #  - content
+                                  #  - permissions
+                                  #  - user, group: if does not exist in container, uses container's user|group
+
 DATA VOLUME DRIVER ==>            #Plugin for specific filesystems (e.g. over the network)
                                   #Def: "local"
 
@@ -1018,6 +1048,7 @@ SMOUNTINFO.BindOptions.Propagation#
 
 docker service create ...
 --mount volume-nocopy=BOOL        #When CONTAINER_DIR is empty and being mounted, whether to copy HOST_DIR content (def: true)
+                                  #E.g. restarting containers will get their volumes content back
 
 
 docker rm
@@ -1060,7 +1091,7 @@ docker create ...
 
 
 docker create ...
---device=                         #Similar to volumes, but for devices (e.g. /dev/sda)
+--device                          #Similar to volumes, but for devices (e.g. /dev/sda)
  HOST_PATH:CONTAINER_PATH[:OPT]   #OPT (def: 'rwm') are:
 HOSTCONF.Devices                  #  - 'r' (read)
                                   #  - 'w' (write)
@@ -1102,7 +1133,7 @@ CONTAINERSPEC.Mounts              #SMOUNTINFO_ARR
 STORAGE DRIVER ==>                #Filesystem, handling image/container layers
                                   #Def: AUFS
                                   #Is mounted on an existing filesystem, "backing" (i.e. DOCKERDIR's)
-dockerd                           #Store driver are per daemon. Can be inspected with docker info
+dockerd                           #Store driver are per daemon.
 --storage-driver=DRIVER           #Among: overlay2, aufs, btrfs, devicemapper, vfs, zfs
 DOCKER_DRIVER                     #ENVVAR to override storage DRIVER
 dockerd, docker create ...
@@ -1183,7 +1214,7 @@ PROCESS ==>                       #Each container uses its own "PID namespace", 
 docker create ...
 --pid STR                         #Set container's PID namespace:
 HOSTINFO.PidMode                  #  - "host": same as host's (i.e. no isolation)
-                                  #  - "container:CONTAINER": same as another container
+                                  #  - "container:CONTAINER": same as another container (bidirectional)
                                   #Def: new one
 CONTAINERINFO.State.Pid           #
 
@@ -1343,14 +1374,13 @@ NETWORK[S|C]SET.MacAddress        #Incompatible with --network host|CONTAINER
 
 docker create ...
 --network STR                     #Associate to network STR:
-                                  #  - none: no networking
+HOSTCONF.NetworkMode              #  - none: no networking
                                   #  - host: 
                                   #     - same as host's
                                   #     - i.e. less isolation (insecure) but much faster
                                   #  - CONTAINER: same as container's
                                   #  - bridge: create and use new NETWORK of type "bridge"
                                   #  - NETWORK: use existing one
-HOSTCONF.NetworkMode              #
 
 
 docker network disconnect NETWORK
@@ -1522,21 +1552,42 @@ dockerd ...
                                              \=+===============================+=/
 
 
-ISOLATION ==>                     #"User namespaces": each container uses its own list of users/groups:
-                                  #  - i.e. container root user does not have to map to host's root user
-                                  #  - /etc/subuid and /etc/subgid show sub-users|groups that current user|group can create as
-                                  #    newline-delimited ranges: USER|GROUP:MIN_ID:MAX_ID
-                                  #Disabled by default
+CONTAINER USER|GROUP              #By def:
+(FROM HOST'S PERSPECTIVE) ==>     #  - container's user|group (from host's perspective) will be the user|group that control docker client
+                                  #  - should avoid root
+                                  #When using "user namespace" instead (disabled by def):
+                                  #  - it will be one of that user's sub-users|groups instead
+                                  #  - "user namespace" is map between user|group and "sub-users|groups":
+                                  #     - host must set up this map by setting /etc/subuid and /etc/subgid:
+                                  #        - newline-delimited ranges: USER|GROUP:MIN_ID:MAX_ID
+                                  #     - docker only uses first UID from sub-ids range, i.e. all containers will share same subuid
+                                  #  - goal is security: in case container somehow manage to reach host, it will do so as a sub-user
                                   #Conflicts with docker create:
                                   #  - --pid|network host
                                   #  - --privileged, unless --userns host
                                   #  - --read-only
 dockerd ...
---userns-remap                    #Enables user namespaces
- [USER|UID[:GROUP|GID]]           #Uses specified host's USER. Def: USER "dockremap", which is created if not existing
-docker create ...                 
---userns STR                      #Same value as --pid
-HOSTCONF.UsernsMode               #Using --userns host nullifies --userns-remap
+--userns-remap                    #Enables user namespaces, i.e. specifies which host's user|group should use sub-users|groups when launching containers
+ [USER|UID[:GROUP|GID]]           #Def: USER "dockremap", which is created if not existing
+docker create ...                 #Same value as --pid, i.e.:
+--userns STR                      #  - nothing (def): use a new "user namespace" for container
+HOSTCONF.UsernsMode               #  - --userns container:CONTAINER_ID: share between containers
+                                  #  - --userns host: nullifies everything, since container use same "user namespace" as its host
+
+
+CONTAINER USER|GROUP              #Containers usually do not require root access:
+(FROM CONTAINER'S PERSPECTIVE) ==>#  - default user|group is root
+                                  #  - so should use unprivileged user|group instead
+USER STR                          
+docker create|exec ...
+-u USER|UID[:GROUP|GID]
+--user USER|UID[:GROUP|GID]       
+IMAGEINFO.Config.User             
+CONTAINERSPEC.User                #First one is Dockerfile instruction, which is used not only runtime, but also in following instructions, e.g. COMMANDs
+
+docker create ...
+--group-add GROUP                 
+HOSTCONF.GroupAdd                 #Add GROUP to container's user's groups
 
 
 DAEMON USER ==>                   #Server must be run as root user
@@ -1547,28 +1598,6 @@ dockerd --group|-G GROUP          #When using Unix socket:
                                   #  - will be owned by daemon user and group
                                   #  - i.e. should use 'docker' GROUP, so that client can connect to socket without being root
                                   #     - however, access to socket still means can do anything to dockerd
-
-
-CONTAINER USER ==>                #Different from host's:
-                                  #  - containers uses "user namespaces" (see above)
-                                  #Containers usually do not require root access:
-                                  #  - default user is root
-                                  #  - so should use unprivileged user (see USER above)
-
-USER STR                          #Dockerfile instruction. Sets current user, used:
-                                  #  - in following instructions, e.g. COMMANDs
-                                  #  - runtime, i.e. docker exec
-docker create|exec ...
--u USER|UID[:GROUP|GID]
---user USER|UID[:GROUP|GID]       
-IMAGEINFO.Config.User             
-CONTAINERSPEC.User                #
-
-
-CONTAINER GROUP ==>               #
-docker create ...
---group-add GROUP                 
-HOSTCONF.GroupAdd                 #Add GROUP to container's user's groups
 
 
                                              /=+===============================+=\ 
@@ -1613,6 +1642,22 @@ docker create ...
 
 SYSINFO."Security options"        #
 HOSTCONF.SecurityOpt              #STR_ARR
+
+
+                                             /=+===============================+=\ 
+                                            /  :                               :  \  
+                                            )==:          PERFORMANCE          :==(   
+                                            \  :_______________________________:  /    
+                                             \=+===============================+=/
+
+
+CPU/MEMORY ==>                    #Close to native
+
+I/O ==>                           #I/O can be slow, because using storage driver (i.e. union filesystems) instead of normal filesystems
+                                  #Can fix it by using data volumes (but portability and distributed issues)
+
+NETWORK ==>                       #IP/port translation can be slow, especially in network latency
+                                  #Can fix it with --net=host (but security issue)
 
 
                                              /=+===============================+=\ 
