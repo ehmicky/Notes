@@ -5,56 +5,8 @@
 
 
 
-Should do runEnd check+return before the second measure() instead of after the third measure():
-  - reasons:
-     - less duration variability
-         - check it
-         - remove comments about specific calculations of values of variability when there are more tasks
-     - when task is more than half as slow as maxDuration, only run it once
-  - still keep the `if (recurse)` check+return after third measure()
-
-First implement empty loop bias with hard-coded bias values:
-  - only implement dynamic bias values retrievale after adaptive `repeat` is implemented
-
-Loop bias:
-  - once, before all runs
-  - nowBias:
-     - time taken to perform now()
-     - calculated with getMedian(now, 100ms)
-        - not `() => now()`
-        - repeat should always be NUM
-           - check which one is right but probably around 1e3
-     - should be around 60ns on my machine
-  - loopBias:
-     - time taken to perform each loop in measureLoop()
-     - calculated with getMedian(() => {}, 100ms)
-        - repeat should always be 1e5
-     - should be around .3ns on my machine
-  - after each measure():
-     - substract nowBias
-     - substract repeats * loopBias
-     - if result < 0 -> 1 (for the moment)
-     - except when calculating nowBias|loopBias themselves
-
-Fast functions bias:
-  - when implementing this, try using empty function as main() since this is the one that requires the most repeats and is the most biased
-  - use `repeat` in measure():
-     - initially 1
-  - before each scale up:
-     - after calculating median time
-     - not if duration ran out
-     - not if not `recurse`
-  - then set `repeat` for next scale:
-     - repeat = Math.ceil(min(A, B) / median)
-        - A = time where only 1% is due to now(): 100 * timeOfNow
-        - B = at least 2 digits of precision within time resolution: 100 * timeResolution
-        - note: almost always A > B
-        - timeOfNow, timeResolution and median should be in same unit (nanosecs)
-  - when `repeat` changes, should discard current median (not pass it to next scale):
-     - unless oldChange / Math.abs(newChange - oldChange) < NUM
-        - NUM is hardcoded
-        - NUM should be approx. three times the typical `repeat` up|down variations once it has stabilized
-           - if less than .1, hardcode .1 as NUM instead since that should not bias results too much
+Try to loop with child processes
+  - use it in code too, if very different from looping with an array???
 
 Distributions:
   - reasons:
@@ -93,7 +45,7 @@ Distributions:
      - do it locally while implementing to check everything is ok
      - also do it as unit tests
 
-When measure() result < 0:
+When calculating `repeat` with median === 0:
   - instead of falling back to 1, fallback to (standardDeviation(nowBias) * repeat)
 
 Add before() and after()
@@ -128,8 +80,13 @@ Design:
         - 2 would make an arithmetic mean instead of a median
   - remove the time taken to perform iteration itself:
      - reasons:
-        - get current timestamp takes some time (36ns on my machine)
-        - the iteration itself takes a little time (1ns on my machine)
+        - get current timestamp takes some time (45ns on my machine)
+        - the iteration itself takes a little time:
+           - time to increment counter (.3ns on my machine)
+           - time to make function call, even if empty function (3ns on my machine)
+     - i.e. allows precise measurement of nanoseconds-long functions
+        - however if the function is as fast as the iteration itself (approx. <10ns), cannot measure because the iteration variance has too much influence.
+           - the result then might be 0, and might vary a lot
   - if the task is very fast (approx. <0.1ms), also loop it and use arithmetic mean time:
      - reasons:
         - measured time must be too low compared to time resolution
@@ -140,6 +97,15 @@ Design:
      - number of repetitions is automatically guessed
         - the same number is consistently used across the run
            - reason: looping a function might make it faster (due to engine optimizations)
+     - alternative would be loop unrolling:
+        - i.e. using `new Function('f', 'f();'.repeat(NUM))`:
+        - pro: no bias of the iteration itself
+        - cons:
+           - requires lots of memory, i.e. max NUM would be required (probably 1e5, which is too low to estimate even ~50ns functions)
+           - odd engine optimizations:
+              - first call is much slower, i.e. requires a cold start
+           - still need to calculate and remove the bias of calling that function itself (several nanoseconds bias)
+           - cannot use a closure, i.e. function cannot reference upper scopes
   - use max duration:
      - as opposed to fixed number of loops
      - reasons:
@@ -149,14 +115,16 @@ Design:
         - more stable user experience, avoiding potentially very long runs
         - get the most precision as user is ready to wait
         - no separate timeout feature needed
-  - max duration is approximative:
-     - reason: we need exactly 3 ** NUM iterations
-     - this might be -|+ 50% of max duration (regardless of number of main())
-        - average deviation is 25% if one task
-           - minus 1/sqrt(1) if two tasks, then minus 1/sqrt(2) if three tasks, etc.
-           - etc. 25% -> 16.7% -> 13.5% -> 11.7% -> 10.4%
   - use bottom-up recursion:
      - reason: we don't know how many recursion levels are needed to reach max duration
+  - run several child processes in parallel and get a median of them:
+     - reasons:
+        - when launching new processes (like when end user is running the command several times in CLI), variation is much
+          higher than when using a single process and running several benchmarks in parallel
+           - this is probably due to some engine optimization and global/OS variation
+           - using a median over several child processes allow emulating user running those commands several times in CLI
+     - we only run (os.cpus().length / 2) at once in parallel:
+        - otherwise they start to compete with each other, i.e. time is slower
 
 OPTS.duration:
   - instead of OPTS.repeat
