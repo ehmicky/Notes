@@ -31,7 +31,7 @@ s/___/__/
 s/\([[]\)_/\1/
 
 # Put technology between parenthesis
-s/\.\([^].]\+\)\]/ (\1])]/
+s/\.\([^].]\+\)\]/ (\1)]/
 
 # Replace _ by spaces.
 s/\(\[[^]]\+\)_/\1 /
