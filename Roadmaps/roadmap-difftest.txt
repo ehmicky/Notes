@@ -127,40 +127,84 @@ CONF.update BOOL (-u|--update):
   - if false (def):
      - do not add|remove|modify snapshots in snapshot files
      - fail tests if any snapshot new|removed|different
-  - if true: inverse (including pruning)
+  - if true:
+     - add|remove|modify snapshots in snapshot files
+     - always succeed snapshot tests
+     - exception: "inconstant" snapshots
 
 CONF.remove BOOL (-r|--remove):
-  - more snapshots in snapshot files
-  - do not run tests
+  - remove snapshots in snapshot files
+  - do not run tests nor spawn workers
   - no reporting
-  - only for the snapshots that were used: not for skipped tests or not selected files
+  - only for the target snapshots|tests: not for skipped tests or not selected files
   - not compatible with CONF.update|input true
 
-"removed" result type:
+CONF.input BOOL (-i|--input):
+  - goal: test-first development for snapshots
+  - not compatible with CONF.update|remove true
+  - only report existing snapshot tests, i.e. do not report:
+      - assertion tests
+      - removed tests
+      - "process" errors
+  - file|test selection applies as normal
+  - result type always "input"
+  - content is either:
+      - if new test: empty
+      - otherwise: current snapshot
+         - reported the same way as "same" snapshots
+         - we are reporting currently persisted snapshots only (as opposed to snapshot() return value), so it's clear that only inputs are updating them
+  - tests are not run (not needed)
+      - but files are loaded, so we know which tests are defined (including new ones)
+  - each result should prompt:
+      - if submit without entering anything:
+         - noop
+         - must distinguish from explicitely entering undefined
+      - if submit something:
+         - updates snapshot in snapshot file with it
+         - do not erase the prompt, so user can see previous prompts
+         - moves to next one
+      - use Node REPL ("readline" or "repl" core module)
+      - can multiple statements (use the last one)
+      - can use history (arrow up) to re-use previous inputs
+      - retry if invalid input
+
+Result types:
+   - "pass" assertion
+   - "fail" assertion
+   - "new" snapshots
+   - "removed" snapshots
+   - "same" snapshots (i.e. unchanged)
+   - "different" snapshots (same snapshot key but different snapshot)
+   - "renamed" snapshots (only file path or test title changed)
+   - "inconstant" snapshots (current test code created different snapshots when run several times)
+   - "input" snapshots (CONF.input)
+   - "process" errors
+
+"removed" snapshots:
   - only when file selection targets either:
      - the removed file (even though it does not exist anymore)
      - all files (files that exist and have snapshots)
 
 "renamed" result type:
-  - challenges (document those in code comments):
-     - renaming files: tests might also have been renamed|added|removed
-     - renaming tests: to identify, cannot reliably use:
-        - FUNC.name: arrow function name is ""
-        - FUNC.name|toString(): tests might be wrapped, i.e. identical wrapper will show for several tests
-           - including FUNC.bind()
-        - FUNC.data: it is common for the same set of data to be re-used across tests
-        - index in the file: adding one test at beginning change whole order
-     - streaming issues:
-        - if comparing snapshots content: must wait for all tests of a given file to complete, before reporting the first one
-        - if comparing files: must wait for all files to synchronously load, before reporting the first one
+   - challenges (document those in code comments):
+      - renaming files: tests might also have been renamed|added|removed
+      - renaming tests: to identify, cannot reliably use:
+         - FUNC.name: arrow function name is ""
+         - FUNC.name|toString(): tests might be wrapped, i.e. identical wrapper will show for several tests
+            - including FUNC.bind()
+         - FUNC.data: it is common for the same set of data to be re-used across tests
+         - index in the file: adding one test at beginning change whole order
+      - streaming issues:
+         - if comparing snapshots content: must wait for all tests of a given file to complete, before reporting the first one
+         - if comparing files: must wait for all files to synchronously load, before reporting the first one
    - current solution only works if:
-      - tests was passing and still is
-      - nothing was changed but the test title or the file
+      - test was passing and still is
+      - only the test title or the file was changed
       - for file changing, only works if whole file was removed
    - matching:
       - any "new" test
       - with any "removed" test that look the same
-      - for all snapshots in the test
+      - for all data in the test
    - removed tests:
       - are coming either from:
          - removed files: known before starting workers
@@ -181,66 +225,111 @@ CONF.remove BOOL (-r|--remove):
       - should try to keep snapshots layout (so there is no git diff)
    - rename the test title or the file path in the snapshot files
 
-Result types:
-   - "pass" assertion
-   - "fail" assertion
-   - "new" snapshots
-   - "removed" snapshots
-   - "same" snapshots (i.e. unchanged)
-   - "different" snapshots (same snapshot key but different snapshot)
-   - "inconstant" snapshots (current test code created different snapshots when run several times)
-   - "process" errors
+Reporting:
+  - should take as input UI information: snapshots, titles, filepaths, data, whether an error was thrown|rejected, available actions, etc.
+  - should not need to handle most logic including:
+     - color highlighting
+     - truncating
+  - counter (like test-openapi): for all reporters except tap
+  - end summary: for all reporters
 
-CONF.input BOOL (-i|--input):
-  - goal: test-first development for snapshots
-  - not compatible with CONF.update|remove true
-  - only report existing snapshot tests, i.e. do not report:
-      - assertion tests
-      - removed tests
-      - "process" errors
-  - file|test selection applies as normal
-  - result type always "input"
-  - content is either:
-      - if new test: empty
-      - otherwise: current snapshot
-         - reported the same way as "same" snapshots
-         - we are reporting currently persisted snapshots only (as opposed to snapshot() return value), so it's clear we are only updating them through inputs
-  - tests are not run (not needed)
-      - but files are loaded, so we know about which tests are defined
-  - each result should prompt:
-      - if submit without entering anything, noop:
-          - must distinguish from explicitely entering undefined
-      - if submitting something:
-           - updates snapshot in snapshot file with it
-           - do not erase the prompt, so user can see previous prompts
-           - moves to next one
-      - use Node REPL ("readline" or "repl" core module)
-      - can multiple statements (use the last one)
-      - can use history (arrow up) to re-use previous inputs
-      - retry if invalid input
+CONF.reporters STR_ARR (-R|--reporter):
+  - types:
+     - pretty (default)
+     - tap
+     - json
+     - notify
+  - only "notify" can be used with others
+
+Reporting ordering:
+  - the following applies to all reporters
+  - run in parallel but buffer and report in order (like test-openapi)
+     - should stream it
+  - order should be (by priority):
+     - other files > new files > removed files > process errors
+     - lexicographical ordering of "shortest filepath" (see below)
+     - other tests > new tests > removed tests
+     - when test() was called
+     - result type: "same" > "different" > "new" > "removed"
+     - argument order in parameters
 
 CONF.level STR:
   - among 'silent', 'error', 'warn', 'info'
-  - do not report "pass|same" result types:
-     - for 'silent|error|warn' but not 'info'
+  - do not report 'pass|same' result types:
+     - for 'error|warn' but not 'info'
   - do not report content (but still report header) of tests, except first failed one of each test + result type
-     - for 'silent|error' but not 'warn|info'
+     - for 'error' but not 'warn|info'
+  - 'silent': do not report anything
   - for any reporters
   - default value:
      - pretty|tap|notify: 'error'
      - json: 'info'
+
+CONF.color BOOL (--[no-]color):
+  - def: chalk default
+  - color highlighting in snapshots
+  - use a syntax highlighting library
+     - so that YAML/HTML/etc. snapshots are highlighted too
+     - should work well with prettyFormat()
+  - all snapshots types:
+     - but for "different" snapshots: not on the added|removed lines. They should instead be backgroundGreen|Red and auto in foreground
+
+CONF.compact BOOL (--[no-]compact)
+  - def: true
+  - goals:
+     - make each test fit a single screen
+     - avoiding slowing down machine when test content is big
+  - truncate:
+     - ERROR.message (in assertion testing)
+     - snapshots:
+        - OBJ max depth 2
+        - ARR max length 4
+           - truncate in middle
+     - snapshots|ERROR.messages to max lines NUM:
+        - truncate in middle
+        - newline should be either CRLF or LF
+        - NUM is terminal height
+           - minus test headers height
+           - if cannot guess, use a typical terminal height
+        - each series of 80 chars without any newlines should be considered a line:
+           - increments the number of "lines"
+           - might be truncated in the middle of the line
+     - should try not to truncate first:
+        - if over max lines, then truncate it
+        - if not over max lines, keep it not truncated
+
+t.log(VAL,...)
+  - workers should not redirect stdout|stderr to parent
+  - if a test is passing and CONF.level 'error|warn' (but not 'silent'), still report it if it contains t.log()
+  - --pretty reporting:
+     - all lines prefixed with =>
+     - in gray
+     - multiline formatting, same as snapshot reporting
+  - --tap reporting:
+     - TAP comment
+     - single line
+  - if several VAL: reported on separate lines
+  - report always after snapshot content
 
 Default reporter:
   - newlines:
      - test iteration with no content
         - no newline before|after
         - reason: more compact and make assertion testing look similar to other test runners
-        - e.g. assertion "pass" result types, and non-first errors with CONF.level "warn"
+        - e.g. for:
+           - "pass|renamed" result types
+           - "input" result type on new test
+           - non-first errors with CONF.level "warn"
      - test iteration with content:
         - no newline before, but newline after
   - tests with no data iteration:
      - single line:
         - result type:
+
+Branding:
+  - rebrand to "revolutionary testing|test runner"??? rebel???
+  - focus on: snapshot driven testing, data driven testing, fuzz testing, minimalist API.
+
            - "new", "removed", "different", "same", "inconstant", "uncaughtException|unhandledRejection|..."
            - background colored: "new" (backgroundGreen), "removed" (backgroundRed), "different" (backgroundYellow), "same" (backgroundGrey), "inconstant" (backgroundMagenta), "process" (backgroundPurple)
            - padded so they all have same length
@@ -276,82 +365,6 @@ Default reporter:
               - "inconstant" snapshots: like "different" if snapshot exists, "new" otherwise
               - "process" snapshots: nothing
            - for "inconstant": data header + content is reported twice, because two snapshots are shown
-
-Color highlighting in snapshots:
-  - use a syntax highlighting library
-      - so that YAML/HTML/etc. snapshots arre highlighted too
-      - should work well with prettyFormat()
-  - all snapshots types:
-      - but for "different" snapshots: not on the added|removed lines. They should instead be backgroundGreen|Red and auto in foreground
-  - CONF.color BOOL (--[no-]color) (def: chalk default)
-
-Compact mode:
-  - truncate ERROR.message when in compact mode
-  - goals:
-     - make each test fit a single screen
-     - avoiding slowing down machine when test content is big
-  - CONF.compact BOOL (def: true) (--[no-]compact)
-  - truncates snapshots:
-     - OBJ max depth 2
-     - ARR max length 4
-        - truncate in middle
-  - truncates snapshots|ERROR.messages to max lines NUM:
-     - truncate in middle
-     - newline should be either CRLF or LF
-     - NUM is terminal height
-        - minus test headers height
-        - if cannot guess, use a typical terminal height
-     - each series of 80 chars without any newlines should be considered a line:
-        - increments the number of "lines"
-        - might be truncated in the middle of the line
-  - should try not to truncate first:
-     - if over max lines, then truncate it
-     - if not over max lines, keep it not truncated
-        - do not show "[no-]compact" modes
-
-Reporting:
-  - should take as input UI information: snapshots, titles, filepaths, data, whether an error was thrown|rejected, available actions, etc.
-  - should not need to handle most logic including:
-      - color highlighting
-      - truncating
-  - counter (like test-openapi)
-      - for all reporters except tap
-  - end summary:
-      - for all reporters
-
-CONF.reporters STR_ARR (-R|--reporter):
-  - types:
-      - pretty (default)
-      - tap
-      - json
-      - notify
-  - only "notify" can be used with others
-
-Reporting ordering:
-  - the following applies to all reporters
-  - run in parallel but buffer and report in order (like test-openapi)
-     - should stream it
-  - order should be (by priority):
-     - other files > new files > removed files > process errors
-     - lexicographical ordering of "shortest filepath" (see below)
-     - other tests > new tests > removed tests
-     - when test() was called
-     - result type: "same" > "different" > "new" > "removed"
-     - argument order in parameters
-
-Logging:
-  - workers should not redirect stdout|stderr to parent
-  - t.log(VAL,...)
-  - if a test is passing and CONF.level 'error|warn' (but not 'silent'), still report it if it contains t.log()
-  - --pretty reporting:
-     - all lines prefixed with =>
-     - in gray
-     - multiline formatting, same as snapshot reporting
-  - --tap reporting:
-     - TAP comment
-     - single line
-  - if several VAL: reported on separate lines
-  - report always after snapshot content
 
 Use itself for unit testing, but its latest release (not direct require())
 
@@ -431,6 +444,7 @@ Fuzz data generation:
 Any Node flags should be allowed as CLI flags:
   - it should be passed as `execArgv` to workers
   - should whitelist them, so that wrong CLI flags still trigger a validation error
+     - do not include flags that do not make sense like --interactive
   - including --require
      - make sure it works with "ts-node/register"
      - document it
@@ -446,11 +460,12 @@ CONF.bail BOOL (-b|--bail)
      - terminate workers
      - do not run|report any additional tests
 
-Process errors:
+"process" errors:
   - use log-process-errors
       - does not make process exit
   - result type "process":
       - reported at end of test run
+      - reported snapshot type is "uncaughtException|unhandledRejection|..."
       - filepath "", title "Process errors"
       - snapshot content is the main error value
       - no prompt
