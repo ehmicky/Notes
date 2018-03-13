@@ -13,6 +13,114 @@ Code quality:
   - duplicated code
   - dependencies deprecation/security automatic check
 
+dataValidation fix:
+  - in output dataValidation, remove validation related to IDL user-defined validation (i.e. attr.validation). It's already applied on input, and significantly slows down commands.
+
+User defaults fix:
+  - attribute cannot specify a "default" if it is a required attribute
+     - when done, remove the runtime check done for this in userDefaults middleware
+
+Readonly fix:
+  - IDL validation:
+     - at the moment, we validate that if attr.compute, then attr.readOnly must be true and attr.transform|default not defined
+     - should instead validate:
+        - if attr.compute, then attr.readOnly true
+        - if attr.readOnly true, then:
+           - attr.transform|value|default is not defined
+           - it is not a variant nor has a variant
+           - attr.validation is not defined (including required)
+     - add comment that for this middleware to properly work, if readOnly is true,
+       features that transform input or assume input is possible (such as transforms, variants, defaults) should not be used.
+  - readOnly middleware:
+     - instead of always deleting args.newData.ATTR, put readonly args.newData.ATTR = args.currentData.ATTR (including not_defined)
+     - move readOnly middleware further in the layer, i.e. before pagination middleware, after any transformation (defaults, transforms, variants)
+
+Transforms fix:
+  - divide "transform" into two attributes:
+     - "transform": passes $/$$, not applied if $ == null
+     - "value": does not pass $ (but passes $$), applied even if $ == null. No special warning|error when $ != null
+     - cannot specify both "transform" and "value": IDL validates that
+  - "compute" is left as is, i.e. does not pass $ (but passes $$), applied even if $ == null
+  - simplify syntax to only: transform|value|compute JSL|VAL:
+     - remove transform.test
+     - remove transform.using:
+        - transforms are performed in undefined order (i.e. actually alphabetically)
+        - $$ is the *full* model before transformation, i.e. first all transforms are calculated, and then they are all assigned at once to the model
+     - value cannot be an array anymore
+  - the things above should be changed in both the related middleware, the IDL validation and the IDL normalization.
+    Make sure to check everywhere transform|compute are used, e.g.:
+     - readOnly forbids transform property, but now needs to forbids "value" property as well
+     - used by createdBy plugin, etc.
+
+Empty values:
+  - Possible empty values:
+     - "not_defined" (i.e. no key)
+     - undefined or null:
+        - in input, converted to "not_defined"
+        - i.e. treated the same, and never stored or in output
+        - only difference: with update action, overrides current value to "not_defined"
+  - Testing empty values:
+     - after removeUndefined middleware, there should be no more undefined|null
+     - i.e. should test not_defined with == null which is simpler and works in case one undefined|null value slipped up.
+       Basically all possible empty values syntax should behave the same.
+  - removeUndefined middleware:
+     - right after actionExecute middleware, before setChangedData middleware and inputValidation middleware
+     - in args.newData OBJ[_ARR], set undefined|null values to "not defined" (i.e. remove keys)
+  - Middleware behavior:
+     - actionExecute, args.newData:
+        - create|replace|upsert action: user-specified, can contain null|undefined|not_defined
+        - update action:
+           - Object.assign(currentData, args.data), i.e. null|undefined overrides, not_defined leave as is
+           - if currentData.ATTR == null and args.data.ATTR is JSL, leave as is
+        - create action: set currentData to empty {} (createOne) or [] (createMany)
+     - variants, new aliases:
+        - if one variants is all not_defined, other variants are as well
+        - i.e. on write, if main variant is == null, do not run JSL: simply set all variants to not_defined
+     - (former) aliases:
+        - args.newData.ATTR:
+            - if ATTR among args.changedData, do nothing
+            - else, sets to value (including not_defined) of first alias that is among args.changedData
+            - if none, do nothing
+            - in all of the above cases, remove all aliases from args.newData, i.e. set to not_defined
+        - response.ATTR copied to all aliases, unless not_defined (i.e. since no keys, nothing to copy)
+     - read_only:
+        - put readonly args.newData.ATTR to same value as args.currentData.ATTR (including not_defined)
+     - transform|value|compute:
+        - if JSL return value == null, sets to not_defined.
+        - transform is not applied if $ == null (as opposed to value|compute)
+     - system|user defaults:
+        - applied if args.newData.ATTR == null
+        - if JSL return value == null, sets to not_defined
+        - IDL validate that if attr.default is defined, attr.validation.required is not true
+     - pagination:
+        - in output, token parts that are null are serialized to "null", while not_defined is serialized to "undefined"
+        - in input, token parts are parsed to null or undefined, which means not_defined will use < > undefined test, but that should work
+     - dataValidation middleware:
+        - required validation does not test !== null (but it should), but it should work since:
+            1) attr.type is required and cannot be "null"
+            2) null should never be there as that stage, thanks to previous middleware removing it.
+        - during IDL validation: do not allow type "null" (remember type can also be an array) nor typeof "null" or "undefined"
+  - remove commented code in transforms/compute related to: when transform/compute sets to undefined, set to null instead
+
+Action layer fix:
+  - upsert action:
+     - should do create and replace commands concurrently (Promise.all())
+  - args.changedData "ATTR"_ARR[_ARR]
+     - set in setChangedData middleware, after actionExecute middleware
+     - is keys of args.newData, except the ones whose values are same as args.currentData (using Lodash isEqual())
+     - used by variants/aliases: only consider changed attributes
+  - refactoring:
+     - rename input.authorizarion false|true to input.internal true|false (inverse boolean), which also disables pagination
+          - first read command of replace action should use input.internal true
+     - refactor executeAction:
+          - each action should only be a OBJ_ARR, where each OBJ is a command to execute with OBJ.command, OBJ.args, etc.
+          - executeAction middleware pick one of those OBJ_ARR and execute it
+      - need to rethink input.pagination:
+          - it feels wrong to specify this outside of the pagination middleware itself.
+            E.g. commands should be whitelisted inside pagination middleware instead, i.e. paginate read and delete commands only.
+          - if input.internal true, should not paginate output.
+          - problem with update action: first find command should not be paginated, but final update command should be paginated
+
 Compile-time step:
   - make src/idl/ produce optimized version (JSON file)
   - problems:
@@ -89,7 +197,7 @@ Refactoring:
      - might add an option to chain() to wrap each middleware:
         - might require adding this.caller to each middleware context, so they can stop previous middleware perf
         - check if it's worth using a Proxy for that
-  - maybe rethink transform helper
+  - maybe rethink transform utility helper
   - simplify promise handling with GraphQL-anywhere once they support it (there is a pull request #51)
   - replace circular-json by stringify helper with options:
      - {boolean} [canonical=true] - use stable-json-stringify (from debitoor) instead of JSON.stringify
@@ -185,10 +293,6 @@ Aggregating:
     it as JavaScript, parsed as MongoDB aggregate object???
   - think of interaction with pagination
 
-User defaults:
-  - attribute can specify a "default" if it is a required attribute
-     - when done, remove the runtime check done for this in userDefaults middleware
-
 Pagination:
   - pagination error messages on wrong cursors are not clear
   - use Range [C] and Accept-Ranges [S] for pagination
@@ -277,20 +381,11 @@ Error reporting:
 inputValidation middleware:
   - like dataValidation middleware but before any server-side data transformation:
      - i.e. beginning of command layer
-     - reuse attr.validation like dataValidation middleware 
-         - reason we do not have two different sets of validation: data stored in database should be valid input, and also having two sets adds two much complexity and room for errors to end-users
+     - reuse attr.validation like dataValidation middleware
+        - reason we do not have two different sets of validation: data stored in database should be valid input, and also having two sets adds two much complexity and room for errors to end-users
      - gives 4** client-side errors, while dataValidation middleware gives 5** server-side errors
      - input only (like dataValidation middleware)
      - should try to memoize|reuse per request (to avoid memory leaks) between inputValidation and dataValidation middlewars
-
-null|undefined handling:
-  - both should behave almost the same:
-     - only different is informative, i.e. undefined means attribute has never been set, null is has been set but deleted.
-       i.e. cannot go back from non-undefined to undefined, and must keep as undefined if not set.
-  - null|undefined allowed or not according to model.required
-  - add middleware that transform undefined (i.e. there is a key but no value) to null in args.newData
-  - uncomment code in transforms/compute related to: when transform/compute sets to undefined, set to null instead
-  - JSON schema type validation need to always allow null, unless required
 
 Nested models:
   - rethink nested models:
@@ -423,6 +518,12 @@ Concurrency conflicts:
   - preconditions, including HTTP (e.g. If-Match [C])
   - errors, including HTTP 409
   - see concurrency chapter in to_learn.txt
+  - problem with args.changedData:
+      - e.g. if clientA fetches model as { a: 1 } then clientB saves it as { a: 2 }, then clientA saves it as { a: 2 } as well, "a" will not be in args.changedData, although it should, because args.
+        changedData is not about which attributes changed from a server perspective, but about which attributes a client tried to change, i.e. from a client perspective.
+      - e.g. variants middleware won't work properly, e.g. clientA fetches model as { oldA: 1, newA: 1 }, then clientB saves it as { oldA: 2, newA: 2 }, then clientA saves it as { oldA: 1, newA: 2 }.
+        clientA intents here to chamge variant using "newA", but "oldA" will be used instead
+      - other middleware relying on args.changedData might not work properly too
 
 Protocols:
   - HTTP server events "checkContinue" (for 100-continue [C]), "connect" (for CONNECT), "upgrade" (for Upgrade [C])
@@ -455,6 +556,8 @@ Database transformation layer:
   - before database action middleware
   - e.g. one model in two tables, two models in one table, database-specific info, for both input|output
   - should allow single server to use multiple databases with different technologies (e.g. MongoDB + Redis) too
+  - possibility: using variants.ATTR.ATTR2 (instead of variants.ATTR) with ATTR being a nested model
+     - in that case, need to think about consequences on $$ JSL variable
 
 Rate limiting:
   - should be shared between server instances
@@ -493,7 +596,7 @@ Compile-time JSL validation:
      - params are determined runtime
      - function body might not be readable, e.g. if function is bound
   - perform static analysis, e.g. linting
-  - maybe validate complexity, e.g. max length 
+  - maybe validate complexity, e.g. max length
 
 Custom code:
   - using a more plugin-oriented architecture, e.g. allow users to write support for new protocols, operations, etc.
@@ -542,6 +645,8 @@ Optimization:
         - should memoize only the arguments that are used, i.e. need to figure out which ones are used, e.g. by
           parsing AST tree
            - problem: if function body is not available
+  - in upsert action, second_find command is unnecessary if only one of create or replace command (or neither) was performed.
+    Create|replace command then needs to perform pagination, sorting, etc.
 
 Streaming:
   - input|output streaming:
@@ -799,9 +904,15 @@ Positioning:
 1 month for quality
 1 month for infrastructure
 
- 15  CLEANUP
+ 20  CLEANUP
  0.5 Basic dev documentation
  3   Code quality
+ 0.1 dataValidation fix
+ 0.1 User defaults fix
+ 0.5 Readonly fix
+ 1   Transforms fix
+ 1   Empty values
+ 1   Action layer fix
  1   Compile-time step
  0.5 Modularity
  1   Main command input
@@ -813,7 +924,6 @@ Positioning:
  4   arg.filter normalization
  3   Authorization
  5   Aggregating
- 0.5 User defaults
  1   Pagination
 ?7   Compatibility layer
 ?7   Versioning/changes
@@ -822,7 +932,6 @@ Positioning:
  1   inputValidation
 
  20  DATA MODEL
- 1   null|undefined handling
 ?2   Nested models
 ?1   No orphans
 ?0.5 Data correctness
