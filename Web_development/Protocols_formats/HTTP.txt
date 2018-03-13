@@ -7,6 +7,7 @@
   - version
   - URI scheme
   - architecture
+  - security: TLS
   - session
   - syntax (HTTP/1.*)
   - syntax (HTTP/2)
@@ -18,7 +19,10 @@
   - charset
   - extensions
   - switching protocols
-  - HTTP methods: safety/idempotency, GET, HEAD, OPTIONS, TRACE, PUT, DELETE, POST, PATCH, CONNECT
+  - CRUD
+  - Method safety
+  - Method idempotency
+  - Methods
   - headers syntax
   - status codes
   - redirects: client-side, server-side, alternative services
@@ -28,11 +32,11 @@
   - content transformation
   - content semantics: HTTP method, status code, MIME_TYPE, Prefer: Safe [C], Prefer: handling [C], Content-Disposition [S]
   - content negotation: types (MIME, charset, language, compression, delta encoding, features), proactive vs reactive
-  - remove CRUD semantics into separate section from HTTP methods???
 
 To finish:
   - HTTP-related RFCs
   - w3c standards, WHATWG standards
+  - check if missing HTTP-related RFCs
   - format this doc
   - write summary on top
   - finish temp_sync doc
@@ -73,6 +77,7 @@ Standards (RFCs):
   - Prefer [C]: 7240
   - Alt-* [S]: 7838
   - Digest [S]: 3230
+  - 5** response body: 7807
 
 HTTP-related RFCs:
   - URI: https://daniel.haxx.se/blog/2016/05/11/my-url-isnt-your-url/?utm_source=webopsweekly&utm_medium=email, WHATWG URL spec
@@ -98,6 +103,7 @@ Version:
         - can Upgrade to but not from HTTP/2
      - prior knowledge: client already knows server supports HTTP/2
   - can refuse request with 505 (HTTP Version Not Supported)
+  - (HTTP/2) can use HTTP_1_1_ERROR (0xd) error code to ask to downgrade to HTTP/1.1
 
 URI scheme: 
   - http[s]:
@@ -122,17 +128,20 @@ Architecture:
      - application layer
      - usually on top of TCP/IP
         - TCP ports: 80 (HTTP), 443 (HTTPS)
-     - TLS:
-        - HTTP/2: 
-           - not required by specs, but browser implementation does
-           - when used:
-              - must use TLS 1.2+ with SNI extension
-              - if using TLS 1.2, must disable compression, renegotiation
-        - HTTP/1.*: not required
   - client-server:
      - client: "user agents", e.g. web browser, web crawler, app, etc.
      - order is always: client request -> server response (can include several streams)
      - resource can be dynamic (server modifies content) or static
+
+Security:
+  - TLS:
+     - HTTP/2: 
+        - not required by specs, but browser implementation does
+        - when used:
+           - must use TLS 1.2+ with SNI extension
+           - if using TLS 1.2, must disable compression, renegotiation
+        - can use INADEQUATE_SECURITY (0xc) error code
+     - HTTP/1.*: not required
 
 Session:
   - state:
@@ -260,7 +269,7 @@ Server push stream (HTTP/2):
      - the original request cannot contain request body
      - the pushed request must be cacheable, e.g. use safe method
   - client:
-     - RST_STREAM frame to cancel request, e.g. if cached
+     - RST_STREAM frame with CANCEL|REFUSED_STREAM error code to cancel request, e.g. if cached
      - server reacts to RST_STREAM but does not wait for client to send next frames
   - server: 
      - HEADERS, DATA: like normal response
@@ -271,10 +280,12 @@ Error codes (HTTP/2):
      - PROTOCOL_ERROR (0x1): e.g. wrong frame order or content
      - INTERNAL_ERROR (0x2)
      - FLOW_CONTROL_ERROR (0x3): too much buffered DATA because of flow control
-     - SETTINGS_TIMEOUT (0x4): SETTINGS response timeout
+     - SETTINGS_TIMEOUT (0x4): SETTINGS timeout
      - STREAM_CLOSED (0x5)
      - FRAME_SIZE_ERROR (0x6): frame too small|big
-     - REFUSED_STREAM (0x7): sender notifies receiver that reqyest has not been processed, allowing safe retry. E.g. too many concurrent streams or refused server push
+     - REFUSED_STREAM (0x7): 
+        - sender notifies receiver that request has not been processed, allowing safe retry. 
+        - e.g. too many concurrent streams or refused server push
      - CANCEL (0x8): stream no longer needed or server push refused
      - COMPRESSION_ERROR (0x9)
      - CONNECT_ERROR (0xa): when using CONNECT method
@@ -286,6 +297,7 @@ Error codes (HTTP/2):
 Limits (HTTP/2):
   - SETTINGS_MAX_CONCURRENT_STREAMS (0x3) (def: unlim)
   - SETTINGS_MAX_FRAME_SIZE (0x5) (def/min: 16KB, max: 16MB)
+     - can use FRAME_SIZE_ERROR (0x6) error code
   - HEADERS frames:
      - SETINGS_MAX_HEADER_LIST_SIZE (0x6) (def: unlim):
         - max HEADERS frame size, uncompressed, with extra 32 bytes per header. 
@@ -298,7 +310,7 @@ Limits (HTTP/2):
         - increased when receiver sends WINDOW_UPDATE frame:
            - includes how much to increase
            - e.g. when receiver consumed (i.e. received and do not buffer anymore)
-        - if exhausted, each endpoint should terminate stream
+        - if exhausted, each endpoint should terminate stream with FLOW_CONTROL_ERROR (0x3) error code
         - should amount to how much receiver can buffer
      - can be for a stream, or whole connection (if stream ID is 0)
 
@@ -360,101 +372,92 @@ Switching protocols:
      - server (missing Upgrade [C])
         - 426 (Upgrade Required)
 
+CRUD:
+  - GET:
+     - retrieve resource
+     - safe method
+     - body:
+        - request: none
+        - response: resource representation
+  - HEAD: 
+     - like GET but no response body
+     - content-related headers may also be omitted, e.g. content encoding or transfer encoding
+  - POST:
+     - non-idempotent modification
+     - including creating resource, without known resource URI (e.g. no specific ID)
+        - use 201 (Created) with Location: URL [S]
+     - unsafe non-idempotent method
+     - body:
+        - request: modification, e.g. new resource representation
+        - response: status of modification
+           - e.g. new resource representation, in which case should add Content-Location [S]
+  - PUT: 
+     - replace|create (completely) resource, with known resource URI (e.g. specific ID)
+     - if created, use 201 (Created) with Location: URL [S]
+     - unsafe idempotent method
+     - body:
+        - request: new resource representation
+        - response: either:
+           - none, with 204|205
+           - replace|creation status, with 200 (OK), e.g. new resource representation
+  - PATCH: 
+     - modify (partially) resource, with known resource URI (e.g. specific ID)
+        - if not existing, can create, or not (preferred)
+     - unsafe non-idempotent method
+     - body:
+        - request: resource diff|changes
+        - response: diff status, e.g. new resource representation
+     - conflicts:
+        - should require If-* [C], unless it just appends
+        - consider 409 for conflicts
+     - JSON merge patch:
+        - application/merge-patch+json 
+        - rules:
+           - set if specified
+           - leave as is if unspecified
+           - remove if null
+           - if VAL not OBJ, should set whole resource to VAL
+        - simple but not suitable if:
+           - should be able to set values to null
+           - need to be able to transform values instead or replacing, e.g. NUM++, ARR.push(), STR.concat()
+     - Accept-Patch: MIME[;charset=CHARSET],... [S]
+        - in response to OPTIONS request, meaning MIME types accepted by PATCH
+  - DELETE: 
+     - erase resource
+     - unsafe idempotent method
+     - body:
+        - request: none
+        - response: either:
+           - none, with 204|205
+           - deletion status, with 200 (OK)
+
+Method safety:
+  - read vs write (the resource)
+  - list:
+     - safe: GET, HEAD, OPTIONS, TRACE
+     - unsafe: PUT, DELETE, [UN]LINK, POST, PATCH, CONNECT
+  - Safe [C]: 
+     - declares method safe
+     - useless for methods safe by default
+     - other methods should remain unsafe. 
+        - however ther are cases where a safe POST is needed
+        - e.g. when need to submit x-www-urlencoded safe request without using XHR
+     - goal is to imply idempotency, i.e. client can retry without prompting user
+     - not implemented by clients
+
+Method idempotency:
+  - resource state afterwards is always same if called again (with same parameters)
+  - mean client can repeat|retry request without risk
+  - safe implies idempotent
+  - list:
+     - idempotent: GET, HEAD, OPTIONS, TRACE, PUT, DELETE, [UN]LINK
+     - not idempotent: POST, PATCH, CONNECT
+
 Method:
   - specifies request goal
-  - concepts:
-     - safety:
-        - read vs write (the resource)
-        - safe implies idempotent
-        - Safe [C]: 
-           - declares method safe
-           - useless for methods safe by default
-           - other methods should remain unsafe. 
-              - however ther are cases where a safe POST is needed
-              - e.g. when need to submit x-www-urlencoded safe request without using XHR
-           - goal is to imply idempotency, i.e. client can retry without prompting user
-           - not implemented by clients
-     - idempotency:
-        - resource state afterwards is always same if called again (with same parameters)
-        - mean client can repeat|retry request without risk
-  - types:
-     - safe:
-        - GET:
-           - retrieve resource
-           - body:
-              - request: none
-              - response: resource representation
-        - HEAD: 
-           - like GET but no response body
-           - content-related headers may also be omitted, e.g. content encoding or transfer encoding
-        - OPTIONS:
-           - retrieve communication options
-           - use cases:
-              - server functionalities|features
-              - document specific resource, e.g. accepted HTTP methods, parameters, description, example, etc.
-           - URI: can use * to mean "any resource"
-           - request body: none
-           - response headers|body:
-              - communication options
-                 - accepted HTTP methods: can use Allow [S] and Accept-Patch [S] (see below)
-        - TRACE: 
-           - echoes request
-           - use cases: see changes introduced by servers|proxies
-           - body:
-              - request: none
-              - response: not specified, but Content-Type "message/http"
-     - unsafe:
-        - idempotent:
-           - PUT: 
-              - replace|create (completely) resource, with known resource URI (e.g. specific ID)
-              - if created, use 201 (Created) with Location: URL [S]
-              - body:
-                 - request: new resource representation
-                 - response: either:
-                    - none, with 204|205
-                    - replace|creation status, with 200 (OK), e.g. new resource representation
-           - DELETE: 
-              - erase resource
-              - body:
-                 - request: none
-                 - response: either:
-                    - none, with 204|205
-                    - deletion status, with 200 (OK)
-           - [UN]LINK: add|change|remove Link [C] (see below)
-        - not idempotent:
-           - POST:
-              - non-idempotent modification
-              - including creating resource, without known resource URI (e.g. no specific ID)
-                 - use 201 (Created) with Location: URL [S]
-              - body:
-                 - request: modification, e.g. new resource representation
-                 - response: status of modification
-                    - e.g. new resource representation, in which case should add Content-Location [S]
-           - PATCH: 
-              - modify (partially) resource, with known resource URI (e.g. specific ID)
-                 - if not existing, can create, or not (preferred)
-              - body:
-                 - request: resource diff|changes
-                 - response: diff status, e.g. new resource representation
-              - conflicts:
-                 - should require If-* [C], unless it just appends
-                 - consider 409 for conflicts
-              - JSON merge patch:
-                 - application/merge-patch+json 
-                 - rules:
-                    - set if specified
-                    - leave as is if unspecified
-                    - remove if null
-                    - if VAL not OBJ, should set whole resource to VAL
-                 - simple but not suitable if:
-                    - should be able to set values to null
-                    - need to be able to transform values instead or replacing, e.g. NUM++, ARR.push(), STR.concat()
-           - CONNECT: HTTP Tunneling (see below)
   - whitelisting:
      - Allow: HTTP_METHOD,... [S]:
         - in response to OPTIONS request
-     - Accept-Patch: MIME[;charset=CHARSET],... [S]
-        - in response to OPTIONS request, meaning MIME types accepted by PATCH
      - errors:
         - not allowed: 405 (Method Not Allowed). Must also include Allow [S]
         - not understood: 501 (Not Implemented)
@@ -526,7 +529,7 @@ Status codes:
      - 429 (Too Many Requests)                throttle. May include Retry-After [S]                                   See load
      - 431 (Request Header Fields Too Large)                                                                          See request|response length
      - 451 (Unavailable For Legal Reasons)                                                                            See wrong request|response
-  - 5**: server-side failure (response body should give error info)
+  - 5**: server-side failure
      - 500 (Internal Server Error)            bug in server, e.g. syntax error                                        See wrong request|response
      - 501 (Not Implemented)                  feature not available yet                                               See extensions
      - 502 (Bad Gateway)                      sent by proxy when it received error from server                        See proxies
@@ -1303,12 +1306,15 @@ Request|response speed:
         - should not wait more than NUM seconds to process async
         - can be combined with Prefer: respond-async [C]
      - X-Response-Time: NUM [S]: time taken by server to process answer
+  - request|response:
+     - (HTTP/2) SETTINGS_TIMEOUT (0x4) error code: SETTINGS timeout
 
 Load:
-  - errors:
-     - 429 (Too Many Requests): throttle
-     - 503 (Service Unavailable): client cannot connect to server
-     - Both may include Retry-After [S]
+  - throttle:
+     - 429 (Too Many Requests)
+     - (HTTP/2) ENHANCE_YOUR_CALM (0xb) error code
+  - 503 (Service Unavailable): client cannot connect to server
+  - any may include Retry-After [S]
 
 Response processing:
   - Prefer [C]:
@@ -1338,7 +1344,7 @@ Content location:
         - partial|symbolic body, e.g. Prefer: return=representation [S] or 202 (Accepted)
         - with unsafe methods (e.g. POST|PUT|PATCH), indicating response body is latest representation
 
-Wrong request|response:
+Errors:
   - request:
      - syntax:
         - HTTP method: 405 (see HTTP methods)
@@ -1369,6 +1375,45 @@ Wrong request|response:
   - response:
      - syntax: 500 (Internal Server Error)
      - not implemented: 501, 510 (see extensions), 505 (see architecture/versions)
+     - body:
+        - 5** should include response body with error information
+        - can be a "problem detail":
+           - format JSON or XML, MIME type "application/problem+json|xml"
+           - attributes:
+              - type URI:
+                 - error main identifier
+                 - points to human-readable description, e.g. HTML
+                 - specific to a given status code
+                 - "about:blank" (def):
+                    - use status code number
+                    - title should be status code string (possibly i18n'd)
+              - title STR:
+                 - short description
+                 - 1 type === 1 title, but can be i18n'd
+              - detail STR:
+                 - longer description
+                 - goal is to help end-user fix the problem
+                    - should not try to help developer debug nor contain trace info
+                    - meant for end-user not programatic|parsing usage
+              - status NUM:
+                 - status code
+                 - might be different from response's if a proxy changed it
+              - instance URI:
+                 - resource that created the error
+              - any other VAR:
+                 - unprefixed [[:alnum:]_] 
+                 - min 3 chars
+  - HTTP/2 error codes (request|response):
+     - syntax:
+        - PROTOCOL_ERROR (0x1): e.g. wrong frame order or content
+        - COMPRESSION_ERROR (0x9): HPACK error
+        - INTERNAL_ERROR (0x2): protocol-related generic error
+     - cancel stream:
+        - REFUSED_STREAM (0x7): stream refused
+        - CANCEL (0x8): stream no longer needed
+     - normal exit:
+        - STREAM_CLOSED (0x5)
+        - NO_ERROR (0x0)
 
 Proxies:
   - types:
@@ -1612,6 +1657,31 @@ Compression:
         - Accept-Encoding: COMPRESSION_ALGO,... [S]: which one could have been possible
   - server should cache compression
 
+Documentation:
+  - OPTIONS:
+     - safe HTTP method
+     - retrieve communication options
+     - use cases:
+        - server functionalities|features
+        - document specific resource, e.g. accepted HTTP methods, parameters, description, example, etc.
+     - URI: can use * to mean "any resource"
+     - request body: none
+     - response headers|body:
+        - communication options
+           - accepted HTTP methods: can use Allow [S] and Accept-Patch [S] (see below)
+
+Debugging:
+  - TRACE: 
+     - safe HTTP method
+     - echoes request
+     - use cases: see changes introduced by servers|proxies
+     - body:
+        - request: none
+        - response: not specified, but Content-Type "message/http"
+  - pages:
+     - HTTP: about:networking#http (Firefox)
+     - HTTP/2: about:net-internals#http2 (Chrome)
+
 Push technologies:
   - allow server to initiate message to client
   - types:
@@ -1677,8 +1747,13 @@ HTTP tunneling:
   - methods:
      - CONNECT:
         - how:
-           - client: HTTP method CONNECT, URI is ORIGIN only, no request body
-           - server: 2**
+           - client: 
+              - HTTP method CONNECT (unsafe non-idempotent)
+              - URI: ORIGIN only
+              - no request body
+           - server: 
+              - 2**
+              - (HTTP/2) can use CONNECT_ERROR (0xa) error code
            - then server will forward the TCP connection used by HTTP request
               - it will only forward without interpreting, i.e. can be any TCP-based protocol, including HTTP
         - intented for forward proxies
@@ -1688,21 +1763,22 @@ HTTP tunneling:
         - allow client to do any TCP request, which can be security concern:
            - should restrict to specific use case by whitelisting ORIGIN and|or PORT
 
-Practices becoming bad with HTTP/2:
-  - concatenation:
-     - performance impact:
-        - lower number of requests
-        - but invalidates cache more often
-     - HTTP/2:
-        - does not have limit on number of parallel requests
-        - keep TCP socket always alive
-        - so roundtrip performance impact is less important
-     - types of concatenation:
-        - file plain concatenation
-        - sprites
-        - inlining, e.g. <link> -> <style>
-        - data URIs
-  - domain sharding
+Performance:
+  - practices becoming bad with HTTP/2:
+     - concatenation:
+        - performance impact:
+           - lower number of requests
+           - but invalidates cache more often
+        - HTTP/2:
+           - does not have limit on number of parallel requests
+           - keep TCP socket always alive
+           - so roundtrip performance impact is less important
+        - types of concatenation:
+           - file plain concatenation
+           - sprites
+           - inlining, e.g. <link> -> <style>
+           - data URIs
+     - domain sharding
 
 MIME TYPES ==>                                  #For { VAR: VAL, ... }:
                                                 #  - "text/plain": 
@@ -1720,7 +1796,3 @@ MIME TYPES ==>                                  #For { VAR: VAL, ... }:
 																								#         STR--
 																								#     - more efficient than percent-encoding for binary|big request body, e.g. file upload.
 																								#     - STR should be long enough and random. Can include a graphical line with "------" for humans reading the request.
-
-Debugging:
-  - HTTP: about:networking#http (Firefox)
-  - HTTP/2: about:net-internals#http2 (Chrome)
