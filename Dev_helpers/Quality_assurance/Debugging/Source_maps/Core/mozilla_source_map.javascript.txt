@@ -9,6 +9,8 @@ ALTERNATIVES ==>                  #  - mozilla source-map:
                                   #     - by far the most high-profile
 
 VERSION ==>                       #0.7.2
+
+GOAL ==>                          #Serializes and parses source maps
                                   #Based on source map format (see its doc)
                                   #Node/browser
 
@@ -26,7 +28,7 @@ SOURCE_MAP                        #Source map as object
                                              \=+===============================+=/
 
 
-GENERATOR                         #Low-level API to generate a source map by specifying each mapping
+GENERATOR                         #Low-level API to generate|serialize a source map by specifying each mapping
 
 new SourceMapGenerator            #GENERATOR_OPTS:
  ([GENERATOR_OPTS])               #  - file 'COMPILED_FILENAME' (SOURCE_MAP "file")
@@ -38,7 +40,7 @@ GENERATOR.addMapping(OBJ)         #Add to "mappings"
                                   #  - source 'SOURCE_PATH' (SOURCE_MAP "sources")
                                   #  - generated|original:
                                   #     - line|column NUM
-                                  #  - name 'VAR'|null (SOURCE_MAP "names")
+                                  #  - name 'SOURCE_CODE'|null (SOURCE_MAP "names")
 
 GENERATOR.setSourceContent
  ('SOURCE_PATH', STR)             #Add to "sourceContent"
@@ -59,26 +61,35 @@ new SourceNode                    #Single "mapping":
  ([LINE_NUM, COLUMN_NUM]          #  - LINE|COLUMN_NUM are source file's
  [, 'SOURCE_FILENAME']            #  - line|column of compiled file are automatically calculated from 'COMPILED_CODE'
  [,'COMPILED_CODE'|SOURCENODE_ARR]#'SOURCE_FILENAME' is SOURCE_MAP "sources"
- [, 'VAR'])                       #'VAR' is SOURCE_MAP "names"
+ [, 'SOURCE_CODE'])               #'SOURCE_CODE' is SOURCE_MAP "names"
+
 SOURCE_NODE.add|prepend
- ('COMPILED_CODE'|SOURCE_NODE_ARR)#Same as appending|prepending another SOURCE_NODE with same LINE|COLUMN_NUM and 'SOURCE_FILENAME'
+ ('COMPILED_CODE'|SOURCE_NODE_ARR)#Append|prepend children
+SOURCE_NODE.join
+ ('COMPILED_CODE'|SOURCE_NODE)    #Insert it between each child
+SOURCE_NODE.replaceRight(...)     #Performs replace(...) on last child
+                                  #E.g. to remove trailing whitespaces
+
+SOURCE_NODE.line|column           #NUM|null
+SOURCE_NODE.source                #'SOURCE_FILENAME'|null
+SOURCE_NODE.children              #'COMPILED_NODE'|SOURCENODE_ARR
+SOURCE_NODE.name                  #'SOURCE_CODE'|null
 
 SOURCE_NODE.setSourceContent
  ('SOURCE_PATH', STR)             #Add to "sourceContent"
+SOURCE_NODE.sourceContents
+ .SOURCE_PATH                     #STR
 
 SOURCE_NODE.toStringWithSourceMap #Returns OBJ:
  ([GENERATOR_OPTS])->OBJ          #  - map GENERATOR
                                   #  - code 'JAVASCRIPT_CODE': same as SOURCE_NODE.toString()
-
 SOURCE_NODE.toString()
  ->'COMPILED_CODE'                #
-SOURCE_NODE.join(...)             #Like toString().join(...)???
-SOURCE_NODE.replaceRight(...)     #Like replace(...) on last mapping???
 
-SOURCE_NODE.walk                  #Iterate over "mappings":
- (FUNC('COMPILED_CODE', OBJ))     #  - source 'URI' (relative)
+SOURCE_NODE.walk                  #Iterate over "mappings" OBJ:
+ (FUNC('COMPILED_CODE', OBJ))     #  - source 'SOURCE_PATH'
                                   #  - line|column NUM
-                                  #  - name 'VAR'|null
+                                  #  - name 'SOURCE_CODE'|null
 SOURCE_NODE.walkSourceContents
  (FUNC('SOURCE_PATH', STR))       #Iterate over "sourceContent"
 
@@ -90,46 +101,77 @@ SOURCE_NODE.walkSourceContents
                                              \=+===============================+=/
 
 
+CONSUMER ==>                      #Reads|parses a source map
+
 new SourceMapConsumer
- (SOURCE_MAP_OBJ|STR)
+ (SOURCE_MAP_OBJ|STR
+ [, 'SOURCEMAP_URI'])
  ->PROMISE_CONSUMER               #
 CONSUMER.destroy()                #Removes WASM-related data
 SourceMapConsumer.with(SOURCE_MAP,
- 'SOURCEMAP_PATH'|null,           #Like new SourceMapConsumer() except CONSUMER.destroy() is automatically called when ASYNC_FUNC ends
+ 'SOURCEMAP_URI'|null,            #Like new SourceMapConsumer() except CONSUMER.destroy() is automatically called when ASYNC_FUNC ends
  ASYNC_FUNC(CONSUMER))->PROMIS_VAL#PROMISE_VAL is ASYNC_FUNC's return value
+
 CONSUMER.sources                  #Source map "sources" resolved to absolute URIs
+CONSUMER.sourceRoot               #'DIR'|null (SOURCE_MAP "sourceRoot")
+CONSUMER.sourceContent            #STR|null_ARR (SOURCE_MAP "sourceContent")
+CONSUMER.file                     #'COMPILED_FILENAME'|null (SOURCE_MAP "file")
+
 CONSUMER.originalPositionFor(OBJ) #Use "mappings" to map compiled file index OBJ:
  ->OBJ2                           #  - line|column NUM
-                                  #  - bias SourceMapConsumer.GREATEST_LOWER|UPPER_BOUND (def: LOWER): if cannot find source
-                                  #    element, whether to return previous of next boundary
+                                  #  - bias SourceMapConsumer.GREATEST_LOWER|UPPER_BOUND (def: LOWER):
+                                  #     - if between two positions, whether to pick the previous|next one
                                   #To source file position OBJ2:
-                                  #  - source 'URI'|null (absolute)
+                                  #  - source 'SOURCE_PATH'|null
                                   #  - line|column NUM|null
-                                  #  - lastColumn NUM|null
-                                  #     - only generated if CONSUMER.computeColumnsSpans() was called
-                                  #  - name 'VAR'|null
+                                  #  - name 'SOURCE_CODE'|null
 CONSUMR.generatedPositionFor(OBJ2)#Inverse, i.e. maps source file position to compiled file index
  ->OBJ                            #With:
                                   #  - OBJ2: source|file|column
                                   #  - OBJ: line|column|lastColumn NUM|null
-CONSUMER.allGeneratedPositions    #Same except:
+CONSUMER.allGeneratedPositionsFor #Same except:
  (OBJ2)->OBJ                      #  - column is optional
                                   #  - returns all mappings, i.e. OBJ_ARR
+
+CONSUMER.computeColumnSpans()     #Make 'last[Generated]Column' available (otherwise undefined), i.e. the next position's column - 1
+                                  #If no next position, Infinity
+
 CONSUMER.eachMapping              #Iterates over "mappings" OBJ:
  (FUNC(OBJ)[, THIS][, VAL])       #  - source 'SOURCE_PATH'|null
-                                  #  - generated|originalLine|Column|LastColumn NUM|null
-                                  #  - name 'VAR'|null
+                                  #  - generated|originalLine|Column|LastGeneratedColumn NUM|null
+                                  #  - name 'SOURCE_CODE'|null
                                   #VAL is SourceMapConsumer.GENERATED|ORIGINAL_ORDER (def: GENERATED)
+
 CONSUMER.sourceContentFor         #Returns "sourceContent"
  ('SOURCE_PATH'[, BOOL])->STR     #If not found, throws if BOOL false (def) or returns null if BOOL true.
 CONSUMER.hasContentsOfAllSources()
  ->BOOL                           #True if every source has "sourceContent", i.e. is completely inline source map
 
 SourceMapGenerator.fromSourceMap
- (CONSUMER)->GENERATOR            #
-GENERATOR.applySourceMap
- (CONSUMER[, 'SOURCE_FILENAME']
- [, 'SOURCE_DIR'])                #Def 'SOURCE_PATH': CONSUMER.file
-SOURCE_NOD.fromStringWithSourceMap
- ('COMPILED_CODE', CONSUMER
- [, 'DIR'])                       #'DIR' is relative path
+ (CONSUMER)->GENERATOR            #Re-serialize (GENERATOR) a parsed source map (CONSUMER)
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:      REVERSE COMPILATION      :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+SourceNode.fromStringWithSourceMap#Create a SOURCE_NODE from full 'COMPILED_CODE' + its source map (CONSUMER)
+ ('COMPILED_CODE', CONSUMER       #I.e. help compiled -> source reverse translation.
+ [, 'DIR'])->SOURCE_NODE          #'DIR' is relative path
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:         MULTI-MAPPING         :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+GENERATOR.applySourceMap          #Multi-mapping:
+ (CONSUMER[, 'SOURCE_PATH']       #  - CONSUMER is compilation from source file to intermediate file
+ [, 'SOURCE_DIR'])                #  - GENERATOR is compilation from intermediate file to compiled file
+                                  #Will make GENERATOR's source map from source file to compiled file instead
+                                  #Def 'SOURCE_PATH': CONSUMER.file
