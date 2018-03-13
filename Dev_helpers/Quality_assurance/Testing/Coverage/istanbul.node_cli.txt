@@ -16,6 +16,7 @@
 ISTANBUL-API ==>                  #1.3.2
                                   #Istanbul programmatic usage
 
+
 CONF_OBJ                          #Plain object
 CONF                              #CLASS
 CONF.PROP()->VAL                  #Gets CONF_OBJ.PROP (camelCase instead of dasherized)
@@ -27,26 +28,89 @@ config.loadFile
  (['CONF_FILE'],[CONF_OBJ2])->CONF#Same with a YAML|JSON FILE (def: './.istanbul.yml')
 
 
+instrument.cover                  #Target source files:
+ (CONF[, 'GLOB'_ARR],             #  - including:
+ FUNC(ERROR, COVER_OBJ))          #     - 'GLOB'_ARR
+                                  #     - def: '**/*.EXT' using CONF.extensions '.EXT'_ARR (def: ['.js'])
+                                  #  - excluding:
+                                  #     - uses CONF.excludes (def: [])
+                                  #     - adds ['**/node_modules|test|tests/**'] if CONF.defaultExcludes true (def)
+                                  #     - adds CONF.reporting.dir 'DIR' (def: './coverage')
+                                  #  - at CONF.instrumentation.root (def: '.')
+                                  #  - unless CONF.includeAllSources true (def: false), do not report files that are never require()'d
+COVER_OBJ.hookFn()                #Run ISTANBUL-LIB-HOOK.hookRequire(..., OPTS2)
+                                  #  - with OPTS2:
+                                  #     - extensions OPTS.extensions
+                                  #     - verbose OPTS.verbose
+                                  #     - coverageVariable '$$coverage$$'
+                                  #  - that runs ISTANBUL-LIB-INSTRUMENT.createInstrumenter(OPTS2).instrumentSync() with OPTS2:
+                                  #     - CONF.instrumentation OBJ (dasherized)
+                                  #     - coverageVariable '$$coverage$$'
+                                  #  - uses ISTANBUL-LIB-HOOK.hookRunIn[This]Context() instead if
+                                  #    CONF.hooks.hookRunIn[This]Context true (def: false)
+COVER_OBJ.unhookFn()              #Unhook and also run ISTANBUL-LIB-HOOK.unloadRequireCache()
+COVER_OBJ.coverageFinderFn()      #Gets global.$$coverage$$ COVMAP
+COVER_OBJ.exitFn(OPTS2)           #Gets global.$$coverage$$ COVMAP
+                                  #Writes it at 'DIR/coverage[-PID].raw-json'
+                                  #  - DIR is CONF.reporting.dir
+                                  #  - PID if CONF.instrumentation.includePid true (def: false)
+                                  #Apply MAPSTORE.transformCoverage(COVMAP):
+                                  #  - uses returned sourceFinder as reporters' sourceFinder
+                                  #  - instrumenter uses OPTS2.sourceMapUrlCallback MAPSTORE.registerURL()
+                                  #Reports each COVMAP with createReporter() using 'FORMAT'_ARR:
+                                  #  - CONF.reporting.reports 'FORMAT'_ARR (def: 'lcov')
+                                  #  - 'text' and|or 'text-summary' according to CONF.reporting.print 'detail|summary|none|both' (def: 'summary')
 
 
-instrument.run(CONF, OPTS, FUNC())#
-                                  #Instrument OPTS.input 'PATH':
+instrument.run(CONF, OPTS, FUNC())#Instrument OPTS.input 'PATH':
                                   #  - using ISTANBUL-LIB-INSTRUMENT.createInstrumenter(OBJ).instrumentSync()
                                   #  - with CONF.instrumentation OBJ (dasherized)
+                                  #     - coverageVariable is called variable (def: '__coverage__')
                                   #Then writes the result to OPTS.output 'PATH' (def: stdout)
                                   #Can use OPTS.input|output 'DIR':
-                                  #  - uses filesFor() to find files:
-                                  #     - OPTS.root 'DIR'
-                                  #     - OPTS.includes:
-                                  #        - def ['**/*'] if CONF.completeCopy true (def: false)
-                                  #        - otherwise [**/*.EXT] using CONF.extensions '.EXT'_ARR (def: ['.js'])
-                                  #     - OPTS.excludes
-                                  #        - uses CONF.excludes (def: [])
-                                  #        - adds ['**/node_modules/**'] if CONF.defaultExcludes true (def)
-                                  #     - OPTS.relative true
+                                  #  - OPTS.includes:
+                                  #     - def ['**/*'] if CONF.completeCopy true (def: false)
+                                  #     - otherwise [**/*.EXT] using CONF.extensions '.EXT'_ARR (def: ['.js'])
+                                  #  - OPTS.excludes
+                                  #     - uses CONF.excludes (def: [])
+                                  #     - adds ['**/node_modules/**'] if CONF.defaultExcludes true (def)
+                                  #If OPTS.saveBaseline true (def: false):
+                                  #  - creates a COVEMAP with each INSTRUMENTER.lastFileCoverage() (i.e. empty counters)
+                                  #  - saves it to to OPTS.baselineFile (def: './coverage/coverage-baseline.raw.json')
 
 
-filesFor                          #Find files according to globbing pattern (using node-fileset)
+reports.run('FORMAT'_ARR, CONF    #Retrieves all COVMAP files using:
+ [, OPTS], FUNC())                #  - OPTS.root 'DIR' (def: process.cwd())
+                                  #  - OPTS.includes (def: '**/coverage*.raw.json')
+                                  #  - excludes ['**/node_modules/**']
+                                  #For each COVMAP, report it with createReporter()
+createReporter(CONF[, OPTS])
+ ->REPORTER                       #
+REPORTER.addAll('FORMAT'_ARR)
+REPORTER.add('FORMAT')            #Specify 'FORMAT'
+REPORTER.write(COVMAP, OPTS2)     #Reports COVMAP with each 'FORMAT':
+                                  #  - ISTANBUL-LIB-REPORT.createContext(OPTS2)->CONTEXT with OPTS2:
+                                  #     - dir CONF.reporting.dir (def: './coverage')
+                                  #     - watermarks CONF.reporting.watermarks (merged to default ones)
+                                  #  - ISTANBUL-REPORTS.create('FORMAT', OPTS2)->VISITOR:
+                                  #     - OPTS2 is CONF.reporting.report-config OBJ
+                                  #  - TREE.visit(VISITOR, CONTEXT)
+                                  #     - TREE is OPTS|CONF.summarizer 'flat|nested|pkg' (using ISTANBUL-LIB-REPORT.summarizers.*) (def: 'pkg')
+
+
+checkCoverage(CONF[, OPTS],       #Find and merge COVMAP files:
+ FUNC(ERROR|'ERROR'))             #  - OPTS.include (def: '**/coverage*.json')
+                                  #  - at OPTS.root (def: CONF.instrumentation.root (def: '.'))
+                                  #Check coverage (SUMMARY.*.pct) against CONF.check.global|each:
+                                  #  - statements|branches|lines|functions NUM (def: 0)
+                                  #  - excludes 'PATH'_ARR
+                                  #  - global is for all files, each is for each file
+                                  #If under thresholds: ERROR|'ERROR'
+
+
+GLOBBING ==>                      #Uses node-fileset
+
+filesFor                          #Find files
  ([OPTS], FUNC(ERROR, 'PATH'_ARR))#OPTS:
                                   #  - includes 'GLOB'_ARR (def: ['**/*.js'])
                                   #  - excludes 'GLOB'_ARR (def: ['**/node_modules/**'])
@@ -58,6 +122,9 @@ matcherFor
 
 
 CONF.verbose                      #Debugging console.log()
+
+CONF.postRequireHook???
+CONF.handleSigint???
 
 
 
@@ -79,6 +146,7 @@ INSTRUMENTER.instrumentSync       #In a nutshell:
                                   #Instrument code:
                                   #  - prepends code that create a new FILECOV:
                                   #     - referenced by both global.__coverage__.FILENAME and a local variable
+                                  #        - i.e. global.__coverage__ is a COVMAP
                                   #     - all FILECOV.statement|fn|branchMap.CID set to their related source code's line|column|name
                                   #     - all FILECOV.s|f|b.CID initialized to 0
                                   #  - adds counters:
@@ -110,6 +178,7 @@ INSTRUMENTER.lastSourceMap()      #Uses babel-generator options:
                                   #  - sourceFileName 'FILENAME'
                                   #To multi-map into an already existing SOURCE_MAP, add it as last argument to instrumentSync()
                                   #OPTS.sourceMapUrlCallback('FILENAME', 'sourceMappingURL') is called by instrumentSync() if defined
+                                  #  - e.g. ISTANBUL-LIB-SOURCE-MAPS.registerURL
 
 // istanbul ignore file [COMENT]  #Skip instrumentation for current file
 // istanbul ignore next [COMENT]  #Skip instrumentation for next block|structure
@@ -257,15 +326,18 @@ MAPSTORE.transformCoverage(COVMAP)#Returns a new COVMAP2 with each FILECOV.input
  ->{ map COVMAP2, sourceFinder }  #Uses mozilla source-map's CONSUMER.originalPositionFor() (see its doc)
 
 FILECOV.inputSourceMap            #SOURCE_MAP
-registerMap('PATH',SOURCE_MAP_OBJ)#Alternative way instead of specifying FILECOV.inputSourceMap
-registerURL('PATH', STR)          #STR is sourceMappingURL value (base64 or external file)
+MAPSTORE.registerMap
+ ('PATH',SOURCE_MAP_OBJ)          #Alternative way instead of specifying FILECOV.inputSourceMap
+MAPSTORE.registerURL('PATH', STR) #STR is sourceMappingURL value (base64 or external file)
 
-sourceFinder('SOURCE_PATH')       #If available, uses sourceContent:
- ->'FILE_CONTENT'                 #  - cached during MAPSTORE.transformConverage() into OPTS.sourceStore:
-                                  #     - 'memory' (def)
+MAPSTORE.sourceFinder             #If available, uses sourceContent:
+ ('SOURCE_PATH')                  #  - cached during MAPSTORE.transformConverage() into OPTS.sourceStore:
+ ->'FILE_CONTENT'                 #     - 'memory' (def)
                                   #     - 'file' at OPTS.tmpdir (def: OS.tmpdir())
                                   #Otherwise, reads the file:
                                   #  - relative to OPTS.baseDir 'DIR' (def: process.cwd())
+
+MAPSTORE.dispose()                #Cleanup
 
 
                                              /=+===============================+=\
@@ -420,6 +492,21 @@ CONTEXT.getSource('PATH')->STR    #Runs either:
                                   #  - OPTS.sourceFinder('PATH')->STR if defined
                                   #     - e.g. the one from INSTANBUL-LIB-SOURCE-MAPS to get source file's content,
                                   #       not compiled file
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:     BABEL-PLUGIN-ISTANBUL     :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+VERSION ==>                      ##4.1.6
+                                 ##Babel plugin that instrument code with Istanbul (ISTANBUL-LIB-INSTRUMENT)
+
+PLUGIN_OPTS.useInlineSourceMaps  ##BOOL (def: true)
+PLUGIN_OPTS.onCover
+ (FUNC('PATH', FILECOV))         ##Optional event handler
 
 
 
