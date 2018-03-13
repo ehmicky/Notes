@@ -177,7 +177,10 @@ REQ.fresh|stale               #Returns true|false if:
                               #  - method is GET|HEAD
                               #  - RES.statusCode is 2** or 304
                               #  - If-Modified-Since [C] matches Last-Modified [S] or If-None-Match [C] matches ETag [S], using FRESH(...) (see its doc)
-                              #Used by REQ.send()
+                              #Used by REQ.send(). REQ.sendFile() does not use it directly but uses same logic.
+                              #Note:
+                              #  - ETag [S] is set by REQ.send[File]()
+                              #  - Last-Modified [S] is set by REQ.sendFile()
 
 
 																						 /=+===============================+=\ 
@@ -216,86 +219,6 @@ RES.cookie                    #Sets Set-Cookie: COOKIE [S], using COOKIE('VAR', 
                               #           - usually a middleware (like COOKIE-PARSER) sets REQ.secret and verifies 's:VAL.HASH'
 RES.clearCookie('VAR'[, OBJ2])#Same as RES.cookie, with OPTS.expires 1970-01-01
 															
-                              #???:
-                              #     - RES Last-Modified
-                              #        - set automatically by RES.sendFile()
-                              #     - RES ETag
-                              #        - set automatically by RES.send|sendFile()
-                              #        - sendFile|download() ETag function is always content-based, 'W/"MD5HASH"'
-
-RES.send([VAL])				        #Similar to RES.end(STR) but also:
-															#  - VAL can also be OBJ|ARR|BOOL|NUM:
-                              #     - uses JSON.stringify(OBJ[, APPNAME "json replacer"][, APPNAME "json spaces"])
-                              #  - sets Content-Type|Length [S], if body and not already set
-                              #  - sets ETag [S], using ETAG(..., {weak: BOOL}) (see its doc)
-                              #     - BOOL according to APPVAR 'etag' 'weak' (def) or 'strong'
-                              #     - i.e. '[W/]"SIZE-MD5HASH"'
-                              #     - can customize with APPVAR "etag fn"(STR, 'ENCODING')->'ETAG'
-                              #  - if REQ.fresh: 304
-                              #  - if 204|304 or HEAD, no body
-RES.json(...)									#Same as RES.send(OBJ)
-RES.jsonp(...)								#Same as RES.send(OBJ) but for JSONP, i.e. returns FUNC(BODY)
-                              #  - 'FUNC' is REQ.query[CALLBACK]
-                              #     - CALLBACK is "jsonp callback name" (def: 'callback')
-RES.sendStatus(NUM)           #Like RES.status(NUM).send(HTTP.STATUS_CODES[NUM])
-
-
-SERVE-STATIC
-
-
-VERSION ==>                   #0.14.1
-                              #Like RES.end() but tailored for sending file content according to a 'PATH'
-                              #Handles: range requests, [un]conditional caching, Content-Type|Length [S], HEAD
-
-SEND(REQ, 'PATH'[, OPTS])     #Similar to RES.end(STR) but also:
- ->SENDSTREAM                 #  - send 'PATH' file content
-SENDSTREAM.pipe(RES)->RES     #  - handle range requests, using RANGE-PARSER (see its doc), if OPTS.acceptRanges true (def)
-                              #     - i.e. Range [C], If-Range [C], Accept-Ranges: bytes [S], Content-Range [S], 206, 416
-                              #  - sets Content-Type|Length [S], if body and not already set
-                              #     - Content-Type [S] is deduced from 'PATH'
-                              #  - sets Cache-Control: public, max-age=NUM [S]:
-                              #     - NUM is OPTS.maxAge
-                              #     - unless OPTS.cacheControl false, or already defined
-                              #  - sets Last-Modified: FILE_MTIME [S] if OPTS.lastModified true (def)
-                              #  - sets ETag [S], using ETAG(...) (see its doc), i.e. "SIZE-MTIME", if OPTS.etag true (def)
-                              #  - if REQ.fresh: 304
-                              #     - actually does not use REQ.fresh itself but similar logic
-                              #  - if 304 or HEAD, no body
-                              #'PATH':
-                              #  - must be encodeURIComponent()'d
-                              #  - if wrong, sends 400
-                              #  - if contains .., sends 403
-                              #  - if cannot find, sends 404
-                              #  - if other filesystem error, sends 500
-                              #OPTS:
-                              #  - start|end NUM: only send the file content from those byte offsets
-                              #  - root 'DIR': make 'PATH' relative to 'DIR'
-                              #  - extensions 'EXT'_ARR or false (def): if 'PATH' cannot be found, try 'PATH.EXT'
-                              #  - index 'FILE'[_ARR]|false (def: 'index.html'): if 'PATH' cannot be found and is DIR, PATH/FILE
-                              #  - dotfiles STR: what to do if 'PATH' contains dotfiles:
-                              #     - 'allow': nothing
-                              #     - 'deny': sends 403
-                              #     - 'ignore' (def): sends 404
-
-SENDSTREAM.on('error',        #Fired when 4**|5** would be sent.
-FUNC(HTTPERROR, STATUS_NUM))  #Unless defined, will:
-                              #  - RES.sendStatus(STATUS_NUM)
-                              #  - also set Content-Range [S] if 416
-                              #HTTPERROR (see its doc) 
-SENDSTREAM.on                 #Fired when 'PATH' is DIR but misses last '/'
-('directory', FUNC())         #Unless defined, will send 301 with Location: 'PATH/' [S], and body "Redirecting to PATH/"
-
-SENDSTREAM.on
-('file', FUNC('PATH', FSSTAT))#When 'PATH' is FILE found, goind to be sent
-SENDSTREAM.on('headers', 
-FUNC(RES, 'PATH', FSSTAT))    #Before setting response headers
-SENDSTREAM.on
-('stream', FUNC(ISTREAM))     #Sending body has started (if body)
-SENDSTREAM.on('end', FUNC())  #Sending body has ended (if body)
-
-
-
-
 RES.sendFile('PATH'[, OBJ]		#Uses SEND(REQ, ...) (see its doc), i.e. like RES.end() but:
 [, FUNC([ERROR])])						#  - send file content for 'PATH'
                               #  - handles: range requests, [un]conditional caching, Content-Type|Length [S], HEAD
@@ -305,7 +228,29 @@ RES.sendFile('PATH'[, OBJ]		#Uses SEND(REQ, ...) (see its doc), i.e. like RES.en
                               #  - fires FUNC(ERROR) (or, if undefined, NEXT(ERROR)) instead of sending 4**, 5**
                               #  - fires FUNC(ERROR) (or, if undefined, NEXT()) instead of 301
                               
-EXPRESS.static(DIR[, OBJ])    #Express MIDWR that serves static files using RES.sendFile(). Same as SERVE-STATIC
+RES.send([VAL])				        #Similar to sendFile() but:
+                              #  - sends content directly, not file content
+															#     - VAL can be any JSON value except null:
+                              #        - uses JSON.stringify(VAL[, APPNAME "json replacer"][, APPNAME "json spaces"])
+                              #     - does not set Last-Modified [S]
+                              #  - no range requests
+                              #  - does not set Cache-Control [S]
+                              #  - different ETag [S]: uses ETAG(..., {weak: BOOL}) (see its doc)
+                              #     - BOOL according to APPVAR 'etag' 'weak' (def) or 'strong'
+                              #     - i.e. '[W/]"SIZE-MD5HASH"'
+                              #     - can customize with APPVAR "etag fn"(STR, 'ENCODING')->'ETAG'
+                              #  - if 204, no body
+                              #  - never fires NEXT([ERROR])
+RES.json(...)									#Same as RES.send(OBJ)
+RES.jsonp(...)								#Same as RES.send(OBJ) but for JSONP, i.e. returns FUNC(BODY)
+                              #  - 'FUNC' is REQ.query[CALLBACK]
+                              #     - CALLBACK is "jsonp callback name" (def: 'callback')
+RES.sendStatus(NUM)           #Like RES.status(NUM).send(HTTP.STATUS_CODES[NUM])
+
+
+
+
+EXPRESS.static(DIR[, OBJ])    #Express MIDWR that serves static files using RES.sendFile(). Same as SERVE-STATIC (???)
                               #OBJ:
                               #  - maxAge: see sendFile()
                               #  - redirect BOOL: if true (def), request to DIR redirects to DIR/
