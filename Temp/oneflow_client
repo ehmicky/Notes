@@ -736,18 +736,16 @@ AGREEMENT: /agreements/AGREEMENT
      - isEmpty(): AGREEMENT type notset
      (comment box): not used
      (document box):
-     + KEY is "documents", VALUE is AGREEMENT_DOCUMENT_CONTENT_COLL
-     - isEmpty(): AGREEMENT_DOCUMENT_ARR not empty or containing only _removed
-     + on save(), changes state draft -> enabled, or enabled -> disabled
+     + KEY is "data", VALUE is DATA_CONTENT_COLL (with subtype "file")
+     - isEmpty(): DATA_CONTENT_COLL not empty or containing only _removed
      (attachments box)
-     + KEY is "documents", VALUE is AGREEMENT_DOCUMENT_CONTENT_COLL
+     + KEY is "data", VALUE is DATA_CONTENT_COLL (with subtype "file")
      - config:
-        - order AGREEMENT_DOCUMENT_ID_ARR: used as comparator. BOX.toJSON() fills default (only not _removed ones)
+        - order DATA_ID_ARR: used as comparator. BOX.toJSON() fills default (only not _removed ones)
         - counterpart_edit true: never isEmpty()
-     | moveFile(AGREEMENT_DOCUMENT, AGREEMENT_DOCUMENT2): to change config.order
+     | moveFile(DATA, DATA2): to change config.order
      | toggleCounterpartEdit()
      - isEmpty(): like document box
-     + save(): changes state draft -> enabled
      + permission allow-add-attachment: same as permission "allow-update" or (if config.counterpart_edit true) "allow-update-shared"
      (text box)
      + KEY is "data", VALUE is DATA_COLL, but use only DATA_COLL[0] (with subtype "text"), initially setup with value ""
@@ -820,7 +818,7 @@ AGREEMENT: /agreements/AGREEMENT
      _ mimetype STR
      - file_extension STR
      | isPDF()
-     - has_file BOOL
+     - has_file 0|1
      | generateDownloadURL()->"/agreements/AGREEMENT/documents/DOCUMENT/download[?at=TOKEN]"
      - getPages()->AGREEMENT_DOCUMENT_PAGE_COLL (according to pages|page_dimensions, redone when changed):
         - agreement AGREEMENT
@@ -842,7 +840,7 @@ AGREEMENT: /agreements/AGREEMENT
   - data DATA_ARR (no URL):
      - agreement AGREEMENT
      - key "form_input|product|text|file" (subtypes) [V]
-     - value DATA_VALUE_FORM_INPUT|PRODUCT|STR
+     - value DATA_VALUE_FORM_INPUT|PRODUCT|FILE|STR
         - _id: removed from toJSON()
         - _data DATA
         (form_input)
@@ -863,6 +861,18 @@ AGREEMENT: /agreements/AGREEMENT
         - description STR
         - price_1|2 NUM
         (file)
+        - name "FILENAME"
+        - extension "EXT"
+        - asset_identifier "ASSET" (returned by server)
+        - has_file BOOL
+        | generateDownloadURL()->"/agreements/AGREEMENT/assets/ASSET?download=FILENAME.EXT[&at=TOKEN]"
+        | isPDF()
+        - owner_participant_id PARTICIPANT
+        | getOwnerParticipant(): create|retrieve with owner_participant_id (def: AGREEMENT:owner)
+        | isOwner(POSITION[, BOOL]): like above but use getOwnerParticipant()
+        + permissions:
+           + allow-replace|update|remove: AGREEMENT state template, or
+           (Flow.position is PARTICIPANT and AGREEMENT state not signed|declined and isOwner() (including with checking owner_participant_id))
      + validateAndSave() also validates value
      (product)
      + all EVENT from value are forwarded as "related:value:EVENT" to DATA
@@ -872,7 +882,8 @@ AGREEMENT: /agreements/AGREEMENT
      - _removed 0|1
     || remove() overwritten so it doesn't really remove but sets _removed, unless OBJ.modelRemove true or MODEL._id not set
     || active(): subcollection on _removed
-  x getPDFContractURL(): /agreements/AGREEMENT/assets/contract.pdf?download=contract.pdf
+    || add|reset(): sync AGREEMENT.data???
+  | getPDFContractURL(): /agreements/AGREEMENT/assets/contract.pdf?download=contract.pdf
   - messages MESSAGE_ARR (email messages, comments): /agreements/AGREEMENT/messages
      - id: comparator (id null is min)
      - agreement AGREEMENT
@@ -918,13 +929,18 @@ AGREEMENT: /agreements/AGREEMENT
         - TYPE_COMPANY_DISABLE: EVENT.refs: company_name
         - TYPE_COMPANY_UPDATE: EVENT.refs: company_name
         - TYPE_COMPANY_UPDATE_ITEM: EVENT.refs: key "company_name|company_orgnr|company_country", to|from VAL
-        - TYPE_DATA_CREATE|UPDATE|REMOVE: EVENT.refs: 
-           - key "duration_type|duration_value|duration_notice_period|expire_date|text|form_input|product"
-           - label[_disabled]: if key "form_input|product"
+        - TYPE_DATA_CREATE|REMOVE: EVENT.refs: 
+           - key "text|form_input|product|file"
+           - or label (for Forms and Products)
+        - TYPE_DATA_UPDATE: EVENT.refs: 
+           - key|label: same
+           - from|to OBJ: 
+              - (if key "file"): OBJ.name
+              - (if key "form_input"): OBJ.value
+              - (if key "product"): OBJ.count
         - TYPE_DOCUMENT_ADD|ENABLE: EVENT.refs: [replaced_]document_name STR
         - TYPE_DOCUMENT_UPDATE: EVENT.refs: key "name", from|to VAL
         - TYPE_DOCUMENT_DISABLE: EVENT.refs document_name STR
-        - TYPE_DOCUMENT_MAKE_PRIMARY: EVENT.refs document_name STR
         - TYPE_MESSAGE_ADD: EVENT.refs: message_type
         - TYPE_BOX_UPDATE: EVENT.refs: box_type
         - TYPE_BOX_ENABLE: EVENT.refs: box_type
@@ -1489,8 +1505,8 @@ Agreement ParticipantBar:
                  - if AGREEMENT state signed: SignedActionsView:
                     - MODEL AGREEMENT
                     - shows "Generating receipt" when signinprogress
-                    - "Download contract receipt": link pointing to DOCUMENT (with state receipt) generateDownloadURL()
-                      i.e. "/agreements/AGREEMENT/documents/DOCUMENT/download[?at=TOKEN]"
+                    - "Download contract receipt": link pointing to DOCUMENT (with state receipt) getPDFContractURL()
+                      i.e. /agreements/AGREEMENT/assets/contract.pdf?download=contract.pdf
                     - "Print contract" -> "/contracts/AGREEMENT/print"
                     - "Cancel button": "modal:show" CancelModalView
                        - MODEL AGREEMENT
@@ -1641,7 +1657,7 @@ Boxes:
                  - use helpers:
                     - formatAttrName("VAR"[, "VAR2"]): returns CONSTANTS.ATTRIBUTES.VAR2.VAR (def VAR2: "agreement"), i.e. human friendly version of a MODEL.VAR:
                        - agreement: type|duration|notice_period|expire_date|start_date
-                       - data: duration_type|duration_value|duration_notice_period|expire_date|text|form_input|product
+                       - data: duration_type|duration_value|duration_notice_period|expire_date|text|form_input|product|file
                        - participant: fullname|title|type|consumer_orgnr|consumer_country
                        - company: company_name|company_orgnr|company_country
                     - formatAttrValue("VAR", "VAR2"): according to VAR:
@@ -1660,18 +1676,21 @@ Boxes:
      - "boxes:history:list:view"(AGREEMENT, EVENT_COLL, OBJ)->EventListView
   - document:
      - DocumentLayout:
-        - MODEL first VALUE (from AGREEMENT_DOCUMENT_CONTENT_COLL) with state enable or (if isOwner) draft
-        - PagesView MCOLLVIEW (from "document:pages:view"(AGREEMENT_DOCUMENT))
-           - MODEL AGREEMENT_DOCUMENT.getPages()
+        - MODEL first VALUE (from DATA_CONTENT_COLL) with state enable or (isOwner() and draft)
+        - PagesView MCOLLVIEW (from "document:pages:view"(DATA))
+           - MODEL from DATA.getPages()
            - <img> with src MODEL.generatePageURL()
      - BoxMenu:
-        - "Download document": AGREEMENT_DOCUMENT.generateDownloadURL()
-        - "Replace document" or "Upload document": "file:upload:show"
-           - "modal:show"() with ModalLayout with region container: UploadDocumentModalView
-              - MODEL AGREEMENT_DOCUMENT
-              - use /agreements/AGREEMENT/documents/?_source=form
+        - "Download document": DATA.generateDownloadURL()
+        - "Replace document" or "Upload document": "file:upload:show"(DOCUMENT_BOX)
+           - "modal:show"() with ModalLayout with region container: UploadFileModalView
+              - MODEL DATA: according to DATA.value:
+                 - name, asset_extension (filename entry box)
+                 - asset_identifier, has_file (response from server)
+              - use /agreements/AGREEMENT/assets/?_source=form
               - use fineUploader: only allow PDF, no multiple
-              - add server response AGREEMENT_DOCUMENT to box AGREEMENT_DOCUMENT_CONTENT_COLL
+              - add server response DATA to box DATA_CONTENT_COLL (first stage)
+              - then sets DATA details via async task via Pusher (second stage)
      - permissions:
         - allow-replace and not mobile: "Replace document"
   - attachments:
@@ -1679,22 +1698,20 @@ Boxes:
      - according to BOX_CONTENT.documents OBJ: name STR
      - FilesView MCOMPVIEW:
         - MODEL ATTACHMENTS_BOX
-        - "Add attachment" button|BoxMenu -> "file:upload:show"(ATTACHMENTS_BOX)
+        - "Add attachment" button|BoxMenu -> "file:upload:show"(ATTACHMENTS_BOX): see above
         - "Allow all participants to add attachments" -> toggle config.counterpart_edit
-        - jQuery UI sortable -> ATTACHMENTS_BOX.moveFile(AGREEMENT_DOCUMENT, AGREEMENT_DOCUMENT2)
+        - jQuery UI sortable -> ATTACHMENTS_BOX.moveFile(DATA, DATA2)
         - "Cancel": restore previous model, set by restorePoint when clicking anywhere
-        - BoxMenu "Restore" (on each AGREEMENT_DOCUMENT from VALUE with state disabled): change state to enabled
         - FileView
-           - MODEL AGREEMENT_DOCUMENT from VALUE.active().enabled(), i.e. not _removed, state enabled or (if isOwner()) draft
-              - according to name, pages, has_file, file_extension, owner.fullname
-              - name: editable popoverText
-           - "Download" points to AGREEMENT_DOCUMENT.generateDownloadURL()
-           - "View" (shown if AGREEMENT_DOCUMENT.pages exist) -> "modal:show" with container ViewModalLayout:
-              - MODEL AGREEMENT_DOCUMENT: according to name
+           - MODEL DATA from VALUE.active(), i.e. not _removed or (isOwner() and draft)
+              - according to DATA.value: name, pages, has_file, asset_extension, owner.fullname
+              - DATA.value.name: editable popoverText
+           - "Download" points to DATA.generateDownloadURL()
+           - "View" (shown if DATA.pages exist) -> "modal:show" with container ViewModalLayout:
+              - MODEL DATA: according to name
               - region pages: same as documentBox PagesView MCOLLVIEW
-           - "Remove":
+           - "Remove": DATA_COLL.remove(DATA)
               - if last one, "modal:confirm:show" -> ATTACHMENTS_BOX.disable()
-              - if draft, AGREEMENT_DOCUMENT_CONTENT_COLL.remove(AGREEMENT_DOCUMENT). Otherwise, AGREEMENT_DOCUMENT.disable()
         - NoFilesView:
            - "Add attachment": see above
      - permissions:
