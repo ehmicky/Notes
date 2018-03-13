@@ -17,19 +17,11 @@ test("TITLE", [...ARR], FUNC(t, ...ARG) [, ...OPTS])->PROMISE
 
 "TITLE":
   - not optional
-  - must be unique within file
+  - must be unique within all test files
   - test iterations are identified with TITLE + ARGs (using info.title from test-each)
-
-"shortest filepath":
-   - if unique: filename without .EXT
-   - if differ only by .EXT: filename with .EXT
-   - otherwise, prepend first parent dir (and so on) until different (and do not use .EXT)
 
 ...ARR + FUNC:
   - use test-each
-
-FUNC:
-  - should be fired on next tick
 
 t OBJ:
   - index, indexes: like test-each
@@ -53,13 +45,6 @@ Re-using:
    - OPTS: test = (...args) => test(...args, OPTS)
        - which is why OPTS is variadic
 
-Hooks not needed:
-   - beforeAll():
-      - just execute code in top-level scope
-      - for async, top-level code can return PROMISE then each test can use await PROMISE
-   - afterAll(): use await Promise.all(...PROMISE) using returned PROMISEs
-   - before|afterEach(): just repeat code at beginning|end of FUNC
-
 CLI runner:
   - called "dt" to make it fast to type
 
@@ -67,11 +52,11 @@ Files selection:
   - use CLI argument "GLOB"... (whitelisting)
      - can be "!GLOB" (blacklisting)
      - can target DIRs
-  - def: test[s]|spec|__tests__/**/*.EXT, **/*.[sS]pec|test.EXT, **/[*-]test[-*].EXT, !helpers|fixtures, !_*
+  - def: test[s]|spec|__tests__/**/*.EXT, **/*.[sS]pec|test.EXT, **/[*-]test[s][-*].EXT, !helpers|fixtures, !_*
      - EXT is .js[x]|ts[x]
   - always exclude:
-     - snapshot files
-     - node_modules, bower_components, jspm_packages
+     - snapshots/
+     - node_modules/, bower_components/, jspm_packages/
 
 Tests selection:
   - OPTS.skip BOOL:
@@ -89,18 +74,62 @@ Tests selection:
      - on the CLI, is 'REGEXP' case-insensitive
      - matched against test titles
 
+Worker errors:
+  - errors not related to tests logic
+  - reported after process errors
+  - types:
+     - WORKER 'error' event: should only happen if bug in library, because we catch uncaught exceptions otherwise
+     - test files loaded twice
+     - empty test file
+     - test() run too late
+
+Test files loaded twice:
+  - should prevent two workers from loading the same test file. Reasons:
+     - slow: runs tests twice
+     - slow: spawns unnecessary workers, e.g. when one worker is a subset of another
+     - verbose: reports tests twice
+     - duplicates same snapshots across different snapshot files
+  - enforced by making 'TITLE' (excluding data) unique across workers (instead of worker-wise):
+     - throw a "worker error"
+     - error message should indicate that either:
+        - two tests are using the same 'TITLE'
+        - a file was loaded twice from different top-level test files
+     - reason: hard to know which parent loaded a file without using hacks like ERROR.stack
+
+Empty test file:
+  - if a worker exits normally but no tests were defined, throw a "worker error"
+     - reason: spawning unnecessary workers is slow
+  - should still allow workers which define tests but do not run them (e.g. because of OPTS.skip)
+
 Test declaration:
-  - test() must be called synchronously during file load
+  - on next tick after first test():
+     - no more test() allowed (throw "worker error")
+     - run tests
+  - i.e. all test() must be defined at once. Reasons:
+     - cannot know if a test was renamed if we don't know if some other tests might be defined later on
+     - separating test definition step from test running step can help with other features
+  - but test() do not need to be defined during file load
+     - reason: allows beforeAll() without each test awaiting a top-level promise
   - once all tests of a worker have finished, do not terminate it
      - let worker end on its own (i.e. no more macrotasks) or on global timeout
      - reason: allow afterAll() hooks
-  - if a worker does not define any tests during the initial synchronous load, make whole tests run fail
-     - reason: avoiding spawning lots of useless workers because of misconfiguration
-  - if a test is declared twice:
-     - by same worker, error
-     - by different workers, do not error, but only run test once
+
+Hooks not needed:
+   - beforeAll(): execute code in top-level scope, including PROMISE
+   - afterAll(): use await Promise.all(...PROMISE) using returned PROMISEs
+   - before|afterEach(): repeat code at beginning|end of FUNC
 
 Use worker threads / workers for each test file
+
+Parallelism:
+  - CONF.maxConcurrency NUM
+     - number of parallel workers at once
+     - i.e. 1 for serial
+     - def: number of CPUs
+  - OPTS.serial BOOL
+     - def: false
+     - runs test serially inside its worker
+     - serial tests run before parallel ones
 
 Any Node flags should be allowed as CLI flags:
   - it should be passed as `execArgv` to workers
@@ -187,6 +216,7 @@ Snapshot key:
      - for input functions: use `${FUNC.name}()` (or "function()" if anonymous) instead of generated value
      - filepath does not need to be persisted in snapshot file, since it is used for the snapshot filepath itself
      - should be persisted in a way to allow retrieving only one of the parts (e.g. only test title)
+     - data should be serialized with the same logic as the content
   - can use same key several times:
      - used when NUM as data dimension, since test title repeats
      - with CONF.update true, only first one is persisted
@@ -299,9 +329,20 @@ Reporting ordering:
      - should stream it
   - order should be (by priority):
      - process errors at end
-     - lexicographical ordering of "shortest filepath" (see below)
+     - lexicographical ordering of "shortest filepath"
      - when test() was called
      - argument order in parameters
+
+"Shortest filepath":
+  - used in reporting and reporting order
+  - strip root common to all currently selected test files
+     - i.e. might change across runs
+  - reasons:
+     - seeing parent directories help users know about test file's context
+        - but shared directories are not as useful
+     - consistent when used for reporting order, even when selected test files changes
+     - does not require finding package root
+  - include file extension
 
 CONF.level STR:
   - among 'silent', 'error', 'warn', 'info'
@@ -448,10 +489,6 @@ Snapshots???
   - use sourcemaps to figure out where to put snapshots
      - or only allow overidding snapshot dir instead???
   - should try to keep existing sorting, so that git diff do not show changes due to sorting
-  - key should be combination of:
-      - "shortest filepath"
-      - test title
-      - ARR of data serialized with same logic as snapshot
 
 Separate snapshot testing into own project that can be used with other test runners???
   - t.snapshot() needs to know about current file:
