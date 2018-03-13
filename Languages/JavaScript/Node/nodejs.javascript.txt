@@ -502,6 +502,11 @@ INHERITING STREAMS ==>                          #To create STREAM child classes,
                                                 #_read(), _write[v](), _transform() or _flush() (see online doc), without calling them directly.
 
 
+process.stdout|err|in                           #OSTREAM|ISTREAM with extra member:
+                                                #  - isTTY BOOL: if true, will be a READSTREAM|WRITESTREAM
+                                                #Unless used as a pipe, are sync (unless other STREAM which are async by def).
+
+
                                              /=+===============================+=\
                                             /  :                               :  \
                                             )==:              TTY              :==(
@@ -511,6 +516,7 @@ INHERITING STREAMS ==>                          #To create STREAM child classes,
 
 READSTREAM                                      #Child of TCPSOCKET, but without destroy(), connect event nor *address*
                                                 #Instantiated by process.stdin if process.stdin.isTTY true
+                                                #Will keep process alive until destroyed.
 READSTREAM.isRaw                                #BOOL: raw or character device.
 READSTREAM.bytesRead                            #So far
 READSTREAM.setRawMode(BOOL)                     #
@@ -529,30 +535,34 @@ isatty(FD_INT)                                  #
                                              \=+===============================+=/
 
 
-INTERFACE                                       #
-                                                #  - read CLI input and pipe it to output
-                                                #  - when using stdin and stdout on a terminal, will create a CLI
-                                                #  - if Node prompt is already there, will double output on input
+INTERFACE                                       #Read CLI input and pipe it to output
+                                                #I.e. when using stdin and stdout on a terminal, will create a CLI
+                                                #If Node prompt is already there, will double output on input
 createInterface(OBJ)->INTERFACE                 #OBJ:
                                                 #  - input ISTREAM
                                                 #  - output OSTREAM
+                                                #  - terminal BOOL (def: OSTREAM.isTTY): use READSTREAM|WRITESTREAM
                                                 #  - completer(STR[, FUNC(ERROR, ARR)])[->ARR]:
                                                 #     - used to tab completion
                                                 #     - can be sync or async
-                                                #     - ARR: [ STR2_ARR, STR ]
+                                                #     - ARR: [STR2_ARR, STR]
                                                 #        - STR is original string
                                                 #        - STR2_ARR are possible matches. If only one left, autocompletes
-                                                #  - historySize NUM (def: 30)
-                                                #  - deDupeHistory BOOL (def: false): new history lines that are duplicate
+                                                #  - historySize NUM (def: 30) (0 for none)
+                                                #  - removeHistoryDuplicates BOOL (def: false): new history lines that are duplicate
                                                 #    of a previous one removes that older one
-                                                #  - terminal BOOL (def: OSTREAM.isTTY): if tty
+                                                #  - prompt STR (def: '> ')
+                                                #  - crlfDelay NUM (def: 100, cannot be lower): if input reads \r and \n
+                                                #    successively but more than NUMms apart, treat them as two newlines, not one
 INTERFACE.close()                               #Called by ISTREAM.end(), CTRL-C and CTRL-D.
 INTERFACE.on("close", FUNC())                   #
 
 INTERFACE.on("line", FUNC(STR))                 #Fired each time a line is read from ISTREAM.
-INTERFACE.write(STR[, OBJ])                     #Prints STR on OSTREAM or, if OBJ { ctrl|meta|shift: true, name: STR }, on CTRL-STR
+INTERFACE.write(STR[, OBJ])                     #Prints STR on OSTREAM or, if OBJ { ctrl|meta|shift: true, name: STR },
+                                                #on CTRL|META|SHIFT-STR
                                                 #Be careful as it will be read by ISTREAM, if ISTREAM and OSTREAM point to same thing (e.g. terminal).
-INTERFACE.prompt([BOOL])                        #Write in beginning of current OSTREAM line the STR set by INTERFACE.setPrompt(STR) (def: "> ").
+INTERFACE.setPrompt(STR)                        #Change OBJ.prompt (see above)
+INTERFACE.prompt([BOOL])                        #Write in beginning of current OSTREAM line the OBJ.prompt
                                                 #If line was not empty, will place cursor at character number UINT of prompt (def) or, if true, at end of line.
 INTERFACE.question(STR, FUNC(STR2))             #Replace current prompt by STR on OSTREAM, and fires FUNC(STR2) on line event instead of normal line event.
 INTERFACE.pause|resume()                        #Pause|resume ISTREAM.
@@ -562,10 +572,10 @@ INTERFACE.pause|resume()                        #Pause|resume ISTREAM.
 INTERFACE.on("pause|resume", FUNC())            #
 INTERFACE.on("SIGNINT|TSTP|CONT", FUNC())       #
 
-clearScreenDown(OSTREAM)                        #
-clearLine(OSTREAM, NUM)                         #Can be 0 (entire line) or -1|1 (to the left|right of cursor)
-cursorTo|moveCursor(OSTREAM, NUM, NUM2)         #Move cursor absolutely|relatively
-emitKeypressEvents(OSTREAM[, INTERFACE])        #Enable OSTREAM.on('keypress')
+clearScreenDown(WRITESTREAM)                    #
+clearLine(WRITESTREAM, NUM)                     #Can be 0 (entire line) or -1|1 (to the left|right of cursor)
+cursorTo|moveCursor(WRITESTREAM, NUM, NUM2)     #Move cursor absolutely|relatively
+emitKeypressEvents(WRITESTREAM[, INTERFACE])    #Enable OSTREAM.on('keypress')
 
 
                                              /=+===============================+=\
@@ -576,14 +586,15 @@ emitKeypressEvents(OSTREAM[, INTERFACE])        #Enable OSTREAM.on('keypress')
 
 
 start([OBJ])->REPLSERVER                        #Creates a REPLSERVER:
-                                                #  - INTERFACE made specifically for Node.js command line, e.g. whose line event handler is eval()
+                                                #  - INTERFACE made specifically for Node.js command line:
+                                                #     - line event handler is eval()
+                                                #     - core modules are loaded by default
                                                 #  - this is what is used by node with no FILE.
                                                 #If NODE_NO_READLINE envvar is defined to 1, readline is not used.
                                                 #OBJ members are:
-                                                #  - prompt STR (def: "> ")
-                                                #  - input ISTREAM (def: process.stdin)
-                                                #  - output OSTREAM (def: process.stdout)
-                                                #  - terminal BOOL (def: OSTREAM.isTTY)
+                                                #  - input|output|terminal|prompt:
+                                                #     - like createInterface()
+                                                #     - but with defaults process.stdin|stdout
                                                 #  - eval(STR, OBJ, FILENAME, FUNC(ERROR, STR)):
                                                 #     - function to perform after each line
                                                 #        - if ERROR is new Recoverable(ERROR), keep prompt ongoing (e.g. for multiline input)
@@ -621,13 +632,12 @@ CTRL-C                                          #
 REPLSERVER.defineCommand('STR', OBJ|FUNC(...))  #Custom commands called .STR
                                                 #OBJ:
                                                 #  - action(...)
+                                                #     - can use REPLSERVER.displayPrompt([BOOL]) to reshow the prompt
+                                                #       using INTERFACE.prompt(BOOL)
                                                 #  - help STR
 
 NODE_REPL_HISTORY ENVVAR                        #Def: ~/.node_repl_history
 NODE_REPL_HISTORY_SIZE ENVVAR                   #Def: 1000
-NODE_REPL_MODE ENVVAR                           #Whether to use strict mode:
-                                                #  - sloppy (def): never
-                                                #  - strict: always
 
 
                                              /=+===============================+=\
@@ -1615,10 +1625,6 @@ on('rejectionHandled, FUNC(PROMISE))            #When adding PROMISE.catch() on 
                                                 #  - and had no handler when it was rejected (i.e. 'unhandledRejection')
                                                 #  - and was rejected in a previous macrotask
 
-stdout|err|in                                   #OSTREAM|ISTREAM with extra member:
-                                                #  - isTTY BOOL: if true, will be a READSTREAM|WRITESTREAM
-                                                #And those members for ISTREAM:
-                                                #Unless used as a pipe, are sync (unless other STREAM which are async by def).
 argv                                            #Command line args as STR_ARR. Doesn't include node options.
                                                 #First is "node", second the absolute path of FILE, then the other arguments.
 execArgv                                        #Same but only for node options (exclude all STR of argv)
