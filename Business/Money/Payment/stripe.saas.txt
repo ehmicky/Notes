@@ -1245,6 +1245,7 @@ CUSTOMER.email                  CU#'EMAIL'.
 ?email=STR                        #
 CUSTOMER.description            CU#STR.
 CUSTOMER.shipping               CU#BILL_DETAILS.
+CUSTOMER.preferred_locales      CU#'LANG'_ARR, used for invoices, emails, etc.
 
 GET /sources/ID
 POST /sources[/ID]
@@ -1282,6 +1283,9 @@ SOURCE TYPES ==>                  #Differences between source types:
                                   #      - automatically triggered when using 'card' PAYMENT_METHOD with PINTENT
                                   #      - version 2: allow for PSD2 exemptions (see its doc)
                                   #         - Stripe automatically try to ask for exemptions if possible
+                                  #      - can send email with instructions on how to proceed:
+                                  #         - on every payment, or on payments that don't complete
+                                  #         - must be configured through Dashboard settings
                                   #  - 'card' with CARD.wallet.type:
                                   #      - digital wallets
                                   #      - put money on it usually with credit card
@@ -1442,7 +1446,7 @@ CARD_RECEIPT.authorization_code   #STR. Identifier for this transaction.
 CARD_RECEIPT.
  authorization_response_code      #STR. EMV tag 8A. A code returned by the card issuer.
 CARD_RECEIPT.
- cardholder_verification_method   #STR. How the cardholder verified ownership of the card.
+ cardholder_verification_method   #STR among 'email' or 'sms'. How the cardholder verified ownership of the card.
 CARD_RECEIPT.
  dedicated_file_name              #STR. EMV tag 84. Similar to the application identifier stored on the integrated circuit chip.
 CARD_RECEIPT.
@@ -1619,6 +1623,9 @@ SOURCE RENEWAL ==>                #For some countries, Stripe automatically upda
                                   #EVENTs:
                                   #  - 'customer.source.updated' and 'payment_method.card_automatically_updated': emitted on change
                                   #  - 'customer.source.expiring': SOURCE will expire at end of month
+                                  #     - automatically sent email to CUSTOMER
+                                  #        - must be enabled in Dashboard settings
+                                  #        - can change link in email in Dashboard settings
 
 GET /payment_methods/ID
 GET /payment_methods?
@@ -1845,9 +1852,10 @@ TOS_ACCEPTANCE.user_agent       CU#STR
                                   #Must be filled, but can be emptied out afterwards.
 
 ACCOUNT.settings                CU#SETTINGS
-SETTINGS.branding               CU#BRANDING. Customize colors/logos in receipts, invoices and Checkout.
+SETTINGS.branding               CU#BRANDING. Customize colors/logos in emails, receipts, invoices and Checkout.
 BRANDING.icon                   CU#FILE.id. Icon logo. Square and min 128x128. JPG/PNG/GIF.
 BRANDING.logo                   CU#FILE.id. Full logo. Min 128x128. Max 512KB. JPG/PNG/GIF.
+                                  #Can decide whether to show icon (def) or logo using Dashboard setttings
 BRANDING.primary_color          CU#'#CSS_HEX_COLOR'
 SETTINGS.dashboard                #DASHBOARD_SETTINGS. Settings for Dashboard UI.
 DASHBOARD_SETTINGS.display_name   #STR
@@ -2407,6 +2415,7 @@ SUBSCRIPTION.billing            CU#Either:
 ?billing=STR                      #
 SUBSCRIPTION.latest_invoice       #Last INVOICE.id
 SUBSCRIPTION.days_until_due     CU#NUM of days to pay INVOICEs. Only if SUBSCRIPTION.billing 'send_invoice'
+                                  #Default can be configured in Dashboard settings
 SUBSCRIPTION.                   CU#DATE_NUM (def: 'now') used to define on which day of the week|month|year to INVOICE each period.
  billing_cycle_anchor             #Reset when:
                                   #  - changing PLAN or period settings
@@ -2436,7 +2445,9 @@ SUBSCRIPTION.trial_end          CU#DATE_NUM or 'now'. Either:
                                   #  - automatically set using SUBSCRIPTION.trial_period_days if SUBSCRIPTION.trial_from_plan
                                   #  - manually set. At most two years from billing_cycle_anchor
                                   #EVENT 'customer.subscription.trial_will_end' three days before trial end, or when using 'now'
-SUBSCRIPTION.prorate           RCU#BOOL. Whether partial period are charged|credited proportionally (true, def) or free (false).
+SUBSCRIPTION.prorate           RCU#BOOL. Whether partial period are charged|credited:
+                                  #  - true (def): proportionally
+                                  #  - false: not at all
                                   #Partial periods happen when changing:
                                   #  - quantity or unit price
                                   #  - period settings
@@ -2496,7 +2507,7 @@ PLAN.tiers_mode                  C#Either:
                                   #  - 'graduated': $2x100 + $1x50
 PLAN.usage_type                  C#Either:
                                   #  - 'licensed' (def):
-                                  #     - quantity is fixed: SUBSCRIPTION[_ITEM]|LINE_ITEM.quantity
+                                  #     - quantity is fixed: SUBSCRIPTION[_ITEM].quantity
                                   #     - e.g. price per number of users
                                   #     - INVOICE at period start
                                   #  - 'metered':
@@ -2582,19 +2593,20 @@ POST /credit_notes[/ID]           #
 POST /credit_notes/ID/void        #Set status to 'void'
 STRIPE.creditNodes.retrieve|list|
  create|update|voidCreditNote()   #
-CREDIT_NOTE                       #Adjustment on an already done INVOICE (wrong quantity, has over-charged, under-charged, etc.)
+CREDIT_NOTE                       #Adjustment on an 'open|paid' INVOICE (wrong quantity|price, cannot deliver, etc.)
                                   #Can have several per INVOICE.
                                   #If:
                                   #  - type 'pre_payment': reduces INVOICE.amount_due
                                   #  - type 'post_payment' + refund[_amount]: REFUND
                                   #  - type 'post_payment' + credit_amount: reduces CUSTOMER.account_balance
                                   #  - any thing left after there is considered settled outside of Stripe
+                                  #Applied after DISCOUNT, TAX_RATE, starting_balance, prorate.
 CREDIT_NOTE.type                  #One of:
                                   #  - 'pre_payment': INVOICE.status 'open'
                                   #  - 'post_payment': INVOICE.status 'paid'
 CREDIT_NOTE.status                #STR among:
                                   #  - 'issued'
-                                  #  - 'void': reverted
+                                  #  - 'void': reverted (EVENT 'credit_note.voided')
 CREDIT_NOTE.invoice             *C#INVOICE.id
 ?invoice=INVOICE.id               #
 CREDIT_NOTE.customer              #CUSTOMER.id
@@ -2618,7 +2630,10 @@ POST /invoices/ID/
  mark_uncollectible               #Set INVOICE.status from 'open' to 'uncollectible'
 POST /invoices/ID/void            #Set INVOICE.status to 'void'
 POST /invoices/ID/send            #Manually send INVOICE by email. Noop in test mode.
+                                  #Only if state 'open'
+                                  #EVENT 'invoice.sent'
 POST /invoices/ID/pay             #Set INVOICE.paid true
+                                  #Only if state 'open|uncollectible'
                                   #Payload: payment_method|source, paid_out_of_band, forgive
 PAYLOAD.payment_method|source     #Will attempt PINTENT|CHARGE again.
                                   #If not set, manually set INVOICE.paid true.
@@ -2637,6 +2652,8 @@ INVOICE.customer                  #CUSTOMER.id
 ?customer=CUSTOMER.id             #
 INVOICE.billing                  C#Def: SUBSCRIPTION.billing
 ?billing=STR                      #
+INVOICE.
+ subscription_proration_date     ?#SUBSCRIPTION.proration_date
 INVOICE.days_until_due         RCU#Def: SUBSCRIPTION.days_until_due
 INVOICE.due_date                CU#DATE_NUM depending on INVOICE.days_until_due
 ?due_date=CMP_FILTER              #
@@ -2647,28 +2664,62 @@ CUSTOMER.delinquent               #BOOL. True if last INVOICE unpaid by due date
 INVOICE.starting_balance          #CUSTOMER.account_balance before this INVOICE
 INVOICE.ending_balance           ?#CUSTOMER.account_balance after this INVOICE
                                   #Only once status 'open'
-INVOICE.subtotal                  #PMONEY before DISCOUNT
-INVOICE.total                     #PMONEY after DISCOUNT
-INVOICE.amount_due                #PMONEY used as CHARGE.amount. INVOICE.starting_balance + INVOICE.total - prorated credits
+INVOICE.subtotal                  #PMONEY without DISCOUNT, TAX_RATE, starting_balance, prorate, CREDIT_NOTE.
+INVOICE.total                     #PMONEY with DISCOUNT, but without TAX_RATE, starting_balance, prorate, CREDIT_NOTE.
+INVOICE.amount_due                #PMONEY with DISCOUNT, TAX_RATE, starting_balance, prorate, CREDIT_NOTE.
+                                  #Used as CHARGE.amount
 INVOICE.amount_paid|remaining     #PMONEY. Their sum === INVOICE.amount_due
 INVOICE.paid                      #BOOL
-INVOICE.
- subscription_proration_date     ?#DATE_NUM used for proration
 INVOICE.status                    #STR among:
                                   #  - 'draft'
+                                  #     - does not have following fields yet: invoice_pdf|hosted_invoice_url|receipt_number|number|customer_*
                                   #  - 'open'
                                   #     - EVENT 'invoice.finalized'
                                   #  - 'paid'
                                   #     - EVENTs 'invoice.payment_succeeded|failed'
                                   #  - 'uncollectible'
+                                  #     - canceled because CUSTOMER cannot pay
+                                  #     - accounted as bad debt
+                                  #     - status can still change to 'paid' or 'void'
                                   #     - EVENT 'invoice.marked_uncollectible'
                                   #  - 'void'
+                                  #     - canceled because INVOICE was wrong
+                                  #     - accounted as $0 invoice
+                                  #     - status cannot change anymore
                                   #     - EVENT 'invoice.voided'
-                                  #Depending on SUBCRIPTION.billing:
-                                  #  - 'charge_automatically': EVENT 'invoice.upcoming' few days before
-                                  #  - 'send_invoice': EVENT 'invoice.sent'
-INVOICE.auto_advance            CU#BOOL (def: true). Automatically go from state 'draft' to 'open' after one hour.
-                                  #Set to false when SUBSCRIPTION state is 'canceled'
+INVOICE.auto_advance            CU#BOOL for all the following actions.
+                                  #Def true unless:
+                                  #  - manual INVOICE
+                                  #  - INVOICE.billing_reason 'subscription_update|upcoming|manual'
+                                  #  - INVOICE.billing_reason 'subscription_create' and first payment attempt failed
+                                  #  - SUBSCRIPTION.state 'canceled'
+                                  #Most of this can|must be configured|enabled|disabled in Dashboard setttings
+                                  #Change state:
+                                  #  - from 'draft' to 'open' after one hour
+                                  #  - from 'open' to 'paid' after successful CHARGE (amount_due)
+                                  #  - from 'open' to 'void|uncollectible':
+                                  #     - if all retries fail
+                                  #     - after 15 days since first attempt
+                                  #     - after 60 days since due_date
+                                  #Charges payments:
+                                  #  - using SUBSCRIPTION.default_source|payment_method
+                                  #  - including sending emails if PINTENT.status 'requires_action'
+                                  #  - if SUBSCRIPTION.billing 'charge_automatically'
+                                  #Retries failed payments:
+                                  #  - default 4 times within 3 weeks
+                                  #  - use machine learning to determine best time to retry
+                                  #  - if SUBSCRIPTION.billing 'charge_automatically'
+                                  #Send email:
+                                  #  - few days (def: 7) before INVOICE creation:
+                                  #     - if SUBSCRIPTION.billing 'charge_automatically'
+                                  #     - also EVENT 'invoice.upcoming'
+                                  #  - on INVOICE 'open':
+                                  #     - contains INVOICE.invoice_pdf and INVOICE.hosted_invoice_url
+                                  #     - if SUBSCRIPTION.billing 'send_invoice'
+                                  #     - can be manually send with POST /invoices/ID/send
+                                  #  - on payment success
+                                  #  - on payment failure
+                                  #  - few days before|after due_date
 INVOICE.status_transitions.
  finalized_at|paid_at|
  marked_uncollectible_at|voided_at#DATE_NUM
@@ -2676,7 +2727,7 @@ INVOICE.webhooks_delivered_at     #DATE_NUM where EVENT 'invoice.finalized' was 
 INVOICE.billing_reason            #STR among:
                                   #  - 'subscription_create': SUBSCRIPTION first period
                                   #  - 'subscription_cycle': SUBSCRIPTION non-first periods
-                                  #  - 'subscription_update': SUBSCRIPTION update
+                                  #  - 'subscription_update': SUBSCRIPTION change
                                   #  - 'subscription_threshold': SUBSCRIPTION.billing_thresholds
                                   #  - 'upcoming': GET /invoices/upcoming
                                   #  - 'manual': created through API|Dashboard
@@ -2691,23 +2742,32 @@ INVOICE.charge                    #CHARGE.id
 INVOICE.payment_intent            #PINTENT.id
 INVOICE.next_payment_attempt      #DATE_NUM for next CHARGE. Only if SUBSCRIPTION.billing 'charge_automatically'
 INVOICE.attempt_count             #NUM. How many times CHARGE was tried (including successfully).
-                                  #Stripe tries 4 times
 INVOICE.attempted                 #BOOL. Whether attemp_count !== 0
 INVOICE.invoice_pdf              ?#'URL' to PDF. Can view.
-                                  #Not if state 'draft'
-INVOICE.hosted_invoice_url        #'URL' to web version. Can view and pay.
-                                  #Not if state 'draft'
+INVOICE.hosted_invoice_url        #'URL' to web version. Can:
+                                  #  - view
+                                  #  - specify PAYMENT_METHOD and pay
+                                  #  - download PDF and receipts
+                                  #Can be disabled though Dashboard settings
+                                  #Shown in invoices footers. Also sent by email.
 INVOICE.receipt_number            #Unique STR shown in receipts (payment transaction).
 INVOICE.number                    #Unique STR shown in receipts (invoice + customer).
-CUSTOMER.invoice_prefix         CU#STR prefixed to INVOICE.number
+                                  #Prefixed by CUSTOMER.invoice_prefix followed by '-INCREMENT'
+CUSTOMER.invoice_prefix         CU#STR. Def: random 4 bytes hex
 INVOICE.lines                     #LINE_ITEM_LIST
                                   #Sorted by LINE_ITEM.subscription then LINE_ITEM.period.end
 CUSTOMER.invoice_settings       CU#INVOICE_SETTINGS
 INVOICE.description             CU#STR shown to CUSTOMER
-INVOICE[_SETINGS].custom_fields CU#CUSTOM_FIELD_ARR. Rows displayed on the invoice, beyong LINE_ITEM
+                                  #Example: thanking the customer
+                                  #Can set default value through Dashboard settings, per-SUBSCRIPTION or for all.
+INVOICE[_SETINGS].custom_fields CU#CUSTOM_FIELD_ARR. Displayed on top-right corner.
+                                  #By default that corner also shows: invoice number, date of issue, date due.
+                                  #Example: contact info, unique numbers.
 CUSTOM_FIELD.name                C#STR
 CUSTOM_FIELD.value               C#STR
 INVOICE[_SETTINGS].footer       CU#STR displayed on the invoice.
+                                  #Can set default value through Dashboard settings
+                                  #Example: legal text
 INVOICE.account_name              #ACCOUNT.business_profile.name
 INVOICE.customer_address|email|
  name|phone|shipping|tax*         #CUSTOMER.*
@@ -2715,7 +2775,7 @@ INVOICE.customer_address|email|
 GET /invoices/ID/lines            #
 STRIPE.invoices.retrieveLines()   #
 LINE_ITEM                         #Single item in an automatic INVOICE
-LINE_ITEM.type                    #Either 'subscription' or 'invoiceitem'
+LINE_ITEM.type                    #'subscription' or 'invoiceitem'
 LINE_ITEM.subscription          ?C#SUBSCRIPTION.id
 LINE_ITEM.subscription_item      ?#SUBSCRIPTION_ITEM.id
 LINE_ITEM.plan                   ?#PLAN.id
@@ -2732,8 +2792,10 @@ POST /invoiceitems[/ID]
 DELETE /invoiceitems/ID           #
 STRIPE.invoiceItems.
  retrieve|list|create|update|del()#
-INVOICE_ITEM                      #Single item in a manual INVOICE.
-INVOICE_ITEM                      #Same properties as LINE_ITEM, with extra fields:
+INVOICE_ITEM                      #Single item in:
+                                  #  - a specific INVOICE, manual or automatic: INVOICE_ITEM.invoice
+                                  #  - the next automatic INVOICE: INVOICE_ITEM.customer|subscription
+                                  #Same properties as LINE_ITEM, with extra fields:
 INVOICE_ITEM.unit_amount        CU#PMONEY
 INVOICE_ITEM.invoice            ?C#INVOICE.id
 ?invoice=INVOICE.id               #
@@ -2785,6 +2847,18 @@ GET /invoices/upcoming/lines      #See LINE_ITEMs of INVOICEs not created yet.
 ?invoice_items.*.tax_rates=OBJ_ARR#
 ?invoice_items.*.unit_amount=NUM  #
 
+AUTOMATED RECONCILIATION ==>      #If:
+                                  #  - no SUBSCRIPTION.default_payment_method|source
+                                  #  - SUBSCRIPTION.billing 'send_invoice'
+                                  #  - ACCOUNT.country US
+                                  #  - currency USD
+                                  #Then:
+                                  #  - create a 'ach_credit_transfer' SOURCE and attach it to CUSTOMER.source
+                                  #  - create INVOICE-wise virtual bank account
+                                  #     - more secure because do not expose our bank account information.
+                                  #  - send payment instructions in email on how to make ACH or wire transfer
+                                  #  - on payment, set INVOICE.status 'paid'
+
 GET /customers/ID/tax_ids[/ID]
 POST /customers/ID/tax_ids
 DELETE /customers/ID/tax_ids/ID   #
@@ -2811,6 +2885,7 @@ POST /tax_rates[/ID]              #
 STRIPE.taxRates.
  retrieve|list|create|update()    #
 TAX_RATE                          #Specific tax rate for a given SUBSCRIPTION[_ITEM]|INVOICE|LINE_ITEM
+                                  #Applied after DISCOUNT but before starting_balance, prorate, CREDIT_NOTE.
 TAX_RATE.percentage             *C#FLOAT (0-1)
 ?percentage=CMP_FILTER            #
 TAX_RATE.inclusive              *C#BOOL. Whether inclusive (included in amount) or exclusive (added to amount).
@@ -3103,6 +3178,8 @@ ISSUING_CARD.status             CU#string One of active, inactive, canceled, los
 ?status=STR                       #
 ISSUING_CARD.type                C#string One of virtual or physical.
 ?type=STR                         #
+ISSUING_CARD.replacement_for    ?C#ISSUING_CARD2.id
+ISSUING_CARD.replacement_reason ?C#STR among 'damage', 'expiration', 'loss', 'theft'
 
 GET /issuing/cards/ID/details     #
 STRIPE.issuing.cards.
@@ -3555,3 +3632,6 @@ MOBILE SDK ==>                    #Like Stripe elements, but for native mobile
 STRIPE CHECKOUT ==>               #Full payment forms/flow (including Stripe elements).
 
 STRIPE TERMINAL ==>               #In-person mobile terminal.
+
+INVOICE WEB PAGE ==>              #INVOICE.hosted_invoice_url is 'URL' where users can pay.
+                                  #Send to them by email
