@@ -121,14 +121,10 @@ docker commit CONTAINER [IMAGE]   #Creates a new (or copies to an) IMAGE, from a
 
 
 docker build DIR|URL              #Creates an IMAGE from a DIR with a Dockerfile inside
-                                  #Each instruction creates a new "layer":
-                                  #  - i.e. a new CONTAINER, then docker commit it to a new IMAGE
-                                  #  - intermediate IMAGE are removed at the end
-                                  #  - max 127 layers
--f DOCKERFILE                     #Def: DIR/Dockerfile
--t IMAGE                          #
---no-cache                        #Each layer + next instruction is cached, and by def reused if matched
-                                  #Use this when this would create problems before of instructions with weird side effects
+                                  #See Dockerfile for more info
+-f DOCKERFILE                     
+--no-cache                        #See Dockerfile
+-t IMAGE                          #See below
 
 
 docker diff CONTAINER ???
@@ -146,6 +142,7 @@ docker tag IMAGE IMAGE2           #Make IMAGE2 a link to IMAGE, i.e.:
                                   #  - IMAGE_ID IMAGE_NAME: gives a name
                                   #  - IMAGE IMAGE:TAG: create tag
                                   #  - IMAGE REPO_USER/IMAGE_NAME: associate with a repository
+docker build -t IMAGE2            #Performs docker tag IMAGE_ID IMAGE2 after creating IMAGE
 
 
 
@@ -415,19 +412,56 @@ docker save IMAGE... ???
 
                                              /=+===============================+=\ 
                                             /  :                               :  \  
-                                            )==:          DOCKERFILE           :==(   
+                                            )==:           BUILDING            :==(   
                                             \  :_______________________________:  /    
                                              \=+===============================+=/
 
 
-FILESYSTEM ==>                    #/ is image root
+BUILD LAYERS ==>                  #Each Dockerfile instruction creates a new "layer":
+                                  #  - i.e. a new CONTAINER, then docker commit it to a new IMAGE
+                                  #  - intermediate IMAGE are removed at the end
+                                  #  - each layer creates a new shell, e.g. $PWD will be reset
+                                  #  - max 127 layers
 
-/Dockerfile                       #Main configuration file, with following commands
+BUILD CONTEXT ==>                 #Directories:
+                                  #  - BUILD_DIR: specified by docker build
+                                  #  - CONTEXT_DIR: temporary, copied from BUILD_DIR
+                                  #  - IMAGE_DIR: when image is created
+                                  #CONTEXT_DIR:
+                                  #  - sent by client to server:
+                                  #     - should keep it minimal
+                                  #  - can be used by Dockerfile instructions (e.g. COPY|ADD)
+                                  #     - path resolution:
+                                  #        - absolute path: relative to CONTEXT_DIR
+                                  #        - relative path: relative to current dir, which is initially CONTEXT_DIR
+                                  #  - copied from BUILD_DIR:
+                                  #     - minus files matching BUILD_DIR/.dockerignore:
+                                  #        - recommended
+                                  #        - newline-separated, similar to .gitignore
+                                  #        - # COMMENT, first line only
+                                  #        - globbing: * ? ** !
 
-/.dockerignore                    #???
-                                  #Recommended
+BUILD CACHE ==>                   #Each layer + next instruction is cached:
+                                  #  - by def reused if matched
+                                  #  - specified in output log "Using cache"
+                                  #Can be disabled with docker build --no-cache:
+                                  #  - e.g. when this would create problems before of instructions with weird side effects
 
-FROM IMAGE                        #Pull another IMAGE
+docker build DIR|URL              #URL is Git repo
+                                  #Builds an IMAGE using a DOCKERFILE
+
+
+DOCKERFILE                        #Main configuration file, with commands below
+                                  #Def: BUILD_DIR/Dockerfile, or docker build -f DOCKERFILE
+
+# COMMENT                         #
+
+# escape=CHAR                     #Changes escape character (def: \)
+                                  #Can use escaped newlines
+                                  #Must be at top of file, before any instruction, comment or blank line
+
+FROM IMAGE                        #Pull another IMAGE, and use it as base
+                                  #Must be first instruction. Mandatory.
 
 COMMAND                           #Means a CLI command, either:
                                   #  - same syntax as in a CLI
@@ -447,6 +481,14 @@ CMD COMMAND                       #If ENTRYPOINT was:
                                   #Only last CMD will be used.
 
 ENV VAR VAL                       #Sets ENVVAR
+ENV VAR=VAL ...                   #Can be used in following instructions, except:
+                                  #  - COMMAND-related: CMD, RUN, ENTRYPOINT, SHELL, HEALTHCHECK
+                                  #  - ARG
+                                  #  - MAINTAINER
+$VAR
+${VAR}                            #Expand ENVVAR
+${VAR:-VAL}
+${VAR:+VAL}                       #Like in Bash
 
 LABEL VAR="VAL" ...               #Sets LABEL (metadata)
 
