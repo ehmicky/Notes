@@ -28,7 +28,7 @@ Content-Type: application/
  x-www-form-urlencoded [C]        #Request body: x-www-form-urlencoded (but must keep [] not encoded)
 Accept: application/json [C]      #Response body: JSON
 
-Authorization: Bearer KEY [C]     #Authentication
+Authorization: Bearer API_KEY [C] #Authentication
 Stripe-Account: ACCOUNT.id [C]    #4 keys by default:
                                   #  - either production and one testing:
                                   #     - separate data
@@ -48,14 +48,17 @@ Request-Id: UUID [S]              #
 
 { error: ERROR }                  #Error response for any endpoint
 ERROR.type                        #Can be:
-                                  #  - 'validation_error': input validation by client-side libraries
+                                  #  - 'validation_error': input validation by client-side libraries (not Node.js library)
                                   #  - 'invalid_request_error' (400|404): input validation server-side
                                   #  - 'authentication_error' (401)
-                                  #  - 'api_connection_error': cannot connect to API
+                                  #  - 'api_connection_error': cannot connect to API (network failure, timeout)
                                   #  - 'card_error' (402): credit card could not be charged
+                                  #  - 'permission_error' (403)
                                   #  - 'idempotency_error' (409): wrong usage of `Idempotency-Key`
                                   #  - 'rate_limit_error' (429)
                                   #  - 'api_error' (500|502|503|504): server-side errors
+                                  #  - 'signature_response_error': webhooks verification error created by Node.js library
+                                  #  - 'generic_error': generic error created by Node.js library
 ERROR.code                        #One of:
 CHARGE.failure_code               #  - 'account_already_exists': The email address provided for the creation of a deferred account already has an account associated with it.
                                   #    Use the OAuth flow to connect the existing account to your platform.
@@ -1923,6 +1926,16 @@ WEBHOOK.status                    #string The status of the webhook. It can be e
 WEBHOOK.url                    *CU#string The URL of the webhook endpoint.
 WEBHOOK.connect                 RC#Whether this endpoint should receive events from connected accounts (true), or your account (false).
 
+SIGNATURE ==>                     #Webhooks requests must be verified to make sure they are sent by Stripe.
+                                  #Using:
+                                  #  - SECRET: webhook-specific and -specific, can be found in dashboard
+                                  #  - Stripe-Signature: 't=DATE_NUM,v1=HASH' [S]
+                                  #     - HASH is SHA256('DATE_NUM.REQUEST_PAYLOAD', SECRET) in hex
+                                  #     - DATE_NUM is set sometime during response sending
+                                  #        - should verify that it's not too far from current time to prevent replay attacks
+                                  #          (intercepting a webhook request then resending it later)
+                                  #        - library use a default tolerance of 5 minutes
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -1933,18 +1946,16 @@ WEBHOOK.connect                 RC#Whether this endpoint should receive events f
 
 VERSION ==>                       #6.28.0
 
-
-
 new STRIPE-NODE
- (['AUTH_KEY'][, 'VERSION'])
+ (['API_KEY'][, 'VERSION'])
  ->STRIPE                         #
+
+STRIPE.setApiKey('API_KEY')       #Def: none
+STRIPE.setApiVersion('VERSION')   #Def: none
 
 STRIPE.setHost('HOST')            #Def: 'api.stripe.com'
 STRIPE.setPort('PORT')            #Def: 443
 STRIPE.setProtocol('SCHEME')      #Def: 'https'
-
-STRIPE.setApiVersion('VERSION')   #Def: none
-STRIPE.setApiKey('AUTH_KEY')      #Def: none
 
 STRIPE.setMaxNetworkRetries(NUM)  #Def: 0
                                   #Retry on 409 (any method) or 5** (not POST)
@@ -1962,11 +1973,12 @@ STRIPE.setTelemetryEnabled(true)  #Send X-Stripe-Client-Telemetry: JSON [C] of O
                                   #Def: disabled
 
 STRIPE.RESOURCE.*                 #RESOURCE is camelCase, in plural
+                                  #RESOURCE can be checkout|issuing|radar|reporting|sigma|terminal.*
 
 STRIPE.balances.retrieve(DATA_OBJ, OPTS)->PROMISE
   - DATA_OBJ: request payload + URL params
   - OPTS:
-     - api_key: override 'AUTH_KEY'
+     - api_key: override 'API_KEY'
      - idempotency_key
      - stripe_account
      - stripe_version: override 'VERSION'
@@ -1996,20 +2008,29 @@ SPEC:
         - update(): `POST /{id}`
         - del(): `DELETE /{id}`
      - add:
-        - setMetadata('ID', OBJ|null[, 'AUTH_KEY'])->PROMISE:
+        - setMetadata('ID', OBJ|null[, 'API_KEY'])->PROMISE:
            - like update({ metadata: OBJ })
            - OBJ can also be 'VAR', VAL
-        - getMetadata('ID'[, AUTH_KEY])->PROMISE_OBJ
+        - getMetadata('ID'[, API_KEY])->PROMISE_OBJ
            - like retrieve().metadata
+  - methodList 'list':
+     - make PROMISE an ASYNC_ITERATOR returning each result OBJ
+     - add pagination methods:
+        - autoPagingEach([FUNC(OBJ)][, FUNC2()])->PROMISE:
+           - iterates over all
+           - PROMISE resolved with undefined once iteration done
+           - FUNC() is called with each batch
+              - can return false to stop iteration
+              - can be async
+           - FUNC2() is called at end
+        - autoPagingToArray(OPTS)->PROMISE_OBJ_ARR
+           - iterates over all
+           - OPTS:
+              - limit NUM (required) (max 10000)
 
 HTTP request:
-  - encode to x-www-form-urlencoded (using QS)
-     - serialize DATE to DATE_NUM
+  - DATE are serialized to DATE_NUM
   - User-Agent: Stripe/v1 NodeBindings/{PACKAGE.version} [C]
-  - Authorization: Bearer KEY [C]
-  - Accept: application/json [C]
-  - Content-Length [C]
-  - Stripe-Version: VERSION [C]
   - X-Stripe-Client-User-Agent: JSON [C] with JSON of OBJ:
      - bindings_version PACKAGE.version
      - lang 'node'
@@ -2031,6 +2052,7 @@ Errors:
      - 429
   - 'card_error', 'invalid_request_error', 'api_error', 'idempotency_error': using RESPONSE.error.type
   - 'generic_error': unknown RESPONSE.error.type
+  - 'signature_verification_error': webhooks verification
   - 'api_error':
      - response not JSON
 
@@ -2054,3 +2076,11 @@ STRIPE.on('response', FUNC(OBJ))  #Like 'request' but also:
                                   #  - status NUM
                                   #  - request_id STR
                                   #  - elapsed NUM (in ms)
+
+STRIPE[-NODE].webhooks.signature. #Throw error if webhook request is invalid.
+ verifyHeader(REQUEST_PAYLOAD,    #HEADER is Stripe-Signature [S]
+ HEADER, SECRET, NUM)             #SECRET is webhook secret.
+                                  #NUM is tolerance (def: does not check) (see above).
+STRIPE[-NODE].webhooks.           #Like verifyHeader() except:
+ constructEvent(REQUEST_PAYLOAD,  #  - returns JSON.parse(REQUEST_PAYLOAD)
+ HEADER, SECRET, NUM)->OBJ        #  - def tolerance is 5 minutes
