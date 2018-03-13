@@ -31,7 +31,7 @@ s/___/__/
 s/\([[]\)_/\1/
 
 # Put technology between parenthesis
-s/\.\([^].]\+\)\]/ (\1)]/
+s/\.\([^].]\+\)\]/ (\u\1)]/
 s/(node)/(Node)/
 
 # Replace _ by spaces.
