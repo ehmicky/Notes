@@ -11,12 +11,11 @@ This covers:
   - _Platforms_: mobile, Chrome extensions
   - _Cloud_: AWS
   - _Testing_: unit (Mocha, Jasmine, QUnit, Karma), browser (Selenium), CSS, performance, stress
-  - _Topics_: 
-    - _User experience_: usability, design, performance (async, caching, concurrency), internationalization, accessibility
-    - _Quality_: monitoring, security, validation, high availability, debugging
-    - _Ease to maintain_: functional programming, static analysis, documenting
-    - _Automating_: build automation, continuous integration
-    - _Others_: analytics, realtime 
+  - _User experience_: usability, design, performance (async, caching, concurrency), internationalization, accessibility
+  - _Quality_: monitoring, security, validation, high availability, debugging
+  - _Ease to maintain_: functional programming, static analysis, documenting
+  - _Automating_: build automation, continuous integration
+  - _Others_: analytics, realtime 
 
 # Structure #
 
