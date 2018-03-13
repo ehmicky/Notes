@@ -26,10 +26,6 @@ s/^  //
 # Remove file extension
 s/\.txt\]/]/
 
-# Remove leading _ from filenames
-s/___/__/
-s/\([[]\)_/\1/
-
 # Put technology between parenthesis
 s/\.\([^].]\+\)\]/ (\u\1)]/
 # Capitalize each technology
