@@ -6,7 +6,7 @@
 
 
 TODO:
-  - stopped at https://stripe.com/docs/receipts
+  - stopped at https://stripe.com/docs/disputes/prevention#identifying-potential-fraud
   - https://stripe.com/docs
      - go back to:
         - https://stripe.com/docs/billing/webhooks
@@ -507,9 +507,11 @@ CHARGE.status                     #First 'pending' then either 'succeeded' or 'f
                                   #EVENTS 'charge.pending|succeeded|failed' fired but not needed since response
                                   #status is never 'pending'.
 CHARGE.source                   *C#Can be:
-                                  #  - TOKEN
                                   #  - SOURCE|CARD|BANK_ACCOUNT: requires CHARGE.customer
-                                  #  - STRIPE_ACCOUNT.id
+                                  #  - STRIPE_ACCOUNT
+                                  #On create:
+                                  #  - must be id
+                                  #  - can be TOKEN.id too
 CHARGE.payment_method             #PAYMENT_METHOD.id
 CHARGE.payment_method_details     #Like SOURCE.type + SOURCE.TYPE.*
 CHARGE.customer                 CU#CUSTOMER.id
@@ -600,10 +602,10 @@ CUSTOMER.email                  CU#STR.
 CUSTOMER.description            CU#STR.
 CUSTOMER.shipping               CU#BILL_DETAILS Mailing and shipping address for the customer. Appears on invoices emailed to this customer.
 CUSTOMER.payment_method         RC#PAYMENT_METHOD.id to attach to the customer
-CUSTOMER.sources                  #TOKEN|SOURCE_LIST
-CUSTOMER.default_source          U#TOKEN|SOURCE
+CUSTOMER.sources                  #TOKEN|SOURCE|BANK_ACCOUNT|CARD_LIST
+CUSTOMER.default_source          U#TOKEN|SOURCE|BANK_ACCOUNT|CARD
 CUSTOMER.source                RCU#Change default_source.
-                                  #Also creates the TOKEN|SOURCE.
+                                  #Also creates the TOKEN|SOURCE|BANK_ACCOUNT|CARD.
 CUSTOMER.tax_info               CU#TAX_INFO. Shown on email invoices. Verified by Stripe.
 TAX_INFO.tax_id                   #Tax ID number.
 TAX_INFO.type                     #Tax ID number type.
@@ -676,16 +678,37 @@ WITHDRAWAL ==>                    #Should always talk to customer, and try to fi
 AVOIDING DISPUTES ==>             #Billing:
                                   #  - using 3D secure makes us less liable to disputes.
                                   #  - provide a good CHARGE.statement_descriptor
-                                  #  - clear refund policy
-                                  #  - clear cancellation policy
                                   #  - send receipts
                                   #  - should always collect: name, email, card CVC, full billing address (including ZIP), shipping address (if different)
+                                  #  - use STRIPE_ACCOUNT.settings.card_payments.decline_on.avs_failure|cvc_failure true
+                                  #  - do not refund on a different credit card / bank account (to avoid frauds)
+                                  #Communication:
+                                  #  - good communication / customer service
+                                  #  - clear refund and cancellation policies
+                                  #     - should be agreed on (as part of terms of service)
+                                  #     - should be presented in full text (not just link)
                                   #Shipping:
-                                  #  - choose delivery service that requires signature on delivery
+                                  #  - choose delivery service that:
+                                  #     - requires signature on delivery
+                                  #     - has good tracking
                                   #  - ship to the exact same address provided by customer
                                   #  - be fast to ship, and communicate delays
                                   #  - save shipping labels
                                   #  - protective packaging
+
+TYPICAL FRAUDS ==>                #  - stolen cards
+                                  #  - overpayment / payout scam:
+                                  #     - using a stolen card, make a purchase
+                                  #     - then ask seller to make a purchase back (e.g. pay for their favorite freight company)
+                                  #     - then cancel first purchase
+                                  #  - alternative refunds:
+                                  #     - using a stolen card, make a purchase but pays too much
+                                  #     - then ask seller to make a refund
+                                  #     - then cancel first purchase
+                                  #  - marketplace: when running a marketplace and one user pays another, but product/service is not delivered
+                                  #  - card testing:
+                                  #     - trying a stolen card on a website that allow very small purchases (e.g.  donations)
+                                  #     - should prevent with CAPTCHAs or rate limiting
 
 GET /disputes[/ID]
 POST /disputes/ID                 #
@@ -983,10 +1006,11 @@ SOURCE                            #Payment method of a CUSTOMER.
 SOURCE.type 'TYPE'              *C#Specific payment method among:
                                   #  - 'card'
                                   #  - 'card_present'
+                                  #  - 'bank_account' (create|update only)
                                   #  - 'ach_credit_transfer'
                                   #  - 'ach_debit'
                                   #  - 'stripe_account'
-                                  #  - 'alipay'
+                                  #  - 'alipay' (called 'alipay_account' on create|update)
                                   #  - 'bancontact'
                                   #  - 'eps'
                                   #  - 'giropay'
@@ -997,14 +1021,27 @@ SOURCE.type 'TYPE'              *C#Specific payment method among:
                                   #  - 'sofort'
                                   #  - 'wechat'
 SOURCE.TYPE                       #SOURCE_DETAILS. Each TYPE has its own attributes, but some are shared.
+                                  #On update, should use SOURCE.* not SOURCE.TYPE.*
+SOURCE.card*.number            *RC#STR. Credit card number.
+SOURCE.card*.name              RCU#STR. Cardholder name.
+SOURCE.card*.exp_month         *CU#INT. Card's expiration month (1-12)
+SOURCE.card*.exp_year          *CU#INT. Card's expiration year.
+SOURCE.card*.cvc                RC#INT. Card's CVC (back number)
+SOURCE.card*.address_*         RCU#STR. Like ADDRESS.*
+SOURCE.card*.address_zip       RCU#STR. ZIP or postal code.
 SOURCE.card*.brand                #STR. Card brand among 'amex', 'diners', 'discover', 'jcb', 'mastercard', 'unionpay', 'visa', 'unknown'.
-SOURCE.card*.exp_month            #INT. Card's expiration month (1-12)
-SOURCE.card*.exp_year             #INT. Card's expiration year.
 SOURCE.card*.funding              #STR. Card funding type among 'credit', 'debit', 'prepaid', 'unknown'.
-SOURCE.card.checks                #Check results and CVC with OBJ:
-                                  #  - address_line1_check STR: 'pass', 'failed', 'unavailable', 'unchecked' (if address line1 was defined)
-                                  #  - address_postal_code_check STR: same for postal_code
-                                  #  - cvc_check STR: same for cvc
+SOURCE.card.                      #Checks performed by the bank.
+ checks.CHECK_TYPE_check          #Even when 'failed', bank still sometimes allows payment.
+                                  #  - however this might indicate fraud, so we should not use this SOURCE
+                                  #  - see STRIPE_ACCOUNT.settings.card_payments.decline_on.avs_failure|cvc_failure to automatically deny
+                                  #Can be 'pass', 'failed', 'unavailable' (could not check), 'unchecked' (did not provide enough information)
+                                  #CHECK_TYPE are:
+                                  #  - cvc: CVC. Guarantees customer physically possesses the card.
+                                  #  - address_line1 and address_postal_code ("AVS check"):
+                                  #     - address matches the credit card owner's
+                                  #     - does not work in every country
+                                  #Requires SOURCE.card*.cvc|address_line1|address_postal_code to be provided.
 SOURCE.card.three_d_secure       ?#Populated if this transaction used 3D Secure authentication. OBJ:
                                   #  - supported BOOL
 SOURCE.card.wallet               ?#WALLET. Card's wallet.
@@ -1016,19 +1053,37 @@ WALLET.TYPE.billing_address       #ADDRESS. For 'masterpass', 'visa_checkout' on
 WALLET.TYPE.shipping_address      #ADDRESS. For 'masterpass', 'visa_checkout' only.
 SOURCE.card_present.read_method   #STR. How card was read among 'contact_emv', 'contactless_emv', 'magnetic_stripe_fallback', 'magnetic_stripe_track2', 'contactless_magstripe_mode'
 SOURCE.card_present.emv_auth_data #STR. Authorization response cryptogram.
-SOURCE.card_present.receipt       #OBJ. Fields to print on receipts. Only required for EMV transactions.
-                                  #Only with card_present.
+SOURCE.card_present.receipt       #CARD_RECEIPT. Fields to print on receipts. Only required for EMV transactions.
+CARD_RECEIPT.
+ application_cryptogram           #STR. EMV tag 9F26, cryptogram generated by the integrated circuit
+CARD_RECEIPT.
+ application_preferred_name       #STR. Mnenomic of the Application Identifier.
+CARD_RECEIPT.authorization_code   #STR. Identifier for this transaction.
+CARD_RECEIPT.
+ authorization_response_code      #STR. EMV tag 8A. A code returned by the card issuer.
+CARD_RECEIPT.
+ cardholder_verification_method   #STR. How the cardholder verified ownership of the card.
+CARD_RECEIPT.
+ dedicated_file_name              #STR. EMV tag 84. Similar to the application identifier stored on the integrated circuit chip.
+CARD_RECEIPT.
+ terminal_verification_results    #STR. The outcome of a series of EMV functions performed by the card reader.
+CARD_RECEIPT.
+ transaction_status_information   #STR. An indication of various EMV functions performed during the transaction.
 SOURC.card_present.generated_card?#CARD.id
 SOURCE.card*|ach_debit.last4      #STR. Last four digits of the bank account or card number.
-SOURCE.card*|ach_debit.fingerprint#STR. Checksum|fingerprint of the bank account or card number.
-SOURCE.card*|ach_debit|sofort.
- country                          #Bank account's COUNTRY.
-SOURCE.ach*.routing_number        #STR. Routing transit number of the destination bank account.
-SOURCE.ach_debit.
- account_holder_type              #STR. Whether bank account holder is 'individual' or 'company'.
-SOURCE.
+SOURCE.card*|ach_debit|alipay.
+ fingerprint                      #STR. Checksum|fingerprint of the bank account or card number.
+SOURCE.bank_account|card*|
+ ach_debit|sofort.country       *C#Bank account's COUNTRY.
+SOURCE.bank_account.
+ account_holder_name           RCU#STR. Name of the owner (person/business).
+SOURCE.bank_account|ach*.
+ routing_number                  C#STR. Routing transit number of the destination bank account.
+SOURCE.bank_account|ach_debit.
+ account_holder_type            CU#STR. Whether bank account holder is 'individual' or 'company'.
+SOURCE.bank_account|
  ach_credit_transfer.
- account_number                   #STR. Account number to transfer funds to.
+ account_number                *RC#STR. Account number to transfer funds to.
 SOURCE.ach_credit_transfer.
  swift_code                       #STR. Bank's SWIFT code.
 SOURCE.
@@ -1049,6 +1104,11 @@ SOURCE.ideal.bank                 #STR. Bank name among 'abn_amro', 'asn_bank', 
                                   #'moneyou', 'rabobank', 'regiobank', 'sns_bank', 'triodos_bank', 'van_lanschot'.
 SOURCE.bancontact.
  preferred_language               #STR. Customer's preferred language among 'en', 'de', 'fr', 'nl'.
+SOURCE.alipay_account           RC#STR. A token returned by Stripe representing the user’s Alipay account details.
+SOURCE.alipay.username            #STR.
+SOURCE.alipay.reusable            #BOOL. False if it's one-time payment method.
+SOURCE.alipay.used                #BOOL. True if it's one-time payment method and has been used.
+SOURCE.alipay.payment_amount      #PMONEY if one-time payment.
 SOURCE.amount                    C#PMONEY This is the amount for which the source will be chargeable once ready. Required for single_use sources.
 SOURCE.client_secret              #string The client secret of the source. Used for client-side retrieval using a publishable key.
 SOURCE.code_verification          #CODE_VERIF. Information related to the code verification flow. Present if the source is authenticated by a verification code (flow is code_verification).
@@ -1119,7 +1179,7 @@ PAYMENT_METHOD.type             *C#Like SOURCE.*
 PAYMENT_METHOD.card[_present]   CU#Like SOURCE.*
 PAYMENT_METHOD.TYPE.generated_from#GENERATED
 GENERATED.charge                  #CHARGE.id
-GENERATED.payment_method_details  #PAYMENT_METHOD
+GENERATED.payment_method_details  #Like SOURCE.*
 PAYMENT_METHOD.billing_details   U#BILL_DETAILS
 PAYMENT_METHOD.customer           #CUSTOMER.id
 
@@ -1132,20 +1192,10 @@ STRIPE.sources.list|retrieve|
  create|update|deleteSource()     #
 CARD                              #Similar to PAYMENT_METHOD.
 CARD.*                            #Same properties as SOURCE.card
-                                  #None can be created. Only CARD.exp_* are updatable.
-CARD.name                        U#string Cardholder name.
+CARD.*_check                      #Same as CARD.checks.*
 CARD.account                      #STRIPE_ACCOUNT.id This attribute will not be in the card object if the card belongs to a customer or recipient instead.
 CARD.customer                     #CUSTOMER.id This attribute will not be in the card object if the card belongs to an account or recipient instead.
 CARD.recipient                    #CUSTOMER.id This attribute will not be in the card object if the card belongs to a customer or account instead.
-CARD.address_city                U#string City/District/Suburb/Town/Village.
-CARD.address_country             U#string Billing address country, if provided when creating card.
-CARD.address_line1               U#string Address line 1 (Street address/PO Box/Company name).
-CARD.address_line2               U#string Address line 2 (Apartment/Suite/Unit/Building).
-CARD.address_state               U#string State/County/Province/Region.
-CARD.address_zip                 U#string ZIP or postal code.
-CARD.address_line1_check         U#string If address_line1 was provided, results of the check: pass, fail, unavailable, or unchecked.
-CARD.address_zip_check           U#string If address_zip was provided, results of the check: pass, fail, unavailable, or unchecked.
-CARD.cvc_check                    #string If a CVC was provided, results of the check: pass, fail, unavailable, or unchecked.
 CARD.available_payout_methods     #array containing strings A set of available payout methods for this card.
                                   #Will be either ["standard"] or ["standard", "instant"].
                                   #Only values from this set should be passed as the method when creating a transfer.
@@ -1163,10 +1213,8 @@ STRIPE.sources.list|retrieve|
  create|update|delete|
  verifySource()                   #
 BANK_ACCOUNT                      #ach_debit SOURCE + CUSTOMER.
-BANK_ACCOUNT.*                    #Same properties as SOURCE.ach_debit
-                                  #None can be created. Only BANK_ACCOUNT.account_holder_type is updatable.
+BANK_ACCOUNT.*                    #Same properties as SOURCE.ach_debit|bank_account
 BANK_ACCOUNT.account              #STRIPE_ACCOUNT.id
-BANK_ACCOUNT.account_holder_name U#string The name of the person or business that owns the bank account.
 BANK_ACCOUNT.customer             #CUSTOMER.id
 BANK_ACCOUNT.status               #string For bank accounts, possible values are new, validated, verified, verification_failed, or errored.
                                   #A bank account that hasn't had any activity or validation performed is new.
@@ -1304,7 +1352,7 @@ CUSTOM_FIELD.name                C#string The name of the custom field.
 CUSTOM_FIELD.value               C#string The value of the custom field.
 INVOICE.customer                  #CUSTOMER.id
 ?customer=CUSTOMER.id             #
-INVOICE.default_source          CU#SOURCE.id ID of the default payment source for the invoice.
+INVOICE.default_source          CU#SOURCE|BANK_ACCOUNT|CARD.id ID of the default payment source for the invoice.
                                   #It must belong to the customer associated with the invoice and be in a chargeable state.
                                   #If not set, defaults to the subscription's default source, if any, or to the customer's default source.
 INVOICE.description             CU#string An arbitrary string attached to the object. Often useful for displaying to users. Referenced as ‘memo' in the Dashboard.
@@ -1726,10 +1774,9 @@ BRANDING.icon                   CU#FILE.id. Icon logo. Square and min 128x128. J
 BRANDING.logo                   CU#FILE.id. Full logo. Min 128x128. Max 512KB. JPG/PNG/GIF.
 BRANDING.primary_color          CU#'#CSS_HEX_COLOR'
 STRIPE_SETTINGS.card_payments   CU#CARD_SETTINGS. Settings specific to card charging on the account.
-CARD_SETTINGS.decline_on        CU#DECLINE_ON. Automatically declines certain charge types regardless of whether the card issuer accepted or declined the charge.
-DECLINE_ON.avs_failure          CU#boolean Whether Stripe automatically declines charges with an incorrect ZIP or postal code.
-                                  #This setting only applies when a ZIP or postal code is provided and they fail bank verification.
-DECLINE_ON.cvc_failure          CU#boolean Whether Stripe automatically declines charges with an incorrect CVC. This setting only applies when a CVC is provided and it fails bank verification.
+CARD_SETTINGS.decline_on        CU#DECLINE_ON. Automatically declines CHARGES when SOURCE.card.checks is 'failed'.
+DECLINE_ON.avs_failure          CU#BOOL. For SOURCE.card.checks.address_*_check
+DECLINE_ON.cvc_failure          CU#BOOL. For SOURCE.card.checks.cvc_check
 CARD_SETTINGS.                    #string The default text that appears on credit card statements when a charge is made.
  statement_descriptor_prefix    CU#This field prefixes any dynamic statement_descriptor specified on the charge.
                                   #statement_descriptor_prefix is useful for maximizing descriptor space for the dynamic portion.
@@ -2110,10 +2157,7 @@ REQUEST_HISTORY.reason            #string One of authorization_controls, card_ac
 AUTHORIZATION.status              #string One of pending, reversed, or closed.
 ?status=STR                       #
 AUTHORIZATION.transactions        #ISSUING_TRANSACTION_ARR
-AUTHORIZATION.verification_data   #A_VERIF_DATA
-A_VERIF_DATA.address_line1_check  #string One of match, mismatch, or not_provided.
-A_VERIF_DATA.address_zip_check    #string One of match, mismatch, or not_provided.
-A_VERIF_DATA.cvc_check            #string One of match, mismatch, or not_provided.
+AUTHORIZATION.verification_data   #Same as SOURCE.card.checks, except values are 'match', 'mismatch' or 'not_provided'
 AUTHORIZATION.wallet_provider     #string What, if any, digital wallet was used for this authorization. One of apple_pay, google_pay, or samsung_pay.
 
 GET /issuing/disputes[/ID]
