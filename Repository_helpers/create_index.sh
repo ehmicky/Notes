@@ -25,7 +25,7 @@ md-file-tree | sed '
 cat "$dir/intermediate.md" "$dir/index.md" > "$dir/long_index.md"
 
 sed '
-  /@[]_]/! d;
+  /@[_]/! d;
 ' "$dir/index.md" > "$dir/short_index.md"
 
 sed -i '
