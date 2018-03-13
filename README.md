@@ -38,7 +38,6 @@ Number of pages (if it were a printed book): 6984
 ### Office
 
 - __Project management__
-  - [Pivotal Tracker (SaaS)](Business/Office/Project_management/Pivotal Tracker.saas.txt)
   - [project management (Theory)](Business/Office/Project_management/project_management.theory.txt)
 - __Team management__
   - [people management (Theory)](Business/Office/Team_management/people_management.theory.txt)
