@@ -4,13 +4,17 @@
           
 
 
+
+Stopped at CHARGE.outcome
+
 TODO:
   - https://stripe.com/docs/api/errors
+     - including CHARGE.failure_code|message
 
 
-VERSION ==>                       #2019/04/08
+VERSION ==>                       #2019-03-14
 
-ENDPOINT ==>                      #https://api.stripe.com/
+ENDPOINT ==>                      #https://api.stripe.com/v1/
 
 MIME ==>                          #Request body: x-www-form-urlencoded
                                   #Response body: JSON
@@ -21,6 +25,7 @@ AUTHENTICATION ==>                #4 keys by default:
                                   #     - payments not processed by providers
                                   #     - simpler steps for some flows
                                   #     - fewer retries
+                                  #     - RESOURCE.livemode BOOL on all RESOURCEs
                                   #  - either secret or public ("publishable")
                                   #Can create|delete more:
                                   #  - can be revoked
@@ -28,6 +33,14 @@ AUTHENTICATION ==>                #4 keys by default:
                                   #  - can be scoped to:
                                   #     - specific endpoints
                                   #     - read/write, read-only, none
+
+?limit=NUM                        #Pagination size (def: 10). Min 1, max 100.
+?starting_after|ending_before
+ =RESOURCE.id                     #Cursor pagination
+
+PAGINATED_RESPONSE.data           #OBJ_ARR
+PAGINATED_RESPONSE.has_more       #BOOL
+PAGINATED_RESPONSE.url            #'/v1/...'
 
 ?expand=VARR,...                  #Populate attribute
                                   #Max depth 4
@@ -42,5 +55,122 @@ AUTHENTICATION ==>                #4 keys by default:
                                   #Only memoize requests that passed input validation layer.
                                   #Only for `POST`
 
+RESOURCE.id                       #STR
+RESOURCE.object                   #Either:
+                                  #  - 'list': for list endpoints
+                                  #  - 'RESOURCE_NAME' (e.g. 'balance_transaction')
 RESOURCE.metadata                 #Custom OBJ
                                   #Max 50 properties, max KEY length 40 bytes, max value length 500 bytes.
+
+Request-Id [S]                    #Request/response ID, for debugging
+
+OPTIONAL FIELDS ==>               #Are null if not present
+                                 ?#Marked like this
+
+MONEY                             #INT. In the currency's smallest unit (e.g. cents for USD).
+                                  #Can be negative.
+PMONEY                            #Like MONEY but >= 0
+OBJ.currency                      #Always as a sibling on OBJ with MONEY.
+                                  #STR (ISO 4217) (e.g. 'usd')
+DATE_NUM                          #Unix timestamp in seconds.
+
+GET /balance                      #BALANCE
+                                  #Current Stripe "aggregated bank account".
+BALANCE.available                 #BALANCE_SUB_ARR. Money available.
+BALANCE.pending                   #BALANCE_SUB_ARR. Money not available yet due to 7-day rolling pay cycle.
+BALANCE.connect_reserved          #BALANCE_SUB_ARR. Money held.
+BALANCE_SUB                       #Subdivision of BALANCE for each currency and bank account
+BALANCE_SUB.amount                #MONEY
+BALANCE_SUB.source_types.TYPE     #INT. How amount is divided between account TYPE:
+                                  #  - 'bank_account'
+                                  #  - 'bitcoin_receiver'
+                                  #  - 'card'
+
+GET /balance/history[/ID]         #BALANCE_TRANSACTION.
+                                  #BALANCE's single transaction
+CHARGE.balance_transaction        #BALANCE_TRANSACTION.id
+BALANCE_TRANSACTION.amount        #PMONEY paid by sender
+BALANCE_TRANSACTION.fee           #PMONEY paid to Stripe or taxes
+BALANCE_TRANSACTION.fee_details   #FEE_DETAILS
+FEE_DETAILS.amount                #PMONEY
+FEE_DETAILS.description           #STR
+FEE_DETAILS.type                  #Can be: 'application_fee', 'stripe_fee' or 'tax'
+BALANCE_TRANSACTION.net           #amount - fee
+BALANCE_TRANSACTION.exchange_rate?#NUM
+BALANCE_TRANSACTION.created       #DATE_NUM
+BALANCE_TRANSACTION.available_on  #DATE_NUM. When will be 'available' in BALANCE. Until then is 'pending'
+BALANCE_TRANSACTION.status        #'pending' or 'available'
+BALANCE_TRANSACTION.type          #Can be:
+                                  #  - adjustment
+                                  #  - advance
+                                  #  - advance_funding
+                                  #  - application_fee
+                                  #  - charge
+                                  #  - connect_collection_transfer
+                                  #  - issuing_authorization_hold
+                                  #  - issuing_authorization_release
+                                  #  - issuing_transaction
+                                  #  - payment
+                                  #  - payout
+                                  #  - refund
+                                  #  - reserve_transaction
+                                  #  - reserved_funds
+                                  #  - stripe_fee
+                                  #  - stripe_fx_fee
+                                  #  - tax_fee
+                                  #  - topup
+                                  #  - topup_reversal
+                                  #  - transfer
+                                  #  - *_refund: for application_fee|payment|payment_failure|transfer
+                                  #  - *_cancel: for payout|transfer
+                                  #  - *_failure: for payout|refund|transfer
+BALANCE_TRANSACTION.source        #Related RESOURCE.id
+BALANCE_TRANSACTION.description  ?#STR
+
+GET /charges[/ID]
+POST /charges[/ID]                #CHARGE
+                                  #Credit|debit card's charge.
+CHARGE.amount                     #PMONEY
+CHARGE.amount_refunded            #PMONEY refunded, if any, or 0.
+CHARGE.application_fee_amount    ?#PMONEY
+CHARGE.billing_details            #BILL_DETAILS. Billing contact info.
+BILL_DETAILS.address              #ADDRESS
+ADDRESS.name                      #Person's name
+ADDRESS.email                     #'EMAIL'
+ADDRESS.phone                     #STR, including country extension
+ADDRESS.country                   #STR (2-letters code)
+ADDRESS.state                     #STR
+ADDRESS.city                      #STR
+ADDRESS.postal_code               #STR
+ADDRESS.line1                     #STR (e.g. street)
+ADDRESS.line2                     #STR (e.g. appt)
+ADDRESS.created                   #DATE_NUM
+CHARGE.fraud_details              #FRAUD_DETAILS
+FRAUD_DETAILS.stripe_report      ?#'fraudulent' (set by Stripe)
+FRAUD_DETAILS.user_report        ?#'fraudulent|safe' (set by current user)
+CHARGE.description               ?#STR
+
+POST /charges[/ID]/capture        #Two-steps payment flow:
+                                  #  - first create with CHARGE.captured false
+                                  #  - then set to true with this method
+CHARGE.captured                   #BOOL
+
+CONNECT_APP                       #
+FEE_DETAILS|CHARGE.application   ?#CONNECT_APP.id
+CHARGE.on_behalf_of              ?#CONNECT_APP.id
+                                 ?#When one made transaction of another's behalf
+
+CONNECT_APP_FEE                   #
+CHARGE.application_fee           ?#CONNECT_APP_FEE.id
+
+CUSTOMER                          #
+CHARGE.customer                   #CUSTOMER.id
+
+DISPUTE                           #
+CHARGE.dispute                   ?#DISPUTE.id
+
+INVOICE                           #
+CHARGE.invoice                   ?#INVOICE.id
+
+ORDER                             #
+CHARGE.order                     ?#ORDER.id
