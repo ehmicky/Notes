@@ -575,14 +575,13 @@ AGREEMENT: /agreements/AGREEMENT
   - _is_international BOOL: true when different (B2B) AGREEMENT_COMPANY.company_country or (B2C) PARTICIPANT.consumer_country (among sellers with state enabled)
   | isInternational() 
   - cancel_timestamp "ISO"
+  | cancel(): calls /agreements/AGREEMENT/cancel_recurring which sets cancel_timestamp. Triggers "cancel"
   | isCanceled()
   _ terminate_timestamp "ISO"
   | isTerminated(): canceled or lifecycle ended
   _ publish_timestamp[_ts] "ISO"|TIMESTAMP
   | publish(STR, STR2): calls /agreements/AGREEMENT/publish with data { subject STR, message STR2 }, which changes state draft->pending and sends emails
     Triggers "publish"
-  | cancel(): calls /agreements/AGREEMENT/cancel_recurring which sets state expired if type recurring and in notice_period
-    Triggers "cancel"
   - parent AGREEMENT: only the id because no relation setup
   | isCopy()
   - checksum STR
@@ -639,7 +638,7 @@ AGREEMENT: /agreements/AGREEMENT
      - position POSITION
      | isMe()
      | sharesAccountWith(POSITION): same ACCOUNT
-    || [get]enabledOthers(): subcollection on state enabled, and isMe()
+    || [get]enabledOthers(): subcollection on state enabled, and not isMe()
     || getPublishEmailRecipients(): same but also excludes PARTICIPANT from hardcoded CONFIG.agreements.delegate_accounts
      - owner POSITION
      | isOwner([POSITION[, BOOL]]): same POSITION or (if true) same AGREEMENT_COMPANY
@@ -1059,6 +1058,9 @@ flash_nofication (notification on top, small):
      - "flash:show[:next]"(OBJ) with OBJ: messageContainer JQ, header|text STR, type "error|warning|info|success", timeout NUM
      - "flash:hide"(OBJ)
 
+GuestMessage:
+  - MDL_EVENT "guest:message:show"(STR): for isGuest(), full page message
+
 app-alert (notification on top, large):
   - MDL_EVENT "app-alert:show"(STR[, BOOL])
      - If true, close button
@@ -1081,7 +1083,7 @@ modal:
 MultiActionButton:
   - button with an arrows that shows more options (use Bootstrap)
   - mixin MVIEW with "view-mixins:multi-action-button", which makes available MVIEW.createMultiActionButton(JQ, OBJ2_ARR, OBJ): 
-     - buttons on click do OBJ2.event "FUNC"[_ARR]
+     - buttons on click do OBJ2.event "FUNC"[_ARR] -> FUNC(...)
      - replace JQ (keeps classes) with:
         .btn-group[.btn-multi.dropup][.dropdown-only] 
           [button.btn[.OBJ.btnClass]]                 // Main button: unless OBJ.noDefault true
@@ -1352,35 +1354,113 @@ Agreement Toolbar
      - BaseToolbarView:
         - MODEL AGREEMENT
         - "Edit Layout"|"Create content" button: changes layout mode
-        (unless isGuest())
-        - Oneflow flow -> "index:show"
+        - Oneflow icon -> "index:show"
         - Back button -> "agreements:list-view:current:show"
         - "help:popover:show"("activate-template|layout-mode", TEMPLATE, ...) with dismissForever
           on switch button and arrow of main button
-        (unless isGuest() or layoutMode)
-        - Main button:
-           - "Publish|Send reminder" according to
-           - Uses modals_controller.js: 
-        (unless isGuest() or draft|template)
+        - Main buttons:
+           (not template)
+           - "Delete contract": "modal:confirm:show" -> AGREEMENT.hideOrDiscard() -> GuestMessage|flash_nofication -> "agreements:list-view:current:show"
+           - "Create template": new AGREEMENT(OBJ), with OBJ.template_id, then save() -> flash_nofication -> "agreements:template:show"
+           - "Copy contract": same but without OBJ.state template and "agreements:agreement:show"
+           - "Send contract":
+              - "modal:show" with PublishModalView (composite):
+                 - MODEL SIMPLEMODEL
+                 - COLL RecipientView:
+                    - MODEL PARTICIPANT from AGREEMENT.participants.getPublishEmailRecipients() (i.e. state enabled, not isMe())
+                       - use fullname and POSITION.email
+                 - subject|message taken from Flow.settings.position-agreement-invite-header|content 
+                   Both ways if checkbox "Save as message template" (does patch())
+                 - if ! hasEnabledDecisionMakers(), shows warning
+                 - calls AGREEMENT.publish(SUBJECT, MESSAGE) (sends email, draft->pending)
+              - tooltip when disabled because: no company_orgnr, draft boxes, no counterparts
+           - "Send reminder":
+              - "modal:show" with ReminderModalView (composite): similar but:
+                 - MODEL MESSAGE
+                 - COLL RecipientView: AGREEMENT.participants.getEnabledOthers() instead
+                 - Flow.settings.position-agreement-reminder-header|content
+                 - no warning
+                 - does MESSAGE.save() instead, then add to AGREEMENT.messages
+           (template)
+           - "Create contract": like "Copy contract"
+           - "Activate template": AGREEMENT visibility visible (with patch()) -> flash_nofication -> "agreements:manage-templates:show"
+           - "Delete template": like "Delete contract" but AGREEMENT.destroy() and "agreements:manage-templates:show" 
+           - "Copy template": like "Copy contract" but "agreements:template:show"
         - "Updates":
            - JQ.popover(OBJ) with content MVIEW.$el of UpdatesLayout:
               - MODEL AGREEMENT
               - EVENT_COLL.updates() (i.e. parent EVENT and new EVENT) (length shown on button)
               - region eventList: "boxes:history:list:view"(AGREEMENT, EVENT_COLL.updates())
-        (unless isGuest() or layoutMode or not isOwner() or draft|template)
         - "Insight": 
-           - JQ.popover(OBJ) with content MVIEW.$el of MetricsView:
+           - JQ.popover(OBJ) with content MVIEW.$el of MetricsView (composite):
               - MODEL AGREEMENT
-        (only isGuest())
+              - COLL ParticipantMetricView:
+                 - MODEL PARTICIPANT (from AGREEMENT.participants.enabledNoneOwners())
+                    - according to fullname, visits, first_visit|last_visit, email_status, status signed|declined
+                    - hides if PARTICIPANT.isMe()
+                    - also AGREEMENT.getInviteDate()
         - Guest settings gear icon:
            - JQ.popover(OBJ) with content MVIEW.$el of GuestSettingsView:
               - MODEL: SETTINGS_POSITION:
-                 - linked to position-notification-email (does a patch())
+                 - checkbox linked to position-notification-email (does a patch())
   - permissions/conditions:
      - allow-post-message: "Send reminder"
      - allow-discard (isOwner(), seller, template|draft|pending|expired) or allow-hide (not guest, signinprogress|signed|expired): "Delete contract"
      - not guest, same ACCOUNT as Owner: "Create template" (canEditTemplates()) or "Copy template" (otherwise)
      - pending|signinprogress: "Send reminder"
+     - unless isGuest: Oneflow icon, back button, help:popover, main button, "Updates", "Insight"
+     - isGuest: Guest settings icon
+     - viewMode: Main button
+     - draft|template: "Updates", "Insight"
+     - isOwner() and not draft|template: "Insight"
+     - allow-publish|visible-publish: "Publish"
+
+Agreement ParticipantBar:
+  - "participants:view"(AGREEMENT):
+     - if not template: 
+        - ParticipantsLayout:
+           - MODEL AGREEMENT
+           - regions:
+              - logo: AgreementBrandingView:
+                 - MODEL SETTINGS_ACCOUNT (of AGREEMENT.owner)
+                 - inherits from BrandingView (but different presentation)
+                    - if ACCOUNT.account-brand-logo:
+                       - 1: adds <img> with src="ACCOUNT.getLogoURL(true)" (i.e. /ACCOUNT_ID/logo.png)
+                       - undefined: upload image (using fineUploader) -> sets ACCOUNT.account-brand-logo 1
+              - companies: CompaniesView:
+                 - COLL AGREEMENT.companies with state enabled
+              - actions: (bottom right actions)
+                 - if AGREEMENT state not signed|declined: OpenActionsView:
+                    - MODEL AGREEMENT
+                 - if AGREEMENT state signed: SignedActionsView:
+                    - MODEL AGREEMENT
+                    - shows "Generating receipt" when signinprogress
+                    - "Download contract receipt": link pointing to DOCUMENT (with state receipt) generateDownloadURL()
+                      i.e. "/agreements/AGREEMENT/documents/DOCUMENT/download[?at=TOKEN]"
+                    - "Print contract" -> "/contracts/AGREEMENT/print"
+                    - "Cancel button": "modal:show" CancelModalView
+                       - MODEL AGREEMENT
+                       - shows:
+                          - AGREEMENT.start_timestamp|duration|notice_period|period_start_timestamp|period_end_timestamp
+                          (B2C)
+                          - PARTICIPANT.fullname|title|consumer_orgnr
+                          (B2B)
+                          - AGREEMENT_COMPANY.company_name|company_orgnr
+                       - "Cancel contract" -> AGREEMENT.cancel(), i.e. /agreements/AGREEMENT/cancel_recurring which sets cancel_timestamp
+                         Then AGREEMENT.fetch()
+                       - Notice warning if AGREEMENT.inNoticePeriod()
+                       - hash mismatch: mismatch warning
+     - if template, same but:
+        - no regions companies|actions
+        - regions companies: TemplateSettingsView:
+           - MODEL TEMPLATE_COLL (or current AGREEMENT)
+           - inSidebar true
+  - "participants:sign:view"(AGREEMENT): SignActionsViews:
+     - MODEL AGREEMENT
+  - "participants:template-settings:view"(AGREEMENT): when SingleColView and template
+     - returns TemplateSettingsView: like above but inSidebar false
+  - permissions:
+     - Cancel contracts: allow-cancel, i.e. signinprogress|signed|expired, decisionmaker and not lifecycle ended, type recurring
 
 Agreement LayoutSidebar:
   - MDL_EVENT "layout-sidebar:view(AGREEMENT)->MVIEW
