@@ -18,8 +18,6 @@ graphql(SCHEMA, 'QUERY'[, RESOLVERS][, CONTEXT][, VARIABLES][, 'OPERATION'])
                                   #  - VARIABLES OBJ: list of $VAR
                                   #  - 'OPERATION': operationName
 
-new GraphQLSchema(OPTS)           #OPTS: query|mutation OBJTYPE
-
 
 RESOLVE(RPARENT, ARGS, CONTEXT,   #Resolve function. Can be specified|overriden:
  RESINFO)->VAL                    #  - in schema definition
@@ -35,29 +33,8 @@ RESINFO                           #OBJ:
                                   #  - fragments.FRAGMENT FRAGMENTDEFINITION???
 
 
-new Source('QUERY'[, 'FILE'])     #'FILE' is for debugging
 
-getLocation(SOURCE, NUM)->OBJ     #Returns OBJ: line NUM, column NUM
-                                  #I.e. after formatting
-
-lex(SOURCE)->FUNC([NUM])->        #Calling FUNC repeatedly returns next AST_TOKEN, or EOF if none
- AST_TOKEN                        #NUM is position to seek (def: next one)
-ASK_TOKEN.kind                    #Among Kind.* ???
-ASK_TOKEN.value                   #STR
-ASK_TOKEN.start|end               #Position NUM
-
-parse(SOURCE|'QUERY'[, OPTS])
- ->DOCUMENT                       #For whole query
-parseValue(SOURCE|STR[, OPTS])
- ->VAL                            #For part of query
-                                  #Throws SyntaxError if problem
-
-visit(AST???, OBJ, KEYMAP)
-                                  #OBJ:
-                                  #  - enter|leave(NODE, KEY, PARENT, PATH, ANCESTORS)
-
-
-assertValidName('TYPE'[, BOOL])   #Used internally to check against all names, including 'TYPE', 'ATTR', 'ENUM_VAL', etc:
+assertValidName('TYPE'[, BOOL])   #Used internally to check against all names, including 'TYPE', 'ATTR', 'ENUM_VAL', 'DIRECTIVE', 'ARG', etc:
                                   #  - check regexp /^[_a-zA-Z][_a-zA-Z0-9]*$/
                                   #  - check does not start with __, unless BOOL true 
                                   #     - can ignore error with OPTS.isIntrospection true for OBJTYPE|ENUMTYPE
@@ -66,12 +43,188 @@ assertValidName('TYPE'[, BOOL])   #Used internally to check against all names, i
 
                                              /=+===============================+=\ 
                                             /  :                               :  \  
-                                            )==:             TYPES             :==(   
+                                            )==:            PARSING            :==(   
                                             \  :_______________________________:  /    
                                              \=+===============================+=/
 
 
-TYPES ==>                         #  +-----------------+---------------+---------+---------------+-----------+------------+----------+--------------+
+new Source('QUERY'[, 'FILE'])     #'FILE' is for debugging (def: 'GraphQL')
+
+getLocation(SOURCE, NUM)->OBJ     #Returns OBJ: line NUM, column NUM
+                                  #I.e. after taking into account newlines as formatting
+
+lex(SOURCE)->FUNC([NUM])->        #Calling FUNC repeatedly returns next AST_TOKEN, or EOF if none
+ AST_TOKEN                        #NUM is position to seek (def: next one)
+ASK_TOKEN.kind                    #Among Kind.*:
+                                  #  - SOF|EOF (start|end)
+                                  #  - BANG|DOLLAR|PAREN_L|PAREN_R|COLON|EQUALS|AT|BRACKET_L|BRACKET_R|BRACE_L|BRACE_R|PIPE: ! $ ( ) : = @ [ ] { } |
+                                  #  - SPREAD: ...
+                                  #  - COMMENT: #COMMENT
+                                  #  - NAME: 'ATTR', etc.
+                                  #  - INT|FLOAT|STRING
+ASK_TOKEN.value                   #STR
+ASK_TOKEN.start|end               #Position NUM
+ASK_TOKEN.line|column             #NUM
+ASK_TOKEN.prev|next               #ASK_TOKEN2|null
+
+parse*(SOURCE|'QUERY')            #Parses into AST tree.
+ ->AST_DOCUMENT                   #There are also subcommands for each subkind of values, e.g. directives, fragments, etc.
+                                  #Throws SyntaxError if problem
+
+
+
+AST_NODE (any of following *_NODE)
+  kind: CamelCase, e.g. OPERATION_DEFINITION_NODE has kind 'OperationDefinition'
+  location
+    start|end NUM
+    start|endToken AST_TOKEN
+    source SOURCE
+
+NAME_NODE: value STR
+
+TYPE_NODE (any of the following *_TYPE_NODE)
+NAMED_TYPE_NODE: name NAME_NODE
+LIST_TYPE_NODE: type TYPE_NODE
+NON_NULL_TYPE_NODE: type NAMED_TYPE_NODE|LIST_TYPE_NODE
+
+VALUE_NODE (any of the following *_VALUE_NODE or VARIABLE_NODE)
+VARIABLE_NODE: name NAME_NODE
+INT_VALUE_NODE: value STR
+FLOAT_VALUE_NODE: value STR
+STRING_VALUE_NODE: value STR
+BOOLEAN_VALUE_NODE: value BOOL
+NULL_VALUE_NODE (no attributes apart from name)
+ENUM_VALUE_NODE: value STR
+LIST_VALUE_NODE: values VALUE_NODE_ARR
+OBJECT_VALUE_NODE: fields OBJECT_FIELD_NODE_ARR: name NAME_NODE, value VALUE_NODE
+
+ARGUMENT_NODE
+  name NAME_NODE
+  value VALUE_NODE
+
+INPUT_VALUE_DEFINITION_NODE_ARR
+  name NAME_NODE
+  type TYPE_NODE
+  defaultValue VALUE_NODE
+  directives DIRECTIVE_NODE_ARR
+
+DIRECTIVE_NODE
+  name NAME_NODE
+  arguments ARGUMENT_NODE_ARR
+
+DOCUMENT_NODE
+  definitions OBJ_ARR, of either:
+    (OPERATION_DEFINITON_NODE)
+    (FRAGMENT_DEFINITION_NODE)
+    (TYPE_SYSTEM_DEFINITION_NODE), of either
+      (SCHEMA_DEFINITION_NODE)
+      (TYPE_DEFINITION_NODE), of either
+        (SCALAR_TYPE_DEFINITION_NODE)
+        (OBJECT_TYPE_DEFINITION_NODE)
+        (INTERFACE_TYPE_DEFINITION_NODE)
+        (UNION_TYPE_DEFINITION_NODE)
+        (ENUM_TYPE_DEFINITION_NODE)
+        (INPUT_OBJECT_TYPE_DEFINITION_NODE)
+      (TYPE_EXTENSION_DEFINITION_NODE)
+      (DIRECTIVE_DEFINITION_NODE)
+
+OPERATION_DEFINITON_NODE
+  operation 'METHOD'
+  name NAME_NODE
+  variableDefinitions VARIABLE_DEFINITION_NODE_ARR
+    variable VARIABLE_NODE
+    type TYPE_NODE
+    defaultValue VALUE_NODE
+  directives DIRECTIVE_NODE_ARR
+  selectionSet SELECTION_SET_NODE
+    selections SELECTION_NODE_ARR, of either
+    (FIELD_NODE)
+      alias NAME_NODE
+      name NAME_NODE
+      arguments ARGUMENT_NODE_ARR
+      directives DIRECTIVE_NODE_ARR
+      selectionSet SELECTION_SET_NODE
+    (FRAGMENT_SPREAD_NODE)
+      name NAME_NODE
+      directives DIRECTIVE_NODE_ARR
+    (INLINE_FRAGMENT_NODE)
+      typeCondition NAMED_TYPE_NODE
+      directives DIRECTIVE_NODE_ARR
+      selectionSet SELECTION_SET_NODE
+
+FRAGMENT_DEFINITION_NODE
+  name NAME_NODE
+  typeCondition NAMED_TYPE_NODE
+  directives DIRECTIVE_NODE_ARR
+  selectionSet SELECTION_SET_NODE
+
+SCHEMA_DEFINITION_NODE
+  directives DIRECTIVE_NODE_ARR
+  operationTypes OPERATION_TYPE_DEFINITION_NODE_ARR
+    operation: 'METHOD'
+    type NAMED_TYPE_NODE
+
+SCALAR_TYPE_DEFINITION_NODE
+  name NAME_NODE
+  directives DIRECTIVE_NODE_ARR
+
+OBJECT_TYPE_DEFINITION_NODE
+  name NAME_NODE
+  interfaces NAMED_TYPE_NODE_ARR
+  directives DIRECTIVE_NODE_ARR
+  fields FIELD_DEFINITION_NODE_ARR
+    name NAME_NODE
+    arguments INPUT_VALUE_DEFINITION_NODE_ARR
+    type TYPE_NODE
+    directives DIRECTIVE_NODE_ARR
+
+INTERFACE_TYPE_DEFINITION_NODE
+  name NAME_NODE
+  directives DIRECTIVE_NODE_ARR
+  fields FIELD_DEFINITION_NODE_ARR (see above)
+
+UNION_TYPE_DEFINITION_NODE
+  name NAME_NODE
+  directives DIRECTIVE_NODE_ARR
+  types NAMED_TYPE_NODE_ARR
+
+ENUM_TYPE_DEFINITION_NODE
+  name NAME_NODE
+  directives DIRECTIVE_NODE_ARR
+  values ENUM_VALUE_DEFINITION_NODE_ARR
+    name NAME_NODE
+    directives DIRECTIVE_NODE_ARR
+
+INPUT_OBJECT_TYPE_DEFINITION_NODE
+  name NAME_NODE
+  directives DIRECTIVE_NODE_ARR
+  fields INPUT_VALUE_DEFINITION_NODE_ARR
+
+TYPE_EXTENSION_DEFINITION_NODE
+  definition OBJECT_TYPE_DEFINITION_NODE (see above)
+
+DIRECTIVE_DEFINITION_NODE
+  name NAME_NODE
+  arguments INPUT_VALUE_DEFINITION_NODE_ARR
+  locations NAME_NODE_ARR
+
+
+
+visit(AST???, OBJ, KEYMAP)
+                                  #OBJ:
+                                  #  - enter|leave(NODE, KEY, PARENT, PATH, ANCESTORS)
+
+
+                                             /=+===============================+=\ 
+                                            /  :                               :  \  
+                                            )==:          DEFINITION           :==(   
+                                            \  :_______________________________:  /    
+                                             \=+===============================+=/
+
+
+TYPES ==>                         #The following members only models graphQL definition format in JavaScript, without adding anything more.
+                                  
+CATEGORIES ==>                    #  +-----------------+---------------+---------+---------------+-----------+------------+----------+--------------+
 																	#  | NonNullModifier | ArrayModifier | OBJTYPE | INTERFACETYPE | UNIONTYPE | SCALARTYPE | ENUMTYPE | INPUTOBJTYPE |
 																	#  +-------------------------------------------+---------------------------+-----------------------+--------------+
 																	#  |-------------------------------------------| ABSTRACTYPE               | LEAFTYPE              |--------------|
@@ -95,11 +248,16 @@ TYPE.name                         #'TYPE'. Provided by TYPE constructor's OPTS.n
                                   #Returned by TYPE.toString(), which also adds potential [] or ! modifiers
 TYPE.description                  #STR
 
+
 new GraphQLList(TYPE)             #ARR modifier
 getNamedType(TYPE)->TYPE          #Removes NonNull|ARR modifiers, if present
 
 new GraphQLNonNull(TYPE)          #NonNull (!) modifier
 getNullableType(TYPE)->TYPE       #Removes NonNull modifier, if present
+
+
+CONSTRUCTORS ==>                  #All TYPE constructors creates custom TYPEs, not instance of that TYPE
+                                  #I.e. GraphQLInt is not constructor
 
 new GraphQLScalarType(OPTS)       #SCALARTYPE. Constructor is used for custom ones
                                   #OPTS:
@@ -116,13 +274,10 @@ GraphQLString                     #STR TYPE
 GraphQLBoolean                    #BOOL TYPE
 GraphQLID                         #ID TYPE
 
-new GraphQLEnumType(OPTS)         #OPTS:
-                                  #  - values.ENUM_VAL:
-                                  #     - value VAL: underlying low-level value of ENUM_VAL, e.g. integer
-                                  #     - description STR
-                                  #     - deprecationReason STR
-                                  #Server-side ENUM_NUM
-                                  #GraphQL|client-side ENUM_VAL
+new GraphQLEnumType(OPTS)         #OPTS.values.ENUM_VAL:
+                                  #  - value ENUM_INTERNAL_NUM
+                                  #  - description STR
+                                  #  - deprecationReason STR
 
 new GraphQLObjectType(OPTS)       #OPTS:
                                   #  - fields[()].FIELD:
@@ -137,11 +292,18 @@ new GraphQLObjectType(OPTS)       #OPTS:
                                   #  - interfaces[()] INTERFACETYPE_ARR
                                   #  - isTypeOf(VAL, RESINFO)->BOOL
 
-new GraphQLInputObjectType(OPTS)  #OPTS:
-                                  #  - fields[()].FIELD:
-                                  #     - type INPUTTYPE
-                                  #     - defaultValue VAL
-                                  #     - description STR
+new GraphQLSchema(OPTS)           #OPTS:
+                                  #  - query|mutation OBJTYPE
+                                  #  - subscription OBJTYPE ???
+                                  #  - types NAMEDTYPE_ARR: 
+                                  #     - all possible types, used by introspection __schema.types
+                                  #     - guessed by default by going through schema
+                                  #  - directives DIRECTIVE_ARR ???
+
+new GraphQLInputObjectType(OPTS)  #OPTS.fields[()].FIELD:
+                                  #  - type INPUTTYPE
+                                  #  - defaultValue VAL
+                                  #  - description STR
 
 new GraphQLInterfaceType(OPTS)    #OPTS:
                                   #  - fields: like OBJTYPE
@@ -149,5 +311,22 @@ new GraphQLInterfaceType(OPTS)    #OPTS:
                                   #     - used to determine which child type to pick
 
 new GraphQLUnionType(OPTS)        #OPTS:
-                                  #  - resolveType: like INTERFACETYPE
                                   #  - types OBJTYPE_ARR[()]
+                                  #  - resolveType: like INTERFACETYPE
+
+
+new GraphQLDirective(OPTS)        #OPTS:
+                                  #  - name 'DIRECTIVE', description STR
+                                  #  - locations ARR: among DirectiveLocation.*
+                                  #  - args.ARG:
+                                  #     - type INPUTTYPE
+                                  #     - description STR: 
+                                  #     - defaultValue VAL
+GraphQLInclude|SkipDirective      #Possible locations: FIELD, FRAGMENT_SPREAD, INLINE_FRAGMENT
+GraphQLDeprecatedDirective        #Possible locations: FIELD_DEFINITION, ENUM_VALUE
+
+
+__Schema|__Type|__Directive|
+__Field|__InputValue|__EnumValue|
+__TypeKind|__Directive|           #
+__DirectiveLocation               #OBJTYPE, related to introspection, with default resolvers
