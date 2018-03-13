@@ -539,8 +539,13 @@ CHARGE.application_fee            #STRIPE_ACCOUNT_FEE.id
 CHARGE.balance_transaction        #BALANCE_TRANSACTION.id
 CHARGE.paid                       #BOOL for success
 CHARGE.status                     #First 'pending' then either 'succeeded' or 'failed'.
-                                  #EVENTS 'charge.pending|succeeded|failed' fired but not needed since response
-                                  #status is never 'pending'.
+                                  #EVENTS 'charge.pending|succeeded|failed' fired:
+                                  #  - most SOURCEs are sync:
+                                  #     - response status is never 'pending'
+                                  #     - no need to use webhooks
+                                  #  - some SOURCEs are async
+                                  #     - must use webhooks
+                                  #     - only SOURCE.type 'ach_*', 'sepa_debit' and 'sofort'
 CHARGE.refunds                    #REFUND_LIST
 CHARGE.refunded                   #BOOL. False if only partially refunded.
 CHARGE.amount_refunded            #PMONEY. 0 if none.
@@ -1065,9 +1070,6 @@ POST /sources[/ID]
 STRIPE.sources.
  retrieve|create|update()         #
 customer.source.expiring          #'EVENT_TYPE' when a card or source will expire at the end of the month.
-source.canceled                   #'EVENT_TYPE' when a source is canceled.
-source.chargeable                 #'EVENT_TYPE' when a source transitions to chargeable.
-source.failed                     #'EVENT_TYPE' when a source fails.
 source.mandate_notification       #'EVENT_TYPE' when a source mandate notification method is set to manual.
 source.refund_attributes_required #'EVENT_TYPE' when the refund attributes are required on a receiver source to process a refund or a mispayment.
 payment_method.attached           #'EVENT_TYPE' when a new payment method is attached to a customer.
@@ -1092,16 +1094,16 @@ SOURCE.type 'TYPE'              *C#Specific payment method among:
                                   #  - 'bank_account':
                                   #      - generic TYPE for all bank accounts payments
                                   #      - create|update only
-                                  #  - 'ach_credit_transfer', 'ach_debit':
+                                  #  - 'ach_debit', 'ach_credit_transfer':
                                   #      - uses ACH (Automated Clearing House)
                                   #      - with bank account number and routing number
                                   #      - can take few days
                                   #      - more automated than credit card, because do not need to re-authorize
                                   #         - i.e. more convenient but needs more trust
-                                  #      - 'credit' vs 'debit':
-                                  #         - 'credit': puts money to other account
+                                  #      - 'debit' vs 'credit':
+                                  #         - 'debit': we pull money from customer's account
                                   #            - more automated but more trust to other account
-                                  #         - 'debit': other account must ask to withdraw money instead
+                                  #         - 'credit': customer puts money to our account
                                   #  (bank-consortium controlled online payment method)
                                   #  - 'sepa_debit': EU
                                   #  - 'sofort': Germany
@@ -1132,6 +1134,10 @@ SOURCE.type 'TYPE'              *C#Specific payment method among:
                                   #     - more anonymous, more fraud-friendly
                                   #     - no possible refunds
                                   #     - high fees
+                                  #Differences:
+                                  #  - how customer inputs the information (SOURCE.TYPE)
+                                  #  - sync vs async CHARGEs (see CHARGE webhooks above)
+                                  #  - SOURCE.flow
 SOURCE.TYPE                       #SOURCE_DETAILS. Each TYPE has its own attributes, but some are shared.
                                   #On update, should use SOURCE.* not SOURCE.TYPE.*
 SOURCE.card*.number            *RC#STR. Credit card number.
@@ -1155,7 +1161,10 @@ SOURCE.card*.funding              #STR. Card funding type among:
 SOURCE.card.                      #Checks performed by the bank.
  checks.CHECK_TYPE_check          #Even when 'failed', bank still sometimes allows payment.
                                   #  - however this might indicate fraud, so we should not use this SOURCE
-                                  #Can be 'pass', 'failed', 'unavailable' (could not check), 'unchecked' (did not provide enough information)
+                                  #Can be:
+                                  #  - 'unchecked' (pending)
+                                  #  - 'pass' or 'failed'
+                                  #  - 'unavailable' (could not check)
                                   #CHECK_TYPE are:
                                   #  - cvc: CVC. Guarantees customer physically possesses the card.
                                   #  - address_line1 and address_postal_code ("AVS check"):
@@ -1244,7 +1253,7 @@ SOURCE.token                    RC#TOKEN.id. Use TOKEN to populate properties.
 SOURCE.usage                     C#Either:
                                   #  - 'reusable'
                                   #  - 'single_use'
-                                  #Might be constrained to one or another according to SOURCE.type
+                                  #Only one of them might be available depending on SOURCE.type
 SOURCE.amount                    C#PMONEY if SOURCE.usage 'single_use'
 SOURCE.client_secret              #STR. The client secret of the source. Used for client-side retrieval using a publishable key.
 SOURCE.customer                   #CUSTOMER.id This will not be present when the source has not been attached to a customer.
@@ -1252,14 +1261,21 @@ SOURCE.owner                   RCU#BILL_DETAILS
 
 SOURCE.status                     #STR among:
                                   #  - 'pending': SOURCE not ready for payment yet
-                                  #  - 'chargeable': can charge SOURCE
-                                  #  - 'canceled', 'failed': cannot charge SOURCE anymore
+                                  #  - 'chargeable': can charge SOURCE (EVENT 'source.chargeable')
+                                  #  - 'canceled': cannot charge SOURCE anymore (EVENT 'source.canceled')
+                                  #  - 'failed': cannot charge SOURCE anymore (EVENT 'source.failed')
                                   #  - 'consumed': already charge, with SOURCE.usage 'single_use'
 SOURCE.flow                      C#How the SOURCE is authenticated among:
-                                  #  - 'none': nothing required. E.g. with credit cards (including 3D secure)
-                                  #  - 'redirect': redirected to payment provider's URL, then payment provider redirects back
+                                  #  - 'none':
+                                  #      - nothing required
+                                  #      - for SOURCE.type 'card*' (no 3D secure) and 'sepa_debit'
+                                  #  - 'redirect':
+                                  #      - redirected to payment provider's URL, then payment provider redirects back
+                                  #      - for SOURCE.type 'card*' (3D secure), 'ach_debit', 'alipay', 'bancontact', 'eps', 'giropay', 'ideal', 'p24', 'wechat', 'sofort'
                                   #  - 'code_verification': a code is sent (e.g. by SMS)
+                                  #      - for SOURCE.type 'ach_debit'
                                   #  - 'receiver': authenticate a specific amount towards a specific destination (e.g. with cryptocurrencies)
+                                  #      - for SOURCE.type 'ach_credit_transfer' and 'multibanco'
 SOURCE.redirect                  C#REDIRECT. If SOURCE.flow 'redirect'
 REDIRECT.url                      #'URL' of payment provider to redirect user to.
 REDIRECT.return_url              C#'URL' to redirect after successful authentication.
