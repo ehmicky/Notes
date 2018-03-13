@@ -5,25 +5,6 @@
 
 
 
-Return full distribution:
-  - check it with a main() with: Math.random() * (Math.random() > .5 ? (Math.random() > .5 ? 1: 10) :  (Math.random() > .5 ? 20: 30))
-  - add:
-     - histogram
-     - margin of error, relative margin of error, standard error of mean
-  - final returned array might be smaller size than max size if never reached the limit:
-     - some stats (e.g. variance) should require minimum size
-  - issue with `repeat`??? Probably transform any distribution to a bell curve
-     - verify this
-     - if so, some stats should not be calculated when `repeat` was used, because they would not be valid (e.g. percentiles)
-        - however still make sense: figure out which ones: median, maybe arithmetic mean???
-        - figure it by checking `count` and `loops`
-  - test each stat:
-     - e.g. average, mean, standard deviation, etc.
-     - using main() with known distributions, based on Math.random, with a high maxDuration
-     - do it locally while implementing to check everything is ok
-     - also do it as unit tests
-  - remove the part in "design" saying only mean is calculated, or instead say this is where the focus mostly is
-
 Study node --prof and node --cpu-prof and see if that can be used for <1ns functions
 
 Add before() and after()
@@ -33,50 +14,42 @@ Add before() and after()
 Add support for async:
   - first implement separately, then check if running sync code with async is ok
 
-Design:
-  - see if anything needs to be added here???
-  - we only return one "average" metric:
-     - as opposed to returning distribution and related metrics: variance, standard error, etc.
-     - reasons:
-        - users are mostly interested in this
-        - simpler interface
-        - distribution is only due to:
-           - variation due to engine (garbage collection, optimization, etc.): not wanted in results
-           - variation due to different input:
-              - non-random set of inputs: should instead run several benchmarks with each set, instead of mixing several distributions
-              - random set of inputs:
-                 - want distribution of this??? E.g. load testing with real input
-                 - could do the same logic as median but with percentile instead???
-  - use medians instead of arithmetic mean:
-     - reason: remove outliers due to:
+Algorithm rational:
+  - problem: variance added by JavaScript engines
+     - types:
         - garbage collection and background processes
-        - engine optimization over time (first runs tend to be much slower)
-  - use a recursive median of medians:
-     - reason: O(log n) memory instead of O(n)
-        - i.e. can have high number of iterations without crashing
-     - use an outdegree of 3 because:
-        - we want the smallest possible for minimum memory consumption
-        - 2 would make an arithmetic mean instead of a median
-  - remove the time taken to perform iteration itself:
-     - reasons:
-        - get current timestamp takes some time (45ns on my machine)
-        - the iteration itself takes a little time:
-           - time to increment counter (.3ns on my machine)
-           - time to make function call, even if empty function (3ns on my machine)
-     - i.e. allows precise measurement of nanoseconds-long functions
-        - however if the function is as fast as the iteration itself (approx. <10ns), cannot measure because the iteration variance has too much influence.
-           - the result then might be 0, and might vary a lot
-  - if the task is very fast (approx. <0.1ms), also loop it and use arithmetic mean time:
-     - reasons:
-        - measured time must be too low compared to time resolution
-           - we want at least 2 digits of precision
-        - time taken to get current timestamp might be much slower than the task
-           - i.e. much of the variance would be due to it, not to the task
-           - we want task iteration to be at least 100 times the time required to get current timestamp
-     - number of repetitions is automatically guessed
-        - the same number is consistently used across the run
-           - reason: looping a function might make it faster (due to engine optimizations)
-     - alternative would be loop unrolling:
+        - engine optimization
+     - solution: use medians instead of arithmetic mean
+  - problem: performance slows down a lot periodically due to JavaScript engine background processes (e.g. garbage collection)
+     - solution: remove slowest measurements
+  - problem: bias and higher variance due to benchmarking logic:
+     - types:
+        - getting current timestamp (60ns on my machine)
+        - the iteration itself:
+           - checking for loop end (.3ns on my machine)
+           - make function call, even if empty function (3ns on my machine)
+     - solution: calculate bias by benchmarking an empty function, then remove that bias from actual benchmark
+  - problem: higher variance due to benchmarking logic:
+     - solution:
+        - run fast benchmark in a loop to lower impact of timestamping
+           - get the arithmeric mean of the loop
+           - the number of loop repeats is automatically guessed
+  - problem: measure time might be too low compare to time resolution to be precise
+     - solution: looping (see above)
+  - problem: first invocation of most functions is much slower than later runs, due to JavaScript engine optimization
+     - of:
+        - the benchmarked function
+        - the benchmarking function itself (i.e. first task will run faster than other tasks)
+     - solution: do cold starts
+  - problem: the more a function is run, the faster is gets
+     - solutions:
+        - use bias calculation as a cold start
+        - limit the maximum number of loops
+           - when reaching a limit, start a new child process instead of keeping iterating
+  - problem: function as fast as the iteration itself (approx. <1ns), cannot be measured because the iteration variance has too much influence
+     - i.e. the result might be 0, and might vary a lot
+     - solutions: none
+     - invalid solution: loop unrolling
         - i.e. using `new Function('f', 'f();'.repeat(NUM))`:
         - pro: no bias of the iteration itself
         - cons:
@@ -85,29 +58,26 @@ Design:
               - first call is much slower, i.e. requires a cold start
            - still need to calculate and remove the bias of calling that function itself (several nanoseconds bias)
            - cannot use a closure, i.e. function cannot reference upper scopes
-  - use max duration:
-     - as opposed to fixed number of loops
-     - reasons:
+  - problem: using a fixed number of loops has issues
+     - details:
         - faster code has higher variance:
            - does not increase variance as engines or code gets faster
            - when comparing fast tasks against slow tasks, make their variance more even
-        - more stable user experience, avoiding potentially very long runs
-        - get the most precision as user is ready to wait
-        - no separate timeout feature needed
-  - use bottom-up recursion:
-     - reason: we don't know how many recursion levels are needed to reach max duration
-  - run several child processes and get a median of them:
-     - reasons:
-        - when launching new processes (like when end user is running the command several times in CLI), variation is much
-          higher than when using a single process and running several benchmarks in parallel
-           - this is probably due to some engine optimization and global/OS variation
-           - using a median over several child processes allow emulating user running those commands several times in CLI
-     - we run them serially:
-        - otherwise they start to compete with each other, i.e. time is slower and variance higher
-     - we don't use worker threads because:
-        - time slicing would skew measurements
-        - only Node, not other platforms
-        - they run in a slightly different environment (process.* has fewer methods)
+        - user cannot get as much precision as ready to wait
+           - bad user experience when unexpectedly long task
+           - require a separate timeout feature
+     - solution: use max duration instead
+  - problem: variation due to different processes having different performance profiles
+     - details:
+        - different processes: e.g. when end user is doing new invocations
+        - each process runs with slightly faster/slower performance than others:
+           - due to global/OS variation and JavaScript engine optimizations
+     - solution: run several child processes and get a median of them
+        - we run them serially:
+           - otherwise they start to compete with each other, i.e. time is slower and variance higher
+        - we don't use worker threads because:
+           - time slicing would skew measurements
+           - they run in a slightly different environment (process.* has fewer methods)
 
 Add lots of comments in the code, especially describing algorithm and constants
 
@@ -120,7 +90,6 @@ OPTS.duration:
   - def 10 secs
   - minimum 1 second
   - how long to benchmark each task
-  - also used for timeout
 
 Report mean duration not ops/sec:
   - use lowest unit, with minimum 10 (i.e. 2 digits)
