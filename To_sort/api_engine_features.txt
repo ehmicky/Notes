@@ -35,7 +35,7 @@ Transforms/readonly:
 Nested actions:
   - currentData can only be undefined (create|find) or array with defined elements (patch|replace|delete)
     Previously (with upsert), it could contain nulls. Might be able to remove some code there
-  - should check if actions/sequencer layer that when extracting ids from args.filter, we think of the case where args.filter 
+  - should check if actions/sequencer layer that when extracting ids from args.filter, we think of the case where args.filter
     has other filters
   - double check that no duplicated action (per model) is done for any command
   - check linting
@@ -151,7 +151,7 @@ arg.filter normalization:
   - think if some dataValidation makes sense for args.filter, e.g. minimum|maximum or type
   
 Complex patches:
-  - provide MongoDB-like patch syntax for patch command, including array manipulation 
+  - provide MongoDB-like patch syntax for patch command, including array manipulation
 
 Authorization:
   - IDL functions for idl|model|attr.authorize:
@@ -218,53 +218,112 @@ Aggregating:
   - think of interaction with pagination
 
 Pagination:
-  - keep the current situation that:
-     - create|replace do not paginate, but arg.data length is limited by pageSize
-     - delete|patch paginate output only, not write query itself
-        - but currentModels for patch needs an unpaginated first find command then???
-        - main reason is it is hard with nested queries???
-     - find is paginated
-  - agnostic to nesting, i.e. action-wise not operation-wise
+  - problems (should document them in code):
+     - parent actions are performed several times while going through the child action pages:
+        - this is inefficient
+        - this creates duplicates results, i.e. clients need to remove them
+        - does not work when parent action cannot be performed twice, e.g. delete or create
+     - this creates one pagination output metadata per action, which is more complex
+  - solution: max models limit:
+     - top-level actions are paginated, i.e. limited by runOpts.pageSize
+     - nested actions are not paginated. Instead, two limits:
+        - maxModels:
+           - each operation can contain maximum NUM models, including top-level and nested actions. This is operation-wise, not action-wise.
+              - does not include duplicate models. E.g. if fetching two nested models with same id, consistency middleware will remove duplicates,
+                so they will not impact database load, and should not be counted in limit.
+           - NUM is runOpts.maxModels.
+              - defaults to 100 * runOpts.pageSize (not args.pageSize)
+           - for many-to-many nested operations that hit that limit, two solutions:
+              - decreasing args.pageSize
+              - split the nested operation into several flatter operations
+        - each nested action OBJ_ARR output length must be maximum pageSize:
+           - this is to avoid using nesting to circumvent pagination
+           - should count duplicates, not ignore them
+           - it is for each OBJ_ARR, not whole nested action. E.g. if a parent has 100 OBJ_ARR children, each child should be under that limit,
+             even though they will all trigger one single action, which might return more than that limit
+     - for both limits:
+        - if over limit, throws error
+           - should trigger rollback
+           - if it can be thrown before write actions are fired, it is even better as it avoids rollback
+        - should use database offset|limiting NUM+1 in child actions to limit database load
+        - for all commands, including createMany and replaceMany
+  - general (top-level actions):
+     - *One commands: no pagination
+     - createMany, replaceMany:
+        - no pagination args nor output metadata
+        - but if args.data length (top-level only) > runOpts.pageSize, throws error
+        - do not allow args.page_size
+     - findMany:
+        - either:
+           - offset vs cursor:
+              - is offset pagination if args.page !== undefined
+              - default is cursor pagination otherwise, with args.after ""
+              - document difference with offset pagination: not random-access, but stronger consistency/isolation
+           - offset pagination:
+              - args:
+                 - page, page_size: same as current system
+              - metadata.pagination:
+                 - page, page_size: same as current system
+                 - has_previous_page, has_next_page: same as current system
+                 - total_size NUM, page_count NUM:
+                    - calculated by doing an extra count database query
+                    - always performed, but on offset pagination only
+           - cursor pagination:
+              - args:
+                 - page_size: same as current system
+                 - after, before: same as current system:
+                    - including:
+                       - how cursors are calculated
+                       - "" cursors for beginning and end
+              - metadata.pagination:
+                 - page_size: same as current system
+                 - has_previous_page, has_next_page: same as current system
+                 - previous|next_token "CURSOR":
+                    - instead of current system where each model has its own token
+                    - those two cursors are the cursor calculated of the last and first model
+                    - undefined if no previous or no next page
+                    - cursors should store oArgs and use them for comparisons, not normalized args.
+                       - clients should submit the same args.filter|order_by (instead of not submitting any, as it is now), i.e. only add args.after|before.
+                 - first_token|last_token: always ""
+     - patchMany, deleteMany:
+        - like findMany except for the following points
+        - no offset pagination
+        - only forward cursors, i.e. no args.before nor  metadata.pagination.previous_token|first_token|last_token. metadata.pagination.has_previous_page is always false.
+        - paginates the write database query itself:
+           - i.e. cannot patch nor delete too many models at once
+           - do it by paginating first internal find command, then use the ids in replace|patch|delete command
+              - i.e. replace|patch|delete commands do not use pagination middleware for cursor pagination directly
+  - middleware:
+     - handles all types of pagination: max args.data length, cursor pagination, offset pagination.
+     - e.g. max args.data length not done during args syntax check middleware
+  - runOpts.pageSize:
+     - instead of the three runOpts currently used, i.e. maxPageSize, defaultPageSize and maxDataLength
+     - defaulting to 100
+     - args.page_size can be used to change pageSize:
+        - but can only be lower
+        - integer, minimum 1
+        - with findMany, patchMany, deleteMany
+     - 0 to disable pagination:
+        - i.e. no paginating, pagination args nor output metadata
+        - args.page_size can be anything
   - metadata:
      - should not be selectable, i.e. always fully rendered in output
-     - action-wise, not model-wise
-     - in output, is sibling to "data", in both GraphQL and REST:
-        - data.COMMAND_PATH METADATA_OBJ
-  - pagination metadata:
-     - previous|next_token "CURSOR":
-        - used with args.after|before "CURSOR"
-        - "CURSOR" uses same as current system, including "" for beginning|end
-        - those two cursors are simply the cursor calculated of the last and first model
-        - undefined if no previous or no next page
-        - cursors should store oArgs and use them for comparisons, not normalized args.
-          Clients should submit the same args.filter|order_by (instead of not submitting any, as it is now), i.e. only add args.after|before.
-     - first_token|last_token: always ""
-     - has_previous|next_page BOOL, page NUM, page_size NUM, args.page_size NUM, args.page NUM: same as current system
-  - Relay.js:
+     - operation-wise, i.e. not action-wise, nor model-wise
+     - in output, is sibling to "data", in both GraphQL and REST, i.e. { data OBJ, metadata OBJ }
+     - should be undefined if args.silent true
+     - go through the whole codebase looking for "metadata" because there's been quite some changes
+  - relay.js:
      - requires model-wise cursors, which is too slow, and too complicated for users, i.e.:
-        - only expose Relay.js cursors as opt-in
-        - only first and last cursor are calculated. The others simply append an offset to the first cursor.
-          It is not as isolation-safe, but is much faster and only meant for Relay.js
-  - replace runOpts maxPageSize, defaultPageSize and maxDataLength by only runOpt pageSize NUM:
-     - defaulting to 1000
-     - 0 to disable:
-        - args.page_size and runOpts.pageSize 0 are like Infinity, i.e.:
-           - if runOpts.pageSize 0, args.page_size can be anything
-           - args.page_size can only be 0 if runOpts.pageSize 0
-        - no pagination metadata response
-     - used as default page_size, max page_size and max args.data size
-  - pagination error messages on wrong cursors are not clear
-  - use Range [C] and Accept-Ranges [S] for pagination
-     - e.g. transforming them into pagination regular arguments
-  - total_size and page_count???
-  - first|last|previous|next:
-     - like first|last|previous|next_token, but prepended with URL to perform the query
-     - URL might have different command than current command, e.g. delete|patch output is paginated, but pagination should
-       use find, e.g. delete|patch -> find
-     - for GraphQL, need to put query in the URL query string
-     - for nested models, is the URL that would be used if those models were not nested
-     - also as HTTP Link: <URL>; rel="first|last|prev|next|self[ ...]"; command="findPets.findFriends":
-        - should be single Link, not two, if have same URL
+       - only expose Relay.js cursors as opt-in
+       - only first and last cursor are calculated. The others simply append an offset to the first cursor.
+          - it is not as isolation-safe, but is much faster and only meant for Relay.js
+  - protocol-level:
+     - use Range [C] and Accept-Ranges [S] for pagination
+        - e.g. transforming them into pagination regular arguments
+     - first|last|previous|next:
+        - like first|last|previous|next_token, but prepended with URL to perform the query
+        - for GraphQL, need to put query in the URL query string
+        - also as HTTP Link: <URL>; rel="first|last|prev|next|self[ ...]"
 
 Compatibility layer:
   - reporting deprecation
@@ -924,7 +983,7 @@ Positioning:
 
  10  DATA MODEL
 ?2   No orphans
-?0.5 Data correctness
+?2   Data correctness
 ?5   Schema strictness/polymorphism
 ?3   API base types
 
