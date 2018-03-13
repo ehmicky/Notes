@@ -7,6 +7,8 @@ if [[ ! -f "$dir/long_index.md" ]]; then
   exit 1
 fi
 
+cat "$dir/intermediate.md" > "$dir/long_index.md"
+
 md-file-tree | sed '
   1 d;
   /LICENSE\]/ d;
@@ -24,7 +26,7 @@ md-file-tree | sed '
 
 sed '
   /\[/ d
-' "$dir/long_index.md" > "$dir/short_index.md"
+' "$dir/long_index.md" >> "$dir/short_index.md"
 
 # Updates README.md
 cat "$dir/presentation.md" "$dir/short_index.md" "$dir/long_index.md" > README.md
