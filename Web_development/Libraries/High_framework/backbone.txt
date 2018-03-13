@@ -82,11 +82,19 @@ MODEL.clone()                     #
 
 MODEL.get|escape(VAR_STR)         
 MODEL.set(VAR_STR, VAL[, OBJ])    
-MODEL.set({ VAR: VAL }[, OBJ])    
-MODEL.unset(VAR_STR[, OBJ])       #Manipulates ATTR_OBJ.         
-MODEL.clear([OBJ])                #escape() returns as HTML-escaped STR
-MODEL.has(VAR_STR)                #set|unset|clear() fires events change(MODEL, OBJ) and change:VAR(MODEL, VAL, OBJ)
-                                  #unless no value was changed.
+MODEL.set({ VAR: VAL }[, OBJ])    #Manipulates ATTR_OBJ. "VAR" should not include spaces.
+MODEL.unset(VAR_STR[, OBJ])       #escape() returns as HTML-escaped STR
+MODEL.clear([OBJ])                #set|unset|clear() fires events change(MODEL, OBJ) and change:VAR(MODEL, VAL, OBJ)
+MODEL.has(VAR_STR)                #unless no value was changed.
+
+MODEL.changedAttributes([OBJ])    #Returns the part of ATTR_OBJ modified by the last MODEL.set(), or false if it did not 
+                                  #change anything.
+                                  #Internaly used MODEL.changed, which is like MODEL.attributes but keep only track of changes.
+                                  #Use OBJ to temporarily remove from MODEL.changed any attributes that match same key+val.
+MODEL.hasChanged()                #Returns true if MODEL.changedAttributes() empty
+MODEL.previousAttributes()        #Returns ATTR_OBJ before the modification by the last MODEL.set().
+                                  #Only available in "change[:VAR]" event handlers.
+MODEL.previous(VAR_STR)           #Same as MODEL.previousAttributes().VAR
 
 MODEL.id                          #MODEL ID.
                                   #Equal to ATTR_OBJ[MODEL_ATTR.idAttribute (def: "id")]
@@ -96,16 +104,15 @@ MODEL.cid                         #Unique ID assigned by Backbone, useful when M
                                   #By def., an incremented number prepended by "c"
 MODEL.isNew()                     #Returns true if MODEL.id undefined
 
-MODEL.changedAttributes([OBJ])    #Returns the part of ATTR_OBJ modified by the last MODEL.set(), or false if it did not 
-                                  #change anything.
-                                  #Internaly used MODEL.changed, which is like MODEL.attributes but keep only track of changes.
-                                  #Use OBJ to temporarily remove from MODEL.changed any attributes that match same key+val.
-MODEL.hasChanged()                #Returns true if MODEL.changedAttributes() empty
-
 MODEL.toJSON([OBJ])               #JSON.stringify() takes MODEL.toJSON() instead of MODEL as input.
+                                  #Should return MODEL as OBJ.
                                   #Can be overriden.
-                                  #By def., returns ATTR_OBJ copy
+                                  #By def., returns ATTR_OBJ copy.
 Backbone.ajax(OBJ)                #Hardlink to $.ajax(OBJ). Can be overriden.
+                                  #Conventions:
+                                  #  - return value is XHR_RET (JQXHR with jQuery)
+                                  #  - XHR_VAL is the first argument passed to OBJ.success|error() callbacks
+                                  #    (with jQuery: the return value for success, the JQXHR for error)
 Backbone|MODEL.sync               #Calls and returns Backbone.ajax(OBJ), with OBJ also having:
 (METHOD_STR, MODEL[, OBJ])        #  - type STR: according to METHOD_STR:
                                   #     - "create": POST   
@@ -124,25 +131,27 @@ Backbone|MODEL.sync               #Calls and returns Backbone.ajax(OBJ), with OB
                                   #  (not for GET nor DELETE)
                                   #  - contentType "application/json"
                                   #  - data STR: JSON.stringify(MODEL.toJSON(OBJ))
-                                  #  - success|error(...): MODEL.fetch|save|destroy wrapped it to take as arguments
-                                  #    (MODEL, VAL, OBJ):
-                                  #     - VAL is the first argument of the actual OBJ.success|error passed to Backbone.ajax()
-                                  #       (i.e. with jQuery: the return value for success, the JQXHR for error)
-                                  #     - Can use OBJ.context to define this in the wrapped callback
+                                   success|error(...): MODEL.fetch|save|destroy wrapped it to take as arguments
+                                  #    (MODEL, XHR_VAL, OBJ).
+                                  #    Can use OBJ.context to define this in the wrapped callback
                                   #For older servers, if: 
                                   #  - Backbone.emulateHTTP true, use only GET|POST + HTTP-Method-Override METHOD header
                                   #  - Backbone.emulateHTTP + Backbone.emulateJSON true, use also _method METHOD query param
                                   #  - Backbone.emulateJSON true, send as "application/x-www-form-urlencoded" instead of
                                   #    "application/json"
                                   #Can be overriden globally, or only for a MODEL by overriding MODEL_ATTR.sync()
-MODEL.fetch([OBJ])                #Calls and returns MODEL.sync("read", MODEL[, OBJ]), then do MODEL.set(VAL)
+                                  #Events:
+                                  #  - request(MODEL, XHR_RET, OBJ): when request start
+                                  #  - sync|error(MODEL, XHR_VAL, OBJ): when request succeeded|errored, only with 
+                                  #    MODEL.fecth|save|destroy()
+MODEL.fetch([OBJ])                #Calls and returns MODEL.sync("read", MODEL[, OBJ]), then do MODEL.set(XHR_VAL)
 MODEL.save(...)                   #Calls MODEL.set(...), then calls/returns Backbone.sync("create|update|patch", MODEL[, OBJ]):
                                   #  - "create": if MODEL.isNew()
                                   #  - "update": if not MODEL.isNew() and OBJ.patch false
                                   #  - "patch": if not MODEL.isNew() and OBJ.patch true
                                   #    As opposed to "create|update", only send attributes specified by ... (not whole ATTROBJ)
-                                  #then call MODEL.set(...) again with the success VAL.
-                                  #If OBJ.wait true, only does the second MODEL.set(...)
+                                  #then call MODEL.set(XHR_VAL)
+                                  #If OBJ.wait true, only does the second MODEL.set()
 MODEL.destroy([OBJ])              #Calls and returns Backbone.sync("delete", MODEL[, OBJ])
                                   #Does nothing and returns false if MODEL.isNew()
                                   #Fire COLL.remove(MODEL) + destroy(MODEL, COLL, OBJ) event right away.
@@ -152,12 +161,14 @@ MODEL.destroy([OBJ])              #Calls and returns Backbone.sync("delete", MOD
 MODEL_ATTR.validate(ATTR_OBJ, OBJ)#Can be user-defined. Must return ERROR[_STR] if problem, nothing otherwise.
                                   #Called by MODEL.save() and (if OBJ.validate true) by MODEL.set|fetch()
                                   #OBJ is MODEL.save|set|fetch() OBJ
-                                  #If problem, stops operation by returning false and sets MODEL.validationError ERROR[_STR]
+                                  #If problem:
+                                  #  - stops operation by returning false 
+                                  #  - fire invalid(MODEL, ERROR[_STR], OBJ)
+                                  #  - sets MODEL.validationError ERROR[_STR]
 MODEL.isValid()                   #Runs MODEL.validate() then returns BOOL.
-MODEL_ATTR.parse(VAL[, OBJ])->VAL #Can be defined to modify success VAL of Backbone.ajax() when calling MODEL.fetch|save([OBJ])
-                                  #Modifies the VAL used by MODEL.set(...) by those methods, but not the one used in the
+MODEL_ATTR.parse(VAL[, OBJ])->VAL #Can be defined to modify XHR_VAL when calling MODEL.fetch|save([OBJ])
+                                  #Modifies the XHR_VAL used by MODEL.set(...) by those methods, but not the one used in the
                                   #success callback.
-                                  #If CONST_OBJ.parse true, called also on MODEL.set(...)
 
 
 																						 /=+===============================+=\ 
@@ -167,48 +178,94 @@ MODEL_ATTR.parse(VAL[, OBJ])->VAL #Can be defined to modify success VAL of Backb
 																						 \=+===============================+=/
 
 
-Backbone.Collection.extend        #Returns a COLL, i.e. an array of MODEL:
-(COLL_ATTR[, CONST_ATTR])         #  - COLL_ATTR is mixed in COLL
-                                  #  - CONST_ATTR is mixed in COLL.constructor
-new Backbone.Collection
-(ATTR_OBJ_ARR, ...)               #Like Backbone.Collection.extend(...) but add some initial objects.
-COLL_ATTR.initialize(???)         #Called at creation
-COLL.clone()                      #
+Backbone.Collection               #Root COLL
 
-COLL_ATTR.model(ATTR_OBJ[, OBJ])  #Allows COLL.add|create|reset|set() to use ATTR_OBJ instead of MODEL as argument
-                                  #Must return a MODEL
-                                  #Is usually a MODEL_CONSTRUCTOR
+COLL_CONSTRUCTOR.extend           #Like MODEL except:
+(COLL_ATTR[, CONST_ATTR])         #  - represent an array of MODEL, so use MODEL[_ARR] instead of ATTR_OBJ
+new COLL_CONSTRUCTOR              #  - no COLL_ATTR.defaults
+([COLL_ELEM[_ARR][, OBJ]])        #  - new COLL_CONSTRUCTOR() OBJ:
+COLL_ATTR.initialize(...)         #      - can specify COLL_ATTR "known" attributes, i.e. model() and comparator
+COLL_ATTR.constructor()           #      - specifies default OBJ passed to most COLL function (e.g. COLL.add() OBJ.merge)
+COLL.clone()                      #      - is passed to new MODEL_CONSTRUCTOR() OBJ
+                                  #  - any MODEL event bubble up to their collection, e.g. "destroy", "change:VAR", "invalid"
+
+COLL_ELEM                         #Means MODEL|ATTR_OBJ:
+                                  #  - if ATTR_OBJ, call new MODEL_CONSTRUCTOR(ATTR_OBJ[, OBJ])
+                                  #  - MODEL_CONSTRUCTOR is COLL_ATTR.model() (def: Backbone.Model)
+COLL_ATTR.model(...)              #
 COLL.models                       #Internal MODEL_ARR
 MODEL.collection                  #COLL
-                                  #Those MODEL events bubble up to their collection: "destroy"
 
-COLL.add(MODEL[_ARR][, OBJ])      #Adds and returns MODEL[_ARR].
-                                  #Does not add duplicates (according to MODEL.id), but merge them if OBJ.merge true
-                                  #Adds at OBJ.at NUM (def: end)
-COLL.push(...)                    #Differences???
-COLL.unshift(...)                 #Like COLL.add(...) but at beginning
-COLL.remove(MODEL[_ARR][, OBJ])   #Removes and returns MODEL[_ARR]
+COLL.set(COLL_ELEM[_ARR][, OBJ])  #Compare each current element to COLL_ELEM[_ARR] (according to their MODEL.id) and:
+                                  #  - if current element same as COLL_ELEM[_ARR]:
+                                  #     - if OBJ.merge false, does nothing
+                                  #     - if OBJ.merge true (def), merges it.
+                                  #  - if current element but not in COLL_ELEM[ARR]:
+                                  #     - if OBJ.remove true (def): removes it.
+                                  #       Fires event remove(MODEL, COLL, OBJ), where OBJ.index NUM is the element index.
+                                  #  - if COLL_ELEM[ARR] but not in current elements:
+                                  #     - if OBJ.add true (def): adds it at position OBJ.at NUM (def: end)
+                                  #       Fires event add(MODEL, COLL, OBJ)
+                                  #Returns new MODEL_ARR.
+                                  #All COLL_ELEM[_ARR] must have MODEL.id if OBJ.remove|merge true
+COLL.reset([...])                 #Removes all models, then (if ...) calls and returns COLL.add(...).
+                                  #Similar to COLL.set() with OBJ.remove true, OBJ.add true and OBJ.merge false except:
+                                  #  - for big difference, faster
+                                  #  - different events: only fire event reset(COLL, OBJ), with OBJ.previousModels MODEL_ARR
+                                  #    set
+COLL.add(...)                     #Same as COLL.set(...) with different default OBJ.remove false
+COLL.push|unshift(...)            #Same as COLL.add(...) but with OBJ.at COLL.length|0
+COLL.remove                       #Removes and returns COLL_ELEM[_ARR] or VAL (i.e. MODEL.id|cid)
+(COLL_ELEM[_ARR]|VAL[,OBJ])       #Fires same event "remove" as COLL.set()
 COLL.pop|shift([OBJ])             #Same but for the last|first MODEL
-COLL.reset([...])                 #Removes all models, then (if ...) call COLL.add(...)
-COLL.set(...)                     #Differences???
+
 COLL.get(VAL)                     #Returns a MODEL, where VAL can be the MODEL.id, MODEL.cid or MODEL itself
-COLL.at(NUM)                      #Returns a MODEL
+                                  #Returns undefined if none found.
+COLL.at(NUM)                      #Returns a MODEL. Error if out-of-bound.
 COLL.slice(NUM[, NUM2])           #Same as ARR.slice(...) (including that it returns copy), but for COLL
 COLL.length                       #
+COLL.findWhere(...)               #Same as COLL.where(...)[0]
 
-COLL.sort()                       #Use MODEL.id
 COLL_ATTR.comparator(...)         #Is a LFUNC or FUNC(VAL, VAL2)->-1|0|1
                                   #If defined:
                                   #  - keep the collection sorted accordingly when models are changed, unless using 
                                   #    OBJ.sort false (to COLL.add(), etc.)
-                                  #  - used by COLL.sort()
-COLL.findWhere(...)               #Same as COLL.where(...).at(0)
+                                  #  - can manually sort with COLL.sort(). Only useful after OBJ.sort false has been used.
+                                  #  - each time it is sorted (automatically or with COLL.sort()), fire event sort(COLL, OBJ)
 
-COLL.toJSON(...)                  #
-COLL.sync(...)                    #
-COLL.parse(...)                   #Same as for MODEL.
-COLL.fetch(...)                   #Same as for MODEL. Also:
-                                  #  - can take same OBJ as COLL.add()
-                                  #  - can pass OBJ to COLL.sync() OBJ (same for MODEL.fetch()???)
-                                  #  - prefer COLL.reset() during initial page load
-COLL.create(MODEL[, OBJ])         #MODEL.save() then COLL.add(MODEL)
+COLL.toJSON(...)                  #Same as for MODEL (def: concanates all MODEL.toJSON(...))
+COLL.sync(...)                    #Same as for MODEL.
+COLL.fetch([OBJ])                 #Same as for MODEL but:
+                                  #  - calls and returns COLL.sync("read", COLL[, OBJ]), then do COLL.set(XHR_VAL[, OBJ]) or
+                                  #    (if OBJ.reset true) COLL.reset(XHR_VAL[, OBJ]).
+                                  #    Prefer OBJ.reset true during initial page load.
+                                  #  - events request|sync|error fired too, but first arg is COLL not MODEL
+COLL.create(COLL_ELEM[, OBJ])     #COLL.add(COLL_ELEM[, OBJ]) then MODEL.save() (or the other way around if OBJ.wait true)
+                                  #OBJ.success() is proxied like for COLL.fetch()
+COLL.parse(COLL_ELEM[_ARR][, OBJ])#Called on COLL.set(COLL_ELEM[_ARR], OBJ) when OBJ.parse true (def: false, except within
+                                  #COLL.fetch()), to modify the input COLL_ELEM[_ARR].
+                                  #If COLL.set() OBJ.parse true, will also call MODEL.parse() when a MODEL is updated 
+                                  #(with OBJ.merge true)
+
+
+																						 /=+===============================+=\ 
+																						/  :                               :  \  
+							 														  )==:            ROUTING            :==(   
+																						\  :_______________________________:  /    
+																						 \=+===============================+=/
+
+
+Backbone.history                  #HISTORY. Instance of Backbone.History.
+
+HISTORY.start([OBJ])              #Listen to routing events (in priority order):
+                                  #  - if OBJ.pushState BOOL true (def: false) and HTML 5 History API supported, listen
+                                  #    to window "popstate" event
+                                  #  - if OBJ.hashChange true (def), listen to window "hashchange" event
+                                  #  - otherwise, poll every OBJ.interval ms (def: 50)
+                                  #And call checkUrl()???
+                                  #Must be done once routes set up.
+                                  #Set HISTORY.started to true
+                                  #OBJ:
+                                  #  - root (def: "/")
+                                  #  - hashChange BOOL (def: true)
+                                  #  - pushState BOOL (def: false): use HTML5 History API
