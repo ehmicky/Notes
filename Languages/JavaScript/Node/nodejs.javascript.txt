@@ -666,10 +666,13 @@ TCPSERVER.listen                                #Makes the TCPSERVER:
                                                 #       already uses this port.
                                                 #  - listen to 'ADDR':
                                                 #     - def: INADDR_ANY, i.e. any available IP on the machine will work
-                                                #  - UINT: max number of pending connections:
-                                                #     - def: 511
+                                                #  - UINT:
+                                                #     - max number of pending connections, i.e. TCP sent SYN packet, but not
+                                                #       ACK yet.
+                                                #     - refuse connection if above max.
+                                                #     - def: 511 (which is pretty ok)
                                                 #     - OS limits are determined by sysctl settings like tcp_max_backlog
-                                                #       and somaxconn
+                                                #       and somaxconn (which is 511 in my system)
                                                 #  - FUNC is 'listening' event hander
                                                 #Can only be called once.
 TCPSERVER.listen('PATH'[, UINT][, FUNC()])      #Same but by explictely creating a socket at 'PATH' (should be in /tmp)
@@ -692,6 +695,7 @@ TCPSERVER.[un]ref()->TCPSERVER                  #The program will block until at
 TCPSERVER.on("connection", FUNC(TCPSOCKET))     #Fired when a TCP connection is initiated.
 TCPSERVER.on("error", FUNC(ERROR))              #Fired when connection problem. Will fire TCPSERVER.close()
 TCPSERVER.maxConnections                        #Def: null
+                                                #0|null means no limits.
                                                 #Above that, will refuse connections.
 TCPSERVER.getConnections([FUNC(ERROR, UINT)])   #Number of connections
 
@@ -734,12 +738,20 @@ TCPSOCKET.destroy([ERROR])                      #No more read|write. Only necess
 TCPSOCKET.destroyed                             #BOOL
 TCPSOCKET.[un]ref()->TCPSOCKET                  #Like TCPSERVER
 
-TCPSOCKET.setTimeout(UINT[, FUNC()])->TCPSOCKET #Trigger a timeout event after UINT ms of idleness (0 to disable (def)),
-                                                #a single time.
-                                                #Event handler can end|destroy()
+TCPSOCKET.setTimeout(UINT[, FUNC()])->TCPSOCKET #Emits timeout event after UINTms of idleness.
+                                                #0 (def) disables.
+                                                #By def, timeout handler does not do anything, but can end|destroy()
                                                 #FUNC is 'timeout' event handler
+                                                #Uses setTimeout(), i.e. done at macrotask level, i.e. might take longer than
+                                                #UINTms if long macrotasks.
 TCPSOCKET.on('timeout', FUNC())                 #
 TCPSOCKET.setKeepAlive(BOOL, UINT)->TCPSOCKET   #Def: false and 0.
+                                                #Everytime current socket sends data, give UINTms to other socket to send new
+                                                #data, otherwise close socket.
+                                                #E.g. for a HTTP server socket, client will keep connection if requests are
+                                                #done within UINTms of server response.
+                                                #Makes sense for HTTP/2 too, as HTTP/2 has only one multiplexed connection,
+                                                #but per top-level request only.
 TCPSOCKET.setNoDelay(BOOL)->TCPSOCKET           #If false (def), use buffers:
                                                 #  - to reduce amount of requests i.e. send data in chunks
                                                 #  - more efficient when using a lot of small requests, but can delay them
@@ -922,11 +934,15 @@ HTTPSERVER.on                                   #Fired on client request with Up
 ("upgrade", FUNC(REQ, TCPSOCKET, BUFFER))       #Client's body is in BUFFER.
 HTTPSERVER.on("clientError",FUNC(ERR,TCPSOCKET))#Fired on connection problem.
                                                 #Def: TCPSOCKET.destroy()
+
 HTTPSERVER.maxHeadersCount                      #Maximum number of headers incoming (def: 1000, 0 for unlim)
+HTTPSERVER.keepAliveTimeout                     #Do setKeepAlive(...) on all underlying TCPSOCKET, with def of 5000 (5 secs)
 HTTPSERVER.setTimeout(UINT[, FUNC()])           #Do setTimeout(...) on all underlying TCPSOCKET, with def of 120000 (2 mins)
 HTTPSERVER.timeout                              #Same
-HTTPSERVER.keepAliveTimeout                     #Def: 5000 (5 secs), to wait for new data, for closing TCPSOCKETs after server
-                                                #sent response
+REQ|RES.setTimeout(UINT[, FUNC()])
+REQ|RES.on("timeout", FUNC())
+CLIENTREQ.setTimeout|NoDelay|
+SocketKeepAlive(...)                            #Same for single REQ|RES|CLIENTREQ
 
 REQ                                             #ISTREAM, reading the body
 REQ.httpVersion[Major|Minor]                    #
@@ -942,7 +958,6 @@ REQ.rawHeaders                                  #As [ 'VAR', 'VAL', ... ]. Not n
 REQ.[raw]trailers                               #Same for trailer headers
 REQ.statusCode|Message                          #Only for CLIENTREQ's REQ
 REQ.socket                                      #TCPSOCKET
-REQ.setTimeout(UINT[, FUNC()])                  #Calls TCPSOCKET.setTimeout()
 REQ.flush()                                     #Send the headers right away, instead of trying to send in same TCP packet
                                                 #as body.
                                                 #Useful if headers are given quickly but body retrieval takes time.
@@ -969,8 +984,6 @@ RES.removeHeader('VAR')                         #
 RES.writeHead(STATUS_NUM[, 'STATUS_NAME'][,OBJ])#Sets RES.statusCode|Message|headers (must be done only once)
 RES.addTrailers(OBJ)                            #Add trailing header fields, i.e. between write() and end() of the body.
                                                 #Do not forget Trailer [C] at beginning of response
-RES.setTimeout(UINT[, FUNC()])                  #For the underlying TCPSOCKET.
-RES.on("timeout", FUNC())                       #See setTimeout()
 
 ON-FINISHED(REQ|RES, FUNC(ERROR, REQ|RES))     ##Fires FUNC() when it ended because of:
 ON-FINISHED.isFinished(REQ|RES)->BOOL          ##  - an ERROR, i.e. IOSTREAM events 'error'
@@ -1026,8 +1039,6 @@ CLIENTREQ.on
 CLIENTREQ.abort()                               #
 CLIENTREQ.on('abort', FUNC())                   #Aborted by client, i.e. CLIENTREQ.abort()
 CLIENTREQ.on('aborted', FUNC())                 #Aborted by server
-CLIENTREQ.setTimeout|NoDelay|
-SocketKeepAlive(...)                            #Do it on underlying TCPSOCKET.
 CLIENTREQ.flushHeaders()                        #Like REQ.flush()
 
 AGENT                                           #Socket pools manager for CLIENTREQ (not REQ|RES)
