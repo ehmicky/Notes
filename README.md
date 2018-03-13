@@ -1,22 +1,23 @@
 This repository contains notes I took when using diverse tools and reading IT-related articles, over the last 10 years.
 
 It should give a good idea of what I can work with, although it is primarly intended for my own usage.
-This covers:
-  - _[Languages](Architecture/Languages)_: [JavaScript](Architecture/Languages/JavaScript/JavaScript.language.txt) (including [ES6](Architecture/Languages/JavaScript/JavaScript.language.txt), [Node](Architecture/Networking/RPC/HTTP/Server/Framework/nodejs.javascript.txt), [DOM](Architecture/Languages/JavaScript/DOM/DOM.javascript.txt), [Web APIs](Architecture/Languages/JavaScript/DOM/DOM.javascript.txt)), [HTML](Architecture/Languages/HTML/HTML.language.txt), [CSS](Architecture/Languages/CSS/CSS.language.txt), [Bash](To_sort/Bash_Unix/Bash/bash.txt), [SQL](Architecture/State/Database/Relational/SQL/SQL.database.txt), [C](Architecture/Languages/C_C++/C.language.txt), [C++](Architecture/Languages/C_C++/C++.language.txt), [ASM x86](Architecture/Languages/x86), [R](Architecture/Languages/R.language.txt), [VBA](Architecture/Languages/VBA)
-     - _Transcompiled languages_: [CoffeeScript](Architecture/Languages/JavaScript/Transcompilation/coffeescript.language.txt), [Jade/Pug](Architecture/Languages/HTML/Transcompilation/jade.language.txt), [Sass](Architecture/Languages/CSS/Transcompilation/_sass.language.txt), [Less](Architecture/Languages/CSS/Transcompilation/_less.language.txt), [PostCSS](Architecture/Languages/CSS/Transcompilation/postcss.language.txt)
-  - _[Theory](Theory)_: [design patterns](Theory), [algorithms](Theory/Algorithms), [type theory](Theory/Types)
-  - _Procotols_: [HTTP](Architecture/Networking/RPC/HTTP/HTTP.protocol.txt) (including [REST](Architecture/Networking/RPC/HTTP)), [WebSocket](Functional_requirements/Realtime/WebSocket), [TCP](Architecture/Networking/Routing/TCP.protocol.txt)
-  - _Frameworks_: [Node](Architecture/Networking/RPC/HTTP/Server/Framework/nodejs.javascript.txt) (including [Express](Architecture/Networking/RPC/HTTP/Server/Framework/express.node.txt), [Sails](Architecture/Networking/RPC/HTTP/Server/Framework/sails.express.txt)), [React](Non_functional_requirements/Maintainability/Operability/Abstraction/MVC/Frameworks/View/React/react.javascript.txt), [Flux](Non_functional_requirements/Maintainability/Operability/Abstraction/MVC/Frameworks/State/Flux/flux.javascript.txt)/[Redux](Non_functional_requirements/Maintainability/Operability/Abstraction/MVC/Frameworks/State/Flux/Redux/redux.flux.txt), [Angular](Non_functional_requirements/Maintainability/Operability/Abstraction/MVC/Frameworks/Full/angular.javascript.txt), [Backbone](Non_functional_requirements/Maintainability/Operability/Abstraction/MVC/Frameworks/Full/Backbone/backbone_marionette.javascript.txt) (including [Marionette](Non_functional_requirements/Maintainability/Operability/Abstraction/MVC/Frameworks/Full/Backbone/backbone_marionette.javascript.txt))
-  - _[Databases](Architecture/State/Database)_: [PostgreSQL](Architecture/State/Database/Relational/SQL/SQL.database.txt), [MongoDB](Architecture/State/Database/Document_oriented/mongodb.database.txt), [Redis](Architecture/State/Database/Key_value/redis.database.txt)
-  - _[Platforms](Architecture/Platform)_: [mobile](Architecture/Platform/Mobile), [Chrome extensions](Architecture/Platform/Browser/Extensions/Chrome_extensions_apps.javascript.txt)
-  - _[Cloud](Architecture/Platform/Cloud)_: [AWS](Architecture/Platform/Cloud/IaaS/AWS.saas.txt)
-  - _[Testing](Non_functional_requirements/Quality/Stability/Testing)_: [unit](Non_functional_requirements/Quality/Stability/Testing/Unit_tests) ([Mocha](Non_functional_requirements/Quality/Stability/Testing/Test_runners/Unit_test_runner/mocha.node_cli.txt), [Jasmine](Non_functional_requirements/Quality/Stability/Testing/Test_runners/Unit_test_runner/_jasmine.node_cli.txt), [QUnit](Non_functional_requirements/Quality/Stability/Testing/Test_runners/Unit_test_runner/_qunit.cli.txt), [Karma](Non_functional_requirements/Quality/Stability/Testing/Test_runners/Full_runner/karma.cli.txt)), [browser](Non_functional_requirements/Quality/Stability/Testing/Browser_testing) ([Selenium](Non_functional_requirements/Quality/Stability/Testing/Browser_testing/Selenium)), [CSS](Non_functional_requirements/Quality/Stability/Testing/CSS), [performance](Non_functional_requirements/Quality/Stability/Testing/Performance), [stress](Non_functional_requirements/Quality/Stability/Testing/Stress)
-  - _[User experience](Non_functional_requirements/User_experience)_: [usability](Non_functional_requirements/User_experience/Usability), [design](Non_functional_requirements/User_experience/Design), [internationalization](Non_functional_requirements/User_experience/Internationalization), [accessibility](Non_functional_requirements/User_experience/Accessibility/accessibility.theory.txt)
-  - _[Performance](Non_functional_requirements/User_experience/Performance)_: [async](Non_functional_requirements/User_experience/Performance/Async), [caching](Non_functional_requirements/User_experience/Performance/Computation_reduction/Caching), [lazy loading](Non_functional_requirements/User_experience/Performance/Computation_reduction/Lazy_loading), [concurrency](Non_functional_requirements/User_experience/Performance/Concurrency), [compression](Non_functional_requirements/User_experience/Performance/Space_reduction/Compression), [minification](Non_functional_requirements/User_experience/Performance/Space_reduction/Minification)
-  - _[Quality](Non_functional_requirements/Quality)_: [monitoring](Non_functional_requirements/Quality/Monitoring), [security](Non_functional_requirements/Quality/Stability/Security), [validation](Non_functional_requirements/Quality/Stability/Validation), [high availability](Non_functional_requirements/Quality/Stability/Availability), [debugging](Non_functional_requirements/Quality/Vulnerability/Debugging)
-  - _[Ease to maintain](Non_functional_requirements/Maintainability)_: [functional programming](Non_functional_requirements/Maintainability/Operability/Abstraction/Functional), [static analysis](Non_functional_requirements/Maintainability/Operability/Static_analysis), [documenting](Non_functional_requirements/User_experience/Usability/Documenting)
-  - _[Automating](Non_functional_requirements/Maintainability/Operability/Automation)_: [build automation](Non_functional_requirements/Maintainability/Operability/Automation/Build_automation), [continuous integration](Non_functional_requirements/Maintainability/Operability/Automation/Continuous_integration)
-  - _Others_: [analytics](Functional_requirements/Analytics), [realtime](Functional_requirements/Realtime)
+This includes notably:
+  - _[Languages](Languages)_: [JavaScript](Languages/JavaScript) (including [ES6](Languages/Inter_language/Version_migration/JavaScript/babel.node_cli.txt), [Node](Languages/JavaScript/Node), [DOM](Platforms/Browser/DOM), [Web APIs](Platforms/Browser/DOM)), [HTML](Data/Markup/HTML), [CSS](Design/CSS), [PHP](Languages/PHP), [Bash](Languages/Bash), [SQL](State/Databases/Relational), [C](Languages/C), [C++](Languages/C++), [ASM x86](Languages/x86), [R](Languages/R), [VBA](Languages/VBA)
+     - _Transcompiled languages_: [CoffeeScript](Languages/JavaScript/JavaScript_core/Transpiler/coffeescript.language.txt), [Flow](Languages/JavaScript/JavaScript_core/Transpiler/flow.language.txt), [Jade/Pug](Data/Markup/HTML/Transpiler/jade.language.txt), [Sass](Languages/Language_processing/Post_processing/CSS/_sass.language.txt), [Less](Languages/Language_processing/Post_processing/CSS/_less.language.txt), [PostCSS](Languages/Language_processing/Post_processing/CSS/postcss.language.txt)
+  - _[Architecture](Architecture)_: [design patterns](Architecture/Code_design/Design_patterns), [algorithms](Architecture/Code_design/Algorithms), [type theory](Architecture/Code_design/Types), [requirements analysis](Architecture/Code_design/Requirements), [dependencies](Architecture/Dependencies), [async programming](Architecture/Async), [functional programming](Architecture/Functional)
+  - _[Networking](Networking)_: [HTTP](RPC/Inter_process/HTTP) (including [REST](RPC/Web_server)), [realtime](RPC/Realtime) (including [WebSocket](RPC/Realtime/WebSocket)), [TLS](Networking/Networking_procotols/SSL_TLS), [TCP](Networking/Networking_procotols/TCP), [DNS](Networking/Networking_procotols/DNS), [Load balancing](Networking/Networking_procotols/Load_balancing), [Proxies](Networking/Networking_procotols/Proxies)
+  - _Frameworks_: [Node](Languages/JavaScript/Node) (including [Express](RPC/Web_server/Web_framework/Minimalist/express.node.txt), [Sails](RPC/Web_server/Web_framework/Declarative/sails.express.txt), [Swagger](RPC/Web_server/REST_API_generation/Declarative_opiniated/swagger.http.txt)), [React](Languages/JavaScript/JavaScript_frameworks/View/One_way_data_binding/Virtual_DOM/React), [Flux](Languages/JavaScript/State_management/Flux)/[Redux](Languages/JavaScript/State_management/Flux/Redux), [Angular](Languages/JavaScript/JavaScript_frameworks/MVC/Opiniated/angular.javascript.txt), [Backbone](Languages/JavaScript/JavaScript_frameworks/MVC/Minimalistic/Backbone) (including [Marionette](Languages/JavaScript/JavaScript_frameworks/MVC/Minimalistic/Backbone))
+  - _[Data](Data)_: [PostgreSQL](Data/State/Databases/Relational/SQL.database.txt), [MongoDB](Data/State/Databases/Document_oriented/mongodb.database.txt), [Redis](Data/State/Databases/Key_value/Structured/redis.database.txt), [validation](Data/State/Validation)
+  - _[Platforms](Platforms)_: [mobile](Platforms/Mobile), [Chrome extensions](Platforms/Browser/Browser_extensions/Chrome/Chrome_extensions_apps.javascript.txt), [Headless browsers](Platforms/Browser/Headless_browser), [OS kernels theory](Platforms/Desktop/OS), [CLI applications](Platforms/Terminal/CLI)
+  - _[DevOps](DevOps)_: [Containers](DevOps/Virtualization/Containers) (including [Docker](DevOps/Virtualization/Containers/Core_abstraction/docker.cli.txt)), [Orchestration](DevOps/Supervision/Cluster_orchestration) (including [Kubernetes](DevOps/Supervision/Cluster_orchestration/kubernetes.cli.txt)), [AWS](DevOps/Infrastructure/IaaS/AWS.saas.txt), [Deployment](DevOps/Deployment/Deployment_general), [Continuous integration](DevOps/Deployment/Continuous_integration), [Configuration](DevOps/Configuration), 
+  - _[Testing](Dev_helpers/Quality_assurance/Testing)_: [test runners](Dev_helpers/Quality_assurance/Testing/Test_runners), [coverage](Dev_helpers/Quality_assurance/Testing/Coverage), [browser testing](Dev_helpers/Quality_assurance/Testing/Browser_testing), [CSS](Dev_helpers/Quality_assurance/Testing/Visual), [performance](Architecture/Performance/Performance_testing), [stress](Dev_helpers/Quality_assurance/Testing/Stress), [fuzz testing](Dev_helpers/Quality_assurance/Testing/Fuzz)
+  - _[User experience](UX)_: [patterns](UX), [design](Design), [internationalization](UX/Text/i18n), [accessibility](UX/Accessibility)
+  - _[Performance](Architecture/Performance)_: [caching](Architecture/Performance/Optimization/Caching), [lazy loading](Architecture/Performance/Optimization/Lazy_loading), [pooling](Architecture/Performance/Optimization/Pooling), [concurrency](Architecture/Async/Concurrency), [compression](Architecture/Performance/Compression), [minification](Languages/Language_processing/Minification), [memory management](Architecture/Performance/Memory_management)
+  - _[Security](Architecture/Performance/Memory_management)_: [authentication](Architecture/Security/Authentication), [authorization](Architecture/Security/Authorization), [cryptography](Architecture/Security/Authorization)
+  - _[Supervision](Dev_helpers/Insights)_: [logging](Dev_helpers/Insights/Logging), [monitoring](Dev_helpers/Insights/Monitoring), [debugging](Dev_helpers/Quality_assurance/Debugging), [analytics](UX/Behavior/Analytics)
+  - _[Code quality](Dev_helpers)_: [version control](Dev_helpers/Coding/Version_control), [documenting](Dev_helpers/Coding/Documentation), [coding style](Languages/Coding_style), [beautifying](Languages/Language_processing/Beautifiers), [static analysis](Languages/Static_analysis)  
+  - _[Automating](Dev_helpers/Automation)_: [build automation](Dev_helpers/Automation/Build_automation), [scaffolding](Dev_helpers/Automation/Scaffolding)
+  - _[Utilities](Utilities)_: [string manipulation](Utilities/Strings)
 
 # Size
 
@@ -30,10 +31,10 @@ Number of pages (if it were a printed book): 6424
 
 ### Async
 
-- __Concurrency__
-  - [concurring programming (Theory)](Architecture/Async/Concurrency/concurring_programming.theory.txt)
 - __Control flow__
   - [async (JavaScript)](Architecture/Async/Control_flow/async.javascript.txt)
+- __Concurrency__
+  - [concurring programming (Theory)](Architecture/Async/Concurrency/concurring_programming.theory.txt)
 - __Events__
   - [eventemitter2 (JavaScript)](Architecture/Async/Events/eventemitter2.javascript.txt)
   - [propagate (Node)](Architecture/Async/Events/propagate.node.txt)
@@ -75,23 +76,23 @@ Number of pages (if it were a printed book): 6424
   - [domain driven design (Theory)](Architecture/Code_design/Software_methodology/domain_driven_design.theory.txt)
   - [general programming (Theory)](Architecture/Code_design/Software_methodology/general_programming.theory.txt)
 - __Types__
+  - [object oriented (Theory)](Architecture/Code_design/Types/object_oriented.theory.txt)
   - [functions (Theory)](Architecture/Code_design/Types/functions.theory.txt)
   - [polymorphism (Theory)](Architecture/Code_design/Types/polymorphism.theory.txt)
-  - [object oriented (Theory)](Architecture/Code_design/Types/object_oriented.theory.txt)
   - [types (Theory)](Architecture/Code_design/Types/types.theory.txt)
 
 ### Dependencies
 
 - __Compatibility__
+  - [compatibility (Theory)](Architecture/Dependencies/Compatibility/compatibility.theory.txt)
   - __Versioning__
     - __Changelog__
       - __Generation__
-        - [headway (SaaS)](Architecture/Dependencies/Compatibility/Versioning/Changelog/Generation/headway.saas.txt)
         - [conventional changelog (Node)](Architecture/Dependencies/Compatibility/Versioning/Changelog/Generation/conventional_changelog.node.txt)
+        - [headway (SaaS)](Architecture/Dependencies/Compatibility/Versioning/Changelog/Generation/headway.saas.txt)
       - [changelog (Theory)](Architecture/Dependencies/Compatibility/Versioning/Changelog/changelog.theory.txt)
     - [versioning (Theory)](Architecture/Dependencies/Compatibility/Versioning/versioning.theory.txt)
   - [standards list (Theory)](Architecture/Dependencies/Compatibility/standards_list.theory.txt)
-  - [compatibility (Theory)](Architecture/Dependencies/Compatibility/compatibility.theory.txt)
 - __Dependency deprecation security__
   - __Deprecation security__
     - [gemnasium (SaaS)](Architecture/Dependencies/Dependency_deprecation_security/Deprecation_security/gemnasium.saas.txt)
@@ -116,86 +117,10 @@ Number of pages (if it were a printed book): 6424
 - __Immutable__
   - [immutable (JavaScript)](Architecture/Functional/Immutable/immutable.javascript.txt)
 - __Utilities__
-  - [clone_deep equal deep merge (Node)](Architecture/Functional/Utilities/clone_deep_equal_deep_merge.node.txt)
   - [recompose (React)](Architecture/Functional/Utilities/recompose.react.txt)
+  - [clone_deep equal deep merge (Node)](Architecture/Functional/Utilities/clone_deep_equal_deep_merge.node.txt)
   - [reselect (Node)](Architecture/Functional/Utilities/reselect.node.txt)
   - [underscore lodash immutable (JavaScript)](Architecture/Functional/Utilities/underscore_lodash_immutable.javascript.txt)
-
-### Security
-
-- __Authentication__
-  - __Common websites__
-    - [cognito (AWS)](Architecture/Security/Authentication/Common_websites/cognito.aws.txt)
-  - __Framework__
-    - [passport (Express)](Architecture/Security/Authentication/Framework/passport.express.txt)
-  - __HTTP__
-    - [web authentication (HTTP)](Architecture/Security/Authentication/HTTP/web_authentication.http.txt)
-  - __JWT__
-    - [jwt (Format)](Architecture/Security/Authentication/JWT/jwt.format.txt)
-    - [jws (Node)](Architecture/Security/Authentication/JWT/jws.node.txt)
-- __Authorization__
-  - __Framework__
-    - [connect-roles (Express)](Architecture/Security/Authorization/Framework/connect-roles.express.txt)
-    - [IAM STS (AWS)](Architecture/Security/Authorization/Framework/IAM_STS.aws.txt)
-  - __OAuth__
-    - __Client__
-      - [oauth (JavaScript)](Architecture/Security/Authorization/OAuth/Client/oauth.javascript.txt)
-    - __Server__
-      - [oauth2orize (Node)](Architecture/Security/Authorization/OAuth/Server/oauth2orize.node.txt)
-      - [passport-oauth2 (Express)](Architecture/Security/Authorization/OAuth/Server/passport-oauth2.express.txt)
-    - [oauth (Protocol)](Architecture/Security/Authorization/OAuth/oauth.protocol.txt)
-- __Cryptography__
-  - __Algorithm__
-    - __General__
-      - __Hash__
-        - [pwd (Node)](Architecture/Security/Cryptography/Algorithm/General/Hash/pwd.node.txt)
-        - [hash function (Theory)](Architecture/Security/Cryptography/Algorithm/General/Hash/hash_function.theory.txt)
-      - [block ciphers (Theory)](Architecture/Security/Cryptography/Algorithm/General/block_ciphers.theory.txt)
-      - [crypto padding (Theory)](Architecture/Security/Cryptography/Algorithm/General/crypto_padding.theory.txt)
-      - [stream ciphers (Theory)](Architecture/Security/Cryptography/Algorithm/General/stream_ciphers.theory.txt)
-      - [mac digital signature (Theory)](Architecture/Security/Cryptography/Algorithm/General/mac_digital_signature.theory.txt)
-    - __Specific__
-      - [algo mac (Theory)](Architecture/Security/Cryptography/Algorithm/Specific/algo_mac.theory.txt)
-      - [algos classiques (Theory)](Architecture/Security/Cryptography/Algorithm/Specific/algos_classiques.theory.txt)
-  - __Certifications__
-    - [certifications (Theory)](Architecture/Security/Cryptography/Certifications/certifications.theory.txt)
-  - __Checksum__
-    - [luhn (Format)](Architecture/Security/Cryptography/Checksum/luhn.format.txt)
-  - __Cryptanalyse__
-    - __Brute force__
-      - [express-brute (Express)](Architecture/Security/Cryptography/Cryptanalyse/Brute_force/express-brute.express.txt)
-    - [crypta attacks (Theory)](Architecture/Security/Cryptography/Cryptanalyse/crypta_attacks.theory.txt)
-    - [crypta classique attacks (Theory)](Architecture/Security/Cryptography/Cryptanalyse/crypta_classique_attacks.theory.txt)
-    - [cryptanalyse (Theory)](Architecture/Security/Cryptography/Cryptanalyse/cryptanalyse.theory.txt)
-  - __Email__
-    - [openPGP (GUI)](Architecture/Security/Cryptography/Email/openPGP.gui.txt)
-  - __History__
-    - [histoire crypto (Theory)](Architecture/Security/Cryptography/History/histoire_crypto.theory.txt)
-  - __Key__
-    - [keygrip (Node)](Architecture/Security/Cryptography/Key/keygrip.node.txt)
-    - [crypto key (Format)](Architecture/Security/Cryptography/Key/crypto_key.format.txt)
-  - __Legal__
-    - [crypto laws (Theory)](Architecture/Security/Cryptography/Legal/crypto_laws.theory.txt)
-  - __Theory__
-    - [asymetric crypto (Theory)](Architecture/Security/Cryptography/Theory/asymetric_crypto.theory.txt)
-    - [authentication (Theory)](Architecture/Security/Cryptography/Theory/authentication.theory.txt)
-    - [crypto goals (Theory)](Architecture/Security/Cryptography/Theory/crypto_goals.theory.txt)
-    - [crypto general (Theory)](Architecture/Security/Cryptography/Theory/crypto_general.theory.txt)
-    - [crypto hardware (Theory)](Architecture/Security/Cryptography/Theory/crypto_hardware.theory.txt)
-    - [crypto systems (Theory)](Architecture/Security/Cryptography/Theory/crypto_systems.theory.txt)
-    - [information security (Theory)](Architecture/Security/Cryptography/Theory/information_security.theory.txt)
-    - [random (Theory)](Architecture/Security/Cryptography/Theory/random.theory.txt)
-- __Security general__
-  - __Sanitization__
-    - [sprintf.js (JavaScript)](Architecture/Security/Security_general/Sanitization/sprintf.js.javascript.txt)
-  - __Web__
-    - [Web security (Theory)](Architecture/Security/Security_general/Web/Web_security.theory.txt)
-    - [cors (Express)](Architecture/Security/Security_general/Web/cors.express.txt)
-    - [csurf (Express)](Architecture/Security/Security_general/Web/csurf.express.txt)
-    - [helmet (Express)](Architecture/Security/Security_general/Web/helmet.express.txt)
-- __Steganography__
-  - [steganography (Theory)](Architecture/Security/Steganography/steganography.theory.txt)
-  - [stego logiciels (CLI GUI)](Architecture/Security/Steganography/stego_logiciels.cli_gui.txt)
 
 ### Performance
 
@@ -218,11 +143,11 @@ Number of pages (if it were a printed book): 6424
 - __Optimization__
   - __Caching__
     - __HTTP__
-      - __Unconditional__
-        - [versionator (Express)](Architecture/Performance/Optimization/Caching/HTTP/Unconditional/versionator.express.txt)
       - __Conditional__
         - [etag (Node)](Architecture/Performance/Optimization/Caching/HTTP/Conditional/etag.node.txt)
         - [fresh (Node)](Architecture/Performance/Optimization/Caching/HTTP/Conditional/fresh.node.txt)
+      - __Unconditional__
+        - [versionator (Express)](Architecture/Performance/Optimization/Caching/HTTP/Unconditional/versionator.express.txt)
     - __LRU__
       - [lru-cache (Node)](Architecture/Performance/Optimization/Caching/LRU/lru-cache.node.txt)
   - __Lazy loading__
@@ -231,8 +156,8 @@ Number of pages (if it were a printed book): 6424
     - __Infinite scrolling__
       - [nginfinitescroll (Angular)](Architecture/Performance/Optimization/Lazy_loading/Infinite_scrolling/nginfinitescroll.angular.txt)
     - __Pagination__
-      - [express-paginate (Express)](Architecture/Performance/Optimization/Lazy_loading/Pagination/express-paginate.express.txt)
       - [jquery-bootstrap-pagination (Bootstrap)](Architecture/Performance/Optimization/Lazy_loading/Pagination/jquery-bootstrap-pagination.bootstrap.txt)
+      - [express-paginate (Express)](Architecture/Performance/Optimization/Lazy_loading/Pagination/express-paginate.express.txt)
   - __Pooling__
     - [generic-pool (Node)](Architecture/Performance/Optimization/Pooling/generic-pool.node.txt)
   - __Timeout__
@@ -247,28 +172,81 @@ Number of pages (if it were a printed book): 6424
     - [tsung (CLI)](Architecture/Performance/Performance_testing/Load_testing/tsung.cli.txt)
 - [performance (Theory)](Architecture/Performance/performance.theory.txt)
 
-## Business
+### Security
 
-### Law
-
-- [licences (Theory)](Business/Law/licences.theory.txt)
-
-### Office
-
-- __Project management__
-  - [Pivotal Tracker (SaaS)](Business/Office/Project_management/Pivotal Tracker.saas.txt)
-  - [project management (Theory)](Business/Office/Project_management/project_management.theory.txt)
-- __Team management__
-  - [team management (Theory)](Business/Office/Team_management/team_management.theory.txt)
-  - [people management (Theory)](Business/Office/Team_management/people_management.theory.txt)
-
-### Promotion
-
-- __Ads__
-  - __Badges__
-    - [shields.io (Images)](Business/Promotion/Ads/Badges/shields.io.images.txt)
-- __SEO__
-  - [SEO (Theory)](Business/Promotion/SEO/SEO.theory.txt)
+- __Authentication__
+  - __Common websites__
+    - [cognito (AWS)](Architecture/Security/Authentication/Common_websites/cognito.aws.txt)
+  - __Framework__
+    - [passport (Express)](Architecture/Security/Authentication/Framework/passport.express.txt)
+  - __HTTP__
+    - [web authentication (HTTP)](Architecture/Security/Authentication/HTTP/web_authentication.http.txt)
+  - __JWT__
+    - [jwt (Format)](Architecture/Security/Authentication/JWT/jwt.format.txt)
+    - [jws (Node)](Architecture/Security/Authentication/JWT/jws.node.txt)
+- __Authorization__
+  - __Framework__
+    - [IAM STS (AWS)](Architecture/Security/Authorization/Framework/IAM_STS.aws.txt)
+    - [connect-roles (Express)](Architecture/Security/Authorization/Framework/connect-roles.express.txt)
+  - __OAuth__
+    - __Client__
+      - [oauth (JavaScript)](Architecture/Security/Authorization/OAuth/Client/oauth.javascript.txt)
+    - __Server__
+      - [oauth2orize (Node)](Architecture/Security/Authorization/OAuth/Server/oauth2orize.node.txt)
+      - [passport-oauth2 (Express)](Architecture/Security/Authorization/OAuth/Server/passport-oauth2.express.txt)
+    - [oauth (Protocol)](Architecture/Security/Authorization/OAuth/oauth.protocol.txt)
+- __Cryptography__
+  - __Algorithm__
+    - __General__
+      - [block ciphers (Theory)](Architecture/Security/Cryptography/Algorithm/General/block_ciphers.theory.txt)
+      - __Hash__
+        - [hash function (Theory)](Architecture/Security/Cryptography/Algorithm/General/Hash/hash_function.theory.txt)
+        - [pwd (Node)](Architecture/Security/Cryptography/Algorithm/General/Hash/pwd.node.txt)
+      - [mac digital signature (Theory)](Architecture/Security/Cryptography/Algorithm/General/mac_digital_signature.theory.txt)
+      - [crypto padding (Theory)](Architecture/Security/Cryptography/Algorithm/General/crypto_padding.theory.txt)
+      - [stream ciphers (Theory)](Architecture/Security/Cryptography/Algorithm/General/stream_ciphers.theory.txt)
+    - __Specific__
+      - [algo mac (Theory)](Architecture/Security/Cryptography/Algorithm/Specific/algo_mac.theory.txt)
+      - [algos classiques (Theory)](Architecture/Security/Cryptography/Algorithm/Specific/algos_classiques.theory.txt)
+  - __Certifications__
+    - [certifications (Theory)](Architecture/Security/Cryptography/Certifications/certifications.theory.txt)
+  - __Checksum__
+    - [luhn (Format)](Architecture/Security/Cryptography/Checksum/luhn.format.txt)
+  - __Cryptanalyse__
+    - __Brute force__
+      - [express-brute (Express)](Architecture/Security/Cryptography/Cryptanalyse/Brute_force/express-brute.express.txt)
+    - [crypta attacks (Theory)](Architecture/Security/Cryptography/Cryptanalyse/crypta_attacks.theory.txt)
+    - [crypta classique attacks (Theory)](Architecture/Security/Cryptography/Cryptanalyse/crypta_classique_attacks.theory.txt)
+    - [cryptanalyse (Theory)](Architecture/Security/Cryptography/Cryptanalyse/cryptanalyse.theory.txt)
+  - __Email__
+    - [openPGP (GUI)](Architecture/Security/Cryptography/Email/openPGP.gui.txt)
+  - __History__
+    - [histoire crypto (Theory)](Architecture/Security/Cryptography/History/histoire_crypto.theory.txt)
+  - __Key__
+    - [crypto key (Format)](Architecture/Security/Cryptography/Key/crypto_key.format.txt)
+    - [keygrip (Node)](Architecture/Security/Cryptography/Key/keygrip.node.txt)
+  - __Legal__
+    - [crypto laws (Theory)](Architecture/Security/Cryptography/Legal/crypto_laws.theory.txt)
+  - __Theory__
+    - [asymetric crypto (Theory)](Architecture/Security/Cryptography/Theory/asymetric_crypto.theory.txt)
+    - [crypto general (Theory)](Architecture/Security/Cryptography/Theory/crypto_general.theory.txt)
+    - [authentication (Theory)](Architecture/Security/Cryptography/Theory/authentication.theory.txt)
+    - [crypto goals (Theory)](Architecture/Security/Cryptography/Theory/crypto_goals.theory.txt)
+    - [crypto hardware (Theory)](Architecture/Security/Cryptography/Theory/crypto_hardware.theory.txt)
+    - [crypto systems (Theory)](Architecture/Security/Cryptography/Theory/crypto_systems.theory.txt)
+    - [information security (Theory)](Architecture/Security/Cryptography/Theory/information_security.theory.txt)
+    - [random (Theory)](Architecture/Security/Cryptography/Theory/random.theory.txt)
+- __Security general__
+  - __Sanitization__
+    - [sprintf.js (JavaScript)](Architecture/Security/Security_general/Sanitization/sprintf.js.javascript.txt)
+  - __Web__
+    - [Web security (Theory)](Architecture/Security/Security_general/Web/Web_security.theory.txt)
+    - [cors (Express)](Architecture/Security/Security_general/Web/cors.express.txt)
+    - [csurf (Express)](Architecture/Security/Security_general/Web/csurf.express.txt)
+    - [helmet (Express)](Architecture/Security/Security_general/Web/helmet.express.txt)
+- __Steganography__
+  - [steganography (Theory)](Architecture/Security/Steganography/steganography.theory.txt)
+  - [stego logiciels (CLI GUI)](Architecture/Security/Steganography/stego_logiciels.cli_gui.txt)
 
 ## Communication
 
@@ -277,6 +255,29 @@ Number of pages (if it were a printed book): 6424
 - __Chat__
   - __General__
     - [gitter.im (SaaS)](Communication/Messaging/Chat/General/gitter.im.saas.txt)
+
+## Business
+
+### Law
+
+- [licences (Theory)](Business/Law/licences.theory.txt)
+
+### Office
+
+- __Team management__
+  - [people management (Theory)](Business/Office/Team_management/people_management.theory.txt)
+  - [team management (Theory)](Business/Office/Team_management/team_management.theory.txt)
+- __Project management__
+  - [project management (Theory)](Business/Office/Project_management/project_management.theory.txt)
+  - [Pivotal Tracker (SaaS)](Business/Office/Project_management/Pivotal Tracker.saas.txt)
+
+### Promotion
+
+- __Ads__
+  - __Badges__
+    - [shields.io (Images)](Business/Promotion/Ads/Badges/shields.io.images.txt)
+- __SEO__
+  - [SEO (Theory)](Business/Promotion/SEO/SEO.theory.txt)
 
 ## Data
 
@@ -318,8 +319,8 @@ Number of pages (if it were a printed book): 6424
 
 - __CSV__
   - __Syntax__
-    - [dsv tsv csv (Format)](Data/Serialization/CSV/Syntax/dsv_tsv_csv.format.txt)
     - [csv (Node)](Data/Serialization/CSV/Syntax/csv.node.txt)
+    - [dsv tsv csv (Format)](Data/Serialization/CSV/Syntax/dsv_tsv_csv.format.txt)
 - __Excel__
   - __Parsing serializing__
     - [xlsx (JavaScript)](Data/Serialization/Excel/Parsing_serializing/xlsx.javascript.txt)
@@ -341,10 +342,10 @@ Number of pages (if it were a printed book): 6424
     - __Session__
       - [express-session (Express)](Data/State/Client_server_state/Cookies/Session/express-session.express.txt)
     - __Parsing__
-      - [js-cookie (JavaScript)](Data/State/Client_server_state/Cookies/Parsing/js-cookie.javascript.txt)
       - [cookie-parser (Express)](Data/State/Client_server_state/Cookies/Parsing/cookie-parser.express.txt)
-      - [jquery-cookie (jQuery)](Data/State/Client_server_state/Cookies/Parsing/_jquery-cookie.jquery.txt)
       - [cookie (Node)](Data/State/Client_server_state/Cookies/Parsing/_cookie.node.txt)
+      - [jquery-cookie (jQuery)](Data/State/Client_server_state/Cookies/Parsing/_jquery-cookie.jquery.txt)
+      - [js-cookie (JavaScript)](Data/State/Client_server_state/Cookies/Parsing/js-cookie.javascript.txt)
   - __General__
     - [connect-flash (Express)](Data/State/Client_server_state/General/connect-flash.express.txt)
     - [express-state (Express)](Data/State/Client_server_state/General/express-state.express.txt)
@@ -355,8 +356,8 @@ Number of pages (if it were a printed book): 6424
     - [mongodb (Database)](Data/State/Databases/Document_oriented/mongodb.database.txt)
   - __Key value__
     - __Structured__
-      - [elasticache (Database)](Data/State/Databases/Key_value/Structured/elasticache.database.txt)
       - [redis (Database)](Data/State/Databases/Key_value/Structured/redis.database.txt)
+      - [elasticache (Database)](Data/State/Databases/Key_value/Structured/elasticache.database.txt)
   - __ORM__
     - __Many types__
       - [waterline (Node)](Data/State/Databases/ORM/Many_types/waterline.node.txt)
@@ -375,24 +376,24 @@ Number of pages (if it were a printed book): 6424
   - __Full-content__
     - [data uri (Identifier)](Data/State/Identifiers/Full-content/data_uri.identifier.txt)
   - __Hash__
-    - [ni (Identifier)](Data/State/Identifiers/Hash/ni.identifier.txt)
     - [sigmund (Node)](Data/State/Identifiers/Hash/sigmund.node.txt)
+    - [ni (Identifier)](Data/State/Identifiers/Hash/ni.identifier.txt)
   - __Human-friendly__
     - [nih (Identifier)](Data/State/Identifiers/Human-friendly/nih.identifier.txt)
     - [tag (Identifier)](Data/State/Identifiers/Human-friendly/tag.identifier.txt)
   - __Others__
-    - [oid (Identifier)](Data/State/Identifiers/Others/oid.identifier.txt)
     - [doi (Identifier)](Data/State/Identifiers/Others/doi.identifier.txt)
+    - [oid (Identifier)](Data/State/Identifiers/Others/oid.identifier.txt)
     - [publicid fpi (Identifier)](Data/State/Identifiers/Others/publicid_fpi.identifier.txt)
     - [urn (Identifier)](Data/State/Identifiers/Others/urn.identifier.txt)
   - __URI__
+    - __Templates__
+      - [uri-templates (JavaScript)](Data/State/Identifiers/URI/Templates/uri-templates.javascript.txt)
     - __Manipulation__
       - [uri.js (JavaScript)](Data/State/Identifiers/URI/Manipulation/uri.js.javascript.txt)
       - __Query string__
         - [qs (Node)](Data/State/Identifiers/URI/Manipulation/Query_string/qs.node.txt)
     - [URI (Identifier)](Data/State/Identifiers/URI/URI.identifier.txt)
-    - __Templates__
-      - [uri-templates (JavaScript)](Data/State/Identifiers/URI/Templates/uri-templates.javascript.txt)
   - [identifiers (Summary)](Data/State/Identifiers/identifiers.summary.txt)
   - [web architecture (Theory)](Data/State/Identifiers/web_architecture.theory.txt)
 - __Validation__
@@ -427,6 +428,331 @@ Number of pages (if it were a printed book): 6424
   - [statistics theory (Theory)](Data_science/Computation/Statistics/statistics_theory.theory.txt)
   - [survey (Theory)](Data_science/Computation/Statistics/survey.theory.txt)
 
+## Design
+
+### CSS
+
+- __General__
+  - [CSS (Language)](Design/CSS/General/CSS.language.txt)
+  - __CSS in JavaScript__
+    - [cssx (JavaScript)](Design/CSS/General/CSS_in_JavaScript/cssx.javascript.txt)
+    - [jss (JavaScript)](Design/CSS/General/CSS_in_JavaScript/jss.javascript.txt)
+    - [aphrodite (JavaScript)](Design/CSS/General/CSS_in_JavaScript/_aphrodite.javascript.txt)
+    - [react-css (React)](Design/CSS/General/CSS_in_JavaScript/react-css.react.txt)
+
+### Visual
+
+- __Animations__
+  - __Specific animations__
+    - __General__
+      - [animate.css (CSS)](Design/Visual/Animations/Specific_animations/General/animate.css.css.txt)
+- __Typography__
+  - [typography (Theory)](Design/Visual/Typography/typography.theory.txt)
+
+## Dev helpers
+
+### Automation
+
+- __Build automation__
+  - __Autotools__
+    - [autotools (CLI)](Dev_helpers/Automation/Build_automation/Autotools/autotools.cli.txt)
+    - [make (CLI)](Dev_helpers/Automation/Build_automation/Autotools/make.cli.txt)
+  - [grunt (JavaScript)](Dev_helpers/Automation/Build_automation/_grunt.javascript.txt)
+  - [cmake (CLI)](Dev_helpers/Automation/Build_automation/cmake.cli.txt)
+  - [gulp (JavaScript)](Dev_helpers/Automation/Build_automation/gulp.javascript.txt)
+- __Desktop automation__
+  - __Screenshots__
+    - [webshot (Node)](Dev_helpers/Automation/Desktop_automation/Screenshots/webshot.node.txt)
+  - [copy-paste (Node)](Dev_helpers/Automation/Desktop_automation/copy-paste.node.txt)
+  - [open (Node)](Dev_helpers/Automation/Desktop_automation/open.node.txt)
+- __Live reloading__
+  - [livereload (Node)](Dev_helpers/Automation/Live_reloading/livereload.node.txt)
+  - [nodemon (Node)](Dev_helpers/Automation/Live_reloading/nodemon.node.txt)
+- __Scaffolding__
+  - [yeoman (CLI)](Dev_helpers/Automation/Scaffolding/yeoman.cli.txt)
+
+### Coding
+
+- __Documentation__
+  - __From comments__
+    - [jsdoc (JavaScript)](Dev_helpers/Coding/Documentation/From_comments/jsdoc.javascript.txt)
+    - [doxygen (Many)](Dev_helpers/Coding/Documentation/From_comments/doxygen.many.txt)
+  - __UI component__
+    - __Tutorial__
+      - [torturial (jQuery)](Dev_helpers/Coding/Documentation/UI_component/Tutorial/torturial.jquery.txt)
+- __Source code__
+  - [organisation sources (Theory)](Dev_helpers/Coding/Source_code/organisation_sources.theory.txt)
+- __Version control__
+  - __Git__
+    - [VCS (Theory)](Dev_helpers/Coding/Version_control/Git/VCS.theory.txt)
+    - [git (CLI)](Dev_helpers/Coding/Version_control/Git/git.cli.txt)
+  - __GitHub__
+    - [github (SaaS)](Dev_helpers/Coding/Version_control/GitHub/github.saas.txt)
+
+### Insights
+
+- __Logging__
+  - __Aggregator__
+    - [cloudwatch logs (AWS)](Dev_helpers/Insights/Logging/Aggregator/cloudwatch_logs.aws.txt)
+  - __Automatic logging__
+    - __Errors__
+      - [errorhandler (Express)](Dev_helpers/Insights/Logging/Automatic_logging/Errors/errorhandler.express.txt)
+    - __Network interaction__
+      - [cloudtrail (AWS)](Dev_helpers/Insights/Logging/Automatic_logging/Network_interaction/cloudtrail.aws.txt)
+  - __Beautifying__
+    - [createerror (Node)](Dev_helpers/Insights/Logging/Beautifying/createerror.node.txt)
+  - __Logger__
+    - __Server side__
+      - [log4js (Node)](Dev_helpers/Insights/Logging/Logger/Server_side/_log4js.node.txt)
+      - [morgan (Express)](Dev_helpers/Insights/Logging/Logger/Server_side/_morgan.express.txt)
+      - [debug (Node)](Dev_helpers/Insights/Logging/Logger/Server_side/debug.node.txt)
+      - [winston (Node)](Dev_helpers/Insights/Logging/Logger/Server_side/winston.node.txt)
+- __Monitoring__
+  - __Custom metrics__
+    - __Alerting__
+      - [vitalsigns (Node)](Dev_helpers/Insights/Monitoring/Custom_metrics/Alerting/vitalsigns.node.txt)
+  - __Host metrics__
+    - __Collecting dashboard__
+      - [cloudwatch (AWS)](Dev_helpers/Insights/Monitoring/Host_metrics/Collecting_dashboard/cloudwatch.aws.txt)
+
+### Quality assurance
+
+- __Debugging__
+  - __General debugger__
+    - __Server side__
+      - [gdb (C C++ x86)](Dev_helpers/Quality_assurance/Debugging/General_debugger/Server_side/gdb.c_c++_x86.txt)
+      - [express-debug (Express)](Dev_helpers/Quality_assurance/Debugging/General_debugger/Server_side/express-debug.express.txt)
+      - [bashdb (C C++ x86)](Dev_helpers/Quality_assurance/Debugging/General_debugger/Server_side/bashdb.c_c++_x86.txt)
+      - [nm (x86)](Dev_helpers/Quality_assurance/Debugging/General_debugger/Server_side/nm.x86.txt)
+      - [xdebug (PHP)](Dev_helpers/Quality_assurance/Debugging/General_debugger/Server_side/xdebug.php.txt)
+    - __Browser__
+      - [redux-devtools (Redux)](Dev_helpers/Quality_assurance/Debugging/General_debugger/Browser/redux-devtools.redux.txt)
+      - [react-devtools (React)](Dev_helpers/Quality_assurance/Debugging/General_debugger/Browser/react-devtools.react.txt)
+      - [about (Identifier)](Dev_helpers/Quality_assurance/Debugging/General_debugger/Browser/about.identifier.txt)
+      - [view-source (Identifier)](Dev_helpers/Quality_assurance/Debugging/General_debugger/Browser/view-source.identifier.txt)
+- __Testing__
+  - __Assertions__
+    - [chai (Node)](Dev_helpers/Quality_assurance/Testing/Assertions/chai.node.txt)
+    - __HTTP__
+      - [supertest (Node)](Dev_helpers/Quality_assurance/Testing/Assertions/HTTP/supertest.node.txt)
+  - __Browser testing__
+    - __Selenium__
+      - __Runner__
+        - [browserstack (SaaS)](Dev_helpers/Quality_assurance/Testing/Browser_testing/Selenium/Runner/browserstack.saas.txt)
+        - [saucelabs (SaaS)](Dev_helpers/Quality_assurance/Testing/Browser_testing/Selenium/Runner/saucelabs.saas.txt)
+        - [selenium webdriver (CLI)](Dev_helpers/Quality_assurance/Testing/Browser_testing/Selenium/Runner/selenium_webdriver.cli.txt)
+      - __Client__
+        - [selenium-webdriver (Node)](Dev_helpers/Quality_assurance/Testing/Browser_testing/Selenium/Client/selenium-webdriver.node.txt)
+        - [wd.js (Node)](Dev_helpers/Quality_assurance/Testing/Browser_testing/Selenium/Client/wd.js.node.txt)
+  - __Coverage__
+    - [coveralls (SaaS)](Dev_helpers/Quality_assurance/Testing/Coverage/coveralls.saas.txt)
+    - [istanbul (Node CLI)](Dev_helpers/Quality_assurance/Testing/Coverage/istanbul.node_cli.txt)
+  - __Data-driven__
+    - [faker.js (JavaScript)](Dev_helpers/Quality_assurance/Testing/Data-driven/faker.js.javascript.txt)
+  - __Fuzz__
+    - [big-list-of-naughty-strings (JSON TXT)](Dev_helpers/Quality_assurance/Testing/Fuzz/big-list-of-naughty-strings.json_txt.txt)
+  - __Mocking__
+    - __Specific framework__
+      - [enzyme (React)](Dev_helpers/Quality_assurance/Testing/Mocking/Specific_framework/enzyme.react.txt)
+    - __Stubs spies__
+      - [sinon (Node)](Dev_helpers/Quality_assurance/Testing/Mocking/Stubs_spies/sinon.node.txt)
+    - __HTTP__
+      - __Server side__
+        - __Request response__
+          - [node-mocks-http (Node)](Dev_helpers/Quality_assurance/Testing/Mocking/HTTP/Server_side/Request_response/node-mocks-http.node.txt)
+        - __Response__
+          - [nock (Node)](Dev_helpers/Quality_assurance/Testing/Mocking/HTTP/Server_side/Response/nock.node.txt)
+    - __Module loading__
+      - [jest (Jasmine)](Dev_helpers/Quality_assurance/Testing/Mocking/Module_loading/jest.jasmine.txt)
+  - __Stress__
+    - [gremlins.js (JavaScript)](Dev_helpers/Quality_assurance/Testing/Stress/gremlins.js.javascript.txt)
+  - __Test framework__
+    - [karma (CLI)](Dev_helpers/Quality_assurance/Testing/Test_framework/karma.cli.txt)
+  - __Test runners__
+    - [mocha (Node CLI)](Dev_helpers/Quality_assurance/Testing/Test_runners/mocha.node_cli.txt)
+    - [jasmine (Node CLI)](Dev_helpers/Quality_assurance/Testing/Test_runners/_jasmine.node_cli.txt)
+    - [qunit (CLI)](Dev_helpers/Quality_assurance/Testing/Test_runners/_qunit.cli.txt)
+  - __Visual__
+    - [wraith (Node)](Dev_helpers/Quality_assurance/Testing/Visual/_wraith.node.txt)
+    - [phantomcss (Node)](Dev_helpers/Quality_assurance/Testing/Visual/_phantomcss.node.txt)
+    - [argus-eyes (CLI)](Dev_helpers/Quality_assurance/Testing/Visual/argus-eyes.cli.txt)
+  - [testing (Summary)](Dev_helpers/Quality_assurance/Testing/testing.summary.txt)
+  - [testing (Theory)](Dev_helpers/Quality_assurance/Testing/testing.theory.txt)
+
+## Languages
+
+### C
+
+- [C (Language)](Languages/C/C.language.txt)
+- __Compiling__
+  - __gcc__
+    - [feature test macro (CLI)](Languages/C/Compiling/gcc/feature_test_macro.cli.txt)
+    - [gcc optimization (CLI)](Languages/C/Compiling/gcc/gcc_optimization.cli.txt)
+    - [gcc (CLI)](Languages/C/Compiling/gcc/gcc.cli.txt)
+    - [cpp (CLI)](Languages/C/Compiling/gcc/cpp.cli.txt)
+- [shared libraries (Theory)](Languages/C/shared_libraries.theory.txt)
+
+### C++
+
+- [C++ (Language)](Languages/C++/C++.language.txt)
+
+### Coding style
+
+- __Linting__
+  - __CSS__
+    - [immutable-css (Node CLI)](Languages/Coding_style/Linting/CSS/immutable-css.node_cli.txt)
+    - [csslint (Node CLI)](Languages/Coding_style/Linting/CSS/csslint.node_cli.txt)
+    - [postcss-bem-linter (PostCSS)](Languages/Coding_style/Linting/CSS/postcss-bem-linter.postcss.txt)
+    - [scss-lint (CLI)](Languages/Coding_style/Linting/CSS/scss-lint.cli.txt)
+    - [stylelint (Node CLI)](Languages/Coding_style/Linting/CSS/stylelint.node_cli.txt)
+  - __CoffeeScript__
+    - [coffeelint (CoffeeScript)](Languages/Coding_style/Linting/CoffeeScript/coffeelint.coffeescript.txt)
+  - __HTML__
+    - [htmlhint (Node CLI)](Languages/Coding_style/Linting/HTML/htmlhint.node_cli.txt)
+    - [nu html checker (CLI)](Languages/Coding_style/Linting/HTML/nu_html_checker.cli.txt)
+  - __JavaScript__
+    - [w3cjs (Node)](Languages/Coding_style/Linting/JavaScript/w3cjs.node.txt)
+    - [jshint (Node CLI)](Languages/Coding_style/Linting/JavaScript/jshint.node_cli.txt)
+  - __JavaScript CSS__
+    - [hound (SaaS)](Languages/Coding_style/Linting/JavaScript_CSS/hound.saas.txt)
+
+### Go
+
+- [go (Language)](Languages/Go/go.language.txt)
+
+### Inter language
+
+- __Version migration__
+  - __JavaScript__
+    - [babel (Node CLI)](Languages/Inter_language/Version_migration/JavaScript/babel.node_cli.txt)
+
+### JavaScript
+
+- __Data binding__
+  - [stickit (Backbone)](Languages/JavaScript/Data_binding/stickit.backbone.txt)
+- __JavaScript core__
+  - [JavaScript (Language)](Languages/JavaScript/JavaScript_core/JavaScript.language.txt)
+  - __Transpiler__
+    - [flow (Language)](Languages/JavaScript/JavaScript_core/Transpiler/flow.language.txt)
+    - [coffeescript (Language)](Languages/JavaScript/JavaScript_core/Transpiler/coffeescript.language.txt)
+- __JavaScript frameworks__
+  - __MVC__
+    - __Opiniated__
+      - [angular (JavaScript)](Languages/JavaScript/JavaScript_frameworks/MVC/Opiniated/angular.javascript.txt)
+    - __Minimalistic__
+      - __Backbone__
+        - [backbone.collectionsubset (Backbone)](Languages/JavaScript/JavaScript_frameworks/MVC/Minimalistic/Backbone/backbone.collectionsubset.backbone.txt)
+        - [backbone marionette (JavaScript)](Languages/JavaScript/JavaScript_frameworks/MVC/Minimalistic/Backbone/backbone_marionette.javascript.txt)
+  - __View__
+    - __One way data binding__
+      - __Virtual DOM__
+        - __React__
+          - [react-engine (React)](Languages/JavaScript/JavaScript_frameworks/View/One_way_data_binding/Virtual_DOM/React/react-engine.react.txt)
+          - [backbone-react-component (React)](Languages/JavaScript/JavaScript_frameworks/View/One_way_data_binding/Virtual_DOM/React/backbone-react-component.react.txt)
+          - [react (JavaScript)](Languages/JavaScript/JavaScript_frameworks/View/One_way_data_binding/Virtual_DOM/React/react.javascript.txt)
+          - [react-helmet (React)](Languages/JavaScript/JavaScript_frameworks/View/One_way_data_binding/Virtual_DOM/React/react-helmet.react.txt)
+- __Node__
+  - [nodejs (JavaScript)](Languages/JavaScript/Node/nodejs.javascript.txt)
+- __State management__
+  - __Flux__
+    - __Redux__
+      - [redux-actions (Redux)](Languages/JavaScript/State_management/Flux/Redux/redux-actions.redux.txt)
+      - [redux-storage (Redux)](Languages/JavaScript/State_management/Flux/Redux/redux-storage.redux.txt)
+      - [redux-undo (Redux)](Languages/JavaScript/State_management/Flux/Redux/redux-undo.redux.txt)
+      - [redux-thunk (Redux)](Languages/JavaScript/State_management/Flux/Redux/redux-thunk.redux.txt)
+      - [redux (Flux)](Languages/JavaScript/State_management/Flux/Redux/redux.flux.txt)
+    - [flux (JavaScript)](Languages/JavaScript/State_management/Flux/flux.javascript.txt)
+    - [react-refetch (Flux)](Languages/JavaScript/State_management/Flux/react-refetch.flux.txt)
+
+### Language processing
+
+- __Beautifiers__
+  - __CSS__
+    - __General__
+      - [perfectionist (Node CLI)](Languages/Language_processing/Beautifiers/CSS/General/_perfectionist.node_cli.txt)
+      - [stylefmt (Node CLI)](Languages/Language_processing/Beautifiers/CSS/General/_stylefmt.node_cli.txt)
+      - [csscomb (Node CLI)](Languages/Language_processing/Beautifiers/CSS/General/csscomb.node_cli.txt)
+    - __Sorting__
+      - [css-declaration-sorter (Node CLI)](Languages/Language_processing/Beautifiers/CSS/Sorting/css-declaration-sorter.node_cli.txt)
+      - [postcss-sorting (PostCSS)](Languages/Language_processing/Beautifiers/CSS/Sorting/postcss-sorting.postcss.txt)
+  - __JavaScript__
+    - [uglify beautify (Node CLI)](Languages/Language_processing/Beautifiers/JavaScript/uglify_beautify.node_cli.txt)
+- __Post processing__
+  - __CSS__
+    - [less (Language)](Languages/Language_processing/Post_processing/CSS/_less.language.txt)
+    - [compass (Sass)](Languages/Language_processing/Post_processing/CSS/_compass.sass.txt)
+    - [sass (Language)](Languages/Language_processing/Post_processing/CSS/_sass.language.txt)
+    - [stylus (Language)](Languages/Language_processing/Post_processing/CSS/_stylus.language.txt)
+    - [postcss (Language)](Languages/Language_processing/Post_processing/CSS/postcss.language.txt)
+- __Minification__
+  - __CSS__
+    - [cleancss (Node CLI)](Languages/Language_processing/Minification/CSS/_cleancss.node_cli.txt)
+    - [csso (Node CLI)](Languages/Language_processing/Minification/CSS/_csso.node_cli.txt)
+    - [cssnano (Node CLI)](Languages/Language_processing/Minification/CSS/cssnano.node_cli.txt)
+  - __HTML__
+    - [tidy-html5 (CLI)](Languages/Language_processing/Minification/HTML/tidy-html5.cli.txt)
+  - __JavaScript__
+    - [Uglify (Node CLI)](Languages/Language_processing/Minification/JavaScript/Uglify.node_cli.txt)
+
+### Metaprogramming
+
+- __Parsing__
+  - __Specific language__
+    - __CSS__
+      - [parser-lib (Node)](Languages/Metaprogramming/Parsing/Specific_language/CSS/parser-lib.node.txt)
+      - [gonzales-pe (Node)](Languages/Metaprogramming/Parsing/Specific_language/CSS/gonzales-pe.node.txt)
+      - [reworkcss (Node)](Languages/Metaprogramming/Parsing/Specific_language/CSS/reworkcss.node.txt)
+  - [parsing (Theory)](Languages/Metaprogramming/Parsing/parsing.theory.txt)
+
+### PHP
+
+- [PHP (Language)](Languages/PHP/PHP.language.txt)
+
+### Python
+
+- [Python (Language)](Languages/Python/Python.language.txt)
+
+### R
+
+- [R (Language)](Languages/R/R.language.txt)
+
+### Static analysis
+
+- __Complexity size analysis__
+  - __JavaScript__
+    - [plato (Node CLI)](Languages/Static_analysis/Complexity_size_analysis/JavaScript/plato.node_cli.txt)
+- __Dead code__
+  - __CSS__
+    - [uncss (Node CLI)](Languages/Static_analysis/Dead_code/CSS/uncss.node_cli.txt)
+    - [mincss (Node CLI)](Languages/Static_analysis/Dead_code/CSS/_mincss.node_cli.txt)
+- __General__
+  - __CSS__
+    - [stylestats analyze-css (Node CLI)](Languages/Static_analysis/General/CSS/stylestats_analyze-css.node_cli.txt)
+    - [cssstats (Node CLI)](Languages/Static_analysis/General/CSS/_cssstats.node_cli.txt)
+  - __Multiple languages__
+    - [codeclimate (SaaS)](Languages/Static_analysis/General/Multiple_languages/codeclimate.saas.txt)
+
+### VBA
+
+- [Excel Formulas (Language)](Languages/VBA/Excel_Formulas.language.txt)
+- [Excel objet model (Language)](Languages/VBA/Excel_objet_model.language.txt)
+- [PowerPoint object model (Language)](Languages/VBA/PowerPoint_object_model.language.txt)
+- [VBA (Language)](Languages/VBA/VBA.language.txt)
+
+### x86
+
+- __Assembler__
+  - [nasm (CLI)](Languages/x86/Assembler/nasm.cli.txt)
+- [MMX SSE (Language)](Languages/x86/MMX_SSE.language.txt)
+- [x86 (Language)](Languages/x86/x86.language.txt)
+- [x86 64 (Language)](Languages/x86/x86_64.language.txt)
+- [x86 C compilation (Language)](Languages/x86/x86_C_compilation.language.txt)
+- [x86 General (Language)](Languages/x86/x86_General.language.txt)
+- [x86 Segmentation Paging Tasks (Language)](Languages/x86/x86_Segmentation_Paging_Tasks.language.txt)
+- [x86 encodage opcodes (Language)](Languages/x86/x86_encodage_opcodes.language.txt)
+- [x86 extensions (Language)](Languages/x86/x86_extensions.language.txt)
+- [x87 (Language)](Languages/x86/x87.language.txt)
+
 ## DevOps
 
 ### Configuration
@@ -441,14 +767,14 @@ Number of pages (if it were a printed book): 6424
 ### Deployment
 
 - __Continuous integration__
-  - [travis (SaaS)](DevOps/Deployment/Continuous_integration/travis.saas.txt)
   - [docker cloud (Docker)](DevOps/Deployment/Continuous_integration/docker_cloud.docker.txt)
+  - [travis (SaaS)](DevOps/Deployment/Continuous_integration/travis.saas.txt)
 - __Deployment general__
+  - __On premise__
+    - [directconnect (AWS)](DevOps/Deployment/Deployment_general/On_premise/directconnect.aws.txt)
   - __Deploying__
     - [12 factor (Theory)](DevOps/Deployment/Deployment_general/Deploying/12_factor.theory.txt)
     - [installating files (Theory)](DevOps/Deployment/Deployment_general/Deploying/installating_files.theory.txt)
-  - __On premise__
-    - [directconnect (AWS)](DevOps/Deployment/Deployment_general/On_premise/directconnect.aws.txt)
 
 ### Infrastructure
 
@@ -477,334 +803,9 @@ Number of pages (if it were a printed book): 6424
 
 - __Containers__
   - __Core abstraction__
-    - [docker compose (Docker)](DevOps/Virtualization/Containers/Core_abstraction/docker_compose.docker.txt)
     - [docker (CLI)](DevOps/Virtualization/Containers/Core_abstraction/docker.cli.txt)
+    - [docker compose (Docker)](DevOps/Virtualization/Containers/Core_abstraction/docker_compose.docker.txt)
   - [containers (Theory)](DevOps/Virtualization/Containers/containers.theory.txt)
-
-## Dev helpers
-
-### Automation
-
-- __Build automation__
-  - __Autotools__
-    - [autotools (CLI)](Dev_helpers/Automation/Build_automation/Autotools/autotools.cli.txt)
-    - [make (CLI)](Dev_helpers/Automation/Build_automation/Autotools/make.cli.txt)
-  - [grunt (JavaScript)](Dev_helpers/Automation/Build_automation/_grunt.javascript.txt)
-  - [cmake (CLI)](Dev_helpers/Automation/Build_automation/cmake.cli.txt)
-  - [gulp (JavaScript)](Dev_helpers/Automation/Build_automation/gulp.javascript.txt)
-- __Desktop automation__
-  - __Screenshots__
-    - [webshot (Node)](Dev_helpers/Automation/Desktop_automation/Screenshots/webshot.node.txt)
-  - [copy-paste (Node)](Dev_helpers/Automation/Desktop_automation/copy-paste.node.txt)
-  - [open (Node)](Dev_helpers/Automation/Desktop_automation/open.node.txt)
-- __Live reloading__
-  - [livereload (Node)](Dev_helpers/Automation/Live_reloading/livereload.node.txt)
-  - [nodemon (Node)](Dev_helpers/Automation/Live_reloading/nodemon.node.txt)
-- __Scaffolding__
-  - [yeoman (CLI)](Dev_helpers/Automation/Scaffolding/yeoman.cli.txt)
-
-### Coding
-
-- __Source code__
-  - [organisation sources (Theory)](Dev_helpers/Coding/Source_code/organisation_sources.theory.txt)
-- __Documentation__
-  - __From comments__
-    - [doxygen (Many)](Dev_helpers/Coding/Documentation/From_comments/doxygen.many.txt)
-    - [jsdoc (JavaScript)](Dev_helpers/Coding/Documentation/From_comments/jsdoc.javascript.txt)
-  - __UI component__
-    - __Tutorial__
-      - [torturial (jQuery)](Dev_helpers/Coding/Documentation/UI_component/Tutorial/torturial.jquery.txt)
-- __Version control__
-  - __Git__
-    - [git (CLI)](Dev_helpers/Coding/Version_control/Git/git.cli.txt)
-    - [VCS (Theory)](Dev_helpers/Coding/Version_control/Git/VCS.theory.txt)
-  - __GitHub__
-    - [github (SaaS)](Dev_helpers/Coding/Version_control/GitHub/github.saas.txt)
-
-### Insights
-
-- __Logging__
-  - __Aggregator__
-    - [cloudwatch logs (AWS)](Dev_helpers/Insights/Logging/Aggregator/cloudwatch_logs.aws.txt)
-  - __Automatic logging__
-    - __Errors__
-      - [errorhandler (Express)](Dev_helpers/Insights/Logging/Automatic_logging/Errors/errorhandler.express.txt)
-    - __Network interaction__
-      - [cloudtrail (AWS)](Dev_helpers/Insights/Logging/Automatic_logging/Network_interaction/cloudtrail.aws.txt)
-  - __Logger__
-    - __Server side__
-      - [winston (Node)](Dev_helpers/Insights/Logging/Logger/Server_side/winston.node.txt)
-      - [debug (Node)](Dev_helpers/Insights/Logging/Logger/Server_side/debug.node.txt)
-      - [log4js (Node)](Dev_helpers/Insights/Logging/Logger/Server_side/_log4js.node.txt)
-      - [morgan (Express)](Dev_helpers/Insights/Logging/Logger/Server_side/_morgan.express.txt)
-  - __Beautifying__
-    - [createerror (Node)](Dev_helpers/Insights/Logging/Beautifying/createerror.node.txt)
-- __Monitoring__
-  - __Custom metrics__
-    - __Alerting__
-      - [vitalsigns (Node)](Dev_helpers/Insights/Monitoring/Custom_metrics/Alerting/vitalsigns.node.txt)
-  - __Host metrics__
-    - __Collecting dashboard__
-      - [cloudwatch (AWS)](Dev_helpers/Insights/Monitoring/Host_metrics/Collecting_dashboard/cloudwatch.aws.txt)
-
-### Quality assurance
-
-- __Debugging__
-  - __General debugger__
-    - __Browser__
-      - [redux-devtools (Redux)](Dev_helpers/Quality_assurance/Debugging/General_debugger/Browser/redux-devtools.redux.txt)
-      - [react-devtools (React)](Dev_helpers/Quality_assurance/Debugging/General_debugger/Browser/react-devtools.react.txt)
-      - [about (Identifier)](Dev_helpers/Quality_assurance/Debugging/General_debugger/Browser/about.identifier.txt)
-      - [view-source (Identifier)](Dev_helpers/Quality_assurance/Debugging/General_debugger/Browser/view-source.identifier.txt)
-    - __Server side__
-      - [express-debug (Express)](Dev_helpers/Quality_assurance/Debugging/General_debugger/Server_side/express-debug.express.txt)
-      - [bashdb (C C++ x86)](Dev_helpers/Quality_assurance/Debugging/General_debugger/Server_side/bashdb.c_c++_x86.txt)
-      - [gdb (C C++ x86)](Dev_helpers/Quality_assurance/Debugging/General_debugger/Server_side/gdb.c_c++_x86.txt)
-      - [xdebug (PHP)](Dev_helpers/Quality_assurance/Debugging/General_debugger/Server_side/xdebug.php.txt)
-      - [nm (x86)](Dev_helpers/Quality_assurance/Debugging/General_debugger/Server_side/nm.x86.txt)
-- __Testing__
-  - __Assertions__
-    - __HTTP__
-      - [supertest (Node)](Dev_helpers/Quality_assurance/Testing/Assertions/HTTP/supertest.node.txt)
-    - [chai (Node)](Dev_helpers/Quality_assurance/Testing/Assertions/chai.node.txt)
-  - __Coverage__
-    - [coveralls (SaaS)](Dev_helpers/Quality_assurance/Testing/Coverage/coveralls.saas.txt)
-    - [istanbul (Node CLI)](Dev_helpers/Quality_assurance/Testing/Coverage/istanbul.node_cli.txt)
-  - __Browser testing__
-    - __Selenium__
-      - __Runner__
-        - [browserstack (SaaS)](Dev_helpers/Quality_assurance/Testing/Browser_testing/Selenium/Runner/browserstack.saas.txt)
-        - [selenium webdriver (CLI)](Dev_helpers/Quality_assurance/Testing/Browser_testing/Selenium/Runner/selenium_webdriver.cli.txt)
-        - [saucelabs (SaaS)](Dev_helpers/Quality_assurance/Testing/Browser_testing/Selenium/Runner/saucelabs.saas.txt)
-      - __Client__
-        - [selenium-webdriver (Node)](Dev_helpers/Quality_assurance/Testing/Browser_testing/Selenium/Client/selenium-webdriver.node.txt)
-        - [wd.js (Node)](Dev_helpers/Quality_assurance/Testing/Browser_testing/Selenium/Client/wd.js.node.txt)
-  - __Data-driven__
-    - [faker.js (JavaScript)](Dev_helpers/Quality_assurance/Testing/Data-driven/faker.js.javascript.txt)
-  - __Fuzz__
-    - [big-list-of-naughty-strings (JSON TXT)](Dev_helpers/Quality_assurance/Testing/Fuzz/big-list-of-naughty-strings.json_txt.txt)
-  - __Mocking__
-    - __Module loading__
-      - [jest (Jasmine)](Dev_helpers/Quality_assurance/Testing/Mocking/Module_loading/jest.jasmine.txt)
-    - __Specific framework__
-      - [enzyme (React)](Dev_helpers/Quality_assurance/Testing/Mocking/Specific_framework/enzyme.react.txt)
-    - __Stubs spies__
-      - [sinon (Node)](Dev_helpers/Quality_assurance/Testing/Mocking/Stubs_spies/sinon.node.txt)
-    - __HTTP__
-      - __Server side__
-        - __Request response__
-          - [node-mocks-http (Node)](Dev_helpers/Quality_assurance/Testing/Mocking/HTTP/Server_side/Request_response/node-mocks-http.node.txt)
-        - __Response__
-          - [nock (Node)](Dev_helpers/Quality_assurance/Testing/Mocking/HTTP/Server_side/Response/nock.node.txt)
-  - __Stress__
-    - [gremlins.js (JavaScript)](Dev_helpers/Quality_assurance/Testing/Stress/gremlins.js.javascript.txt)
-  - __Test framework__
-    - [karma (CLI)](Dev_helpers/Quality_assurance/Testing/Test_framework/karma.cli.txt)
-  - __Test runners__
-    - [jasmine (Node CLI)](Dev_helpers/Quality_assurance/Testing/Test_runners/_jasmine.node_cli.txt)
-    - [mocha (Node CLI)](Dev_helpers/Quality_assurance/Testing/Test_runners/mocha.node_cli.txt)
-    - [qunit (CLI)](Dev_helpers/Quality_assurance/Testing/Test_runners/_qunit.cli.txt)
-  - __Visual__
-    - [phantomcss (Node)](Dev_helpers/Quality_assurance/Testing/Visual/_phantomcss.node.txt)
-    - [argus-eyes (CLI)](Dev_helpers/Quality_assurance/Testing/Visual/argus-eyes.cli.txt)
-    - [wraith (Node)](Dev_helpers/Quality_assurance/Testing/Visual/_wraith.node.txt)
-  - [testing (Summary)](Dev_helpers/Quality_assurance/Testing/testing.summary.txt)
-  - [testing (Theory)](Dev_helpers/Quality_assurance/Testing/testing.theory.txt)
-
-## Design
-
-### CSS
-
-- __General__
-  - [CSS (Language)](Design/CSS/General/CSS.language.txt)
-  - __CSS in JavaScript__
-    - [jss (JavaScript)](Design/CSS/General/CSS_in_JavaScript/jss.javascript.txt)
-    - [react-css (React)](Design/CSS/General/CSS_in_JavaScript/react-css.react.txt)
-    - [cssx (JavaScript)](Design/CSS/General/CSS_in_JavaScript/cssx.javascript.txt)
-    - [aphrodite (JavaScript)](Design/CSS/General/CSS_in_JavaScript/_aphrodite.javascript.txt)
-
-### Visual
-
-- __Animations__
-  - __Specific animations__
-    - __General__
-      - [animate.css (CSS)](Design/Visual/Animations/Specific_animations/General/animate.css.css.txt)
-- __Typography__
-  - [typography (Theory)](Design/Visual/Typography/typography.theory.txt)
-
-## Languages
-
-### C
-
-- [C (Language)](Languages/C/C.language.txt)
-- __Compiling__
-  - __gcc__
-    - [cpp (CLI)](Languages/C/Compiling/gcc/cpp.cli.txt)
-    - [gcc optimization (CLI)](Languages/C/Compiling/gcc/gcc_optimization.cli.txt)
-    - [feature test macro (CLI)](Languages/C/Compiling/gcc/feature_test_macro.cli.txt)
-    - [gcc (CLI)](Languages/C/Compiling/gcc/gcc.cli.txt)
-- [shared libraries (Theory)](Languages/C/shared_libraries.theory.txt)
-
-### C++
-
-- [C++ (Language)](Languages/C++/C++.language.txt)
-
-### Go
-
-- [go (Language)](Languages/Go/go.language.txt)
-
-### Coding style
-
-- __Linting__
-  - __CSS__
-    - [csslint (Node CLI)](Languages/Coding_style/Linting/CSS/csslint.node_cli.txt)
-    - [immutable-css (Node CLI)](Languages/Coding_style/Linting/CSS/immutable-css.node_cli.txt)
-    - [scss-lint (CLI)](Languages/Coding_style/Linting/CSS/scss-lint.cli.txt)
-    - [postcss-bem-linter (PostCSS)](Languages/Coding_style/Linting/CSS/postcss-bem-linter.postcss.txt)
-    - [stylelint (Node CLI)](Languages/Coding_style/Linting/CSS/stylelint.node_cli.txt)
-  - __CoffeeScript__
-    - [coffeelint (CoffeeScript)](Languages/Coding_style/Linting/CoffeeScript/coffeelint.coffeescript.txt)
-  - __HTML__
-    - [nu html checker (CLI)](Languages/Coding_style/Linting/HTML/nu_html_checker.cli.txt)
-    - [htmlhint (Node CLI)](Languages/Coding_style/Linting/HTML/htmlhint.node_cli.txt)
-  - __JavaScript__
-    - [jshint (Node CLI)](Languages/Coding_style/Linting/JavaScript/jshint.node_cli.txt)
-    - [w3cjs (Node)](Languages/Coding_style/Linting/JavaScript/w3cjs.node.txt)
-  - __JavaScript CSS__
-    - [hound (SaaS)](Languages/Coding_style/Linting/JavaScript_CSS/hound.saas.txt)
-
-### Inter language
-
-- __Version migration__
-  - __JavaScript__
-    - [babel (Node CLI)](Languages/Inter_language/Version_migration/JavaScript/babel.node_cli.txt)
-
-### JavaScript
-
-- __Data binding__
-  - [stickit (Backbone)](Languages/JavaScript/Data_binding/stickit.backbone.txt)
-- __JavaScript core__
-  - __Transpiler__
-    - [flow (Language)](Languages/JavaScript/JavaScript_core/Transpiler/flow.language.txt)
-    - [coffeescript (Language)](Languages/JavaScript/JavaScript_core/Transpiler/coffeescript.language.txt)
-  - [JavaScript (Language)](Languages/JavaScript/JavaScript_core/JavaScript.language.txt)
-- __JavaScript frameworks__
-  - __MVC__
-    - __Opiniated__
-      - [angular (JavaScript)](Languages/JavaScript/JavaScript_frameworks/MVC/Opiniated/angular.javascript.txt)
-    - __Minimalistic__
-      - __Backbone__
-        - [backbone.collectionsubset (Backbone)](Languages/JavaScript/JavaScript_frameworks/MVC/Minimalistic/Backbone/backbone.collectionsubset.backbone.txt)
-        - [backbone marionette (JavaScript)](Languages/JavaScript/JavaScript_frameworks/MVC/Minimalistic/Backbone/backbone_marionette.javascript.txt)
-  - __View__
-    - __One way data binding__
-      - __Virtual DOM__
-        - __React__
-          - [react-engine (React)](Languages/JavaScript/JavaScript_frameworks/View/One_way_data_binding/Virtual_DOM/React/react-engine.react.txt)
-          - [backbone-react-component (React)](Languages/JavaScript/JavaScript_frameworks/View/One_way_data_binding/Virtual_DOM/React/backbone-react-component.react.txt)
-          - [react (JavaScript)](Languages/JavaScript/JavaScript_frameworks/View/One_way_data_binding/Virtual_DOM/React/react.javascript.txt)
-          - [react-helmet (React)](Languages/JavaScript/JavaScript_frameworks/View/One_way_data_binding/Virtual_DOM/React/react-helmet.react.txt)
-- __Node__
-  - [nodejs (JavaScript)](Languages/JavaScript/Node/nodejs.javascript.txt)
-- __State management__
-  - __Flux__
-    - [flux (JavaScript)](Languages/JavaScript/State_management/Flux/flux.javascript.txt)
-    - [react-refetch (Flux)](Languages/JavaScript/State_management/Flux/react-refetch.flux.txt)
-    - __Redux__
-      - [redux-undo (Redux)](Languages/JavaScript/State_management/Flux/Redux/redux-undo.redux.txt)
-      - [redux-storage (Redux)](Languages/JavaScript/State_management/Flux/Redux/redux-storage.redux.txt)
-      - [redux-actions (Redux)](Languages/JavaScript/State_management/Flux/Redux/redux-actions.redux.txt)
-      - [redux-thunk (Redux)](Languages/JavaScript/State_management/Flux/Redux/redux-thunk.redux.txt)
-      - [redux (Flux)](Languages/JavaScript/State_management/Flux/Redux/redux.flux.txt)
-
-### Language processing
-
-- __Beautifiers__
-  - __CSS__
-    - __General__
-      - [stylefmt (Node CLI)](Languages/Language_processing/Beautifiers/CSS/General/_stylefmt.node_cli.txt)
-      - [csscomb (Node CLI)](Languages/Language_processing/Beautifiers/CSS/General/csscomb.node_cli.txt)
-      - [perfectionist (Node CLI)](Languages/Language_processing/Beautifiers/CSS/General/_perfectionist.node_cli.txt)
-    - __Sorting__
-      - [css-declaration-sorter (Node CLI)](Languages/Language_processing/Beautifiers/CSS/Sorting/css-declaration-sorter.node_cli.txt)
-      - [postcss-sorting (PostCSS)](Languages/Language_processing/Beautifiers/CSS/Sorting/postcss-sorting.postcss.txt)
-  - __JavaScript__
-    - [uglify beautify (Node CLI)](Languages/Language_processing/Beautifiers/JavaScript/uglify_beautify.node_cli.txt)
-- __Minification__
-  - __CSS__
-    - [cssnano (Node CLI)](Languages/Language_processing/Minification/CSS/cssnano.node_cli.txt)
-    - [cleancss (Node CLI)](Languages/Language_processing/Minification/CSS/_cleancss.node_cli.txt)
-    - [csso (Node CLI)](Languages/Language_processing/Minification/CSS/_csso.node_cli.txt)
-  - __HTML__
-    - [tidy-html5 (CLI)](Languages/Language_processing/Minification/HTML/tidy-html5.cli.txt)
-  - __JavaScript__
-    - [Uglify (Node CLI)](Languages/Language_processing/Minification/JavaScript/Uglify.node_cli.txt)
-- __Post processing__
-  - __CSS__
-    - [compass (Sass)](Languages/Language_processing/Post_processing/CSS/_compass.sass.txt)
-    - [less (Language)](Languages/Language_processing/Post_processing/CSS/_less.language.txt)
-    - [sass (Language)](Languages/Language_processing/Post_processing/CSS/_sass.language.txt)
-    - [stylus (Language)](Languages/Language_processing/Post_processing/CSS/_stylus.language.txt)
-    - [postcss (Language)](Languages/Language_processing/Post_processing/CSS/postcss.language.txt)
-
-### Metaprogramming
-
-- __Parsing__
-  - __Specific language__
-    - __CSS__
-      - [gonzales-pe (Node)](Languages/Metaprogramming/Parsing/Specific_language/CSS/gonzales-pe.node.txt)
-      - [reworkcss (Node)](Languages/Metaprogramming/Parsing/Specific_language/CSS/reworkcss.node.txt)
-      - [parser-lib (Node)](Languages/Metaprogramming/Parsing/Specific_language/CSS/parser-lib.node.txt)
-  - [parsing (Theory)](Languages/Metaprogramming/Parsing/parsing.theory.txt)
-
-### PHP
-
-- [PHP (Language)](Languages/PHP/PHP.language.txt)
-
-### Python
-
-- [Python (Language)](Languages/Python/Python.language.txt)
-
-### R
-
-- [R (Language)](Languages/R/R.language.txt)
-
-### Static analysis
-
-- __Complexity size analysis__
-  - __JavaScript__
-    - [plato (Node CLI)](Languages/Static_analysis/Complexity_size_analysis/JavaScript/plato.node_cli.txt)
-- __Dead code__
-  - __CSS__
-    - [uncss (Node CLI)](Languages/Static_analysis/Dead_code/CSS/uncss.node_cli.txt)
-    - [mincss (Node CLI)](Languages/Static_analysis/Dead_code/CSS/_mincss.node_cli.txt)
-- __General__
-  - __CSS__
-    - [cssstats (Node CLI)](Languages/Static_analysis/General/CSS/_cssstats.node_cli.txt)
-    - [stylestats analyze-css (Node CLI)](Languages/Static_analysis/General/CSS/stylestats_analyze-css.node_cli.txt)
-  - __Multiple languages__
-    - [codeclimate (SaaS)](Languages/Static_analysis/General/Multiple_languages/codeclimate.saas.txt)
-
-### VBA
-
-- [Excel Formulas (Language)](Languages/VBA/Excel_Formulas.language.txt)
-- [Excel objet model (Language)](Languages/VBA/Excel_objet_model.language.txt)
-- [PowerPoint object model (Language)](Languages/VBA/PowerPoint_object_model.language.txt)
-- [VBA (Language)](Languages/VBA/VBA.language.txt)
-
-### x86
-
-- __Assembler__
-  - [nasm (CLI)](Languages/x86/Assembler/nasm.cli.txt)
-- [MMX SSE (Language)](Languages/x86/MMX_SSE.language.txt)
-- [x86 (Language)](Languages/x86/x86.language.txt)
-- [x86 64 (Language)](Languages/x86/x86_64.language.txt)
-- [x86 C compilation (Language)](Languages/x86/x86_C_compilation.language.txt)
-- [x86 General (Language)](Languages/x86/x86_General.language.txt)
-- [x86 Segmentation Paging Tasks (Language)](Languages/x86/x86_Segmentation_Paging_Tasks.language.txt)
-- [x86 encodage opcodes (Language)](Languages/x86/x86_encodage_opcodes.language.txt)
-- [x86 extensions (Language)](Languages/x86/x86_extensions.language.txt)
-- [x87 (Language)](Languages/x86/x87.language.txt)
 
 ## Multimedia
 
@@ -815,15 +816,15 @@ Number of pages (if it were a printed book): 6424
     - [game design (Theory)](Multimedia/Advanced_graphics/Game/Design_gamification/game_design.theory.txt)
   - __Engines__
     - __2D__
-      - __SDL__
-        - [sdl (C)](Multimedia/Advanced_graphics/Game/Engines/2D/SDL/sdl.c.txt)
       - __SFML__
         - [sfml (C++)](Multimedia/Advanced_graphics/Game/Engines/2D/SFML/sfml.c++.txt)
-        - [sfml audio (C++)](Multimedia/Advanced_graphics/Game/Engines/2D/SFML/sfml_audio.c++.txt)
         - [sfml graphics (C++)](Multimedia/Advanced_graphics/Game/Engines/2D/SFML/sfml_graphics.c++.txt)
+        - [sfml audio (C++)](Multimedia/Advanced_graphics/Game/Engines/2D/SFML/sfml_audio.c++.txt)
+        - [sfml network (C++)](Multimedia/Advanced_graphics/Game/Engines/2D/SFML/sfml_network.c++.txt)
         - [sfml system (C++)](Multimedia/Advanced_graphics/Game/Engines/2D/SFML/sfml_system.c++.txt)
         - [sfml window (C++)](Multimedia/Advanced_graphics/Game/Engines/2D/SFML/sfml_window.c++.txt)
-        - [sfml network (C++)](Multimedia/Advanced_graphics/Game/Engines/2D/SFML/sfml_network.c++.txt)
+      - __SDL__
+        - [sdl (C)](Multimedia/Advanced_graphics/Game/Engines/2D/SDL/sdl.c.txt)
 
 ### Geospatial
 
@@ -847,11 +848,11 @@ Number of pages (if it were a printed book): 6424
   - __Manipulation__
     - [favico.js (JavaScript)](Multimedia/Images/Favicon/Manipulation/favico.js.javascript.txt)
 - __Image display__
+  - __Lightbox__
+    - [magnificpopup (jQuery)](Multimedia/Images/Image_display/Lightbox/magnificpopup.jquery.txt)
   - __Carousel__
     - [cycle2 (jQuery)](Multimedia/Images/Image_display/Carousel/_cycle2.jquery.txt)
     - [slick (jQuery)](Multimedia/Images/Image_display/Carousel/slick.jquery.txt)
-  - __Lightbox__
-    - [magnificpopup (jQuery)](Multimedia/Images/Image_display/Lightbox/magnificpopup.jquery.txt)
 - __Image manipulation__
   - __Diff__
     - [resemble.js (Node)](Multimedia/Images/Image_manipulation/Diff/resemble.js.node.txt)
@@ -869,12 +870,12 @@ Number of pages (if it were a printed book): 6424
 
 ### Networking protocols
 
+- __IP__
+  - [IP (Protocol)](Networking/Networking_protocols/IP/IP.protocol.txt)
 - __DNS__
   - [DNS (Protocol)](Networking/Networking_protocols/DNS/DNS.protocol.txt)
   - __Registration__
     - [route53 (AWS)](Networking/Networking_protocols/DNS/Registration/route53.aws.txt)
-- __IP__
-  - [IP (Protocol)](Networking/Networking_protocols/IP/IP.protocol.txt)
 - __Load balancing__
   - __Load balancer__
     - [elb (AWS)](Networking/Networking_protocols/Load_balancing/Load_balancer/elb.aws.txt)
@@ -900,91 +901,6 @@ Number of pages (if it were a printed book): 6424
 - __UDP__
   - [UDP (Protocol)](Networking/Networking_protocols/UDP/UDP.protocol.txt)
 
-## RPC
-
-### Inter process
-
-- __HTTP__
-  - __Body__
-    - [body-parser multiparty multer (Express)](RPC/Inter_process/HTTP/Body/body-parser_multiparty_multer.express.txt)
-  - [HTTP (Protocol)](RPC/Inter_process/HTTP/HTTP.protocol.txt)
-  - __Content negotiation__
-    - [mime (Node)](RPC/Inter_process/HTTP/Content_negotiation/mime.node.txt)
-    - [negotiator accepts (Node)](RPC/Inter_process/HTTP/Content_negotiation/negotiator_accepts.node.txt)
-    - [vary (Node)](RPC/Inter_process/HTTP/Content_negotiation/vary.node.txt)
-  - __General__
-    - [send (Node)](RPC/Inter_process/HTTP/General/send.node.txt)
-  - __Headers__
-    - [content-disposition (Node)](RPC/Inter_process/HTTP/Headers/content-disposition.node.txt)
-  - __Methods__
-    - [method-override (Express)](RPC/Inter_process/HTTP/Methods/method-override.express.txt)
-  - __Statuses__
-    - [statuses (Node)](RPC/Inter_process/HTTP/Statuses/statuses.node.txt)
-  - __Streaming__
-    - [range-parser (Node)](RPC/Inter_process/HTTP/Streaming/range-parser.node.txt)
-- __URI routing__
-  - __Client side__
-    - [react-router (React)](RPC/Inter_process/URI_routing/Client_side/react-router.react.txt)
-    - [redux-simple-router (Redux)](RPC/Inter_process/URI_routing/Client_side/redux-simple-router.redux.txt)
-  - __Server side__
-    - [vhost (Express)](RPC/Inter_process/URI_routing/Server_side/vhost.express.txt)
-
-### Messages tasks
-
-- __Task coordination__
-  - [orchestrator (Node)](RPC/Messages_tasks/Task_coordination/orchestrator.node.txt)
-  - [swf (AWS)](RPC/Messages_tasks/Task_coordination/swf.aws.txt)
-- __Task queue__
-  - [sqs (AWS)](RPC/Messages_tasks/Task_queue/sqs.aws.txt)
-
-### Realtime
-
-- __Realtime server__
-  - [express.io (Express)](RPC/Realtime/Realtime_server/express.io.express.txt)
-- __WebSocket__
-  - __Server__
-    - [socket.io (Node)](RPC/Realtime/WebSocket/Server/socket.io.node.txt)
-    - [engine.io (Node)](RPC/Realtime/WebSocket/Server/engine.io.node.txt)
-    - [ws (Node CLI)](RPC/Realtime/WebSocket/Server/ws.node_cli.txt)
-    - [WebSocket (Protocol)](RPC/Realtime/WebSocket/Server/WebSocket.protocol.txt)
-
-### Web client
-
-- __Simple web client__
-  - __File downloads__
-    - [download (Node CLI)](RPC/Web_client/Simple_web_client/File_downloads/download.node_cli.txt)
-  - __HTTP__
-    - __Isomorphic__
-      - [superagent (JavaScript)](RPC/Web_client/Simple_web_client/HTTP/Isomorphic/superagent.javascript.txt)
-    - __General__
-      - [request (Node)](RPC/Web_client/Simple_web_client/HTTP/General/request.node.txt)
-  - __Multi protocols__
-    - [curl (CLI)](RPC/Web_client/Simple_web_client/Multi_protocols/curl.cli.txt)
-- __Web scraping crawling__
-  - __Crawler__
-    - [simplecrawler (Node)](RPC/Web_client/Web_scraping_crawling/Crawler/simplecrawler.node.txt)
-
-### Web server
-
-- __HTTP server__
-  - __Directory listing__
-    - [serve-index (Express)](RPC/Web_server/HTTP_server/Directory_listing/serve-index.express.txt)
-  - __General__
-    - [st (Express)](RPC/Web_server/HTTP_server/General/_st.express.txt)
-    - [s3 (AWS)](RPC/Web_server/HTTP_server/General/s3.aws.txt)
-    - [glacier (AWS)](RPC/Web_server/HTTP_server/General/glacier.aws.txt)
-    - [serve-static (Express)](RPC/Web_server/HTTP_server/General/serve-static.express.txt)
-  - __For development__
-    - [http-server (CLI)](RPC/Web_server/HTTP_server/For_development/http-server.cli.txt)
-- __REST API generation__
-  - __Declarative opiniated__
-    - [swagger (HTTP)](RPC/Web_server/REST_API_generation/Declarative_opiniated/swagger.http.txt)
-- __Web framework__
-  - __Declarative__
-    - [sails (Express)](RPC/Web_server/Web_framework/Declarative/sails.express.txt)
-  - __Minimalist__
-    - [express (Node)](RPC/Web_server/Web_framework/Minimalist/express.node.txt)
-
 ## Platforms
 
 ### Browser
@@ -996,9 +912,9 @@ Number of pages (if it were a printed book): 6424
   - __Abstraction__
     - [jsdom (Node)](Platforms/Browser/DOM/Abstraction/jsdom.node.txt)
     - [rackt history (JavaScript)](Platforms/Browser/DOM/Abstraction/rackt_history.javascript.txt)
+  - [DOM (JavaScript)](Platforms/Browser/DOM/DOM.javascript.txt)
   - __Manipulation__
     - [jQuery cheerio (JavaScript)](Platforms/Browser/DOM/Manipulation/jQuery_cheerio.javascript.txt)
-  - [DOM (JavaScript)](Platforms/Browser/DOM/DOM.javascript.txt)
   - __Virtual DOM__
     - [react-templates (React)](Platforms/Browser/DOM/Virtual_DOM/react-templates.react.txt)
 - __Headless browser__
@@ -1012,26 +928,26 @@ Number of pages (if it were a printed book): 6424
     - [growl (Node)](Platforms/Desktop/Desktop_only_features/Notifications/growl.node.txt)
 - __OS__
   - __OS Kernel__
-    - [OS Gestion memoire (Theory)](Platforms/Desktop/OS/OS_Kernel/OS_Gestion_memoire.theory.txt)
     - [OS filesystem (Theory)](Platforms/Desktop/OS/OS_Kernel/OS_filesystem.theory.txt)
+    - [OS Gestion memoire (Theory)](Platforms/Desktop/OS/OS_Kernel/OS_Gestion_memoire.theory.txt)
     - [OS Boot kernel (Theory)](Platforms/Desktop/OS/OS_Kernel/OS_Boot_kernel.theory.txt)
     - __Process__
       - [loading time (Format)](Platforms/Desktop/OS/OS_Kernel/Process/loading_time.format.txt)
       - [process (Theory)](Platforms/Desktop/OS/OS_Kernel/Process/process.theory.txt)
+  - __Executable__
+    - [elf (Format)](Platforms/Desktop/OS/Executable/elf.format.txt)
+    - [object formats (Format)](Platforms/Desktop/OS/Executable/object_formats.format.txt)
+  - __Types__
+    - [float fixed point (Format)](Platforms/Desktop/OS/Types/float_fixed_point.format.txt)
+    - [signedness binaire (Format)](Platforms/Desktop/OS/Types/signedness_binaire.format.txt)
+    - [BCD (Format)](Platforms/Desktop/OS/Types/BCD.format.txt)
+    - [little big endian (Format)](Platforms/Desktop/OS/Types/little_big_endian.format.txt)
   - __Partitions__
     - [CHS LBA (Theory)](Platforms/Desktop/OS/Partitions/CHS_LBA.theory.txt)
-    - [type partitions (Format)](Platforms/Desktop/OS/Partitions/type_partitions.format.txt)
     - [MBR (Format)](Platforms/Desktop/OS/Partitions/MBR.format.txt)
+    - [type partitions (Format)](Platforms/Desktop/OS/Partitions/type_partitions.format.txt)
   - __System__
     - [CPU (Theory)](Platforms/Desktop/OS/System/CPU.theory.txt)
-  - __Executable__
-    - [object formats (Format)](Platforms/Desktop/OS/Executable/object_formats.format.txt)
-    - [elf (Format)](Platforms/Desktop/OS/Executable/elf.format.txt)
-  - __Types__
-    - [BCD (Format)](Platforms/Desktop/OS/Types/BCD.format.txt)
-    - [signedness binaire (Format)](Platforms/Desktop/OS/Types/signedness_binaire.format.txt)
-    - [float fixed point (Format)](Platforms/Desktop/OS/Types/float_fixed_point.format.txt)
-    - [little big endian (Format)](Platforms/Desktop/OS/Types/little_big_endian.format.txt)
   - [architectures (Theory)](Platforms/Desktop/OS/architectures.theory.txt)
   - [calcul binaire (Algorithm)](Platforms/Desktop/OS/calcul_binaire.algorithm.txt)
   - [taille octet bits bytes (Theory)](Platforms/Desktop/OS/taille_octet_bits_bytes.theory.txt)
@@ -1039,8 +955,6 @@ Number of pages (if it were a printed book): 6424
 ### Interoperability
 
 - __Browser__
-  - __Browser list__
-    - [browserslist (Node CLI)](Platforms/Interoperability/Browser/Browser_list/browserslist.node_cli.txt)
   - __CSS__
     - __Linting__
       - [doiuse (Node CLI)](Platforms/Interoperability/Browser/CSS/Linting/doiuse.node_cli.txt)
@@ -1049,13 +963,15 @@ Number of pages (if it were a printed book): 6424
     - __Transpiler__
       - [autoprefixer (Node CLI)](Platforms/Interoperability/Browser/CSS/Transpiler/autoprefixer.node_cli.txt)
       - [cssnext (PostCSS)](Platforms/Interoperability/Browser/CSS/Transpiler/cssnext.postcss.txt)
+  - __Browser list__
+    - [browserslist (Node CLI)](Platforms/Interoperability/Browser/Browser_list/browserslist.node_cli.txt)
   - __Device identification__
     - [session.js (JavaScript)](Platforms/Interoperability/Browser/Device_identification/session.js.javascript.txt)
     - [express-device (Express)](Platforms/Interoperability/Browser/Device_identification/express-device.express.txt)
   - __Feature support__
+    - [feature.js (JavaScript)](Platforms/Interoperability/Browser/Feature_support/_feature.js.javascript.txt)
     - [modernizr (JavaScript)](Platforms/Interoperability/Browser/Feature_support/modernizr.javascript.txt)
     - [caniuse (JSON)](Platforms/Interoperability/Browser/Feature_support/caniuse.json.txt)
-    - [feature.js (JavaScript)](Platforms/Interoperability/Browser/Feature_support/_feature.js.javascript.txt)
 
 ### Mobile
 
@@ -1063,27 +979,112 @@ Number of pages (if it were a printed book): 6424
   - __Notifications__
     - [sns (AWS)](Platforms/Mobile/Mobile_only_features/Notifications/sns.aws.txt)
 - __Mobile responsiveness__
-  - __Mobile menu__
-    - [snap.js (JavaScript)](Platforms/Mobile/Mobile_responsiveness/Mobile_menu/snap.js.javascript.txt)
-    - [meny (JavaScript)](Platforms/Mobile/Mobile_responsiveness/Mobile_menu/meny.javascript.txt)
   - [mobile strategy (Theory)](Platforms/Mobile/Mobile_responsiveness/mobile_strategy.theory.txt)
+  - __Mobile menu__
+    - [meny (JavaScript)](Platforms/Mobile/Mobile_responsiveness/Mobile_menu/meny.javascript.txt)
+    - [snap.js (JavaScript)](Platforms/Mobile/Mobile_responsiveness/Mobile_menu/snap.js.javascript.txt)
 
 ### Terminal
 
+- __CLI__
+  - __Output__
+    - __Prompt__
+      - [inquirer (Node)](Platforms/Terminal/CLI/Output/Prompt/inquirer.node.txt)
+    - __Colors__
+      - [chalk (Node)](Platforms/Terminal/CLI/Output/Colors/chalk.node.txt)
+  - __Input__
+    - [bytes (Node)](Platforms/Terminal/CLI/Input/bytes.node.txt)
+    - [ms (Node CLI)](Platforms/Terminal/CLI/Input/ms.node_cli.txt)
+    - [minimist (Node)](Platforms/Terminal/CLI/Input/minimist.node.txt)
 - __Terminal general__
   - __Remote__
     - __SSH__
       - [SSH (Protocol)](Platforms/Terminal/Terminal_general/Remote/SSH/SSH.protocol.txt)
-- __CLI__
-  - __Input__
-    - [bytes (Node)](Platforms/Terminal/CLI/Input/bytes.node.txt)
-    - [minimist (Node)](Platforms/Terminal/CLI/Input/minimist.node.txt)
-    - [ms (Node CLI)](Platforms/Terminal/CLI/Input/ms.node_cli.txt)
-  - __Output__
-    - __Colors__
-      - [chalk (Node)](Platforms/Terminal/CLI/Output/Colors/chalk.node.txt)
-    - __Prompt__
-      - [inquirer (Node)](Platforms/Terminal/CLI/Output/Prompt/inquirer.node.txt)
+
+## RPC
+
+### Inter process
+
+- __HTTP__
+  - __General__
+    - [send (Node)](RPC/Inter_process/HTTP/General/send.node.txt)
+  - __Content negotiation__
+    - [vary (Node)](RPC/Inter_process/HTTP/Content_negotiation/vary.node.txt)
+    - [mime (Node)](RPC/Inter_process/HTTP/Content_negotiation/mime.node.txt)
+    - [negotiator accepts (Node)](RPC/Inter_process/HTTP/Content_negotiation/negotiator_accepts.node.txt)
+  - [HTTP (Protocol)](RPC/Inter_process/HTTP/HTTP.protocol.txt)
+  - __Body__
+    - [body-parser multiparty multer (Express)](RPC/Inter_process/HTTP/Body/body-parser_multiparty_multer.express.txt)
+  - __Headers__
+    - [content-disposition (Node)](RPC/Inter_process/HTTP/Headers/content-disposition.node.txt)
+  - __Methods__
+    - [method-override (Express)](RPC/Inter_process/HTTP/Methods/method-override.express.txt)
+  - __Statuses__
+    - [statuses (Node)](RPC/Inter_process/HTTP/Statuses/statuses.node.txt)
+  - __Streaming__
+    - [range-parser (Node)](RPC/Inter_process/HTTP/Streaming/range-parser.node.txt)
+- __URI routing__
+  - __Client side__
+    - [redux-simple-router (Redux)](RPC/Inter_process/URI_routing/Client_side/redux-simple-router.redux.txt)
+    - [react-router (React)](RPC/Inter_process/URI_routing/Client_side/react-router.react.txt)
+  - __Server side__
+    - [vhost (Express)](RPC/Inter_process/URI_routing/Server_side/vhost.express.txt)
+
+### Realtime
+
+- __Realtime server__
+  - [express.io (Express)](RPC/Realtime/Realtime_server/express.io.express.txt)
+- __WebSocket__
+  - __Server__
+    - [WebSocket (Protocol)](RPC/Realtime/WebSocket/Server/WebSocket.protocol.txt)
+    - [engine.io (Node)](RPC/Realtime/WebSocket/Server/engine.io.node.txt)
+    - [ws (Node CLI)](RPC/Realtime/WebSocket/Server/ws.node_cli.txt)
+    - [socket.io (Node)](RPC/Realtime/WebSocket/Server/socket.io.node.txt)
+
+### Messages tasks
+
+- __Task coordination__
+  - [orchestrator (Node)](RPC/Messages_tasks/Task_coordination/orchestrator.node.txt)
+  - [swf (AWS)](RPC/Messages_tasks/Task_coordination/swf.aws.txt)
+- __Task queue__
+  - [sqs (AWS)](RPC/Messages_tasks/Task_queue/sqs.aws.txt)
+
+### Web client
+
+- __Simple web client__
+  - __File downloads__
+    - [download (Node CLI)](RPC/Web_client/Simple_web_client/File_downloads/download.node_cli.txt)
+  - __HTTP__
+    - __General__
+      - [request (Node)](RPC/Web_client/Simple_web_client/HTTP/General/request.node.txt)
+    - __Isomorphic__
+      - [superagent (JavaScript)](RPC/Web_client/Simple_web_client/HTTP/Isomorphic/superagent.javascript.txt)
+  - __Multi protocols__
+    - [curl (CLI)](RPC/Web_client/Simple_web_client/Multi_protocols/curl.cli.txt)
+- __Web scraping crawling__
+  - __Crawler__
+    - [simplecrawler (Node)](RPC/Web_client/Web_scraping_crawling/Crawler/simplecrawler.node.txt)
+
+### Web server
+
+- __HTTP server__
+  - __Directory listing__
+    - [serve-index (Express)](RPC/Web_server/HTTP_server/Directory_listing/serve-index.express.txt)
+  - __For development__
+    - [http-server (CLI)](RPC/Web_server/HTTP_server/For_development/http-server.cli.txt)
+  - __General__
+    - [st (Express)](RPC/Web_server/HTTP_server/General/_st.express.txt)
+    - [serve-static (Express)](RPC/Web_server/HTTP_server/General/serve-static.express.txt)
+    - [glacier (AWS)](RPC/Web_server/HTTP_server/General/glacier.aws.txt)
+    - [s3 (AWS)](RPC/Web_server/HTTP_server/General/s3.aws.txt)
+- __REST API generation__
+  - __Declarative opiniated__
+    - [swagger (HTTP)](RPC/Web_server/REST_API_generation/Declarative_opiniated/swagger.http.txt)
+- __Web framework__
+  - __Minimalist__
+    - [express (Node)](RPC/Web_server/Web_framework/Minimalist/express.node.txt)
+  - __Declarative__
+    - [sails (Express)](RPC/Web_server/Web_framework/Declarative/sails.express.txt)
 
 ## To sort
 
@@ -1091,8 +1092,8 @@ Number of pages (if it were a printed book): 6424
 
 - __Bash__
   - [bash](To_sort/Bash_Unix/Bash/bash.txt)
-  - [bash variables](To_sort/Bash_Unix/Bash/bash_variables.txt)
   - [batch bash equivalences](To_sort/Bash_Unix/Bash/batch_bash_equivalences.txt)
+  - [bash variables](To_sort/Bash_Unix/Bash/bash_variables.txt)
   - [colorisation shell](To_sort/Bash_Unix/Bash/colorisation_shell.txt)
   - [common options](To_sort/Bash_Unix/Bash/common_options.txt)
   - [differences bash sh](To_sort/Bash_Unix/Bash/differences_bash_sh.txt)
@@ -1273,15 +1274,17 @@ Number of pages (if it were a printed book): 6424
 
 - __C__
   - __Glibc__
-    - [IO filedescriptors](To_sort/Utilities_to_sort/C/Glibc/IO_filedescriptors.txt)
     - [IO normale](To_sort/Utilities_to_sort/C/Glibc/IO_normale.txt)
+    - [IO filedescriptors](To_sort/Utilities_to_sort/C/Glibc/IO_filedescriptors.txt)
     - [IO memoire](To_sort/Utilities_to_sort/C/Glibc/IO_memoire.txt)
     - [TODO](To_sort/Utilities_to_sort/C/Glibc/TODO.txt)
+    - [attributs fichiers](To_sort/Utilities_to_sort/C/Glibc/attributs_fichiers.txt)
     - [caracteres](To_sort/Utilities_to_sort/C/Glibc/caracteres.txt)
     - [communication interprocess](To_sort/Utilities_to_sort/C/Glibc/communication_interprocess.txt)
     - [dynamic allocation](To_sort/Utilities_to_sort/C/Glibc/dynamic_allocation.txt)
     - [encodage crypto](To_sort/Utilities_to_sort/C/Glibc/encodage_crypto.txt)
     - [erreurs](To_sort/Utilities_to_sort/C/Glibc/erreurs.txt)
+    - [extension 64 bits](To_sort/Utilities_to_sort/C/Glibc/extension_64_bits.txt)
     - [fichiers temporaires](To_sort/Utilities_to_sort/C/Glibc/fichiers_temporaires.txt)
     - [goto](To_sort/Utilities_to_sort/C/Glibc/goto.txt)
     - [limites](To_sort/Utilities_to_sort/C/Glibc/limites.txt)
@@ -1290,22 +1293,20 @@ Number of pages (if it were a printed book): 6424
     - [repertoires](To_sort/Utilities_to_sort/C/Glibc/repertoires.txt)
     - [signaux](To_sort/Utilities_to_sort/C/Glibc/signaux.txt)
     - [strings](To_sort/Utilities_to_sort/C/Glibc/strings.txt)
-    - [extension 64 bits](To_sort/Utilities_to_sort/C/Glibc/extension_64_bits.txt)
-    - [time](To_sort/Utilities_to_sort/C/Glibc/time.txt)
     - [systeme de fichier](To_sort/Utilities_to_sort/C/Glibc/systeme_de_fichier.txt)
-    - [attributs fichiers](To_sort/Utilities_to_sort/C/Glibc/attributs_fichiers.txt)
+    - [time](To_sort/Utilities_to_sort/C/Glibc/time.txt)
     - [wchar wstr](To_sort/Utilities_to_sort/C/Glibc/wchar_wstr.txt)
   - __Standard library__
     - __C89__
-      - [assert](To_sort/Utilities_to_sort/C/Standard_library/C89/assert.txt)
       - [ctype](To_sort/Utilities_to_sort/C/Standard_library/C89/ctype.txt)
+      - [assert](To_sort/Utilities_to_sort/C/Standard_library/C89/assert.txt)
       - [errno](To_sort/Utilities_to_sort/C/Standard_library/C89/errno.txt)
       - [float](To_sort/Utilities_to_sort/C/Standard_library/C89/float.txt)
-      - [limits](To_sort/Utilities_to_sort/C/Standard_library/C89/limits.txt)
       - [locale](To_sort/Utilities_to_sort/C/Standard_library/C89/locale.txt)
+      - [limits](To_sort/Utilities_to_sort/C/Standard_library/C89/limits.txt)
+      - [math](To_sort/Utilities_to_sort/C/Standard_library/C89/math.txt)
       - [setjmp](To_sort/Utilities_to_sort/C/Standard_library/C89/setjmp.txt)
       - [signal](To_sort/Utilities_to_sort/C/Standard_library/C89/signal.txt)
-      - [math](To_sort/Utilities_to_sort/C/Standard_library/C89/math.txt)
       - [stdarg](To_sort/Utilities_to_sort/C/Standard_library/C89/stdarg.txt)
       - [stddef](To_sort/Utilities_to_sort/C/Standard_library/C89/stddef.txt)
       - [stdio](To_sort/Utilities_to_sort/C/Standard_library/C89/stdio.txt)
@@ -1317,16 +1318,16 @@ Number of pages (if it were a printed book): 6424
       - [wchar](To_sort/Utilities_to_sort/C/Standard_library/C95/wchar.txt)
       - [wctype](To_sort/Utilities_to_sort/C/Standard_library/C95/wctype.txt)
     - __C99__
-      - [stdint](To_sort/Utilities_to_sort/C/Standard_library/C99/stdint.txt)
       - [inttypes](To_sort/Utilities_to_sort/C/Standard_library/C99/inttypes.txt)
       - [stdbool](To_sort/Utilities_to_sort/C/Standard_library/C99/stdbool.txt)
+      - [stdint](To_sort/Utilities_to_sort/C/Standard_library/C99/stdint.txt)
 - __C++__
   - __Boost__
-    - [any](To_sort/Utilities_to_sort/C++/Boost/any.txt)
-    - [boost](To_sort/Utilities_to_sort/C++/Boost/boost.txt)
     - __Images__
       - [random (JPG)](To_sort/Utilities_to_sort/C++/Boost/Images/random.jpg)
+    - [any](To_sort/Utilities_to_sort/C++/Boost/any.txt)
     - [array](To_sort/Utilities_to_sort/C++/Boost/array.txt)
+    - [boost](To_sort/Utilities_to_sort/C++/Boost/boost.txt)
     - [boost uuid](To_sort/Utilities_to_sort/C++/Boost/boost_uuid.txt)
     - [call traits](To_sort/Utilities_to_sort/C++/Boost/call_traits.txt)
     - [compressed pair](To_sort/Utilities_to_sort/C++/Boost/compressed_pair.txt)
@@ -1386,10 +1387,10 @@ Number of pages (if it were a printed book): 6424
 
 ### Boxes
 
-- __Toast notification__
-  - [angular growl 2 (Angular)](UX/Boxes/Toast_notification/angular_growl_2.angular.txt)
 - __Modals__
   - [avgrund (jQuery)](UX/Boxes/Modals/_avgrund.jquery.txt)
+- __Toast notification__
+  - [angular growl 2 (Angular)](UX/Boxes/Toast_notification/angular_growl_2.angular.txt)
 
 ### Components framework
 
@@ -1404,35 +1405,35 @@ Number of pages (if it were a printed book): 6424
   - __Autosize__
     - [autosize (JavaScript)](UX/Forms/Form_input/Autosize/autosize.javascript.txt)
 - __Form select__
-  - [select2 (jQuery)](UX/Forms/Form_select/select2.jquery.txt)
   - [chosen (jQuery)](UX/Forms/Form_select/_chosen.jquery.txt)
+  - [select2 (jQuery)](UX/Forms/Form_select/select2.jquery.txt)
 - __Form sliders__
   - [knob (jQuery)](UX/Forms/Form_sliders/knob.jquery.txt)
 - __Progress bars__
   - [nprogress (JavaScript)](UX/Forms/Progress_bars/nprogress.javascript.txt)
 - __Rich editor__
-  - __RTF__
-    - [redactor (jQuery)](UX/Forms/Rich_editor/RTF/_redactor.jquery.txt)
-    - [ckeditor (JavaScript)](UX/Forms/Rich_editor/RTF/ckeditor.javascript.txt)
   - __Autocompletion__
     - __Inside input__
       - [typeahead.js (jQuery)](UX/Forms/Rich_editor/Autocompletion/Inside_input/typeahead.js.jquery.txt)
+  - __RTF__
+    - [redactor (jQuery)](UX/Forms/Rich_editor/RTF/_redactor.jquery.txt)
+    - [ckeditor (JavaScript)](UX/Forms/Rich_editor/RTF/ckeditor.javascript.txt)
 - __Spinners__
-  - __General__
-    - [spinkit (CSS)](UX/Forms/Spinners/General/spinkit.css.txt)
   - __Buttons__
     - [ladda (JavaScript)](UX/Forms/Spinners/Buttons/ladda.javascript.txt)
+  - __General__
+    - [spinkit (CSS)](UX/Forms/Spinners/General/spinkit.css.txt)
 
 ### General
 
 - __Theory__
-  - [UX consent (Theory)](UX/General/Theory/UX_consent.theory.txt)
   - [UX animations (Theory)](UX/General/Theory/UX_animations.theory.txt)
+  - [UX consent (Theory)](UX/General/Theory/UX_consent.theory.txt)
   - [UX forms (Theory)](UX/General/Theory/UX_forms.theory.txt)
+  - [UX general (Theory)](UX/General/Theory/UX_general.theory.txt)
   - [UX interactions (Theory)](UX/General/Theory/UX_interactions.theory.txt)
   - [UX mobile (Theory)](UX/General/Theory/UX_mobile.theory.txt)
   - [UX performance (Theory)](UX/General/Theory/UX_performance.theory.txt)
-  - [UX general (Theory)](UX/General/Theory/UX_general.theory.txt)
   - [usability (Theory)](UX/General/Theory/usability.theory.txt)
 
 ### Information structure
@@ -1442,12 +1443,12 @@ Number of pages (if it were a printed book): 6424
     - [masonry (JavaScript)](UX/Information_structure/Layout/Bricks/masonry.javascript.txt)
   - __Sticky header__
     - [headroom.js (jQuery)](UX/Information_structure/Layout/Sticky_header/headroom.js.jquery.txt)
+- __Tables__
+  - [ngtable (Angular)](UX/Information_structure/Tables/_ngtable.angular.txt)
+  - [ng-grid (Angular)](UX/Information_structure/Tables/ng-grid.angular.txt)
 - __Presentations__
   - __Web__
     - [fullpage.js (jQuery)](UX/Information_structure/Presentations/Web/fullpage.js.jquery.txt)
-- __Tables__
-  - [ng-grid (Angular)](UX/Information_structure/Tables/ng-grid.angular.txt)
-  - [ngtable (Angular)](UX/Information_structure/Tables/_ngtable.angular.txt)
 
 ### Interaction
 
@@ -1458,46 +1459,46 @@ Number of pages (if it were a printed book): 6424
 - __Orientation__
   - [parallax.js (JavaScript)](UX/Interaction/Orientation/parallax.js.javascript.txt)
 - __Scrolling__
-  - __Animate on scroll__
-    - [skrollr (JavaScript)](UX/Interaction/Scrolling/Animate_on_scroll/skrollr.javascript.txt)
-    - [scrollreveal (JavaScript)](UX/Interaction/Scrolling/Animate_on_scroll/scrollreveal.javascript.txt)
-    - [waypoints (JavaScript)](UX/Interaction/Scrolling/Animate_on_scroll/waypoints.javascript.txt)
-    - [stroll (JavaScript)](UX/Interaction/Scrolling/Animate_on_scroll/stroll.javascript.txt)
   - __Enhanced scrolling__
     - [slimscroll (jQuery)](UX/Interaction/Scrolling/Enhanced_scrolling/_slimscroll.jquery.txt)
     - [nicescroll (jQuery)](UX/Interaction/Scrolling/Enhanced_scrolling/nicescroll.jquery.txt)
+  - __Animate on scroll__
+    - [scrollreveal (JavaScript)](UX/Interaction/Scrolling/Animate_on_scroll/scrollreveal.javascript.txt)
+    - [stroll (JavaScript)](UX/Interaction/Scrolling/Animate_on_scroll/stroll.javascript.txt)
+    - [waypoints (JavaScript)](UX/Interaction/Scrolling/Animate_on_scroll/waypoints.javascript.txt)
+    - [skrollr (JavaScript)](UX/Interaction/Scrolling/Animate_on_scroll/skrollr.javascript.txt)
 
 ### Text
 
 - __Content__
   - [content strategy (Theory)](UX/Text/Content/content_strategy.theory.txt)
 - __i18n__
+  - __General__
+    - [c++ internationalization (C++)](UX/Text/i18n/General/c++_internationalization.c++.txt)
+    - [gtk internationalization (GTK)](UX/Text/i18n/General/gtk_internationalization.gtk.txt)
   - __Encoding__
-    - __All__
-      - [histoire encodage (Theory)](UX/Text/i18n/Encoding/All/histoire_encodage.theory.txt)
-      - [comparatif encodage (Theory)](UX/Text/i18n/Encoding/All/comparatif_encodage.theory.txt)
     - __Non-Unicode__
       - [detailed encoding (Format)](UX/Text/i18n/Encoding/Non-Unicode/detailed_encoding.format.txt)
       - [summary encoding (Format)](UX/Text/i18n/Encoding/Non-Unicode/summary_encoding.format.txt)
     - __Unicode__
-      - [unicode (Format)](UX/Text/i18n/Encoding/Unicode/unicode.format.txt)
-      - [utf16 ucs2 (Format)](UX/Text/i18n/Encoding/Unicode/utf16_ucs2.format.txt)
       - [utf32 ucs4 (Format)](UX/Text/i18n/Encoding/Unicode/utf32_ucs4.format.txt)
       - [utf8 (Format)](UX/Text/i18n/Encoding/Unicode/utf8.format.txt)
+      - [utf16 ucs2 (Format)](UX/Text/i18n/Encoding/Unicode/utf16_ucs2.format.txt)
+      - [unicode (Format)](UX/Text/i18n/Encoding/Unicode/unicode.format.txt)
+    - __All__
+      - [histoire encodage (Theory)](UX/Text/i18n/Encoding/All/histoire_encodage.theory.txt)
+      - [comparatif encodage (Theory)](UX/Text/i18n/Encoding/All/comparatif_encodage.theory.txt)
   - __Translation__
     - __Library__
-      - __Formats__
-        - [po2json (Node CLI)](UX/Text/i18n/Translation/Library/Formats/po2json.node_cli.txt)
       - __Extraction__
         - [gettext (Many)](UX/Text/i18n/Translation/Library/Extraction/gettext.many.txt)
         - [i18n (Node)](UX/Text/i18n/Translation/Library/Extraction/i18n.node.txt)
+      - __Formats__
+        - [po2json (Node CLI)](UX/Text/i18n/Translation/Library/Formats/po2json.node_cli.txt)
       - __Replacement__
         - [angular translate (Angular)](UX/Text/i18n/Translation/Library/Replacement/angular_translate.angular.txt)
         - [jed (JavaScript)](UX/Text/i18n/Translation/Library/Replacement/jed.javascript.txt)
   - [internationalization (Theory)](UX/Text/i18n/internationalization.theory.txt)
-  - __General__
-    - [c++ internationalization (C++)](UX/Text/i18n/General/c++_internationalization.c++.txt)
-    - [gtk internationalization (GTK)](UX/Text/i18n/General/gtk_internationalization.gtk.txt)
 
 ## Utilities
 
@@ -1506,35 +1507,35 @@ Number of pages (if it were a printed book): 6424
 - __Date time general__
   - __Date popovers__
     - [jquery-timeago (jQuery)](Utilities/Date_time/Date_time_general/Date_popovers/jquery-timeago.jquery.txt)
-  - __Date picker__
-    - [bootstrap-datepicker (Bootstrap)](Utilities/Date_time/Date_time_general/Date_picker/bootstrap-datepicker.bootstrap.txt)
   - __Utilities__
     - [moment (JavaScript)](Utilities/Date_time/Date_time_general/Utilities/moment.javascript.txt)
+  - __Date picker__
+    - [bootstrap-datepicker (Bootstrap)](Utilities/Date_time/Date_time_general/Date_picker/bootstrap-datepicker.bootstrap.txt)
 
 ### Strings
 
 - __Strings general__
-  - __Matching__
-    - __Globbing__
-      - [minimatch (Node)](Utilities/Strings/Strings_general/Matching/Globbing/minimatch.node.txt)
-    - __RegExp__
-      - [gulp-replace (Gulp)](Utilities/Strings/Strings_general/Matching/RegExp/gulp-replace.gulp.txt)
+  - __Encoding__
+    - [base64 base32 hex octal (Format)](Utilities/Strings/Strings_general/Encoding/base64_base32_hex_octal.format.txt)
   - __Diff__
-    - __Patch__
-      - [patch (CLI)](Utilities/Strings/Strings_general/Diff/Patch/patch.cli.txt)
     - __VCDiff__
       - [vcdiff (Format)](Utilities/Strings/Strings_general/Diff/VCDiff/vcdiff.format.txt)
       - [xdelta (CLI)](Utilities/Strings/Strings_general/Diff/VCDiff/xdelta.cli.txt)
     - [cmp (CLI)](Utilities/Strings/Strings_general/Diff/cmp.cli.txt)
+    - __Patch__
+      - [patch (CLI)](Utilities/Strings/Strings_general/Diff/Patch/patch.cli.txt)
     - [comm (CLI)](Utilities/Strings/Strings_general/Diff/comm.cli.txt)
-    - [diff3 (CLI)](Utilities/Strings/Strings_general/Diff/diff3.cli.txt)
     - [diff sdiff (CLI)](Utilities/Strings/Strings_general/Diff/diff_sdiff.cli.txt)
-  - __Encoding__
-    - [base64 base32 hex octal (Format)](Utilities/Strings/Strings_general/Encoding/base64_base32_hex_octal.format.txt)
+    - [diff3 (CLI)](Utilities/Strings/Strings_general/Diff/diff3.cli.txt)
+  - __Matching__
+    - __RegExp__
+      - [gulp-replace (Gulp)](Utilities/Strings/Strings_general/Matching/RegExp/gulp-replace.gulp.txt)
+    - __Globbing__
+      - [minimatch (Node)](Utilities/Strings/Strings_general/Matching/Globbing/minimatch.node.txt)
   - __Manipulation__
+    - __Utilities__
+      - [underscore.string (JavaScript)](Utilities/Strings/Strings_general/Manipulation/Utilities/underscore.string.javascript.txt)
     - __Concatenation__
       - [gulp-concat (Gulp)](Utilities/Strings/Strings_general/Manipulation/Concatenation/gulp-concat.gulp.txt)
       - [gulp-header-footer (Gulp)](Utilities/Strings/Strings_general/Manipulation/Concatenation/gulp-header-footer.gulp.txt)
-    - __Utilities__
-      - [underscore.string (JavaScript)](Utilities/Strings/Strings_general/Manipulation/Utilities/underscore.string.javascript.txt)
 
