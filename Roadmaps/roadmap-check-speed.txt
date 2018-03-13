@@ -5,12 +5,25 @@
 
 
 
+Should do runEnd check+return before the second measure() instead of after the third measure():
+  - reasons:
+     - less duration variability
+         - check it
+         - remove comments about specific calculations of values of variability when there are more tasks
+     - when task is more than half as slow as maxDuration, only run it once
+  - still keep the `if (recurse)` check+return after third measure()
+
+First implement empty loop bias with hard-coded bias values:
+  - only implement dynamic bias values retrievale after adaptive `repeat` is implemented
+
 Loop bias:
   - once, before all runs
   - nowBias:
      - time taken to perform now()
-     - calculated with getMedian(() => {}, 100ms)
-        - repeat should always be 0
+     - calculated with getMedian(now, 100ms)
+        - not `() => now()`
+        - repeat should always be NUM
+           - check which one is right but probably around 1e3
      - should be around 60ns on my machine
   - loopBias:
      - time taken to perform each loop in measureLoop()
@@ -20,10 +33,11 @@ Loop bias:
   - after each measure():
      - substract nowBias
      - substract repeats * loopBias
-     - if result < 0 -> 1
+     - if result < 0 -> 1 (for the moment)
      - except when calculating nowBias|loopBias themselves
 
 Fast functions bias:
+  - when implementing this, try using empty function as main() since this is the one that requires the most repeats and is the most biased
   - use `repeat` in measure():
      - initially 1
   - before each scale up:
@@ -36,11 +50,56 @@ Fast functions bias:
         - B = at least 2 digits of precision within time resolution: 100 * timeResolution
         - note: almost always A > B
         - timeOfNow, timeResolution and median should be in same unit (nanosecs)
-  - when repeat changes, should discard current median (not pass it to next scale)???
-     - find a way to prevent too many changes???
-     - the bigger loopRepeat is, the more likely it is too change: i.e. should be less likely to trigger a discard???
+  - when `repeat` changes, should discard current median (not pass it to next scale):
+     - unless oldChange / Math.abs(newChange - oldChange) < NUM
+        - NUM is hardcoded
+        - NUM should be approx. three times the typical `repeat` up|down variations once it has stabilized
+           - if less than .1, hardcode .1 as NUM instead since that should not bias results too much
 
-Separate sync and async??? See differences once implemented
+Distributions:
+  - reasons:
+     - allow other stats than mean
+     - better mean, i.e. more precision
+  - should return array of values (distributions/percentiles) instead of single mean
+     - caller use it to calculate stats, including mean
+     - array should be recursively passed around instead of single mean
+  - final return should be sorted:
+     - unless final return size is max array size, in which case it is guaranteed to be sorted (make sure about that)
+     - make sure it is only done on final return
+  - max array size:
+     - hardcoded
+        - should be as big as the amount of memory we are ok to spend
+           - check actual memory usage using memory dump report core module
+     - before each scale up, if array is bigger than size:
+        - sort array then only keep median of each triplet
+     - final returned array might be smaller size than max size if never reached the limit:
+        - some stats (e.g. variance) should require minimum size
+     - check how increasing/decreasing max array size impacts how many times measure() is called
+  - would using an adaptive sort (since subarrays are already sorted) instead of ARR.sort() be faster???
+  - check it with a main() with: Math.random() * (Math.random() > .5 ? (Math.random() > .5 ? 1: 10) :  (Math.random() > .5 ? 20: 30))
+  - remove the part in "design" saying only mean is calculated, or instead say this is where the focus mostly is
+  - issues with `repeat` (measuring in loops):
+     - probably transform any distribution to a bell curve
+        - verify this
+     - if so, some stats should not be calculated when `repeat` was used, because they would not be valid (e.g. percentiles)
+        - however still make sense: figure out which ones: median, maybe arithmetic mean???
+        - figure it out by returning:
+           - `count` NUM: number of times main() was run
+           - `loops` NUM: number of times measure() was run
+           - should discard the ones not used (due to `repeat` discarding)
+  - test each stat:
+     - e.g. average, mean, standard deviation, etc.
+     - using main() with known distributions, based on Math.random, with a high maxDuration
+     - do it locally while implementing to check everything is ok
+     - also do it as unit tests
+
+When measure() result < 0:
+  - instead of falling back to 1, fallback to (standardDeviation(nowBias) * repeat)
+
+Add before() and after()
+
+Add support for async:
+  - first implement separately, then check if running sync code with async is ok
 
 Remove `depth` argument from timing functions, unless it's now needed
 
@@ -84,8 +143,9 @@ Design:
   - use max duration:
      - as opposed to fixed number of loops
      - reasons:
-        - does not increase variance as engines or code gets faster
-           - because faster code has higher variance
+        - faster code has higher variance:
+           - does not increase variance as engines or code gets faster
+           - when comparing fast tasks against slow tasks, make their variance more even
         - more stable user experience, avoiding potentially very long runs
         - get the most precision as user is ready to wait
         - no separate timeout feature needed
@@ -230,6 +290,9 @@ OPTS.platforms STR (use browserlist and PACKAGE.engines)
 Separate now.js to its own package
 
 Separate resolution.js to its own package
+
+Separate measuring part to its own package
+  - child processes might be able to spawn only this instead of the full check-speed package
 
 Promote:
   - add keywords (GitHub, package.json)
