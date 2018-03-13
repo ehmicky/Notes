@@ -6,8 +6,8 @@
 
 
 TODO:
-  - stopped at https://stripe.com/docs/connect/capabilities-overview
-     - but should do https://stripe.com/docs/connect/charges first
+  - stopped at https://stripe.com/docs/connect/accounts
+     - then jump to https://stripe.com/docs/connect/best-practices
   - Connect:
      - in API it sometimes shows "Custom only" or "Custom and Express only"
      - https://stripe.com/docs/sources/connect
@@ -115,8 +115,9 @@ PRICING ==>                       #CHARGE:
                                   #     - $2 per ACCOUNT
                                   #        - except ones with 0 CHARGEs during the month
                                   #        - except first 5000 ones each month
-                                  #     - 0.25% of CHARGEs in US/Canada, 0.5% otherwise
-                                  #     - 1.5% of TRANSFERs
+                                  #     - 0.25% of TRANSFERs in US/Canada, 0.5% otherwise
+                                  #     - 1.5% of account debits
+                                  #FEE: none
                                   #Sigma:
                                   #  - <500: $0.02 per CHARGE + $10
                                   #  - <1000: $0.018 per CHARGE + $25
@@ -957,14 +958,20 @@ PAYOUT.amount                   *C#MONEY
                                   #Minimum of around €1-2 (currency-specific) (only for EU countries).
                                   #Can be negative, in which case bank account / credit card is debited instead.
                                   #  - done to put negative BALANCE back to normal
+                                  #Restrictions for debit 'card':
+                                  #  - must be US
+                                  #  - must be visa|mastercard|discover
+                                  #  - maximum $3000 for 'standard', $9999 for 'instant'.
 PAYOUT.method                    C#Either:
                                   #  - 'standard':
                                   #     - takes several days (country-specific)
                                   #        - 7-10 days the first time it's done
                                   #  - 'instant':
-                                  #     - takes few minutes
+                                  #     - less than 30 minutes
                                   #     - only for Connect, for debit cards and not for all banks (but most)
                                   #     - higher Stripe fee
+                                  #     - US only
+                                  #     - max $5000 per day
 PAYOUT.source_type               C#'bank_account' or 'card' (source)
                                   #Decides which BALANCE_SUB to pick.
 PAYOUT.type                       #'bank_account' or 'card' (destination)
@@ -1001,13 +1008,14 @@ PAYOUT.failure_code              ?#STR among:
 PAYOUT.automatic                  #BOOL. True if created by an automated payout SCHEDULE.
 ACCOUNT.settings.payouts        CU#PAYOUTS_SETTINGS.
 PAYOUTS_SETTINGS.schedule       CU#SCHEDULE. Automatically create PAYOUTs.
-SCHEDULE.interval               CU#Automatic PAYOUTs frequency among 'manual' (never), 'daily', 'weekly', 'monthly'.
+SCHEDULE.interval               CU#Automatic PAYOUTs frequency among 'daily', 'weekly', 'monthly' or 'manual' (never, but actually 90 days)
 SCHEDULE.weekly_anchor          CU#STR ('monday', etc.). Day of the week if SCHEDULE.interval 'weekly'.
 SCHEDULE.monthly_anchor         CU#NUM. Days of the month if SCHEDULE.interval 'monthly'.
                                   #If 29-31 and month has fewer days, send on last day.
 SCHEDULE.delay_days             CU#Wait for INT days before any CHARGE is included in automatic PAYOUTs.
 PAYOUTS_SETTINGS.               CU#BOOL (def: true for Express, false for Custom accounts).
  debit_negative_balances          #Automatically create negative PAYOUT if BALANCE is negative.
+                                  #Only for ACCOUNT in US|Canada|Australia.
 
 GET /topups[/ID]
 POST /topups[/ID]                 #
@@ -1015,6 +1023,9 @@ POST /topups/ID/cancel            #From TOPUP.status 'pending' to 'canceled'.
 STRIPE.topups.list|retrieve|
  create|update|cancel()           #
 TOPUP                             #Inverse of PAYOUT. Money added to ACCOUNT
+                                  #Only for US ACCOUNTs (at the moment)
+                                  #ACCOUNT.settings.payouts.schedule.interval must be 'manual'
+                                  #Take 5-6 business days.
 TOPUP.status                      #Can be:
                                   #  - 'pending'
                                   #  - 'succeeded' (EVENT 'topup.succeeded')
@@ -1025,6 +1036,7 @@ TOPUP.status                      #Can be:
 TOPUP.amount                    *C#PMONEY
 ?amount=CMP_FILTER                #
 TOPUP.source                     C#SOURCE
+                                  #Must be verified BANK_ACCOUNT
 TOPUP.balance_transaction        ?#BALANCE_TRANSACTION.id
 TOPUP.expected_availability_date ?#DATE_NUM.
 TOPUP.description               CU#STR shown to users.
@@ -1271,6 +1283,14 @@ CUSTOMER                          #Entity/person paying.
                                   #  - email
                                   #  - addresses
                                   #  - invoice info
+                                  #To re-use between several Connect destination ACCOUNT2:
+                                  #  - using platform ACCOUNT:
+                                  #     - create CUSTOMER
+                                  #  - then using destination ACCOUNT2:
+                                  #     - create TOKEN of CUSTOMER
+                                  #     - either:
+                                  #        - create CHARGE with that TOKEN
+                                  #        - create CUSTOMER, then create CHARGE with that CUSTOMER
 GET /customers[/ID]
 POST /customers[/ID]
 DELETE /customers/ID              #
@@ -1775,8 +1795,8 @@ TOKEN.type                        #One of:
                                   #  - 'bank_account': TOKEN.bank_account + TOKEN.customer
 TOKEN.pii                       RC#OBJ: id_number STR
                                   #Personally Identifiable Information.
-TOKEN.card                       C#Same as SOURCE.card
-TOKEN.bank_account               C#Same as SOURCE.bank_account
+TOKEN.card                       C#Same as SOURCE.card. Can be omitted if specified in CUSTOMER.
+TOKEN.bank_account               C#Same as SOURCE.bank_account. Can be omitted if specified in CUSTOMER.
 TOKEN.customer                  RC#CUSTOMER.id
 TOKEN.client_ip                   #'IP'
 
@@ -1860,11 +1880,11 @@ OAUTH REDIRECTION ==>             #Redirect URI:
                                   #EVENT 'account.application.authorized'
 ERROR_RESPONSE                    #Does not redirect, except for 'access_denied'
 ERROR_RESPONSE.error              #STR:
-																	#  - 'access_denied': user clicked the Deny button
-																	#  - 'invalid_scope': invalid ?scope
-																	#  - 'invalid_redirect_uri': invalid ?redirect_uri
-																	#  - 'invalid_request': missing ?response_type
-																	#  - 'unsupported_response_type' invalid ?response_type
+                                  #  - 'access_denied': user clicked the Deny button
+                                  #  - 'invalid_scope': invalid ?scope
+                                  #  - 'invalid_redirect_uri': invalid ?redirect_uri
+                                  #  - 'invalid_request': missing ?response_type
+                                  #  - 'unsupported_response_type' invalid ?response_type
 ERROR_RESPONSE.error_description  #STR that can be shown to user
 ERROR_RESPONSE.state              #STR. Same as ?state
 
@@ -1905,8 +1925,8 @@ Stripe-Account: ACCOUNT.id [C]    #Must be done when using OAuth. Only after ACC
 Authorization: ACCESS_TOKEN [C]   #Alternative|legacy way, less secure.
                                   #ACCESS_TOKEN is OAuth's
 
-POST /accounts/ID/reject          #Report ACCOUNT.
-                                  #Ask Stripe to set ACCOUNT.payouts_enabled|charges_enabled to false.
+POST /accounts/ID/reject          #Restrict an ACCOUNT connected through OAuth
+                                  #Set ACCOUNT.payouts_enabled|charges_enabled to false.
                                   #Payload: reason
 PAYLOAD.reason                    #STR among 'fraud', 'terms_of_service', 'other'.
 STRIPE.account.reject()           #
@@ -1918,8 +1938,8 @@ CAPABILITIES.TYPE                 #Disable some features on ACCOUNT pending veri
                                   #Only required if US ACCOUNT.
                                   #Should only ask the ones needed, so less verification is done.
                                   #TYPE can be:
-                                  #  - 'card': CHARGEs
-                                  #  - 'platform': Connect
+                                  #  - 'card': direct charges (see above)
+                                  #  - 'platform': destination|separate charges (see above)
                                   #Value is 'pending', 'active' or 'inactive'
 ACCOUNT|PERSON.requirements      ?#REQUIREMENTS to fill in some ACCOUNT.* properties (and wait for verification) to:
                                   #  - allow CAPABILITIES
@@ -1948,8 +1968,15 @@ GET /balance                      #BALANCE
 STRIPE.balance.retrieve()         #
 BALANCE.available                 #BALANCE_SUB_ARR. Money available.
                                   #EVENT 'balance.available' when updated.
-BALANCE.pending                   #BALANCE_SUB_ARR. Money not available yet due to 7-day rolling pay cycle.
-BALANCE.connect_reserved          #BALANCE_SUB_ARR. Money held, e.g. due to capturing.
+                                  #If negative, cannot create TRANSFER nor positive PAYOUT.
+BALANCE.pending                   #BALANCE_SUB_ARR.
+                                  #Any money added to BALANCE is pending for few days (country-specific).
+                                  #Cannot be used while pending.
+BALANCE.connect_reserved          #BALANCE_SUB_ARR.
+                                  #Money reserved with Connect when a destination's ACCOUNT's BALANCE is negative:
+                                  #  - when platform is responsible to cover cost, i.e. with DESC|SEPC
+                                  #  - a TRANSFER is automatically created after 6 months
+                                  #  - if for too long, should use POST /accounts/ID/reject
 BALANCE_SUB                       #Subdivision of BALANCE for each currency and SOURCE
 BALANCE_SUB.amount                #MONEY
 BALANCE_SUB.source_types.TYPE     #INT. How amount is divided between account TYPE 'bank_account' or 'card'.
@@ -2000,101 +2027,174 @@ BALANCE_TRANSACTION.source        #Related RESOURCE.id
 ?source=SOURCE.id                 #
 BALANCE_TRANSACTION.description   #STR
 
-CHARGE.source                   *C#Can be ACCOUNT
-CHARGE.application                #ACCOUNT.id
-CHARGE.on_behalf_of              C#ACCOUNT.id
-                                  #When one made transaction of another's behalf
-CARD|BANK_ACCOUNT.account         #ACCOUNT.id
-CHARGE|PINTENT.transfer_data     C#TRANSFER_DATA.
-TRANSFER_DATA.destination        C#ACCOUNT.id
-TRANSFER_DATA.amount             C#MONEY (def: CHARGE.amount)
+CHARGES ROUTING ==>               #There are three way to route Connect charges: 'direct charges' (DIRC), 'destination charges' (DESC) and 'separate' (SEPC)
+                                  #For all:
+                                  #  - source: customer. Can use any payment method
+                                  #  - platform: our ACCOUNT in the middle
+                                  #  - destination: another ACCOUNT2, authorized to us through OAuth
+                                  #Use cases:
+                                  #  - DIRC: platform only forwards payments
+                                  #  - DESC: platform does more than only forwarding payments
+                                  #  - SEPC: more complex routing such as:
+                                  #     - TRANSFER done later than CHARGE
+                                  #     - 1-n, n-1 or n-n payments
+                                  #Recommended ACCOUNT.type:
+                                  #  - DIRC: standard
+                                  #  - DESC|SEPC: express|custom
+                                  #Stripe fees:
+                                  #  - DIRC: source for all fees
+                                  #  - DESC|SEPC: platform for all fees + additional ones (see above)
+                                  #Responsibility for DISPUTE, REFUND ad negative BALANCE:
+                                  #  - DIRC + ACCOUNT.type 'standard': source
+                                  #  - otherwise: platform
+                                  #Routing summary:
+                                  #  - DIRC:
+                                  #     - 1 CHARGE source -> destination
+                                  #     - platform not involved except for FEE
+                                  #  - DESC:
+                                  #     - 1 CHARGE source -> platform
+                                  #     - 1 TRANSFER platform -> destination (automatic)
+                                  #  - SEPC:
+                                  #     - 1-n CHARGE source -> platform
+                                  #     - 1-n TRANSFER platform -> destination (manual)
+                                  #CHARGE routing:
+                                  #  - DIRC: create CHARGE|PINTENT using destination's ACCOUNT2 (OAuth)
+                                  #  - DESC: create CHARGE|PINTENT using our ACCOUNT, with transfer_data towards ACCOUNT2
+                                  #  - SEPC:
+                                  #     - create CHARGE|PINTENT using our ACCOUNT
+                                  #     - create TRANSFER from out ACCOUNT to destination's ACCOUNT2
+                                  #     - all CHARGEs|PINTENTs|TRANSFERs must specify transfer_group, and use the same one
+                                  #     - should create TRANSFERs as fast as possible, and not more than 90 days (for compliance reasons)
+                                  #REFUND:
+                                  #  - DIRC: create REFUND using destination's ACCOUNT2 (OAuth), with REFUND.refund_application_fee
+                                  #  - DESC: create REFUND using our ACCOUNT, with REFUND.refund_application_fee|reverse_transfer
+                                  #  - SEPC: create REFUND using our ACCOUNT, with REFUND.reverse_transfer or REVERSAL
+                                  #FEE:
+                                  #  - all: Stripe fee calculated based on original CHARGE, before application FEE
+                                  #  - DIRC: CHARGE|PINTENT.application_fee_amount (creates a FEE)
+                                  #  - DESC: either (same financial result):
+                                  #     - CHARGE|PINTENT.application_fee_amount: fee is taken by creating a FEE after TRANSFER
+                                  #     - TRANSFER_DATA.amount: fee is taken by making TRANSFER amount smaller (with TRANSFER_DATA.amount), no FEE is created
+                                  #  - SEPC: fee is taken by making TRANSFER amount smaller, no FEE is created
+                                  #CHARGE.on_behalf_of:
+                                  #  - DIRC: cannot be defined. Always destination's
+                                  #  - DESC|SEPC: can be defined. Defaults to platform's
+                                  #CAPABILITIES:
+                                  #  - DIRC: 'card'
+                                  #  - DESC|SEPC: 'platform'
+                                  #Restrictions:
+                                  #  - SEPC: only when platform's ACCOUNT and destination's ACCOUNT2 are both in US or both in Europe
+                                  #Publishable key for Stripe.js:
+                                  #  - all: changes which account is used client-side (e.g. when looking up CUSTOMERs)
+                                  #  - DIRC: platform|destination
+                                  #  - DESC|SEPC: platform
 
-Three ways:
-  - direct charges:
-     - when platform only forwards payments
-     - often appropriate for standard
-        - possible with express|custom too, but platform will be responsible for DISPUTE|REFUND
-     - source pays fees and is responsible for DISPUTE|REFUND
-     - CHARGE source -> destination (platform BALANCE not involved except for FEE)
-     - automatic FEE
-  - destination charges:
-     - when platform does more than just forwarding payments
-     - often appropriate for express|custom
-     - platform pays fees and is responsible for DISPUTE|REFUND
-     - automatic TRANSFER source -> platform + CHARGE platform -> destination
-     - automatic FEE
-  - separate charges/transfers: more complex scenarios:
-     - transfer done later than charge
-     - 1-n, n-1 or n-n payments
-     - platform pays fees and is responsible for DISPUTE|REFUND
-     - manual TRANSFER source -> platform + CHARGE platform -> destination
-     - manual FEE
-     - only when platform's ACCOUNT and source's ACCOUNT are both US/Europe
+CHARGE.application                #ACCOUNT.id that created the charge. When using DIRC|DESC|SEPC charges
+CHARGE|PINTENT.transfer_data     C#TRANSFER_DATA. When using DESC charges
+TRANSFER_DATA.destination        C#ACCOUNT.id
+CHARGE.on_behalf_of              C#ACCOUNT.id
+                                  #When using Connect, which ACCOUNT should be used for information like statement_descriptor and currency
+                                  #Either platform's or destination's
+                                  #Default value depends on whether using DIRC|DESC|SEPC charges routing (see below)
+CARD|BANK_ACCOUNT.account         #ACCOUNT.id
+
+ACCOUNT DEBIT ==>                 #Transferring money from a destination's ACCOUNT2 towards our ACCOUNT.
+                                  #Two methods:
+                                  #  - CHARGE.source ACCOUNT:
+                                  #     - to use for actual service|charge
+                                  #     - properly accounted in tax form
+                                  #  - TRANSFER using destination's ACCOUNT2 (OAuth) towards our ACCOUNT
+                                  #     - to use for corrections
+                                  #     - not accounted in tax form
+                                  #Both methods are charged higher than normal CHARGE|TRANSFER (see above)
+                                  #Restrictions:
+                                  #  - only express|custom
+                                  #  - ACCOUNTs must both be in US, or both in Europe
+                                  #  - must use destination's ACCOUNT default currency
+
+SUBSCRIPTIONS ==>                 #Can make sources pay for SUBSCRIPTIONs of destination's ACCOUNT2 (OAuth).
+                                  #SUBSCRIPTION|PLAN|CUSTOMER must be handled while authenticated as ACCOUNT2 (not our ACCOUNT).
+                                  #To take a FEE:
+                                  #  - either:
+                                  #     - SUBSCRIPTION.application_fee_percent: relative
+                                  #     - INVOICE.application_fee_amount: absolute
+                                  #  - all LINE_ITEMs but have been created with our ACCOUNT
 
 GET /transfers[/ID]
 POST /transfers[/ID]              #
 STRIPE.transfers.
  retrieve|list|create|update()    #
-TRANSFER                          #Transfer money from current ACCOUNT. Can be towards another ACCOUNT2 (or not).
-                                  #If enough money in BALANCE, use it. Otherwise, create a CHARGE.
+TRANSFER                          #Transfer money from current ACCOUNT towards another ACCOUNT2.
+                                  #Uses ACCOUNTs BALANCE.
                                   #EVENTs 'transfer.paid|failed'
 TRANSFER.amount                 *C#
 TRANSFER.description            CU#Like CHARGE.*
-TRANSFER.amount_reversed          #Like CHARGE.amount_refunded
+TRANSFER.source_transaction     ?C#CHARGE.id of source
+                                  #When defined, both TRANSFER and ACCOUNT's BALANCE_TRANSACTION will be pending until CHARGE completes (success|failure)
+                                  #  - otherwise, they are withdrawn right away
+                                  #TRANSFER.amount (of all TRANSFERs with same source_transaction) must be <= CHARGE.amount
+                                  #Automatically filled as transfer_group
+                                  #If CHARGE fails, TRANSFER still happens
+                                  #  - should create a TRAVERSAL then
+                                  #Alternative is to wait for 'charge.paid' webhook to create TRANSFER:
+                                  #  - should be done when payment method is async, since we need to create those webhooks to handle failure anyway
 TRANSFER.source_type             C#'card|bank_account'
-TRANSFER.balance_transaction     ?#BALANCE_TRANSACTION.id of source, if enough in BALANCE.
-TRANSFER.source_transaction     ?C#CHARGE.id of source, if not enough in BALANCE.
+TRANSFER.balance_transaction     ?#BALANCE_TRANSACTION.id of source
 CHARGE.transfer                   #TRANSFER.id (inverse)
-TRANSFER.destination            ?C#ACCOUNT.id
+TRANSFER.destination            *C#ACCOUNT.id
 ?destination=ACCOUNT.id           #
-TRANSFER.destination_payment     ?#CHARGE.id of destination (if ACCOUNT).
+TRANSFER.destination_payment     ?#CHARGE.id of destination
 CHARGE.source_transfer            #TRANSFER.id (inverse)
-TRANSFER.reversed                 #BOOL. Whether has been fully reversed.
-                                  #EVENT 'transfer.reversed', even on partial TRAVERSAL.
-TRANSFER.reversals                #TRAVERSAL_LIST
-TRANSFER.transfer_group          C#STR to group several TRANSFERs
+TRANSFER.transfer_group          C#Unique STR to group several TRANSFERs
 ?transfer_group=STR               #
 CHARGE|PINTENT.transfer_group   CU#
 ?transfer_group=STR               #
 TOPUP.transfer_group             C#
 
 GET /transfers/ID/reversals[/ID]
-POST /transfers/ID/reversals[/ID] #REFUND of a TRANSFER.
+POST /transfers/ID/reversals[/ID]
 STRIPE.transferReversals.
  list|retrieve|create|update()    #
-TRAVERSAL.transfer                #TRANSFER.id
+TRAVERSAL                         #REFUND of a TRANSFER.
+                                  #If can do TRANSFER, can do TRAVERSAL (no permission needed from destination).
 TRAVERSAL.amount                 C#PMONEY (def: entire amount)
-                                  #Can only reverse up to the unreversed amount remaining of the TRANSFER.
-                                  #Partial TRAVERSAL only if destination is ACCOUNT
 TRAVERSAL.description           RC#STR shown in Dashboard.
+TRAVERSAL.transfer                #TRANSFER.id
 TRAVERSAL.source_refund           #REFUND.id
-TRAVERSAL.balance_transaction     #BALANCE_TRANSACTION.id
 TRAVERSAL.
- destination_payment_refund       #CHARGE.id
-REFUND.reverse_transfer         RC#BOOL (def: false). Whether should reverse TRANSFER.
-REFUND.source_transfer_reversal   #TRAVERSAL.id if source was ACCOUNT
-REFUND.transfer_reversal          #TRAVERSAL.id if destination was ACCOUNT
+ destination_payment_refund       #REFUND.id
+TRAVERSAL.balance_transaction     #BALANCE_TRANSACTION.id of the refund
+TRANSFER.amount_reversed          #Like CHARGE.amount_refunded
+TRANSFER.reversed                 #BOOL. Whether has been fully reversed.
+                                  #EVENT 'transfer.reversed', even on partial TRAVERSAL.
+TRANSFER.reversals                #TRAVERSAL_LIST
+REFUND.reverse_transfer         RC#BOOL (def: false). Whether should create a TRAVERSAL.
+                                  #Only when CHARGE.transfer_data was used.
+REFUND.source_transfer_reversal  ?#TRAVERSAL.id if source was ACCOUNT
+REFUND.transfer_reversal         ?#TRAVERSAL.id if destination was ACCOUNT
 
 GET /application_fees[/ID]        #
 STRIPE.applicationFees.
  retrieve|list()                  #
-FEE                               #Cut taken from ACCOUNT to ACCOUNT2 CHARGE.
+FEE                               #Cut taken by platform ACCOUNT for a CHARGE|TRANSFER from source to destination ACCOUNT2.
+                                  #Is in same currency as CHARGE|TRANSFER
 CHARGE.application_fee_amount    C#PMONEY
+ORDER.application_fee            C#PMONEY
+SUBSCRIPTION.
+ application_fee_percent        CU#0-100
 INVOICE.application_fee_amount  CU#PMONEY
+TRANSFER_DATA.amount             C#PMONEY (def: CHARGE.amount)
+                                  #If lower than CHARGE.amount, difference is fee.
+                                  #Does not create a FEE instance.
+                                  #Not supported by PINTENT yet.
 CHARGE.application_fee            #FEE.id
-FEE.account                       #ACCOUNT.id that paid the fee
-FEE.application                   #ACCOUNT.id that earned the fee
-FEE.originating_transaction       #CHARGE|TRANSFER.id
-FEE.charge                        #CHARGE.id
-?charge=CHARGE.id                 #
-FEE.balance_transaction           #BALANCE_TRANSACTION.id
 FEE.amount                        #PMONEY
-FEE.amount_refunded               #PMONEY.
-FEE.refunded                      #BOOL. True if fully refunded.
-                                  #EVENT 'application_fee.refunded', even on partial REFUND.
-FEE.refunds                       #FEE_REFUND_LIST
-TRAVERSAL|REFUND.
- refund_application_fee         RC#BOOL (def: false). Whether should refund application_fee as well.
+FEE.account                       #ACCOUNT.id of destination (paid the fee)
+FEE.application                   #ACCOUNT.id of platform (earned the fee)
+FEE.originating_transaction       #CHARGE|TRANSFER.id that created the FEE
+FEE.charge                        #CHARGE.id of the FEE itself
+?charge=CHARGE.id                 #
+FEE.balance_transaction           #BALANCE_TRANSACTION.id of the FEE itself
 
 GET /application_feeds/ID/
  refunds[/ID]
@@ -2102,9 +2202,15 @@ POST /application_feeds/ID/
  refunds[/ID]                     #REFUND of a FEE.
 STRIPE.applicationFeeRefunds.
  retrieve|list|create|update()    #
-FEE_REFUND.amount                C#MONEY
+FEE_REFUND.amount                C#MONEY. Can be partial.
 FEE_REFUND.fee                    #FEE.id
-FEE_REFUND.balance_transaction    #BALANCE_TRANSACTION.id
+FEE_REFUND.balance_transaction    #BALANCE_TRANSACTION.id of the FEE_REFUND itself
+TRAVERSAL|REFUND.
+ refund_application_fee         RC#BOOL (def: false). Whether should create a FEE_REFUND.
+FEE.amount_refunded               #PMONEY.
+FEE.refunded                      #BOOL. True if fully refunded.
+                                  #EVENT 'application_fee.refunded', even on partial REFUND.
+FEE.refunds                       #FEE_REFUND_LIST
 
 GET /checkout/sessions/ID
 POST /checkout/sessions           #
@@ -2388,8 +2494,6 @@ SUBSCRIPTION.status               #string Possible values are incomplete, incomp
                                   #Note that when a subscription has a status of unpaid, no subsequent invoices will be attempted (invoices will be created, but then immediately automatically closed).
                                   #After receiving updated payment information from a customer, you may choose to reopen and pay their closed invoices.
 ?status=STR                       #
-SUBSCRIPTION.                   CU#decimal A non-negative decimal between 0 and 100, with at most two decimal places.
- application_fee_percent          #This represents the percentage of the subscription invoice subtotal that will be transferred to the application owner's Stripe account.
 SUBSCRIPTION.
  billing_cycle_anchor           CU#timestamp Determines the date of the first full invoice, and, for plans with month or year intervals, the day of the month for subsequent invoices.
 SUBSCRIPTION.billing_thresholds CU#BILLING_THRESHOLDS. Define thresholds at which an invoice will be sent, and the subscription advanced to a new billing period
@@ -2583,7 +2687,6 @@ ORDER                             #CHARGE for 1|several SKUs sold to a specific 
                                   #Some attributes can only be updated through custom callback (see below).
 ?ids=ID_ARR                       #
 ORDER.amount
-ORDER.application_fee
 ORDER.application                 #Like CHARGE.*
 ORDER.amount_returned             #Like CHARGE.amount_refunded
 ORDER.customer                   C#Like CHARGE.*
