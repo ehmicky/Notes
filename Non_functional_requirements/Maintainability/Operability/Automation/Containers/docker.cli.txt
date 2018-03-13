@@ -438,7 +438,8 @@ docker create
 
 
 NETWORK ==>                       #Each container uses its own:
-                                  #  - network interfaces
+                                  #  - network interfaces:
+                                  #     - see --network "host" to remove isolation
                                   #  - "UTS namespace", i.e. its own hostname
 docker create
 --uts STR                         #Set container's UTS namespace:
@@ -464,11 +465,66 @@ CONTROL GROUPS ==>                #Ensures for each process (i.e. container), at
                                   #  - logging/monitoring #  - freezing processes
                                   #Security-wise: this mitigates DDoS, etc.
                                   #Can be hierarchical
+                                  #Limitations:
+                                  #  - automatically creates a control group
+                                  #     - --cgroup-parent uses a specific control group instead
+                                  #  - NUM can be -1, i.e. infinity (usually def)
+
+docker create ...                 
+--cgroup-parent CGROUP            #Assigns a specific control group to the container. 
+
+-m NUM[b|k|m|g]
+--memory=NUM[b|k|m|g]             #Memory hard limit. Min: 4M.
+--memory-swap=NUM[b|k|m|g]        #Memory + Swap hard limit
+                                  #Def: double of --memory
+                                  #When set, --memory must be set
+--memory-reservation=NUM[b|k|m|g] #Memory soft limit (i.e. only hint, but not enforce limit)
+                                  #If 0 (def), same as --memory
+--kernel-memory=NUM[b|k|m|g]      #Memory hard limit, but only the one used by kernel (includes sockets buffer, process stack, slabs).
+                                  #Min: 4M.
+                                  #When set, --memory must be set
+--oom-kill-disable=BOOL           #Enable OOM killer (def: true)
+                                  #OOM (out-of-memory) killer: 
+                                  #  - kernel terminates a process (here the container) that requested memory while none is either available or above memory hard limit
+                                  #  - disabling OOM killer for the container does not disable host's OOM killer
+                                  #     - i.e. it might dangerously force killing host's system processes, unless --memory is set
+--oom-score-adj=-1000-1000        #Sets OOM preference, i.e. container with lower preference will be first to be OOM killed
+--memory-swappiness=0-100         #How much memory pages should be swapped to cache (as opposed to not cached)
+                                  #Def: from host, usually 60
+                                  #0: no swap, i.e. bad latency (cannot read any cache), but better throughput (no writing caching)
+                                  #100: always swap, i.e. inverse
+
+-c NUM 
+--cpu-shares=NUM                  #CPU shares:
+                                  #  - relative weight between containers
+                                  #     - e.g. containers with twice more than other containers get twice more CPU
+                                  #     - distributed among running containers, i.e. idle containers are ignored
+                                  #  - def: 1024. Min: 2.
+--cpu-period=NUM                  #Similar to CPU shared but from an OS process scheduler perspective:
+--cpu-quota=NUM                   #  - --cpu-period is scheduler frequency (in ms, def: 100)
+                                  #  - CPU shares is --cpu-quota / --cpu-period (def: same as 1 / number of containers)
+                                  #Wheras --cpu-shares distribute CPU between containers, --cpu-period|quota limits host's CPU to each container
+--cpuset-cpus=RANGE               #Only allow specific CPUs, as RANGE of index, e.g. 0-3 or 0,2
+--cpuset-mems=RANGE               #Same for memory nodes (MEMs), which is only used on NUMA systems
+
+--blkio-weight=10-1000            #Block IO weight:
+                                  #  - relative weight between containers, i.e. like --cpu-shares but for I/O
+                                  #  - only for direct block IO (not buffered block IO)
+                                  #Def: 500
+--blkio-weight-device=
+ DEVICE_PATH:10-1000              #Same but for a specific device, e.g. /dev/sda
+--device-read|write-bps=
+ DEVICE_PATH:NUM[kb|mb|gb]        #Limit read|write rate from a device, as byte/sec
+--device-read|write-iops=
+ DEVICE_PATH:NUM                  #Same but as operation/sec
+
+--shm-size=NUM[b|k|m|g]           #Size of /dev/shm (device that can be mounted as tmpfs, i.e. like /tmp but for IPC)
+                                  #Def: 64MB
 
 
                                              /=+===============================+=\ 
                                             /  :                               :  \  
-                                            )==:      USERS/CAPABILITIES       :==(   
+                                            )==:             USERS             :==(   
                                             \  :_______________________________:  /    
                                              \=+===============================+=/
 
@@ -495,10 +551,37 @@ docker create|exec ...
 -u STR
 --user STR                        #
 
+CONTAINER GROUP ==>               #
+docker create ...
+--group-add GROUP                 #Add GROUP to container's user's groups
 
-CONTAINER CAPABILITIES ==>        #Most capabilities (i.e. kernel feature available to root) are disabled to containers:
-                                  #  - unless using docker create|exec --privileged
-                                  #  - can adjust with docker create --cap-add|drop VAL
+
+                                             /=+===============================+=\ 
+                                            /  :                               :  \  
+                                            )==:           SECURITY            :==(   
+                                            \  :_______________________________:  /    
+                                             \=+===============================+=/
+
+
+CONTAINER CAPABILITIES ==>        #Most capabilities (i.e. kernel feature available to root) are disabled to containers.
+docker create|exec ...
+--privileged                      #Do not disable capabilities
+docker create ...
+--cap-add|drop VAL                #Add|remove capabilities
+
+
+docker create ...
+--security-opt="no-new-privileges"#Do not allow adding privileges, e.g. through sudo
+
+
+docker create ...
+--security-opt=
+ "label=user|role|type|level:VAL"
+--security-opt="label=disable"    #SELinux options
+--security-opt="apparmor=PROFILE" #Apparmor options
+--security-opt=
+ "seccomp=unconfined"             
+--security-opt="seccomp=PROFILE"  #Seccomp options
 
 
                                              /=+===============================+=\ 
@@ -521,6 +604,36 @@ HEALTHCHECK [--OPT] CMD COMMAND   #Dockerfile instruction. Adds a "health status
 --interval=NUM                    #Def: 30 (in secs)
 --timeout=NUM                     #Def: 30 (in secs)
 --retries=NUM                     #Def: 3
+
+
+                                             /=+===============================+=\ 
+                                            /  :                               :  \  
+                                            )==:             EXIT              :==(   
+                                            \  :_______________________________:  /    
+                                             \=+===============================+=/
+
+
+docker create ...
+--restart STR                     #What happens when container exits:
+                                  #  - "no" (def): nothing
+                                  #  - "always": restarts
+                                  #  - "on-failure[:NUM]": restarts if exit code non-0, with NUM max retries (def: unlim)
+                                  #  - "unless-stopped": restarts unless explicitely stopped by admin
+                                  #Restarts use exponential delay
+                                  #Should not be used if a process manager is used, e.g. systemd, forever or pm2
+--rm                              #When exiting, remove:
+                                  #  - volumes, except if specific VOLUME_NAME was given
+                                  #  - container filesystem
+                                  #Pros: clean up space
+                                  #Cons: cannot inspect them after container exit (for debugging)
+                                  #Cannot be used with --detach
+
+
+docker exec EXIT CODE ==>         #Is:
+                                  #  - 125: dockerd error
+                                  #  - 126: cannot run COMMAND
+                                  #  - 127: cannot find COMMAND
+                                  #  - otherwise: COMMAND exit code
 
 
                                              /=+===============================+=\ 
@@ -571,14 +684,6 @@ docker create IMAGE               #Does:
 --name CONTAINER_NAME             #Def: random
 --cidfile FILE                    #Write CONTAINER_ID to FILE
 
---restart STR                     #What happens when container exits:
-                                  #  - "no" (def): nothing
-                                  #  - "always": restarts
-                                  #  - "on-failure[:NUM]": restarts if exit code non-0, with NUM max retries (def: unlim)
-                                  #  - "unless-stopped": restarts unless explicitely stopped by admin
-                                  #Restarts use exponential delay
-                                  #Should not be used if a process manager is used, e.g. systemd, forever or pm2
-
 
 docker rename CONTAINER CONTAINER2#
 
@@ -606,8 +711,6 @@ docker run IMAGE [...]            #Does:
                                   #  - docker create IMAGE
                                   #  - docker exec CONTAINER ...
                                   #Shares all options from docker create+exec, plus extra, following.
---rm                              #???
-                                  #Cannot be used with --detach
 
 
 docker stop|restart CONTAINER...  #Stops a running CONTAINER
@@ -686,15 +789,11 @@ NETWORK                           #Is a set of network-related settings/resource
 
 DRIVER                            #Can be:
                                   #  - bridge: 
-                                  #     - single-host inter-container communication, with external interface outside of host
-                                  #        - using container IP address, not host
-                                  #        - must belong to same NETWORK
-                                  #     - hosts uses docker0 interface:
-                                  #        - by default, ethernet
+                                  #     - single-host inter-container communication, with single gateway
+                                  #     - hosts uses docker0 ethernet interface:
                                   #        - automatically creates gateway (external single IP for the subnet)
                                   #     - container uses eth0 interface:
-                                  #        - uses one IP among host's subnet
-                                  #           - only one subnet
+                                  #        - uses one IP among host's single subnet
                                   #           - def: automatic, with 2^16 possible IP addresses
                                   #  - macvlan:
                                   #     - similar to bridge, but different design, which is more performant and simpler
@@ -702,13 +801,13 @@ DRIVER                            #Can be:
                                   #     - containers must use same interface as host:
                                   #        - specified with NETWORK option parent=INTERFACE
                                   #  - overlay:
-                                  #     - multi-host inter-container communication, with external interface outside of host ("advertiser")
+                                  #     - multi-host inter-container communication, with single gateway ("advertiser")
                                   #        - connected together using a key-value store
                                   #        - hosts must have unique hostnames
                                   #     - key-value store:
                                   #        - supported: consul, etcd, zookeeper
                                   #        - must open ports 4789 (UDP) and 7946 (TCP/UDP)
-                                  #     - daemond:
+                                  #     - dockerd:
                                   #        - --cluster-store=PROVIDER://URL
                                   #        - --cluster-advertise=IP:PORT (advertiser)
                                   #        - --cluster-opts=OPT_VAR-OPT_VAL,... (e.g. SLL options)
@@ -733,20 +832,32 @@ docker network create NETWORK_NAME#Creates NETWORK
 --ip-range=IP/MASK                #Specifies IP range, i.e. subset of subnet from which containers IPs will be picked (def: whole subnet)
 --aux-address="VAR=IP"            #Specifies secondary address
 
+dockerd ...
+--ipv6                            #Like docker network create ...
+
+docker network create ...
 -o "com.docker.network.bridge.
  name=NAME"                       #Bridge name to be used when creating the Linux bridge
+docker network create ...
 -o "com.docker.network.bridge.
  enable_ip_masquerade"  
+dockerd ...
 --ip-masq                         #Enable IP masquerading
+docker network create ...
 -o "com.docker.network.bridge.
  enable_icc=BOOL"
+dockerd ...
 --icc                             #Enable or Disable Inter Container Connectivity
+docker network create ...
 -o "com.docker.network.bridge.
  host_binding_ipv4=IP"
+dockerd ...
 --ip IP                           #Default IP when binding container ports
 
+docker network create ...
 -o "com.docker.network.
  driver.mtu=NUM"
+dockerd ...
 --mtu NUM                         #Set the containers network MTU
 
 
@@ -755,12 +866,21 @@ docker network rm NETWORK         #
 
 docker network connect NETWORK
  CONTAINER                        #Associate a CONTAINER to a NETWORK
---ip[6] IP                        #Specifies IP (instead of random one from subnet)
+docker network connect ...
+--ip[6] IP                        
+docker create ...
+--ip[6] IP                        #Specifies Ethernet interface's IP (instead of random one from subnet)
+--mac-address STR                 #Specifies Ethernet interface's MAC
+                                  #Incompatible with --network host|CONTAINER
+-h HOST                           #Specifies hostname (see UTS namespace above)
+--hostname HOST                   #Incompatible with --network CONTAINER
 
 docker create ...
 --network STR                     #Associate to network STR:
                                   #  - none: no networking
-                                  #  - host: same as host's
+                                  #  - host: 
+                                  #     - same as host's
+                                  #     - i.e. less isolation (insecure) but much faster
                                   #  - CONTAINER: same as container's
                                   #  - bridge: create and use new NETWORK of type "bridgebridge"
                                   #  - NETWORK: use existing one
@@ -792,20 +912,31 @@ docker network inspect NETWORK    #Prints verbose debug information, as JSON
 
 
 DNS ==>                           #When inter-container communication is possible, can use DNS names, within same NETWORK:
-                                  #  - CONTAINER_NAME, providing it is not the default bridge NETWORK
-                                  #  - DNS_ALIAS using:
-                                  #     - docker network connect --link CONTAINER2:DNS_ALIAS or docker create --link CONTAINER2:DNS_ALIAS
-                                  #        - i.e. one CONTAINER defined how to refer to one CONTAINER2
-                                  #     - docker network connect --alias DNS_ALIAS or docker create --network-alias DNS_ALIAS
-                                  #        - i.e. one CONTAINER2 tells any other CONTAINER how refer to it
-                                  #        - several containers can have same DNS_ALIAS:
-                                  #           - only one will be targeted (always the same, i.e. the first one)
-                                  #           - others behave as passive failover
-                                  #  - uses /etc/resolve.conf
-                                  #     - can alternative specify DNS server with docker create flags:
-                                  #        --dns=[IP,...]
-                                  #        --dns-search=DOMAIN,...
-                                  #        --dns-opt=OPT,...
+                                  #  - CONTAINER_NAME:
+                                  #     - providing it is not the default bridge NETWORK
+                                  #  - DNS_ALIAS: see below
+
+docker network connect ...
+--link CONTAINER2:DNS_ALIAS
+docker create 
+--link CONTAINER2:DNS_ALIAS       #One CONTAINER defines DNS_ALIAS to refer to another CONTAINER2
+
+docker network connect ...        #One CONTAINER2 tells any other CONTAINER the DNS_ALIAS to refer to itself
+--alias DNS_ALIAS                 #Several containers can have same DNS_ALIAS:
+docker create ...                 #  - only one will be targeted (always the same, i.e. the first one)
+--network-alias DNS_ALIAS         #  - others behave as passive failover
+
+docker create ...                 #Appends STR to /etc/hosts
+--add-host=STR                    #Incompatible with --network CONTAINER
+
+
+DNS SERVER ==>                    #By default, same as host's, but can alternative specify DNS server:
+                                  #  - with the following options, which update /etc/resolve.conf
+                                  #  - incompatible with --network CONTAINER
+docker create
+--dns=[IP,...]                    #
+--dns-search=DOMAIN,...           #
+--dns-opt=OPT,...                 #
 
 
                                              /=+===============================+=\ 
@@ -813,6 +944,9 @@ DNS ==>                           #When inter-container communication is possibl
                                             )==:             PORTS             :==(   
                                             \  :_______________________________:  /    
                                              \=+===============================+=/
+
+
+PORT FORWARDING ==>               #Only works with default NETWORK
 
 
 docker create ...
