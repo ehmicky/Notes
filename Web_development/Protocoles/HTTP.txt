@@ -5,20 +5,19 @@
 
 
 List of headers:
+  - look at individual specs, including HTTP/1.1 spec
   - look at list on hpack spec
   - look at iana list
-  - look at individual speca, including HTTP/1.1 spec
-
+  - look at status-codes-related RFC (see Wikipedia)
 
 Architecture:
-  - version 2
-     - to guess HTTP/2 version, can use:
-        - ALPN, TLS extension (see SSL/TLS doc)
-        - Upgrade: h2[c] [C|S] (see below)
-           - h2 is HTTS, h2c HTTPS
-           - must include SETTINGS frame as HTTP2-Settings [C] (base64-encoded)
-           - not supported by most browsers
-        - prior knowledge: client already knows server supports HTTP/2
+  - version 2. To guess support, can use:
+     - ALPN, TLS extension (see SSL/TLS doc)
+     - Upgrade: h2[c] [C|S] (see below)
+        - h2 is HTTS, h2c HTTPS
+        - must include SETTINGS frame as HTTP2-Settings [C] (base64-encoded)
+        - not supported by most browsers
+     - prior knowledge: client already knows server supports HTTP/2
   - layers:
      - application layer
      - usually on top of TCP/IP
@@ -37,7 +36,7 @@ Architecture:
      - resource can be dynamic (server modifies content) or static
   - state:
      - streams independant from each other
-     - but URL/headers/payload can keep state (e.g. cookies)
+     - but headers/payload can keep state (e.g. cookies)
      - a stream need to keep its own state though
   - session:
      - set of TCP sockets:
@@ -60,106 +59,127 @@ Architecture:
            - NUM requests using Keep-Alive: max=NUM [S]
         - HTTP/1.0: requires Connection: Keep-Alive [C|S] to remain open
 
-Low-level format (HTTP/2): ???
+Format (HTTP/2):
+  - stream: one request+response, or server push:
+     - several ordered frames connected by stream ID
+     - is what makes multiplexing possible
+     - steam ID:
+        - 0: hypothetical main stream
+        - odd is started by client, even by server
+        - incremental ID
+  - frames:
+     - headers: length [0-2], type [3], flags [4], reserved [5.0], stream ID [5.1-8], payload [*]
+     - payload:
+        - DATA (0x0): [padding length [0], ]data [*][, padding [*]]
+        - HEADERS (0x1): [padding length [0], ][exclusive [1.0], stream parent ID [1.1-4], weight [5]], headers [*][, padding [*]]
+        - PRIORITY (0x2): exclusive [0.0], stream parent ID [0.1-3], weight [4]
+        - RST_STREAM (0x3): error code [0-3]
+        - SETTINGS (0x4): several times: VAR [0-1], VAL [2-5]
+        - PUSH_PROMISE (0x5): [padding length [0], ]reserved [1.0], promise stream ID [1.1-4], headers [*][, padding [*]]
+        - PING (0x6): data [0-7]
+        - GOAWAY (0x7): reserved [0.0], last stream ID [0.1-3], error code [4-7], debug data [*]
+        - WINDOW_UPDATE (0x8): reserved [0.0], increment [0.1-3]
+        - CONTINUATION (0x9): headers [*]
+     - flags:
+        - END_STREAM (0x1) (DATA, HEADERS)
+        - ACK (0x1) (SETTINGS, PING)
+        - END_HEADERS (0x4) (HEADERS, PUSH_PROMISE, CONTINUATION)
+        - PADDED (0x8) (DATA, HEADERS, PUSH_PROMISE)
+        - PRIORITY (0x20) (HEADERS)
+  - init (for each endpoint):
+     - start:
+         PRI * HTTP/2.0
+
+         SM
+
+     - SETTINGS frame:
+        - options, noted SETTINGS_*
+        - receiver must respond with empty SETTINGS frame with ACK flag
+        - can be sent again later to change settings
+  - normal (request/response) stream:
+     - request:
+        - 1 HEADERS, 0-n DATA (payload), 0-1 trailing HEADERS
+        - HEADERS:
+           - must contain pseudo-headers: 
+               :method METHOD [C] 
+               :authority URL [C] 
+               :path PATH [C] : can be *
+               :scheme PROTOCOL [C]
+           - if 1 frame not enough, send extra CONTINUATION frames with extra headers
+           - last frame should have flag END_HEADERS
+     - response:
+        - same but HEADERS must contain instead pseudo-header :status UINT [S]
+  - server push stream:
+     - enabled by SETTINGS_ENABLE_PUSH (0x2) (def: true)
+     - initiated by server, in reaction to client request
+     - server: PUSH_PROMISE frame:
+        - contains HEADERS frame information that client would send if it was to request this stream
+        - the original request cannot contain payload
+        - the pushed request must be cacheable, e.g. use safe method
+     - client:
+        - RST_STREAM frame to cancel request, e.g. if cached
+        - server reacts to RST_STREAM but does not wait for client to send next frames
+     - server: 
+        - HEADERS, DATA: like normal response
+  - end:
+     - END_STREAM flag:
+        - normal stream end
+        - on last DATA frame (or last HEADERS if none) for each endpoint
+        - might be followed by CONTINUATION frames
+     - RST_STREAM frame: 
+        - cancels current stream
+     - GOAWAY frame: 
+        - end of session , i.e. stops any new stream
+        - keep processing existing streams
+        - contains last stream ID that will be processed
+        - can contain arbitrary debug info
+        - should respond with another GOAWAY
+
+Format (HTTP/1.*):
+  - newline is \n\r
+  - request:
+      METHOD URL HTTP/1.*
+      HEADER: VAL
+      ...
+
+      [BODY]
+  - response:
+      HTTP/1.1 UINT STR
+      [HEADER: VAL
+      ...]
+
+      [BODY]
+  - Host [C] is mandatory
 
 Error codes (HTTP/2):
-           - types:
-              - NO_ERROR
-              - PROTOCOL_ERROR: e.g. wrong frame order or content
-              - INTERNAL_ERROR
-              - FLOW_CONTROL_ERROR: too much buffered DATA because of flow control
-              - SETTINGS_TIMEOUT: SETTINGS response timeout
-              - STREAM_CLOSED
-              - FRAME_SIZE_ERROR: frame too small|big
-              - REFUSED_STREAM: sender notifies receiver that reqyest has not been processed, allowing safe retry. E.g. too many concurrent streams or refused server push
-              - CANCEL: stream no longer needed or server push refused
-              - COMPRESSION_ERROR
-              - CONNECT_ERROR: when using CONNECT method
-              - ENHANCE_YOUR_CALM: throttling, e.g. too many server pushes
-              - INADEQUATE_SECURITY: does not use TLS or wrong TLS setup
-              - HTTP_1_1_ERROR: should downgrade to HTTP/1.1
-           - contained in GOAWAY|RST_FRAME frame
-
-Stream prioritization (HTTP/2):
-              - receiver is not constrained to respect it
-              - fields/flags on HEADERS|PRIORITY frame
-              - dependency:
-                 - Parent stream ID field (def: 0): current stream must only start once stream ID is done
-                 - EXCLUSIVE flag: make siblings become children of current stream
-              - priority: Weight field 1-256 (def: 16): how much resources server should allocate
-
-Format (HTTP/2)
-        - stream: one request+response, or server push:
-           - several ordered frames connected by stream ID
-           - is what makes multiplexing possible
-        - frames:
-           - size
-           - type
-           - flags
-           - stream ID:
-              - 0: hypothetical main stream
-              - odd is started by client, even by server
-              - incremental ID
-        - init (for each endpoint):
-           - start:
-               PRI * HTTP/2.0
-
-               SM
-
-           - SETTINGS frame:
-              - options, noted SETTINGS_* in this doc
-              - receiver must respond with empty SETTINGS frame with ACK flag set
-              - can be sent again later to change settings
-        - normal (request/response) stream:
-           - request:
-              - HEADERS, DATA (payload), optional trailing HEADERS
-              - HEADERS:
-                 - must contain pseudo-headers: 
-                     :method METHOD [C] 
-                     :authority URL [C] 
-                     :path PATH [C] : can be *
-                     :scheme PROTOCOL [C]
-                 - if frame too small, send extra CONTINUATION frames with extra headers
-                 - last frame should have flag END_HEADERS
-           - response:
-              - same but HEADERS must contain instead pseudo-header :status UINT [S]
-        - server push stream:
-           - enabled by SETTINGS_ENABLE_PUSH (def: true)
-           - initiated by server, in reaction to client request
-           - server: PUSH_PROMISE frame:
-              - contains HEADERS frame information that client would send if it was to request this stream
-              - the original request cannot contain payload
-              - the pushed request must be cacheable, e.g. use safe method
-           - client:
-              - RST_STREAM frame to cancel request, e.g. if cached
-              - server reacts to RST_STREAM but does not wait for client to send next frames
-           - server: 
-              - HEADERS, DATA: like normal response
-        - end:
-           - END_STREAM flag:
-              - normal stream end
-              - on last DATA frame (or last HEADERS if none) for each endpoint
-              - might be followed by CONTINUATION frames
-           - RST_STREAM frame: 
-              - cancels current stream
-           - GOAWAY frame: 
-              - end of session , i.e. stops any new stream
-              - keep processing existing streams
-              - contains last stream ID that will be processed
-              - can contain arbitrary debug info
-              - should respond with another GOAWAY
+  - types:
+     - NO_ERROR (0x0)
+     - PROTOCOL_ERROR (0x1): e.g. wrong frame order or content
+     - INTERNAL_ERROR (0x2)
+     - FLOW_CONTROL_ERROR (0x3): too much buffered DATA because of flow control
+     - SETTINGS_TIMEOUT (0x4): SETTINGS response timeout
+     - STREAM_CLOSED (0x5)
+     - FRAME_SIZE_ERROR (0x6): frame too small|big
+     - REFUSED_STREAM (0x7): sender notifies receiver that reqyest has not been processed, allowing safe retry. E.g. too many concurrent streams or refused server push
+     - CANCEL (0x8): stream no longer needed or server push refused
+     - COMPRESSION_ERROR (0x9)
+     - CONNECT_ERROR (0xa): when using CONNECT method
+     - ENHANCE_YOUR_CALM (0xb): throttling, e.g. too many server pushes
+     - INADEQUATE_SECURITY (0xc): does not use TLS or wrong TLS setup
+     - HTTP_1_1_ERROR (0xd): should downgrade to HTTP/1.1
+  - contained in GOAWAY|RST_FRAME frame
 
 Limits (HTTP/2):
-  - SETTINGS_MAX_CONCURRENT_STREAMS (def: unlim)
-  - SETTINGS_MAX_FRAME_SIZE (def/min: 16KB, max: 16MB)
+  - SETTINGS_MAX_CONCURRENT_STREAMS (0x3) (def: unlim)
+  - SETTINGS_MAX_FRAME_SIZE (0x5) (def/min: 16KB, max: 16MB)
   - HEADERS frames:
-     - SETINGS_MAX_HEADER_LIST_SIZE (def: unlim):
+     - SETINGS_MAX_HEADER_LIST_SIZE (0x6) (def: unlim):
         - max HEADERS frame size, uncompressed, with extra 32 bytes per header. 
         - not mandatory to respect it.
-     - SETTINGS_HEADER_TABLE_SIZE (def: 4KB): headers dynamic table size
+     - SETTINGS_HEADER_TABLE_SIZE (0x1) (def: 4KB): headers dynamic table size
      - implementation additional limits, e.g. Apache limits 8MB/header and 1000 headers, Node.js 80KB/header
   - DATA frames: max receiver buffer (flow control):
-     - counter SETTINGS_INITIAL_WINDOW_SIZE bytes (def: 64KB, max: 2GB):
+     - counter SETTINGS_INITIAL_WINDOW_SIZE (0x4) bytes (def: 64KB, max: 2GB):
         - decreased when sender sends
         - increased when receiver sends WINDOW_UPDATE frame:
            - includes how much to increase
@@ -168,34 +188,34 @@ Limits (HTTP/2):
         - should amount to how much receiver can buffer
      - can be for a stream, or whole connection (if stream ID is 0)
 
-Ping (HTTP/2):
-           - PING frame:
-              - used to calculate round-trip time
-              - contains 8 bytes of arbitrary data
-              - have priority
-              - must respond with another PING frame with flag ACK
 Format extensions:
-           - new frame type
-           - new SETTINGS_*
-           - new *_ERROR
-           - new headers
+  - new frame type
+  - new SETTINGS_*
+  - new *_ERROR
+  - new headers
 
-Format (HTTP/1.*):
-        - newline is \n\r
-        - request:
-            METHOD URL HTTP/1.*
-            HEADER: VAL
-            ...
+Stream prioritization (HTTP/2):
+  - receiver is not constrained to respect it
+  - fields/flags on HEADERS|PRIORITY frame. Must set PRIORITY flag
+  - priority: Weight field 1-256 (def: 16): how much resources server should allocate
+  - dependency:
+     - Parent stream ID field (def: 0, i.e. none): current stream must only start once stream ID is done
+     - Exclusive field: make siblings become children of current stream
 
-            [BODY]
-        - response:
-            HTTP/1.1 UINT STR
-            [HEADER: VAL
-            ...]
+PING frame (HTTP/2):
+  - used to calculate round-trip time
+  - contains 8 bytes of arbitrary data
+  - have priority over other frame types
+  - must respond with another PING frame with flag ACK
 
-            [BODY]
-        - Host [C] is mandatory
-
+Cacheability:
+  - defined by headers
+  - default: caches GET|HEAD
+  - should invalidate cache: PUT|DELETE|POST|PATCH
+  - status codes:
+     - cached: 301, 308
+     - not cached: 302, 307
+     - cannot be cached: 303
 
 Method:
   - safe (read):
@@ -204,15 +224,17 @@ Method:
      - OPTIONS:
         - retrieve metadata (e.g. functionalities of web server).
         - usually use * as URL
-     - TRACE: echoes request (to see changes introduced by servers|proxies)
-  - unsafe (wtite):
+     - TRACE: 
+        - echoes request
+        - to see changes introduced by servers|proxies
+  - unsafe (write):
      - idempotent (resource returned is always same if called again):
         - PUT: replace/create resource with specific ID
         - DELETE: erase resource
      - not idempotent:
         - POST: create resource without specific ID
         - PATCH: modify resource
-        - CONNECT: do HTTP Tunneling
+        - CONNECT: HTTP Tunneling
 
 Headers:
   - case insensitive
@@ -224,64 +246,64 @@ Headers:
   - :HEADER are called pseudo-headers: same as headers but with extra restrictions on when can be used (HTTP/2)
 
 Status codes:
-         - WebDAV-only: 102, 207, 208, 422, 423, 424, 507, 508
-         - 1**: information
-            - 100 (Continue): client sent only headers and can proceed to send body (see Expect: 100-continue [C])
-            - 101 (Switching Protocols): switch protocol success, e.g. from HTTP to HTTPS (see Upgrade [C])
-         - 2**: success
-            - 200 (OK): simple
-            - 201 (Created): new resource (e.g. POST). Use Location: URL [S] for new resource URL.
-            - 202 (Accepted): response is ongoing and will take some time to proccess (client can timeout). Usually response include links to monitor processing status.
-            - 203 (Non-Authoritative Information): proxy transformed server response, which was originally 200
-            - 204 (No Content): OK, but nothing is to be returned. Client should stay on same resource/document. E.g. successful DELETE, If-Modified-Since header.
-            - 205 (Reset content): like 204 but client should reset/refresh current resource/document.
-            - 206 (Partial content): response is only a subset of the full resource, (see Range [C])
-            - 214 (Transformation applied): proxy transformed server response, which was originally not 200
-            - 226 (IM used): returns diff not full resource. Uses HTTP delta compression, an RFC which seems old.
-         - 3**: redirection to be performed by client
-            - 300 (Multiple choices): redirection need client input
-            - 301 (Moved Permanently): permanent, GET (even if different method, but should ask first). Cacheable.
-            - 302 (Found): temp, GET (even if different method, but should ask first)
-            - 303 (See other): different resource (not only different URL) than requested
-            - 304 (Not Modified): resource did not change (see caching)
-            - 305 (Use proxy): redirect to a proxy
-            - 307 (Temporary Redirect): temp, same HTTP method
-            - 308 (Permanent Redirect): permanent, same HTTP method
-         - 4**: client-side failure
-            - 400 (Bad request): syntax error
-            - 401 (Unauthorized): authentication problem
-            - 402 (Payment required): e.g. should pay to increase request rate
-            - 403 (Forbidden): authorization problem. Prefer 404 when location itself is secret.
-            - 404 (Not Found): wrong URL, but correct domain.
-            - 405 (Method not allowed): HTTP method not implemented or not allowed
-            - 406 (Not Acceptable): wrong requested media type (see Accept [C])
-            - 407 (Proxy authentication required): like 401 but for application proxy
-            - 408 (Request Timeout): as opposed to response timeout
-            - 409 (Conflict): multi-client conflict
-            - 410 (Gone): like 404, but indicates URL was present before
-            - 411 (Length Required): missing request body length (see Content-Length [C])
-            - 412 (Precondition Failed): resource changed even though client assumed it did not, e.g. with If-Unmodified-Since [C] (see caching)
-            - 413 (Payload too large)
-            - 414 (URI too long) 
-            - 415 (Unsupported Media Type): server does not support payload media type (inverse of 406)
-            - 416 (Range Not Satisfiable): wrong Range [C]
-            - 417 (Expectation failed): e.g. wrong Expect [C]
-            - 421 (Misredirected request): request picked wrong server
-            - 426 (Upgrade Required): switch protocol denied, e.g. from HTTP to HTTPS
-            - 428 (Precondition required): must use If-* [C]
-            - 429 (Too many requests): throttle
-            - 431 (Request header fields too large)
-            - 451 (Unavailable for Legal Reasons): e.g. censorship, copyright, privacy
-         - 5**: server-side failure
-            - 500 (Internal server error): bug in server, e.g. syntax error
-            - 501 (Not implemented): feature not available yet
-            - 502 (Bad gateway): sent by proxy when it received error from server
-            - 503 (Service unavailable): server is down (cannot connect)
-            - 504 (Gateway timeout): sent by proxy on server timeout
-            - 505 (HTTP version not supported)
-            - 506 (Variant also negotiates): negotiation circular loop (see Negotiate [C])
-            - 510 (Not extended): HTTP extension not implemented
-            - 511 (Network authentication required): like 401 but for network proxy, containing link where to authenticate.
+  - WebDAV-only: 102, 207, 208, 422, 423, 424, 507, 508
+  - 1**: information
+     - 100 (Continue)                         client sent only headers and can proceed to send body (see Expect: 100-continue [C])
+     - 101 (Switching Protocols)              switch protocol success, e.g. from HTTP to HTTPS (see Upgrade [C])
+  - 2**: success
+     - 200 (OK)                               simple
+     - 201 (Created)                          new resource (e.g. POST). Use Location: URL [S] for new resource URL.
+     - 202 (Accepted)                         response is ongoing and will take some time to proccess (client can timeout). Usually response include links to monitor processing status.
+     - 203 (Non-Authoritative Information)    proxy transformed server response, which was originally 200
+     - 204 (No Content)                       OK, but nothing is to be returned. Client should stay on same resource/document. E.g. successful DELETE, If-Modified-Since header.
+     - 205 (Reset content)                    like 204 but client should reset/refresh current resource/document.
+     - 206 (Partial content)                  response is only a subset of the full resource, (see Range [C])
+     - 214 (Transformation applied)           proxy transformed server response, which was originally not 200
+     - 226 (IM used)                          returns diff not full resource. Uses HTTP delta compression, an RFC which seems old.
+  - 3**: redirection to be performed by client
+     - 300 (Multiple choices)                 redirection need client input
+     - 301 (Moved Permanently)                permanent, GET (even if different method, but should ask first). Cacheable.
+     - 302 (Found)                            temp, GET (even if different method, but should ask first)
+     - 303 (See other)                        different resource (not only different URL) than requested
+     - 304 (Not Modified)                     resource did not change (see caching)
+     - 305 (Use proxy)                        redirect to a proxy
+     - 307 (Temporary Redirect)               temp, same HTTP method
+     - 308 (Permanent Redirect)               permanent, same HTTP method
+  - 4**: client-side failure
+     - 400 (Bad request)                      syntax error
+     - 401 (Unauthorized)                     authentication problem
+     - 402 (Payment required)                 e.g. should pay to increase request rate
+     - 403 (Forbidden)                        authorization problem. Prefer 404 when location itself is secret.
+     - 404 (Not Found)                        wrong URL, but correct domain.
+     - 405 (Method not allowed)               HTTP method not implemented or not allowed
+     - 406 (Not Acceptable)                   wrong requested media type (see Accept [C])
+     - 407 (Proxy authentication required)    like 401 but for application proxy
+     - 408 (Request Timeout)                  as opposed to response timeout
+     - 409 (Conflict)                         multi-client conflict
+     - 410 (Gone)                             like 404, but indicates URL was present before
+     - 411 (Length Required)                  missing request body length (see Content-Length [C])
+     - 412 (Precondition Failed)              resource changed even though client assumed it did not, e.g. with If-Unmodified-Since [C] (see caching)
+     - 413 (Payload too large)
+     - 414 (URI too long) 
+     - 415 (Unsupported Media Type)           server does not support payload media type (inverse of 406)
+     - 416 (Range Not Satisfiable)            wrong Range [C]
+     - 417 (Expectation failed)               wrong Expect [C]
+     - 421 (Misredirected request)            request picked wrong server
+     - 426 (Upgrade Required)                 switch protocol denied, e.g. from HTTP to HTTPS
+     - 428 (Precondition required)            must use If-* [C]
+     - 429 (Too many requests)                throttle
+     - 431 (Request header fields too large)
+     - 451 (Unavailable for Legal Reasons)    e.g. censorship, copyright, privacy
+  - 5**: server-side failure
+     - 500 (Internal server error)            bug in server, e.g. syntax error
+     - 501 (Not implemented)                  feature not available yet
+     - 502 (Bad gateway)                      sent by proxy when it received error from server
+     - 503 (Service unavailable)              server is down (cannot connect)
+     - 504 (Gateway timeout)                  sent by proxy on server timeout
+     - 505 (HTTP version not supported)
+     - 506 (Variant also negotiates)          negotiation circular loop (see Negotiate [C])
+     - 510 (Not extended)                     HTTP extension not implemented
+     - 511 (Network authentication required)  like 401 but for network proxy, containing link where to authenticate.
 
 <meta http-equiv="HEADER" content="VAL">:
   - client (not server) will add HTTP HEADER: VAL to the server's response. 
