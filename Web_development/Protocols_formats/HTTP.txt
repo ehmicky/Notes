@@ -23,7 +23,7 @@ HTTP-related RFCs:
   - Language tag: 4645, 4647, 5645, 5646
   - HTTP/1.*: 1945, 7231
   - Compression, chunked encoding: 7230
-  - Proxies: 3143, 3205
+  - Proxies: 3143
   - Accept-Datetime [C]: 7089, http://timetravel.mementoweb.org/
 
 Architecture:
@@ -695,11 +695,23 @@ Caching:
   - what is cached:
      - key:
         - HTTP method
-        - URI, excluding #HASH. 
-        - does not include HTTP headers, unless Vary: HEADER [S]:
-           - when headers have impact on content, i.e. usually on Accept* [C]
-           - usually towards proxies, since browsers usually use only one set of headers
+        - URI, excluding #HASH
+        - HTTP headers, if Vary: HEADER [S]:
            - whitespaces, orders, case, identical values will be normalized before comparison
+           - if unconditional caching failed because of different HTTP headers: 
+              - client should try conditional caching
+              - but if client does not implement this HEADER, it might not send it, e.g.:
+                 - CLIENT_1 -> HEADER    -> PROXY -> HEADER                          -> SERVER -> 2** Vary: HEADER
+                 - CLIENT_2 -> no HEADER -> PROXY -> no HEADER (conditional caching) -> SERVER -> 304
+                    - here CLIENT_2 gets same response as CLIENT_1 even though HEADER varied
+              - solutions:
+                 - use new status code understood (thus cached) only by clients/proxies that implement HEADER
+                    - ex: 226 for delta encoding
+                    - problem: some clients/proxies cache any unknown status codes
+                 - solutions like Cache-Control: im (delta encoding)
+           - use case:
+              - when headers have impact on content, i.e. usually on Accept* [C]
+              - usually towards proxies, since browsers usually use only one set of headers
         - does not include request body
      - value: full response (URL, headers, body)
   - HTTP methods allowed:
@@ -897,7 +909,8 @@ Delta encoding:
      - Vary: A-IM [S]:
         - client cache should implicitely use Vary: A-IM [S]
         - but needs to be explicit for proxies that do not understand delta encoding
-        - can also use Cache-Control: no-store, im [S]:
+        - should also use Cache-Control: no-store, im [S]:
+           - see Vary [S] above for the problem associated with it
            - proxies that understand delta encoding should ignore no-store if "im" is present
            - proxies that do not understand delta encoding will use no-store
      - Cache-Control: retain[=NUM] [S]
@@ -1320,12 +1333,27 @@ Push technologies:
   - best: Websockets or SSE
 
 HTTP Tunneling:
-  - wrapping another protocol packets in a HTTP payload
-  - proxy and endpoints wraps|unwraps request|response
-  - CONNECT method:
-     - wraps TCP protocol
-     - use only first HTTP handshake with proxy, then use TCP connection
-     - can be used to access HTTPS using a HTTP proxy (TCP between client-proxy, SSL between proxy-server)
+  - goal:
+     - wrapping another protocol packets in a HTTP payload
+     - proxy and endpoints wraps|unwraps request|response
+  - advantages:
+     - compatibility with existing software, including firewalls
+     - with HTTPS, can completely hide the other protocol packet (including which protocol it is)
+     - can use HTTP features, e.g. caching
+  - problems:
+     - adds HTTP features that might not be needed -> complexity
+     - slower
+  - should register|use different:
+     - URI scheme or HTTP methods: if very different from HTTP usual behavior
+     - port: if separate from HTTP server (different goal|traffic|data)
+     - status codes: never, should instead reuse existing ones and make sure it matches behavior:
+        - because proxies will behave according to status code (e.g. for caching)
+        - if nothing matches, use general ones like 200 or 500
+  - how:
+     - CONNECT method:
+        - wraps TCP protocol
+        - use only first HTTP handshake with proxy, then use TCP connection
+        - can be used to access HTTPS using a HTTP proxy (TCP between client-proxy, SSL between proxy-server)
 
 Practices becoming bad with HTTP/2:
   - concatenation:
