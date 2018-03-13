@@ -13,16 +13,18 @@ Logo:
   - nice sans-serif non-monospace font
 
 test("TITLE", [...ARR], FUNC(t, ...ARG) [, ...OPTS])->PROMISE
-  - must be called synchronously during file load
   - named export `test` (not default export)
 
 "TITLE":
-   - not optional
-   - must be unique within file
+  - not optional
+  - must be unique within file
+  - logic always use info.title (from test-each) i.e. TITLE + ARGs
 
-...ARR + FUNC: use test-each
+...ARR + FUNC:
+  - use test-each
 
-FUNC: should be fired on next tick
+FUNC:
+  - should be fired on next tick
 
 t OBJ:
   - index, indexes: like test-each
@@ -35,7 +37,7 @@ Returned PROMISE:
   - resolved value:
       - OBJ:
          - title STR, args: ARR_ARR, options OPTS
-         - tests OBJ_ARR: success BOOL, type 'new|removed|same|different|inconstant', action 'next|update|remove|move|input', value VAL, args ARR, async BOOL, errored BOOL
+         - tests OBJ_ARR: args ARR, error ERROR
          - others???
       - meant for plugins.
   - always resolved, even on test failure
@@ -82,6 +84,7 @@ Tests selection:
      - file-wise, i.e. user might need to use files selection too
 
 Test declaration:
+  - test() must be called synchronously during file load
   - once all tests of a worker have finished, do not terminate it
      - let worker end on its own (i.e. no more macrotasks) or on global timeout
      - reason: allow afterAll() hooks
@@ -142,155 +145,132 @@ Assertion testing:
         - only of the deepest stack call
         - do not do it if lines are very long, which probably indicates a concatenated build
 
-t.snapshot(VAL[, STR])
-  - STR is snapshot name
-     - required if two snapshots in same test
-        - so we know which one to diff
-  - on failure, throws ERROR with ERROR.message containing:
-     - snapshot name (if defined)
-     - description message, e.g. "New snapshot:", "Snapshot changed:", etc.
-  - VAL is not awaited even if PROMISE
-  - no way to catch FUNC exceptions: user must explictly use try/catch
-  - no reported snapshot type:
-      - only pass|fail
-      - use error message to explain snapshot type instead
-  - try to make it as orthogonal as possible
-      - i.e. treat just as an assertion in non-update mode
-  - pruning???
-  - file|test selection with: pruning, CONF.remove, CONF.input???
-  - renamed snapshots???
-  - should removed|renamed snapshots be marked as "pass"??? I.e. not shown in default level???
+Process errors: title should be "uncaughtException|..." and ERROR.message should start with explanation
 
-snapshot():
-  - snapshot testing
-  - should return VAL to snapshot
-  - if return PROMISE, await it
-     - snapshot (including reporting) should include that it's async
-  - exceptions or rejected PROMISEs:
-     - snapshot the ERROR
-     - snapshot (including reporting) should include that it's been thrown|rejected (errored BOOL)
-     - serializer should always snapshot ERRORs with String() (i.e. no stack trace)
-
-CONF.update BOOL (-u|--update):
-  - if false (def):
-     - do not add|remove|modify snapshots in snapshot files
-     - fail tests if any snapshot new|removed|different
-  - if true:
-     - add|remove|modify snapshots in snapshot files
-     - always succeed snapshot tests
-     - exception: "inconstant" snapshots
-
-CONF.remove BOOL (-r|--remove):
-  - remove snapshots in snapshot files
-  - do not run tests nor spawn workers
-  - no reporting
-  - only for the target snapshots|tests: not for skipped tests or not selected files
-  - not compatible with CONF.update|input true
-
-CONF.input BOOL (-i|--input):
-  - goal: test-first development for snapshots
-  - not compatible with CONF.update|remove true
-  - only report existing snapshot tests, i.e. do not report:
-      - assertion tests
-      - removed tests
-      - "process" errors
-  - file|test selection applies as normal
-  - result type always "input"
-  - content is either:
-      - if new test: empty
-      - otherwise: current snapshot
-         - reported the same way as "same" snapshots
-         - we are reporting currently persisted snapshots only (as opposed to snapshot() return value), so it's clear that only inputs are updating them
-  - tests are not run (not needed)
-      - but files are loaded, so we know which tests are defined (including new ones)
-  - each result should prompt:
-      - if submit without entering anything:
-         - noop
-         - must distinguish from explicitely entering undefined
-      - if submit something:
-         - updates snapshot in snapshot file with it
-         - do not erase the prompt, so user can see previous prompts
-         - moves to next one
-      - use Node REPL ("readline" or "repl" core module)
-      - can multiple statements (use the last one)
-      - can use history (arrow up) to re-use previous inputs
-      - retry if invalid input
-
-Result types:
-   - "pass" assertion (light green)
-   - "fail" assertion (light red)
-   - "new" snapshots (dark green)
-   - "removed" snapshots (dark red)
-   - "same" snapshots (i.e. unchanged) (gray)
-   - "different" snapshots (same snapshot key but different snapshot) (dark yellow)
-   - "renamed" snapshots (only file path or test title changed) (dark cyan)
-   - "inconstant" snapshots (current test code created different snapshots when run several times) (dark magenta)
-   - "input" snapshots (CONF.input) (light cyan)
-   - "process" errors (light purple)
-
-"removed" snapshots:
-  - only when file selection targets either:
-     - the removed file (even though it does not exist anymore)
-     - all files (files that exist and have snapshots)
-
-"renamed" result type:
-   - challenges (document those in code comments):
-      - renaming files: tests might also have been renamed|added|removed
-      - renaming tests: to identify, cannot reliably use:
-         - FUNC.name: arrow function name is ""
-         - FUNC.name|toString(): tests might be wrapped, i.e. identical wrapper will show for several tests
-            - including FUNC.bind()
-         - FUNC.data: it is common for the same set of data to be re-used across tests
-         - index in the file: adding one test at beginning change whole order
-      - streaming issues:
-         - if comparing snapshots content: must wait for all tests of a given file to complete, before reporting the first one
-         - if comparing files: must wait for all files to synchronously load, before reporting the first one
-   - current solution only works if:
-      - test was passing and still is
-      - only the test title or the file was changed
-      - for file changing, only works if whole file was removed
-   - matching:
-      - any "new" test
-      - with any "removed" test that look the same
-      - for all data in the test
-   - removed tests:
-      - are coming either from:
-         - removed files: known before starting workers
-         - removed test in current file: known because tests are defined synchronously, and tests start running on next tick
-      - should not be reported until the end, in case they are actually "renamed"
-   - comparing tests:
-      - either same test title or file
-      - same data + FUNC.name + FUNC.toString():
-         - persisted in snapshot files as 8 hex chars hash
-      - same snapshots
-   - streaming:
-      - when a snapshot looks like it should be marked as "renamed" but we still need to wait for snapshots
-      - then pause streaming of that test until we know the answer
-   - report them with:
-      - "renamed" result type
-      - followed by oldName -> newName
-      - test will fail if CONF.update false
-      - should try to keep snapshots layout (so there is no git diff)
-   - rename the test title or the file path in the snapshot files
-
-"process" errors:
+Process errors:
   - use log-process-errors
      - does not make process exit
-  - result type "process"
-  - reported the same way as assertion errors except:
-     - reported at end of test run
-     - reported type is "uncaughtException|unhandledRejection|..."
-     - filepath "", title "Process errors"
+  - reported as failed tests:
+     - at end of test run
+     - filepath "", title "uncaughtException|unhandledRejection|..."
+     - use log-process-errors ERROR as if it had been thrown
   - CONF.processErrors STR_ARR
      - which types creates failures (others are ignored)
      - def: ["uncaughtException", "unhandledRejection"]
         - default is conservative to avoid annoying users
 
+t.snapshot(VAL[, STR])
+  - comparison result:
+     - "same": success
+     - "new|different": depends on CONF.update
+  - on failure, throws ERROR with ERROR.message containing:
+     - snapshot name (if defined)
+     - description message, e.g. "New snapshot:", "Snapshot changed:", etc.
+     - snapshot content
+  - on success, returns true
+     - reason: allowing shortcut notation assert.throws(FUNC, t.snapshot)
+  - VAL is not awaited even if PROMISE: user must explicity use t.snapshot(await VAL)
+  - no way to catch FUNC exceptions: user must explictly use assert.throws(FUNC, t.snapshot)
+  - STR is snapshot name
+     - required if two snapshots in same test
+        - so we know which one to diff
+
+Snapshot key:
+  - use "shortest filepath" + test title + data + STR (snapshot name)
+     - for input functions: use `${FUNC.name}()` (or "function()" if anonymous) instead of generated value
+  - can use same key several times:
+     - used when NUM as data dimension, since test title repeats
+     - with CONF.update true, only first one is persisted
+     - if two t.snapshot() with same key differ, it should just work:
+        - with CONF.update true, different snapshots will be ignored
+        - with CONF.update false, one of the snapshots will fail, stopping test iteration
+
+CONF.update BOOL (-u|--update):
+  - what t.snapshot() should do on "new|different" snapshots
+  - if false (def):
+     - do not add|prune|modify inside snapshot files
+     - throw ERROR
+  - if true:
+     - add|prune|modify inside snapshot files
+     - do not throw ERROR
+
+CONF.remove BOOL (-r|--remove):
+  - make t.snapshot():
+     - remove snapshot in snapshot file
+     - throw ERROR as "new" snapshot
+  - not compatible with CONF.update|input true
+
+Pruning snapshots:
+  - for removed files|tests|t.snapshot()
+  - never run, i.e. not reported
+  - removed in snapshot files (with no reporting) during CONF.update true
+  - only prune files selected by file selection:
+     - including removing snapshot files of test files that have been removed but match the file selection
+
+Snapshots in renamed files|tests:
+  - not special treatment, they are just removed + new snapshots
+
+CONF.input BOOL (-i|--input):
+  - goal: test-first development for snapshots
+  - not compatible with CONF.update|remove true
+  - make t.snapshot():
+     - if there already is a snapshot, print it
+     - prompt for snapshot:
+        - if submit something:
+           - updates snapshot in snapshot file with it
+        - if submit without entering anything:
+           - keep current snapshot (including none)
+           - must distinguish from explicitely entering undefined
+     - not throw any ERROR
+  - prompt:
+     - use Node REPL ("readline" or "repl" core module)
+     - can multiple statements (use the last one)
+     - can use history (arrow up) to re-use previous inputs
+     - retry if invalid input
+     - not erased after submit
+
+Different snapshot reporting:
+  - report snapshot diff
+  - only report different lines, with 2 lines of context
+     - use ellipsis in-between parts
+
+Color highlighting in snapshots:
+  - use a syntax highlighting library
+     - so that YAML/HTML/etc. snapshots are highlighted too
+     - should work well with prettyFormat()
+  - for "different" snapshots:
+     - not on the added|removed lines
+     - instead backgroundGreen|Red and auto (or darker green|red) in foreground
+  - first column:
+     - "new" snapshots: green pluses for all lines
+     - "different" snapshots: red minuses or green minuses for relevant lines
+
+Normalization:
+   - to normalize snapshots, user needs to transform the value passed to t.snapshot()
+   - create a separate package with some common normalization methods:
+      - separate some of those methods to own package if makes sense, including deep(), compose(), error(), duration()
+      - deep(FUNC(VAL)->VAL)->FUNC(OBJ)->OBJ:
+         - make a mapping FUNC recursive
+         - avoid infinite recursions
+         - only enumerated own properties
+         - applied to all methods in the package
+      - compose(FUNC,...)->FUNC: functional compose
+      - trim(STR)->STR
+      - error(STR)->STR: replace stack traces (lines starting with \s+at ...) by single "at STACK TRACE"
+         - should work on ERROR since error() is deep and should be applied to error.stack
+         - should work on CLI error output (i.e. there is no available ERROR instance)
+         - should work for any browser
+      - colors(STR)->STR: remove colors
+      - duration(STR[, STR2])->STR: replace anything that looks like durations by STR2 (def: "100ms")
+      - timestamp(STR[, STR2])->STR: replace anything that looks like timestamps by STR2 (with a default of epoch)
+      - newline(STR)->STR: CRLF or LF
+      - removePath(STR)->STR: remove anything that looks like a path (including Windows PATH)
+      - normalizePath(STR)->STR: normalize Windows paths to Unix paths
+      - replace(REGEXP, STR)
+
 Reporting:
-  - should take as input UI information: snapshots, titles, filepaths, data, whether an error was thrown|rejected, available actions, etc.
-  - should not need to handle most logic including:
-     - color highlighting
-     - truncating
+  - should take as input UI information: titles, filepaths, data, error, etc.
+  - should not need to handle most logic including: color highlighting, truncating
   - counter (like test-openapi): for all reporters except tap
   - end summary: for all reporters
 
@@ -307,11 +287,9 @@ Reporting ordering:
   - run in parallel but buffer and report in order (like test-openapi)
      - should stream it
   - order should be (by priority):
-     - other files > new files > removed files > process errors
+     - process errors at end
      - lexicographical ordering of "shortest filepath" (see below)
-     - other tests > new tests > removed tests
      - when test() was called
-     - result type: "same" > "different" > "new" > "removed"
      - argument order in parameters
 
 "shortest filepath"
@@ -323,9 +301,9 @@ Reporting ordering:
 
 CONF.level STR:
   - among 'silent', 'error', 'warn', 'info'
-  - do not report 'pass|same' result types:
+  - do not report passed tests:
      - for 'error|warn' but not 'info'
-  - do not report content (but still report header) of tests, except first failed one of each test + result type
+  - do not report content (but still report header) of tests, except first failed one of each test
      - for 'error' but not 'warn|info'
   - 'silent': do not report anything
   - for any reporters
@@ -335,29 +313,15 @@ CONF.level STR:
 
 CONF.color BOOL (--[no-]color):
   - def: chalk default
-  - color highlighting in snapshots
-  - use a syntax highlighting library
-     - so that YAML/HTML/etc. snapshots are highlighted too
-     - should work well with prettyFormat()
-  - all snapshots types:
-     - but for "different" snapshots:
-        - not on the added|removed lines.
-        - instead backgroundGreen|Red and auto (or darker green|red) in foreground
 
 CONF.compact BOOL (--[no-]compact)
   - def: true
   - goals:
      - make each test fit a single screen
      - avoiding slowing down machine when test content is big
-  - truncate:
-     - ERROR.message (in assertion testing)
-     - snapshots:
-        - OBJ max depth 2
-        - ARR max length 4
-           - truncate in middle
-     - snapshots|ERROR.messages to max lines NUM:
+  - truncate ERROR.message:
+     - max lines NUM:
         - truncate in middle
-        - if "different" snapshot, "middle" is the middle of the diff zone (lines that changed)
         - newline should be either CRLF or LF
         - NUM is terminal height
            - minus test headers height
@@ -380,7 +344,6 @@ t.log(VAL,...)
      - TAP comment
      - single line
   - if several VAL: reported on separate lines
-  - report always after snapshot content
 
 Default reporter:
   - newlines:
@@ -388,17 +351,15 @@ Default reporter:
         - no newline before|after
         - reason: more compact and make assertion testing look similar to other test runners
         - e.g. for:
-           - "pass|renamed" result types
-           - "input" result type on new test
+           - "pass" tests
            - non-first errors with CONF.level "warn"
      - test iteration with content:
         - no newline before, but newline after
   - tests with no data iteration:
      - single line:
-        - result type:
-           - padded so they all have same length
+        - "PASS|FAIL" (backgroundGreen|Red)
         - "shortest filepath" + test title: no background color, normal foreground color
-     - content
+     - ERROR (if any)
   - tests with data iteration:
      - header:
         - once per test
@@ -407,76 +368,23 @@ Default reporter:
         - "shortest filepath" + test title
      - subheader:
         - once per test iteration
-        - result type: same as above
+        - "PASS|FAIL" (backgroundGreen|Red)
         - data:
-           - space-separated ARGs
-           - ARG stringified with prettyFormat()
-           - ellipsis in middle of each ARG if needed
-              - each ARG gets same amount of max chars
-           - for "process", this is an explanatory text (like in log-process-errors)
+           - use info.title from test-each
            - no background color, normal foreground color
-     - content
-  - any tests:
-     - test title: ellipsis in middle if needed
-     - content (if any) either:
-        - assertion error
-        - "process" error
-        - snapshot:
-           - first column:
-              - "removed" snapshots: red minuses for all lines
-              - "new" snapshots: green pluses for all lines
-              - "different" snapshots: red minuses or green minuses for relevant lines
-              - "inconstant" snapshots: like "different" if snapshot exists, "new" otherwise
-              - "same|renamed|input" snapshots: nothing
-           - for "inconstant": data header + content is reported twice, because two snapshots are shown
+     - ERROR (if any)
 
 Use itself for unit testing, but its latest release (not direct require())
 
-Normalization:
-   - to normalize snapshots, user needs to modify the return value of tests before returning it
-   - create a separate package with some common normalization methods:
-      - separate some of those methods to own package if makes sense, including deep(), compose(), error(), duration()
-      - deep(FUNC(VAL)->VAL)->FUNC(OBJ)->OBJ:
-         - make a mapping FUNC recursive
-         - avoid infinite recursions
-         - only enumerated own properties
-         - applied to all methods in the package
-      - compose(FUNC,...)->FUNC: functional compose
-      - trim(STR)->STR
-      - error(STR)->STR: replace stack traces (lines starting with \s+at ...) by single "at STACK TRACE"
-         - should work on ERROR since error() is deep and should be applied to error.stack
-         - should work on CLI error output (i.e. there is no available ERROR instance)
-         - should work for any browser
-      - colors(STR)->STR: remove colors
-      - duration(STR[, STR2])->STR: replace anything that looks like durations by STR2 (def: "100ms")
-      - timestamp(STR[, STR2])->STR: replace anything that looks like timestamps by STR2 (with a default of epoch)
-      - newline(STR)->STR: CRLF or LF
-      - removePath(STR)->STR: remove anything that looks like a path (including Windows PATH)
-      - normalizePath(STR)->STR: normalize Windows paths to Unix paths
-      - replace(REGEXP, STR)
-
 Fuzz testing:
   - use test-each: NUM, input functions
-      - rely on t.indexes to know whether they were originally used
-  - CONF.repeat NUM (--repeat):
-      - def: 1
-      - >= 0
-      - append NUM to each set of data, i.e. repeat each test NUM times
   - NUM as data dimension:
-      - NUM is absent from test title or snapshot key
-      - assertion testing: only report once, either all "pass" or the first one that "fail"
-      - snapshot testing: only a single snapshot is created for all iterations:
-          - if all the same, use any
-          - if any differs: result type "inconstant":
-              - no prompt
-              - test always fails
-              - first two different snapshots are reported
-                  - if any snapshot is same as current one, should use it as the first one
-  - test title or snapshot key should be appended with ` | ${info.title}`
-      - for snapshot testing (not assertion testing), input functions should:
-         - use `${FUNC.name}()` (or "function()" if anonymous) in snapshot key instead of generated value
-            - generated value should be used in reporting
-         - although test takes randomness as input, the test output should be consistent across runs, otherwise each new run will fail
+     - NUM is absent from test titles
+     - only report once, either all "pass" or the first one that "fail"
+  - CONF.repeat NUM (--repeat):
+     - def: 1
+     - >= 0
+     - append NUM to each set of data, i.e. repeat each test NUM times
 
 Fuzz data generation:
   - similar to faker but specific to fuzz testing
@@ -489,7 +397,15 @@ Fuzz data generation:
   - random function should allow a seed as argument
   - try to search for similar packages
   - separate package
-  - link to it from documentation of both test-each and snapshot testing tool
+  - link to it from documentation of both test-each and difftest
+
+Executing commands:
+  - should create a separate repo which is a thin wrapper around execa()
+  - returning { code, stdout, stderr[, error] }
+  - always use opts.reject false
+  - with correct normalization
+  - allow using current package CLI name (finds it in `package.json`)
+      - see https://github.com/sindresorhus/execa/issues/281
 
 Watch mode:
   - CONF.watch BOOL (-w|--watch)
@@ -515,14 +431,6 @@ Watch mode:
 
 Config:
   - test OPTS can also be set as global defaults on CONF
-
-Executing commands:
-  - should create a separate repo which is a thin wrapper around execa()
-  - returning { code, stdout, stderr[, error] }
-  - always use opts.reject false
-  - with correct normalization
-  - allow using current package CLI name (finds it in `package.json`)
-      - see https://github.com/sindresorhus/execa/issues/281
 
 Snapshots???
   - should ideally:
