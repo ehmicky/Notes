@@ -1,18 +1,72 @@
-eslint-plugin-compat: uninstall it
-
-attr.authorize.$model|params should use actual object, not dot notation.
-
 Prefix args.filter keywords and args.data complex operators with _ (not $):
   - restrict schema schema, to forbid attribute names starting with _ (at the moment only __ is forbidden)
 
 Naming convention:
-  - make every both client facing (e.g. event payload, headers, arguments, etc.) and maintainer facing (e.g. config, schema, etc.) variables contain only lowercase a-z, numbers or _, i.e. [a-z0-9_]+
+  - make every both client facing (e.g. event payload, headers, arguments, etc.) and maintainer facing
+    (e.g. config, schema, etc.) variables contain only lowercase a-z, numbers or _, i.e. [a-z0-9_]+
       - including schema.variables.* but not schema.variables.*.*
       - including no uppercase nor camelcase with event payload, custom validation keyword, etc.
       - including plugin options
       - replace x-* by __* (but no other restriction on that one)
       - excluding JSON schema
   - custom keywords should be prefixed with __: custom validation, custom patch operators
+
+attr.authorize.$model|params should use actual object, not dot notation.
+
+Patch operators:
+  - operators:
+     - on NUM:
+        - _add NUM2: +
+        - _sub NUM2: -
+        - _mul NUM2: *
+        - _div NUM2: /
+     - on BOOL:
+        - _invert true: "not"
+     - on STR:
+        - _slicestr [INDEX, [LENGTH]]: INDEX and LENGTH can be negative for from end.
+        - _insertstr [INDEX, STR]: INDEX can be negative for from end.
+        - _replace ["REGEXP", STR]: can use JavaScript notation $1, etc.
+     - on ARR:
+        - _push VAL_ARR
+        - _unshift VAL_ARR
+        - _pop true
+        - _shift true
+        - _remove VAL_ARR
+        - _sort "asc|desc"
+        - _slice [INDEX, [LENGTH]]: INDEX and LENGTH can be negative for from end.
+        - _insert [INDEX, VAL...]: INDEX can be negative for from end.
+  - schema.operators.NAME OBJ:
+     - custom patch operators
+     - NAME must be __[a-z0-9_]+
+     - OBJ.types STR_ARR "boolean|integer|number|string|array":
+         - if "array", must the only type
+         - required
+     - OBJ.check FUNC(ARG)->STR|undefined:
+         - return error message if wrong input, e.g. wrong type.
+         - as opposed to OBJ.value, applied only once per operation, not once per model.
+         - required
+     - OBJ.value FUNC(VAL, ARG)->VAL:
+         - must return correct type, or null|undefined. Validate that.
+         - must have FUNC.length <= 2 (to make sure people know ARG is used as variadic).
+         - required
+  - should validate type, for:
+     - ATTR:
+         - using operators OBJ.type
+         - e.g. cannot use data: { ATTR: { _add: NUM } } if ATTR.type is not number|integer
+     - $model.ATTR:
+         - using operators OBJ.check
+         - e.g. cannot use data: { ATTR: { _add: "$model.ATTR2" } } if ATTR2.type is not number|integer
+  - any value can be "$model.ATTR" instead of constant:
+     - must validate it is a known attribute
+     - replaced by attribute value before being passed to patch operators functions
+  - when on an array, and the operation is not specific to arrays, apply operation on each element of array.
+  - when attribute value before patch is == null:
+     - skip modification for that attribute, i.e. keep as is
+         - skip during patch application (as opposed to augmenting args.filter)
+     - also when using $model.ATTR that is == null, whole attribute update is skipped
+         - e.g. data: { ATTR: { _push: ["$model.ATTR2", "$model.ATTR3", 10] } } is applied only on models where both
+           ATTR, ATTR2 and ATTR3 are != null
+  - cannot do patch operation if attribute is nested, i.e. throw if data { ATTR: { _OP: ..., ATTR2: ... } }
 
 REST:
   - any argument can also in protocol headers, operation-independent:
@@ -55,74 +109,6 @@ JSON-RPC:
   - no batch requests
   - both versions 1.0 and 2.0. Same endpoint, but use version field to distinguish.
   
-Complex patches:
-  - provide MongoDB-like patch syntax for patch action, including array manipulation
-
-Orphans:
-  - maybe keep dead links dangling???
-     - but either:
-        - silently filter them on find
-        - also remove them (in a separate thread|promise) on find
-     - what if validation fails???
-        - request fails???
-        - model is deleted???
-  - is it worth the performance penalty and the validation constraints???
-     - although delete probably do want to remove dead links anyway???
-     - removing dead links when being populated???
-     - removing dead links in a separate promise, e.g. not affecting current query???
-  - validation:
-     - attribute targeting another model have limited validation:
-        - the reason: they might be deleted|modified when the model they target is deleted, and that model deletion
-          should not have to care about it, but in the same time we don't want invalid models
-        - forbidden: required, minItems, dependencies, contains, custom validation, being part of
-          $data cross-attributes validation
-     - maybe instead:
-        - if model being invalid after attribute removal, delete the model altogether???
-  - find dead links and remove dead links:
-     - should bypass authorization and pagination (using args.internal true)
-     - actions should have no args.select, so they are not in output
-     - make sure it does not impact "topLevel" action logic, since that logic might imply there is only one topLevel action
-     - do not merge their "results" with other "results", to avoid authorization issue
-     - after action performed (i.e. after db query for "remove dead links", and after 404 validation for "find dead links"),
-       response.data should be [] to avoid extra computation
-  - find dead links:
-     - for create|patch|upsert actions
-     - find all ids+modelName of attributes that:
-        - have attr.target !== undefined
-        - are defined in args.data
-        - are a "leaf", e.g. in args.data { childA, childB: { ... } }, childA, not childB (since it will be created,
-          it cannot be a dead link)
-        - are not one of the models already being written, i.e. the id of one the models in:
-           - (create|upsert) args.data
-           - (patch) currentData results
-     - timing:
-        - create: run|started just before currentData middleware
-        - patch|upsert:
-           - run|started just after currentData middleware
-           - only args.data that are being modified, i.e. defined in args.data and different from currentData results
-        - create|patch|upsert: await the promise only just before write actions start, i.e. can be run in parallel
-          of all middleware until then
-     - goal: firing 404 if dead link
-  - remove dead links:
-     - for delete actions
-     - silently skipped if target model's database adapter if does not have features "filter:eq|in|some"
-     - timing:
-        - run|started just after currentData middleware
-        - await it, i.e. mergePatchData middleware must not start until this is done
-     - first search for source models with dead links:
-        - do find actions with args.filter { attr: { in: ids } } (isArray false) or { attr: { some: { in: ids } } }
-          (isArray true) where ids are the models being deleted, on the models that might target them
-        - group by source model type:
-           - e.g. if two different model types have same parent model type but different parent model attribute,
-             just use args.filter OBJ_ARR alternative
-        - merge per source model attribute:
-           - e.g. if two models have same parent model attribute, merge their ids in "in", removing duplicates
-        - add args.filter { id: { neq: ids } } to exclude models already being deleted, i.e. already present in delete actions
-          results
-     - then create patch actions to remove dead links
-        - do not fire those patch actions, only stack them up at the end, and resolveWriteAction will take care of them
-     - should bypass 404, just in case the model got deleted in-between
-
 Pagination:
   - problems (should document them in code):
      - parent actions are performed several times while going through the child action pages:
@@ -233,14 +219,143 @@ Pagination:
   - system defaults:
      - move all of them to their respective middleware
 
-Aggregating:
-  - are just other commands, following similar logic as the others
-     - should also think of which other commands it requires, and which one it implies
-  - e.g. countUsers, groupUsers, etc.
-  - arg.distinct "ATTR": no duplicates
-  - is basically asking for server-side multi/single-ATTR/OBJ operations, so maybe try to allow client to specify
-    it as JavaScript, parsed as MongoDB aggregate object???
-  - think of interaction with pagination
+Orphans:
+  - maybe keep dead links dangling???
+     - but either:
+        - silently filter them on find
+        - also remove them (in a separate thread|promise) on find
+     - what if validation fails???
+        - request fails???
+        - model is deleted???
+  - is it worth the performance penalty and the validation constraints???
+     - although delete probably do want to remove dead links anyway???
+     - removing dead links when being populated???
+     - removing dead links in a separate promise, e.g. not affecting current query???
+  - validation:
+     - attribute targeting another model have limited validation:
+        - the reason: they might be deleted|modified when the model they target is deleted, and that model deletion
+          should not have to care about it, but in the same time we don't want invalid models
+        - forbidden: required, minItems, dependencies, contains, custom validation, being part of
+          $data cross-attributes validation
+     - maybe instead:
+        - if model being invalid after attribute removal, delete the model altogether???
+  - find dead links and remove dead links:
+     - should bypass authorization and pagination (using args.internal true)
+     - actions should have no args.select, so they are not in output
+     - make sure it does not impact "topLevel" action logic, since that logic might imply there is only one topLevel action
+     - do not merge their "results" with other "results", to avoid authorization issue
+     - after action performed (i.e. after db query for "remove dead links", and after 404 validation for "find dead links"),
+       response.data should be [] to avoid extra computation
+  - find dead links:
+     - for create|patch|upsert actions
+     - find all ids+modelName of attributes that:
+        - have attr.target !== undefined
+        - are defined in args.data
+        - are a "leaf", e.g. in args.data { childA, childB: { ... } }, childA, not childB (since it will be created,
+          it cannot be a dead link)
+        - are not one of the models already being written, i.e. the id of one the models in:
+           - (create|upsert) args.data
+           - (patch) currentData results
+     - timing:
+        - create: run|started just before currentData middleware
+        - patch|upsert:
+           - run|started just after currentData middleware
+           - only args.data that are being modified, i.e. defined in args.data and different from currentData results
+        - create|patch|upsert: await the promise only just before write actions start, i.e. can be run in parallel
+          of all middleware until then
+     - goal: firing 404 if dead link
+  - remove dead links:
+     - for delete actions
+     - silently skipped if target model's database adapter if does not have features "filter:eq|in|some"
+     - timing:
+        - run|started just after currentData middleware
+        - await it, i.e. mergePatchData middleware must not start until this is done
+     - first search for source models with dead links:
+        - do find actions with args.filter { attr: { in: ids } } (isArray false) or { attr: { some: { in: ids } } }
+          (isArray true) where ids are the models being deleted, on the models that might target them
+        - group by source model type:
+           - e.g. if two different model types have same parent model type but different parent model attribute,
+             just use args.filter OBJ_ARR alternative
+        - merge per source model attribute:
+           - e.g. if two models have same parent model attribute, merge their ids in "in", removing duplicates
+        - add args.filter { id: { neq: ids } } to exclude models already being deleted, i.e. already present in delete actions
+          results
+     - then create patch actions to remove dead links
+        - do not fire those patch actions, only stack them up at the end, and resolveWriteAction will take care of them
+     - should bypass 404, just in case the model got deleted in-between
+
+Aggregation:
+  - args.group_by:
+     - in findMany commands
+     - value "ATTR,...":
+        - ATTR value can be any type, including undefined
+        - if several ATTR,... group by ordered union of all of them
+           - i.e. GROUP is an ARR
+        - should validate against bad format and unknown attributes, just like args.order_by
+        - should be parsed in parseGroupBy middleware, after args.parseOrderBy middleware (since it modifies it)
+     - performed just before parseResponse middleware:
+        - i.e. has no impact on any other middleware
+        - i.e. done at API level, not database adapter
+     - transforms response:
+        - from OBJ_ARR to OBJ2_ARR: group GROUP[_ARR], items OBJ_ARR
+     - args.order_by:
+        - prepend args.group_by to args.order_by, so that response is sorted by GROUP values, even when paginated.
+        - if some attributes in args.group_by were already in args.order_by, remove them first
+     - do not allow grouping on an ATTR that has unique constraint
+        - including model.id
+  - args.aggregate:
+     - on findMany commands
+     - value { VAR: AGG, ... }
+        - each AGG is run and assigned to each VAR, returning an OBJ
+        - AGG is "FUNC [...]", with available ones:
+           - count [ATTR,...]:
+              - count models where no ATTR == null (by augmenting args.filter) or all models if no ATTR specified
+           - sum|avg|min|max VAL:
+              - VAL can contain:
+                 - ATTR:
+                    - including multiple ones
+                    - when specifying ATTRs, only include models where no ATTR == null, by augmenting args.filter
+                 - + - * /
+                 - ( )
+                 - NUM finite constant
+              - tokenize then parse to AST in parseAggregate middleware, in action layer
+                 - it should validate against unknown ATTRs too
+                 - AST:
+                    - type: "count" (ATTR,... is handled by augmenting args.filter)
+                    - type: "sum|avg|min|max", value NODE
+                    - type: "add|substract|multiply|divide", left NODE, right NODE
+                    - type: "attribute", value "ATTR"
+                    - type: "constant", value NUM
+     - args.aggregate AST is passed to database adapter, which performs the aggregation
+     - database feature "aggregate:count|min|max|avg|sum"
+     - args.select should assume response will look like args.aggregate, instead of using model schema:
+        - since args.aggregate, this also imply args.select will never have nested response/actions
+     - if args.aggregate !== undefined, the following is not applied:
+        - pagination:
+           - also forbid pagination-related args
+        - whole response layer:
+           - including validateMissingIds (but not authorization middleware), i.e. no 404 will be checked
+        - renameIdsOutput middleware
+     - forbid args.order_by
+  - args.aggregate + args.group_by:
+     - aggregate is performed on each group
+        - response looks like OBJ_ARR: group GROUP[_ARR], AGG_VAR: VAL (no "items")
+     - args.group_filter:
+        - like args.filter, except applied after grouping
+        - parsed in same middleware as args.filter
+        - forbidden if args.group_by or args.aggregate undefined
+     - order_by:
+        - is applied after grouping
+        - i.e. just like args.select, attributes must be validated against how aggregated response looks like,
+          not usual response
+     - pagination:
+        - cursor pagination is merged to args.group_filter, not args.filter
+        - offset pagination, i.e. offset|limit is applied after grouping
+     - everything else behaves same as args.aggregate without args.group_by, except:
+        - args.select amd results merging must be applied on each group
+        - args.order_by and pagination are allowed
+     - database feature "aggregate:group"
+     - args.aggregate can be empty, if want to obtain a result similar to SQL "distinct"
 
 Compatibility layer:
   - reporting deprecation
@@ -987,13 +1102,13 @@ Positioning:
       - i.e. no vendor lock-in
 
  25  MUST HAVE FEATURES
- 0.1 Wrapup
+ 0.5 Wrapup
+ 2   Patch operators
  1   REST
  0.5 JSON-RPC
- 1   Complex patches
- 2   Orphans
  2   Pagination
- 4   Aggregating
+ 2   Orphans
+ 4   Aggregation
 ?7   Compatibility layer
 ?7   Versioning/changes
  4   Static assets
