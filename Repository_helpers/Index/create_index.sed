@@ -32,7 +32,7 @@ s/\([[]\)_/\1/
 
 # Put technology between parenthesis
 s/\.\([^].]\+\)\]/ (\u\1)]/
-s/ \(.[^()])]\)/ \u\1/
+s/ \(.[^()]\+)]\)/ \u\1/
 s/(Aws)/(AWS)/
 s/(Javascript)/(JavaScript)/
 s/(\([^)]*\)Cli\([^)]*\))]/(\1CLI\2)/
