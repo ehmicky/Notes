@@ -6,7 +6,7 @@
 
 
 TODO:
-  - stopped at https://stripe.com/docs/strong-customer-authentication
+  - stopped at https://stripe.com/docs/orders
   - https://stripe.com/docs
      - go back to:
         - https://stripe.com/docs/billing/webhooks
@@ -21,6 +21,7 @@ TODO:
            - https://stripe.com/docs/payments/3d-secure-iframe
         - https://stripe.com/docs/payments/checkout
            - including the Checkout section on https://stripe.com/docs/receipts
+        - https://stripe.com/en-US/radar/guide
   - go through each attribute, edit and try to make sense of them
   - check https://raw.githubusercontent.com/stripe/openapi/master/openapi/spec3.yaml
   - what do publishable keys do?
@@ -33,6 +34,7 @@ TODO:
         - https://stripe.com/docs/payments/payment-intents/usage#connected-accounts
         - https://stripe.com/docs/ach#connect
         - https://stripe.com/docs/disputes#disputes-on-connect-platforms
+        - https://stripe.com/docs/strong-customer-authentication/connect-platforms
   - go through all undocumented endpoints, see if they are documented elsewhere
   - pricing
      - including differences based on where the Stripe account was created
@@ -40,6 +42,7 @@ TODO:
      - including https://stripe.com/docs/receipts#automatically-send-receipts-when-using-billing
   - compare with other providers like PayPal, authorize.net and Klarna
   - https://stripe.com/works-with
+  - https://stripe.com/en-US/guides/general-data-protection-regulation
 
 Undocumented:
   - can see schema at https://raw.githubusercontent.com/stripe/openapi/master/openapi/spec3.yaml
@@ -119,7 +122,7 @@ SECURITY ==>                      #Check online doc how to migrate from|to Strip
                                   #  - from one Stripe account to another: can contact support
                                   #When using CSP in front-end, must whitelist some *.stripe.com (see online doc).
 
-PCI COMPLIANCE ==>                #See PCI doc.
+PCI COMPLIANCE ==>                #See PCI docs.
                                   #How Stripe helps:
                                   #  - stores sensitive information
                                   #     - i.e. never returned in response, only in request payloads
@@ -131,13 +134,8 @@ PCI COMPLIANCE ==>                #See PCI doc.
                                   #     - not level 1
                                   #        - for level 1, can also offer help (must contact them), reducing audit time from 3 months to 1 week
 
-PSD2 ==>                          #EU directive. Includes SCA (Strong Customer Authentication):
-                                  #  - requires 2-factor auth on credit card payments
-                                  #     - among knowledge (e.g. password), possession (e.g. device), inherence (e.g. biometrics)
-                                  #  - 3D secure is SCA-compliant
-                                  #  - exceptions:
-                                  #     - fixed amount subscriptions, providing there is a contract
-                                  #     - phone sales
+SCA COMPLIANCE ==>                #Must use 3D secure for 'card' payments. I.e. must use PINTENT.
+                                  #See PSD2 docs.
 
 { error: ERROR }                  #Error response for any endpoint
 ERROR.type                        #Can be:
@@ -395,12 +393,18 @@ CURRENCY CONVERSION ==>           #Conversion is automatic and has three stages:
                                   #  - destination's currency (our bank account)
                                   #     - used during PAYOUT
                                   #        - not when money is re-used with a REFUND or a Connect transaction
-AVAILABLE CURRENCIES ==>          #Customer's currency and CHARGE.currency:
+AVAILABLE CURRENCIES ==>          #Customer's currency:
                                   #  - see full list at https://stripe.com/docs/currencies
-                                  #  - payment method-specifics for CHARGE.currency:
-                                  #     - 'usd' only for card with JCB, Discover, Diners Club, and for 'ach*'
-                                  #     - 'eur' for bancontact
-                                  #     - same as destination currency for 'alipay'
+                                  #CHARGE.currency is payment method-specific:
+                                  #  - 'card*': any.
+                                  #  - 'usd' only for card with JCB, Discover, Diners Club, and for 'ach*'
+                                  #  - 'eur' for 'bancontact', 'eps', 'giropay', 'ideal', 'multibanco', 'sepa_debit', 'sofort'
+                                  #  - 'pln' for 'p24'
+                                  #  - 'usd', 'eur', 'gbp', 'cad', 'aud', 'sgd', 'hkd', 'jpy', 'nzd' for 'alipay'
+                                  #     - and must be same as destination currency
+                                  #  - 'usd', 'gbp', 'eur', 'aud', 'chf', 'hkd', 'sgd' for 'apple_pay'
+                                  #  - 'usd', 'gbp', 'eur', 'aud', 'nzd', 'hkd', 'sgd' for 'google_pay'
+                                  #  - 'usd', 'gbp', 'eur', 'aud', 'cad', 'hkd', 'sgd' for 'wechat'
                                   #Destination currency:
                                   #  - must match main currency of STRIPE_ACCOUNT.country
                                   #  - but PAYOUT can be to another country with same currency (e.g. Eurozone)
@@ -826,7 +830,7 @@ CHARGE.status                     #First 'pending' then either 'succeeded' or 'f
                                   #     - no need to use webhooks
                                   #  - some SOURCEs are async
                                   #     - must use webhooks
-                                  #     - only SOURCE.type 'ach_*', 'sepa_debit' and 'sofort'
+                                  #     - only SOURCE.type 'ach_*' (2-5 days), 'sepa_debit' (6 days) and 'sofort' (2-14 days)
 CHARGE.refunds                    #REFUND_LIST
 CHARGE.refunded                   #BOOL. False if only partially refunded.
 CHARGE.amount_refunded            #PMONEY. 0 if none.
@@ -919,9 +923,11 @@ CHARGE.capture                  RC#BOOL. Delayed payment:
                                   #  - if more than 7 days, CHARGE fails
                                   #     - EVENT 'charge.expired'
                                   #  - to cancel it, should create a REFUND
-                                  #Goal:
-                                  #  - delaying payment when it might look fraudulent (see below).
+                                  #Possible goals:
                                   #  - lightweight refund by holding money (cannot be spent by customer) without withdrawing it
+                                  #     - e.g. when merchant must do some work before customer pays, and wants to avoid wasting
+                                  #       this is customer cancels, while still allowing easy refunds
+                                  #  - delaying payment when it might look fraudulent (see below).
                                   #Some banks show not-processed yet (but authorized) payments as if it was processed, which
                                   #can confuse some customers.
                                   #Only works with card* SOURCEs
@@ -1056,6 +1062,7 @@ DISPUTE ==>                       #When a CUSTOMER questions our CHARGE. Also ca
                                   #  - 'ach_debit':
                                   #     - cannot provide EVIDENCE
                                   #     - within 60 days
+                                  #  - 'google_pay', 'apply_pay', 'microsoft_pay', 'samsung_pay', 'alipay': yes
 
 DISPUTE AND REFUNDS ==>           #  - cannot create a REFUND on a disputed CHARGE
                                   #  - cannot create a DISPUTE on a refunded CHARGE
@@ -1073,6 +1080,11 @@ HIGH DISPUTE RATE ==>             #If for one month, for >5000 USD, either:
                                   #        - MATCH is Mastercard's one and is commonly used
                                   #         - can happen too if:
                                   #            - failing to protect payment method data or comply to PCI
+                                  #     - give hefty fines ($10,000 to $100,000)
+                                  #Credit card companies have warning programs:
+                                  #  - if about to hit threshold, give warnings
+                                  #  - then must tell them how we want to fix it
+                                  #  - give few months to fix it
 
 DISPUTE LIFECYCLE ==>             #Created by Stripe on CUSTOMER's request
                                   #  - EVENT 'charge.dispute.created'
@@ -1320,6 +1332,9 @@ SOURCE                            #Payment method of a CUSTOMER.
 SOURCE TYPES ==>                  #Differences between source types:
                                   #  - how customer inputs the information (SOURCE.TYPE)
                                   #     - including client-side integration
+                                  #  - customers habits:
+                                  #     - country-specific
+                                  #     - businesses prefer bank accounts, consumers prefer credit cards or digital wallets
                                   #  - sync vs async CHARGEs (see CHARGE webhooks above)
                                   #  - SOURCE.flow (how customer add payment method)
                                   #  - SOURCE.usage (whether can be re-used)
@@ -1340,10 +1355,9 @@ SOURCE TYPES ==>                  #Differences between source types:
                                   #         - redirects to bank website
                                   #         - banks asks for online password, on-device code or biometric
                                   #      - also called 'Visa Secure' or 'Mastercard Identity Check'
-                                  #      - version 2:
-                                  #         - allows banks to not perform extra authorization based on contextual data sent
-                                  #         - contextual data: device ID, transaction history, address, etc.
                                   #      - automatically triggered when using 'card' PAYMENT_METHOD with PINTENT
+                                  #      - version 2: allow for PSD2 exemptions (see its doc)
+                                  #         - Stripe automatically try to ask for exemptions if possible
                                   #  - 'card' with CARD.wallet.type:
                                   #      - digital wallets
                                   #      - put money on it usually with credit card
@@ -1357,8 +1371,9 @@ SOURCE TYPES ==>                  #Differences between source types:
                                   #      - create|update only
                                   #  - 'ach_debit', 'ach_credit_transfer':
                                   #      - US
+                                  #      - common in B2B
                                   #      - with bank account number and routing number
-                                  #      - can take few days
+                                  #      - can take 2-5 days
                                   #      - more automated than credit card, because do not need to re-authorize
                                   #         - i.e. more convenient but needs more trust
                                   #      - charge amount can be paid in separate/several payments
@@ -1420,6 +1435,7 @@ SOURCE TYPES AVAILABILITY ==>     #Right away: 'card', 'stripe_account', 'apple_
 SOURCE TYPES COUNTRIES ==>        #Countries availability:
                                   #  - US (destination): 'ach*'
                                   #  - Germany|Austria|Netherlands|Belgium|Italy|Spain (customer), US/EU (destination): 'sofort'
+                                  #  - France|Germany|Austria|Netherlands|Belgium|Italy|Spain|Portugal|Luxembourg|Ireland (customer), US/EU (destination): 'sepa_debit'
                                   #  - Germany (customer), US/EU (destination): 'giropay'
                                   #  - Netherlands (customer), US/EU (destination): 'ideal'
                                   #  - Austria (customer), US/EU (destination): 'eps'
@@ -1557,7 +1573,7 @@ SOURCE.token                    RC#TOKEN.id. Use TOKEN to populate properties.
 SOURCE.usage                     C#Either:
                                   #  - must be 'reusable': for SOURCE.type 'card*', 'ach*'
                                   #  - must be 'single_use': for all others SOURCE.type
-                                  #  - can be either: 'alipay', 'sepa_debit'
+                                  #  - can be either: 'alipay', 'google_pay', 'apply_pay', 'samsung_pay', 'microsoft_pay', 'sepa_debit'
                                   #For 'reusable', must attach SOURCE to CUSTOMER before first usage, to be able to re-use it.
 SOURCE.amount                    C#PMONEY if SOURCE.usage 'single_use'
 SOURCE.owner                   RCU#BILL_DETAILS
