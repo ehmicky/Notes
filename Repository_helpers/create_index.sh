@@ -22,11 +22,11 @@ md-file-tree | sed '
   s/^- /\n/;
   s/^  //;
   s/\([[_]\)@/\1/;
-' > "$dir/long_index.md"
+' >> "$dir/long_index.md"
 
 sed '
   /\[/ d
-' "$dir/long_index.md" >> "$dir/short_index.md"
+' "$dir/long_index.md" > "$dir/short_index.md"
 
 # Updates README.md
 cat "$dir/presentation.md" "$dir/short_index.md" "$dir/long_index.md" > README.md
