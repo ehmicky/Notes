@@ -9,6 +9,7 @@
 /LICENSE\]/ d
 /\[README/ d
 /Repository_helpers/ d
+/Roadmaps/ d
 /__Index__/ d
 
 # Remove temporary files
