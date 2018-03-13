@@ -35,6 +35,8 @@ SCHEMA_ID                         #SCHEMA.id
 SCHEMA_VAL                        #1
 PARENT_SCHEMA                     #{ minimum: 1 }
 DATA_VAL                          #2
+PARENT_DATA                       #{ hello: 2 }
+ROOT_DATA                         #{ world: { hellow: 2 } }
 DATA_PATH                         #'.world.hello'
 DATA_VAR                          #'hello'
 SCHEMA_PATH                       #'#/properties/world/properties/hello/minimum'
@@ -70,13 +72,16 @@ VALIDATE.errors                   #Of the last VALIDATE()
                                   #ERROR_OBJ_ARR:
                                   #  - null if no errors
                                   #  - only the first error, unless AOPTS.allErrors true
-                                  #Validation functions (in AJV.addKeyword()) can assign this.errors ERROR_OBJ_ARR 
-                                  #(def: standard errors):
-                                  #  - if not, should use KOPTS.errors false for better efficiency
-                                  #  - must at least define ERROR_OBJ.message|keyword|params
-                                  #Async:
-                                  #  - in ERROR.errors instead
-                                  #  - custom 'RULE' should reject with new Ajv.ValidationError(ERROR_OBJ_ARR) instead
+                                  #Validation functions (in AJV.addKeyword()):
+                                  #  - can assign FUNC.errors ERROR_OBJ_ARR, where FUNC is the function itself (not "this")
+                                  #     - otherwise, will use default:
+                                  #        - keyword 'RULE'
+                                  #        - message 'should pass "RULE" keyword validation'
+                                  #        - params: keyword 'RULE'
+                                  #     - if no custom errors, should use KOPTS.errors false for better efficiency
+                                  #  - must define ERROR_OBJ.message|keyword|params
+                                  #     - other ERROR_OBJ.* are filled in by AJV
+                                  #Async rules work differently, see below
 AJV.errorsText(ERR_OBJ_ARR[,OPTS])#Returns "data.DATA_PATH MESSAGE,...", e.g. "data.examplevar should be >= 10"
                                   #OPTS: separator (def: ","), dataVar (def: "data")
                                   #Can be used as human-friendly error message
@@ -121,7 +126,7 @@ ERROR_OBJ.params                  #Schema information. OBJ:
                                   #  - property 'VAR', missingProperty 'VAR', deps 'STR,...', depsCount NUM 
                                   #  ($ref)
                                   #  - ref STR 
-                                  #  (custom keyword)
+                                  #  (custom keyword with no custom error)
                                   #  - keyword 'RULE' 
 (if AOPTS.verbose true)
 ERROR_OBJ.schema                  #SCHEMA_VAL
@@ -184,7 +189,8 @@ AOPTS.cache                       #Object used for caching. By def, done in memo
 
 AJV.addFormat('FORMAT', VVAL)     #Add custom SCHEMA.format according to VVAL:
 AOPTS.formats.FORMAT VVAL         #  - OBJ:
-                                  #     - validate, async: see AJV.addKeyword()
+                                  #     - validate: like AJV.addKeyword() but can also be REGEXP|'REGEXP'???
+                                  #     - async: like AJV.addKeyword()
                                   #     - compare(STR, STR2)->-1|0|1: to make SCHEMA.format[Exlusive]Maximum|Minimum work
                                   #  - VAL: shortcut for OBJ.validate VAL
 AOPTS.full                        #Make format validation slower, must more correct, e.g. validates dates against Date() 
@@ -194,12 +200,12 @@ AOPTS.unknownFormats              #If unknown format, throws exception: true (fu
 AJV.addKeyword('RULE', KOPTS)     #Add custom SCHEMA.RULE
                                   #'RULE' must be [:alnum:]-_$ and should be namespaced
                                   #Can be performed in four different ways according to KOPTS:
-                                  #  - validate REGEXP|'REGEXP' or FUNC(SCHEMA_VAL, DATA_VAL, PARENT_SCHEMA, DATA_PATH, 
-                                  #    PARENT_VAL, DATA_VAR, ROOT_VAL)->[PROMISE_]BOOL
+                                  #  - validate(SCHEMA_VAL, DATA_VAL, PARENT_SCHEMA, DATA_PATH, PARENT_DATA, DATA_VAR, ROOT_DATA)
+                                  #    ->[VALIDATION_PROMISE_]BOOL
                                   #     - fired during VALIDATE()
                                   #     - is the most flexible, but slowest
-                                  #  - compile(SCHEMA_VAL, PARENT_SCHEMA, CONTEXT)->(DATA_VAL, DATA_PATH, PARENT_VAL, 
-                                  #    DATA_VAR, ROOT_VAL)->[PROMISE_]BOOL
+                                  #  - compile(SCHEMA_VAL, PARENT_SCHEMA, CONTEXT)->(DATA_VAL, DATA_PATH, PARENT_DATA, 
+                                  #    DATA_VAR, ROOT_DATA)->[VALIDATION_PROMISE_]BOOL
                                   #     - first function is fired during AJV.compile(), second during VALIDATE()
                                   #  - macro(SCHEMA_VAL, PARENT_SCHEMA, CONTEXT)->EXTRA_SCHEMA
                                   #     - fired during AJV.compile()
@@ -207,21 +213,28 @@ AJV.addKeyword('RULE', KOPTS)     #Add custom SCHEMA.RULE
                                   #  - inline(CONTEXT, 'RULE', SCHEMA_VAL, PARENT_SCHEMA)->STR
                                   #     - fired during AJV.compile()
                                   #     - the fastest, but way too complicated to use
+                                  #See above about how to set custom error messages
                                   #KOPTS:
                                   #  - type 'TYPE'[_ARR] (def: all): only trigger on those types
                                   #  - valid true: if FUNC is performed but its result can be ignored, i.e. only used for 
                                   #    side-effects
-                                  #  - modifying true: so FUNC can modify object (through PARENT|ROOT_VAL)
+                                  #  - modifying true: so FUNC can modify object (through PARENT|ROOT_DATA)
                                   #  (validate() only)
-                                  #  - schema false: [PARENT|ROOT_]VAL are not passed as argument
-                                  #  - async VAL: 
-                                  #     - if returning PROMISE
+                                  #  - schema false: SCHEMA_VAL, PARENT_SCHEMA are not passed as argument
+                                  #  - $data true: allow using $data
+                                  #  - async VAL:
+                                  #     - if returning validate() returns VALIDATION_PROMISE
+                                  #     - AJV.validate() will return RESULT_PROMISE:
+                                  #        - resolved with true if VALIDATION_PROMISE resolved with true
+                                  #        - rejected with ERROR if VALIDATION_PROMISE resolved with false,
+                                  #          or if new Ajv.ValidationError(ERROR_OBJ_ARR) thrown
+                                  #           - with ERROR.errors ERROR_OBJ_ARR
+                                  #        - (should avoid) rejected with VAL if VALIDATION_PROMISE rejected with VAL
                                   #     - RSCHEMA.$async true should be true as well
                                   #     - will use, according to VAL: "*"|"co*" (generator), "es7" (async function), 
                                   #       true (either is installed)
                                   #     - will transpile using KOPTS.transpile "nodent|regenerator" 
                                   #       (must be installed separately)
-                                  #  - $data true: allow using $data
                                   #AOPTS:
                                   #  - passContext BOOL: if false (def), bind validate function context with AJV
                                   #CONTEXT:
