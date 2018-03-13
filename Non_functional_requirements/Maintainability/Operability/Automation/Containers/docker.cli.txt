@@ -357,18 +357,20 @@ DOCKERFILE                        #Main configuration file, with commands below
 
 
 BUILD LAYERS ==>                  #Works in layers:
-                                  #  - each layer only contains modification from parent image
-                                  #  - parent images are read-only, shared by reference
-                                  #     - uses "storage drivers" (see above)
-                                  #  - layers are images or containers
+                                  #  - each layer only contains modification from parent
+                                  #     - container is last layer, read-write
+                                  #     - images are others, read-only, shared by reference
+                                  #  - uses "storage drivers" (see above)
                                   #Each Dockerfile instruction (docker build) or commit (docker commit) creates a new layer:
-                                  #  - intermediate IMAGE are removed at the end:
-                                  #     - unless docker build --rm=false
-                                  #     - can force with docker build --force-rm
+                                  #  - intermediate IMAGE are removed at the end
                                   #  - each layer creates a new shell, e.g. $PWD will be reset 
                                   #     - should limit number of layers, i.e. combine instructions as much as possible
                                   #  - max 127 layers
                                   #  - prefer Dockerfile over commit
+docker build ...
+--rm=false                        #Do not remove intermediate IMAGE
+--force-rm                        #Force removing intermediate IMAGE
+
 
 BUILD CACHE ==>                   #Each layer + next instruction is cached:
                                   #  - by def reused if matched
@@ -378,8 +380,11 @@ BUILD CACHE ==>                   #Each layer + next instruction is cached:
                                   #     - i.e. should be as late as possible, in order to invalidate fewer cache
                                   #  - ARG with different value
                                   #Does not invalidate cache:
-                                  #  - COMMANDs, even if takes input from some global/changing state (e.g. apt-get update)
-                                  #  - this can create problem, but can be disabled with docker build --no-cache
+                                  #  - COMMANDs, even if takes input from some global/changing state
+                                  #     - e.g. apt-get install without version pinning
+                                  #  - this can create problem
+docker build ...
+--no-cache                        #
 
 
 docker history IMAGE              #Show all IMAGE layers: 
@@ -436,7 +441,7 @@ docker images [IMAGE]             #Prints images with information (one line per 
 
 SYSINFO.Images                    #NUM
 IMAGEINFO.Id                      #IMAGE_ID
-IMAGEINFO.Config.Image            #IMAGE_ID
+IMAGEINFO.Config.Image            
 IMAGEINFO.Parent                  #IMAGE_ID or "" (if none)
 IMAGEINFO.RepoDigests             #sha256 checksum
 IMAGEINFO.Created                 #"DATE"
@@ -482,6 +487,8 @@ CONTAINER                         #Running instance of an image
 docker create IMAGE               #Does:
  [COMMAND [ARGS...]]              #  - if does not exist locally, docker pull IMAGE
                                   #  - creates a container, using IMAGE
+                                  #  - does not start it yet
+                                  #COMMAND: see COMMANDs section
 --name CONTAINER_NAME             #Def: random
 --cidfile FILE                    
 HOSTCONF.ContainerIDFile          #Write CONTAINER_ID to FILE
@@ -490,7 +497,7 @@ HOSTCONF.ContainerIDFile          #Write CONTAINER_ID to FILE
 docker rename CONTAINER CONTAINER2#
 
 
-docker update CONTAINER...        #
+docker update CONTAINER...        #Only few attributes can be changed, documented elsewhere in this file
 
 
 docker rm CONTAINER               #Deletes a CONTAINER
@@ -539,7 +546,7 @@ docker ps                         #Prints containers with information:
 
 CONTAINERINFO.Id                  #CONTAINER_ID
 CONTAINERINFO.Name                #CONTAINER_NAME
-CONTAINERINFO|CONTAINERSPEC.Image #IMAGE_ID
+CONTAINERINFO|CONTAINERSPEC.Image #IMAGE_NAME
 CONTAINERINFO.Created             #"DATE"
 CONTAINERINFO.HostConfig          #HOSTCONF
 CONTAINERINFO.SizeRootFs          #"Virtual size", i.e. size of all layers
@@ -563,7 +570,7 @@ CONTAINERINFO.Config              #Same attributes as IMAGEINFO.Config
                                              \=+===============================+=/
 
 
-docker stop|restart CONTAINER...  #Send SIGTERM, i.e. graceful stop
+docker stop|restart CONTAINER...  #Send "stop signal" (def: SIGTERM), i.e. graceful stop
                                   #After a "stop grace period" (def: 10 secs), sends SIGKILL, i.e. force stop
                                   #If restart, runs docker start right after
 -t INT
@@ -573,7 +580,7 @@ docker service start ...
 CONTAINERSPEC.StopGracePeriod     #Stop grace period
 
 docker create ...
---stop-signal SIGNAL_NAME         #Signal to stop container (def: SIGTERM)
+--stop-signal SIGNAL_NAME         #"stop signal"
 STOPSIGNAL SIG_NAME|NUM           #Same as Dockerfile instruction.
 
 
@@ -595,15 +602,16 @@ CONTAINERINFO.State.Status        #Can be:
                                   #  - created: after docker create
                                   #  - running: after docker start
                                   #  - paused: after docker pause
-                                  #  - restarting: after new docker start, or docker restart
-                                  #  - exited [+ status code, time]
+                                  #  - restarting: during new docker start
+                                  #  - exited
                                   #  - dead: trying to kill|stop, and it failed, so cannot restart
 CONTAINERINFO.Running|Paused|
  Restarting|OOMKilled|Dead        #BOOL
 SYSINFO.Containers.
  Running|Paused|Stopped           #NUM
 CONTAINERINFO.RestartCount        #NUM
-CONTAINERINFO.StartedAt|FinishedAt#"DATE"
+CONTAINERINFO.State.
+ StartedAt|FinishedAt             #"DATE"
 
 
                                              /=+===============================+=\ 
@@ -716,36 +724,47 @@ COMMAND                           #Means a CLI command, either:
                                   #        - subcommands:
                                   #           - are not terminated when parent is (e.g. with docker stop)
                                   #           - cannot receive signals
-                                  #        - can be changed with SHELL ["COMMAND",...]
+                                  #        - can be changed with SHELL ["COMMAND",...] (def: ["/bin/sh", "-c"])
                                   #     - only uses escape character for escaped newlines
+                                  #     - preferred for foreground jobs
                                   #  - as JSON array ["STR",...]
                                   #     - run with exec, i.e. same shell (not subcommand)
-                                  #     - does not do shell expansion (e.g. $VAR)
-                                  #     - preferred
-                                  #Different timing:
-                                  #  - build-time: during docker build, i.e. RUN
-                                  #  - runtime: during docker exec, i.e. ENTRYPOINT, CMD
+                                  #     - no shell expansion
+                                  #     - preferred for background/long-running jobs
 
-RUN COMMAND                       #Dockerfile instruction. Run command
+PACKAGE INSTALLATION ==>          #Containers are always unprivileged:
+                                  #  - can do apt-get install -y
+                                  #  - but apt-get upgrade will fail on some core packages
+                                  #How to install packages:
+                                  #  apt-get update && 
+                                  #  apt-get install -y PACKAGE=VERSION && (version pinning to avoid unpredictability)
+                                  #  rm -rf /var/lib/apt/lists/* (remove apt-get update footprint, so it does not take up space)
 
-ENTRYPOINT COMMAND                #Dockerfile instruction. If COMMAND uses:
-                                  #  - CLI syntax: like CMD
-                                  #  - JSON array syntax: sets default command, that can take args
-                                  #Only last ENTRYPOINT will be used.
-                                  #At least one CMD or ENTRYPOINT required per Dockerfile
-docker create ...
---entrypoint COMMAND              
-IMAGEINFO.Config.Entrypoint       #Overrides|specifies ENTRYPOINT (+ related CMD)
 
-CMD COMMAND                       #Dockerfile instruction. If ENTRYPOINT was:
-                                  #  - not called before: sets default command, that cannot take args. 
-                                  #  - called before: 
-                                  #     - sets default args
-                                  #     - both ENTRYPOINT and CMD must use JSON array syntax
+RUN COMMAND                       #Dockerfile instruction. Run command, compile-time
+
+CMD COMMAND                       #Dockerfile instruction. Run command, rutime. 
+IMAGEINFO.Config.Cmd              #Sets default command, that cannot take args. 
                                   #Only last CMD will be used.
                                   #At least one CMD or ENTRYPOINT required per Dockerfile
-IMAGEINFO.Config.Cmd              #STR_ARR (includes args)
 
+ENTRYPOINT COMMAND                #Dockerfile instruction.
+docker create ...                 #If COMMAND uses:
+--entrypoint COMMAND              #  - CLI syntax: like CMD
+IMAGEINFO.Config.Entrypoint       #  - JSON array syntax: 
+                                  #     - sets default command, that can take args
+                                  #     - CMD now sets default args (not default command), and must use JSON array syntax
+                                  #Only last ENTRYPOINT will be used.
+                                  #At least one CMD or ENTRYPOINT required per Dockerfile
+
+
+docker create IMAGE               
+ [COMMAND [ARGS...]]              #COMMAND [ARGS...]: see docker exec???
+
+docker run IMAGE [...]            #Does:
+                                  #  - docker create IMAGE ...
+                                  #  - docker start -i CONTAINER
+                                  #Shares all options from docker create+exec, plus extra, specified in this doc.
 
 docker exec CONTAINER COMMAND     #Run COMMAND from within the container (def: container's default command/arguments)
  [ARGS...]                        #CONTAINER must be running
@@ -753,13 +772,6 @@ CONTAINERINFO.Path
 CONTAINERSPEC.Command             #COMMAND
 CONTAINERINFO|CONTAINERSPEC.Args  #"ARG"_ARR
 CONTAINERINFO.ExecIDs             #Linux kernel syscall "exec" IDs
-
-
-docker run IMAGE [...]            #Does:
-                                  #  - docker create IMAGE
-                                  #  - docker start CONTAINER
-                                  #  - docker exec CONTAINER ...
-                                  #Shares all options from docker create+exec, plus extra, specified in this doc.
 
 
                                              /=+===============================+=\ 
@@ -778,6 +790,22 @@ docker exec|start ...
                                   #Def: "ctrl-p,ctrl-q"
                                   #Can also use DOCKERCONF.detachKeys STR
 
+docker attach CONTAINER           #Bring container foreground, either:
+                                  #  - it is in background in current terminal|process
+                                  #  - it is running in another terminal|process, e.g. several terminals can attach to same container
+--no-stdin                        #Brings stdout|stderr in foreground, but not stdin
+--detach-keys                     #Like docker exec
+
+
+docker create ...
+-a stdin|stdout|stderr            
+--attach stdin|stdout|stderr      #Redirects COMMAND's standard streams to|from current process|terminal
+IMAGEINFO.Config.                 #Can be done several time.
+ AttachStdin|Stdout|Stderr        #Def: all for docker run|exec, but none for docker start|run
+docker start ...
+-a
+--attach                          #Same as -a stdin -a stdout -a stderr --sig-proxy=true
+
 docker create|exec ...
 -t
 --tty                             
@@ -788,18 +816,6 @@ docker create|exec|start ...
 IMAGEINFO.Config.OpenStdin        #Keep stdin opened even if --detach. Should be used for interactive shells
 IMAGEINFO.Config.StdinOnce        #Like --interactive, but close stdin after the last client closes.
                                   #Can only be set through REST API
-
-docker create|start ...
--a stdin|stdout|stderr            
---attach stdin|stdout|stderr      
-IMAGEINFO.Config.                 #Redirects COMMAND's standard streams to|from current process|terminal
- AttachStdin|Stdout|Stderr        #Can be done several time. Def: all
-
-docker attach CONTAINER           #Bring container foreground, either:
-                                  #  - it is in background in current terminal|process
-                                  #  - it is running in another terminal|process, e.g. several terminals can attach to same container
---no-stdin                        #Brings stdout|stderr in foreground, but not stdin
---detach-keys                     #Like docker exec
 
 
 docker run|attach ...
@@ -812,6 +828,8 @@ docker run|attach ...
                                             \  :_______________________________:  /    
                                              \=+===============================+=/
 
+
+SHELL EXPANSION ==>               #E.g. $VAR, is done only when COMMAND uses CLI syntax
 
 $VAR                              #Expands in Dockerfile. Defined by ENV or ARG
 ${VAR}                            #Should not be used for confidential information, as docker history shows it
@@ -1536,13 +1554,6 @@ CONTAINER USER ==>                #Different from host's:
                                   #Containers usually do not require root access:
                                   #  - default user is root
                                   #  - so should use unprivileged user (see USER above)
-                                  #Containers are always unprivileged:
-                                  #  - can do apt-get install -y
-                                  #  - but apt-get upgrade will fail on some core packages
-                                  #  - apt-get update:
-                                  #     - on its own, creates cache problems (avoid)
-                                  #     - creates non-predictability unless pinning version, e.g. apt-get install -y PACKAGE=VERSION
-                                  #     - recommended: apt-get update && apt-get install + version pinning && rm -rf /var/lib/apt/lists/*
 
 USER STR                          #Dockerfile instruction. Sets current user, used:
                                   #  - in following instructions, e.g. COMMANDs
@@ -1784,7 +1795,9 @@ HOSTCONF.ShmSize                  #Def: 64MB
 
 
 LABEL ==>                         #Metadata on images, containers, daemons, volumes, networks, swarm nodes or swarm services
-                                  #Can be viewed with docker inspect
+                                  #Can be:
+                                  #  - viewed with docker inspect
+                                  #  - used as filters with docker images, ps, network ls, events, node ls, service ls, service ps
 
 
 LABEL VAR="VAL" ...               #Dockerfile instruction
