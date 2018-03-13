@@ -15,7 +15,7 @@
 PURPOSE ==>                                     #Execute JavaScript code server-side
                                                 #Based on Chrome JavaScript engine V8
 
-VERSION ==>                                     #11.12.0 (current), 10.15.3 (active LTS), 8.15.1 (active LTS)
+VERSION ==>                                     #11.13.0 (current), 10.15.3 (active LTS), 8.15.1 (active LTS)
                                                 #Branches:
                                                 #  - "current": latest major version. New one every 0.5 years
                                                 #  - LTS: every even-numbered version
@@ -320,6 +320,9 @@ EventEmitter                                    #Base class of all objects recei
 EVENTEMITTER.on('EVENT', FUNC)->EVENTEMITTER    #
 EVENTEMITTER.once('EVENT', FUNC)->EVENTEMITTER  #
 EVENTEMITTER.prepend[Once]Listener(...)         #Like on[ce](...) but adds to beginning of listeners list, not end
+once(EVENTEMITTER, 'EVENT')->PROMISE_ARG_ARR 11*#Like EVENTEMITTER.once() but using PROMISE:
+                                             11*#  - resolved with ARG_ARR on emit('EVENT', ...ARGS)
+                                             11*#  - rejected with VAL on emit('error', VAL) (unless 'EVENT' is 'error' itself)
 EVENTEMITTER.removeListener('EVENT', FUNC)
   ->EVENTEMITTER                                #
 EVENTEMITTER.off(...)                        10*#Same
@@ -716,10 +719,11 @@ IOSTREAM ==>                                    #Implement both ISTREAM and OSTR
 INHERITING STREAMS ==>                          #To create STREAM child classes, just inherit them and reimplement functions
                                                 #_read(), _write[v](), _transform() or _flush() (see online doc), without calling them directly.
 
-
-process.stdout|err|in                           #OSTREAM|ISTREAM with extra member:
-                                                #  - isTTY BOOL: if true, will be a READSTREAM|WRITESTREAM
-                                                #Unless used as a pipe, are sync (unless other STREAM which are async by def).
+process.stdin|stdout|stderr                     #Standard streams
+                                                #Unless other STREAMs which are async, writes are sync|async depending on to what it is piped to:
+                                                #  - a file -> sync
+                                                #  - a terminal -> sync (Unix), async (Windows)
+                                                #  - another process (pipe) or a socket -> async (Unix), sync (Windows)
 
 
                                              /=+===============================+=\
@@ -729,8 +733,11 @@ process.stdout|err|in                           #OSTREAM|ISTREAM with extra memb
                                              \=+===============================+=/
 
 
+STREAM.isTTY                                    #true|undefined. True if piped to|from terminal.
+                                                #For process.stdin|stdout|stderr, if true, they will be instances of READSTREAM|WRITESTREAM
+isatty(FD_INT)->BOOL                            #
+
 READSTREAM                                      #Child of TCPSOCKET, but without destroy(), connect event nor *address*
-                                                #Instantiated by process.stdin if process.stdin.isTTY true
                                                 #Will keep process alive until destroyed.
 READSTREAM.isRaw                                #BOOL: raw or character device.
 READSTREAM.bytesRead                            #So far
@@ -738,10 +745,38 @@ READSTREAM.setRawMode(BOOL)                     #
 
 WRITESTREAM                                     #Same but for process.stdout|stderr
 WRITESTREAM.columns|rows                        #UINT
-WRITESTREAM.getColorDepth([process.env])->NUM 9*#Number of bits per channel, 1|4|8|24
 WRITESTREAM.on("resize", FUNC())                #
 
-isatty(FD_INT)                                  #
+WRITESTREAM.getColorDepth([process.env])->NUM 9*#Number of bits per channel: 1|4|8|24
+                                              9*#Used by console.*() and REPL
+                                              9*#Based on heuristic on process.env and os.release():
+                                              9*#  - Linux:
+                                              9*#     - ENVVAR TERM 'dumb': 1 bit
+                                              9*#     - ENVVAR TMUX, ENVVAR TERM 'eterm|cons25|console|cygwin|dtterm|gnome|
+                                              9*#       hurd|jfbterm|konsole|kterm|mlterm|putty|st' or contains
+                                              9*#       'ansi|color|linux|con|rxvt|screen|term|vt100', ENVVAR COLORTERM: 4 bits
+                                              9*#     - ENVVAR TERM 'xterm-256*': 8 bits
+                                              9*#     - ENVVAR TERM 'terminator|rxvt-unicode-24bit',
+                                              9*#       ENVVAR COLORTERM 'truecolor|24bit': 24 bits
+                                              9*#  - Mac (base on ENVVAR 'TERM_PROGRAM'):
+                                              9*#     - 'Apple_Terminal', old 'iTerm.app': 4 bits
+                                              9*#     - 'HyperTerm', 'MacTerm', new 'iTerm.app': 24 bits
+                                              9*#  - Windows:
+                                              9*#     - <10: 4 bits
+                                              9*#     - 10 before build 14931: 8 bits
+                                              9*#     - after: 24 bits
+                                              9*#  - CI:
+                                              9*#     - Travis/CircleCI/AppVeyor/GitLab/Codeship: 8 bits
+                                              9*#     - others: 1 bit
+                                              9*#  - Teamcity:
+                                              9*#     - old versions: 1 bit
+                                              9*#     - new versions: 4 bits
+                                              9*#  - otherwise: 1 bit
+ENVVAR FORCE_COLOR=0|1|2|3                   11*#Force getColorDepth() to assume color support for 1|4|8|24 bits per channel
+ENVVAR NO_COLOR=1                            11*#Same as FORCE_COLOR=0
+ENVVAR NODE_DISABLE_COLORS=1                 11*#Same as FORCE_COLOR=0 but also change REPL (prefer NO_COLOR)
+WRITESTREAM.hasColors([NUM][, process.env])  11*#Returns true if 2 ** getColorDepth([process.env]) >= NUM
+ ->BOOL                                      11*#I.e. NUM should be 2 (2**1), 16 (2**4) (def), 256 (2**8) or 16 million (2**24)
 
 
                                              /=+===============================+=\
@@ -819,8 +854,7 @@ start([OBJ])->REPLSERVER                        #Creates a REPLSERVER:
                                                 #        - STR is command
                                                 #        - OBJ is current context (global object)
                                                 #        - STR2 is current module.filename
-                                                #  - useColors BOOL (def: same as terminal)
-                                                #     - can also use ENVVAR NODE_DISABLE_COLORS=1
+                                                #  - useColors BOOL (def: process.stdout.hasColors())
                                                 #  - useGlobal BOOL (def: false): use current context, and not local one
                                                 #  - ignoreUndefined BOOL (def: false): if true, doesn't print output when it is undefined
                                                 #  - writer FUNC(VAL):
@@ -2638,7 +2672,7 @@ generateKeyPair[Sync]('TYPE', OPTS           10*#Create asym key pair, where SBU
                                              10*#  - namedCurve STR: curve name
 
 createPrivate|PublicKey(OPTS|SBUFFER)->KEY   11*#Create asym key pair. OPTS:
-                                             11*#  - key SBUFFER
+                                             11*#  - key SBUFFER or (for 'Public') KEY
                                              11*#  - format 'pem' (def) or 'der': of key
                                              11*#  - type 'pkcs1', 'spki' or (privateKey only) 'sec1': ignored if format 'pem'
                                              11*#  - passphrase SBUFFER (privateKey only)
@@ -2769,7 +2803,7 @@ new Console(OPTS)                               #Returns CONSOLE, same as consol
 new Console(OSTREAM[, OSTREAM2][, BOOL])     10*#OPTS:
                                                 #  - stdout OSTREAM, stdout OSTREAM2
                                                 #  - ignoreErrors BOOL (def: true): ignore errors on OSTREAM[2]
-                                             10*#  - colorMode BOOL or 'auto' (def, depends on OSTREAM.isTTY|getColorDepth())
+                                             10*#  - colorMode BOOL or 'auto' (def: OSTREAM.isTTY && OSTREAM.hasColors())
                                              11*#  - inspectOptions OPTS: passed to UTIL.inspect()
 
 STDERR ==>                                      #Uses by:
