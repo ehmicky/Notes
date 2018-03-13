@@ -40,9 +40,11 @@ AUTHENTICATION ==>                #4 keys by default:
 ?starting_after|ending_before
  =RESOURCE.id                     #Cursor pagination
 
-PAGINATED_RESPONSE.data           #OBJ_ARR
-PAGINATED_RESPONSE.has_more       #BOOL
-PAGINATED_RESPONSE.url            #'/v1/...'
+LIST                              #Paginated response
+LIST.data                         #OBJ_ARR
+LIST.has_more                     #BOOL
+LIST.total_count                  #NUM
+LIST.url                          #'/v1/...'
 
 ?expand=VARR,...                  #Populate attribute
                                   #Max depth 4
@@ -61,20 +63,45 @@ RESOURCE.id                       #STR
 RESOURCE.object                   #Either:
                                   #  - 'list': for list endpoints
                                   #  - 'RESOURCE_NAME' (e.g. 'balance_transaction')
-RESOURCE.metadata                 #Custom OBJ
+RESOURCE.metadata              =CU#Custom OBJ
                                   #Max 50 properties, max KEY length 40 bytes, max value length 500 bytes.
+
+RESOURCE.created                  #DATE_NUM
+GET /RESOURCES?created=OBJ        #Filters by OBJ: gt[e]|lt[e] DATE_NUM
 
 Request-Id [S]                    #Request/response ID, for debugging
 
+NOTATION ==>                     ?#Optional field
+                               *CU#Required on create|update
+                               =CU#Updatable on create|update
+
 OPTIONAL FIELDS ==>               #Are null if not present
-                                 ?#Marked like this
 
 MONEY                             #INT. In the currency's smallest unit (e.g. cents for USD).
                                   #Can be negative.
 PMONEY                            #Like MONEY but >= 0
-OBJ.currency                      #Always as a sibling on OBJ with MONEY.
+RESOURCE.currency                 #Always as a sibling on OBJ with MONEY.
+                                  #Also present on CUSTOMER
                                   #STR (ISO 4217) (e.g. 'usd')
 DATE_NUM                          #Unix timestamp in seconds.
+
+BILL_DETAILS|SHIPPING.address     #ADDRESS
+SHIPPING.carrier                  #STR. Delivery service like 'Fedex', 'UPS', 'USPS', etc.
+BILL_DETAILS|SHIPPING.email       #STR.
+BILL_DETAILS|SHIPPING.name        #STR. Recipient name.
+BILL_DETAILS|SHIPPING.phone       #STR. Recipient phone (including country extension).
+SHIPPING.tracking_number          #'STR,...'.
+
+ADDRESS                           #
+ADDRESS.name                      #Person's name
+ADDRESS.email                     #'EMAIL'
+ADDRESS.phone                     #STR, including country extension
+ADDRESS.country                   #STR (2-letters code)
+ADDRESS.state                     #STR
+ADDRESS.city                      #STR
+ADDRESS.postal_code               #STR
+ADDRESS.line1                     #STR (e.g. street)
+ADDRESS.line2                     #STR (e.g. appt)
 
 GET /balance                      #BALANCE
                                   #Current Stripe "aggregated bank account".
@@ -90,7 +117,10 @@ BALANCE_SUB.source_types.TYPE     #INT. How amount is divided between account TY
 
 GET /balance/history[/ID]         #BALANCE_TRANSACTION.
                                   #BALANCE's single transaction
+
 CHARGE.balance_transaction        #BALANCE_TRANSACTION.id
+REFUND_DATA.balance_transaction   #BALANCE_TRANSACTION.id
+
 BALANCE_TRANSACTION.amount        #PMONEY paid by sender
 BALANCE_TRANSACTION.fee           #PMONEY paid to Stripe or taxes
 BALANCE_TRANSACTION.fee_details   #FEE_DETAILS
@@ -99,7 +129,7 @@ FEE_DETAILS.description           #STR
 FEE_DETAILS.type                  #Can be: 'application_fee', 'stripe_fee' or 'tax'
 BALANCE_TRANSACTION.net           #amount - fee
 BALANCE_TRANSACTION.exchange_rate?#NUM
-BALANCE_TRANSACTION.created       #DATE_NUM
+
 BALANCE_TRANSACTION.available_on  #DATE_NUM. When will be 'available' in BALANCE. Until then is 'pending'
 BALANCE_TRANSACTION.status        #'pending' or 'available'
 BALANCE_TRANSACTION.type          #Can be:
@@ -126,47 +156,176 @@ BALANCE_TRANSACTION.type          #Can be:
                                   #  - *_refund: for application_fee|payment|payment_failure|transfer
                                   #  - *_cancel: for payout|transfer
                                   #  - *_failure: for payout|refund|transfer
+
 BALANCE_TRANSACTION.source        #Related RESOURCE.id
 BALANCE_TRANSACTION.description  ?#STR
 
-GET /charges[/ID]
-POST /charges[/ID]                #CHARGE
-                                  #Credit|debit card's charge.
-CHARGE.amount                     #PMONEY
-CHARGE.amount_refunded            #PMONEY refunded, if any, or 0.
-CHARGE.application_fee_amount    ?#PMONEY
-CHARGE.billing_details            #BILL_DETAILS. Billing contact info.
-BILL_DETAILS.address              #ADDRESS
-ADDRESS.name                      #Person's name
-ADDRESS.email                     #'EMAIL'
-ADDRESS.phone                     #STR, including country extension
-ADDRESS.country                   #STR (2-letters code)
-ADDRESS.state                     #STR
-ADDRESS.city                      #STR
-ADDRESS.postal_code               #STR
-ADDRESS.line1                     #STR (e.g. street)
-ADDRESS.line2                     #STR (e.g. appt)
-ADDRESS.created                   #DATE_NUM
-CHARGE.fraud_details              #FRAUD_DETAILS
-FRAUD_DETAILS.stripe_report      ?#'fraudulent' (set by Stripe)
-FRAUD_DETAILS.user_report        ?#'fraudulent|safe' (set by current user)
-CHARGE.description               ?#STR
+GET /charges[/ID]                 #CHARGE
+POST /charges[/ID]                #Credit|debit card's charge.
 
 POST /charges[/ID]/capture        #Two-steps payment flow:
                                   #  - first create with CHARGE.captured false
                                   #  - then set to true with this method
+CHARGE.capture                  =C#BOOL
 CHARGE.captured                   #BOOL
+
+GET /charges?customer=CUSTOMER.id
+GET /charges?transfer_group=STR
+
+CHARGE.amount                  *=C#PMONEY
+CHARGE.amount_refunded            #PMONEY refunded, if any, or 0.
+CHARGE.application_fee_amount  ?=C#PMONEY
+CHARGE.paid                       #BOOL for success
+CHARGE.status                     #STR among 'succeeded', 'pending', 'failed'.
+
+CHARGE.receipt_email          ?=CU#'EMAIL' receipt was sent to. null until sent.
+CHARGE.receipt_number            ?#STR.
+CHARGE.receipt_url               ?#STR. Kept up-to-date.
+
+CHARGE.source                   =C#METHODDETAILS
+CHARGE.payment_method_details     #PAYMENTMETHODDETAILS
+PAYMENTMETHODDETAILS.type 'TYPE'  #Payment provider among:
+                                  #  - 'ach_credit_transfer'
+                                  #  - 'ach_debit'
+                                  #  - 'alipay'
+                                  #  - 'bancontact'
+                                  #  - 'card'
+                                  #  - 'card_present'
+                                  #  - 'eps'
+                                  #  - 'giropay'
+                                  #  - 'ideal'
+                                  #  - 'multibanco'
+                                  #  - 'p24'
+                                  #  - 'sepa_debit'
+                                  #  - 'sofort'
+                                  #  - 'stripe_account'
+                                  #  - 'wechat'
+PAYMENTMETHODDETAILS.TYPE         #METHODDETAILS. Each TYPE has its own attributes, but some are shared.
+METHODDETAILS.reference           #STR. Unique reference for this payment.
+                                  #Only with multibanco|p24.
+METHODDETAILS.verified_name       #STR. Owner's full name according to provider.
+                                  #Only with bancontact|eps|giropay|ideal|p24|sofort.
+METHODDETAILS.country             #STR. Bank account's country. Two-letter ISO code.
+                                  #Only with ach_debit|card|card_present|sofort.
+METHODDETAILS.account_holder_type #STR. Whether bank account holder is 'individual' or 'company'.
+                                  #Only with ach_debit.
+METHODDETAILS.preferred_language  #STR. Customer's preferred language among 'en', 'de', 'fr', 'nl'.
+                                  #Only with bancontact.
+METHODDETAILS.entity              #STR. Entity number.
+                                  #Only with multibanco.
+METHODDETILS.account_number       #STR. Account number to transfer funds to.
+                                  #Only with ach_credit_transfer.
+METHODDETILS.routing_number       #STR. Routing transit number of the destination bank account.
+                                  #Only with ach_credit_transfer|ach_debit.
+METHODDETAILS.fingerprint         #STR. Checksum|fingerprint of the bank account or card number.
+                                  #Only with ach_debit|card|card_present.
+METHODDETAILS.last4               #STR. Last four digits of the bank account or card number.
+                                  #Only with ach_debit|card|card_present.
+METHODDETAILS.iban_last4          #STR. Last four characters of the IBAN.
+                                  #Only with bancontact|ideal|sofort.
+METHODDETAILS.bank                #STR. Bank name among 'abn_amro', 'asn_bank', 'bunq', 'handelsbanken', 'ing', 'knab',
+                                  #'moneyou', 'rabobank', 'regiobank', 'sns_bank', 'triodos_bank', 'van_lanschot'.
+                                  #Only with ideal.
+METHODDETAILS.bank_name           #STR.
+                                  #Only with ach_credit_transfer|ach_debit|bancontact|giropay|sofort.
+METHODDETAILS.bank_code           #STR. Code of the bank.
+                                  #Only with bancontact|giropay|sofort.
+METHODDETAILS.bic                 #STR. Bank Identifier Code.
+                                  #Only with bancontact|giropay|ideal|sofort.
+METHODDETAILS.swift_code          #STR. Bank's SWIFT code.
+                                  #Only with ach_credit_transfer.
+METHODDETAILS.brand               #STR. Card brand among 'amex', 'diners', 'discover', 'jcb', 'mastercard', 'unionpay', 'visa', 'unknown'.
+                                  #Only with card|card_present.
+METHODDETAILS.exp_month           #INT. Card's expiration month (1-12)
+                                  #Only with card|card_present.
+METHODDETAILS.exp_year            #INT. Card's expiration year.
+                                  #Only with card|card_present.
+METHODDETAILS.funding             #STR. Card funding type among 'credit', 'debit', 'prepaid', 'unknown'.
+                                  #Only with card|card_present.
+METHODDETAILS.checks              #Check results and CVC with OBJ:
+                                  #Only with card.
+                                  #  - address_line1_check STR: 'pass', 'failed', 'unavailable', 'unchecked' (if address line1 was defined)
+                                  #  - address_postal_code_check STR: same for postal_code
+                                  #  - cvc_check STR: same for cvc
+METHODDETAILS.read_method         #STR. How card was read among 'contact_emv', 'contactless_emv', 'magnetic_stripe_fallback', 'magnetic_stripe_track2', 'contactless_magstripe_mode'
+                                  #Only with card_present.
+METHODETILS.three_d_secure       ?#Populated if this transaction used 3D Secure authentication. OBJ:
+                                  #  - supported BOOL
+                                  #Only with card.
+METHODDETAILS.emv_auth_data       #STR. Authorization response cryptogram.
+                                  #Only with card_present.
+METHODDETAILS.wallet             ?#WALLET. Card's wallet.
+                                  #Only with card.
+WALLET.type                       #STR. 'amex_express_checkout', 'apple_pay', 'google_pay', 'masterpass', 'samsung_pay', 'visa_checkout'
+WALLET.dynamic_last4              #STR. For tokenized numbers only. The last four digits of the device account number.
+WALLET.TYPE.billing_address       #BILLING_ADDRESS. For 'masterpass', 'visa_checkout' only.
+WALLET.TYPE.shipping_address      #SHIPPING_ADDRESS. For 'masterpass', 'visa_checkout' only.
+WALLET.TYPE.email                 #STR. For 'masterpass', 'visa_checkout' only
+WALLET.TYPE.name                  #STR. Owner's name. For 'masterpass', 'visa_checkout' only
+METHODDETAILS.receipt             #OBJ. Fields to print on receipts. Only required for EMV transactions.
+                                  #Only with card_present.
+
+CHARGE.billing_details            #BILL_DETAILS.
+CHARGE.shipping                =CU#SHIPPING.
+
+CHARGE.fraud_details            =U#FRAUD_DETAILS
+FRAUD_DETAILS.stripe_report      ?#'fraudulent' (set by Stripe)
+FRAUD_DETAILS.user_report      ?*U#'fraudulent|safe' (set by current user)
+
+CHARGE.outcome                    #OUTCOME. Whether payment was accepted.
+OUTCOME.network_status            #STR among:
+                                  #  - 'approved_by_network'
+                                  #  - 'declined_by_network'
+                                  #  - 'not_sent_to_network'
+                                  #  - 'reversed_after_approval': bank authorized, but Stripe blocked
+OUTCOME.reason                   ?#STR among:
+                                  #  - 'highest|elevated_risk_level': blocked by Radar
+                                  #  - 'rule': blocked by custom rule
+OUTCOME.risk_level                #STR among:
+                                  #  - 'normal', 'elevated', 'highest'
+                                  #  - 'not_assessed': non-card payments
+                                  #  - 'unknown'
+OUTCOME.risk_score               ?#0-100
+                                  #Undefined for non-card payments
+OUTCOME.rule                     ?#Radar's rule ID
+OUTCOME.seller_message           ?#STR. Explanation.
+OUTCOME.type                      #STR among 'authorized', 'manual_review', 'issuer_declined', 'blocked', 'invalid'.
+
+CHARGE.refunded                   #BOOL. False if not refunded or partially refunded.
+CHARGE.refunds                    #REFUND_DATA_LIST. Refunds that have been applied.
+REFUND_DATA.id                    #STR
+REFUND_DATA.amount                #MONEY
+REFUND_DATA.charge                #CHARGE.id
+REFUND_DATA.description           #STR. Can be displayed to users. Not if card refunds.
+REFUND_DATA.
+  failure_balance_transaction    ?#BALANCE_TRANSACTION.id. If refund failed, adjustment made on BALANCE to reverses the initial transaction.
+REFUND_DATA.failure_reason        #STR. Only if refund failed. Among 'lost_or_stolen_card', 'expired_or_canceled_card', 'unknown'.
+REFUND_DATA.reason               ?#STR among 'duplicate', 'fraudulent', 'requested_by_customer'.
+REFUND_DATA.receipt_number        #STR.
+REFUND_DATA.status                #STR among 'succeeded', 'failed' or (non-card refunds only) 'pending', 'canceled'.
+
+CHARGE.statement_descriptor    ?=C#STR. Extra information to show to customer's bank transaction statement.
+CHARGE.description            ?=CU#STR
+
+CHARGE.transfer_data           ?=C#TRANSFER_DATA.
+TRANSFER_DATA.amount             ?#MONEY (def: CHARGE.amount).
+CHARGE.transfer_group          =CU#STR.
+
+CARD                              #
+PAYMENTMETHDDETILS.generated_card?#CARD.id
+                                  #Only with card_present.
 
 CONNECT_APP                       #
 FEE_DETAILS|CHARGE.application   ?#CONNECT_APP.id
-CHARGE.on_behalf_of              ?#CONNECT_APP.id
+CHARGE.on_behalf_of            ?=C#CONNECT_APP.id
                                  ?#When one made transaction of another's behalf
+TRANSFER_DATA.destination      ?*C#STR. Stripe account to transfer funds to if CHARGE.transfer_data was defined.
 
 CONNECT_APP_FEE                   #
 CHARGE.application_fee           ?#CONNECT_APP_FEE.id
 
 CUSTOMER                          #
-CHARGE.customer                   #CUSTOMER.id
+CHARGE.customer                =CU#CUSTOMER.id
 
 DISPUTE                           #
 CHARGE.dispute                   ?#DISPUTE.id
@@ -176,3 +335,203 @@ CHARGE.invoice                   ?#INVOICE.id
 
 ORDER                             #
 CHARGE.order                     ?#ORDER.id
+
+PAYMENTINTENT                     #
+CHARGE.payment_intent            ?#PAYMENTINTENT.id
+
+PAYMENTMETHOD                     #
+CHARGE.payment_method            ?#PAYMENTMETHOD.id
+
+REVIEW                            #
+CHARGE.review                    ?#REVIEW.id
+
+TRANSFER_REVERSAL                 #
+REFUND_DATA.transfer_reversal    ?#TRANSFER_REVERSAL.id. Only applicable if the charge was created using the destination parameter.
+REFUND_DATA.
+ source_transfer_reversal        ?#TRANSFER_REVERSAL.id. Only if the charge came from another Stripe account.
+
+TRANSFER                          #
+CHARGE.transfer                  ?#TRANSFER.id. Only applicable if the charge was created using the destination parameter.
+CHARGE.source_transfer           ?#TRANSFER.id. Only present if the charge came from another Stripe account.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+CUSTOMER.account_balance integer Current balance, if any, being stored on the customer’s account. If negative, the customer has credit to apply to the next invoice. If positive, the customer has an amount owed that will be added to the next invoice. The balance does not refer to any unpaid invoices; it solely takes into account amounts that have yet to be successfully applied to any invoice. This balance is only taken into account as invoices are finalized. Note that the balance does not include unpaid invoices.
+CUSTOMER.default_source string EXPANDABLE ID of the default payment source for the customer.
+CUSTOMER.delinquent boolean When the customer’s latest invoice is billed by charging automatically, delinquent is true if the invoice’s latest charge is failed. When the customer’s latest invoice is billed by sending an invoice, delinquent is true if the invoice is not paid by its due date.
+CUSTOMER.description string An arbitrary string attached to the object. Often useful for displaying to users.
+CUSTOMER.discount hash, discount object Describes the current discount active on the customer, if there is one.
+CUSTOMER.email string The customer’s email address.
+CUSTOMER.invoice_prefix string The prefix for the customer used to generate unique invoice numbers.
+CUSTOMER.invoice_settings hash The customer’s default invoice settings.
+CUSTOMER.invoice_settings.custom_fields array of hashes Default custom fields to be displayed on invoices for this customer.
+CUSTOMER.invoice_settings.custom_fields.*.name string The name of the custom field.
+CUSTOMER.invoice_settings.custom_fields.*.value string The value of the custom field.
+CUSTOMER.invoice_settings.footer string Default footer to be displayed on invoices for this customer.
+CUSTOMER.shipping SHIPPING Mailing and shipping address for the customer. Appears on invoices emailed to this customer.
+CUSTOMER.sources LIST The customer’s payment sources, if any.
+CUSTOMER.subscriptions LIST The customer’s current subscriptions, if any.
+CUSTOMER.tax_info hash The customer’s tax information. Appears on invoices emailed to this customer.
+CUSTOMER.tax_info.tax_id string The customer’s tax ID number.
+CUSTOMER.tax_info.type string The type of ID number.
+CUSTOMER.tax_info_verification hash Describes the status of looking up the tax ID provided in tax_info.
+CUSTOMER.tax_info_verification.status string The state of verification for this customer. Possible values are unverified, pending, or verified.
+CUSTOMER.tax_info_verification.verified_name string The official name associated with the tax ID returned from the external provider.
+
+DISPUTE.amount MONEY Disputed amount. Usually the amount of the charge, but can differ (usually because of currency fluctuation or because only part of the order is disputed).
+DISPUTE.balance_transactions BALANCE_TRANSACTION_ARR List of zero, one, or two balance transactions that show funds withdrawn and reinstated to your Stripe account as a result of this dispute.
+DISPUTE.charge CHARGE.id of the charge that was disputed.
+DISPUTE.evidence hash Evidence provided to respond to a dispute. Updating any field in the hash will submit all fields in the hash for review.
+DISPUTE.evidence_details hash Information about the evidence submission.
+DISPUTE.evidence_details.due_by DATE_NUM Date by which evidence must be submitted in order to successfully challenge dispute. Will be null if the customer’s bank or credit card company doesn’t allow a response for this particular dispute.
+DISPUTE.evidence_details.has_evidence boolean Whether evidence has been staged for this dispute.
+DISPUTE.evidence_details.past_due boolean Whether the last evidence submission was submitted past the due date. Defaults to false if no evidence submissions have occurred. If true, then delivery of the latest evidence is not guaranteed.
+DISPUTE.evidence_details.submission_count integer The number of times evidence has been submitted. Typically, you may only submit evidence once.
+DISPUTE.is_charge_refundable boolean If true, it is still possible to refund the disputed payment. Once the payment has been fully refunded, no further funds will be withdrawn from your Stripe account as a result of this dispute.
+DISPUTE.reason string Reason given by cardholder for dispute. Possible values are bank_cannot_process, check_returned, credit_not_processed, customer_initiated, debit_not_authorized, duplicate, fraudulent, general, incorrect_account_details, insufficient_funds, product_not_received, product_unacceptable, subscription_canceled, or unrecognized. Read more about dispute reasons.
+DISPUTE.status string Current status of dispute. Possible values are warning_needs_response, warning_under_review, warning_closed, needs_response, under_review, charge_refunded, won, or lost.
+
+EVENT.api_version string The Stripe API version used to render data. Note: This property is populated only for events on or after October 31, 2014.
+EVENT.data hash Object containing data associated with the event.
+EVENT.data.object hash Object containing the API resource relevant to the event. For example, an invoice.created event will have a full invoice object as the value of the object key.
+EVENT.data.previous_attributes hash Object containing the names of the attributes that have changed, and their previous values (sent along only with *.updated events).
+EVENT.pending_webhooks positive integer or zero Number of webhooks that have yet to be successfully delivered (i.e., to return a 20x response) to the URLs you’ve specified.
+EVENT.request hash Information on the API request that instigated the event.
+EVENT.request.id string ID of the API request that caused the event. If null, the event was automatic (e.g., Stripe’s automatic subscription handling). Request logs are available in the dashboard, but currently not in the API.
+EVENT.request.idempotency_key string The idempotency key transmitted during the request, if any. Note: This property is populated only for events on or after May 23, 2017.
+EVENT.type string Description of the event (e.g., invoice.created or charge.refunded).
+
+FILE.filename string A filename for the file, suitable for saving to a filesystem.
+FILE.links FILE_LINK_LIST
+FILE.purpose string The purpose of the file. Possible values are business_icon, business_logo, customer_signature, dispute_evidence, finance_report_run, identity_document, pci_document, sigma_scheduled_query, or tax_document_user_upload.
+FILE.size integer The size in bytes of the file object.
+FILE.title string A user friendly title for the document.
+FILE.type string The type of the file returned (e.g., csv, pdf, jpg, or png).
+FILE.url string The URL from which the file can be downloaded using your live secret API key.
+
+FILE_LINK.expired boolean Whether this link is already expired.
+FILE_LINK.expires_at timestamp Time at which the link expires.
+FILE_LINK.file FILE.id The file object this link points to.
+FILE_LINK.url string The publicly accessible URL to download the file.
+
+PAYMENT_INTENT.amount MONEY Amount intended to be collected by this PaymentIntent.
+PAYMENT_INTENT.amount_capturable MONEY Amount that can be captured from this PaymentIntent.
+PAYMENT_INTENT.amount_received MONEY Amount that was collected by this PaymentIntent.
+PAYMENT_INTENT.application CONNECT_APP.id ID of the Connect application that created the PaymentIntent.
+PAYMENT_INTENT.application_fee_amount integer The amount of the application fee (if any) for the resulting payment. See the PaymentIntents Connect usage guide for details.
+PAYMENT_INTENT.canceled_at timestamp Populated when status is canceled, this is the time at which the PaymentIntent was canceled. Measured in seconds since the Unix epoch.
+PAYMENT_INTENT.cancellation_reason string User-given reason for cancellation of this PaymentIntent, one of duplicate, fraudulent, requested_by_customer, or failed_invoice.
+PAYMENT_INTENT.capture_method string Capture method of this PaymentIntent, one of automatic or manual.
+PAYMENT_INTENT.charges CHARGE_LIST
+PAYMENT_INTENT.client_secret string The client secret of this PaymentIntent. Used for client-side retrieval using a publishable key. Please refer to dynamic authentication guide on how client_secret should be handled.
+PAYMENT_INTENT.confirmation_method string Confirmation method of this PaymentIntent, one of manual or automatic.
+PAYMENT_INTENT.customer CUSTOMER.id ID of the Customer this PaymentIntent is for if one exists.
+PAYMENT_INTENT.description string An arbitrary string attached to the object. Often useful for displaying to users.
+PAYMENT_INTENT.invoice INVOICE.id ID of the invoice that created this PaymentIntent, if it exists.
+PAYMENT_INTENT.last_payment_error LPERROR The payment error encountered in the previous PaymentIntent confirmation.
+LPERROR.type string The type of error returned. One of api_connection_error, api_error, authentication_error, card_error, idempotency_error, invalid_request_error, or rate_limit_error
+LPERROR.charge CHARGE.id For card errors
+LPERROR.code string For some errors that could be handled programmatically, a short string indicating the error code reported.
+LPERROR.decline_code string For card errors resulting from a card issuer decline, a short string indicating the card issuer’s reason for the decline if they provide one.
+LPERROR.doc_url string A URL to more information about the error code reported.
+LPERROR.message string A human-readable message providing more details about the error. For card errors, these messages can be shown to your users.
+LPERROR.param string If the error is parameter-specific, the parameter related to the error. For example, you can use this to display a message near the correct form field.
+LPERROR.payment_intent PAYMENT_INTENT The PaymentIntent object for errors returned on a request involving a PaymentIntent.
+LPERROR.payment_method METHODDETAILS with extra properties:
+  - only type 'card' or `card_present`
+  - customer CUSTOMER.id
+  - billing_details BILLING_DETAIL
+  - source OBJ The source object for errors returned on a request involving a source.
+PAYMENT_INTENT.next_action hash If present, this property tells you what actions you need to take in order for your customer to fulfill a payment using the provided source.
+PAYMENT_INTENT.next_action.redirect_to_url hash Contains instructions for authenticating a payment by redirecting your customer to another page or application.
+PAYMENT_INTENT.next_action.redirect_to_url.return_url string If the customer does not exit their browser while authenticating, they will be redirected to this specified URL after completion.
+PAYMENT_INTENT.next_action.redirect_to_url.url string The URL you must redirect your customer to in order to authenticate the payment.
+PAYMENT_INTENT.next_action.type string Type of the next action to perform, one of redirect_to_url or use_stripe_sdk.
+PAYMENT_INTENT.next_action.use_stripe_sdk hash When confirming a PaymentIntent with Stripe.js, Stripe.js depends on the contents of this object to invoke authentication flows. The shape of the contents is subject to change and is only intended to be used by Stripe.js.
+PAYMENT_INTENT.on_behalf_of string The account (if any) for which the funds of the PaymentIntent are intended. See the PaymentIntents Connect usage guide for details.
+PAYMENT_INTENT.payment_method PAYMENT_METHOD.id
+PAYMENT_INTENT.payment_method_types array containing strings The list of payment method types (e.g. card) that this PaymentIntent is allowed to use.
+PAYMENT_INTENT.receipt_email string Email address that the receipt for the resulting payment will be sent to.
+PAYMENT_INTENT.review REVIEW.id
+PAYMENT_INTENT.shipping SHIPPING
+PAYMENT_INTENT.source RESOURCE.id (e.g. CARD|BANK_ACCOUNT)
+PAYMENT_INTENT.statement_descriptor string Extra information about a PaymentIntent. This will appear on your customer’s statement when this PaymentIntent succeeds in creating a charge.
+PAYMENT_INTENT.status string Status of this PaymentIntent, one of requires_payment_method, requires_confirmation, requires_action, processing, requires_authorization, requires_capture, canceled, or succeeded.
+PAYMENT_INTENT.transfer_data hash The data with which to automatically create a Transfer when the payment is finalized. See the PaymentIntents Connect usage guide for details.
+PAYMENT_INTENT.transfer_data.destination CONNECT_ACCOUNT.id The account (if any) the payment will be attributed to for tax reporting, and where funds from the payment will be transferred to upon payment success.
+PAYMENT_INTENT.transfer_group string A string that identifies the resulting payment as part of a group. See the PaymentIntents Connect usage guide for details.
+
+PAYOUT.amount MONEY Amount to be transferred to your bank account or debit card.
+PAYOUT.arrival_date timestamp Date the payout is expected to arrive in the bank. This factors in delays like weekends or bank holidays.
+PAYOUT.automatic boolean Returns true if the payout was created by an automated payout schedule, and false if it was requested manually.
+PAYOUT.balance_transaction BALANCE_TRANSACTION.id Impact of this payout on your account balance.
+PAYOUT.description string An arbitrary string attached to the object. Often useful for displaying to users.
+PAYOUT.destination CARD|BANK_ACCOUNT.id Where it was sent to.
+PAYOUT.failure_balance_transaction BALANCE_TRANSACTION.id If the payout failed or was canceled, this will be the ID of the balance transaction that reversed the initial balance transaction, and puts the funds from the failed payout back in your balance.
+PAYOUT.failure_code string Error code explaining reason for payout failure if available. See Types of payout failures for a list of failure codes.
+PAYOUT.failure_message string Message to user further explaining reason for payout failure if available.
+PAYOUT.method string The method used to send this payout, which can be standard or instant. instant is only supported for payouts to debit cards. (See Instant payouts for marketplaces for more information.)
+PAYOUT.source_type string The source balance this payout came from. One of card or bank_account.
+PAYOUT.statement_descriptor string Extra information about a payout to be displayed on the user’s bank statement.
+PAYOUT.status string Current status of the payout (paid, pending, in_transit, canceled or failed). A payout will be pending until it is submitted to the bank, at which point it becomes in_transit. It will then change to paid if the transaction goes through. If it does not go through successfully, its status will change to failed or canceled.
+PAYOUT.type string Can be bank_account or card.
+
+PRODUCT.active boolean Whether the product is currently available for purchase.
+PRODUCT.attributes array containing strings A list of up to 5 attributes that each SKU can provide values for (e.g., ["color", "size"]). Only applicable to products of type=good.
+PRODUCT.caption string A short one-line description of the product, meant to be displayable to the customer. Only applicable to products of type=good.
+PRODUCT.deactivate_on array containing strings An array of connect application identifiers that cannot purchase this product. Only applicable to products of type=good.
+PRODUCT.description string The product’s description, meant to be displayable to the customer. Only applicable to products of type=good.
+PRODUCT.images array containing strings A list of up to 8 URLs of images for this product, meant to be displayable to the customer. Only applicable to products of type=good.
+PRODUCT.name string The product’s name, meant to be displayable to the customer. Applicable to both service and good types.
+PRODUCT.package_dimensions OBJ The dimensions of this product for shipping purposes. A SKU associated with this product can override this value by having its own package_dimensions. Only applicable to products of type=good.
+PRODUCT.package_dimensions.height|length|weight|width NUM Height, in inches.
+PRODUCT.shippable boolean Whether this product is a shipped good. Only applicable to products of type=good.
+PRODUCT.statement_descriptor string Extra information about a product which will appear on your customer’s credit card statement. In the case that multiple products are billed at once, the first statement descriptor will be used. Only available on products of type=service.
+PRODUCT.type string The type of the product. The product is either of type good, which is eligible for use with Orders and SKUs, or service, which is eligible for use with Subscriptions and Plans.
+PRODUCT.unit_label string A label that represents units of this product, such as seat(s), in Stripe and on customers’ receipts and invoices. Only available on products of type=service.
+PRODUCT.updated timestamp
+PRODUCT.url string A URL of a publicly-accessible webpage for this product. Only applicable to products of type=good.
+
+REFUND.amount MONEY
+REFUND.balance_transaction BALANCE_TRANSACTION.id Balance transaction that describes the impact on your account balance.
+REFUND.charge CHARGE.id that was refunded.
+REFUND.description string An arbitrary string attached to the object. Often useful for displaying to users. (Available on non-card refunds only)
+REFUND.failure_balance_transaction BALANCE_TRANSACTION.id If the refund failed, this balance transaction describes the adjustment made on your account balance that reverses the initial balance transaction.
+REFUND.failure_reason string If the refund failed, the reason for refund failure if known. Possible values are lost_or_stolen_card, expired_or_canceled_card, or unknown.
+REFUND.reason string Reason for the refund. If set, possible values are duplicate, fraudulent, and requested_by_customer.
+REFUND.receipt_number string This is the transaction number that appears on email receipts sent for this refund.
+REFUND.source_transfer_reversal TRANSFER_REVERSAL.id The transfer reversal that is associated with the refund. Only present if the charge came from another Stripe account. See the Connect documentation for details.
+REFUND.status string Status of the refund. For credit card refunds, this can be succeeded or failed. For other types of refunds, it can be pending, succeeded, failed, or canceled. Refer to our refunds documentation for more details.
+REFUND.transfer_reversal TRANSFER_REVERSAL.id If the accompanying transfer was reversed, the transfer reversal object. Only applicable if the charge was created using the destination parameter.
+
+TOKEN.card Used to make the charge. 'card' METHODDETAILS with also:
+  - address_* ADDRESS fields
+  - address_line1|zip|cvc_check STR 'pass', 'fail', 'unavailable' or 'unchecked'
+  - tokenization_method STR (like WALLET.type)
+  - dynamic_last4 (like WALLET.*)
+TOKEN.bank_account OBJ:
+  - account_holder_name STR
+  - account_holder_type, bank_name, country, fingerprint, last4, routing_number: like METHODDETAILS.*
+  - status string For bank accounts, possible values are new, validated, verified, verification_failed, or errored. A bank account that hasn’t had any activity or validation performed is new. If Stripe can determine that the bank account exists, its status will be validated. Note that there often isn’t enough information to know (e.g., for smaller credit unions), and the validation is not always run. If customer bank account verification has succeeded, the bank account status will be verified. If the verification failed for any reason, such as microdeposit failure, the status will be verification_failed. If a transfer sent to this bank account fails, we’ll set the status to errored and will not continue to send transfers until the bank details are updated.
+For external accounts, possible values are new and errored. Validations aren’t run against external accounts because they’re only used for payouts. This means the other statuses don’t apply. If a transfer fails, the status is set to errored and transfers are stopped until account details are updated.
+TOKEN.client_ip string IP address of the client that generated the token.
+TOKEN.type string Type of the token: account, bank_account, card, or pii.
+TOKEN.used boolean Whether this token has already been used (tokens can be used only once).
