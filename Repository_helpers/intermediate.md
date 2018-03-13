@@ -1,3 +1,0 @@
-
-# Documentation list (long version) #
-

@@ -22,18 +22,5 @@ md-file-tree | sed '
   s/\([[_]\)@/\1/;
 ' > "$dir/index.md"
 
-cat "$dir/intermediate.md" "$dir/index.md" > "$dir/long_index.md"
-
-sed '
-  /@[]_]/! d;
-' "$dir/index.md" > "$dir/short_index.md"
-
-sed -i '
-  s/@\([]_]\)/\1/;
-' "$dir/short_index.md"
-sed -i '
-  s/@\([]_]\)/\1/;
-' "$dir/long_index.md"
-
 # Updates README.md
-cat "$dir/presentation.md" "$dir/short_index.md" "$dir/long_index.md" > README.md
+cat "$dir/presentation.md" "$dir/index.md" > README.md
