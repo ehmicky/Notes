@@ -180,6 +180,7 @@ Assertion testing:
         - after source maps applied
         - only of the deepest stack call
         - do not do it if lines are very long, which probably indicates a concatenated build
+  - since snapshot() is an assertion, applies to it as well
 
 Process errors:
   - use log-process-errors
@@ -194,24 +195,110 @@ Process errors:
      - def: ["uncaughtException", "unhandledRejection"]
         - default is conservative to avoid annoying users
 
+Snapshot format:
+  - design goals:
+     - easy to inspect
+     - diff friendly
+     - editable for simple edits
+        - resistant to text edition by editors|IDE|linters
+  - editorconfig normalization:
+     - own repository
+        - make sure it does not exist yet
+     - format-agnostic, just takes strings
+     - normalize(STR)->STR
+     - also available as CLI that transforms stdin
+     - normalize a file content (STR) according to an .editorconfig
+     - different functions depending on how .editorconfig is loaded:
+        - path traversal (async)
+        - specific path (async)
+        - string content (sync)
+        - OBJ content (sync)
+        - default:
+           - indent_style 'space'
+           - indent_size 2
+           - end_of_line lf
+           - charset utf-8
+           - no max_line_length
+           - trim_trailing_whitespaces true
+           - insert_final_newline true
+     - assumes STR is non-binary
+     - normalizations:
+        - indent_style + indent_size + tab_width:
+           - guess by counting the most recurring one
+           - then if any line's indentation does not fit the most common one, guess for this specific line
+              - this allows fixing mixed indentation
+        - end_of_line:
+           - guess by counting the most recurring one
+        - charset:
+           - guess encoding (using node-chardet)
+           - convert (using iconv-lite)
+        - max_line_length: wrap
+        - trim_trailing_whitespaces
+        - insert_final_newline
+  - snapshot format:
+     - own repository
+     - serialization-agnostic: title|subtitle|snapshot are raw STR
+        - difftest adds its own serialization|parsing for subtitle and snapshot
+     - parse(STR)->OBJ_ARR: title STR, subtitle STR, snapshot STR
+     - serialize(OBJ_ARR)->STR
+     - editorconfig-agnostic:
+        - parse() uses editorconfig normalization with default values
+           - i.e. loose parsing: any whitespaces|etc. allowed
+        - serialize() uses same editorconfig defaults
+           - i.e. strict serializing: snapshots will use consistent whitespaces|etc. by default
+        - no identation for each snapshot part
+           - but content itself can have some, and can be any type of identation
+     - empty lines:
+        - parse() ignores whitespace-only lines
+           - including at beginning
+           - including at end, excluding final newline if insert_final_newline
+        - serialize() adds the following empty lines:
+           - 0 at beginning|end
+           - 1 in-between snapshots
+           - 0 between title, data and content
+     - # and > prefixes whitespaces:
+        - parse() ignore spaces|tabs after # and > prefixes
+        - serialize() uses 1 space after them
+     - single flat text file, where each section is:
+        - title, starting with #, single-line
+        - subtitle, starting with >, single-line
+           - can be used for data in data-driven tests
+        - content, multiline
+        - only title is required
+     - parse|serialize() throw error if two sections have same title + subtitle
+     - order:
+        - OBJ_ARR order <-> format order for parse|serialize()
+        - i.e. caller decides of the order
+        - difftest should use the order in which test() and data were called:
+           - reasons:
+              - easier for user to find specific snapshot
+              - smaller diff when renaming title|data
+           - this means moving test() and data around will change snapshots, but that's ok
+
 Underlying snapshot repository:
   - name???
      - should replace SNAPSHOT_MODE with a shorter name
-  - test runner adapters (including difftest itself) should abstract:
-     - retrieving __filename and 'TITLE'_ARR:
-        - ideally by using global variables
-        - but can also monkey patch it|test() (including .only|skip())
-     - running init() and done()
-     - passing SNAPSHOTS and "TITLE" to snapshot()
-  - difftest:
-     - __filename and 'TITLE'_ARR: known by core
-     - init(): done before worker starts and passed to it via IPC
-     - done(): done after worker end and passed from it via IPC
-     - snapshot(SNAPSHOTS, "TITLE", VAL) -> t.snapshot(VAL)
-     - ENVVAR SNAPSHOT_MODE=t[est]|u[pdate]|r[emove]|i[nput] -> CONF.update|remove|input BOOL (-u|--update|-r|--remove|-i|--input)
-        - not compatible with each other
-  - "TITLE" should include data if data-driven testing
-     - including for snapshot() and done()
+  - snapshot() should work in browsers but init|done|end() don't need to
+  - "TITLE DATA" is either "TITLE" or ["TITLE", "DATA"]
+     - reason: input mode shows data on separate line
+
+Test runner adapters:
+  - the core snapshot repository must be instantiated by adapters for each test runner
+  - decide how SNAPSHOTS is communicated between init|snapshot|done|end():
+     - local scope, global variable (e.g. for jest), worker postMessage() (e.g. for difftest), temporary files (e.g. for ava), network
+     - SNAPSHOTS should be JSON serializable
+  - when|how init|done|end() are called
+     - some runners (like ava) might require end() to be done through a separate CLI
+  - retrieve __filename and 'TITLE DATA'_ARR:
+     - ideally by using global variables
+     - but can also monkey patch it|test() (including .only|skip())
+  - bind SNAPSHOTS and "TITLE DATA" to snapshot()
+  - difftest adapter:
+     - SNAPSHOTS communication: worker IPC
+     - __filename and 'TITLE DATA'_ARR: known by core
+     - init|done|end(): done before worker [all] starts|end
+     - snapshot(SNAPSHOTS, "TITLE DATA", VAL) -> t.snapshot(VAL)
+     - ENVVAR SNAPSHOT_MODE -> CONF.update|remove|input BOOL (-u|--update|-r|--remove|-i|--input)
 
 Snapshots file:
   - persisted at `./snapshots/TEST_FILENAME.EXT.snap`
@@ -234,11 +321,10 @@ init(__filename)->PROMISE_SNAPSHOTS:
   - SNAPSHOTS contains state:
      - __filename
      - content of corresponding snapshot (of any)
+  - SNAPSHOTS is JSON serializable
   - for most test runners, done during beforeAll() hook
-  - serializable so it can be passed to workers using structured clone algorithm
-     - ideally should be JSON serializable
 
-snapshot(SNAPSHOTS, "TITLE", VAL[, STR]):
+snapshot(SNAPSHOTS, "TITLE DATA", VAL[, STR]):
   - comparison result:
      - "same": success
      - "different|new": depends on SNAPSHOT_MODE=update
@@ -248,7 +334,7 @@ snapshot(SNAPSHOTS, "TITLE", VAL[, STR]):
      - snapshot content
   - on success, returns true
      - reason: allowing shortcut notation assert.throws(FUNC, snapshot)
-  - record result (including "TITLE") in SNAPSHOTS
+  - record result (including "TITLE DATA") in SNAPSHOTS
   - synchronous
   - VAL is not awaited even if PROMISE: user must explicity use snapshot(await VAL)
   - no way to catch FUNC exceptions: user must explictly use assert.throws(FUNC, snapshot)
@@ -256,17 +342,24 @@ snapshot(SNAPSHOTS, "TITLE", VAL[, STR]):
      - required if two snapshots in same test
         - so we know which one to diff
 
-done(SNAPSHOTS, "TITLE"_ARR)->PROMISE
+done(SNAPSHOTS, "TITLE DATA"_ARR)->PROMISE
   - if SNAPSHOT_MODE=update:
      - persists snapshots
         - create snapshot file if it does not exist yet
      - prune snapshot files and snapshots
   - done only once per file instead of incrementally as tests go, in order to limit I/O and risks of concurrency
   - should not be called if test() definitions (not test runs) might have failed
-  - if any snapshot() recorded in SNAPSHOTS is not among "TITLE" throw error
+  - if any snapshot() recorded in SNAPSHOTS is not among "TITLE DATA" throw error
      - this means user forgot to specify it
      - however not the other way around since tests might have used skip()
   - for most test runners, done during afterAll() hook
+
+end(SNAPSHOTS_ARR)->PROMISE:
+  - to trigger after all tests done
+  - used by SNAPSHOT_MODE=input
+
+ENVVAR SNAPSHOT_MODE=t[est]|u[pdate]|r[emove]|i[nput]
+  - not compatible with each other
 
 ENVVAR SNAPSHOT_MODE=test:
   - default value
@@ -299,6 +392,7 @@ ENVVAR SNAPSHOT_MODE=input:
         - easier to combine with test runners, because does not mix with their reporting or run
         - separation of concerns: no issues mixing with reporting
         - prompt would be slow if CPU is fully used by running tests
+     - started by end(SNAPSHOTS_ARR)->PROMISE
   - prompt for every snapshot() executed during test run:
      - passing or not
         - i.e. can update existing snapshots, not only new ones
@@ -306,30 +400,29 @@ ENVVAR SNAPSHOT_MODE=input:
         - e.g. when assertion fails before them
            - including when having several snapshot() in same test and one throws
         - workaround: move the snapshot() temporarily, then move it back
-  - prompt for snapshot:
-     - if submit something:
+  - if submit:
+     - something:
         - updates snapshot in snapshot file with it
-     - if submit without entering anything:
+     - nothing:
         - keep current snapshot (including none)
         - must distinguish from explicitely entering undefined
         - same as n/next
   - if there is an existing snapshot, print it before each prompt
   - prompt:
      - use Node REPL ("readline" or "repl" core module)
-     - can multiple statements (use the last one)
+     - can use multiple statements (use the last one)
+     - local state maintained between prompts
      - can use history (arrow up) to re-use previous inputs
      - retry if invalid input
-     - not erased after submit
-  - n/next, u/undo, q/quit, ?/help actions
+     - not erased after submit, so previous results can be seen
+  - n/next, u/undo, q/quit actions
      - if REPL does not allow raw input without quotes, can define those actions as variables with SYM as values instead
-  - how should reporting look like??? Similar to pretty reporter???
-     - clearly separate from test run with a big header???
-  - end()->PROMISE in underlying snapshot utlity
-     - how to do this with test runners without that concept like ava???
-        - however possible with all other test runners
-        - maybe???
-           - endEach() that persists state in temporary files, to do in after() for each worker
-           - then CLI utility that uses it
+  - reporting:
+     - no initial header before all prompts
+     - first line: "shortest file path" + test title
+     - optional second line: data, serialized like in difftest
+     - prompt question: "Input snapshot (n/next, u/undo, q/quit):"
+     - prompt same as normal node REPL
 
 Snapshots in renamed files|tests:
   - no special treatment, they are just removed + new snapshots
@@ -354,7 +447,7 @@ Pruning:
         - it does not require knowing what the root directory is, or recursing over many files
         - it does not require knowing what the current test selection is
   - removing orphan snapshots for whole tests in a given file:
-     - remove any snapshot if no test defined (not run) with the same "TITLE"
+     - remove any snapshot if no test defined (not run) with the same "TITLE DATA"
      - if it|test() is inside an if block, will always be pruned. Possible workarounds:
         - add else block with it|test.skip()
         - use OPTS.skip BOOL instead
@@ -374,9 +467,9 @@ Pruning:
      - whether this was the only snapshot() or not in the test
      - by default, snapshots inside tests are never pruned
         - unless the whole test or file was pruned, in which case the following is not needed
-     - user must manually change snapshot(SNAPSHOTS, "TITLE", VAL) to snapshot(SNAPSHOTS, "TITLE") (with no VAL):
-        - different from snapshot(SNAPSHOTS, "TITLE", undefined). Can distinguish by using variadic ...args.length
-        - this removes all snapshots for current "TITLE" except for any other snapshot() performed in current run (before or after)
+     - user must manually change snapshot(SNAPSHOTS, "TITLE DATA", VAL) to snapshot(SNAPSHOTS, "TITLE DATA") (with no VAL):
+        - different from snapshot(SNAPSHOTS, "TITLE DATA", undefined). Can distinguish by using variadic ...args.length
+        - this removes all snapshots for current "TITLE DATA" except for any other snapshot() performed in current run (before or after)
         - doing it twice in same test is noop
         - pruning is only persisted once done() is called
         - once pruning is persisted, user can then remove that line of code
@@ -403,6 +496,12 @@ Snapshots directory creation|deletion:
       6) delete snapshot directory
           - should error if not empty, which could happen if another worker created a snapshot file (3)) between 5) and 6). In that case, ignore error and move on.
           - can error if another worker did 6) at same time. In that case, ignore error and move on.
+
+Source maps with snapshots:
+  - __filename should use source maps if available (inline or external)
+  - used for:
+     - finding snapshot directory
+     - finding sibling test files (when pruning)
 
 Color highlighting in snapshots:
   - use a syntax highlighting library
@@ -576,20 +675,6 @@ Executing commands:
   - with correct normalization
   - allow using current package CLI name (finds it in `package.json`)
      - see https://github.com/sindresorhus/execa/issues/281
-
-Snapshots???
-  - should ideally:
-     - use a single file per snapshot
-     - be a simple human-friendly flat text file
-     - be resistant to linter/IDE/text editors modifications
-     - be diff friendly
-  - have both Markdown and binary files like ava???
-     - use v8.serialize() on binary files???
-     - use brotli on binary files???
-     - maybe should be normal text file instead of Markdown, because users will look at it in IDE, not browser
-  - use sourcemaps to figure out where to put snapshots
-     - or only allow overidding snapshot dir instead???
-  - should try to keep existing sorting, so that git diff do not show changes due to sorting
 
 Watch mode:
   - CONF.watch BOOL (-w|--watch)
