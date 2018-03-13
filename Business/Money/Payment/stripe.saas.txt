@@ -129,7 +129,7 @@ Accept: application/json [C]      #Response body: JSON
 Authorization: Bearer API_KEY [C] #Authentication
                                   #2 keys:
                                   #  - server-side / secret
-                                  #  - client-side / public / "publishable": from Stripe.js library
+                                  #  - client-side / public / "publishable"
                                   #Can create|delete more:
                                   #  - can be revoked
                                   #     - including with a timeout of 12 hours
@@ -545,6 +545,7 @@ COUNTRY_SPEC.
 ACCOUNT.country                  C#COUNTRY. Cannot be changed.
                                   #Must match the bank account / credit card's country.
                                   #Impacts pricing and features (see COUNTRY_SPEC)
+INVOICE.account_country           #
 AVAILABLE COUNTRIES ==>           #Only in Western countries (except Eastern Europe), Hong Kong, Singapore and Japan.
                                   #  - soon: Greece, Baltic countries, Poland, Brazil, India, Mexico, Malaysia
                                   #  - but can accept payments from any country
@@ -1239,23 +1240,6 @@ CUSTOMER.email                  CU#'EMAIL'.
 ?email=STR                        #
 CUSTOMER.description            CU#STR.
 CUSTOMER.shipping               CU#BILL_DETAILS.
-CUSTOMER.tax_info               CU#TAX_INFO. Shown on invoices. Verified by Stripe.
-TAX_INFO.tax_id                   #Tax ID number.
-TAX_INFO.type                     #Tax ID number type.
-CUSTOMER.tax_info_verification    #TAX_INFO_VERIF
-TAX_INFO_VERIF.status             #From 'pending' to 'verified' or 'unverified'.
-TAX_INFO_VERIF.verified_name      #STR. Customer's official tax name.
-CUSTOMER.account_balance        CU#MONEY to add|substract to next INVOICE.
-                                  #Negative means we owe CUSTOMER, positive CUSTOMER owes us.
-CUSTOMER.delinquent               #BOOL. True if latest invoice unpaid by due date, or failed (if recurring).
-CUSTOMER.invoice_prefix         CU#STR prefixed to INVOICE.number
-CUSTOMER.invoice_settings       CU#INVOICE_SETTINGS
-INVOICE_SETTINGS.custom_fields
-INVOICE_SETTINGS.footer          U#Like INVOICE.*
-CUSTOMER.subscriptions            #SUBSCRIPTION_LIST
-CUSTOMER.coupon                RCU#COUPON.id. Creates CUSTOMER.discount.
-                                  #Only applied on recurring CHARGEs.
-CUSTOMER.discount                 #DISCOUNT
 
 GET /sources/ID
 POST /sources[/ID]
@@ -2363,314 +2347,81 @@ FEE.refunded                      #BOOL. True if fully refunded.
                                   #EVENT 'application_fee.refunded', even on partial REFUND.
 FEE.refunds                       #FEE_REFUND_LIST
 
-GET /checkout/sessions/ID
-POST /checkout/sessions           #
-STRIPE.checkout.sessions.
- retrieve|create()                #
-SESSION                           #Checkout session
-checkout.session.completed        #'EVENT_TYPE' when a Checkout Session has been successfully completed.
-SESSION.success_url             *C#string The URL the customer will be directed to after a successful payment.
-SESSION.cancel_url              *C#string The URL the customer will be directed to if they decide to go back to your website.
-SESSION.client_reference_id      C#string A unique string to reference the Checkout Session.
-                                  #This can be a customer ID, a cart ID, or similar.
-                                  #It is included in the checkout.session.completed webhook and can be used to fulfill the purchase.
-SESSION.customer                 C#CUSTOMER.id
-SESSION.customer_email           C#string The email address used to create the customer object.
-SESSION.display_items             #DISPLAY_ITEM_ARR The line items, plans, or SKUs that were purchased by the customer.
-DISPLAY_ITEM.amount               #PMONEY
-DISPLAY_ITEM.quantity             #NUM
-DISPLAY_ITEM.type                 #STR, including 'custom'
-DISPLAY_ITEM.custom               #OBJ metadata
-SESSION.line_items              RC#LINE_ITEM_ARR:
-                                  #  - only amount, quantity, description
-                                  #  - also attributes: name STR, images 'URL'_ARR
-SESSION.locale                   C#string The IETF language tag of the locale Checkout is displayed in. If blank or auto, the browser's locale is used.
-SESSION.payment_intent            #PINTENT.id Only if SKUs or line items were provided.
-SESSION.payment_intent_data      C#PINTENT with only: application_fee_amount, capture_method, description, on_behalf_of, receipt_email, shipping, statement_descriptor, transfer_data
-SESSION.payment_method_types    *C#array containing strings The list of payment method types (e.g. card) that this Checkout Session is allowed to use.
-SESSION.subscription              #SUBSCRIPTION.id Only if one or more plans were provided.
-SESSION.subscription_data        C#SUBSCRIPTION with only trial_end, trial_period_days, items SUBSCRIPTION_ITEM_ARR (with only plan|quantity)
-SESSION.                        *C#Specify whether Checkout should collect the customer's billing address.
- billing_address_collection       #If set to required, Checkout will always collect the customer's billing address.
-                                  #If left blank or set to auto Checkout will only collect the billing address when necessary.
-
-GET /invoices[/ID]
-POST /invoices[/ID]
-DELETE /invoices/ID               #
-POST /invoices/ID/finalize        #From INVOICE.status 'draft' to 'open'.
-                                  #Payload: invoice, auto_advance.
-POST /invoices/ID/send            #Send INVOICE by email. Noop in test mode.
-POST /invoices/ID/pay             #Set INVOICE.paid true
-                                  #Payload: invoice, source, forgive, paid_out_of_band
-STRIPE.invoices.retrieve|list|
- create|update|del|
- finalizeInvoice|send|pay()       #
-invoice.finalized                 #'EVENT_TYPE' when a draft invoice is finalized and updated to be an open invoice.
-invoice.marked_uncollectible      #'EVENT_TYPE' when an invoice is marked uncollectible.
-invoice.payment_failed            #'EVENT_TYPE' when an invoice payment attempt fails, due either to a declined payment or to the lack of a stored payment method.
-invoice.payment_succeeded         #'EVENT_TYPE' when an invoice payment attempt succeeds.
-invoice.sent                      #'EVENT_TYPE' when an invoice email is sent out.
-invoice.upcoming                  #'EVENT_TYPE' X number of days (depends on subscription settings) before a subscription is scheduled to create an invoice that is automatically charged.
-invoice.voided                    #'EVENT_TYPE' when an invoice is voided.
-PAYLOAD.forgive                   #BOOL. In cases where the source used to pay the invoice has insufficient funds, passing forgive=true controls whether a charge should be attempted for the full amount
-                                  #available on the source, up to the amount to fully pay the invoice.
-                                  #This effectively forgives the difference between the amount available on the source and the amount due.
-                                  #Passing forgive=false will fail the charge if the source hasn't been pre-funded with the right amount.
-                                  #An example for this case is with ACH Credit Transfers and wires: if the amount wired is less than the amount due by a small amount, you might want to forgive the
-                                  #difference.
-PAYLOAD.paid_out_of_band          #BOOL. representing whether an invoice is paid outside of Stripe. This will result in no charge being made.
-POST /invoices/ID/void            #Set INVOICE.status to 'void'
-POST /invoices/ID/
- mark_uncollectible               #Set INVOICE.status from 'open' to 'uncollectible'
-STRIPE.invoices.
- void|markUncollectible()         #
-INVOICE                           #Invoice, i.e. details of what a CUSTOMER should pay.
-INVOICE.days_until_due         RCU#Like SUBSCRIPTION.*
-INVOICE.amount_due                #integer Final amount due at this time for this invoice.
-                                  #If the invoice's total is smaller than the minimum charge amount, for example, or if there is account credit that can be applied to the invoice, the amount_due may be 0.
-                                  #If there is a positive starting_balance for the invoice (the customer owes money), the amount_due will also take that into account.
-                                  #The charge that gets generated for the invoice will be for the amount specified in amount_due.
-INVOICE.amount_paid               #integer The amount, in cents, that was paid.
-INVOICE.amount_remaining          #integer The amount remaining, in cents, that is due.
-INVOICE.attempt_count             #positive integer or zero Number of payment attempts made for this invoice, from the perspective of the payment retry schedule.
-                                  #Any payment attempt counts as the first attempt, and subsequently only automatic retries increment the attempt count.
-                                  #In other words, manual payment attempts after the first attempt do not affect the retry schedule.
-INVOICE.attempted                 #boolean Whether an attempt has been made to pay the invoice.
-                                  #An invoice is not attempted until 1 hour after the invoice.created webhook, for example, so you might not want to display that invoice as unpaid to your users.
-INVOICE.auto_advance            CU#boolean Controls whether Stripe will perform automatic collection of the invoice.
-                                  #When false, the invoice's state will not automatically advance without an explicit action.
-INVOICE.billing                  C#string Either charge_automatically, or send_invoice.
-                                  #When charging automatically, Stripe will attempt to pay this invoice using the default source attached to the customer.
-                                  #When sending an invoice, Stripe will email this invoice to the customer with payment instructions.
-?billing=STR                      #
-INVOICE.billing_reason            #string Indicates the reason why the invoice was created.
-                                  #subscription_cycle indicates an invoice created by a subscription advancing into a new period.
-                                  #subscription_create indicates an invoice created due to creating a subscription.
-                                  #subscription_update indicates an invoice created due to updating a subscription.
-                                  #subscription is set for all old invoices to indicate either a change to a subscription or a period advancement.
-                                  #manual is set for all invoices unrelated to a subscription (for example: created via the invoice editor).
-                                  #The upcoming value is reserved for simulated invoices per the upcoming invoice endpoint.
-                                  #subscription_threshold indicates an invoice created due to a billing threshold being reached.
-INVOICE.charge                    #CHARGE.id
-INVOICE.custom_fields           CU#CUSTOM_FIELD_ARR. Custom fields displayed on the invoice.
-CUSTOM_FIELD.name                C#string The name of the custom field.
-CUSTOM_FIELD.value               C#string The value of the custom field.
-INVOICE.customer                  #CUSTOMER.id
-?customer=CUSTOMER.id             #
-INVOICE.default_source          CU#SOURCE|BANK_ACCOUNT|CARD.id ID of the default payment source for the invoice.
-                                  #It must belong to the customer associated with the invoice and be in a chargeable state.
-                                  #If not set, defaults to the subscription's default source, if any, or to the customer's default source.
-INVOICE.description             CU#string An arbitrary string attached to the object. Often useful for displaying to users. Referenced as ‘memo' in the Dashboard.
-INVOICE.discount                  #DISCOUNT
-INVOICE.due_date                CU#timestamp The date on which payment for this invoice is due. This value will be null for invoices where billing=charge_automatically.
-?due_date=CMP_FILTER              #
-INVOICE.ending_balance            #integer Ending customer balance after the invoice is finalized.
-                                  #Invoices are finalized approximately an hour after successful webhook delivery or when payment collection is attempted for the invoice.
-                                  #If the invoice has not been finalized yet, this will be null.
-INVOICE.footer                  CU#string Footer displayed on the invoice.
-INVOICE.hosted_invoice_url        #string The URL for the hosted invoice page, which allows customers to view and pay an invoice. If the invoice has not been finalized yet, this will be null.
-INVOICE.invoice_pdf               #string The link to download the PDF for the invoice. If the invoice has not been finalized yet, this will be null.
-INVOICE.lines                     #LINE_ITEM_LIST The individual line items that make up the invoice.
-                                  #lines is sorted as follows: invoice items in reverse chronological order, followed by the subscription, if any.
-INVOICE.next_payment_attempt      #timestamp The time at which payment will next be attempted. This value will be null for invoices where billing=send_invoice.
-INVOICE.number                    #string A unique, identifying string that appears on emails sent to the customer for this invoice.
-                                  #This starts with the customer's unique invoice_prefix if it is specified.
-INVOICE.paid                      #boolean Whether payment was successfully collected for this invoice.
-                                  #An invoice can be paid (most commonly) with a charge or with credit from the customer's account balance.
-INVOICE.payment_intent            #PINTENT. The PaymentIntent is generated when the invoice is finalized, and can then be used to pay the invoice.
-                                  #Note that voiding an invoice will cancel the PaymentIntent.
-INVOICE.period_end                #timestamp End of the usage period during which invoice items were added to this invoice.
-INVOICE.period_start              #timestamp Start of the usage period during which invoice items were added to this invoice.
-INVOICE.receipt_number            #string This is the transaction number that appears on email receipts sent for this invoice.
-INVOICE.starting_balance          #integer Starting customer balance before the invoice is finalized. If the invoice has not been finalized yet, this will be the current customer balance.
-INVOICE.status                    #string The status of the invoice, one of draft, open, paid, uncollectible, or void.
-INVOICE.status_transitions        #STATUS_TRANSITIONS
-STATUS_TRANSITIONS.finalized_at   #timestamp The time that the invoice draft was finalized.
-STATUS_TRANSITIONS.
- marked_uncollectible_at          #timestamp The time that the invoice was marked uncollectible.
-STATUS_TRANSITIONS.paid_at        #timestamp The time that the invoice was paid.
-STATUS_TRANSITIONS.voided_at      #timestamp The time that the invoice was voided.
-INVOICE.subscription             C#SUBSCRIPTION.id
-?subscription=SUBSCRIPTION.id     #
-INVOIC.subscription_proration_date#integer Only set for upcoming invoices that preview prorations. The time used to calculate prorations.
-INVOICE.subtotal                  #integer Total of all subscriptions, invoice items, and prorations on the invoice before any discount is applied.
-INVOICE.tax_percent            RCU#The percent tax rate applied to the invoice, represented as a decimal number.
-INVOICE.tax                       #integer The amount of tax included in the total, calculated from tax_percent and the subtotal. If no tax_percent is defined, this value will be null.
-INVOICE.threshold_reason          #THRESHOLD_REASON. If billing_reason is set to subscription_threshold this returns more information on which threshold rules triggered the invoice.
-THRESHOLD_REASON.amount_gte       #integer The total invoice amount threshold boundary if it triggered the threshold invoice.
-THRESHOLD_REASON.item_reasons     #ITEM_REASON_ARR. Indicates which line items triggered a threshold invoice.
-ITEM_REASON.line_item_ids         #array containing strings The IDs of the line items that triggered the threshold invoice.
-ITEM_REASON.usage_gte             #integer The quantity threshold boundary that applied to the given line item.
-INVOICE.total                     #integer Total after discount.
-INVOICE.webhooks_delivered_at     #timestamp The time at which webhooks for this invoice were successfully delivered (if the invoice had no webhooks to deliver, this will match created).
-                                  #Invoice payment is delayed until webhooks are delivered, or until all webhook delivery attempts have been exhausted.
-
-GET /invoices/ID/lines            #
-STRIPE.invoices.retrieveLines()   #
-LINE_ITEM                         #Single item in an INVOICE
-LINE_ITEM.amount                CU#MONEY
-LINE_ITEM.description           CU#string An arbitrary string attached to the object. Often useful for displaying to users.
-LINE_ITEM.discountable          CU#boolean If true, discounts will apply to this line item. Always false for prorations.
-LINE_ITEM.invoice_item            #INVOICE_ITEM.id
-LINE_ITEM.period                CU#LINE_ITEM_PERIOD. The timespan covered by this invoice item.
-LINE_ITEM_PERIOD.end            CU#integer End of the line item's billing period
-LINE_ITEM_PERIOD.start          CU#integer Start of the line item's billing period
-LINE_ITEM.plan                    #PLAN The plan of the subscription, if the line item is a subscription or a proration.
-LINE_ITEM.proration               #boolean Whether the invoice item was created automatically as a proration adjustment when the customer switched plans.
-LINE_ITEM.quantity              CU#integer Quantity of units for the invoice item. If the invoice item is a proration, the quantity of the subscription that the proration was computed for.
-LINE_ITEM.subscription           C#SUBSCRIPTION.id The subscription that the invoice item pertains to, if any.
-LINE_ITEM.subscription_item       #SUBSCRIPTION_ITEM.id The subscription item that generated this invoice item. Left empty if the line item is not an explicit result of a subscription.
-LINE_ITEM.type                    #string A string identifying the type of the source of this line item, either an invoiceitem or a subscription.
-
-GET /customers/ID/tax_ids[/ID]
-POST /customers/ID/tax_ids
-DELETE /customers/ID/tax_ids/ID   #
-STRIPE.taxIds.
- retrieve|list|create|del()       #
-TAX_IDS                           #Tax IDs of a CUSTOMER shown on their INVOICEs
-                                  #Verified by Stripe, and translated into name and address.
-TAX_IDS.customer                *C#CUSTOMER.id
-?customer=CUSTOMER.id             #
-TAX_IDS.value                   *C#STR
-TAX_IDS.country                   #COUNTRY
-TAX_IDS.type                    *C#One of 'eu_vat' (EU), 'nz_gst' (New Zealand), 'au_abn' (Australia), 'unknown'.
-TAX_IDS.verification              #TAX_VERIF
-TAX_VERIF.status                  #From 'pending' to 'available' (success), 'unavailable' (failure) or 'unverified' (cannot check)
-TAX_VERIF.verified_name           #STR
-TAX_VERIF.verified_address        #STR
-
-GET /invoices/upcoming            #See INVOICEs not created yet.
-STRIPE.invoices.retrieveUpcoming()#
-GET /invoices/upcoming/lines      #See LINE_ITEMs of INVOICEs not created yet.
-?coupon=COUPON.id                 #
-?customer=CUSTOMER.id             #
-?invoice_items=OBJ_ARR            #
-?invoice_items.*.amount=NUM       #
-?invoice_items.*.currency=STR     #
-?invoice_items.*.description=STR  #
-?invoice_items.*.discountable=BOOL#
-?invoice_items.*.invoiceitem=ID   #
-?invoice_items.*.metadata=OBJ     #
-?invoice_items.*.period.start|end
- =DATE_NUM                        #
-?invoice_items.*.quantity=NUM     #
-?invoice_items.*.unit_amount=NUM  #
-?subscription=ID                  #
-?subscription_billing_cycle_anchor
- =STR                             #
-?subscription_cancel_at_period_end
- =BOOL                            #
-?subscription_cancel_now=BOOL     #
-?subscription_items=OBJ_ARR       #
-?subscription_items.*.id=ID       #
-?subscription_items.*.
- billing_thresholds.usage_gte=NUM #
-?subscription_items.*.clear_usage=
- BOOL                             #
-?subscription_items.*.deleted=BOOL#
-?subscription_items.*.metadata=OBJ#
-?subscription_items.*.plan=ID     #
-?subscription_items.*.quantity=NUM#
-?subscription_prorate=BOOL        #
-?subscription_proration_date=
- DATE_NUM                         #
-?subscription_tax_percent=BOOL    #
-?subscription_trial_end=BOOL      #
-?subscription_trial_from_plan=BOOL#
-
-GET /invoiceitems[/ID]
-POST /invoiceitems[/ID]
-DELETE /invoiceitems/ID           #
-STRIPE.invoiceItems.
- retrieve|list|create|update|del()#
-INVOICE_ITEM                      #Like LINE_ITEM, but done in bulk.
-INVOICE_ITEM                      #Same properties as LINE_ITEM, with extra fields:
-INVOICE_ITEM.invoice             C#INVOICE.id
-?invoice=INVOICE.id               #
-?pending=BOOL                     #Filter by INVOICE undefined
-INVOICE_ITEM.customer             #CUSTOMER.id
-?customer=CUSTOMER.id             #
-INVOICE_ITEM.date                 #DATE_NUM
-INVOICE_ITEM.unit_amount        CU#NUM. Unit Amount (in the currency specified) of the invoice item.
-
 GET /subscriptions[/ID]
 POST /subscriptions[/ID]
-DELETE /subscriptions/ID          #
 STRIPE.subscriptions.
- list|retrieve|create|update|del()#
-customer.
- subscription.trial_will_end      #'EVENT_TYPE' three days before a subscription's trial period is scheduled to end, or when a trial is ended immediately (using trial_end=now).
+ list|retrieve|create|update()    #
+DELETE /subscriptions/IDa
+STRIPE.subscriptions.del()        #Set status to 'canceled'
+                                  #Payload: invoice_now, prorate
+PAYLOAD.invoice_now               #BOOL (def: false). Create a final INVOICE for pending metered usage or proration.
+PAYLOAD.prorate                   #BOOL (def: false). Create a INVOICE_ITEM that give credits for remaining unused time.
 SUBSCRIPTION                      #Recurring CHARGE, either as a single PLAN, or several (using SUBSCRIPTION_ITEMs)
-SUBSCRIPTION.default_source
-SUBSCRIPTION.billing            CU#Like INVOICE.*
-SUBSCRIPTION.customer
-SUBSCRIPTION.discount             #Like INVOICE.*
-?customer=CUSTOMER.id
-?billing=STR                      #
-SUBSCRIPTION.coupon            RCU#The code of the coupon to apply to this subscription.
-                                  #A coupon applied to a subscription will only affect invoices created for that particular subscription.
+SUBSCRIPTION.customer           *C#CUSTOMER.id
+?customer=CUSTOMER.id             #
+CUSTOMER.subscriptions            #SUBSCRIPTION_LIST
+SUBSCRIPTION.default_source     CU#SOURCE|BANK_ACCOUNT|CARD.id
+                                  #Def: CUSTOMER.default_source
+SUBSCRIPTION.                   CU#PAYMENT_METHOD.id
+ default_payment_method           #Def: CUSTOMER.default_payment_method
 SUBSCRIPTION.items              CU#SUBSCRIPTION_ITEM_LIST
-                                  #On update:
-                                  #  - no subscription
-                                  #  - also:
-                                  #     - clear_usage BOOL: Delete all usage for a given subscription item. Allowed only when deleted is set to true and the current plan's usage_type is metered.
-                                  #     - deleted BOOL: delete the specified item.
-SUBSCRIPTION.prorate           RCU#Boolean (defaults to true) telling us whether to credit for unused time when the billing cycle changes (e.g. when switching plans, resetting billing_cycle_anchor=now,
-                                  #or starting a trial), or if an item's quantity changes. If false, the anchor period will be free (similar to a trial) and no proration adjustments will be created.
-SUBSCRIPTION.proration_date     RU#If set, the proration will be calculated as though the subscription was updated at the given time.
-                                  #This can be used to apply exactly the same proration that was previewed with upcoming invoice endpoint.
-                                  #It can also be used to implement custom proration logic, such as prorating by day instead of by second, by providing the time that you wish to use for proration
-                                  #calculations.
-SUBSCRIPTION.tax_percent       RCU#A non-negative decimal (with at most four decimal places) between 0 and 100.
-                                  #This represents the percentage of the subscription invoice subtotal that will be calculated and added as tax to the final amount in each billing period.
-                                  #For example, a plan which charges $10/month with a tax_percent of 20.0 will charge $12 per invoice.
-                                  #To unset a previously-set value, pass an empty string.
-SUBSCRIPTION.latest_invoice       #INVOICE.id The most recent invoice this subscription has generated.
-SUBSCRIPTION.plan                 #PLAN Only set if the subscription contains a single plan.
+SUBSCRIPTION.plan                ?#PLAN. Only defined if SUBSCRIPTION.items.length === 1
 ?plan=PLAN.id                     #
-SUBSCRIPTION.quantity             #integer The quantity of the plan to which the customer is subscribed.
-                                  #For example, if your plan is $10/user/month, and your customer has 5 users, you could pass 5 as the quantity to have the customer charged $50 (5 x $10) monthly.
-                                  #Only set if the subscription contains a single plan.
-SUBSCRIPTION.status               #string Possible values are incomplete, incomplete_expired, trialing, active, past_due, canceled, or unpaid.
-                                  #For billing=charge_automatically a subscription moves into incomplete if the initial payment attempt fails.
-                                  #A subscription in this state can only have metadata and default_source updated.
-                                  #Once the first invoice is paid, the subscription moves into an active state.
-                                  #If the first invoice is not paid within 23 hours, the subscription transitions to incomplete_expired.
-                                  #This is a terminal state, the open invoice will be voided and no further invoices will be generated.
-                                  #A subscription that is currently in a trial period is trialing and moves to active when the trial period is over.
-                                  #If subscription billing=charge_automatically it becomes past_due when payment to renew it fails and canceled or unpaid (depending on your subscriptions settings) when
-                                  #Stripe has exhausted all payment retry attempts.
-                                  #If subscription billing=send_invoice it becomes past_due when its invoice is not paid by the due date, and canceled or unpaid if it is still not paid by an additional
-                                  #deadline after that.
-                                  #Note that when a subscription has a status of unpaid, no subsequent invoices will be attempted (invoices will be created, but then immediately automatically closed).
-                                  #After receiving updated payment information from a customer, you may choose to reopen and pay their closed invoices.
+SUBSCRIPTION.quantity             #NUM of PLANs (to multiply).
+                                  #Only if SUBSCRIPTION.plan defined.
+                                  #E.g. if PLAN is per user and there are several users.
+SUBSCRIPTION.status               #STR among:
+                                  #  - 'trialing'
+                                  #  - 'active': last CHARGE succeeded
+                                  #  (fixable errors)
+                                  #  - 'incomplete':
+                                  #     - first CHARGE not paid or failed
+                                  #     - SUBSCRIPTION read-only except for default_source
+                                  #  - 'past_due': non-first CHARGE not paid or failed
+                                  #  (terminal errors)
+                                  #  - 'incomplete_expired': first CHARGE not paid within 23 hours
+                                  #  - 'unpaid':
+                                  #     - several attempts or deadline after 'past_due'
+                                  #     - INVOICEs are still created but closed directly, and be re-opened
+                                  #  - 'canceled'
+                                  #     - INVOICEs are not created anymore.
+                                  #     - on-going INVOICEs still valid, unless deleted. However CHARGE must be manually created.
 ?status=STR                       #
 SUBSCRIPTION.
- billing_cycle_anchor           CU#timestamp Determines the date of the first full invoice, and, for plans with month or year intervals, the day of the month for subsequent invoices.
-SUBSCRIPTION.billing_thresholds CU#BILLING_THRESHOLDS. Define thresholds at which an invoice will be sent, and the subscription advanced to a new billing period
-BILLING_THRESHOLDS.amount_gte   CU#integer Monetary threshold that triggers the subscription to create an invoice
-BILLING_THRESHOLDS.             CU#boolean Indicates if the billing_cycle_anchor should be reset when a threshold is reached.
- reset_billing_cycle_anchor       #If true, billing_cycle_anchor will be updated to the date/time the threshold was last reached; otherwise, the value will remain unchanged.
-                                  #This value may not be true if the subscription contains items with plans that have aggregate_usage=last_ever.
-SUBSCRIPTION.start                #timestamp Date of the last substantial change to this subscription. For example, a change to the items array, or a change of status, will reset this timestamp.
-SUBSCRIPTION.ended_at             #timestamp If the subscription has ended, the date the subscription ended.
-SUBSCRIPTION.current_period_start #timestamp Start of the current period that the subscription has been invoiced for.
-?current_period_start=CMP_FILTER  #
-SUBSCRIPTION.current_period_end   #timestamp End of the current period that the subscription has been invoiced for. At the end of this period, a new invoice will be created.
-?current_period_end=CMP_FILTER    #
-SUBSCRIPTION.trial_start          #timestamp If the subscription has a trial, the beginning of that trial.
-SUBSCRIPTION.trial_end          CU#timestamp If the subscription has a trial, the end of that trial.
-SUBSCRIPTION.trial_from_plan   RCU#Indicates if a plan's trial_period_days should be applied to the subscription.
-                                  #Setting trial_end per subscription is preferred, and this defaults to false.
-                                  #Setting this flag to true together with trial_end is not allowed.
-SUBSCRIPTION.trial_period_days  RC#Integer representing the number of trial period days before the customer is charged for the first time.
-                                  #This will always overwrite any trials that might apply via a subscribed plan.
-SUBSCRIPTION.days_until_due     CU#integer Number of days a customer has to pay invoices generated by this subscription. This value will be null for subscriptions where billing=charge_automatically.
-SUBSCRIPTION.                   CU#boolean If the subscription has been canceled with the at_period_end flag set to true, cancel_at_period_end on the subscription will be true.
- cancel_at_period_end             #You can use this attribute to determine whether a subscription that has a status of active is scheduled to be canceled at the end of the current period.
-SUBSCRIPTION.canceled_at          #timestamp If the subscription has been canceled, the date of that cancellation.
-                                  #If the subscription was canceled with cancel_at_period_end, canceled_at will still reflect the date of the initial cancellation request, not the end of the subscription
-                                  #period when the subscription is automatically moved to a canceled state.
+ cancel_at_period_end           CU#BOOL (def: false). Set status to 'canceled' at end of period.
+SUBSCRIPTION.canceled_at         ?#DATE_NUM
+                                  #If SUBSCRIPTION.cancel_at_period_end was used, date where this was set. Otherwise, date status set to 'canceled'.
+SUBSCRIPTION.billing            CU#Either:
+                                  #  - 'charge_automatically' (def): automatically create CHARGEs
+                                  #  - 'send_invoice': send emails with INVOICE and payment instructions
+?billing=STR                      #
+SUBSCRIPTION.latest_invoice       #Last INVOICE.id
+SUBSCRIPTION.days_until_due     CU#NUM of days to pay INVOICEs. Only if SUBSCRIPTION.billing 'send_invoice'
+SUBSCRIPTION.                   CU#DATE_NUM (or 'now') of the first INVOICE.
+ billing_cycle_anchor             #Used to define on which day of the week|month|year to INVOICE next periods.
+SUBSCRIPTION.billing_thresholds CU#BILLING_THRESHOLDS. When to send emails with INVOICEs.
+                                  #Only with SUBSCRIPTION.billing 'send_invoice'
+                                  #Def: when INVOICE is created
+BILLING_THRESHOLDS.amount_gte   CU#PMONEY
+BILLING_THRESHOLDS.             CU#BOOL (def: false). When sending an INVOICE, update SUBSCRIPTION.billing_cycle_anchor to now
+ reset_billing_cycle_anchor       #Not allowed if PLAN.aggregate_usage 'last_ever'.
+SUBSCRIPTION.start                #DATE_NUM. "Last update" timestamp, but only for significant fields.
+SUBSCRIPTION.ended_at            ?#DATE_NUM
+SUBSCRIPTION.                     #DATE_NUM. Periods are decided by PLAN.interval[_count]
+ current_period_start|end         #INVOICEs are created at end of each period.
+?current_period_start|end=
+ CMP_FILTER                       #
+SUBSCRIPTION.trial_from_plan   RCU#BOOL (def: false). Whether to use SUBSCRIPTION.trial_period_days.
+SUBSCRIPTION.trial_period_days  RC#NUM. Def: PLAN.trial_period_days
+SUBSCRIPTION.trial_start          #DATE_NUM
+SUBSCRIPTION.trial_end          CU#DATE_NUM or 'now'. Either:
+                                  #  - automatically set using SUBSCRIPTION.trial_period_days if SUBSCRIPTION.trial_from_plan
+                                  #  - manually set. At most two years from billing_cycle_anchor
+                                  #EVENT 'customer.subscription.trial_will_end' three days before trial end, or when using 'now'
+SUBSCRIPTION.prorate           RCU#BOOL. When changing PLAN or period settings:
+                                  #  - true (def): give credits for unused time
+                                  #  - false: give remaining period for free
+SUBSCRIPTION.proration_date     RU#DATE_NUM. Def: when PLAN or period settings changed.
 
 GET /subscription_items[/ID]
 POST /subscription_items[/ID]
@@ -2681,8 +2432,13 @@ SUBSCRIPTION_ITEM.subscription  *C#SUBSCRIPTION.id
 ?subscription=SUBSCRIPTION.id     #
 SUBSCRIPTION_ITEM.plan|quantity|
  billing_thresholds             CU#Like SUBSCRIPTION.*
-SUBSCRIPTION_ITEM.prorate|
- proration_date                RCU#Like SUBSCRIPTION.*
+SUBSCRIPTION_ITEM.
+ prorate|proration_date        RCU#Like SUBSCRIPTION.*
+SUBSCRIPTION_ITEM.deleted        U#BOOL. Delete the SUBSCRIPTION_ITEM.
+                                  #Only when updated through SUBSCRIPTION.items
+SUBSCRIPTION_ITEM.clear_usage    U#BOOL. Delete the SUBSCRIPTION_ITEM's USAGE_RECORDs
+                                  #Only when updated through SUBSCRIPTION.items
+                                  #Only when PLAN.usage_type 'metered' and SUBSCRIPTION_ITEM.deleted true
 
 GET /plans[/ID]
 POST /plans[/ID]
@@ -2690,52 +2446,52 @@ DELETE /plans/ID                  #
 STRIPE.plans.
  list|retrieve|create|update|del()#
 PLAN                              #Pricing plan|scheme.
-PLAN.active                     CU#boolean Whether the plan is currently available for new subscriptions.
-?active=BOOL                      #
-PLAN.aggregate_usage             C#string Specifies a usage aggregation strategy for plans of usage_type=metered.
-                                  #Allowed values are sum for summing up all usage during a period, last_during_period for picking the last usage record reported within a period, last_ever for picking
-                                  #the last usage record ever (across period bounds) or max which picks the usage record with the maximum reported usage during a period. Defaults to sum.
-PLAN.amount                      C#PMONEY to be charged on the interval specified.
-PLAN.billing_scheme              C#string Describes how to compute the price per period.
-                                  #Either per_unit or tiered.
-                                  #per_unit indicates that the fixed amount (specified in amount) will be charged per unit in quantity (for plans with usage_type=licensed), or per unit of total usage
-                                  #(for plans with usage_type=metered).
-                                  #tiered indicates that the unit pricing will be computed using a tiering strategy as defined using the tiers and tiers_mode attributes.
-PLAN.interval                   *C#string One of day, week, month or year. The frequency with which a subscription should be billed.
-PLAN.interval_count              C#positive integer The number of intervals (specified in the interval property) between subscription billings.
-                                  #For example, interval=month and interval_count=3 bills every 3 months.
-PLAN.nickname                   CU#string A brief description of the plan, hidden from customers.
-PLAN.product                   *CU#PRODUCT.id The product whose pricing this plan determines.
+PLAN.nickname                   CU#STR, not shown to customers.
+PLAN.product                   *CU#PRODUCT.id
 ?product=PRODUCT.id               #
-PLAN.tiers                       C#TIER_ARR. Each element represents a pricing tier. This parameter requires billing_scheme to be set to tiered. See also the documentation for billing_scheme.
-TIER.flat_amount                  #integer Price for the entire tier.
-TIER.unit_amount                  #integer Per unit price for units relevant to the tier.
-TIER.up_to                        #integer Up to and including to this quantity will be contained in the tier.
-PLAN.tiers_mode                  C#string Defines if the tiering price should be graduated or volume based.
-                                  #In volume-based tiering, the maximum quantity within a period determines the per unit price, in graduated tiering pricing can successively change as the quantity grows.
-PLAN.transform_usage             C#TRANSFORM_USAGE. Apply a transformation to the reported usage or set quantity before computing the billed price. Cannot be combined with tiers.
-TRANSFORM_USAGE.divide_by         #integer Divide usage by this number.
-TRANSFORM_USAGE.round             #string After division, either round the result up or down.
-PLAN.trial_period_days          CU#positive integer Default number of trial days when subscribing a customer to this plan using trial_from_plan=true.
-PLAN.usage_type                  C#string Configures how the quantity per period should be determined, can be either metered or licensed.
-                                  #licensed will automatically bill the quantity set for a plan when adding it to a subscription, metered will aggregate the total usage based on usage records.
-                                  #Defaults to licensed.
+PLAN.active                     CU#BOOL. Available for new SUBSCRIPTIONs
+?active=BOOL                      #
+PLAN.amount                      C#PMONEY to charge on each interval.
+PLAN.interval                   *C#Frequency among 'day', 'week', 'month', 'year'.
+PLAN.interval_count              C#NUM of PLAN.interval
+PLAN.trial_period_days          CU#NUM of free|trial days
+PLAN.billing_scheme              C#Either:
+                                  #  - 'per_unit' (def): use PLAN.usage_type|transform_usage
+                                  #  - 'tiered': use PLAN.tiers[_mode]
+PLAN.usage_type                  C#Either:
+                                  #  - 'licensed' (def): not quantity-wise
+                                  #  - 'metered': quantity-wise, using PLAN.aggregate_usage and USAGE_RECORD[_SUMMARY]
+PLAN.aggregate_usage             C#Can be:
+                                  #  - 'sum' (def): adds all USAGE_RECORDs of the period
+                                  #  - 'max': only use highest USAGE_RECORD of that period
+                                  #  - 'last_during_period': use last USAGE_RECORD of that period
+                                  #  - 'last_ever': use last USAGE_RECORD (even outside period)
+PLAN.transform_usage             C#TRANSFORM_USAGE. Divide the price.
+TRANSFORM_USAGE.divide_by         #INT
+TRANSFORM_USAGE.round             #'up' or 'down'
+PLAN.tiers                       C#TIER_ARR. Different pricing depending on quantity (USAGE_RECORD[_SUMMARY])
+TIER.up_to                        #NUM or 'inf'. Unit threshold to be using this TIER.
+TIER.flat_amount                  #PMONEY. Absolute price (for whole TIER)
+TIER.unit_amount                  #PMONEY. Relative price (per unit)
+PLAN.tiers_mode                  C#Either:
+                                  #  - 'graduated': pricing can successively change as the quantity grows
+                                  #  - 'volume': maximum quantity within a period determines the per unit price
 
 POST /subscription_items/ID/
  usage_records                    #
 STRIPE.usageRecords.create()      #
-USAGE_RECORD                      #CUSTOMER's consumption (metered billing).
-USAGE_RECORD.quantity           *C#positive integer or zero The usage quantity for the specified date.
+USAGE_RECORD                      #CUSTOMER's single consumption for PLAN.usage_type 'metered' or PLAN.tiers
 USAGE_RECORD.subscription_item  *C#SUBSCRIPTION_ITEM.id
-USAGE_RECORD.timestamp          *C#timestamp The timestamp when this usage occurred.
-USAGE_RECORD.action              C#Valid values are increment (default) or set.
-                                  #When using increment the specified quantity will be added to the usage at the specified timestamp.
-                                  #The set action will overwrite the usage quantity at that timestamp.
-                                  #If the subscription has billing thresholds, increment is the only allowed value.
+USAGE_RECORD.quantity           *C#INT (>=0)
+USAGE_RECORD.timestamp          *C#DATE_NUM
+USAGE_RECORD.action              C#If USAGE_RECORD with same subscription_item|timestamp, either:
+                                  #  - 'increment' (default): do not overwrite it
+                                  #  - 'set': overwrite it. Not allowed if SUBSCRIPTION.billing_thresholds defined
 
 GET /subscription_items/ID/
  usage_records_summaries          #
 STRIPE.usageRecordSummaries.list()#
+USAGE_RECORD_SUMMARY              #Aggregate of USAGE_RECORD for a specific SUBSCRIPTION_ITEM and INVOICE
 USAGE_RECORD_SUMMARY.
  subscription_item                #SUBSCRIPTION_ITEM.id
 ?subscription_item=ID             #
@@ -2744,78 +2500,292 @@ USAGE_RECORD_SUMMARY.total_usage  #NUM
 USAGE_RECORD_SUMMARY.
  period.start|end                 #DATE_NUM
 
-DELETE /customers|subscriptions/
- ID/discount                      #
-STRIPE.customers|subscriptions.
- deleteDiscount()                 #
-DISCOUNT                          #Discount|COUPON given to one CUSTOMER
-DISCOUNT.coupon                   #COUPON
-DISCOUNT.customer                 #CUSTOMER.id
-DISCOUNT.start                    #timestamp Date that the coupon was applied.
-DISCOUNT.end                      #timestamp If the coupon has a duration of repeating, the date that this discount will end. If the coupon has a duration of once or forever, this attribute will be null.
-DISCOUNT.subscription             #SUBSCRIPTION.id
-
 GET /coupons[/ID]
 POST /coupons[/ID]
 DELETE /coupons/ID                #
 STRIPE.coupons.
  retrieve|list|create|update|del()#
-COUPON                            #Discount given to many CUSTOMERs
-COUPON.amount_off                C#PMONEY that will be taken off the subtotal of any invoices for this customer.
-COUPON.duration                 *C#string One of forever, once, and repeating. Describes how long a customer who applies this coupon will get the discount.
-COUPON.duration_in_months        C#positive integer If duration is repeating, the number of months the coupon applies. Null if coupon duration is forever or once.
-COUPON.max_redemptions           C#positive integer Maximum number of times this coupon can be redeemed, in total, across all customers, before it is no longer valid.
-COUPON.name                     CU#string Name of the coupon displayed to customers on for instance invoices or receipts.
-COUPON.percent_off               C#decimal Percent that will be taken off the subtotal of any invoices for this customer for the duration of the coupon.
-                                  #For example, a coupon with percent_off of 50 will make a $100 invoice $50 instead.
-COUPON.redeem_by                 C#timestamp Date after which the coupon can no longer be redeemed.
-COUPON.times_redeemed             #positive integer or zero Number of times this coupon has been applied to a customer.
-COUPON.valid                      #boolean Taking account of the above properties, whether this coupon can still be applied to a customer.
+COUPON                            #DISCOUNTs given to many CUSTOMERs
+COUPON.name                     CU#STR shown in INVOICEs and receipts
+COUPON.amount_off                C#PMONEY to substract to all INVOICEs
+COUPON.percent_off               C#0-100. Percentage to substract to all INVOICEs
+COUPON.duration                 *C#How long this works among 'once', 'repeating' or 'forever'
+COUPON.duration_in_months        C#NUM. If duration 'repeating'.
+COUPON.times_redeemed             #NUM of DISCOUNTs created
+COUPON.max_redemptions           C#NUM. Max COUPON.times_redeemed
+COUPON.redeem_by                 C#DATE_NUM after which can no longer create DISCOUNTs
+COUPON.valid                      #BOOL.
+                                  #Can be invalid if beyond COUPON.duration|max_redemptions|redeem_by
+                                  #If false, cannot apply to CUSTOMER, but already created DISCOUNTs still work.
+CUSTOMER.coupon                RCU#Creates a DISCOUNT
+                                  #Only on recurring CHARGEs
+CUSTOMER.discount                 #DISCOUNT
+SUBSCRIPTION.coupon            RCU#Creates a DISCOUNT
+SUBSCRIPTION|INVOICE.discount     #DISCOUNT
+ORDER.coupon                   RCU#Creates a DISCOUNT
+                                  #  - must be COUPON.duration 'once' and same currency as ORDER.
+                                  #  - create a 'discount' ORDER_ITEM
+ORDER.external_coupon_code        #Same
+
+DELETE /customers|subscriptions/
+ ID/discount                      #
+STRIPE.customers|subscriptions.
+ deleteDiscount()                 #
+DISCOUNT                          #COUPON given to one CUSTOMER
+DISCOUNT.coupon                   #COUPON.id
+DISCOUNT.customer                 #CUSTOMER.id
+DISCOUNT.subscription             #SUBSCRIPTION.id
+DISCOUNT.start                    #DATE_NUM
+DISCOUNT.end                     ?#DATE_NUM if COUPON.duration_in_months
 
 GET /credit_notes[/ID]
 POST /credit_notes[/ID]           #
-POST /credit_notes/ID/void        #Revert a CREDIT_NOTE
+POST /credit_notes/ID/void        #Set status to 'void'
 STRIPE.creditNodes.retrieve|list|
  create|update|voidCreditNote()   #
-CREDIT_NOTE                       #Adjustment on an already done invoice (wrong quantity, has over-charged, under-charged, etc.)
-                                  #For a status=open invoice, a credit note reduces its amount_due.
-                                  #For a status=paid invoice, a credit note does not affect its amount_due. Instead, it can result in any combination of the following:
-                                  #  - Refund: create a new refund (using refund_amount) or link an existing refund (using refund).
-                                  #  - Customer balance credit: credit the customer's balance (using credit_amount) which will be automatically applied to their next invoice when it's finalized.
-                                  #  - Outside of Stripe credit: any positive value from the result of amount - refund_amount - credit_amount is represented as an “outside of Stripe” credit.
-                                  #You may issue multiple credit notes for an invoice.
-                                  #Each credit note will increment the invoice's pre_payment_credit_notes_amount or post_payment_credit_notes_amount depending on its status at the time of credit note
-                                  #creation.
-CREDIT_NOTE.amount              *C#MONEY. total amount of the credit note.
-CREDIT_NOTE.credit_amount       RC#MONEY. the amount to credit the customer's balance, which will be automatically applied to their next invoice.
-CREDIT_NOTE.refund_amount       RC#MONEY. the amount to refund. If set, a refund will be created for the charge associated with the invoice.
-CREDIT_NOTE.refund               C#REFUND.id
+CREDIT_NOTE                       #Adjustment on an already done INVOICE (wrong quantity, has over-charged, under-charged, etc.)
+                                  #Can have several per INVOICE.
+                                  #If:
+                                  #  - type 'pre_payment': reduces INVOICE.amount_due
+                                  #  - type 'post_payment' + refund[_amount]: REFUND
+                                  #  - type 'post_payment' + credit_amount: reduces CUSTOMER.account_balance
+                                  #  - any thing left after there is considered settled outside of Stripe
+CREDIT_NOTE.type                  #One of:
+                                  #  - 'pre_payment': INVOICE.status 'open'
+                                  #  - 'post_payment': INVOICE.status 'paid'
+CREDIT_NOTE.status                #STR among:
+                                  #  - 'issued'
+                                  #  - 'void': reverted
 CREDIT_NOTE.invoice             *C#INVOICE.id
 ?invoice=INVOICE.id               #
 CREDIT_NOTE.customer              #CUSTOMER.id
-CREDIT_NOTE.memo                CU#string Customer-facing text that appears on the credit note PDF.
-CREDIT_NOTE.number                #string A unique number that identifies this particular credit note and appears on the PDF of the credit note and its associated invoice.
-CREDIT_NOTE.pdf                   #string The link to download the PDF of the credit note.
-CREDIT_NOTE.reason               C#string Reason for issuing this credit note, one of duplicate, fraudulent, order_change, or product_unsatisfactory
-CREDIT_NOTE.status                #string Status of this credit note, one of issued or void. Learn more about voiding credit notes.
-CREDIT_NOTE.type                  #string Type of this credit note, one of post_payment or pre_payment.
-                                  #A pre_payment credit note means it was issued when the invoice was open.
-                                  #A post_payment credit note means it was issued when the invoice was paid.
+CREDIT_NOTE.amount              *C#PMONEY in total
+CREDIT_NOTE.credit_amount       RC#PMONEY
+CREDIT_NOTE.refund_amount       RC#PMONEY
+CREDIT_NOTE.refund               C#REFUND.id
+CREDIT_NOTE.reason               C#STR among 'duplicate', 'fraudulent', 'order_change', 'product_unsatisfactory'
+CREDIT_NOTE.memo                CU#STR shows to CUSTOMER
+CREDIT_NOTE.number                #Unique STR shown on receipts and INVOICE
+CREDIT_NOTE.pdf                   #'URL' to PDF
+INVOICE.pre|post_payment_
+ credit_notes_amount              #PMONEY received through CREDIT_NOTEs
+
+GET /invoices[/ID]
+POST /invoices[/ID]
+DELETE /invoices/ID               #
+POST /invoices/ID/finalize        #From INVOICE.status 'draft' to 'open'.
+                                  #Payload: invoice, auto_advance.
+POST /invoices/ID/
+ mark_uncollectible               #Set INVOICE.status from 'open' to 'uncollectible'
+POST /invoices/ID/void            #Set INVOICE.status to 'void'
+POST /invoices/ID/send            #Manually send INVOICE by email. Noop in test mode.
+POST /invoices/ID/pay             #Manually set INVOICE.paid true
+                                  #Payload: invoice, source, forgive, paid_out_of_band
+PAYLOAD.paid_out_of_band          #BOOL. Not paid within Stripe. No CHARGE will be automatically created.
+PAYLOAD.forgive                   #BOOL. Allow CHARGE.amount to be less than INVOICE.amount_due.
+STRIPE.invoices.retrieve|list|
+ create|update|del|
+ finalizeInvoice|
+ markUncollectible|void|send|pay()#
+INVOICE                           #Invoice, i.e. SUBSCRIPTION (including CUSTOMER) for a given period.
+INVOICE.subscription             C#SUBSCRIPTION.id
+?subscription=SUBSCRIPTION.id     #
+INVOICE.customer                  #CUSTOMER.id
+?customer=CUSTOMER.id             #
+INVOICE.billing                  C#Def: SUBSCRIPTION.billing
+?billing=STR                      #
+INVOICE.days_until_due         RCU#Def: SUBSCRIPTION.days_until_due
+INVOICE.due_date                CU#DATE_NUM depending on INVOICE.days_until_due
+?due_date=CMP_FILTER              #
+INVOICE.period_start|end          #DATE_NUM
+CUSTOMER.account_balance        CU#MONEY to add|substract to next INVOICE.
+                                  #Negative means we owe CUSTOMER, positive CUSTOMER owes us.
+CUSTOMER.delinquent               #BOOL. True if last INVOICE unpaid by due date, or failed (if recurring).
+INVOICE.starting_balance          #CUSTOMER.account_balance before this INVOICE
+INVOICE.ending_balance           ?#CUSTOMER.account_balance after this INVOICE
+                                  #Only once status 'open'
+INVOICE.subtotal                  #PMONEY before DISCOUNT
+INVOICE.total                     #PMONEY after DISCOUNT
+INVOICE.amount_due                #PMONEY used as CHARGE.amount. INVOICE.starting_balance + INVOICE.total - prorated credits
+INVOICE.amount_paid|remaining     #PMONEY. Their sum === INVOICE.amount_due
+INVOICE.paid                      #BOOL
+INVOICE.
+ subscription_proration_date     ?#DATE_NUM used for proration
+INVOICE.status                    #STR among:
+                                  #  - 'draft'
+                                  #  - 'open'
+                                  #     - EVENT 'invoice.finalized'
+                                  #     - payment will happen in about an hour
+                                  #  - 'paid'
+                                  #     - EVENTs 'invoice.payment_succeeded|failed'
+                                  #  - 'uncollectible'
+                                  #     - EVENT 'invoice.marked_uncollectible'
+                                  #  - 'void'
+                                  #     - EVENT 'invoice.voided'
+                                  #Depending on SUBCRIPTION.billing:
+                                  #  - 'charge_automatically': EVENT 'invoice.upcoming' few days before
+                                  #  - 'send_invoice': EVENT 'invoice.sent'
+INVOICE.auto_advance            CU#BOOL. Automatically go from state 'draft' to 'open'.
+INVOICE.status_transitions.
+ finalized_at|paid_at|
+ marked_uncollectible_at|voided_at#DATE_NUM
+INVOICE.webhooks_delivered_at     #DATE_NUM where EVENT 'invoice.finalized' was successfully delivered (if there are any WEBHOOKs).
+INVOICE.billing_reason            #STR among:
+                                  #  - 'subscription_create': SUBSCRIPTION first period
+                                  #  - 'subscription_cycle': SUBSCRIPTION non-first periods
+                                  #  - 'subscription_update': SUBSCRIPTION update
+                                  #  - 'subscription_threshold': SUBSCRIPTION.billing_thresholds
+                                  #  - 'upcoming': GET /invoices/upcoming
+                                  #  - 'manual': created through API|Dashboard
+INVOICE.threshold_reason          #THRESHOLD_REASON. Only if triggered because of SUBSCRIPTION.billing_thresholds.
+THRESHOLD_REASON.amount_gte       #Total PMONEY that triggered threshold.
+THRESHOLD_REASON.item_reasons     #ITEM_REASON_ARR. Which LINE_ITEM triggered threshold.
+ITEM_REASON.line_item_ids         #LINE_ITEM_ID_ARR
+ITEM_REASON.usage_gte             #PMONEY
+INVOICE.
+ default_payment_method|source  CU#Def: SUBSCRIPTION.default_payment_method|source
+INVOICE.charge                    #CHARGE.id
+INVOICE.payment_intent            #PINTENT.id
+INVOICE.next_payment_attempt      #DATE_NUM for next CHARGE. Only if SUBSCRIPTION.billing 'charge_automatically'
+INVOICE.attempt_count             #NUM. How many times CHARGE was tried (including successfully).
+INVOICE.attempted                 #BOOL. Whether attemp_count !== 0
+INVOICE.invoice_pdf              ?#'URL' to PDF. Can view.
+                                  #Not if state 'draft'
+INVOICE.hosted_invoice_url        #'URL' to web version. Can view and pay.
+                                  #Not if state 'draft'
+INVOICE.receipt_number            #Unique STR shown in receipts (payment transaction).
+INVOICE.number                    #Unique STR shown in receipts (invoice + customer).
+CUSTOMER.invoice_prefix         CU#STR prefixed to INVOICE.number
+INVOICE.lines                     #LINE_ITEM_LIST
+                                  #Sorted by LINE_ITEM.subscription then LINE_ITEM.period.end
+CUSTOMER.invoice_settings       CU#INVOICE_SETTINGS
+INVOICE.description             CU#STR shown to CUSTOMER
+INVOICE[_SETINGS].custom_fields CU#CUSTOM_FIELD_ARR. Rows displayed on the invoice, beyong LINE_ITEM
+CUSTOM_FIELD.name                C#STR
+CUSTOM_FIELD.value               C#STR
+INVOICE[_SETTINGS].footer       CU#STR displayed on the invoice.
+INVOICE.account_name              #ACCOUNT.business_profile.name
+INVOICE.customer_address|email|
+ name|phone|shipping|tax*         #CUSTOMER.*
+
+GET /invoices/ID/lines            #
+STRIPE.invoices.retrieveLines()   #
+LINE_ITEM                         #Single item in an INVOICE
+LINE_ITEM.type                    #Either 'subscription' or 'invoiceitem'
+LINE_ITEM.subscription          ?C#SUBSCRIPTION.id
+LINE_ITEM.subscription_item      ?#SUBSCRIPTION_ITEM.id
+LINE_ITEM.plan                   ?#PLAN.id
+LINE_ITEM.invoice_item           ?#INVOICE_ITEM.id
+LINE_ITEM.amount                CU#MONEY
+LINE_ITEM.quantity              CU#NUM
+LINE_ITEM.discountable          CU#BOOL. Whether DISCOUNT should be used.
+LINE_ITEM.proration               #BOOL
+LINE_ITEM.period.start|end      CU#DATE_NUM
+LINE_ITEM.description           CU#STR shown to CUSTOMER
+
+GET /invoiceitems[/ID]
+POST /invoiceitems[/ID]
+DELETE /invoiceitems/ID           #
+STRIPE.invoiceItems.
+ retrieve|list|create|update|del()#
+INVOICE_ITEM                      #INVOICE items not part of a SUBSCRIPTION
+INVOICE_ITEM                      #Same properties as LINE_ITEM, with extra fields:
+INVOICE_ITEM.unit_amount        CU#PMONEY
+INVOICE_ITEM.invoice            ?C#INVOICE.id
+?invoice=INVOICE.id               #
+?pending=BOOL                     #Filter by INVOICE undefined
+INVOICE_ITEM.customer             #CUSTOMER.id
+?customer=CUSTOMER.id             #
+INVOICE_ITEM.date                 #DATE_NUM
+
+GET /invoices/upcoming            #See INVOICEs not created yet.
+STRIPE.invoices.retrieveUpcoming()#
+GET /invoices/upcoming/lines      #See LINE_ITEMs of INVOICEs not created yet.
+?coupon=COUPON.id                 #
+?customer=CUSTOMER.id             #
+?subscription=ID                  #
+?subscription_billing_cycle_anchor
+ =STR                             #
+?subscription_cancel_at_period_end
+ =BOOL                            #
+?subscription_cancel_now=BOOL     #
+?subscription_default_tax_rates=
+ OBJ_ARR                          #
+?subscription_prorate=BOOL        #
+?subscription_proration_date=
+ DATE_NUM                         #
+?subscription_trial_end=BOOL      #
+?subscription_trial_from_plan=BOOL#
+?subscription_items=OBJ_ARR       #
+?subscription_items.*.id=ID       #
+?subscription_items.*.
+ billing_thresholds.usage_gte=NUM #
+?subscription_items.*.clear_usage=
+ BOOL                             #
+?subscription_items.*.deleted=BOOL#
+?subscription_items.*.metadata=OBJ#
+?subscription_items.*.plan=ID     #
+?subscription_items.*.quantity=NUM#
+?subscription_items.*.tax_rates=
+ OBJ_ARR                          #
+?invoice_items=OBJ_ARR            #
+?invoice_items.*.amount=NUM       #
+?invoice_items.*.currency=STR     #
+?invoice_items.*.description=STR  #
+?invoice_items.*.discountable=BOOL#
+?invoice_items.*.invoiceitem=ID   #
+?invoice_items.*.metadata=OBJ     #
+?invoice_items.*.period.start|end
+ =DATE_NUM                        #
+?invoice_items.*.quantity=NUM     #
+?invoice_items.*.tax_rates=OBJ_ARR#
+?invoice_items.*.unit_amount=NUM  #
+
+GET /customers/ID/tax_ids[/ID]
+POST /customers/ID/tax_ids
+DELETE /customers/ID/tax_ids/ID   #
+STRIPE.taxIds.
+ retrieve|list|create|del()       #
+TAX_IDS                           #CUSTOMER's tax identifiers.
+                                  #Verified by Stripe, and translated into name and address.
+                                  #Shown on INVOICEs.
+TAX_IDS.customer                *C#CUSTOMER.id
+?customer=CUSTOMER.id             #
+TAX_IDS.type                    *C#One of 'eu_vat' (EU), 'nz_gst' (New Zealand), 'au_abn' (Australia), 'unknown'.
+TAX_IDS.value                   *C#STR
+TAX_IDS.country                   #COUNTRY
+TAX_IDS.verification              #TAX_VERIF
+TAX_VERIF.status                  #From 'pending' to 'available' (success), 'unavailable' (failure) or 'unverified' (cannot check)
+TAX_VERIF.verified_name           #STR
+TAX_VERIF.verified_address        #STR
+CUSTOMER.tax_ids                  #TAX_IDS_LIST
+CUSTOMER.tax_id_data            RC#TAX_IDS_ARR
+CUSTOMER.tax_exempt             CU#One of 'none' (def), 'exempt' or 'reverse'
 
 GET /tax_rates[/ID]
 POST /tax_rates[/ID]              #
 STRIPE.taxRates.
  retrieve|list|create|update()    #
-TAX_RATE                          #
+TAX_RATE                          #Specific tax rate for a given SUBSCRIPTION[_ITEM]|INVOICE|LINE_ITEM
 TAX_RATE.percentage             *C#FLOAT (0-1)
 ?percentage=CMP_FILTER            #
-TAX_RATE.inclusive              *C#BOOL. This specifies if the tax rate is inclusive or exclusive.
+TAX_RATE.inclusive              *C#BOOL. Whether inclusive (included in amount) or exclusive (added to amount).
 ?inclusive=BOOL                   #
-TAX_RATE.display_name          *CU#STR. The display name of the tax rates as it will appear to your customer on their receipt email, PDF, and the hosted invoice page.
-TAX_RATE.description            CU#STR. An arbitrary string attached to the tax rate for your internal use only. It will not be visible to your customers.
-TAX_RATE.jurisdiction           CU#STR. The jurisdiction for the tax rate.
-TAX_RATE.active                 CU#BOOL (def: true)
-?active=BOOL                      #When set to false, this tax rate cannot be applied to objects in the API, but will still be applied to subscriptions and invoices that already have it set.
+TAX_RATE.jurisdiction           CU#STR
+TAX_RATE.active                 CU#BOOL (def: true). Whether can be applied to new SUBSCRIPTION|INVOICE (old ones will still work)
+?active=BOOL                      #
+TAX_RATE.display_name          *CU#STR shown to receipts and INVOICEs
+TAX_RATE.description            CU#STR not shown to CUSTOMER
+SUBSCRIPTION|INVOICE.
+ default_tax_rates              CU#TAX_RATE_LIST
+SUBSCRIPTION_ITEM|LINE_ITEM.
+ tax_rates                      CU#TAX_RATE_ARR
+INVOICE.tax                       #PMONEY. Amount of tax.
+INVOICE|LINE_ITEM.
+ total_tax_amounts                #TAX_AMOUNT_ARR. Breakdown of taxes
+TAX_AMOUNT.amount                 #PMONEY
+TAX_AMOUNT.inclusive              #BOOL
+TAX_AMOUNT.tax_rate               #TAX_RATE
 
 GET /orders[/ID]
 POST /orders[/ID]                 #
@@ -2854,14 +2824,10 @@ ORDER.status                     U#STR among:
                                   #  - 'fulfilled': paid + shipped
                                   #  - 'returned': REFUND after shipped (RETURN)
 ?status=STR                       #
-ORDER.status_transitions          #STATUS_TRANSITIONS
-STATUS_TRANSITIONS.
+ORDER.status_transitions.
  paid|fulfilled|returned|canceled #DATE_NUM
 ?status_transitions=OBJ_ARR       #OBJ_ARR: canceled|fulfiled|paid|returned CMP_FILTER
 ORDER.updated                     #DATE_NUM
-ORDER.coupon                   RCU#COUPON.id to create a 'discount' ORDER_ITEM.
-                                  #Must be COUPON.duration 'once' and same currency as ORDER.
-ORDER.external_coupon_code        #Same
 ORDER.returns                     #RETURN_LIST
 ORDER.shipping                 ?CU#SHIPPING
 ORDER.shipping_methods           ?#Available SHIPPING_METHOD_ARR
@@ -3238,6 +3204,37 @@ STRIPE.terminal.connectionTokens.
 CONNECTION_TOKEN.
  operator_account               RC#Like READER.*
 CONNECTION_TOKEN.secret           #string Your application should pass this token to the Stripe Terminal SDK.
+
+GET /checkout/sessions/ID
+POST /checkout/sessions           #
+STRIPE.checkout.sessions.
+ retrieve|create()                #
+SESSION                           #Checkout session
+checkout.session.completed        #'EVENT_TYPE' when a Checkout Session has been successfully completed.
+SESSION.success_url             *C#string The URL the customer will be directed to after a successful payment.
+SESSION.cancel_url              *C#string The URL the customer will be directed to if they decide to go back to your website.
+SESSION.client_reference_id      C#string A unique string to reference the Checkout Session.
+                                  #This can be a customer ID, a cart ID, or similar.
+                                  #It is included in the checkout.session.completed webhook and can be used to fulfill the purchase.
+SESSION.customer                 C#CUSTOMER.id
+SESSION.customer_email           C#string The email address used to create the customer object.
+SESSION.display_items             #DISPLAY_ITEM_ARR The line items, plans, or SKUs that were purchased by the customer.
+DISPLAY_ITEM.amount               #PMONEY
+DISPLAY_ITEM.quantity             #NUM
+DISPLAY_ITEM.type                 #STR, including 'custom'
+DISPLAY_ITEM.custom               #OBJ metadata
+SESSION.line_items              RC#LINE_ITEM_ARR:
+                                  #  - only amount, quantity, description
+                                  #  - also attributes: name STR, images 'URL'_ARR
+SESSION.locale                   C#string The IETF language tag of the locale Checkout is displayed in. If blank or auto, the browser's locale is used.
+SESSION.payment_intent            #PINTENT.id Only if SKUs or line items were provided.
+SESSION.payment_intent_data      C#PINTENT with only: application_fee_amount, capture_method, description, on_behalf_of, receipt_email, shipping, statement_descriptor, transfer_data
+SESSION.payment_method_types    *C#array containing strings The list of payment method types (e.g. card) that this Checkout Session is allowed to use.
+SESSION.subscription              #SUBSCRIPTION.id Only if one or more plans were provided.
+SESSION.subscription_data        C#SUBSCRIPTION with only trial_end, trial_period_days, items SUBSCRIPTION_ITEM_ARR (with only plan|quantity)
+SESSION.                        *C#Specify whether Checkout should collect the customer's billing address.
+ billing_address_collection       #If set to required, Checkout will always collect the customer's billing address.
+                                  #If left blank or set to auto Checkout will only collect the billing address when necessary.
 
 GET /sigma/scheduled_query_runs
  [/ID]                            #
