@@ -1946,6 +1946,196 @@ STORAGE.removeItem('VAR')                       #
 STORAGE.clear()                                 #
 
 
+																						 /=+===============================+=\ 
+																						/  :                               :  \  
+							 														  )==:           INDEXEDDB           :==(   
+																						\  :_______________________________:  /    
+																						 \=+===============================+=/
+
+
+COMPARISON TO LOCAL STORAGE ==>                 #Like localStorage:
+                                                #  - client-side key-value store
+                                                #  - affected by private browsing and removing using user settings (data+schema)
+                                                #Unlike localStorage:
+                                                #  - more value types
+                                                #  - async
+                                                #     - browser can time out connections and requests
+                                                #     - faster
+                                                #  - more ACID
+                                                #  - different persistence (see below)
+ACID ==>                                        #Atomicity: 
+                                                #  - use transactions: auto-commit, auto-rollback
+                                                #  - use locks (no MVCC):
+                                                #     - database-wide lock for schema operations
+                                                #     - table-wide lock for write operations 
+                                                #Consistency:
+                                                #  - can still get inconsistent state if transaction crashes half-written because of cache
+                                                #Durability: 
+                                                #  - notifies when buffered (but not flushed to disk)
+                                                #  - transactions can abort without notifications (e.g. when user closes browser)
+about:indexeddb-internals                       #For debugging (Chrome only)
+
+
+WINDOW|WORKERGLOBAL.indexedDB                   #IFACTORY
+
+IDBDatabase                                     #Connection to a database
+IFACTORY.open('DB'[, VERSION_NUM])->IOREQ(IDB)  #Creates it if not existing
+                                                #Def VERSION_NUM: if existing, current one. Otherwise 1.
+IFACTORY.deleteDatabase('DB')->IOREQ()          #
+IDB.name                                        #'DB'
+IDB.close()                                     #Let pending ITRANSACTION finish first, but do not start new ones
+IDB.onabort = FUNC(EVENT)                       #Fired if any ITRANSACTION.onabort
+IDB.onerror = FUNC(EVENT)                       #Fired if any ITRANSACTION.onerror
+
+IDB.version                                     #VERSION_NUM (ULONGLONG), changed everytime schema changes.
+                                                #Non-yet-existing IDB has version 0
+                                                #When IFACTORY.open() use VERSION_NUM:
+                                                #  - < IDB.version: IREQ will be 'VersionError'
+                                                #  - > IDB.version:
+                                                #     - requests IDB-wide lock:
+                                                #        - new connections are queued
+                                                #        - existing connections (e.g. other tabs) get IDB.onversionchange event, to allow them to close
+                                                #     - if any could not close, IOREQ.onblocked is fired
+                                                #     - otherwise, IOREQ.onupgradeneeded is fired, with IOREQ.mode 'versionchange' (i.e. can change schema)
+                                                #When IFACTORY.deleteDatabase():
+                                                #  - new VERSION_NUM is null, upgradeneeded is not fired 
+                                                #  - but otherwise is like upgradeneeded mechanism
+IDB.onversionchange = FUNC(VCHANGEEVENT)       $#Not supported by IE. 'IndexedDBShim' (pretty big, consider twice)
+IOREQ.onupgradeneeded = FUNC(VCHANGEEVENT)      #IOREQ.result null, but IOREQ.transaction available
+IOREQ.onblocked = FUNC(VCHANGEEVENT)            #
+VCHANGEEVENT.old|newVersion                     #VERSION_NUM
+
+
+IVAL                                            #Any JSON val, but also: REGEXP, ARRAYBUFFER[VIEW], MAP|SET, BLOB, IMAGEDATA, and circular references
+                                                #If trying to IVAL with unsupported type, will use IREQ with 'DataCloneError'
+
+KEY                                             #Can be:
+                                                #  - STR|DATE|NUM 
+                                               $#  - STR|DATE|NUM_ARR, depending on multiEntry:
+                                               $#     - false: whole array is key, including its order
+                                               $#     - true: same for reads. For writes, flattened as several keys.
+                                               $#    Not supported by IE. 'IndexedDBShim' (pretty big, consider twice)
+                                                #Constraints:
+                                                #  - unique: 
+                                                #     - enforces uniquess on KEY
+                                                #     - if not unique, queries will retrieve first one only.
+                                                #  - primary key always has unique true, multiEntry false
+                                                #Primary vs secondary:
+                                                #  - ISTORE only have one key, the primary one
+                                                #  - IINDEX's primary key is ISTORE's secondary key
+                                                #Default value possible if:
+                                                #  - keyPath KEYPATH:
+                                                #     - IVAL[KEYPATH], if exists (i.e. IVAL must be OBJ)
+                                                #     - IVAL[KEYPATH] is still stored as part of IVAL
+                                                #  - autoIncrement true: NUM++ (starts at 1). Can mix with non-NUM keys
+KEYPATH                                         #'VARR' (targetting STR|DATE|NUM) or 'VARR'_ARR (targetting STR|DATE|NUM)
+IFACTORY.cmp(KEY, KEY2)->-1|0|1                 #Using default IndexedDB key sorting
+                                                #By default, values are stored in ISTORE by key in asc order
+
+IDBKeyRange                                     #Sets of continuous KEY
+IRANGE.lower|upper                              #KEY|undefined
+IRANGE.lower|upperOpen                          #BOOL: whether lower|upper is excluded
+IKeyRange.bound(KEY,KEY2[,BOOL][,BOOL2])->IRANGE#IRANGE with lower|upper KEY[2], lower|upperOpen BOOL[2] (def: false)
+IKeyRange.lower|upperBound(KEY[, BOOL])->IRANGE #IRANGE with lower KEY, upper undefined, lowerOpen false, upperOpen true (or inverse)
+IKeyRange.only(KEY)->IRANGE                     #IRANGE with lower|upper KEY, lower|upperOpen false
+
+
+IDBObjectStore                                  #Store (table-like)
+IDB.createObjectStore('STORE'[, OBJ])->ISTORE   #OBJ: keyPath, autoIncrement
+IDB.deleteObjectStore('STORE')                  #
+IDB.objectStoreNames                            #'STORE'_ARR (ARR-like, with also contains('STORE'))
+ISTORE.name                                     #'STORE'
+ISTORE.keyPath                                  #KEYPATH|null (see above) (read-only)
+                                                #If specified wrong, will use IREQ with 'SyntaxError'
+ISTORE.autoIncrement                            #BOOL (def: false) (see above) (read-only)
+                                               $#Not supported by IE (but OBJ.autoIncrement is). 'IndexedDBShim' (pretty big, consider twice)
+ISTORE.add(IVAL[, KEY])->IREQ(KEY)              #Create. If already exist, IREQ with 'ConstraintError'
+ISTORE.put(IVAL[, KEY])->IREQ(KEY)              #Create or update
+ISTORE.get(KEY|IRANGE)->IREQ(IVAL)              #Cannot tell if key exists or if value is just undefined (use ICUR instead for this).
+ISTORE.count([KEY|IRANGE])->IREQ(NUM)           #
+ISTORE.delete(KEY|IRANGE)->IREQ()               #
+ISTORE.clear()->IREQ()                          #
+
+IDBCursor                                       #Iterator
+ISTORE|IINDEX.open[Key]Cursor                   #If 'Key', ICUR.value is not available.
+ ([KEY|IRANGE[, DIRECTION]])->IREQ(ICUR)       $#ISTORE.openKeyCursor(): not supported by IE. 'IndexedDBShim' (pretty big, consider twice)
+ICUR.source                                     #ISTORE|IINDEX
+ICUR.direction                                  #'next' (def), 'prev' or (skips duplicates) 'next|prevunique'
+ICUR.primaryKey|key                             #If source is IINDEX, primary key and secondary key
+                                                #If source is ISTORE, primary key for both (since there are no secondary key)
+ICUR.value                                      #Current IVAL
+Boolean(ICUR)                                   #False if iteration ended
+ICUR.advance(ULONG)                             #Moves cursor ULONG times.
+                                                #Make original IREQ fire success event again (moves cursor only after that event)
+ICUR.continue()                                 #Like ICUR.advance(1)
+ICUR.continue(KEY)                              #Moves cursor until KEY reached. Fires exception if KEY already passed.
+                                                #Make original IREQ fire success like ICUR.advance()
+ICUR.update(IVAL)->IREQ(KEY)                    #Updates at current position
+ICUR.delete()->IREQ()                           #Deletes at current position
+
+IDBIndex                                        #Retrieves values from an ISTORE using a different KEYPATH2:
+                                                #  - primary key: ISTORE.keyPath KEYPATH, pointing to ISTORE
+                                                #  - secondary key: IINDEX.keyPath KEYPATH2, pointing to ISTORE as well
+ISTORE.indexNames                               #'INDEX'_ARR (ARR-like, with also contains('INDEX'))
+ISTORE.createIndex('INDX',KEYPATH[,OBJ])->IINDEX#OBJ: unique BOOL, multiEntry BOOL
+ISTORE.index('INDEX')->IINDEX                   #
+ISTORE.deleteIndex('INDEX')                     #
+IINDEX.name                                     #'INDEX'
+IINDEX.objectStore                              #ISTORE
+IINDEX.keyPath                                  #KEYPATH2
+IINDEX.unique                                   #BOOL (def: false) (see above)
+IINDEX.multiEntry                               #BOOL (def: false) (see above)
+                                               $#Not supported by IE (but OBJ.multiEntry is). 'IndexedDBShim' (pretty big, consider twice)
+IINDEX.getKey(KEY|IRANGE)->IREQ(KEY)            #Primary key
+IINDEX.get(KEY|IRANGE)->IREQ(IVAL)              #
+IINDEX.count([KEY|IRANGE])->IREQ(NUM)           #
+
+
+IDBTransaction                                  #Database transaction
+                                                #Can timeout, in which case IREQ will be 'TimeoutError'
+                                                #Once closed, any IREQ will be 'TransactionInactiveError'
+IDB.transaction('STORE'[_ARR][,MODE])->ITRNSACTN#
+ITRANSACTION.db                                 #IDB
+ITRANSACTION.objectStore('STORE')->ISTORE       #
+ISTORE.transaction                              #ITRANSACTION
+ITRANSACTION.mode                               #MODE: 
+                                                #  - 'readonly' (def): 
+                                                #     - cannot modify anything, otherwise IREQ will be 'ReadOnlyError'
+                                                #     - no lock
+                                                #  - 'readwrite': 
+                                                #     - cannot modify schema (*.create|deleteObjectStore|Index())
+                                                #     - ISTORE-wide lock
+                                                #  - 'versionchange': 
+                                                #     - can do anything
+                                                #     - IDB-wide lock
+                                                #     - only available inside upgradeneeded event handler
+ITRANSACTION.oncomplete = FUNC(EVENT)           #Fired on success, i.e. when transaction result is buffered (not flushed to disk)
+ITRANSACTION.onerror = FUNC(EVENT)              #Fired if any IREQ.onerror
+ITRANSACTION.error                              #ERROR|null
+ITRANSACTION.abort()                            #Rollbacks changes
+                                                #Future IREQ with fail with 'AbortError'
+ITRANSACTION.onabort = FUNC(EVENT)              #On ITRANSACTION.abort()
+
+IDBRequest                                      #Async operation (PROMISE-like)
+IREQ.source                                     #Object having returned it, i.e. ISTORE|IINDEX|IICURSOR|null
+IREQ.transaction                                #ITRANSACTION|null
+IREQ.readyState                                 #Can be 'pending', or 'done' (success|error)
+IREQ.onsuccess = FUNC(EVENT)                    #
+IREQ.result                                     #If success. VAL
+IREQ.onerror = FUNC(EVENT)                      #Default browser action (cancelable) (on IREQ, ITRANSACTION or IDB???): calls IREQ.transaction.abort()
+IREQ.error                                      #If error. ERROR:
+                                                #  - 'NoError': if success
+                                                #  - 'NotFoundError': did not find name
+                                                #  - 'ConstraintError': e.g. name already exist, unique constraints
+                                                #  - 'DataError': wrong argument type
+                                                #  - 'InvalidAccessError': wrong argument value
+                                                #  - 'InvalidStateError': function cannot be called yet|anymore
+                                                #  - 'QuotaExceededError': no more spaces
+                                                #  - 'UnknownError': e.g. IO error
+                                                #  - '*Error': see above
+IDBOpenDBRequest                                #Child of IRequest with upgradeneeded and blocked events (see above)
+
+
                                              /=+===============================+=\ 
                                             /  :                               :  \  
                                             )==:        STORAGE SUMMARY        :==(   
@@ -1956,28 +2146,29 @@ STORAGE.clear()                                 #
 DIFFERENT STORAGE ==>                           #All storage : can be erased through private data erasing GUI for normal 
                                                 #websites/hosted apps, but not for extensions/packaged apps.
 
-                            +------------------+-----------------------+--------------------+--------------------------------+
-                            | Avail.           | Limit                 | Model              | Other                          |
-  +-------------------------+------------------+-----------------------+--------------------+--------------------------------+
-  | cookies                 | All              | 4KB/cookie, 50/domain | Flat. As STR.      | Communicated to server         |
-  +-------------------------+------------------+-----------------------+--------------------+--------------------------------+
-  | localStorage            | All              | 2-10MB/domain         | Flat. As STR.      | Not async.                     |
-  +-------------------------+------------------+-----------------------+--------------------+--------------------------------+
-  | XHR                     | All              | None                  | None               | Slower. Persisted on server.   |
-  |                         |                  |                       |                    | Requires network.              |
-  +-------------------------+------------------+-----------------------+--------------------+--------------------------------+
-  | chrome.storage          | Chrome apps/exts | Unlim (permissions)   | Flat. As OBJ.      | Can be used by content scripts |
-  |                         |                  |                       |                    | Can Cloud sync.                |
-  |                         |                  |                       |                    | Storage event.                 |
-  +-------------------------+------------------+-----------------------+--------------------+--------------------------------+
-  | indexedDB               | Not Safari       | Unlim (permissions)   | Database           |                                |
-  +-------------------------+------------------+-----------------------+--------------------+--------------------------------+
-  | chrome.downloads        | Chrome exts      | Unlim (only download) | Real filesystem    | Filechooser popup or not       |
-  +-------------------------+------------------+-----------------------+--------------------+--------------------------------+
-  | chrome.[sync]filesystem | Chrome apps      | Unlim (permissions)   | Real filesystem    | Use fileSystem API.            |
-  |                         |                  |                       |                    | Can sync with Google Drive.    |
-  +-------------------------+------------------+-----------------------+--------------------+--------------------------------+
-
+                            +------------------+----------------------------------------------------------+--------------------+--------------------------------+
+                            | Avail.           | Limit                                                    | Model              | Other                          |
+  +-------------------------+------------------+----------------------------------------------------------+--------------------+--------------------------------+
+  | cookies                 | All              | 4KB/cookie, 50/domain                                    | Flat. As STR.      | Communicated to server         |
+  +-------------------------+------------------+----------------------------------------------------------+--------------------+--------------------------------+
+  | localStorage            | All              | 2-10MB/domain                                            | Flat. As STR.      | Not async.                     |
+  +-------------------------+------------------+----------------------------------------------------------+--------------------+--------------------------------+
+  | XHR                     | All              | None                                                     | None               | Slower. Persisted on server.   |
+  |                         |                  |                                                          |                    | Requires network.              |
+  +-------------------------+------------------+----------------------------------------------------------+--------------------+--------------------------------+
+  | chrome.storage          | Chrome apps/exts | Unlim (permissions)                                      | Flat. As OBJ.      | Can be used by content scripts |
+  |                         |                  |                                                          |                    | Can Cloud sync.                |
+  |                         |                  |                                                          |                    | Storage event.                 |
+  +-------------------------+------------------+----------------------------------------------------------+--------------------+--------------------------------+
+  | indexedDB               | All              | 33-50% of disk space for all domains (browser-dependant) | Database           |                                |
+  |                         |                  | 33-50% * 20% (i.e. 6.6-10%) for each domain              |                    |                                |
+  |                         |                  | LRU removal if no space                                  |                    |                                |
+  +-------------------------+------------------+----------------------------------------------------------+--------------------+--------------------------------+
+  | chrome.downloads        | Chrome exts      | Unlim (only download)                                    | Real filesystem    | Filechooser popup or not       |
+  +-------------------------+------------------+----------------------------------------------------------+--------------------+--------------------------------+
+  | chrome.[sync]filesystem | Chrome apps      | Unlim (permissions)                                      | Real filesystem    | Use fileSystem API.            |
+  |                         |                  |                                                          |                    | Can sync with Google Drive.    |
+  +-------------------------+------------------+----------------------------------------------------------+--------------------+--------------------------------+
 
 DEBUGGING ==>                                   #about:quota-internals (Chrome)
 
@@ -2327,8 +2518,7 @@ FILES ==>                                       #File API (W):
                                             IE11#  - BLOB: isClosed
                                             IE11#  - FILE: new
                                             IE11#  - URL: createFor()
-                                            IE11#Indexed Database API (R) (like localStorage, but faster, async and more structured)
-                                                #  - including about:indexeddb-internals (Chrome only)
+                                           $IE11#Indexed Database API (R) (few different behavior)
                                             IE11#Streams API (WHATWG) (like Node.js streams)
 
 MOBILE ==>                                  IE11#Client Hints (W) (RTF draft-ietf-httpbis-client-hints) (client HTTP headers indicating screen size/ratio, network speed, etc.)
@@ -2401,190 +2591,3 @@ PRIVACY ==>                                     #DNT (R):
 EXTERNAL DEVICES ==>                        IE11#Network Service Discovery (W) (DNS-SD using NAVIGATOR.getNetworkServices())
 																						IE11#Presentation API (R) (connecting to external display, e.g. TV or Chromecast)
 																						IE11#Remote Playback API (W) (manipulating external display, e.g. TV or Chromecast)
-
-
-
-IndexedDB: 
-  - like localStorage:
-     - client-side key-value store
-     - affected by private browsing and removing using user settings (data+schema)
-  - unlike localStorage:
-     - more value types
-     - async
-     - more ACID
-     - different persistence
-  - persistence:
-     - space quota: 
-        - depends on browser:
-           - on Chrome, 33% of available disk space for all domains, 33%*20% (i.e. 6.6%) for each domain
-           - on Firefox, 50% of available disk space for all domains, 50%*20% (i.e. 10%) for each domain
-        - LRU removal if no space
-  - ACID:
-     - ???
-     - atomicity: 
-        - use transactions: auto-commit, auto-rollback
-        - use locks (no MVCC):
-           - database-wide lock for schema operations
-           - table-wide lock for write operations 
-     - consistency:
-        - can still get inconsistent state if transaction crashes half-written because of cache
-     - isolation
-     - durability: 
-        - notifies when buffered (but not flushed to disk)
-        - transactions can abort without notifications (e.g. when user closes browser)
-  - connections and requests: browser can time it out
-
-
-
-WINDOW|WORKERGLOBAL.indexedDB                   #IFACTORY
-
-IDBDatabase                                     #Connection to a database
-IFACTORY.open('DB'[, VERSION_NUM])->IOREQ(IDB)  #Creates it if not existing
-                                                #Def VERSION_NUM: if existing, current one. Otherwise 1.
-IFACTORY.deleteDatabase('DB')->IOREQ()          #
-IDB.name                                        #'DB'
-IDB.close()                                     #Let pending ITRANSACTION finish first, but do not start new ones
-IDB.onabort = FUNC(EVENT)                       #Fired if any ITRANSACTION.onabort
-IDB.onerror = FUNC(EVENT)                       #Fired if any ITRANSACTION.onerror
-
-IDB.version                                     #VERSION_NUM (ULONGLONG), changed everytime schema changes.
-                                                #Non-yet-existing IDB has version 0
-                                                #When IFACTORY.open() use VERSION_NUM:
-                                                #  - < IDB.version: IREQ will be 'VersionError'
-                                                #  - > IDB.version:
-                                                #     - requests IDB-wide lock:
-                                                #        - new connections are queued
-                                                #        - existing connections (e.g. other tabs) get IDB.onversionchange event, to allow them to close
-                                                #     - if any could not close, IOREQ.onblocked is fired
-                                                #     - otherwise, IOREQ.onupgradeneeded is fired, with IOREQ.mode 'versionchange' (i.e. can change schema)
-                                                #When IFACTORY.deleteDatabase():
-                                                #  - new VERSION_NUM is null, upgradeneeded is not fired 
-                                                #  - but otherwise is like upgradeneeded mechanism
-IDB.onversionchange = FUNC(VCHANGEEVENT)
-VCHANGEEVENT.old|newVersion                     #VERSION_NUM
-IOREQ.onupgradeneeded = FUNC(VCHANGEEVENT)      #IOREQ.result null, but IOREQ.transaction available
-IOREQ.onblocked = FUNC(VCHANGEEVENT)            #
-
-IVAL                                            #Any JSON val, but also: REGEXP, ARRAYBUFFER[VIEW], MAP|SET, BLOB, IMAGEDATA, and circular references
-                                                #If trying to IVAL with unsupported type, will use IREQ with 'DataCloneError'
-
-KEY                                             #Can be:
-                                                #  - STR|DATE|NUM 
-                                                #  - STR|DATE|NUM_ARR, depending on multiEntry:
-                                                #     - false: whole array is key, including its order
-                                                #     - true: same for reads. For writes, flattened as several keys.
-                                                #Constraints:
-                                                #  - unique: 
-                                                #     - enforces uniquess on KEY
-                                                #     - if not unique, queries will retrieve first one only.
-                                                #  - primary key always has unique true, multiEntry false
-                                                #Primary vs secondary:
-                                                #  - ISTORE only have one key, the primary one
-                                                #  - IINDEX's primary key is ISTORE's secondary key
-                                                #Default value possible if:
-                                                #  - keyPath KEYPATH:
-                                                #     - IVAL[KEYPATH], if exists (i.e. IVAL must be OBJ)
-                                                #     - IVAL[KEYPATH] is still stored as part of IVAL
-                                                #  - autoIncrement true: NUM++ (starts at 1). Can mix with non-NUM keys
-KEYPATH                                         #'VARR' (targetting STR|DATE|NUM) or 'VARR'_ARR (targetting STR|DATE|NUM)
-IFACTORY.cmp(KEY, KEY2)->-1|0|1                 #Using default IndexedDB key sorting
-                                                #By default, values are stored in ISTORE by key in asc order
-
-IDBKeyRange                                     #Sets of continuous KEY
-IRANGE.lower|upper                              #KEY|undefined
-IRANGE.lower|upperOpen                          #BOOL: whether lower|upper is excluded
-IKeyRange.bound(KEY,KEY2[,BOOL][,BOOL2])->IRANGE#IRANGE with lower|upper KEY[2], lower|upperOpen BOOL[2] (def: false)
-IKeyRange.lower|upperBound(KEY[, BOOL])->IRANGE #IRANGE with lower KEY, upper undefined, lowerOpen false, upperOpen true (or inverse)
-IKeyRange.only(KEY)->IRANGE                     #IRANGE with lower|upper KEY, lower|upperOpen false
-
-IDBObjectStore                                  #Store (table-like)
-IDB.createObjectStore('STORE'[, OBJ])->ISTORE   #OBJ: keyPath, autoIncrement
-IDB.deleteObjectStore('STORE')                  #
-IDB.objectStoreNames                            #'STORE'_ARR (ARR-like, with also contains('STORE'))
-ISTORE.name                                     #'STORE'
-ISTORE.keyPath                                  #KEYPATH|null (see above) (read-only)
-                                                #If specified wrong, will use IREQ with 'SyntaxError'
-ISTORE.autoIncrement                            #BOOL (def: false) (see above) (read-only)
-ISTORE.add(IVAL[, KEY])->IREQ(KEY)              #Create. If already exist, IREQ with 'ConstraintError'
-ISTORE.put(IVAL[, KEY])->IREQ(KEY)              #Create or update
-ISTORE.get(KEY|IRANGE)->IREQ(IVAL)              #Cannot tell if key exists or if value is just undefined (use ICUR instead for this).
-ISTORE.count([KEY|IRANGE])->IREQ(NUM)           #
-ISTORE.delete(KEY|IRANGE)->IREQ()               #
-ISTORE.clear()->IREQ()                          #
-
-IDBCursor                                       #Iterator
-ISTORE|IINDEX.open[Key]Cursor
- ([KEY|IRANGE[, DIRECTION]])->IREQ(ICUR)        #If 'Key', ICUR.value is not available.
-ICUR.source                                     #ISTORE|IINDEX
-ICUR.direction                                  #'next' (def), 'prev' or (skips duplicates) 'next|prevunique'
-ICUR.primaryKey|key                             #If source is IINDEX, primary key and secondary key
-                                                #If source is ISTORE, primary key for both (since there are no secondary key)
-ICUR.value                                      #Current IVAL
-Boolean(ICUR)                                   #False if iteration ended
-ICUR.advance(ULONG)                             #Moves cursor ULONG times.
-                                                #Make original IREQ fire success event again (moves cursor only after that event)
-ICUR.continue()                                 #Like ICUR.advance(1)
-ICUR.continue(KEY)                              #Moves cursor until KEY reached. Fires exception if KEY already passed.
-                                                #Make original IREQ fire success like ICUR.advance()
-ICUR.update(IVAL)->IREQ(KEY)                    #Updates at current position
-ICUR.delete()->IREQ()                           #Deletes at current position
-
-IDBIndex                                        #Retrieves values from an ISTORE using a different KEYPATH2:
-                                                #  - primary key: ISTORE.keyPath KEYPATH, pointing to ISTORE
-                                                #  - secondary key: IINDEX.keyPath KEYPATH2, pointing to ISTORE as well
-ISTORE.indexNames                               #'INDEX'_ARR (ARR-like, with also contains('INDEX'))
-ISTORE.createIndex('INDX',KEYPATH[,OBJ])->IINDEX#OBJ: unique BOOL, multiEntry BOOL
-ISTORE.index('INDEX')->IINDEX                   #
-ISTORE.deleteIndex('INDEX')                     #
-IINDEX.name                                     #'INDEX'
-IINDEX.objectStore                              #ISTORE
-IINDEX.keyPath                                  #KEYPATH2
-IINDEX.unique                                   #BOOL (def: false) (see above)
-IINDEX.multiEntry                               #BOOL (def: false) (see above)
-IINDEX.getKey(KEY|IRANGE)->IREQ(KEY)            #Primary key
-IINDEX.get(KEY|IRANGE)->IREQ(IVAL)              #
-IINDEX.count([KEY|IRANGE])->IREQ(NUM)           #
-
-IDBTransaction                                  #Database transaction
-                                                #Can timeout, in which case IREQ will be 'TimeoutError'
-                                                #Once closed, any IREQ will be 'TransactionInactiveError'
-IDB.transaction('STORE'[_ARR][,MODE])->ITRNSACTN#
-ITRANSACTION.db                                 #IDB
-ITRANSACTION.objectStore('STORE')->ISTORE       #
-ISTORE.transaction                              #ITRANSACTION
-ITRANSACTION.mode                               #MODE: 
-                                                #  - 'readonly' (def): 
-                                                #     - cannot modify anything, otherwise IREQ will be 'ReadOnlyError'
-                                                #     - no lock
-                                                #  - 'readwrite': 
-                                                #     - cannot modify schema (*.create|deleteObjectStore|Index())
-                                                #     - ISTORE-wide lock
-                                                #  - 'versionchange': 
-                                                #     - can do anything
-                                                #     - IDB-wide lock
-                                                #     - only available inside upgradeneeded event handler
-ITRANSACTION.oncomplete = FUNC(EVENT)           #Fired on success, i.e. when transaction result is buffered (not flushed to disk)
-ITRANSACTION.onerror = FUNC(EVENT)              #Fired if any IREQ.onerror
-ITRANSACTION.error                              #ERROR|null
-ITRANSACTION.abort()                            #Rollbacks changes
-                                                #Future IREQ with fail with 'AbortError'
-ITRANSACTION.onabort = FUNC(EVENT)              #On ITRANSACTION.abort()
-
-IDBRequest                                      #Async operation (PROMISE-like)
-IREQ.source                                     #Object having returned it, i.e. ISTORE|IINDEX|IICURSOR|null
-IREQ.transaction                                #ITRANSACTION|null
-IREQ.readyState                                 #Can be 'pending', or 'done' (success|error)
-IREQ.onsuccess = FUNC(EVENT)                    #
-IREQ.result                                     #If success. VAL
-IREQ.onerror = FUNC(EVENT)                      #Default browser action (cancelable) (on IREQ, ITRANSACTION or IDB???): calls IREQ.transaction.abort()
-IREQ.error                                      #If error. ERROR:
-                                                #  - 'NoError': if success
-                                                #  - 'NotFoundError': did not find name
-                                                #  - 'ConstraintError': e.g. name already exist, unique constraints
-                                                #  - 'DataError': wrong argument type
-                                                #  - 'InvalidAccessError': wrong argument value
-                                                #  - 'InvalidStateError': function cannot be called yet|anymore
-                                                #  - 'QuotaExceededError': no more spaces
-                                                #  - 'UnknownError': e.g. IO error
-                                                #  - '*Error': see above
-IDBOpenDBRequest                                #Child of IRequest with upgradeneeded and blocked events (see above)
