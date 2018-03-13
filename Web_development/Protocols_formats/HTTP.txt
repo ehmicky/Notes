@@ -36,11 +36,15 @@ Architecture:
      - prior knowledge: client already knows server supports HTTP/2
   - URI scheme: 
      - http[s]:
-        - HOSTNAME: required, IP address or DNS name
+        - relative URI can only be absolute path reference (/PATH/...)
+        - HOSTNAME[:PORT]:
+            - required
+            - if relative URI, uses:
+               - (HTTP/2) :authority HOSTNAME[:PORT] [C]
+               - (HTTP/1.1) Host: HOSTNAME[:PORT] [C]
+            - IP address or DNS name
+            - case sensitivity depends on server
         - PATH: def is "/"
-        - relative URI can only be:
-           - absolute path reference (/PATH/...)
-           - when sent directly to server (not through proxy)
      - http:
         - over TCP
         - default port: 80
@@ -63,7 +67,7 @@ Architecture:
      - order is always: client request -> server response (can include several streams)
      - resource can be dynamic (server modifies content) or static
   - state:
-     - statelss: streams independant from each other
+     - stateless: streams independant from each other
      - but headers/payload can keep state (e.g. cookies)
      - a stream need to keep its own state though
   - session:
@@ -74,9 +78,16 @@ Architecture:
            - 6 (depends on client) per hostname + port
            - hostname sharding: using different domains on a server to overcome limit
      - parallel requests per TCP socket: 
-        - HTTP/2: multiplexing: SETTINGS_MAX_CONCURRENT_STREAMS (def: unlim) with no order (unless client suggest specific order)
-        - HTTP/1.1: pipelining: 4-8 (depends on client) with head-of-line blocking (answers in same order as requests)
-        - HTTP/1.0: serial: one
+        - HTTP/2: multiplexing: 
+           - SETTINGS_MAX_CONCURRENT_STREAMS (def: unlim)
+           - no order (unless client suggest specific order)
+           - because there is a stream ID
+        - HTTP/1.1: pipelining: 
+           - 4-8 (depends on client)
+           - head-of-line blocking (answers in same order as requests)
+           - because there is no request ID to match request with response
+        - HTTP/1.0: serial: 
+           - 1
      - how long:
         - HTTP/2: 
            - until GOAWAY frame
@@ -288,11 +299,15 @@ Method:
         - CONNECT: HTTP Tunneling
      - unsafe:
         - idempotent:
-           - PUT: replace/create (completely) resource with specific ID
+           - PUT: 
+              - replace/create (completely) resource with specific ID
+              - use 201 (Created) with Location: URL [S] if created
            - DELETE: erase resource
            - [UN]LINK: add|change|remove Link [C] (see below)
         - not idempotent:
-           - POST: create resource without specific ID
+           - POST: 
+              - create resource without specific ID
+              - use 201 (Created) with Location: URL [S]
            - PATCH: 
               - modify (partially) resource
               - while PUT|POST sends resource itself, PATCH sends resource diff (which might be different format)
@@ -334,21 +349,20 @@ Headers:
 Status codes:
   - WebDAV-only: 102, 207, 208, 422, 423, 424, 507, 508
   - 1**: information
-     - 100 (Continue)                         client sent only headers and can proceed to send body (see Expect: 100-continue [C])
-     - 101 (Switching Protocols)              switch protocol success, e.g. from HTTP to HTTPS (see Upgrade [C])
+     - 100 (Continue)                         client sent only headers and can proceed to send body                   See Expect: 100-continue [C]
+     - 101 (Switching Protocols)              switch protocol success, e.g. from HTTP to HTTPS                        See Upgrade [C]
   - 2**: success
      - 200 (OK)                               simple
-     - 201 (Created)                          new resource (e.g. POST). Use Location: URL [S] for new resource URL.
-     - 202 (Accepted)                         response is ongoing and will take some time to process
-     - 203 (Non-Authoritative Information)    proxy transformed server response, which was originally 200
+     - 201 (Created)                          new resource                                                            See POST
+     - 202 (Accepted)                         response is ongoing and will take some time to process                  See Long response (time)
+     - 203 (Non-Authoritative Information)    proxy transformed server's 200                                          See Proxies
      - 204 (No Content)                       OK, but nothing is to be returned. Client should stay on same resource/document. E.g. successful DELETE, If-Modified-Since header.
      - 205 (Reset content)                    like 204 but client should reset/refresh current resource/document.
-     - 206 (Partial content)                  response is only a subset of the full resource, (see Range [C])
-     - 214 (Transformation applied)           proxy transformed server response, which was originally not 200
-     - 226 (IM used)                          returns diff not full resource (see Delta encoding)
-  - 3**: redirection to be performed by client
-     - 300 (Multiple choices)                 redirection need client input
-     - 301 (Moved Permanently)                permanent, GET (even if different method, but should ask first). Cacheable.
+     - 206 (Partial content)                  response is only a subset of the full resource                          See Range [C]
+     - 226 (IM used)                          returns diff not full resource                                          See Delta encoding
+  - 3**: redirects to be performed by client
+     - 300 (Multiple choices)                 redirect need client input                                              See content negotiation
+     - 301 (Moved Permanently)                permanent, GET (even if different method, but should ask first)
      - 302 (Found)                            temp, GET (even if different method, but should ask first)
      - 303 (See other)                        different resource (not only different URL) than requested
      - 304 (Not Modified)                     resource did not change (see caching)
@@ -396,18 +410,32 @@ Status codes:
   - add HTTP header client-side
   - only ones that are crossbrowser: refresh, Content-Security-Policy
 
-Redirections:
-  - use 3** status code and:
+Redirects:
+  - common redirect:
+     - status code is 3**:
+        - general cases:
+           - GET (even if different method, but should ask first):
+              - permanent: 301 (Moved Permanently)
+              - temp: 302 (Found)
+           - same HTTP method
+              - permanent: 308 (Permanent Redirect)
+              - temp: 307 (Temporary Redirect)
+        - specific cases:
+           - different resource (not only different URL): 303 (See other)
+           - need client input: 300 (Multiple choices)
+           - caching: 304 (Not modified)
+           - server ask client to use proxy instead: 305 (Use proxy)
      - client should request again:
         - Location: URL [S]: right away
         - Retry-After: NUM|DATE [S]: in future, same URL
         - Refresh: NUM[, url=URL] [S]: in future, same URL or not. Can be used as <meta http-equiv>
-     - server fetched it without additional request:
-        - Content-Location: URL [S]
-  - 5+ redirections is considered infinite loop.
-  - open redirect: see webs security doc
+     - 5+ redirects is considered infinite loop.
+  - server-side redirects:
+     - Content-Location: URL [S]:
+        - notifies client of URL, so it can be used for caching, or future requests
+        - status code is not 3**
   - alternative service:
-     - like redirection but:
+     - like redirects but:
         - for an ORIGIN not URL
         - routing is performed server-side, so URL remains the same client-side
         - inform client to optionally request it, instead of requiring client
@@ -444,6 +472,7 @@ Redirections:
               - checked when creating new connections, i.e. does not terminate current ones
            - persist=1:
               - if not present, should invalidate cache on server network configuration change
+  - open redirect: see webs security doc
 
 Time:
   - Date: DATE [C]: when request was sent 
@@ -489,11 +518,6 @@ Software identity:
 
 Client identity:
   - From: EMAIL_ADDRESS [C]: often used with bots for support email
-
-Destination:
-  - Host: HOSTNAME[:PORT] [C] (HTTP/1.1) or :authority HOSTNAME[:PORT] [C] (HTTP/2) 
-     - HOST case sensitivity depends on server
-     - allows differenciating when several hosts per IP address
 
 Content transformation:
   - possible transformations:
@@ -1174,7 +1198,7 @@ Proxies:
                  - CUSTOM_NAME (using [[:alnum:]._-])
            - by NODE: current node info
         - X-Forwarded-Host|For|Proto|Port: HOST|IP|SCHEME|PORT,... [C]: current node info
-        - Via: [HTTP/]HTTP_VERSION HOST[:PORT]|CUSTOM_NAME [DESCRIPTION] ,... [C|S]: current node info
+        - Via: [HTTP/]HTTP_VERSION HOST[:PORT]|CUSTOM_NAME [(DESCRIPTION)] ,... [C|S]: current node info
      - optional for each proxy in the chain (can even remove existing ones)
      - when several, the leftmost is the closest to origin
   - Max-Forwards: NUM [C]: max number of proxies
@@ -1186,7 +1210,9 @@ Proxies:
         - 113 "Heuristic Expiration"
         - 199 "Miscellaneous Warning"
      - 2**: other 
-        - 214 "Transformation applied": e.g. ones prevented by "no-transform"
+        - 214 "Transformation applied": 
+           - e.g. ones prevented by "no-transform"
+           - if 200 (OK), should transform to 203 (Non-Authoritative Information)
         - 299 "Miscellaneous Persistent Warning"
   - transformations:
      - see above for: Cache-Control: no-transform [S|C], Surrogate-Capabilities [C], Surrogate-Control: content [S]
