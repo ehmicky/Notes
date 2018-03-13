@@ -522,11 +522,6 @@ RESOURCE.object                   #Either:
 RESOURCE.metadata               CU#Custom OBJ
                                   #Max 50 properties, max KEY length 40 bytes, max value length 500 bytes.
                                   #Should not contain personal or confidential information.
-SRES.setMetadata
- ('ID', OBJ|null[, API_KEY])      #Like update({ metadata: OBJ })
- ->PROMISE:                       #OBJ can also be 'VAR', VAL
-SRES.getMetadata
- ('ID'[, API_KEY])->PROMISE_OBJ   #Like retrieve().metadata
 
 RESOURCE.created                  #DATE_NUM
 GET /RESOURCES?created=CMP_FILTER #
@@ -1233,7 +1228,7 @@ PINTENT                           #SOURCE authentication + CHARGE creation
 GET /payment_intents[/ID]
 POST /payment_intents[/ID]        #
 POST /payment_intents/ID/confirm  #Like PINTENT.confirm true
-                                  #Payload attributes: client_secret, payment_method, receipt_email, return_url, shipping, source, save_payment_method
+                                  #Payload attributes: client_secret, payment_method, receipt_email, return_url, shipping, source, save_payment_method, off_session
 POST /payment_intents/ID/cancel   #Set PINTENT.status 'canceled'.
                                   #Payload attributes: cancellation_reason
 STRIPE.paymentIntents.
@@ -1259,6 +1254,10 @@ PINTENT.charges                   #CHARGE_LIST
 PINTENT.payment_method_types    CU#STR_ARR of allowed SOURCE.type
 PINTENT.save_payment_method    RCU#BOOL (def: false). Save PINTENT.payment_method|source to CUSTOMER.sources.
                                   #Must be specified again if PINTENT.payment_method|source changes.
+
+PINTENT.off_session             RC#Indicates that payment will be done while user is not on the website.
+                                  #This changes what SCA regulation requires, e.g. 3D secure confirmation.
+                                  #Either 'recurring' (def for SUBSCRIPTIONs) or 'one_off'.
 
 PINTENT.status                    #STR among:
                                   #  - 'requires_payment_method':
@@ -1313,7 +1312,9 @@ NEXT_ACTION.use_stripe_sdk        #Internal OBJ used by Stripe.js
 
 PINTENT.last_payment_error       ?#Confirmation ERROR
 PINTENT.canceled_at              ?#DATE_NUM
-PINTENT.cancellation_reason      ?#STR among: 'duplicate', 'fraudulent', 'requested_by_customer', 'failed_invoice'.
+PINTENT.cancellation_reason      ?#STR among:
+                                 ?#  - by user|us: 'duplicate', 'fraudulent', 'requested_by_customer', 'abandoned'
+                                 ?#  - by Stripe: 'failed_invoice', 'void_invoice', 'automatic'
 
 
                                              /=+===============================+=\
@@ -1331,6 +1332,7 @@ STRIPE.charges.retrieve|list|
  create|update()                  #
 
 CHARGE.payment_intent             #PINTENT.id
+?payment_intent=PINTENT.id        #
 
 CHARGE.amount                   *C#PMONEY
                                   #Have a currency-specific minimum (around $0.5).
@@ -2235,7 +2237,8 @@ SUBSCRIPTION.                   CU#DATE_NUM (def: 'now') used to define on which
                                   #  - status goes from 'trial' to 'active'
                                   #  - BILLING_THRESHOLDS.reset_billing_cycle_anchor true
                                   #When reset to 'now', new INVOICE will be created right away.
-SUBSCRIPTION.start                #DATE_NUM. "Last update" timestamp, but only for significant fields.
+SUBSCRIPTION.start_date           #DATE_NUM. Create timestamp. Might differ from `created` in some cases.
+SUBSCRIPTION.start               ?#DATE_NUM. "Last update" timestamp, but only for significant fields.
 SUBSCRIPTION.ended_at            ?#DATE_NUM
 SUBSCRIPTION.                     #DATE_NUM. Periods are decided by PLAN.interval[_count]
  current_period_start|end         #INVOICEs are created at end of each period.
@@ -2753,7 +2756,7 @@ INVOICE.account_name              #ACCOUNT.business_profile.name
 LINE_ITEM                         #Single item in an automatic INVOICE
 
 GET /invoices/ID/lines            #
-STRIPE.invoices.retrieveLines()   #
+STRIPE.invoices.listLineItems()   #
 
 LINE_ITEM.type                    #'subscription' or 'invoiceitem'
 LINE_ITEM.subscription          ?C#SUBSCRIPTION.id
@@ -2805,6 +2808,8 @@ INVOICE_ITEM.date                 #DATE_NUM
 GET /invoices/upcoming            #See INVOICEs not created yet.
 STRIPE.invoices.retrieveUpcoming()#
 GET /invoices/upcoming/lines      #See LINE_ITEMs of INVOICEs not created yet.
+STRIPE.invoices.
+ listUpcomingLineItems()          #
 
 ?coupon=COUPON.id                 #
 ?customer=CUSTOMER.id             #
@@ -2971,7 +2976,7 @@ DELETE /accounts/ID               #
 STRIPE.accounts.retrieve|list|
  create|update|del()              #
 
-JAPAN KANJI/KANA ==>              #The following fields are suffixed with _kanji|_kana in Japan: address and *name
+JAPAN KANJI/KANA ==>              #The following fields are suffixed with _kanji|_kana in Japan: address, *name, statement_descriptor
 
 ACCOUNT.email                   CU#STR.
 ACCOUNT.business_type           CU#Either 'individual' or 'company'.
@@ -3217,20 +3222,47 @@ REQUIREMENTS.disabled_reason     ?#STR among:
                                   #  - 'under_review': Stripe triggered it internally
                                   #  - 'other'
 
-ACCOUNT.requested_capabilities  CU#CAPABILITIES
-ACCOUNT.capabilities              #CAPABILITIES
-CAPABILITIES.TYPE                 #Disable some features on ACCOUNT pending required fields verification.
-                                  #Only required for US ACCOUNT.
-                                  #Should only ask the ones needed, so less verification is done.
-                                  #TYPE can be:
-                                  #  - 'card': direct charges (see above)
-                                  #  - 'platform': destination|separate charges (see above)
-                                  #Value is 'pending', 'active' or 'inactive'
-
 POST /accounts/ID/reject          #Restrict an ACCOUNT connected through OAuth
                                   #Payload: reason
 PAYLOAD.reason                    #STR among 'fraud', 'terms_of_service', 'listed', 'other'.
 STRIPE.account.reject()           #
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:          CAPABILITY           :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+CAPABILITY                        #Disable some features on ACCOUNT pending required fields verification.
+                                  #Only required for US ACCOUNT.
+                                  #Should only request the ones needed, so less verification is done.
+
+GET
+ /accounts/[ID/]capabilities[/ID]
+POST
+ /accounts/[ID/]capabilities/ID   #
+STRIPE.accounts.
+ list|retrieve|updateCapability() #
+
+CAPABILITY.account                #ACCOUNT.id
+CAPABILITY.requirements           #REQUIREMENTS
+CAPABILITY.status                 #Can be:
+                                  #  - 'unrequested'
+                                  #  - 'pending': requested but pending
+                                  #  - 'active': requested and approved
+                                  #  - 'inactive', 'disabled': requested and declined
+CAPABILITY.requested             U#BOOL
+CAPABILITY.requested_at          ?#DATE_NUM
+
+ACCOUNT.requested_capabilities  CU#TYPE_ARR
+ACCOUNT.capabilities              #CAPABILITIES
+CAPABILITIES.TYPE                 #TYPE can be:
+                                  #  - 'card_payments': direct charges (see above)
+                                  #  - 'platform_payments': destination|separate charges (see above)
+                                  #  - 'card_issuing'
+                                  #Value is CAPABILITY.status
 
 
                                              /=+===============================+=\
@@ -3536,7 +3568,7 @@ CHARGES ROUTING ==>               #There are three way to route Connect charges:
                                   #CHARGE.on_behalf_of:
                                   #  - DIRC: cannot be defined. Always destination's
                                   #  - DESC|SEPC: can be defined. Defaults to platform's
-                                  #CAPABILITIES:
+                                  #CAPABILITY:
                                   #  - DIRC: 'card'
                                   #  - DESC|SEPC: 'platform'
                                   #Restrictions:
@@ -3711,8 +3743,8 @@ GET /application_feeds/ID/
  refunds[/ID]
 POST /application_feeds/ID/
  refunds[/ID]
-STRIPE.applicationFeeRefunds.
- retrieve|list|create|update()    #
+STRIPE.applicationFee.retrieve|
+ list|create|updateRefund[s]()    #
 
 FEE_REFUND.amount                C#MONEY. Can be partial.
 
@@ -4475,6 +4507,7 @@ ISSUING_CARD.type                C#Either:
 ?type=STR                         #
 ISSUING_CARD.shipping            C#ISSUING_CARD_SHIPPING if type 'physical'
 ISSUING_CARD_SHIPPING.*           #Like SHIPPING.*
+ISSUING_CARD_SHIPPING.type       C#Either 'individual' or 'bulk' (ship several together)
 ISSUING_CARD_SHIPPING.status      #STR among:
                                   #  - 'pending'
                                   #  - 'shipped'
@@ -4775,9 +4808,6 @@ STRIPE.terminal.readers.
 
 READER.registration_code        *C#STR. Generated by reader to register an ACCOUNT
 
-READER.operator_account        RCU#ACCOUNT (with Connect)
-?operator_account=ACCOUNT.id      #
-
 READER.location                  C#LOCATION.id
 ?location=LOCATION.id             #
 
@@ -4806,8 +4836,6 @@ DELETE /terminal/location/ID      #
 STRIPE.terminal.locations.
  retrieve|list|create|update|del()#
 
-LOCATION.operator_account      RCU#ACCOUNT (with Connect)
-?operator_account=ACCOUNT.id      #
 LOCATION.address               *CU#ADDRESS.
 LOCATION.display_name          *CU#STR
 
@@ -4826,8 +4854,6 @@ STRIPE.terminal.connectionTokens.
  create()                         #
 
 CONNECTION_TOKEN.secret           #STR. Your application should pass this token to the Stripe Terminal SDK.
-CONNECTION_TOKEN.
- operator_account               RC#ACCOUNT (with Connect)
 
 
                                              /=+===============================+=\
@@ -4977,7 +5003,7 @@ REPORT_RUN_PARAMS.payout          #PAYOUT.id
                                              \=+===============================+=/
 
 
-VERSION ==>                       #6.34.0
+VERSION ==>                       #7.0.0
 
 new STRIPE-NODE
  (['API_KEY'][, 'VERSION'])
