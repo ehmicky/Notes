@@ -7,27 +7,7 @@ if [[ ! -f "$dir/index.md" ]]; then
   exit 1
 fi
 
-md-file-tree | sed '
-  1 d;
-  /LICENSE\]/ d;
-  /\[README/ d;
-  /Repository_helpers/ d;
-  /swp\]/ d;
-  /~\]/ d;
-  s_Notes/__;
-  s/\.txt\]/]/;
-  s/^  //;
-  s/^- /\n/;
-  s/^  //;
-  s/___/__/;
-  s/\([[]\)_/\1/;
-  s/\(\[[^]]\+\)_/\1 /;
-  s/\(\[[^]]\+\)_/\1 /;
-  s/\(\[[^]]\+\)_/\1 /;
-  s/\(__.*\)_\(.*__\)/\1 \2/;
-  s/\(__.*\)_\(.*__\)/\1 \2/;
-  s/\(__.*\)_\(.*__\)/\1 \2/;
-' > "$dir/index.md"
+md-file-tree | sed -f "$dir/create_index.sed" > "$dir/index.md"
 
 # Updates README.md
 cat "$dir/presentation.md" "$dir/index.md" > README.md
