@@ -50,10 +50,16 @@ Task scheduling:
 
 Paradigm:
   - acquiring resource:
-     - spinning / busy waiting / software-driven: using spinlocks:
-        - test if resource locked repeatedly, unless not locked
-        - polling|sleeplock: when there is a fixed sleep time
-     - event-driven / interrupt-driven: test if resource locked using interrupts
+     - spinning / busy waiting / software-driven: 
+        - using spinlocks:
+           - test if resource locked repeatedly, unless not locked
+           - polling|sleeplock: when there is a fixed sleep time
+     - event-driven / interrupt-driven: 
+        - test if resource locked using interrupts
+        - condition variable:
+           - application-level alternative to interrupts
+           - task subscribe to a conditional variable, in order to own resource
+           - other tasks notify change of condition to conditional variable, in order to potentially release resource
   - releasing resource:
      - sync|blocking: do not yield
      - async|non-blocking: yields, then communicate end by using interrupts
@@ -71,6 +77,9 @@ Resource:
   - e.g.:
      - processing: e.g. CPU. Handled by OS timesharing
      - memory: e.g. file, socket, variable
+  - ownership (i.e. usage):
+     - exclusive vs shared
+     - write vs read
 
 Critical section:
   - code section assuming exclusive ownership over a given resource
@@ -78,6 +87,7 @@ Critical section:
      - i.e. assume exclusive ownership but do not have it
      - race condition: when collision is time-dependent (i.e. non-deterministic)
      - solution: process|data synchronization
+     - "thread-safety": avoid collisions
   - critical sections should be minimized|avoided as they require synchronization, which reduces parallelism|multithreading
 
 Process synchronization:
@@ -111,68 +121,28 @@ Data synchronization:
            - timed: unset flag after timeout
      - semaphore:
         - like recursive mutex, except flag can be unset by other tasks that ones that set it 
-     - barrier:
-        - 
+     - barrier|rendezvous:
+        - like semaphore, except action is delayed until resource locked
+  - locking:
+     - implies blocking other tasks, which results in either:
+        - waiting:
+           - starvation: when endless
+           - deadlock: mutual starvation, i.e. several tasks need the others' resources and cannot release their own until others acquired
+           - livelock: deadlock where there is a function trying to solve it, but it always end up in a new deadlock
+        - giving up
+     - can imply resource leak if resource not unlocked after use
+        - e.g.: memory leak, handle leak
 
-Procédé de synchronization:
-  - rendezvous / barrier :
-    - plusieurs threads s'arrêtent à un point (barrier) tant que les autres threads n'ont pas atteint eux aussi la barrier.
-    - s'il y a trois threads X, Y et Z, et que deux threads X pourraient être lancés en même temps, mettre un mutex prévenant l'atteinte de la barrier par les deux threads X en même temps.
-  - conditions variables :
-    - principe :
-      - un thread se lit à une ConditionVar et sleep
-      - un autre thread le wake up. Peut wake up tous les threads attendant ConditionVar ou seulement l'un d'entre eux.
-    - souvent se lier à ConditionVar unlock un Mutex qui est relock lors du wake up, dans l'idée que les actions qui suivent doivent être thread-exclusives.
-    - intérêt : évite spinlocks while ( ! condition )
-  - spinlock
-
-Monitor :
-  - classe dont toutes les méthodes sont gérées via des mutexs, thread-safe donc
-
-Lock/own une ressource :
-  - fait qu'un thread bloque l'utilisation d'une ressource par les autres threads.
-  - on peut demander non pas une ressource, mais l'une de plusieurs ressources. Si aucune disponible, attendra que l'une de ces ressources se libère.
-Thread bloqué : thread mis en attente le temps qu'une ressource soit libérer.
-[Wait]queue :
-  - liste d'attente des threads bloqués en attente de la libération d'une ressource.
-  - un même thread peut être sur plusieurs queues si plusieurs ressources ont été demandées en même temps.
-Une mauvaise gestion des procédés de synchronization peut provoquer :
-  - Starvation : quand un thread cherche à accéder à une ressource perpétuellement sans succès
-    - Deadlock : deux threads ont un besoin mutuel d'une ressource de l'autre pour continuer. Cela peut être plus que deux avec une référence circulaire (qui peut alors aussi être considérée comme un livelock).
-  - Livelock : si le programme génère une fonction en cas de deadlock pour sortir du deadlock, mais que cette fonction est activée par les deux parties bloquantes du deadlock en même temps, ce qui conduit à un nouveau deadlock, et ainsi de suite.
-  - Ressource leak : oublie d'unlock la resource, qui ne peut plus être libérée. Ex : 
-    - memory leak
-    - handle leak
-
-Moyen de gérer les deadlocks et livelocks :
-  - créer une classe centrale manageuse de la synchronization (à éviter)
-  - faire un algorithme sans autorité centrale.
-
-                    /=+===============================+=\ 
-                   /  :                               :  \  
-                   )==:          REENTRANCY           :==(   
-                   \  :_______________________________:  /    
-                    \=+===============================+=/
-
-Possibilité pour un programme d'être interrompu (IRQ, interruption, task/thread switching), puis de reprendre sans que cela pose problème.
-Les codes récursifs doivent être reentrants.
-Les interrupt handlers ne peuvent utiliser que des fonctions reentrants (au cas où elles aient interrompue la même fonction que celle qu'elles appellent).
-
-Différent de thread-safety :
-  - si reentrant, alors thread-safe ; mais pas inverse.
-  - par exemple, un code simple lockant une ressource globale avec des mutexs est thread-safe, mais pas reentrant, car accède une variable globale (le mutex). Une interruption interromptant ce code, puis l'invoquant dans son interrupt handler, provoquerait un deadlock.
-  - un thread n'ayant pas besoin d'accéder à une ressource globale n'a pas besoin de procédé de synchronization, mais seulement d'être reentrant pour être thread-safe.
+Reentrancy:
+  - can be paused by interrupts without problems
+  - implies:
+     - does not use global variables
+     - does not use 
 
 Pour être reentrant :
   - ne pas accéder de variables global non-const
   - ne pas appeler soi-même de fonctions non-reentrantes.
   - ne pas modifier son propre code (self-modifying code)
-
-                    /=+===============================+=\ 
-                   /  :                               :  \  
-                   )==:             AUTRE             :==(   
-                   \  :_______________________________:  /    
-                    \=+===============================+=/
 
 Volatile variables : cf c_synthese et c++_synthese pour l'utilisation de volatile sur les variables partagées par plusieurs threads
 
@@ -185,11 +155,8 @@ resource tracking : recherche par un OS ou une VM, d'un resource leak. Exemple :
 
 Join : fait qu'un thread attend qu'un autre arrive à un certain endroit pour continuer sa propre exécution.
 
-                    /=+===============================+=\ 
-                   /  :                               :  \  
-                   )==:      CANCELLATION POINTS      :==(   
-                   \  :_______________________________:  /    
-                    \=+===============================+=/
+Monitor :
+  - classe dont toutes les méthodes sont gérées via des mutexs, thread-safe donc
 
 Une cancellation ne peut avoir lieu que lors d'un cancellation point.
 Cancellation handler : handler utilisé si la ressource cesse d'être utilisée par le thread actuel (par exemple, libérer la mémoire) Utile pour les asynchronously et synchronously cancelable threads.
@@ -197,73 +164,3 @@ Cancellation status d'un thread :
   - asynchronously cancelable : peut être cancelled à tout moment (défaut).
   - synchronously cancelable : ne peut être cancelled que lors d'un cancellation point.
   - uncancelable : ne peut pas être cancelled (une des manière d'implémenter une critical section).
-
-Cancellation points :
-accept              access              aio_suspend         asctime             
-asctime_r           catclose            catgets             catopen             
-clock_nanosleep     close               closedir            closelog            
-connect             creat               ctermid             ctime               
-ctime_r             dbm_close           dbm_delete          dbm_fetch           
-dbm_nextkey         dbm_open            dbm_store           dlclose             
-dlopen              endgrent            endhostent          endnetent           
-endprotoent         endpwent            endservent          endutxent           
-fclose              fcntl2              fcntl3              fdatasync           
-fflush              fgetc               fgetpos             fgets               
-fgetwc              fgetws              fmtmsg              fopen               
-fpathconf           fprintf             fputc               fputs               
-fputwc              fputws              fread               freopen             
-fscanf              fseek               fseeko              fsetpos             
-fstat               fsync               ftell               ftello              
-ftw                 fwprintf            fwrite              fwscanf             
-getaddrinfo         getc                getchar             getchar_unlocked    
-getc_unlocked       getcwd              getdate             getgrent            
-getgrgid            getgrgid_r          getgrnam            getgrnam_r          
-gethostbyaddr       gethostbyname       gethostent          gethostid           
-gethostname         getlogin            getlogin_r          getmsg              
-getnameinfo         getnetbyaddr        getnetbyname        getnetent           
-getopt4             getpmsg             getprotobyname      getprotobynumber    
-getprotoent         getpwent            getpwnam            getpwnam_r          
-getpwuid            getpwuid_r          gets                getservbyname       getservbyport       getservent          getutxent           getutxid            
-getutxline          getwc               getwchar            getwd               
-glob                iconv_close         iconv_open          ioctl               
-link                localtime           localtime_r         lockf               
-lseek               lstat               mkstemp             mktime              
-mq_receive          mq_send             mq_timedreceive     mq_timedsend        
-msgrcv              msgsnd              msync               nanosleep           
-nftw                open                opendir             openlog             
-pathconf            pause               pclose              perror              
-poll                popen               pread               printf              
-posix_fadvise                           posix_fallocate                         
-posix_madvise                           posix_openpt                            
-posix_spawn                             posix_spawnp                            
-posix_trace_clear                       posix_trace_close                       
-posix_trace_create                      posix_trace_create_withlog              
-posix_trace_eventtypelist_getne         posix_trace_eventtypelist_rewin         
-posix_trace_flush                       posix_trace_get_attr                    
-posix_trace_get_filter                  posix_trace_getnext_event               
-posix_trace_get_status                  posix_trace_open                        
-posix_trace_rewind                      posix_trace_set_filter                  
-posix_trace_shutdown                    posix_trace_timedgetnext_event          
-posix_typed_mem_open                    pthread_cond_timedwait                  
-pthread_cond_wait                       pthread_join                            
-pthread_rwlock_rdlock                   pthread_rwlock_timedrdlock              
-pthread_rwlock_timedwrlock              pthread_rwlock_wrlock                   
-pthread_testcancel                
-pselect             putc                putchar             putchar_unlocked    
-putc_unlocked       putmsg              putpmsg             puts                
-pututxline          putwc               putwchar            pwrite              
-read                readdir             readdir_r           readv               
-recv                recvfrom            recvmsg             remove              
-rename              rewind              rewinddir           scanf               
-seekdir             select              semop               sem_timedwait       
-sem_wait            send                sendmsg             sendto              
-setgrent            sethostent          setnetent           setprotoent         
-setpwent            setservent          setutxent           sigpause            
-sigsuspend          sigtimedwait        sigwait             sigwaitinfo         
-sleep               stat                strerror            strerror_r          
-strftime            symlink             sync                syslog              
-system              tmpfile             tmpnam              ttyname             
-ttyname_r           tzset               ungetc              ungetwc             
-unlink              vfprintf            vfwprintf           vprintf             
-vwprintf            wcsftime            wordexp             wprintf             
-wscanf           
