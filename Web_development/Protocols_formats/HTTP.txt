@@ -25,7 +25,6 @@ HTTP-related RFCs:
   - Compression, chunked encoding: 7230
   - Proxies: 3143, 3205
   - Accept-Datetime [C]: 7089
-  - Diff: 3229
   - Alt-* [S]: 7838
 
 Architecture:
@@ -323,7 +322,7 @@ Status codes:
      - 205 (Reset content)                    like 204 but client should reset/refresh current resource/document.
      - 206 (Partial content)                  response is only a subset of the full resource, (see Range [C])
      - 214 (Transformation applied)           proxy transformed server response, which was originally not 200
-     - 226 (IM used)                          returns diff not full resource. Uses HTTP delta compression, an RFC which seems old.
+     - 226 (IM used)                          returns diff not full resource (see Delta encoding)
   - 3**: redirection to be performed by client
      - 300 (Multiple choices)                 redirection need client input
      - 301 (Moved Permanently)                permanent, GET (even if different method, but should ask first). Cacheable.
@@ -340,7 +339,7 @@ Status codes:
      - 403 (Forbidden)                        authorization problem. Prefer 404 when location itself is secret.
      - 404 (Not Found)                        wrong URL, but correct domain.
      - 405 (Method not allowed)               HTTP method not implemented or not allowed
-     - 406 (Not Acceptable)                   wrong requested media type (see Accept [C])
+     - 406 (Not Acceptable)                   wrong requested media type (see Accept [C]) or ALGO (compression, delta encoding)
      - 407 (Proxy authentication required)    like 401 but for application proxy
      - 408 (Request Timeout)                  as opposed to response timeout
      - 409 (Conflict)                         multi-client conflict
@@ -433,15 +432,25 @@ Destination:
   - Host: HOST[:PORT] [C] (HTTP/1.1) or :authority HOST[:PORT] [C] (HTTP/2) 
      - HOST case sensitivity depends on server
 
-Content:
-  - vocabulary:
+Content transformation:
+  - possible transformations:
+     - variants: 
+        - specific to the entity, changes final representation
+        - e.g. language, charset, Content-Type, features
+     - content-encoding: 
+        - specific to the entity, does not change final representation
+        - e.g. compression, ranges, delta encoding
+        - order is unspecified, except by A-IM [C] and IM [S]
+     - transfer-encoding:
+        - specific to the request/response
+        - e.g. Transfer-Encoding [S]
+  - content can be:
      - resource: highest-level
-     - variant: a resource with a specific representation (e.g. language, Content-Type, etc.)
-     - instance: a variant inside a request/response payload, without:
-        - content-related encoding: compression, Content-Range [S], delta encoding, etc.
-        - transfer-related encoding: Transfer-Encoding [S], etc.
-     - entity: same as instance, but with transfer-related encoding (i.e. what is actually sent)
-  - content negotiation: see below
+     - variant
+     - instance: a variant inside a request/response payload
+     - entity: an instance after content-encoding, then transfer-encoding
+
+Content:
   - request payload:
      - 415 (Unsupported Media Type): wrong request payload MIME_TYPE
      - Prefer: handling=strict|lenient [C]: should validate [not] strictly request payload
@@ -723,6 +732,8 @@ Caching:
                     - while retrieving fresh resource in the background for the next request
               - s-max-age=NUM: same as max-age but for reverse proxies
               - proxy-revalidate: same as must-revalidate but for reverse proxies
+              - retain[=NUM]: see delta encoding
+              - im: see delta encoding
            - STR (client only):
               - max-stale=NUM: extend max-age|Expires with NUM seconds
               - min-fresh=NUM: must be cacheable for at least NUM seconds, otherwise ignore
@@ -774,11 +785,16 @@ Caching:
                     - W/"...": 
                        - weak, same "resource", i.e. same semantically but not necessarily byte-wise
                        - usually shared by different representations
-                       - cannot be used with If-Range [C], If-Match [C] or If-Unmodified-Since [C]
+                       - cannot be used with:
+                          - If-Range [C] 
+                          - If-Match [C] or If-Unmodified-Since [C]
+                          - delta encoding
                        - "..." == W/"..."
            - client include latest representation:
               - If-[Un]Modified-Since: DATE [C]
-              - If-[None-]Match: "ETAG"|* [C] (if specified, If-[Un]Modified-Since is ignored)
+              - If-[None-]Match: "ETAG"|*,... [C]
+                 - if specified, If-[Un]Modified-Since is ignored
+                 - can use several if client cached several
            - server:
               - if condition does not match:
                  - 304 (Not modified) with no body: 
@@ -804,19 +820,51 @@ Caching:
      - low-level: about:net-internals#httpCache (Chrome)
 
 Delta encoding:
-  - check support???
-  - goal: reduce response payload size, when cannot respond with 304
-  - A-IM: ALGO[;VAR=VAL][;q=NUM],... [C]
-     - ALGO:
-        - vcdiff
-        - gdiff
-        - diffe: diff -e
-        - COMPRESSION_ALGO
-        - range
-        - identity
-     - VAR: ALGO params
-     - q=NUM: like content negotation
-  - IM:  [S]
+  - very poor support both client-side and server-side
+  - goal is to reduce response payload size:
+     - client:
+        - use conditional caching request
+        - but has cache of older version
+     - server:
+        - cannot respond with 304 (since older version)
+        - responds with diff instead of full new entity
+     - client applies diff to older cached version
+  - means both server and client need to keep older versions
+  - must be done together with conditional caching:
+     - If-None-Match: "ETAG",... [C] (strong)
+     - ETag: "ETAG" [S]
+  - how:
+     - client:
+        - A-IM: ALGO[;VAR=VAL][;q=NUM],... [C]
+           - ALGO:
+              - specifies:
+                 - order in which content-encoding transformation should be applied
+                 - which DIFF_ALGO are supported
+              - can be:
+                 - DIFF_ALGO:
+                    - vcdiff
+                    - gdiff
+                    - diffe: diff -e
+                 - COMPRESSION_ALGO
+                 - range
+           - VAR: ALGO params
+           - q=NUM: like content negotation
+     - server:
+        - 226 (IM Used)
+        - IM: ALGO[;VAR=VAL],... [S]
+        - Delta-base: "ETAG" [S]
+           - source of the diff
+           - mandatory when several "ETAG" specified in If-None-Match [C], recommended otherwise
+  - caching:
+     - can cache 226 responses either as full entity (200 or 206) or as diff (226)
+     - Vary: A-IM [S]:
+        - client cache should implicitely use Vary: A-IM [S]
+        - but needs to be explicit for proxies that do not understand delta encoding
+        - can also use Cache-Control: no-store, im [S]:
+           - proxies that understand delta encoding should ignore no-store if "im" is present
+           - proxies that do not understand delta encoding will use no-store
+     - Cache-Control: retain[=NUM] [S]
+        - hint that client should keep response cached [for NUM seconds] because it might be used later as diff source
 
 Prefetching (resource hints, server push):
   - types, from most performant to least:
@@ -889,7 +937,8 @@ Long request:
         - 417 (Expectation Failed) if failure
      - client: request body body
   - Content-Length [C|S]:
-     - request body length
+     - request|response body length ('entity', not 'instance')
+     - cannot be used with Transfer-Encoding [S]
      - can use 411 (Length Required)
   - request too large:
      - 414 (Request URI too long)
@@ -1144,7 +1193,7 @@ Cookies:
         - can be blocked in browser settings
         - only disabled by default in Safari
      - Zombie cookie:
-        - use cookies but also other storage at once, e.g. localStorage, ETag [C], Flash cookies, etc.
+        - use cookies but also other storage at once, e.g. localStorage, ETag [S], Flash cookies, etc.
         - removing from one place -> others recreate it
   - security: see web security doc
 
