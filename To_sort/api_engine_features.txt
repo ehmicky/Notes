@@ -1,6 +1,3 @@
-Replace:
-  - TYPE[] by TYPEs in attr.type
-
 Pagination:
   - top-level action:
      - findMany|patchMany:
@@ -106,6 +103,70 @@ Pagination:
         - only first and last cursor are calculated. The others simply append an offset to the first cursor.
            - it is not as isolation-safe, but is much faster and only meant for Relay.js
 
+Exception/errors:
+  - status:
+     - errors during schema compilation or server startup should have HTTP status code 0
+  - normalize error reasons:
+     - should be not about guessing where error was internally triggered, but in terms of how client should respond.
+     - e.g. it does not matter if InputValidation error is because args.data is wrong or args.filter, what matters is that
+       client displays that input is wrong.
+     - differentiate between server-side errors caused by apiengine bug or by maintainer bug (e.g. schema function bug)
+        - including system patch operator vs custom patch operator
+  - simplify validation:
+     - there are too many validation sub-systems. Simplify all this
+     - use more of JSON validation, but pre-compile JSON schemas to keep it fast
+  - normalize error `extra`:
+     - use utilities like the ones for AUTHORIZATION (throwAuthorizationError()):
+        - one per error reason
+        - i.e. force specific message and specific `extra` per error reason
+     - add `extra` information to any throw ERROR that possess interesting information
+     - all errors with the same `reason` should expose the same `extra` variables
+     - example of `extra`:
+        - data that failed
+        - data path: either as JSON path (def) or as JSON pointer (using a runOpt)
+           - set GraphQL errors's `path` with this, and possibly other documented in my GraphQL doc
+        - rule (e.g. 'exclusiveMinimum')
+        - `location.line|column` and `position` in bytes of input
+           - set GraphQL errors's `locations|positions|source|nodes` with this, and possibly other documented in my GraphQL doc
+  - add all `generic.title`
+  - check new AJV versions
+  - error messages:
+     - improve error messages for JSON schema composed types: schema.contains|propertyNames|not|anyOf|oneOf|if|then|else
+       (others are fine)
+  - user documentation:
+     - available error responses types, error `extra` and status codes
+
+Error reporting:
+  - correction suggestions:
+     - e.g. wrong attribute name or wrong args.filter operator
+     - provide list both in error message, and as parsable `extra` info
+     - if possible, use levenshtein distance to guess possible typo suggestion
+  - variants: if data validation fails because of an attribute that was generated as a variant, error message must include information that it was generated as such, otherwise it's confusing for end-user
+  - request timeout error includes very little information (e.g. does not include protocol) because it is fired in
+    an early middleware
+  - reporting several error at once:
+     - e.g. several data validation issues
+     - possible idea:
+        - when several errors can arise (e.g. data validation), wait until all are known to throw error
+        - add as ARR field in error.extra.*
+
+JSON schema $data:
+  - $data notation is a bit cryptic and prone to error with JSON pointers.
+     - should replace to something more user-friendly, where user just need to specify the sibling model's attribute name
+     - at the moment, $data is removed before schema validation, this would need to be changed
+     - validateMap would need to convert this notation to $data, for ajv to work
+     - error reporting does not currently work with $data, because ajv does not translate $data into the actual referred
+       data. E.g. it says "should equal [Object object]" because { $data: STR } is kept as is
+
+inputValidation middleware:
+  - like dataValidation middleware but before any server-side data transformation:
+     - i.e. beginning of command layer
+     - reuse attr.validation like dataValidation middleware
+        - reason we do not have two different sets of validation: data stored in database should be valid input, and also having two sets adds two much complexity and room for errors to end-users
+     - gives 4** client-side errors, while dataValidation middleware gives 5** server-side errors
+     - input only (like dataValidation middleware)
+     - should try to memoize|reuse per request (to avoid memory leaks) between inputValidation and dataValidation middlewars
+
 Aggregation:
   - args.group:
      - in findMany commands
@@ -186,64 +247,6 @@ Static assets:
   - integrate GraphiQL with this
   - server-side templates serving
      - including isomorphic server-side renderer
-
-Exception handling:
-  - error reasons:
-     - rationalize|reduce error reasons:
-        - should be not about guessing where error was internally triggered, but in terms of how client should respond.
-        - e.g. it does not matter if InputValidation error is because args.data is wrong or args.filter, what matters is that
-          client displays that input is wrong.
-     - differentiate between server-side errors caused by apiengine bug or by maintainer bug
-       (e.g. schema function bug)
-        - including system patch operator vs custom patch operator
-     - errors during schema compilation or server startup should have HTTP status code 0
-     - maybe use utilities like the ones for AUTHORIZATION (throwAuthorizationError()):
-        - one per error reason
-        - i.e. force specific message and specific `extra` per error reason
-  - should add `extra` information to any throw ERROR that possess interesting information.
-     - all errors with the same `reason` should expose the same `extra` variables
-  - document available error responses types, error `extra` and status codes
-  - add all `generic.title`
-  - simplify JSON validation utility
-
-Error reporting:
-  - improve error messages for JSON schema composed types: schema.contains|propertyNames|not|anyOf|oneOf|if|then|else (others are fine)
-  - error response should include parsable info for validation errors:
-     - data that failed
-     - data path: either as JSON path (def) or as JSON pointer (using a runOpt)
-     - rule (e.g. 'exclusiveMinimum')
-     - request context (e.g. action, action_path)
-     - any other relevant info
-  - add `locations` attribute to GraphQL errors, and possibly other documented in my GraphQL doc
-  - correction suggestions:
-     - e.g. wrong attribute name or wrong args.filter operator
-     - provide list both in error message, and as parsable `extra` info
-     - if possible, use levenshtein distance to guess possible typo suggestion
-  - variants: if data validation fails because of an attribute that was generated as a variant, error message must include information that it was generated as such, otherwise it's confusing for end-user
-  - request timeout error includes very little information (e.g. does not include protocol) because it is fired in
-    an early middleware
-  - reporting several error at once:
-     - e.g. several data validation issues
-     - possible idea:
-        - when several errors can arise (e.g. data validation), wait until all are known to throw error
-        - add as ARR field in error.extra.*
-
-JSON schema $data:
-  - $data notation is a bit cryptic and prone to error with JSON pointers.
-     - should replace to something more user-friendly, where user just need to specify the sibling model's attribute name
-     - at the moment, $data is removed before schema validation, this would need to be changed
-     - validateMap would need to convert this notation to $data, for ajv to work
-     - error reporting does not currently work with $data, because ajv does not translate $data into the actual referred
-       data. E.g. it says "should equal [Object object]" because { $data: STR } is kept as is
-
-inputValidation middleware:
-  - like dataValidation middleware but before any server-side data transformation:
-     - i.e. beginning of command layer
-     - reuse attr.validation like dataValidation middleware
-        - reason we do not have two different sets of validation: data stored in database should be valid input, and also having two sets adds two much complexity and room for errors to end-users
-     - gives 4** client-side errors, while dataValidation middleware gives 5** server-side errors
-     - input only (like dataValidation middleware)
-     - should try to memoize|reuse per request (to avoid memory leaks) between inputValidation and dataValidation middlewars
 
 Orphans:
   - maybe keep dead links dangling???
@@ -1007,15 +1010,14 @@ Positioning:
       - i.e. no vendor lock-in
 
  25  MUST HAVE FEATURES
- 1   Patch operators
  2   Pagination
-
- 4   Aggregation
 
  1   Exception handling
  1   Error reporting
  0.5 JSON schema $data
  1   inputValidation
+
+ 4   Aggregation
 
  4   Static assets
 
