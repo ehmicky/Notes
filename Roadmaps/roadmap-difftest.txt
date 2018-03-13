@@ -12,9 +12,11 @@ Logo:
   - "difftest" and include green + and red - inside letters
   - nice sans-serif non-monospace font
 
-test("TITLE", [...ARR], FUNC(...ARG)->[PROMISE_]VAL [, ...OPTS])->PROMISE
+test|snapshot("TITLE", [...ARR], FUNC(...ARG)->[PROMISE_]VAL [, ...OPTS])->PROMISE
   - must be called synchronously during file load
-  - named export `test` (not default export)
+  - named export `test|snapshot` (not default export)
+  - test(): assertion testing (must throw errors), no snapshot
+  - snapshot(): returned value or thrown exception creates snapshot
 
 "TITLE":
    - not optional
@@ -87,46 +89,46 @@ Test declaration:
      - reason: avoiding spawning lots of useless workers because of misconfiguration
   - if a test is declared twice by different workers, do not error, but only run test once
 
-Snapshot types:
-   - "new" snapshots
-   - "removed" snapshots
-   - "same" snapshots (i.e. unchanged)
-   - "different" snapshots (same snapshot key but different snapshot)
-   - "inconstant" snapshots (current test code created different snapshots when run several times)
-   - "process" snapshots (process errors)
+Assertion testing:
+  - any assertion library works:
+     - just need to throw error
+     - core 'assert', power-assert, chai, should.js
+  - does not store|use any snapshot
+  - failure reporting:
+     - ERROR.name + ERROR.message
+     - stack trace (in order):
+        - remove node_modules/** and Node internals
+        - apply source maps
+        - report paths relative to common root
+        - see current libraries for ideas and which ones to use???
+     - preview the source code context:
+        - like ava does
+        - after source maps applied
+        - only of the deepest stack call
+        - do not do it if lines are very long, which probably indicates a concatenated build
 
-Interactive mode:
-   - CONF.interactive BOOL (--[no-]interactive in CLI)
-   - false:
-        - always false (cannot override) if !stdin.isTTY || isCi
-        - always false with other reporters than 'pretty'
-        - no prompting
-   - true (def):
-        - interactively ask on each snapshot which action to do
-        - similar to add -p
-        - prompt is:
-              n/next, u/update, r/remove, m/M/move, i/input, u/undo, q/quit
-              1/single, t/test, f/file, */all, v/[no-]verbose, c/[no-]compact, ?/help
+CONF.update BOOL (-u|--update):
+  - if false (def):
+     - do not add|remove|modify snapshots in snapshot files
+     - fail tests if any snapshot new|removed|different
+  - if true: inverse (including pruning)
 
-"next" action:
-   - go to next snapshots
-   - tests will fail if "new"|"removed"|"different" snapshots
+CONF.remove BOOL (-r|--remove):
+  - for each snapshot, first remove it in snapshot files:
+     - result type "new|same|different" -> "new"
+     - result type "removed" -> not reported
+     - result type "inconstant|process" -> "inconstant|process"
+  - only for the snapshots that were used:
+     - not for skipped tests
+     - not for not selected files
+  - implies CONF.update true
 
-"update" action:
-   - if "new" snapshots, create it
-   - if "different" snapshots, update it
-   - not shown if "removed"|"same"|"inconstant"|"process" snapshots
+"removed" result type:
+  - only when file selection targets either:
+     - the removed file (even though it does not exist anymore)
+     - all files (files that exist and have snapshots)
 
-"remove" action:
-   - remove current snapshots
-   - tests will fail if "same"|"different" (not if "removed")
-   - not shown for "new"|"inconstant"|"process" snapshots
-
-"move" action:
-  - goal: tests that were renamed or moved to another file (but not removed):
-     - should not be reported as 2 different snapshots ("removed" + "new")
-        - if snapshot content changed, it should also be reported as a diff
-     - should not reorder snapshots layout (so there is no git diff)
+"renamed" result type:
   - challenges (document those in code comments):
      - renaming files: tests might also have been renamed|added|removed
      - renaming tests: to identify, cannot reliably use:
@@ -138,133 +140,101 @@ Interactive mode:
      - streaming issues:
         - if comparing snapshots content: must wait for all tests of a given file to complete, before reporting the first one
         - if comparing files: must wait for all files to synchronously load, before reporting the first one
-  - m/M/move action:
-     - only shown for "removed" snapshots
-     - either:
-        - whole file was removed:
-           - M action: renamed whole file
-        - otherwise:
-           - m action: renamed test
-           - M action: moved to different file
-     - renames the snapshot path or the test name in the snapshot
-        - the snapshot will be reported again later:
-           - with different path|title
-           - with new corresponding snapshot, i.e. different snapshot type
-           - the snapshot follows normal ordering rules
-              - exception: when moving test to another file and that file is ordered before current one, process current file snapshots first
-        - should keep the snapshot file as is, i.e. not re-order tests (so there is no git diff)
-     - in snapshot files, persist hashes (only 8 hex chars) of:
-        - each test file's raw content
-        - each snapshot data + FUNC.name + FUNC.toString()
-     - highlight action when very likely that file|test was renamed
-        - highlighted the same way as the previous action after "undo" action
-     - ask user for new name among list of possible ones
-        - use CLI combo box (dropdown + search with autocomplete)
-           - current file's test titles should be known because tests are executed on next tick, i.e. first test cannot be reported before tests were defined synchronously top-level
-           - should show possible test files as path relative to current one
-              - omit "./" in output (autocomplete, dropdown) but allow it in input
-              - including extension
-        - sorted by most likely:
-           - renamed whole file:
-              - another file has same content hash (highlight action)
-              - siblings
-              - children, depth level by level
-              - parent, depth level by level
-              - lexicographic order
-           - moved to different file:
-              - no highlight action / content hash
-              - otherwise same as "renamed whole file"
-           - renamed test:
-              - same snapshot hash (highlight action)
-              - same index in file
-              - index 0 to last
+   - current solution only works if:
+      - tests was passing and still is
+      - nothing was changed but the test title or the file
+      - for file changing, only works if whole file was removed
+   - matching:
+      - any "new" test
+      - with any "removed" test that look the same
+      - for all snapshots in the test
+   - removed tests:
+      - are coming either from:
+         - removed files: known before starting workers
+         - removed test in current file: known because tests are defined synchronously, and tests start running on next tick
+      - should not be reported until the end, in case they are actually "renamed"
+   - comparing tests:
+      - either same test title or file
+      - same data + FUNC.name + FUNC.toString():
+         - persisted in snapshot files as 8 hex chars hash
+      - same snapshots
+   - streaming:
+      - when a snapshot looks like it should be marked as "renamed" but we still need to wait for snapshots
+      - then pause streaming of that test until we know the answer
+   - report them with:
+      - "renamed" result type
+      - followed by oldName -> newName
+      - test will fail if CONF.update false
+      - should try to keep snapshots layout (so there is no git diff)
+   - rename the test title or the file path in the snapshot files
 
-"input" action:
-   - modify current snapshots by prompting for input
-   - for "new"|"same"|"different" snapshots
-   - not shown for "removed"|"inconstant"|"process" snapshots
-   - prompt:
-        - use Node REPL ("readline" core module)
-        - can use history to see previous inputs
-        - current snapshot is copied in clipboard
-        - retry if invalid input
-   - tests will fail, unless input snapshot is the same as current snapshot
-   - only shown when group "single"
-   - goal: test-first development
-
-"undo" action:
-   - for the last "next|update|remove|move|input" action
-        - including grouped action
-   - restore previous group|verbose modes if different
-   - should highlight previously done action
-   - not shown if no action to undo
-
-"verbose" mode:
-   - toggle between CONF.level 'verbose' and 'warn'
-   - CONF.level 'error' never possible in interactive mode
-   - prompt should not show current mode
-
-Group mode:
-   - several snapshots at once:
-        - print each before prompt
-        - action applies to each
-   - grouped by "GROUP": single, test, file, all
-   - def is CONF.group (def: 'single')
-   - prompt should not show current group mode
-   - for a given group, each snapshot type is shown and prompted separately:
-        - in order: "same" > "different" > "removed" > "new"
-        - reason: being able to do separate actions for each snapshot type, since they share common actions
-   - only if CONF.interactive true
-
-Switching between modes:
- - group|[no-]verbose mode: do not switch to snapshots where an action (including "next") was already taken
- - switch first snapshot to:
-     - "verbose" mode: first "same" snapshot of current group (or of current test if group "single"). If none, current snapshot.
-     - "no-verbose" mode: first "different"|"removed"|"new" snapshot of current group (or of current test if group "single"). If none, of next group.
-     - group mode: current snapshot
+Result types:
+   - "pass" assertion
+   - "fail" assertion
+   - "new" snapshots
+   - "removed" snapshots
+   - "same" snapshots (i.e. unchanged)
+   - "different" snapshots (same snapshot key but different snapshot)
+   - "inconstant" snapshots (current test code created different snapshots when run several times)
+   - "process" snapshots (process errors)
 
 CONF.level STR:
-  - among 'error', 'warn', 'verbose'
-  - do not report passing snapshots:
-     - for 'error|warn' but not 'verbose'
-  - do not report content (but still report header) of snapshots, except first one of each test + snapshot type
-     - for 'error' but not 'warn|verbose'
+  - among 'error', 'warn', 'info', 'silent'
+  - do not report "pass|same" result types:
+     - for 'error|warn' but not 'info|silent'
+  - do not report content (but still report header) of tests, except first failed one of each test + result type
+     - for 'error' but not 'warn|info|silent'
   - for any reporters
   - default value:
-     - pretty: 'warn' if interactive, 'error' otherwise
-     - tap|notify: 'error'
-     - json: 'verbose'
+     - pretty|tap|notify: 'error'
+     - json: 'info'
 
 Default reporter:
-  - the following applies regardless of group mode
-  - each test: purple header with:
-      - "shortest filepath" (see below)
-      - test title:
-          - ellipsis in middle if needed
-  - each data:
-      - smaller header (do not repeat test header)
-      - color of header: "new" (backgroundGreen), "removed" (backgroundRed), "different" (backgroundYellow), "same" (backgroundGrey), "inconstant" (backgroundMagenta), "process" (backgroundCyan)
-      - start with snapshot type: "New", "Removed", "Different", "Same", "Inconstant", "uncaughtException|unhandledRejection|..."
-      - then data:
-          - space-separated ARGs
-          - ARG stringified with prettyFormat()
-          - ellipsis in middle of each ARG if needed
-             - each ARG gets same amount of max chars
-          - for "process", this is an explanatory text (like in log-process-errors)
-  - content first column:
-      - "removed" snapshots: red minuses for all lines
-      - "new" snapshots: green pluses for all lines
-      - "different" snapshots: red minuses or green minuses for relevant lines
-      - "same" snapshots: nothing
-      - "inconstant" snapshots: like "different" if snapshot exists, "new" otherwise
-      - "process" snapshots: nothing
-  - content: full snapshot
-  - for "inconstant": data header + content is reported twice, because two snapshots are shown
-  - prompt question:
-      - remove it after user has confirmed input
-  - prompt input:
-      - prompt characters (on the left) should be very noticeable so that it is easy to scroll up and distinguish groups
-      - input should be left so user can see previous answers
+  - newlines:
+     - test iteration with no content
+        - no newline before|after
+        - reason: more compact and make assertion testing look similar to other test runners
+        - e.g. assertion "pass" result types, and non-first errors with CONF.level "warn"
+     - test iteration with content:
+        - no newline before, but newline after
+  - tests with no data iteration:
+     - single line:
+        - result type:
+           - "new", "removed", "different", "same", "inconstant", "uncaughtException|unhandledRejection|..."
+           - background colored: "new" (backgroundGreen), "removed" (backgroundRed), "different" (backgroundYellow), "same" (backgroundGrey), "inconstant" (backgroundMagenta), "process" (backgroundPurple)
+           - padded so they all have same length
+        - "shortest filepath" (see below) + test title: no background color, normal foreground color
+     - content
+  - tests with data iteration:
+     - header:
+        - once per test
+        - 3 lines: bottom-filled color, full-filled color, up-filled color (like test-openapi)
+        - color is inverted auto
+        - "shortest filepath" + test title
+     - subheader:
+        - once per test iteration
+        - result type: same as above
+        - data:
+           - space-separated ARGs
+           - ARG stringified with prettyFormat()
+           - ellipsis in middle of each ARG if needed
+              - each ARG gets same amount of max chars
+           - for "process", this is an explanatory text (like in log-process-errors)
+           - no background color, normal foreground color
+     - content
+  - tests with data or no data iteration:
+     - test title: ellipsis in middle if needed
+     - content (if any) either:
+        - assertion error
+        - snapshot:
+           - first column:
+              - "removed" snapshots: red minuses for all lines
+              - "new" snapshots: green pluses for all lines
+              - "different" snapshots: red minuses or green minuses for relevant lines
+              - "same" snapshots: nothing
+              - "inconstant" snapshots: like "different" if snapshot exists, "new" otherwise
+              - "process" snapshots: nothing
+           - for "inconstant": data header + content is reported twice, because two snapshots are shown
 
 Color highlighting in snapshots:
   - use a syntax highlighting library
@@ -275,44 +245,38 @@ Color highlighting in snapshots:
   - CONF.color BOOL (--[no-]color) (def: chalk default)
 
 Compact mode:
+  - truncate ERROR.message when in compact mode
   - goals:
-      - make each headers + snapshot + prompt fit a single screen
-      - avoiding slowing down machine when snapshot is big
-  - [no-]compact mode:
-      - only show one of them at a time
-      - def is CONF.compact BOOL (def: true) (or --[no-]compact)
-  - truncates:
-      - OBJ max depth 2
-      - ARR max length 4
-          - truncate in middle
-      - max lines NUM:
-          - truncate in middle
-          - newline should be either CRLF or LF
-          - NUM should be whatever fits a typical terminal screen
-          - each series of 80 chars without any newlines should be considered a line:
-              - increments the number of "lines"
-              - might be truncated in the middle of the line
+     - make each test fit a single screen
+     - avoiding slowing down machine when test content is big
+  - CONF.compact BOOL (def: true) (--[no-]compact)
+  - truncates snapshots:
+     - OBJ max depth 2
+     - ARR max length 4
+        - truncate in middle
+  - truncates snapshots|ERROR.messages to max lines NUM:
+     - truncate in middle
+     - newline should be either CRLF or LF
+     - NUM is terminal height
+        - minus test headers height
+        - if cannot guess, use a typical terminal height
+     - each series of 80 chars without any newlines should be considered a line:
+        - increments the number of "lines"
+        - might be truncated in the middle of the line
   - should try not to truncate first:
-      - if over max lines, then truncate it
-      - if not over max lines, keep it not truncated
-          - do not show "[no-]compact" modes
+     - if over max lines, then truncate it
+     - if not over max lines, keep it not truncated
+        - do not show "[no-]compact" modes
 
 Reporting:
   - should take as input UI information: snapshots, titles, filepaths, data, whether an error was thrown|rejected, available actions, etc.
-  - interactivity:
-      - should declare whether it can be interactive
-      - if OPTS.interactive true, should return action as output (and argument for "input" action)
   - should not need to handle most logic including:
-      - action handling
       - color highlighting
-      - showing last action with undo
       - truncating
-      - grouping and modes (just get current snapshots as input)
   - counter (like test-openapi)
       - for all reporters except tap
   - end summary:
       - for all reporters
-  - designed to allow a potential GUI interactive reporter in the future
 
 CONF.reporters STR_ARR (-R|--reporter):
   - types:
@@ -325,23 +289,14 @@ CONF.reporters STR_ARR (-R|--reporter):
 Reporting ordering:
   - the following applies to all reporters
   - run in parallel but buffer and report in order (like test-openapi)
-     - should stream it, including in interactive mode
-  - order should be:
-     - for any group mode (including single)
-     - according to (by priority):
-        - removed files > new files > other files > process errors
-        - lexicographical ordering of "shortest filepath" (see below)
-        - when test() was called
-        - snapshot type: "same" > "different" > "removed" > "new"
-        - argument order in parameters
-
-Removed snapshots:
-  - those are not automatically pruned:
-     - user must be explicit because they might have removed snapshots by accident during test refactoring
-     - also this makes design simpler and more orthogonal, at the expense of more actions from user
-  - reported when file selection targets either:
-     - the removed file (even though it does not exist anymore)
-     - all files (files that exist and have snapshots)
+     - should stream it
+  - order should be (by priority):
+     - other files > new files > removed files > process errors
+     - lexicographical ordering of "shortest filepath" (see below)
+     - other tests > new tests > removed tests
+     - when test() was called
+     - result type: "same" > "different" > "new" > "removed"
+     - argument order in parameters
 
 Use itself for unit testing, but its latest release (not direct require())
 
@@ -384,21 +339,26 @@ Fuzz testing:
   - CONF.repeat NUM:
       - append NUM to each set of data, i.e. repeat each test NUM times
       - >= 0
-      - def: 2 if new|different snapshot, 1 otherwise
-          - goal: checking for inconstant results, due to randomness in either input function or test function itself
+      - def:
+         - assertion testing: 1
+         - snapshot testing:
+            - 2 if new|different snapshot, 1 otherwise
+            - goal: checking for inconstant results, due to randomness in either input function or test function itself
   - NUM as data dimension:
-      - NUM is absent from snapshot key
-      - only a single snapshot is created for all iterations:
+      - NUM is absent from test title or snapshot key
+      - assertion testing: only report once, either all "pass" or the first one that "fail"
+      - snapshot testing: only a single snapshot is created for all iterations:
           - if all the same, use any
-          - if any differs: snapshot type "inconstant":
+          - if any differs: result type "inconstant":
               - no prompt
               - test always fails
               - first two different snapshots are reported
                   - if any snapshot is same as current one, should use it as the first one
-  - input function:
-      - `${FUNC.name}()` (or "function()" if anonymous) should be used as snapshot key
-      - but generated value should be used in reporting
-      - although test takes randomness as input, the test output should be consistent across runs, otherwise each new run will fail
+  - test title or snapshot key should be appended with ` | ${info.title}`
+      - for snapshot testing (not assertion testing), input functions should:
+         - use `${FUNC.name}()` (or "function()" if anonymous) in snapshot key
+         - but generated value should be used in reporting
+         - although test takes randomness as input, the test output should be consistent across runs, otherwise each new run will fail
 
 Fuzz data generation:
   - similar to faker but specific to fuzz testing
@@ -427,12 +387,11 @@ CONF.bail BOOL (-b|--bail)
   - "stops":
      - terminate workers
      - do not run|report any additional tests
-  - always false with CONF.interactive true
 
 Process errors:
   - use log-process-errors
       - does not make process exit
-  - snapshot type "process":
+  - result type "process":
       - reported at end of test run
       - filepath "", title "Process errors"
       - snapshot content is the main error value
@@ -461,7 +420,6 @@ Watch mode:
              - problem: does not work with dynamic import()
              - problem: might be harder with transpiled languages like TypeScript (although that might be supported by parsers)
       - cancel current prompt
-  - only in interactive mode
   - add r/restart action to re-run all tests
   - when run done, keep prompt but remove all actions except quit and restart
      - show end summary first
@@ -498,6 +456,8 @@ Snapshots???
           - otherwise, prepend first parent dir (and so on) until different (and do not use .EXT)
       - test title
       - ARR of data serialized with same logic as snapshot
+
+Try to separate snapshot testing into own project that can be used with other test runners???
 
 Should run in browsers too
   - add multi platform capability???
