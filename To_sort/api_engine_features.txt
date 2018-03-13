@@ -51,6 +51,180 @@ Multiple args.rename
 null arguments:
   - many arguments can be null without being properly validated it seems, e.g. `args.pagesize`
 
+Config:
+  - custom props:
+     - clarify "custom properties" prefixed with __ in user documentation. It's not clear that they are not meant to do anything.
+  - schema functions:
+     - schema.variables.* functions should bind all schema variables at end of protocol layer:
+        - i.e. to use any schema variable known only afterwards, must pass them as positional arguments
+        - must make sure they all get same reference, so they can call each other
+        - goal: remove the need for varsRef direct assignment during runSchemaFunc(), which in turns allows schema functions to be async without concurrency issues
+     - user document that schema variables are passed to schema.variables.* but not to schema.variables.*.*
+  - should change prefixing:
+     - no prefix: system vars, model attributes, JSON schema validation
+     - $ prefix: user vars, custom validation, custom properties
+     - _ prefix: query|patch operators
+     - __ prefix: patch user operators
+     - i.e. rename:
+        - system vars from $ to no prefix
+        - user vars from no prefix to $
+        - custom validation from __ to $ prefix
+        - custom properties from __ to $ prefix
+     - rename $1, $2, etc. to arg1, arg2, etc.
+  - default values:
+     - have a more declarative way to do it, e.g. a { "VARR": VAL[(...)] } map
+        - VARR should allow * for "any"
+  - events:
+     - remove "options" property from start event payload
+     - remove event retrying
+     - serverinfo:
+        - move "serverinfo.system.*" and "serverinfo.stats.*" to common "host.*"
+        - rename "serverinfo.system.hostname" to "host.name"
+        - move "node|apiengine.version" to "versions.node|apiengine"
+        - servername:
+           - set by schema.name (which defaults to hostname)
+           - move to "process.name"
+        - serverid is divided between:
+           - "host.id": UUIDv5 with MAC address
+           - "process.id": process ID
+     - remove $message event variable
+     - event *size (e.g. payloadsize) should be undefined, not "unknown" if value is not JSON
+     - event variables error and errorinfo:
+        - merge both of them errorinfo and error (i.e. remove "error" and rename "errorinfo" to "error")
+        - make it available to both call and failure events
+        - only includes the problem details properties
+        - error response.data.error should only contain $error props
+     - start event payload:
+        - exit:
+           - do not pass it to start event payload
+           - instead, add a apiengine stop PID instruction, which sends custom signal, via kill()
+        - rename "servers" to "protocols" OBJ
+     - rename event variable $type to $event
+     - all of requestinfo event variables should be available as schema function variables:
+        - the ones that are computation intense, e.g. payloadsize, should be calculated once per request
+        - not namespaced under "requestinfo"
+        - commandpath, command and collection are only set while a command is being performed
+           - needs to work even with concurrent commands
+     - event handlers:
+        - should be schema functions, i.e. run with await runSchemaFunc()
+        - event handler's input is all the regular schema variables:
+           - including $params, user variables
+              - obviously event handers do not get $val, $model, $expected, $arg, etc.
+           - for request phase:
+              - no more requestinfo, since they are now schema variables
+              - $info variable OBJ:
+                 - is all the schema variables, after event filtering applied
+                 - should add event filter "variables", which filters user variables, and defaults to false
+           - for perf event: $measures variables
+           - for failure event and call event: $error variable OBJ
+              - error response.metadata.info should contain $info variable, except $serverinfo
+           - for start event: $protocols variable
+           - for stop event: $exitcodes variable
+           - for any event: $phase, $level and $event
+           - should user document which schema function get which schema variable, since some variables are set at different times, or under different conditions
+  - formats loading:
+     - check if HJSON and YAML are actually supersets, not sure about that
+     - for INI, undefined can be a value, but not sure how. If via VAR= should be converted to "". If via VAR=undefined, should throw
+     - JavaScript format loader should only use require() if both content === undefined && path !== undefined
+     - superset parser|loader should throw instead of converting:
+        - error message should indicate the faulty value and its path
+        - should throw if value is not JSON, i.e. not typeof string || Number.isFinite(NUM) || typeof boolean || === null || Array.isArray() || .constructor === Object
+     - option allow(VAL)->BOOL
+        - only parsing, not serializing
+        - run recursively against each member
+        - if true:
+           - during "subset" parsing, skips transtyping
+           - during "superset" parsing, skips checking
+  - JSON references:
+     - replace json-schema-ref-parser by own code:
+        - finds all $ref
+        - if value is MODULE.node, replace using module.resolve()
+        - use formats generic loading to load content
+        - should throw on circular references (reuse my current code that checks for that)
+        - should throw on $ref pointing to non-existing files, or to unsupported format
+        - deep merge $ref result with siblings, with lower priority
+     - should keep original $ref on exported object:
+        - using a SYM
+        - only if exported value is typeof object and not null
+        - should be used:
+           - to serialize back to JSON reference during schema compilation
+           - by memory_db to persist database
+     - JSON references:
+        - should be parsed before any schema validation
+        - format loading option allow():
+           - if deep merged, can only parse to JSON-compatible types, i.e. no "allow"
+           - otherwise, if under schema.variables, can parse to anything , i.e. allow()->true
+           - otherwise, can only parse to either JSON-compatible types or to top-level function, i.e. allow()->typeof VAL === "function"
+              - allow() must throw if typeof VAL ==="function" but either:
+                 - it is not directly a Function (in terms of the prototype chain)
+                 - it has any added properties
+              - reason: avoid using FUNC as an OBJ
+        - when compiling schema:
+           - what used to be JSON references (detected with SYM) is serialized back to that exact same JSON reference if it is not a JSON-compatible type, or has any member that is not.
+             Otherwise, left as is.
+     - user document all this
+  - inline functions:
+     - should be parsed before any schema validation
+     - should be serialized back to same value on schema compilation
+  - subconf files:
+     - not used anymore:
+        - should only be JSON references.
+        - no default file searched anymore
+  - move runOpts to schema:
+     - should all:
+        - still have default values
+        - still have same validation (but now with "schema's schema")
+           - including requiredness
+     - config.servername
+     - config.env
+     - config.databases:
+        - memory_db file:
+           - should use simple JSON reference like rest of schema
+           - remove "db" format type: memory_db should use "conf" format type:
+              - when loaded should fail if it is not a OBJ_ARR though
+           - "save" option should:
+              -  default to false
+              -  fail if true but either "data" is undefined or it did not use a JSON reference
+           - "data" option should reuse JSON reference for saving
+     - all limits-related options, under config.limits
+     - all events-related options, under config.events:
+        - should use config.events.filter|level
+     - config.protocols
+  - remove instruction opts:
+     - remove --config instruction opt
+     - make --schema option the only option, i.e. getRunOpts should just be getSchema
+     - remove instruction opts-specific logic, and most instruction-specific logic
+     - no instruction-specific options per se. They just use different part of the config.
+     - rename apiengine.run.config.EXT to apiengine.config.EXT
+  - node.js API:
+     - APIENGINE.INSTRUCTION({ [config: "CONF_FILE"], [CONF_PROPS...] })
+        - CONF_PROPS are deeply merged with priority
+     - if any CONF_PROPS is specified besides the CONF_FILE, precompiled config file cannot be used (i.e. it must be compiled again)
+        - including when specifying CONF_PROPS using envvars or CLI
+  - APIENGINE_* envvars:
+     - should set the schema instead of instruction opts
+     - allow nested *_NUM|VAR, deeply merged
+     - allow APIENGINE_SCHEMA instead of APIENGINE_CONFIG
+     - still use common envvars like NODE_ENV, etc.
+     - values are either unquoted strings or JSON transtyped
+        - i.e. arrays can be "[VAL, ...]" values as well
+  - CLI:
+     - replace apiengine [INSTRUCTION] --schema SCHEMA_FILE by apiengine [INSTRUCTION] [SCHEMA_FILE]
+     - remove --OPT entirely dynamic:
+        - not deduced from a static list of options
+        - not available in --help output
+        - parsed to CONF_OBJ, deeply merged with priority, using --PROP-VAR|NUM-* notation
+        - use JSON transtyping like envvars
+  - renaming:
+     - make sure the word "conf" is not used anywhere in the codebase
+     - rename schema to "config"
+  - documentation:
+     - change also in user doc, eda, Google Notes
+        - including that JSON references are deeply merged
+     - add a reference part for: config, queries
+     - divide between client and server
+     - add a tutorial
+
 Errors:
   - status:
      - errors during schema compilation or server startup should have HTTP status code 0
