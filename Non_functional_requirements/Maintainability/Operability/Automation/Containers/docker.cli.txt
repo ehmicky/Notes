@@ -1002,14 +1002,16 @@ FILE LINK ==>                     #HOST|CONTAINER_DIR can also be FILE:
                                   #  - if inode changes:
                                   #     - e.g. mv, or commands can actually do "mv", like sed -i or vim
                                   #     - the link is sometimes broken, but each side keeps its file
-USERS/GROUPS ==>                  #Will be created under user|group root, unless already existing
-                                  #Share permissions, user and group:
+USERS/GROUPS ==>                  #If HOST_DIR:
+                                  #  - does not exists, creates it under user|group root
+                                  #  - exists, keep user|group and permissions
+                                  #CONTAINER_DIR share permissions, user and group:
                                   #  - bidirectional
-                                  #  - might create portability issues, when using something different than root
-EXISTING HOST DIR ==>             #If HOST_DIR already exist, reuses its:
-                                  #  - content
-                                  #  - permissions
-                                  #  - user, group: if does not exist in container, uses container's user|group
+                                  #  - might create portability issues:
+                                  #     - containers users not existing in host will be mapped, in host, to "container's user (from host's perspective)"
+                                  #     - host users not existing in containers will be mapped, in container, to "container's user (from container's perspective)"
+                                  #  - permissions check is done at host level, i.e. using "container's user (from host's perspective)"
+EXISTING HOST DIR ==>             #If HOST_DIR already exist, reuses its content
 
 DATA VOLUME DRIVER ==>            #Plugin for specific filesystems (e.g. over the network)
                                   #Def: "local"
@@ -1552,23 +1554,29 @@ dockerd ...
                                              \=+===============================+=/
 
 
-CONTAINER USER|GROUP              #By def:
-(FROM HOST'S PERSPECTIVE) ==>     #  - container's user|group (from host's perspective) will be the user|group that control docker client
-                                  #  - should avoid root
-                                  #When using "user namespace" instead (disabled by def):
-                                  #  - it will be one of that user's sub-users|groups instead
-                                  #  - "user namespace" is map between user|group and "sub-users|groups":
-                                  #     - host must set up this map by setting /etc/subuid and /etc/subgid:
+CONTAINER USER|GROUP              #Is root, unless using "user namespaces":
+(FROM HOST'S PERSPECTIVE) ==>     #  - it will be sub-users|groups from a designated user instead
+                                  #     - sub-users|groups are ephemeral and share the user's permissions
+                                  #     - the user can be anyone:
+                                  #        - does not have to be the one controlling docker client
+                                  #        - should have restricted permissions
+                                  #     - goal is security:
+                                  #        - e.g. volumes CONTAINER_DIR will use host's unprivileged user
+                                  #  - "user namespace" is map between user|group and range of possible "sub-users|groups":
+                                  #     - host must set /etc/subuid and /etc/subgid:
                                   #        - newline-delimited ranges: USER|GROUP:MIN_ID:MAX_ID
-                                  #     - docker only uses first UID from sub-ids range, i.e. all containers will share same subuid
-                                  #  - goal is security: in case container somehow manage to reach host, it will do so as a sub-user
+                                  #     - docker only uses first UID|GID from sub-ids range, i.e. all containers will share same subuid
+                                  #  - disabled by default
                                   #Conflicts with docker create:
                                   #  - --pid|network host
                                   #  - --privileged, unless --userns host
                                   #  - --read-only
 dockerd ...
---userns-remap                    #Enables user namespaces, i.e. specifies which host's user|group should use sub-users|groups when launching containers
- [USER|UID[:GROUP|GID]]           #Def: USER "dockremap", which is created if not existing
+--userns-remap                    #Enables user namespaces using USER|GROUP's sub-users|groups
+ [USER|UID[:GROUP|GID]]           #If "default":
+                                  #  - uses USER "dockremap"
+                                  #  - creates that user if not existing
+                                  #  - edit /etc/subuid and /etc/subgid
 docker create ...                 #Same value as --pid, i.e.:
 --userns STR                      #  - nothing (def): use a new "user namespace" for container
 HOSTCONF.UsernsMode               #  - --userns container:CONTAINER_ID: share between containers
