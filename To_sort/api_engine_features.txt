@@ -371,6 +371,14 @@ Versioning/changes:
     successor-version|version-history" [S]
   - must version IDL file format itself, and also apiEngine itself
 
+Static assets:
+  - take inspiration from existing ones, probably reusing one
+  - take inspiration from Express sendFile()
+  - think of Content-Disposition
+  - integrate GraphiQL with this
+  - server-side templates serving
+     - including isomorphic server-side renderer
+
 Exception handling:
   - error reasons:
      - rationalize|reduce error reasons:
@@ -414,24 +422,58 @@ inputValidation middleware:
      - input only (like dataValidation middleware)
      - should try to memoize|reuse per request (to avoid memory leaks) between inputValidation and dataValidation middlewars
 
-No orphans:
-  - allow no orphans, considering that:
-     - model relations can be:
-        - optional|required for each part:
-           - first part:
-              - required means that second part => first part
-              - not that first model's property is required
-           - second part: inverse
-        - single|multiple for each part
-     - model relations can be changed by:
-        - adding for each part:
-           - adding first part, which might happen during create|patch|replace
-           - adding second part, which happens during create
-           - should make whole action fail if any part would become orphan (according to requiredness)
-        - removing for each part:
-           - removing first part, which might happen during delete|patch|replace
-           - removing second part, which happens during delete
-           - should trigger cascade removal when any part would become orphan (according to requiredness)
+Orphans:
+  - validation:
+     - attribute targeting another model have limited validation:
+        - the reason: they might be deleted|modified when the model they target is deleted, and that model deletion should not have to care about it, but in the same time we don't want invalid models
+        - forbidden: required, minItems, dependencies, contains, custom validation, being part of $data cross-attributes validation
+  - find dead links:
+     - for create|patch|replace commands
+     - find all ids+modelName that:
+        - have attr.target !== undefined
+        - are being modified, i.e. defined in args.data and different from currentData
+        - are a "leaf", e.g. in args.data { childA, childB: { ... } }, childA, not childB (since it will be created, it cannot be a dead link)
+     - run in parallel of currentData middleware:
+        - how can it be in parallel since it needs currentData???
+        - merged to same output, i.e. to currentData
+        - should reuse each other (results and pendingPromises)
+        - start at same time. end when both are over.
+     - goal: firing 404 if dead link
+        - the extra currentData is just an added bonus to speed up next middleware
+  - remove dead links:
+     - middleware fired after currentData middleware, before mergePatchData middleware
+     - on delete commands
+     - first search for models with dead links:
+        - do find commands with args.filter { attr: { containsOrIs: ids } } where ids are the models being deleted, on the models that might target them
+           - if the model being deleted contains bidirectional links, can optimize with faster command (i.e. filter directly by id) because the models ids are known
+        - add args.filter { id: { $ne: ids } } to exclude models already being deleted, i.e. already present in delete actions currentData
+     - merge the find commands results to currentData
+     - then create patch actions to remove dead links
+        - do not fire those patch actions, only stack them up at the end, and resolveWriteAction will take care of them
+        - those actions should bypass authorization, i.e. be "internal"
+  - bidirectional links:
+     - attr.reverse "attr2"
+        - IDL validate (before normalization)
+           - forbid attr.reverse if attr.target is not defined
+        - IDL pre-normalization:
+           - attr2.reverse "attr" is added, unless already present. I.e. link is truly the same on both ends.
+        - IDL validation (after normalization):
+           - model2.attr2 must exist, and have attr2.target defined
+           - attr.target and attr2.target must be defined and point at each others models
+           - attr.reverse "attr2" and attr2.reverse "attr" must be defined and point at each other (using also attr[2].target)
+     - middleware:
+        - on create|patch|replace commands
+        - after currentData middleware, before removeDeadLinks middleware
+        - fired for any attribute:
+           - with attr.reverse defined
+           - and that is being modified, i.e. defined in args.data and different from currentData
+        - first merges into currentData some find commands results:
+           - all ids being modified should trigger find commands
+              - except if alread present in currentData. This should cover all ids being addes, since findDeadLinks middleare already searched for them.
+        - then create patch actions to modify all the reverse ids
+           - both the ones being added, and the ones being removed
+           - do not fire those patch actions, only stack them up at the end, and resolveWriteAction will take care of them
+           - those actions should bypass authorization, i.e. be "internal"
 
 Data correctness:
   - code makes assumptions about database correctness:
@@ -504,14 +546,6 @@ Async actions/tasks:
 
 Alternate ids:
   - e.g. a query can either use machine-friendly `id` attribute, or human-friendly `name` attribute
-
-Static file serving:
-  - take inspiration from existing ones, probably reusing one
-  - take inspiration from Express sendFile()
-  - think of Content-Disposition
-  - integrate GraphiQL with this
-  - server-side templates serving
-     - including isomorphic server-side renderer
 
 Server routing:
   - compare with existing libraries, and see if should reuse one and/or their features
@@ -984,21 +1018,21 @@ Positioning:
  2   Pagination
 ?7   Compatibility layer
 ?7   Versioning/changes
+ 4   Static assets
  1   Exception handling
  1   Error reporting
  0.5 JSON schema $data
  1   inputValidation
 
  10  DATA MODEL
-?2   No orphans
+ 2   Orphans
 ?2   Data correctness
 ?5   Schema strictness/polymorphism
 ?3   API base types
 
- 20  NICE TO HAVE FEATURES
+ 15  NICE TO HAVE FEATURES
 ?3   Async actions/tasks
-?0.5 Alrernate ids
- 4   Static file serving
+?0.5 Alternate ids
  1   Server routing
 ?4   Realtime
 ?3   Concurrency conflicts
