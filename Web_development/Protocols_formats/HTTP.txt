@@ -24,6 +24,12 @@ HTTP-related RFCs:
   - HTTP/1.1: 7231
   - Accept-Datetime [C]: 7089, http://timetravel.mementoweb.org/
 
+Goal:
+  - generic:
+     - semantics (HTTP methods, status codes, etc.) represent any kind of resource
+     - no assumption on resource type|format|purpose
+  - but oriented towards document-like resources
+
 Architecture:
   - mostly maintained by IETF RTCs
   - version:
@@ -269,7 +275,7 @@ Format extensions:
      - new frame type
      - new SETTINGS_*
      - new *_ERROR
-  - should prefix with x-*
+  - should prefix with X-*
   - if unavailable:
      - HTTP extensions: 510 (Not Extended)
      - feature: 501 (Not Implemented)
@@ -385,7 +391,9 @@ Method:
         - in response to OPTIONS request
      - Accept-Patch: MIME[;charset=CHARSET],... [S]
         - in response to OPTIONS request, meaning MIME types accepted by PATCH
-     - not allowed: 405 (Method Not Allowed) vs not understood: 501 (Not Implemented)
+     - errors:
+        - not allowed: 405 (Method Not Allowed). Must also include Allow [S]
+        - not understood: 501 (Not Implemented)
   - X-HTTP-Method-Override: METHOD [C]:
      - request should be interpreted as if HTTP METHOD had been used
      - goal is to overcome proxies HTTP methods restrictions
@@ -415,7 +423,7 @@ Status codes:
      - 202 (Accepted)                         response is ongoing and will take some time to process                  See Long response (time)
      - 203 (Non-Authoritative Information)    proxy transformed server's 200                                          See Proxies
      - 204 (No Content)                       OK, but nothing is to be returned and client should not refresh         See request|response length
-     - 205 (Reset Content)                    like 204 but client should refresh                                      See request|response length
+     - 205 (Reset Content)                    like 204 but client should reset                                        See request|response length
      - 206 (Partial Content)                  response is only a subset of the full resource                          See Range [C]
      - 226 (IM Used)                          returns diff not full resource                                          See Delta encoding
   - 3**: client redirect
@@ -424,7 +432,8 @@ Status codes:
      - 302 (Found)                            temp, GET (even if different method, but should ask first)              See redirects
      - 303 (See Other)                        different resource (not only different URI) than requested              See redirects
      - 304 (Not Modified)                     resource did not change                                                 See unconditional caching
-     - 305 (Use Proxy)                        redirect to a proxy                                                     See redirects
+     - 305 (Use Proxy)                        redirect to a proxy (deprecated)                                        See redirects
+     - 306 (Unused)                           Reserved
      - 307 (Temporary Redirect)               temp, same HTTP method                                                  See redirects
      - 308 (Permanent Redirect)               permanent, same HTTP method                                             See redirects
   - 4**: client-side failure
@@ -434,7 +443,7 @@ Status codes:
      - 403 (Forbidden)                        authorization problem (and location not secret)                         See web authentication
      - 404 (Not Found)                        wrong URI, but correct domain (or auth problem with secret location)    See wrong request|response
      - 405 (Method Not Allowed)               HTTP method not implemented or not allowed                              See HTTP methods
-     - 406 (Not Acceptable)                   wrong requested media type or encoding (compression, delta encoding)    See Accept-* [C], delta encoding, compression
+     - 406 (Not Acceptable)                   wrong (requested) response body media type or encoding                  See Accept-* [C], delta encoding, compression
      - 407 (Proxy Authentication Required)    like 401 but for application proxy                                      See web authentication
      - 408 (Request Timeout)                  as opposed to response timeout                                          See request|response speed
      - 409 (Conflict)                         multi-client conflict                                                   See PATCH
@@ -443,7 +452,7 @@ Status codes:
      - 412 (Precondition Failed)              resource changed even though client assumed it did not                  See conditional caching
      - 413 (Payload Too Large)                                                                                        See request|response length
      - 414 (URI Too Long)                                                                                             See request|response length
-     - 415 (Unsupported Media Type)           server does not support request body media type (inverse of 406)        See wrong request|response
+     - 415 (Unsupported Media Type)           unsupported request body media type (inverse of 406)                    See wrong request|response
      - 416 (Range Not Satisfiable)            wrong Range [C]                                                         See Range [C]
      - 417 (Expectation Failed)               Expect [C] failed                                                       See Expect [C]
      - 419 (Authentication Timeout)           like 401 but for authentication timeout                                 See web authentication
@@ -453,7 +462,7 @@ Status codes:
      - 429 (Too Many Requests)                throttle. May include Retry-After [S]                                   See load
      - 431 (Request Header Fields Too Large)                                                                          See request|response length
      - 451 (Unavailable For Legal Reasons)                                                                            See wrong request|response
-  - 5**: server-side failure
+  - 5**: server-side failure (response body should give error info)
      - 500 (Internal Server Error)            bug in server, e.g. syntax error                                        See wrong request|response
      - 501 (Not Implemented)                  feature not available yet                                               See extensions
      - 502 (Bad Gateway)                      sent by proxy when it received error from server                        See proxies
@@ -472,19 +481,21 @@ Redirects:
   - common redirect:
      - status code is 3**:
         - general cases:
-           - GET (even if different method, but should ask first):
+           - use GET (even if HTTP method was not GET, but should ask first)
               - permanent: 301 (Moved Permanently)
               - temp: 302 (Found)
-           - same HTTP method
+           - use same HTTP method
               - permanent: 308 (Permanent Redirect)
               - temp: 307 (Temporary Redirect)
         - specific cases:
            - different resource (not only different URI): 303 (See Other)
-           - server ask client to use proxy instead: 305 (Use Proxy)
-           - need client input: 300 (Multiple Choices)
-           - caching: 304 (Not Modified)
+              - body should contain same URI as Location [S]
+           - server ask client to use proxy instead: 305 (Use Proxy) (deprecated)
+           - need client input: 300 (Multiple Choices) (see content negotiation)
+              - can use Location [S] to indicate preferred choice
+           - caching: 304 (Not Modified) (see caching)
      - client should request again:
-        - Location: URL [S]: right away
+        - Location: URI [S]: right away
         - Retry-After: NUM|DATE [S]: in future, same URI
         - Refresh: NUM[, url=URI] [S]: in future, same URI or not. Can be used as <meta http-equiv>
      - 5+ redirects is considered infinite loop
@@ -532,10 +543,15 @@ Redirects:
         - notifies client of URL, so it can be used for caching, or future requests
         - status code is not 3**
         - similar to alternative services, but for single URL and less features
+  - Retry-After: NUM|DATE [S]: client should request same URI again in the future
   - open redirect: see webs security doc
 
 Time:
-  - Date: DATE [C]: when request was sent 
+  - DATE: 
+     - e.g. Sun 01 Nov 1900 12:00:00 GMT
+     - should be UTC
+     - case-sensitive
+  - Date: DATE [C|S]: when request|response body was generated (i.e. just before request|response sent)
   - X-Response-Time: NUM [S]: time taken by server to process answer
   - Accept-Datetime [C]: ask for past|present versions
 
@@ -566,14 +582,13 @@ Query strings:
 
 Software identity:
   - all come with fingerprint and|or privacy concern
-  - User-Agent: PRODUCT[/VERSION]|(COMMENT) ... [C]: 
-     - client technology
-     - first token cannot be (COMMENT)
   - X-Requested-With: STR [C]:
-     - how request was performed
-     - often used: XMLHttpRequest
-  - Server: STR [S]: server name
-  - X-Powered-By: STR [S]: server technology
+     - client technology (often used: XMLHttpRequest)
+  - User-Agent: PRODUCT[/VERSION]|(COMMENT) ... [C]: 
+     - client application (e.g. web browser)
+     - first token cannot be (COMMENT)
+  - X-Powered-By [S]: like X-Requested-With but for server (e.g. PHP)
+  - Server [S]: like User-Agent but for server (e.g. Apache)
   - Pragma: VAL [C|S]: headers specific to a given client|server technology
   - X-UA-Compatible: CLIENT=VERSION;... [S]: 
      - client, if CLIENT, should render as it was VERSION
@@ -828,7 +843,7 @@ Caching:
      - key:
         - HTTP method
         - URI, excluding #HASH
-        - HTTP headers, if Vary: HEADER [S]:
+        - HTTP headers, if Vary: HEADER,... [S]:
            - whitespaces, orders, case, identical values will be normalized before comparison
            - if unconditional caching failed because of different HTTP headers: 
               - client should try conditional caching
@@ -841,6 +856,7 @@ Caching:
                     - ex: 226 for delta encoding
                     - problem: some clients/proxies cache any unknown status codes
                  - solutions like Cache-Control: im (delta encoding)
+           - HEADER can be *
            - can significantly increase reverse proxy cache size
            - use case:
               - when headers have impact on content, i.e. usually on Accept* [C]
@@ -1228,15 +1244,15 @@ Request|response length:
      - e.g. DELETE, If-Unmodified-Since [C], If-Match [C]
      - status code:
         - 204 (No Content): 
-           - client should not refresh current resource|document
+           - client has latest representation, i.e. does not need to refresh resource with a new GET
            - e.g. browsers will not reload after a <form> POST
         - 205 (Reset Content): 
-           - client should refresh current resource|document
+           - resource went back to representation before modification, i.e. should reset resource to previous state
            - not implemented by browsers
 
 Request|response speed:
   - request:
-     - 408 (Request Timeout)
+     - 408 (Request Timeout): client timeout. Connection should be closed.
   - response:
      - 202 (Accepted): 
         - async processing
@@ -1249,10 +1265,10 @@ Request|response speed:
         - can be combined with Prefer: respond-async [C]
 
 Load:
-  - throttle:
-     - 429 (Too Many Requests) 
-     - May include Retry-After [S]
-  - 503 (Service Unavailable): client cannot connect to server
+  - errors:
+     - 429 (Too Many Requests): throttle
+     - 503 (Service Unavailable): client cannot connect to server
+     - Both may include Retry-After [S]
 
 Response processing:
   - Prefer [C]:
@@ -1274,7 +1290,7 @@ Response processing:
 Content location:
   - Content-Location: URL [C|S]:
      - URL of request|response body itself
-        - if GET|HEAD request and 200|203|204|206|304 response, response body is requested resource, i.e. Content-Location [S] def to request URI
+        - if GET|HEAD request and 200|203|204|205|206|226|304 response, response body is requested resource, i.e. Content-Location [S] def to request URI
      - body can be partial|symbolic, in which case URL points to full representation
      - use cases:
         - request body provenance
@@ -1289,7 +1305,7 @@ Wrong request|response:
         - URI:
            - size: 414 (see request|response length)
            - 404 (Not Found): wrong and never was right 
-           - 410 (Gone): wrong but used to be right 
+           - 410 (Gone): wrong but used to be right, and permanently moved
         - headers:
            - size: 431 (see request|response length)
            - missing headers:
@@ -1302,7 +1318,9 @@ Wrong request|response:
         - any:
            - 400 (Bad Request): syntax error
      - semantic:
-         - 409 (Conflict): multi-client conflict (see PATCH)
+         - 409 (Conflict): 
+            - multi-client conflict (see PATCH)
+            - body should include information to help client resolve conflict
      - authentication: 401|407, 403, 419, 511 (see web authentication)
      - financial: 402 (Payment Required)
      - legal: 451 (Unavailable For Legal Reasons):
@@ -1357,7 +1375,7 @@ Proxies:
   - Max-Forwards: NUM [C]: 
      - max number of proxies
      - each proxy decrements NUM. When 0, proxy should respond as if it was final recipient.
-     - can be used to target a proxy with a OPTIONS|TRACE request
+     - only with OPTIONS|TRACE request, to target a specific proxy
   - Warning: NUM - "DESCRIPTION" "DATE" [S]
      - 1**: caching-related, should be updated by 403:
         - 110 "Response is Stale": proxy served stale resource instead of retrieving fresh one from server
