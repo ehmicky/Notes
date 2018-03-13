@@ -1,28 +1,50 @@
-Authorization:
+Refactoring:
   - remove all codes related to allowedCommandsMap
   - add an example of model.authorize in my example schema, so it is always tested
   - move /src/database/filter to /src/filter:
-     - including /src/crawl and /src/simple_id 
+     - including /src/crawl and /src/simple_id
   - in filter validation:
      - instead of using fullRecurseMap:
         - augment crawFilter to specify callbacks OBJ.node|attr, i.e. fired either:
-           - OBJ.node: on any node, current behavior 
-           - OBJ.attr: on an attribute, passing all its nodes. I.e. if type "or", keep recursing. If type "and", group 
+           - OBJ.node: on any node, current behavior
+           - OBJ.attr: on an attribute, passing all its nodes. I.e. if type "or", keep recursing. If type "and", group
              children by attrName and call each attr. Otherwise, and if parent is not type "and" (which can be checked by
              stopping recursion when type is "and"), call that node as an attr.
-     - like this, can remove parent and grandParent from recurseMap 
-  - models.all:
-     - similar to models.default except:
-        - merged instead of being overidden
-        - how the prop is merged is specific to each prop
-        - only limited set of valid props:
-           - models.all.authorize VAL
+     - like this, can remove parent and grandParent from recurseMap
+
+models.all:
+  - similar to models.default except:
+     - merged instead of being overidden
+     - how the prop is merged is specific to each prop
+     - only limited set of valid props:
+        - models.all.authorize VAL
 
 Seems like MongoDB is messed up:
   - e.g. when do the create_pet operation
   - should also double check some, all, like and nlike operators
 
 like|nlike should always be case-insensitive
+
+Allow specifying args.params as protocol-agnostic headers instead
+
+Prefix all engine headers with X-Api-Engine-* instead of X-*
+
+Event filters:
+  - divide between response (response.data) and metadata (response.metadata)
+     - only have a filter for response.data
+     - response.data|metadata is operation-specific (some other operations might choose different names)
+  - include response headers in event payload
+  - default request|headers filters should include any X-Api-Engine-*
+
+Database features:
+  - always implied:
+     - args.filter { eq: id } and { in: ids }
+     - create, delete, replace
+  - others:
+     - "filter:OP", e.g. "filter:and"
+     - "order_by"
+     - "limit"
+     - "offset"
 
 Create currentData:
   - do a currentData query for create action
@@ -40,26 +62,50 @@ Selection reads:
      - no write to merge write actions results for reuse
      - no need to reuse currentData results, since only used by write actions, and only read actions use "results"
 
-Allow specifying args.params as protocol-agnostic headers instead
+Problem of modifying nested attributes:
+  - if attr.target !== undefined:
+     - do not forbid attr.readonly|value|transform in schema (at the moment attr.transform is forbidden)
+     - but if args.data nest a child model on that attribute, throw a 400 CLIENT_SERVER_CONFLICT error
+        - during args.data parsing
+        - for create|replace|patch commands
+     - reuse code from (and replace) validateStableIds middleware
+     - remove nestedReadonly middleware
+  - document it in code:
+     - when attribute with an attr.target is being modified by the server because of its attr.readonly|value|transform,
+       and it has a nested model in args.data, there will be a mismatch between user-supplied models chain and server-set models
+     - drawbacks of each solution:
+        - forbid in schema: too restrictive, e.g. author plugin requires attr.value|readonly
+        - throw error (picked solution): restrictive for clients
+        - throw error, unless client and server values match:
+           - makes any change on attr.value|readonly|transform a breaking change, because client queries that used to work might then throw.
+           - also, is less predictable for the client.
+        - remove nested actions from response:
+           - requires client to check response
+           - means response can have different shapes
+           - if:
+              - nested actions are not performed: request is a success, but actually some of it was not performed
+              - nested actions are performed: but they are not returned to client
+        - ignore the server-side modification from the response: no way for client to know response models chain is incorrect
+        - use the server-set models chain, e.g. by spawning find actions: current client might not be authorized to fetch those models
 
-Event filters:
-  - divide between response (response.data) and metadata (response.metadata)
-     - only have a filter for response.data
-     - response.data|metadata is operation-specific (some other operations might choose different names)
-  - include response headers in event payload
-  - default request|headers filters should include any X-Api-Engine-*
+Layers:
+  - put patchData middleware at beginning of "command" layer
+  - put dbFeatures middleware just before dataValidation middleware
+  - transform "command"+"database" layers into "request" (input for both) and "response" (output for both). Rename "adapter" layer to "database".
+  - in sequencer layer:
+     - for read, for each action, call serially the layers "request", "database" then "response"
+     - for write, call for all actions the layer "request", in parallel. Then, for each action, call serially "database" then "response".
+     - the reasons:
+        - avoid rollbacks while database writes have started.
+        - run CPU tasks while I/O is waiting
+  - should make sure there are virtually no reasons to throw once write database queries have started: go through code to double-check that
 
-Prefix all engine headers with X-Api-Engine-* instead of X-*
-
-Database features:
-  - always implied:
-     - args.filter { eq: id } and { in: ids }
-     - create, delete, replace
-  - others:
-     - "filter:OP", e.g. "filter:and"
-     - "order_by"
-     - "limit"
-     - "offset"
+Reintroduce upsert action:
+  - behaves usually like create|replace
+  - in validateMissingIds middleware, if upsert action, do not throw 404. But can throw 403.
+  - just like patch authorization is equivalent to find+replace, upsert is equivalent to create+replace
+  - check commit that removed it to make sure I did not miss anything
+  - both create and upsert actions must perform a databaseAdapter upsert command (not a create command)
 
 Complex patches:
   - provide MongoDB-like patch syntax for patch action, including array manipulation
@@ -643,7 +689,7 @@ Schema functions:
 
 Compile-time validation:
   - schema validation should not use JSON schema, but fastValidation to give better error messages
-     - can probably remove ajv-keywords dependency after that 
+     - can probably remove ajv-keywords dependency after that
   - refactor validation to use single system. E.g. filter format validation uses a different one
   - should schema validate that validate.required|dependencies are only used at top-level:
      - because of JSON schema recursion, it's actually currently possible to do validate.allOf.required
