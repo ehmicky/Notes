@@ -6,4 +6,4 @@ This is intended only for my own usage, as it uses personal notation shorthands 
 
 However you can get an idea of the content by looking up file names.
 
-# Documentation list (short version) #
+# Documentation list #
