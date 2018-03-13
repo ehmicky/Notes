@@ -89,13 +89,17 @@ PLUGIN.postcssVersion             #PostCSS version
 																						 \=+===============================+=/
 
 
-PREPROCESSING VS POSTPROCESSING   #One can:
- ==>                              #  - preprocess with Sass/Less/Stylus, then use PostCSS as a postprocessor on the output CSS
-                                  #  - use a SYNTAX to use PostCSS on the non-preprossed Sass/Less/Stylus, then preprocess with them
-                                  #    Usually better e.g. for linting or if we do not want final preprocessing step 
-                                  #    (e.g. library serving Sass files), but can create problems with plugins which did not
-                                  #    think input could be something different than standard CSS.
-                                  #The preprocess step can also be PostCSS plugins mimicing Sass/Less/Stylus.
+PREPROCESSING VS POSTPROCESSING   #Concepts:
+ ==>                              #  - processing: Sass/Less/Stylus or using Sass/Less/Stylus-like PostCSS plugins
+                                  #  - preprocessing: PostCSS plugins used before processing:
+                                  #     - need SYNTAX so that processor-specific syntax:
+                                  #        - does not crash crashing
+                                  #        - semantics is present in parsed nodes
+                                  #     - advantages:
+                                  #        - closer to the source, e.g. want to lint source not output CSS
+                                  #        - useful if no processing involved, e.g. Sass library
+                                  #     - but might make plugins (which only take standard CSS into account) misbehave
+                                  #  - postprocessing: PostCSS plugins used after processing
 
 
 postcss --parser MODULE           #Resolving to PARSER
@@ -115,29 +119,38 @@ postcss --syntax MODULE           #Resolving to SYNTAX
 CONF_OBJ.syntax                   #SYNTAX
 SYNTAX                            #Is { parser: PARSER, stringifier: STRINGIFIER }
 
+
+																						 /=+===============================+=\ 
+																						/  :                               :  \  
+							 														  )==:           SYNTAXES            :==(   
+																						\  :_______________________________:  /    
+																						 \=+===============================+=/
+
+
 POSTCSS-SCSS                      #SYNTAX to support Sass syntax (0.1.7)
                                   #Supported without SYNTAX:
                                   #  - selector nesting
-                                  #  - %CLASS
                                   #Somewhat supported without SYNTAX:
+                                  #  - %CLASS: TAG SELECTOR
                                   #  - @extend|mixin|etc.: ATRULE with PARAMS and children {...}
-                                  #  - !default|optional, $VAR: part of surrounding value
-                                  #  - PROP[: VAL] { PROP2: VAL }: SELECTOR
+                                  #  - !default|optional, $VAR: part of surrounding value, as a WORD
+                                  #  - PROP[: VAL] { PROP2: VAL }: TAG SELECTOR. PROP: VAL fails with POSTCSS-SELECTOR-PARSER
                                   #  - $VAR: VAL: DECLARATION
-                                  #  - #{...}: part of surrounding value, but does not work when used e.g. as SELECTOR
+                                  #  - #{...}: part of surrounding value, as a WORD, but does not work when used e.g. as SELECTOR
                                   #Supported only with SYNTAX:
                                   #  - // COMMENT: COMMENT with: raws.inline true
-                                  #  - can use #{...} anywhere
+                                  #  - can use #{...} anywhere. In SELECTOR will be ID|TAG depending on # place
 
 POSTCSS-LESS                      #SYNTAX to support Less syntax (4.1.8)
                                   #Supported without SYNTAX:
                                   #  - selector nesting
                                   #Somewhat supported without SYNTAX:
-                                  #  - SELECTOR:extend(SELECTOR2): single SELECTOR
-                                  #  - EXPR, @VAR: part of surrounding value
+                                  #  - :extend(SELECTOR): PSEUDO selector
+                                  #  - @VAR: part of surrounding value, as WORD
+                                  #  - EXPR: part of surrounding value, as WORD|SPACE|DIV|STRING|FUNCTION...
                                   #  - PROP+: VAL: use 'PROP+' as PROP
-                                  #  - @VAR: VAL: ARTULE
-                                  #  - MIXIN() with block: MIXIN is SELECTOR
+                                  #  - @VAR: VAL: ATRULE
+                                  #  - MIXIN(...): MIXIN(...) is TAG SELECTOR. Only work with {...}
                                   #Supported only with SYNTAX:
                                   #  - // COMMENT: COMMENT with COMMENT.raws.inline true
                                   #  - @VAR: VAL: DECLARATION
@@ -311,18 +324,25 @@ ROOT.toResult(OBJ)->RESULT        #OBJ: same as POSTCSS.parse()
 
 ATRULE                            #'@RULE VAL... [{ ... }]', as CONTAINER
                                   #{ ... } are children
+                                  #With Sass, this can be @at-root|extend|import|debug|warn|error|if|else|
+                                  #for|each|while|mixin|include|content|function
 ATRULE.name                       #'RULE'
 ATRULE.params                     #'VAL...'
 
 RULE                              #'SELECTORS { ... }', as CONTAINER
                                   #{ ... } are children
                                   #Support nesting, i.e. a RULE can be parent of another RULE
+                                  #Can be 'MIXIN(...) [{...}]' (with Less), with RULE.selector|params (see above)
 RULE.selector                     #'SELECTORS'. See POSTCSS-SELECTOR-PARSER to parse this.
+                                  #Can include PROP[: VAL], #{...} (with Sass), MIXIN(...), :extend(...) (with Less)
 RULE.selectors                    #'SELECTOR'_ARR
 
 DECLARATION                       #'PROP: VAL', as NODE
+                                  #Can be '$VAR|@VAR: VAL' (with Sass/Less)
 DECLARATION.prop                  #'PROP'
+                                  #Can be 'PROP+[_]' (with Less)
 DECLARATION.value                 #'VAL'
+                                  #Can include '!default|optional', $VAR, #{EXPR} (with Sass), EXPR, @VAR (with Less)
 DECLARATION.important             #BOOL
 
 COMMENT                           #'/* COMMENT */', as NODE
@@ -393,6 +413,7 @@ S_CONTAINR.split(FUNC(NOD)->BOOL)##Returns S_CONTAINER.nodes as S_NODE_ARR_ARR: 
 																						\  :_______________________________:  /    
 																						 \=+===============================+=/
 
+
 POSTCSS-SELECTOR-PARSER.
 attribute|className|combinator|
 comment|id|nesting|pseudo|root|
@@ -409,9 +430,12 @@ S_COMBINATOR.value               ##' |>|+|~'
 
 S_PSEUDO                         ##S_CONTAINER representing :[:]PSEUDO[(...)]
                                  ##Parent of ...
+                                 ##Can be :extend(...) (with Less)
 S_PSEUDO.value                   ##':[:]PSEUDO'
 
 S_CLASS|ID|TAG|UNIVERSAL|NESTING ##S_NODE representing .CLASS #ID TAG * &
+                                 ##TAG can also be: %PLACEHOLDER, PROP (with Sass), MIXIN(...) (with Less)
+                                 ##TAG|ID can be #{...} (with Sass)
 S_CLASS|ID|TAG|UNIVERSAL|NESTING
 .value                           ##'CLASS|ID|TAG|*|&'
 
@@ -434,8 +458,8 @@ S_NODE.value                     ##STR
 																						 \=+===============================+=/
 
 
-POSTCSS-VALUE-PARSER('CSS')
-->V_RESULT                       ##Parser for PROP values and media features (3.3.0)
+POSTCSS-VALUE-PARSER('CSS')      ##Parser for PROP values and media features (3.3.0)
+->V_RESULT                       ##Less EXPR is parsed as many WORD|SPACE|DIV|STRING|FUNCTION
 POSTCSS-VALUE-PARSER(V_NODE_ARR, ##Recurse over V_NODE_ARR
 FUNC(V_NODE, NUM, V_NODE_ARR)    ##If FUNC() returns false, does not recurse over that node children (only works if BOOL false)
 [, BOOL])                        ##If BOOL true (def: false), recurse from inwards to outermost
@@ -456,6 +480,7 @@ V_DIV.value                      ##',', '/' or ':'
 V_DIV.before|after               ##Whitespace STR
 
 V_WORD                           ##V_NODE representing any VAL single token, except "STR", 'STR' or FUNC
+                                 ##Can include !default|optional, $VAR, #{EXPR} (with Sass), @VAR (with Less)
 V_WORD.value                     ##'VAL'
 
 V_STRING                         ##V_NODE representing "STR" or 'STR'
