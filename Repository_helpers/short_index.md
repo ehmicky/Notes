@@ -1,1 +1,1 @@
-__Architecture@__
+__Architecture__

@@ -29,10 +29,10 @@ sed '
 ' "$dir/index.md" > "$dir/short_index.md"
 
 sed -i '
-  s/~//;
+  s/@\([]_]\)/\1/;
 ' "$dir/short_index.md"
 sed -i '
-  s/~//;
+  s/@\([]_]\)/\1/;
 ' "$dir/long_index.md"
 
 # Updates README.md
