@@ -10,42 +10,45 @@ ALTERNATIVES ==>                  #  - json-schema-ref-parser (preferred): can c
                                   #    filtering, has CLI tool, good at notifying of errors
 
 VERSION ==>                       #3.1.2
-                                  #Handles JSON references
+                                  #Handles JSON references: parsing, resolving, dereferencing (including circular refs)
                                   #Name suggests "JSON schema" but it's for any JSON
 
-PROMISE ==>                       #All function that return a PROMISE can use final callback instead too.
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:             BASE              :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
 
 REF                               #JSON reference [URI][#HASH] where #HASH is absolute JSON pointer
                                   #As opposed to spec, can be { $ref STR, ... } in which case ... is merged in
-                                  #(which one has priority???)
+                                  #(reference's properties have less priority than referer's properties)
 
-STEPS ==>                         #  - resolution:
-                                  #     - find reference, local or remote (i.e. fetches)
-                                  #     - current|starting document is also added as a local reference
-                                  #  - parsing: file parsing, e.g. JSON|YAML to JavaScript OBJ
-                                  #  - dereferencing: replace $ref by reference
+STEPS ==>                         #Resolution:
+                                  #  - find reference, local or remote (i.e. fetches), but do not parse them (e.g. as BUFFER)
+                                  #  - current|starting document is also added as a local reference
+                                  #Parsing: file parsing, e.g. JSON|YAML to JavaScript OBJ
+                                  #Dereferencing: replace $ref by reference
+
+PROMISE ==>                       #All function that return a PROMISE can use final callback instead too.
 
 new RefParser->REFPARSER          #
 RefParser.*(...)                  #Same as (new RefParser).*(...)
 
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:          RESOLUTION           :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
 REFPARSER.resolve
 (OBJ|PATH|URL[, POPTS])
 ->PROMISE(REFS)                   #Does resolution
-REFPARSER.parse
-(OBJ|PATH|URL[, POPTS])
-->PROMISE(OBJ)                    #Does parsing
-REFPARSER.dereference
-(OBJ|PATH|URL[, POPTS])
-->PROMISE(OBJ)                    #Does parsing and resolution and deferencing
-REFPARSER.bundle                  #Does parsing and resolution, then add remote references to local definitions,
-(OBJ|PATH|URL[, POPTS])           #but does not do dereferencing???
-->PROMISE(OBJ)                    #Use OBJ.definitions if defined???
-                                  #Note: using REFPARSER.bundle() prevents having any circular references
-                                  #But leaves them as local references
 
-REFPARSER.schema OBJ              #From last REFPARSER.*() after parsing|resolution|dereferencing
 REFPARSER.$refs REFS              #From last REFPARSER.*() after resolution
-
 REFS.get(REF)->VAL                #
 REFS.set(REF, VAL)                #
 REFS.exists(REF)->BOOL            #
@@ -55,12 +58,25 @@ REFS.values|toJSON
 REFS.paths(["URI_SCHEME"[_ARR]])
 ->REF_ARR                         #
 
-POPTS.dereference.circular        #What to do when dereferencing circular refs (with REFPARSER.dereference()) among:
-                                  #  - true (def): create circular references in JavaScript, which works,
-                                  #    but won't work when serializing to JSON
-                                  #  - false: throws ReferenceError
-                                  #  - "ignore": do not dereference file that contains circular refs
-REFS.circular                     #BOOL: whether there are some circular references
+RESOLVER                          #Plugin handling resolution
+                                  #Default ones:
+                                  #  - file: order 100, for PATH or file:URI, using FS.readFile(), returns BUFFER
+                                  #  - http: order 200, for http[s]:, using HTTP[S].get(),
+                                  #    can use RESOLVER.headers|timeout|redirects|withCredentials, returns BUFFER
+POPTS.resolve.RSOLVR RESOLVER|BOOL#
+RESOLVER.read|order|canRead|*     #Similar to PARSER.parse|order|canParse|*
+POPTS.resolve.external BOOL       #If false (def: true), ignore REF that have a URI part
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:            PARSING            :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+REFPARSER.parse
+(OBJ|PATH|URL[, POPTS])
+->PROMISE(OBJ)                    #Does parsing
 
 PARSER                            #Plugin handling parsing
                                   #Default ones:
@@ -84,15 +100,28 @@ PARSER.allowEmpty BOOL            #If false (def: true) and parsed value is unde
                                   #Note: default parser can give undefined for yaml|json, "" for text, empty BUFFER for binary.
 PARSER.*                          #Any custom property for a given PARSER
 
-RESOLVER                          #Plugin handling resolution
-                                  #Default ones:
-                                  #  - file: order 100, for PATH or file:URI, using FS.readFile(), returns BUFFER
-                                  #  - http: order 200, for http[s]:, using HTTP[S].get(),
-                                  #    can use RESOLVER.headers|timeout|redirects|withCredentials, returns BUFFER
-POPTS.resolve.RSOLVR RESOLVER|BOOL#
-RESOLVER.read|order|canRead|*     #Similar to PARSER.parse|order|canParse|*
-POPTS.resolve.external BOOL       #If false (def: true), ignore REF that have a URI part
-
 FILE.url URI
 FILE.extension ".EXT"
 FILE.data VAL                     #What was returned by resolver, usually BUFFER but could theoretically be STR
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:         DEREFERENCING         :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+REFPARSER.dereference|bundle
+(OBJ|PATH|URL[, POPTS])           #Does parsing and resolution and deferencing
+->PROMISE(OBJ)                    #See below for difference
+
+REFPARSER.schema OBJ              #From last REFPARSER.*() after parsing|resolution|dereferencing
+
+POPTS.dereference.circular        #What to do when dereferencing circular refs (with REFPARSER.dereference()) among:
+                                  #  - true (def): create circular references in JavaScript, which works,
+                                  #    but won't work when serializing to JSON
+                                  #  - false: throws ReferenceError
+                                  #  - "ignore": do not dereference file that contains circular refs
+                                  #Can also use REFPARSER.bundle(), in which case circular refs are converted to local refs.
+REFS.circular                     #BOOL: whether there are some circular references
