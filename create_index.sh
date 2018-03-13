@@ -1,5 +1,5 @@
 #!/bin/bash
-#Creates a list of files at index.md
+# Creates a list of files at index.md
 
 if [[ ! -f "index.md" ]]; then
   echo "Error: current directory must be the project root" >&2
