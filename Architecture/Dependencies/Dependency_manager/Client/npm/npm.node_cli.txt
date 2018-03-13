@@ -36,6 +36,9 @@ SUMMARY ==>                   #Installs/updates:
                                              \=+===============================+=/
 
 
+PACKAGE                       #LPREFIX/package.json
+                              #Package information
+
 PKG                           #PKGDIR|PKGREPO|PKGNAME
 PKGDIR                        #DIR with package.json
                               #  - PATH to it
@@ -136,18 +139,19 @@ LOGS ==>                      #Failures are written to ./npm-debug.log, whose ve
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:         PACKAGE.JSON          :==(
+                                            )==:           BOOTSTRAP           :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
-
-PACKAGE                       #LPREFIX/package.json
-                              #Package information
 
 npm init                      #Create a new package.json with a set of questions
 -y|--yes                      #
 --scope @SCOPE                #
 -f|--force                    #
+CONF.init-license|version|
+ author-name|email|url        #Prefill answers to questions
+CONF.init-module              #If available, require this file and uses its value OBJ as package.json, instead of asking set of questions
+                              #Def: ~/.npm-init.js
 
 npm init @SCOPE               #Same as npx @SCOPE/create
 npm init [@SCOPE/]PKGNAME     #Same as npx [@SCOPE/]create-PKGNAME
@@ -463,8 +467,8 @@ npm config edit               #
                                              \=+===============================+=/
 
 
-npm install|update|outdated|
- prefix|root|bin -g|--global  #Use GPREFIX instead of LPREFIX
+npm install|ls|update|outdated
+ |prefix|root|bin -g|--global #Use GPREFIX instead of LPREFIX
 
 PREFIX                        #GPREFIX|LPREFIX
 GPREFIX                       #Used for global installs (CLI)
@@ -526,6 +530,12 @@ npm update [PKGNAME...]       #npm install ignores dependencies that:
                               #  - and only works for already installed dependencies
                               #New version is persisted to PACKAGE.*dependencies according to CONF.save*
 --depth NUM                   #Recursive depth (def: 0, i.e. only top-level)
+
+npm outdated [PKGNAME...]     #Print package that can be updated.
+                              #Shows even when latest version != allowed new version (using e.g. ^VERSION), so can show
+                              #new major version, while npm install|update won't install it.
+-l                            #Print more info
+--depth DOUBLE                #Don't go more than DOUBLE subdepedency depth (def: Infinity)
 
 npm uninstall [PKGNAME...]    #Inverse of npm install. Can use same options (ones that make sense)
 
@@ -685,16 +695,13 @@ npm shrinkwrap                #Creates npm-shrinkwrap.json
                                              \=+===============================+=/
 
 
-npm install --link            #Install globally, then use npm link PKGNAME
-npm link [PKGNAME]            #2 steps:
-                              # 1) Without PKGNAME, creates symlink in GINSTALLDIR (including for binaries) that look like it's
-                              #    been installed globally, but pointing to LINSTALLDIR
-                              # 2) With PKGNAME, creates symlinks in LINSTALLDIR (including for binaries) that look like it's
-                              #    been installed locally, but pointing to global symlinks.
-                              #Goal is to have a dependency to a package developed/stored locally without having to
-                              #reinstall the dependency each time it changes.
-                              #Those symlinked dependencies:
-                              #  - are "snapshotted" if package is published
+npm link                      #npm install (without PKG) + symlink global dependency -> current directory (for current PKGNAME)
+                              #I.e. current directory becomes also available as a global dependency
+npm link PKGNAME              #Symlink local dependency -> global dependency
+                              #Combined with npm link (without PKGNAME), allows symlinking local packages between each other
+                              #Symlink is removed on next npm install|ci|update|uninstall
+npm link DIR                  #npm link in DIR + npm link PKGNAME in current DIR
+npm install --link PKGNAME    #npm install -g PKGNAME + npm link PKGNAME
 
 npm submodule PKGNAME         #Installs PKGNAME, but as a git submodule, which means its updates/installing dependencies/etc.
                               #needs to be handled with git not with npm.
@@ -879,9 +886,13 @@ PACKAGE.directories.          #LPATH.
                                              \=+===============================+=/
 
 
-npm ls [PKGNAME]                       #Show everything installed, including dependencies
---depth DOUBLE                #Don't go more than DOUBLE subdepedency depth (def: Infinity)
---production|dev              #
+npm ls [PKGNAME...]           #Print deduped dependencies tree
+                              #With PKGNAME, only show branches including it, and stop at it
+                              #Also prints prunable, missing and invalid dependencies.
+-l|--long                     #Also print dependency's PACKAGE.description|repository|homepage
+--depth NUM                   #Don't go more than NUM depth level (def: Infinity)
+--prod|dev                    #Only show PACKAGE.dependencies|devDependencies
+--link                        #Only show linked dependencies
 
 npm edit PKGNAME              #Open PKGNAME's package.json
 CONF.editor                   #Used by npm edit and npm config edit
@@ -953,6 +964,49 @@ npm doctor                    #Check npm installation:
 
                                              /=+===============================+=\
                                             /  :                               :  \
+                                            )==:             HOOKS             :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+
+npm hook add                  #Add a webhook.
+ PKGNAME|~USER|@SCOPE         #Triggered on new package activity
+ URI SECRET                   #Do a POST URI with JSON:
+                              #  - version '1.0.0': on the payload format
+                              #  - type 'package'
+                              #  - name 'PKGNAME'
+                              #  - event STR among:
+                              #     - 'package:[un]publish': npm [un]publish
+                              #     - 'package:dist-tag[-rm]': npm dist-tag add|rm
+                              #     - 'package:[un]deprecated': npm deprecate
+                              #     - 'package:owner[-rm]': npm owner add|rm
+                              #     - 'package:[un]star': npm [un]star
+                              #     - 'package:change': any other
+                              #  - change OBJ:
+                              #     ('package:[un]publish')
+                              #     - version VERSION
+                              #     ('package:dist-tag[-rm]')
+                              #     - dist-tag TAG
+                              #     ('package:[un]deprecated')
+                              #     - deprecated VERSION
+                              #     ('package:owner[-rm]')
+                              #     - maintainer USER
+                              #     ('package:[un]star')
+                              #     - user USER
+                              #  - payload OBJ: similar payload as npm view --json
+                              #  - time TIMESTAMP_NUM
+                              #  - hookOwner 'USER': who did npm hook add
+                              #Also use X-Npm-Signature: sha256=HMAC_SHA256(BODY, SECRET) [C] for shared secret authentication
+                              #Max 100 webhooks
+npm hook ls [PKGNAME]         #Print hooks, including HOOK_ID
+npm hook update
+ HOOK_ID URI [SECRET]         #
+npm hook rm HOOK_ID           #
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
                                             )==:            OTHERS             :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -961,8 +1015,3 @@ npm doctor                    #Check npm installation:
 npm [un]star [PKGNAME...]     #Show appreciation of a package, by putting it as favorite.
 npm stars [SHELL_USER]        #Show starred packages.
 
-npm outdated [PKGNAME...]     #Print package that can be updated.
-                              #Shows even when latest version != allowed new version (using e.g. ^VERSION), so can show
-                              #new major version, while npm install|update won't install it.
--l                            #Print more info
---depth DOUBLE                #Don't go more than DOUBLE subdepedency depth (def: Infinity)
