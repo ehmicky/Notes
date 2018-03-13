@@ -295,7 +295,9 @@ CALL.isConsructor()->BOOL                       #Using new
 NERROR                                          #Node internal error, as opposed to standard JavaScript ERROR
                                                 #Often filesystem errors, including permissions
 NERROR.code                                     #NERROR_NAME
+                                                #Most start with E* and are cross-OS. Some start with W* and are Windows-specific.
 OS.constants.errno.NERROR_NAME                  #NERROR_NUM
+                                                #OS-specific
 NERROR.errno                                    #-NERROR_NUM (as negative number)
 UTIL.getSystemErrorName(-NERROR_NUM)
  ->NERROR_NAME                                9*#
@@ -368,6 +370,7 @@ MODULE ==>                                      #Can be:
                                                 #     - exports available in void init(Handle<Object> exports)
                                                 #     - must use libraries: V8, libuv, others
                                                 #     - use node-gyp for packaging/compilation
+                                                #     - on Windows, must first npm install -g windows-build-tools as admin
                                                 #Decides type with file extension
                                                 #Done runtime. See JavaScript modules doc for more info
 module                                          #Current MODULE, i.e. file being loaded.
@@ -1542,6 +1545,22 @@ getPriority([PID])->NUM                      10*#
 
 PATH ==>                                        #All these functions look at PATH without caring if file exists.
 
+CROSS-OS ==>                                    #Summary:
+                                                #  - should usually use Unix path
+                                                #  - except when dealing with input|output outside Node (in shell): use PATH.* then
+                                                #  - Node methods input:
+                                                #     - Unix path allowed on all OS
+                                                #        - but Windows path also allowed in Windows (including mixed)
+                                                #     - e.g. require(), PATH.*, FS.*, process.chdir()
+                                                #  - Node methods output:
+                                                #     - OS-specific
+                                                #        - but it's ok since input in Node in Windows allows mixing Unix/Windows
+                                                #     - e.g. PATH.*, __dirname, process.argv|execPath|cwd(), OS.userInfo().homedir
+                                                #     - exceptions:
+                                                #        - PATH.posix|win32.*
+                                                #        - output based on input, e.g. createReadStream().path, fs.mkdtemp()
+                                                #  - input|output outside Node (in shell): OS-specific
+
 normalize('PATH')->'PATH'                       #Remove leading "./", useless ".." and duplicate "/"
 join('PATH',...)->'PATH2'                       #Join with PATH.sep, then do normalize()
 resolve('PATH',...)->'PATH2'                    #Like doing several cd 'PATH' from current directory:
@@ -1559,8 +1578,8 @@ extname('PATH')->'EXT'                          #Including '.'
 parse('PATH')->PATH_OBJ                         #PATH_OBJ: root STR, dir STR, base STR, ext STR, name STR
 format(PATH_OBJ)->'PATH'                        #Inverse
 
-sep                                             #"/" or "\\"
-delimiter                                       #":" or ";" (for ENVVAR PATH)
+sep                                             #OS-specific path delimiter "/" or "\"
+delimiter                                       #OS-specific ENVVAR PATH delimiter ":" or ";"
 posix|win32.*                                   #Like PATH, but always behave like if on those platforms
 toNamespacedPath('PATH')->'PATH'              9*#Returns namespaced path '\\?\LETTER:\'.
                                               9*#Noop unless on Windows.
@@ -1574,6 +1593,12 @@ toNamespacedPath('PATH')->'PATH'              9*#Returns namespaced path '\\?\LE
 
 
 node --trace-sync-io                            #console.trace() when sync I/O is used
+
+CROSS-OS PERMISSIONS ==>                        #Windows permissions are not supported
+                                                #  - except for `readonly` file attribute on regular files, which maps to `a+w`
+                                                #  - all other permissions are always on
+                                                #This affects `umask()`, `chmod()`, `access()`, `stat().mode` and `opts.mode`
+                                                #for `mkdir()` and `open()`.
 
 FS-EXTRA                                       ##Replacement for FS, with extra methods.
                                                ##Version 0.16.3
@@ -1617,9 +1642,10 @@ GULP-RENAME(VAL)                               ##Rename filenames. VAL can be:
 
 [f]truncate(PATH|FD_INT, UINT, FUNC(ERROR))     #
 
-[f|l]chown(PATH|FD_INT, UID, GID, FUNC(ERROR))  #
+[f|l]chown(PATH|FD_INT, UID, GID, FUNC(ERROR))  #Noop on Windows
 WRENCH.chownSyncRecursive(DIR, UID, GID)       ##
-[f|l]chmod(PATH|FD_INT, UINT, FUNC(ERROR))      #
+[f|l]chmod(PATH|FD_INT, UINT, FUNC(ERROR))      #See above for Windows behavior
+                                                #lchmod() is only on Mac
 WRENCH.chmodSyncRecursive(DIR, UINT)           ##
 
 [f]utimes(PATH|FD_INT, ATIME, MTIME, FUNC(ERR)) #Change atime|mtime
@@ -1627,14 +1653,17 @@ access(PATH[, NUM], FUNC(ERROR))                #Checks if has permission, accor
                                                 #  - FS.constants.F_OK (def, always implied):
                                                 #     - files exists and its directory list it
                                                 #     - also fails if directory and is not executable
-                                                #  - FS.constants.R|W|X_OK: can be read|written|executed
+                                                #  - FS.constants.R|W|X_OK:
+                                                #     - can be read|written|executed
+                                                #     - on Windows, only W_OK works and only means "no readonly attribute"
 [f|l]stat(PATH|FD_INT,[OPTS,]FUNC(ERROR,FSSTAT))#FSSTAT:
                                                 #  - isFile|Directory|Block|CharacterDevice|FIFO|Socket(), (only with lstat()) isSymbolicLink()
+                                                #     - on Windows: can only be file, directory or symlink
                                                 #  - dev UINT
                                                 #  - ino UINT
-                                                #  - mode UINT
+                                                #  - mode UINT (see above for file type and permissions behavior)
                                                 #  - nlink UINT
-                                                #  - uid|gid UINT
+                                                #  - uid|gid UINT (0 on Windows)
                                                 #  - rdev UINT
                                                 #  - [blk]size UINT
                                                 #  - blocks UINT
@@ -1645,7 +1674,7 @@ access(PATH[, NUM], FUNC(ERROR))                #Checks if has permission, accor
                                              10*#OPTS:
                                              10*#  - bigint BOOL (def: false): make FSSTAT.* BIGINT instead of UINT
 
-[sym]link(PATH, PATH2[, STR], FUNC(ERROR))      #STR is 'dir', 'file' (def) or 'junction' (only Windows)
+[sym]link(PATH, PATH2[, STR], FUNC(ERROR))      #STR is 'dir', 'file' (def) or 'junction' (Windows only)
                                                 #Symlink and hardlink
 GULP-SYMLINK.relative|absolute                 ##Creates a symlink in DIR (creates it if not existing, overwrite if OBJ.force
 (DIR_ARR|FUNC(VINYL)->VINYL[,OBJ])             ##true) with same filename as current file, poiting to that file (with a
@@ -1672,7 +1701,7 @@ RIMRAF(DIR|FILE[, FUNC()])                     ##Same
                                                ##  - Version 0.1.0
 
 mkdir(PATH[, MODE_INT|OPTS], FUNC(ERROR))    10*#OPTS:
-                                                #  - mode MODE_INT (def: 0777)
+                                                #  - mode MODE_INT (def: 0777) (see above for Windows behavior)
                                              10*#  - recursive BOOL (def: false)
 FS-EXTRA.ensureFile|Dir(FILE|DIR,FUNC(ERROR))  ##Create file|dir, including parent dirs, if not existing.
 FS-EXTRA.mkdirs(DIR, FUNC(ERROR))              ##Like ensureDir()
@@ -1706,12 +1735,13 @@ open(PATH, STR|NUM[, MODE], FUNC(ERROR, FD_INT))#Open a file and return a file d
                                                 #  - O_DIRECTORY: fail if not a directory
                                                 #  - O_NOFOLLOW: fail if is a symlink
                                                 #  - O_SYMLINK: do not follow symlinks
-                                                #  - O_NOATIME: do not update atime
+                                                #  - O_NOATIME: do not update atime (Linux only)
                                                 #  - O_DIRECT: try to avoid caching|buffering
                                                 #  - O_SYNC: synchronous (wait for data)
                                                 #  - O_DSYNC: synchronous (wait for data+metadata)
                                                 #  - O_NOCTTY: if file is a terminal device, treat it as a normal file
                                                 #  - O_NONBLOCK: use async when opening special files like serial ports
+                                                #On Windows, those flags are mapped to file attributes, file permissions and share permissions
                                                 #MODE INT is 0666 by def.
 close(FD_INT, FUNC(ERROR))                      #
 write(FD_INT, TDBUFFER, INT, INT2, [ INT3,]     #Write INT2 bytes from TDBUFFER at its position INT to file FD_INT at its position INT3 (def: current).
@@ -1743,7 +1773,7 @@ createReadStream(PATH[, OBJ])->ISTREAM          #Preferred over readFile().
                                                 #  - flags STR (def: "r")
                                                 #  - encoding 'ENCODING' (def: null)
                                                 #  - fd FD_INT (def: null)
-                                                #  - mode NUM (def: 0666)
+                                                #  - mode NUM (def: 0666) (see above for Windows behavior)
                                                 #  - autoClose BOOL (def: true): close the file descriptor on error|end event
                                                 #  - start|end UINT: only use from bytes UINT to UINT2
                                                 #ISTREAM has extra:
@@ -1784,7 +1814,7 @@ TEMP.cleanup(FUNC(ERROR,OBJ))                  ##Remove temp files. TEMP.track()
 watch('DIR'[, OPTS][, FUNC])->FSWATCHER         #FSWATCHER fires events when s file changes name or content.
                                                 #OPTS:
                                                 #  - persistent BOOL: if true (def), calls ref(), yielding the macrotask
-                                                #  - recursive BOOL (def: false)
+                                                #  - recursive BOOL (def: false) (not on Linux)
                                                 #  - encoding 'ENCODING' (def: 'utf8')
                                                 #FUNC is the FSWATCHER 'change' event handler.
                                                 #Unstable. Prefer Chokidar.
@@ -1954,14 +1984,16 @@ abort()                                         #Aborts: exits + produce a core 
 
 pid                                             #
 ppid                                          9*#Parent's pid
+
+SIGNALS ==>                                     #
+                                                #  - "SIGUSR1" will start debugger (not on Windows)
+                                                #  - handling SIGINT or SIGTERM will remove default handler.
+                                                #  - cannot handle SIGKILL or SIGSTOP
+
 kill(PID_INT[, 'SIGNAME'|SIGNUM])               #Sends a signal (def: "SIGTERM").
                                                 #If PID_INT, doesn't exit, throw exception (can use 0 to just test process existence).
 OS.constants.SIGNAME                            #SIGNUM
 on('SIGNAL', FUNC('SIGNAL'))                    #Fires when signal emitted on current process. Special cases:
-                                                #  - "SIGUSR1" will start debugger (not on Windows)
-                                                #  - handling SIGINT or SIGTERM will remove default handler.
-                                                #  - cannot handle SIGKILL or SIGSTOP
-                                                #  - SIGWINCH: when window resized
 
 on('unhandledRejection, FUNC(VAL, PROMISE))     #When PROMISE:
                                                 #  - is rejected
@@ -1987,12 +2019,14 @@ cwd()->'DIR'                                    #Current directory
                                                 #Is the one of the main file. Required files do not change it.
 chdir('DIR')                                    #
 
+CROSS-OS ==>                                    #All the following throw on Windows
 get[e]gid|[e]uid()                              #
 set[e]gid|[e]uid(UINT|STR)                      #
 getgroups()
 setgroups(STR_ARR)                              #Supplementary GIDs.
 initgroups(STR, STR2[_ARR])                     #
-umask([UINT])                                   #
+
+umask([UINT])                                   #See below for Windows behavior
 
 version                                         #Node.js version 'vSERMVER'
 release.name                                    #'node|io.js'
@@ -2048,15 +2082,20 @@ spawn(STR[, STR2_ARR][, OPTS])->CHILDPROCESS    #Creates and runs a CHILDPROCESS
                                               8*#        - "inherit": [ 0, 1, 2 ]
                                                 #  - shell STR3|BOOL (def: false)
                                                 #     - false (def): runs 'STR ...STR2_ARR'
+                                                #        - on Windows, only works with `*.exe|com|cmd|bat`
                                                 #     - STR3: runs 'STR3 -c "STR ...STR2_ARR"'
                                                 #        - 'STR3 /d /s /c "STR ...STR2_ARR"' instead if cmd.exe
                                                 #     - true: same but using '/bin/sh' (Unix) or ENVVAR ComSpec or 'cmd.exe' (Windows)
                                                 #  - windowsVerbatimArguments BOOL:
-                                                #     - def: true if OPTS.shell with 'cmd.exe', false otherwise
                                                 #     - no shell escaping (Windows only)
+                                                #     - def: true if OPTS.shell with 'cmd.exe', false otherwise
                                                 #  - argv0 STR (def: STR): process.argv[0]
                                                 #     - does not work with node.js binary itself
-                                                #  - detached BOOL (def: false): run in background
+                                                #     - does not modify `process.title` on Windows
+                                                #  - detached BOOL (def: false):
+                                                #     - run in background
+                                                #     - child process will outlive parent
+                                                #        - on Linux, child process always does, even if `detached: false`
                                               8*#  - windowsHide BOOL (def: false):
                                               8*#     - if detached true, in Windows and in terminal, do not create new terminal window
                                                 #Use CHILDPROCESS.ref(), so needs to use unref() if program can exit while CHILDPROCESS is running.
@@ -2145,8 +2184,8 @@ GOAL ==>                                        #A single process will only use 
                                                 #  - connections will arrive randomly at the child processes listening to
                                                 #    the same port.
                                                 #    The randomness uses CLUSTER.schedulingPolicy:
-                                                #      - CLUSTER.SCHED_RR (def): improved round-robin
-                                                #      - CLUSTER.SCHED_NONE: previous version
+                                                #      - CLUSTER.SCHED_RR (def on Unix, not supported on Windows): improved round-robin
+                                                #      - CLUSTER.SCHED_NONE (def on Windows): previous version
                                                 #    or use ENVVAR NODE_CLUSTER_SCHED_POLICY "rr|none"
                                                 #  - be careful:
                                                 #     - listen(TCPSERVER|TCPSOCKET): TCPSERVER|TCPSOCKET must have been sent by master
