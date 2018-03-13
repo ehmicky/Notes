@@ -33,7 +33,7 @@ PROMISE:
   - resolved value:
       - OBJ:
          - title STR, args: ARR_ARR, options OPTS
-         - tests OBJ_ARR: success BOOL, type 'new|removed|same|different|inconstant', action 'next|update|remove|input', value VAL, snapshot STR, args ARR, async BOOL, errored BOOL
+         - tests OBJ_ARR: success BOOL, type 'new|removed|same|different|inconstant', action 'next|update|remove|move|input', value VAL, snapshot STR, args ARR, async BOOL, errored BOOL
          - others???
       - not documented. Meant for plugins.
   - always resolved, even on test failure
@@ -61,8 +61,8 @@ CLI runner:
 
 Files selection:
   - use CLI argument "GLOB"... (whitelisting)
-      - can be "!GLOB" (blacklisting)
-      - can target DIRs
+     - can be "!GLOB" (blacklisting)
+     - can target DIRs
   - def: test[s]|spec|__tests__/**/*.EXT, **/*.[sS]pec|test.EXT, **/[*-]test[-*].EXT, !helpers|fixtures, !_*
      - EXT is .js[x]|ts[x]
   - always exclude:
@@ -100,17 +100,17 @@ Interactive mode:
    - false:
         - always false (cannot override) if !stdin.isTTY || isCi
         - always false with other reporters than 'pretty'
-        - always do "next"
+        - no prompting
    - true (def):
         - interactively ask on each snapshot which action to do
         - similar to add -p
         - prompt is:
-              n/next, u/update, r/remove, i/input, u/undo, q/quit
+              n/next, u/update, r/remove, m/M/move, i/input, u/undo, q/quit
               1/single, t/test, f/file, */all, v/[no-]verbose, c/[no-]compact, ?/help
 
 "next" action:
    - go to next snapshots
-   - tests will fail if "new"|"removed"|"different"|"inconstant"|"process" snapshots
+   - tests will fail if "new"|"removed"|"different" snapshots
 
 "update" action:
    - if "new" snapshots, create it
@@ -121,6 +121,63 @@ Interactive mode:
    - remove current snapshots
    - tests will fail if "same"|"different" (not if "removed")
    - not shown for "new"|"inconstant"|"process" snapshots
+
+"move" action:
+  - goal: tests that were renamed or moved to another file (but not removed):
+     - should not be reported as 2 different snapshots ("removed" + "new")
+        - if snapshot content changed, it should also be reported as a diff
+     - should not reorder snapshots layout (so there is no git diff)
+  - challenges (document those in code comments):
+     - renaming files: tests might also have been renamed|added|removed
+     - renaming tests: to identify, cannot reliably use:
+        - FUNC.name: arrow function name is ""
+        - FUNC.name|toString(): tests might be wrapped, i.e. identical wrapper will show for several tests
+           - including FUNC.bind()
+        - FUNC.data: it is common for the same set of data to be re-used across tests
+        - index in the file: adding one test at beginning change whole order
+     - streaming issues:
+        - if comparing snapshots content: must wait for all tests of a given file to complete, before reporting the first one
+        - if comparing files: must wait for all files to synchronously load, before reporting the first one
+  - m/M/move action:
+     - only shown for "removed" snapshots
+     - either:
+        - whole file was removed:
+           - M action: renamed whole file
+        - otherwise:
+           - m action: renamed test
+           - M action: moved to different file
+     - renames the snapshot path or the test name in the snapshot
+        - the snapshot will be reported again later:
+           - with different path|title
+           - with new corresponding snapshot, i.e. different snapshot type
+           - the snapshot follows normal ordering rules
+              - exception: when moving test to another file and that file is ordered before current one, process current file snapshots first
+        - should keep the snapshot file as is, i.e. not re-order tests (so there is no git diff)
+     - in snapshot files, persist hashes (only 8 hex chars) of:
+        - each test file's raw content
+        - each snapshot data + FUNC.name + FUNC.toString()
+     - highlight action when very likely that file|test was renamed
+        - highlighted the same way as the previous action after "undo" action
+     - ask user for new name among list of possible ones
+        - use CLI combo box (dropdown + search with autocomplete)
+           - current file's test titles should be known because tests are executed on next tick, i.e. first test cannot be reported before tests were defined synchronously top-level
+           - should show possible test files as path relative to current one
+              - omit "./" in output (autocomplete, dropdown) but allow it in input
+              - including extension
+        - sorted by most likely:
+           - renamed whole file:
+              - another file has same content hash (highlight action)
+              - siblings
+              - children, depth level by level
+              - parent, depth level by level
+              - lexicographic order
+           - moved to different file:
+              - no highlight action / content hash
+              - otherwise same as "renamed whole file"
+           - renamed test:
+              - same snapshot hash (highlight action)
+              - same index in file
+              - index 0 to last
 
 "input" action:
    - modify current snapshots by prompting for input
@@ -136,7 +193,7 @@ Interactive mode:
    - goal: test-first development
 
 "undo" action:
-   - for the last "next|update|remove|input" action
+   - for the last "next|update|remove|move|input" action
         - including grouped action
    - restore previous group|verbose modes if different
    - should highlight previously done action
@@ -334,8 +391,8 @@ Fuzz testing:
       - only a single snapshot is created for all iterations:
           - if all the same, use any
           - if any differs: snapshot type "inconstant":
-              - no "update", "remove", "input" actions
-                  - i.e. only action forward is "next", making tests fail
+              - no prompt
+              - test always fails
               - first two different snapshots are reported
                   - if any snapshot is same as current one, should use it as the first one
   - input function:
@@ -379,13 +436,36 @@ Process errors:
       - reported at end of test run
       - filepath "", title "Process errors"
       - snapshot content is the main error value
-         - but it is never snapshot, since only possible action is "next"
+      - no prompt
+      - no snapshot
+      - test always fail
   - CONF.processErrors STR_ARR
       - which types creates failures (others are ignored)
       - def: ["uncaughtException", "unhandledRejection"]
           - default is conservative to avoid annoying users
 
-watch mode
+Watch mode:
+  - CONF.watch BOOL (-w|--watch)
+      - def true??? except if all tests passed???
+  - re-run files on file change
+      - test file change -> only that test file
+      - source file or test helper change??? Possible ideas:
+         - check filesystem atime to see if file accessed during synchronous load
+             - problem: filesystem is global, and worker threads use tine slicing
+             - problem: atime does not always work on some OS, or with some filesystem types/options (noatime)
+         - checking require.cache or using require hooks:
+             - problem: does not work in browsers
+             - problem: does not work with ESM
+         - static analysis of ESM:
+             - problem: does not work with CommonJS
+             - problem: does not work with dynamic import()
+             - problem: might be harder with transpiled languages like TypeScript (although that might be supported by parsers)
+      - cancel current prompt
+  - only in interactive mode
+  - add r/restart action to re-run all tests
+  - when run done, keep prompt but remove all actions except quit and restart
+     - show end summary first
+  - initial run???
 
 Config:
   - test OPTS can also be set as global defaults on CONF
