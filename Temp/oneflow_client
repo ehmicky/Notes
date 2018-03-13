@@ -1025,10 +1025,15 @@ Auth:
            - auth_user_id STR, users OBJ_ARR, positions OBJ_ARR
         - sets Flow.user|account|position|settings
         - pings to /api/ping every minute, which returns 401 if not logged in, and redirects to login page
-        - if isGhost(), i.e. when USER.ghost true (setup by backend according to HTTP headers Ghost*):
-           - append "GHOSTING" view to <body>
-           - no pings
-           - cannot subscribe to Pusher private-*|presence-* channels
+        - Ghosting:
+           - How: 
+              - X-Ghost: 0d1b9873308d8ccaf13df3e82097fe738689e9f4 [C]
+              - X-Ghost-Target-UserId: USER_ID [C]
+              - Sets USER.ghost true -> USER.isGhost() true
+           - Effect:
+              - append "GHOSTING" view to <body>
+              - no pings
+              - cannot subscribe to Pusher private-*|presence-* channels
      - "auth:logout"(OBJ): 
         - when clicking logout button
         - calls /api/users/logout, which unsets cookie flow-user-hash, then redirects to "/"
@@ -1116,24 +1121,38 @@ BoxMenu:
            - url URL, bypass BOOL
   - adds:
      - OBJ.dropdown OBJ for removing box ("box-disable")
-     - boxActions, i.e. publish|disable buttons with MDL_EVENT "box:publish|disable"(BOX), which changes BOX.state
+     - boxActions, i.e. publish|disable buttons with MDL_EVENT "box:publish|disable"(BOX), which changes BOX.state (in viewMode)
+     - if allow-set-read-only (i.e. is_manager), button to change BOX.isManagerLocked()
 
 BoxManager (BaseBoxes container):
   - MDL_EVENT "box-manager:view"(AGREEMENT)->MCOLLVIEW:
      - according to:
-        - AGREEMENT.inLayoutMode()
-        - AGREEMENT.boxes (filtered by BOX.state enabled)
-        - AGREEMENT.box_order changes with drag&drop
+     - Views (according to AGREEMENT.inLayoutMode()):
+        - ViewContainerView
+        - LayoutContainerView: 
+           - AGREEMENT.box_order changes with drag&drop or up|down buttons, then patch()
+           - drag/dropping into view -> create and save() a BOX, then update box_order
+        - all:
+           - MCOLLVIEW of "base-box:build:box"(BOX), from AGREEMENT.boxes:
+              - with state enabled
+              - draft included if (ViewContainerView) AGREEMENT.isOwner() or (LayoutContainerView) AGREEMENT draft|template
+           - 
 
 BaseBox (Box container):
   - MDL_EVENT:
      - "base-box:build:box"(BOX)->MLAYOUTVIEW: 
         - according to AGREEMENT.inLayoutMode():
-           - view mode: 
-           - layout mode: according to BOX.agreement.state, BOX.type
+           - ViewBoxLayout:
+              - on BOX change, re-render|init
+           - LayoutBoxLayout:
+              - according to BOX.agreement.state, BOX.type
+              - MoveUp|Down buttons: changes AGREEMENT.box_order (see BoxManager)
+              - "Create content" which changes to ViewMode
         - all: 
            - sets HTML attribute data-id="BOX.id"
            - MLAYOUTVIEW.inner contains BOX view, through BOX.viewHandler
+           - click .js-remove: calls MVIEW._remove():
+              - for LayoutBoxLayout, is the "Remove" button, which changes BOX state, (unless BOX draft or AGREEMENT draft|template) after confirmation modal
 
 Boxes:
   - all (by inheriting BoxController):
@@ -1147,7 +1166,7 @@ Boxes:
           With MDL_EVENT "boxes:TYPE:view"(BOX) (must be same as BOX.viewHandler)
   - duration:
      - MDL_EVENT:
-        - "boxes:duration:disable:text"()->"HTML": text when about to remove from layout mode
+        - "boxes:duration:disable:text"()->"HTML": text added when confirmation modal to remove from layout mode
      - according to AGREEMENT:
         - type (5 duration types)
         - start_date|end_date|duration|notice_period
@@ -1160,12 +1179,17 @@ Boxes:
   - document|attachments:
      - according to BOX_CONTENT.documents OBJ: name STR
   - forms:
+     - MDL_EVENT "boxes:form:save:all": like clicking on all FORM_BOX "Save" (and validating them too)
      - according to:
         - BOX.getContent("data") DATA_CONTENT_COLL, through BOX.getFieldMatrix()->MATRIX CELL.item DATA
      - views:
         - FormView (composite):
            - MODEL MATRIX
            - "Add row" -> MATRIX.addEmptyRow()
+           - "Rearrange rows" -> Fields are sortable (jQuery UI) -> MATRIX.moveRow(ROW)
+           - Dropdown -> MATRIX.setColCount(NUM)
+           - "Save" -> validate BOX, then BOX.save() (saves only BOX.config: MATRIX.toJSON()???)
+           - BoxMenu: MATRIX.setColCount(NUM), addEmptyRow(), show edit buttons
            - COLL RowView (composite):
               - MODEL ROW
               - "Remove row" -> MATRIX.removeRow(ROW)
@@ -1189,8 +1213,8 @@ Boxes:
                           - "Remove field" -> MATRIX.removeField(CELL)
                           - "Save" -> CELL.set(CELL2.toJSON())
                           - validated at save and init
-                       - click on it: create restorePoint
+                       - click on it: create restorePoint (restored with "Cancel" button)
                        - create <input>, with autosize() if type "text"
      - permissions:
-        - allow-update: to edit VALUE.*, adding|removing|move fields
+        - !isMobile and allow-update: to edit VALUE.*, adding|removing|move fields
         - allow-update-shared: to edit VALUE.value
