@@ -1,0 +1,132 @@
+
+                     
+   EXPRESS-SESSION   
+                     
+
+
+VERSION ==>                   #1.14.0
+
+EXPRESS-SESSION([OPTS])       #Express MIDWR that parses REQ.session|sessionID|sessionStore
+                              #Goal is to use session-specific state OBJ (REQ.session):
+                              #  - retrieved using an authenticated cookie (REQ.sessionId)
+                              #  - backed by any database (REQ.sessionStore)
+
+
+																						 /=+===============================+=\ 
+																						/  :                               :  \  
+							 														  )==:            COOKIE             :==(   
+																						\  :_______________________________:  /    
+																						 \=+===============================+=/
+
+
+REQ.sessionID                 #Value of cookie:
+                              #  - name: OPTS.name (def: 'connect.sid')
+                              #  - value: OPTS.genid(REQ)->'VAL'
+                              #     - def: 24 bytes using CRYPTO.randomBytes(), as base64
+                              #        - i.e. 50% of 1 collision if 8e10 concurrent sessions
+                              #  - options:
+                              #     - OPTS.cookie OBJ: maxAge, expires, secure, httpOnly, domain, path, sameSite (see COOKIE)
+                              #     - httpOnly: def true
+                              #     - path: def '/'
+                              #     - secure: 
+                              #        - should put true
+                              #        - 'auto':
+                              #           - true|false if HTTPS
+                              #           - if OPTS.proxy true, uses X-Forwarded-Proto [C]
+                              #           - if OPTS.proxy undefined (def), uses REQ.secure
+                              #     - maxAge:
+                              #        - def: null, i.e. browser-session only
+                              #        - should use it instead of expires
+                              #        - STORE.touch() updates it, i.e. restore initial maxAge but updated with current time
+                              #           - updated at each request (if OPTS.rolling true) or when REQ.session changed (if OPTS.rolling false (def))
+                              #Cookie uses signed cookies (like COOKIE-PARSER):
+                              #  - uses OPTS.secret 'SECRET'[_ARR]
+                              #     - if HASH verification fails, recreates an new empty REQ.session
+                              #  - use COOKIE (see its doc) 
+                              #  - does not use COOKIE-PARSER (i.e. not required) but emulates same behavior
+                              #     - but do not set REQ.signedCookies|secret
+                              #     - if using COOKIE-PARSER, should use same 'SECRET'[_ARR]
+
+
+																						 /=+===============================+=\ 
+																						/  :                               :  \  
+							 														  )==:            SESSION            :==(   
+																						\  :_______________________________:  /    
+																						 \=+===============================+=/
+
+
+REQ.session                   #Any data OBJ for the specific session, usually serialized as JSON
+                              #Persisted to store (REQ.session.save()) after each request unless it:
+                              #  - did not change (JSON hash comparison) and OPTS.resave false
+                              #  - is new, empty and OPTS.saveUnitialized false
+                              #  - is set to null
+                              #     - if OPTS.unset 'destroy', calls STORE.destroy() too
+                              #OPTS.resave|saveUninitialized must always be defined
+                              #If cannot connect to store, will be undefined
+REQ.session.cookie            #COOKIE_OBJ
+REQ.session.save(FUNC(ERROR)) #Calls STORE.set()
+REQ.session.touch()           #Updates expiration
+REQ.session.reload(FUNC(EROR))#Discard current request changes for REQ.session
+REQ.session.regenerate
+(FUNC(ERROR))                 #Calls STORE.regenerate()
+REQ.session.destroy(FUNC(ERR))#Deletes REQ.session, then calls STORE.destroy()
+
+
+																						 /=+===============================+=\ 
+																						/  :                               :  \  
+							 														  )==:             STORE             :==(   
+																						\  :_______________________________:  /    
+																						 \=+===============================+=/
+
+
+REQ.sessionStore              #How REQ.session is persisted to database.
+                              #Can be customized with OPTS.store OBJ:
+                              #  - must inherit from Store
+                              #  - must redefine STORE.destroy|get|set()
+                              #  - should redefine STORE.touch()
+                              #  - can redefine STORE.all|clear|length()
+                              #  - should not redefine STORE.createSession|regenerate()
+STORE.get(...)                #Get REQ.session
+STORE.length(...)             #Gets number of sessions
+STORE.all(...)                #Gets all sessions
+STORE.set(...)                #Set REQ.session
+STORE.touch(...)              #Updates expiration
+STORE.createSession(...)      #Restore REQ.session (not for first request)
+STORE.destroy(...)            #Deletes REQ.session
+STORE.regenerate(...)         #Replaces REQ.session with empty object
+STORE.clear(...)              #Deletes all sessions
+
+MEMORYSTORE                   #Def STORE:
+                              #  - use memory (internal OBJ2) 
+                              #  - should be used in dev only, since no durability
+
+new (CONNECT-REDIS(EX-SSION))##Version 3.1.0
+(OPTS)                       ##STORE using Redis:
+                             ##  - set PREFIXsessionID SESSION ex MAXAGE
+                             ##     - MAXAGE can be overriden with OPTS.ttl (in sec)
+                             ##     - if no MAXAGE, use one day
+                             ##     - if OPTS.disableTTL true, do not use "ex MAXAGE"
+                             ##     - PREFIX is OPTS.prefix (def: "sess:")
+                             ##     - SESSION serialized by OPTS.serializer.parse|stringify() (def: JSON)
+                             ##  - get|del PREFIXsessionID
+                             ##  - expire PREFIXsessionID MAXAGE: for STORE.touch()
+                             ##OPTS:
+                             ##  - host HOST, port PORT, db NUM, pass PASSWORD
+                             ##     - or url REDIS_URL
+                             ##     - or socket SOCKET_PATH
+                             ##  - client CLIENT (def: Node Redis): a REDIS CLIENT
+                             ##  - logErrors BOOL (def: false) or FUNC(ERROR) (def: console.error): on connection error
+                             ##  - unref BOOL (def: false): calls CLIENT.unref()
+                             ##  - any PARAM_OBJ to REDIS
+
+new                          ##Version 0.7.0
+(CONNECT-MONGO(EXPRESS-SESS))##Use MongoDB, COLL "sessions" (or OBJ.collection STR):
+(OBJ)                        ##  - with TTL OBJ.ttl NUM (in sec, def: 14 days)
+                             ##  - must either create TTL index manually or use OBJ.autoRemove "native" (def) (create it at startup)
+                             ##OBJ:
+                             ##  - mongooseConnection ^DB or db ~DB: to reuse a connection
+                             ##  - url CONN_STR: if not reusing a connection
+                             ##  - mongoOptions OBJ
+                             ##  - stringify BOOL: if true (def: false), use JSON.stringify|parse() for REQ.session
+                             ##    (if contains types not supported by MongoDB)
+                             ##  - [un]serialize(OBJ)->OBJ: modify REQ.session from|to MongoDB
