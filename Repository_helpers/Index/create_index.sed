@@ -41,8 +41,8 @@ s/_\([[:lower:]][^()]\+)\]\)/_\u\1/
 s/_\([[:lower:]][^()]\+)\]\)/_\u\1/
 # Fix case of technologies
 s/(\([^)]*\)Cli\([^)]*\))]/(\1CLI\2)]/
-#s/(Aws)/(AWS)/
-#s/(Javascript)/(JavaScript)/
+s/(\([^)]*\)Aws\([^)]*\))]/(\1AWS\2)]/
+s/(\([^)]*\)Javascript\([^)]*\))]/(\1JavaScript\2)]/
 
 # Replace _ by spaces.
 s/\(\[[^]]\+\)_/\1 /
