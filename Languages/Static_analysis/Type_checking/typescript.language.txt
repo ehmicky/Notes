@@ -37,7 +37,8 @@ CONF                              #Can be:
                                   #CONF files are ignored when FILE... passed to tsc
                                   #Unless specified otherwise, all BOOL options default to false
 CONF_PATH                         #Either CONF_FILE.json or DIR with tsconfig.json it
-CONF.extends                      #'PATH' to a CONF2 to merge with lower priority
+CONF.extends                      #'PATH|MODULE' to a CONF2 to merge with lower priority
+                                  #If 'MODULE', uses PACKAGE.tsconfig 'PATH' or ROOT/tsconfig.json
 --init                            #Create a boilerplate ./tsconfig.json
 --showConfig                      #Print the resolved CONF
 
@@ -159,7 +160,7 @@ type TYPE = TYPE2                 #Alias
 typeof VAL                        #Returns its TYPE
                                   #If VAL is CLASS, returns its constructor() FUNC_TYPE (instead of instance OBJ_TYPE)
 
-TYPE extends TYPE2                #If TYPE is covariant (child|equal) to TYPE2, resolves to TYPE3, otherwise TYPE4
+TYPE extends TYPE2                #If TYPE is covariant to TYPE2, resolves to TYPE3, otherwise TYPE4
  ? TYPE3 : TYPE4                  #If TYPE is generic:
                                   #  - results in union of all possible TYPE3|TYPE4
                                   #  - transtyped to TYPE & TYPE2 if used inside TYPE3
@@ -171,16 +172,17 @@ TYPE extends TYPE2                #If TYPE is covariant (child|equal) to TYPE2, 
                                   #  - boolean as generic TYPE and BOOL as TYPE2
                                   #  - STR_UTYPE as generic TYPE and STR as TYPE2
 
-KTYPE                             #TYPE of an OBJ key, i.e. STR|NUM|SYM_TYPE
+KTYPE                             #TYPE of an OBJ key, i.e. string|number|symbol
                                   #Either:
                                   #  - { VAR: ... }: literal value TYPE
                                   #  - { [VAR: TYPE]: ... }: any TYPE
 KUTYPE                            #UTYPE of KTYPE
-keyof TYPE                        #KUTYPE of TYPE properties keys (including methods)
-                                  #Non-OBJ_TYPE use prototype properties
-                                  #  - null|undefined have none
-                                  #Common ones:
-                                  #  - keyof any: any KTYPE
+keyof TYPE                        #KUTYPE of TYPE properties keys:
+                                  #  - OBJ_TYPE -> properties keys (including methods)
+                                  #  - BOOL|STR|NUM|BIGINT|SYM -> prototype properties
+                                  #  - FUNC -> never (no properties)
+                                  #  - any|never -> string|number|symbol (any KTYPE)
+                                  #  - unknown|null|undefined|void -> never (no properties)
 TYPE[TYPE2]                       #UTYPE of TYPE properties values (including methods)
                                   #TYPE2 must intersect with keyof TYPE
                                   #Common ones:
@@ -227,6 +229,15 @@ never                             #No possible TYPE.
 undefined                         #
 null                              #
 --strictNullChecks                #Unless set, transtype TYPE <-- undefined|null always possible
+NonNullable<TYPE>                 #Same TYPE minus undefined|null
+
+{ VAR[?]: TYPE,... }              #Many TYPEs and assertions use ? which allows:
+([...]VAR[?]: TYPE,...) => TYPE2  #  - missing values: {} FUNC() []
+[TYPE?,...]                       #     - only way to allow them
+                                  #  - undefined: {VAR: undefined} FUNC(undefined) [undefined]
+                                  #     - like TYPE|undefined
+Partial<OBJ_TYPE>                 #Adds ? on all properties
+Required<OBJ_TYPE>                #Removes ? on all properties
 
 void                              #TYPE for "no return value" in FUNCs
                                   #  - i.e. not returning and returning undefined is conceptually different (although the same in JavaScript)
@@ -234,17 +245,16 @@ void                              #TYPE for "no return value" in FUNCs
                                   #Can only transtype from|to itself
                                   #  - exception: void <-- undefined is allowed
 
-NonNullable<TYPE>                 #Same TYPE minus undefined|null
-
 boolean                           #BOOL
 number                            #NUM
 string                            #STR
 bigint                            #BIGINT
 BOOL|NUM|STR|BIGINT               #TYPE for only that value. Must be literal value.
 
-symbol                            #Any SYM
-unique symbol                     #Specific SYM. Child of 'symbol'.
-                                  #Well-known SYM have type 'symbol' but Symbol[.for]() have type 'unique symbol'
+symbol                            #Any SYM (like "boolean")
+SYM                               #Specific SYM (like BOOL).
+                                  #TYPE is SYM, but it's printed in error message as "unique symbol".
+                                  #Well-known SYM (as opposed to Symbol[.for]()) always have type 'symbol' not 'unique symbol'
 
 const enum ENUM                   #Def STR|NUM is previous NUM + 1, or 0 if first one.
  { NAME [= STR|NUM],... }         #STR|NUM can be an EXPR using () + - ~ * / % << >> >>> & | ^
@@ -272,8 +282,7 @@ object                            #OBJ
                                   #Delimiters:
                                   #  - can be , ; or newline
                                   #  - can use trailing delimiters
-                                  #No missing properties unless '?':
-                                  #  - even undefined|null, i.e. {VAR: undefined} works but not {}
+                                  #No missing properties unless '?'
                                   #No additional properties:
                                   #  - with OBJ.VAR or { VAR }, not OBJ[NUM|STR] or { [NUM|STR] }
                                   #  - unless either:
@@ -290,8 +299,6 @@ object                            #OBJ
                                   #Defaults to untyped (any)
 --suppressImplicitAnyIndexErrors  #Do not make --noImplicitAny fail when OBJ[NUM|STR] use default untyped (any).
 
-Partial<OBJ_TYPE>                 #Adds ? on all properties
-Required<OBJ_TYPE>                #Removes ? on all properties
 Pick<OBJ_TYPE, KUTYPE>            #Only keep KUTYPE properties
 Omit<OBJ_TYPE, KUTYPE>            #Inverse
 Record<KUTYPE, TYPE>              #OBJ_TYPE with:
@@ -353,7 +360,7 @@ NewableFunction                   #Same but for a constructor.
 
 ([...]VAR[?]: TYPE,...) => TYPE2  #Specific FUNC (child of Function)
                                   #TYPE2 is return value.
-                                  #No missing arguments: like OBJ missing properties
+                                  #No missing arguments unless '?'
                                   #No additional arguments:
                                   #  - unless defined variadic ...VAR (always optional)
                                   #VAR names are not significant.
@@ -382,7 +389,7 @@ InstanceType<FUNC_TYPE>           #Same as ReturnType<> but for 'new FUNC'
 
 TYPE[]
 Array<TYPE>                       #ARR of same types
-[TYPE,...]                        #ARR of different types (TUPLE).
+[TYPE[?],...]                     #ARR of different types (TUPLE).
                                   #Each TYPE is only for that index. If outside range, use a union of all possible TYPEs.
 [..., ...ARR_TYPE]                #Spreads an ARR_TYPE
                                   #Does not work with TUPLE
@@ -442,23 +449,21 @@ function FUNC(...): TYPE3 {...}   #Each overload is tried in order until one mat
 
 VAL!                              #Transtype to same TYPE minus undefined|null
 
-var|let VAR                       #Unitialized VARs are allowed even if their TYPE does not allow undefined.
-                                  #They use their TYPE for assignments|transtyping, like initialized VARs.
-                                  #But they use `undefined` TYPE for operators (including VAR.VAR2), i.e. will fail.
-var|let VAR!: TYPE                #Do not use `undefined` TYPE for operators with unitialized VARs
+var|let VAR[: TYPE]               #Unitialized VARs are allowed even if their TYPE does not allow undefined.
+var|let VAR!: TYPE                #They use their TYPE for assignments|transtyping, like initialized VARs.
+                                  #But they cannot use any operators (including VAR.VAR2 or ===) unless either:
+                                  #  - they are TYPE any or untyped
+                                  #  - ! was used
 class ... { VAR!: TYPE; ... }     #Useful when VAR is initialized but it cannot be guessed compile-time, e.g. when done in different scope.
 --strictPropertyInitialization    #Do not allow class properties:
                                   #  - whose TYPE does not include undefined
                                   #  - and who is not initialized (including in constructor)
 
-<const>VAL
-VAL as const                      #
-                                  #Type assertion adding Readonly<typeof VAL>
+<const>VAL                        #If STR|NUM|BOOL: like using `const`:
+VAL as const                      #  - cannot be re-assigned
+                                  #  - type infered as specific STR|NUM|BOOL instead of any string|number|boolean
+                                  #If OBJ|ARR: add Readonly<typeof VAL>
                                   #VAL must be a literal STR|NUM|BOOL|ARR|OBJ
-Literal values typing with TypeScript:
-  - if let "number" but if const NUM???
-  - applies to readonly too???
-  - applies to <const>VAL
 
 TRANSTYPING RULES ==>             #For TYPE2 <-- TYPE, TYPE2 must be contravariant to TYPE.
                                   #For FUNCs:
@@ -493,10 +498,14 @@ TYPE INFERENCE ==>                #Only needed for untyped values:
                                   #  - use return literal value as TYPE
                                   #  - if several return statements, use union
                                   #Literal values:
-                                  #  - use literal value as TYPE
-                                  #  - OBJ: do it recursively
+                                  #  - if:
+                                  #     - var|let declaration: use whole TYPE (e.g. number|boolean|string|symbol)
+                                  #     - const|no declaration: use specific value as TYPE (e.g. NUM|BOOL|STR|unique symbol)
+                                  #  - OBJ:
+                                  #     - do it recursively
+                                  #     - properties are only considered const when using <const> assertion
                                   #  - ARR:
-                                  #     - do it recursively, as a union
+                                  #     - same but as a union
                                   #     - if empty -> never[]
                                   #Possible issues:
                                   #  - too generic TYPEs in entry points
@@ -518,7 +527,7 @@ TYPE GUARDS ==>                   #When:
                                   #  - including return value TYPE if has `return` statement
 VAR is TYPE                       #When used as FUNC return value's TYPE2, means FUNC() can be used as a type guard.
                                   #FUNC must return BOOL determining whether argument VAR belongs to TYPE.
-TAGGED UNION ==>                  #When type guarding with OBJ.VAR === !== == != VAL, it type guards OBJ as well.
+TAGGED UNION ==>                  #When type guarding with OBJ.VAR === !== == != VAL or implicit|explicit Boolean(), it type guards OBJ as well.
                                   #For example:
                                   #  type A = { kind: 'A' }
                                   #  type B = { kind: 'B' }
@@ -573,6 +582,7 @@ AMBIENT FILE ==>                  #File where every statement is declaration|TYP
                                   #     - PACKAGE.typesVersions.SEMVER OBJ:
                                   #        - same but only if TypeScript version matches SEMVER
                                   #        - OBJ has same syntax as --paths
+                                  #        - uses first matching SEMVER according to OBJ properties order, i.e. should start with most specific
                                   #  - 'classic' (def otherwise):
                                   #     - "PATH": as is
                                   #     - "MODULE": search ".[/../...]/MODULE"
@@ -638,6 +648,10 @@ import VAL = require(STR)         #  - as opposed to `module.exports.default` / 
                                   #ESM exports always set __esModule true regardless, except when using --module es*
 --allowSyntheticDefaultImports    #Do not report ESM default import of a CommonJS|AMD|UMD default `module.exports`
                                   #Def: true if --esModuleInterop or --module system
+
+import(STR).VAR                   #Same as import {VAR} from 'STR' except:
+                                  #  - as a value (not a statement)
+                                  #  - only for a TYPE
 
 require(STR)                      #Dynamic CommonJS import
                                   #Should prefer dynamic import() instead.
