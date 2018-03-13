@@ -5,6 +5,33 @@
 
 
 
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:      ISTANBUL-LIB-REPORT      :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+
+ISTANBUL-LIB-REPORT ==>           #1.1.4
+
+createContext([OPTS])->CONTEXT
+                                  #OPTS:
+                                  #  - watermarks
+CONTEXT.getSource('PATH')->STR    #Runs either:
+                                  #  - FS.readFileSync()
+                                  #  - OPTS.sourceFinder('PATH')->STR if defined
+                                  #     - e.g. the one from INSTANBUL-LIB-SOURCE-MAPS to get source file's content,
+                                  #       not compiled file
+
+CONTEXT.getWriter()->FILEWRITER   #Uses OPTS.dir 'DIR' (def: 'coverage') to resolve 'PATH'
+FILEWRITER.writeFile('PATH')->FILECONTENTWRITER
+FILECONTENTWRITER.write(STR)
+FILECONTENTWRITER.close()
+FILECONTENTWRITER.println(STR)    #Same as write('STR\n')
+
+
                                              /=+===============================+=\
                                             /  :                               :  \
                                             )==:    ISTANBUL-LIB-INSTRUMENT    :==(
@@ -12,22 +39,58 @@
                                              \=+===============================+=/
 
 
+ISTANBUL-LIB-INSTRUMENT ==>       #1.10.1
+                                  #Instrument JavaScript code so it stores coverage information when run.
 
-ISTANBUL-LIB-INSTRUMENT ==>     #1.10.1
+createInstrumenter([OPTS])        #OPTS:
+ ->INSTRUMENTER                   #  - coverageVariable STR (def: '__coverage__')
+INSTRUMENTER.instrumentSync       #In a nutshell:
+ ('CODE'[, 'FILENAME'])->'CODE'   #  - set a global FILECOV (for this FILENAME) with source code's line|column|name information
+                                  #  - add FILECOV.s|f|b.CID++ before each statement|function|branch
+																  #Instrument code:
+																  #  - prepends code that create a new FILECOV:
+																  #     - referenced by both global.__coverage__.FILENAME and a local variable
+																  #     - all FILECOV.statement|fn|branchMap.CID set to their related source code's line|column|name
+																  #     - all FILECOV.s|f|b.CID initialized to 0
+																  #  - adds counters:
+																  #     - FILECOV.s.CID++ before each statement
+																  #     - FILECOV.f.CID++ before each function
+																  #     - FILECOV.b.CID[INDEX]++ before each child branch
+                                  #Do it by:
+                                  #  - parsing JavaScript 'CODE' to AST (with Babylon, see its doc)
+                                  #     - using options:
+                                  #        - sourceType 'script' if OPTS.esModules false (def) or 'module'
+                                  #        - plugins ['asyncGenerators', 'dynamicImport', 'objectRestSpread', 'flow', 'jsx']
+                                  #        - allowReturnOutsideFunction OPTS.autoWrap BOOL (def: false)
+                                  #  - traversing and transforming AST (with babel-traverse, see its doc)
+                                  #     - can access only that logic using INSTANBUL-LIB-INSTRUMENT.ProgramVisitor
+                                  #  - generating JavaScript 'CODE' from AST (with babel-generator, see its doc)
+                                  #     - using options:
+                                  #        - compact OPTS.compact BOOL (def: true): minify whitespaces
+                                  #        - comments OPTS.preserveComments BOOL (def: false)
+                                  #Noop if applied twice
+                                  #Def 'FILENAME': 'TIMESTAMP.js'
+INSTRUMENTER.instrument('CODE'
+ [, 'FILENAME'], FUNC('CODE'))    #Same (is actually sync as well) but with different signature
 
-createInstrumenter([OPTS])      #OPTS:
- ->INSTRUMENTER                 #  -
-                                #  - coverageVariable STR (def: '__coverage__')
-                                #  - preserveComments BOOL (def: false)
-                                #  - compact BOOL (def: true)
-                                #  - esModules BOOL (def: false)
-                                #  - autoWrap BOOL (def: false)
-                                #  - produceSourceMap BOOL (def: false)
-                                #  - ignoreClassMethods ARR
-                                #  - sourceMapUrlCallback
-                                #  - debug BOOL (def: false)
-INSTRUMENTER.instrumentSync('CODE'[, 'FILENAME'])
-                                #Def 'FILENAME': 'TIMESTAMP.js'
+INSTRUMENTER.lastFileCoverage()
+ ->FILECOV                        #
+
+INSTRUMENTER.lastSourceMap()      #Uses babel-generator options:
+ ->SOURCE_MAP_OBJ                 #  - sourceMaps OPTS.produceSourceMap BOOL (def: false)
+                                  #  - sourceFileName 'FILENAME'
+                                  #To multi-map into an already existing SOURCE_MAP, add it as last argument to instrumentSync()
+                                  #OPTS.sourceMapUrlCallback('FILENAME', 'sourceMappingURL') is called by instrumentSync() if defined
+
+// istanbul ignore file [COMENT]  #Skip instrumentation for current file
+// istanbul ignore next [COMENT]  #Skip instrumentation for next block|structure
+// istanbul ignore if|else [CMT]  #Skip instrumentation for next if|else
+OPTS.ignoreClassMethods           #Skip instrumentation for 'FUNC'_ARR
+
+readInitialCoverage('CODE')->OBJ  #Returns (from already instrumented code):
+                                  #  - coverageData FILECOV (with counters initialized to 0)
+                                  #  - path 'FILENAME'
+                                  #  - gcv '__coverage__'
 
 
                                              /=+===============================+=\
@@ -37,86 +100,88 @@ INSTRUMENTER.instrumentSync('CODE'[, 'FILENAME'])
                                              \=+===============================+=/
 
 
-ISTANBUL-LIB-COVERAGE ==>       #Underlying data model for file coverage information
-                                #1.2.0
+ISTANBUL-LIB-COVERAGE ==>         #Underlying data model for file coverage information
+                                  #1.2.0
 
-SUMMARY                         #Summarized single|multiple file[s] coverage information.
-                                #OBJ:
-                                #  - lines:
-                                #     - total NUM: lines executed or not
-                                #     - covered NUM: lines executed
-                                #     - skipped NUM: when using /* istanbul ignore */
-                                #     - pct NUM|'Unknown':
-                                #        - covered / total
-                                #        - 0-100 with 2 decimal digits precision
-                                #        - 100 if total 0
-                                #  - statements|functions|branches: same for statements|functions|branches
+SUMMARY                           #Summarized single|multiple file[s] coverage information.
+                                  #OBJ:
+                                  #  - lines:
+                                  #     - total NUM: lines executed or not
+                                  #     - covered NUM: lines executed
+                                  #     - skipped NUM: when using /* istanbul ignore */
+                                  #     - pct NUM|'Unknown':
+                                  #        - covered / total
+                                  #        - 0-100 with 2 decimal digits precision
+                                  #        - 100 if total 0
+                                  #  - statements|functions|branches: same for statements|functions|branches
 createCoverageSummary
- ([SUMMARY])->SUMMARY           #
-SUMMARY.toJSON()->OBJ           #
-SUMMARY.isEmpty()->BOOL         #SUMMARY.lines.total === 0
-SUMMARY.merge(SUMMARY2)         #
- ->SUMMARY                      #Adds SUMMARY2's NUMs to SUMMARY
+ ([SUMMARY])->SUMMARY             #
+SUMMARY.toJSON()->OBJ             #
+SUMMARY.isEmpty()->BOOL           #SUMMARY.lines.total === 0
+SUMMARY.merge(SUMMARY2)           #
+ ->SUMMARY                        #Adds SUMMARY2's NUMs to SUMMARY
 
-FILECOV                         #Detailed single file coverage information
-                                #OBJ:
-                                #  - path 'PATH'
-                                #  - s OBJ.SKEY NUM:
-                                #     - number of times statement was executed ("hits")
-                                #     - SKEY is statement's KEY
-                                #  - f OBJ.FKEY NUM:
-                                #     - number of times function was executed
-                                #  - b OBJ.BKEY NUM_ARR:
-                                #     - each NUM is a single branch (number of times it was executed)
-                                #  - statementMap OBJ.SKEY OBJ2:
-                                #     - start:
-                                #        - line NUM
-                                #  - fnMap OBJ.FKEY OBJ2: same for functions
-                                #  - branchMap OBJ.BKEY OBJ2:
-                                #     - loc:
-                                #        - start:
-                                #           - line NUM
-                                #     - line NUM: like loc.start.line
+FILECOV                           #Detailed single file coverage information
+                                  #OBJ:
+                                  #  - path 'PATH'
+                                  #  (number of times statement|function|branch was executed ("hits"))
+                                  #  - s.CID NUM
+                                  #  - f.CID NUM
+                                  #  - b.CID NUM_ARR (each child branch)
+                                  #  (line|column information and metadata)
+                                  #  - statementMap.CID:
+                                  #     - start|end.line|column NUM
+                                  #  - fnMap.CID:
+                                  #     - loc.start|end.line|column NUM: of the FUNC body
+                                  #     - decl.start|end.line|column NUM: of the 'FUNC' name
+                                  #     - name 'FUNC'
+                                  #  - branchMap.CID:
+                                  #     - loc.start|end.line|column NUM (the parent branch)
+                                  #     - locations OBJ_ARR: start|end.line|column NUM (each child branch)
+                                  #     - type 'if|switch|cond-expr|binary-expr|default-arg': type of node
+                                  #       (IfStatement|SwitchStatement|ConditionalExpression|LogicalExpression|AssignmentPattern)
+                                  #CID:
+                                  #  - same statement|function|branch uses same CID between the counter and the *Map
+                                  #  - incrementing 'NUM' for statement|function|branch
 createFileCoverage
- (FILECOV|'PATH')->FILECOV      #
-FILECOV.toJSON()->OBJ           #
-FILECOV.merge(FILECOV2)->FILECOV#Adds FILECOV2's NUMs to FILECOV
-FILECOV.resetHits()             #Resets FILECOV.s|f|b to 0
-FILECOV.toSummary()->SUMMARY    #Leaves SUMMARY.*.skipped to 0
-                                #Uses FILECOV.s|f|b
+ (FILECOV|'PATH')->FILECOV        #
+FILECOV.toJSON()->OBJ             #
+FILECOV.merge(FILECOV2)->FILECOV  #Adds FILECOV2's NUMs to FILECOV
+FILECOV.resetHits()               #Resets FILECOV.s|f|b to 0
+FILECOV.toSummary()->SUMMARY      #Leaves SUMMARY.*.skipped to 0
+                                  #Uses FILECOV.s|f|b
 FILECOV.computeSimpleTotals
  ('getLineCoverage'|'s'|'f')
  ->SUMMARY.lines|statements|
- functions                      #
+ functions                        #
 FILECOV.computeBranchTotals()
- ->SUMMARY.branches             #
-FILECOV.getLineCoverage()       #Statements coverage (using FILECOV.s|statementMap)
- ->{ LINE_NUM: NUM }            #NUM is the number of times that line's statement was executed
-                                #If several statements, takes the max
+ ->SUMMARY.branches               #
+FILECOV.getLineCoverage()         #Statements coverage (using FILECOV.s|statementMap)
+ ->{ LINE_NUM: NUM }              #NUM is the number of times that line's statement was executed
+                                  #If several statements, takes the max
 FILECOV.getUncoveredLines()
- ->LINE_NUM_ARR                 #Same but only returns lines where no statement was executed
-FILECV.getBranchCoverageByLine()#Branch-wise statements coverage (using FILECOV.b|branchMap)
- ->OBJ                          #OBJ.LINE_NUM:
-                                #  - total NUM: number of statements
-                                #  - covered NUM: number of executed statements
-                                #  - coverage NUM: total / covered * 100
+ ->LINE_NUM_ARR                   #Same but only returns lines where no statement was executed
+FILECV.getBranchCoverageByLine()  #Branch-wise statements coverage (using FILECOV.b|branchMap)
+ ->OBJ                            #OBJ.LINE_NUM:
+                                  #  - total NUM: number of statements
+                                  #  - covered NUM: number of executed statements
+                                  #  - coverage NUM: total / covered * 100
 
-COVMAP.data                     #Detailed multiple file coverage information
-                                #{ 'PATH': FILECOV }
-
+COVMAP.data                       #Detailed multiple file coverage information
+                                  #{ 'PATH': FILECOV }
 createCoverageMap
- ([COVMAP])->COVMAP             #
-COVMAP.toJSON()->COVMAP.data    #
-COVMAP.merge(COVMAP2)->COVMAP   #Calls each FILECOV.merge()
+ ([COVMAP])->COVMAP               #
+COVMAP.toJSON()->COVMAP.data      #
+COVMAP.merge(COVMAP2)->COVMAP     #Calls each FILECOV.merge()
 COVMAP.getCoverageSummary()
- ->SUMMARY                      #
-COVMAP.files()->'PATH'_ARR      #
+ ->SUMMARY                        #
+COVMAP.files()->'PATH'_ARR        #
 COVMAP.fileCoverageFor('PATH')
- ->FILECOV                      #
+ ->FILECOV                        #
 COVMAP.addFileCoverage
- (FILECOV|'PATH')               #Merges if already existing
+ (FILECOV|'PATH')                 #Merges if already existing
 COVMAP.filter
- (FUNC(FILECOV)->BOOL)          #Deletes all FILECOV with BOOL false
+ (FUNC(FILECOV)->BOOL)            #Deletes all FILECOV with BOOL false
 
 
                                              /=+===============================+=\
@@ -127,25 +192,53 @@ COVMAP.filter
 
 
 
-ISTANBUL-LIB-HOOK ==>           #1.2.0
+ISTANBUL-LIB-HOOK ==>             #1.2.0
 
-hookRequire(FUNC('PATH')->BOOL, #Monkey patches require():
- FUNC2(STR, { filename })->STR, #  - applies FUNC2 first
- [OPTS])->FUNC3()               #  - only if FUNC BOOL is true
-                                #  - do it by using deprecated require.extensions
-                                #FUNC3() disables it (but does not remove monkey patching)
-                                #OPTS:
-                                #  - extensions STR_ARR (def: ['.js'])
-                                #  - postLoadHook('FILENAME'): fired after each require()
-                                #  - verbose BOOL (def: false): debugging console.log()
-unloadRequireCache(FUNC)        #Removes require.cache of files matching FUNC('PATH')->BOOL
+hookRequire(FUNC('PATH')->BOOL,   #Monkey patches require():
+ FUNC2(STR, { filename })->STR,   #  - applies FUNC2 first
+ [OPTS])->FUNC3()                 #  - only if FUNC BOOL is true
+                                  #  - do it by using deprecated require.extensions
+                                  #FUNC3() disables it (but does not remove monkey patching)
+                                  #OPTS:
+                                  #  - extensions STR_ARR (def: ['.js'])
+                                  #  - postLoadHook('FILENAME'): fired after each require()
+                                  #  - verbose BOOL (def: false): debugging console.log()
+unloadRequireCache(FUNC)          #Removes require.cache of files matching FUNC('PATH')->BOOL
 
-hookCreateScript|               #Same but using VM.createScript|runIn[This]Context() instead of hookRequire()
- runIn[This]Context(...)        #With runInContext():
-                                #  - sets GLOBAL.__coverage__ to reference of same empty OBJ in both current context and child context
-                                #  - can customnize '__coverage__' name using OPTS.coverageVariable
+hookCreateScript|                 #Same but using VM.createScript|runIn[This]Context() instead of hookRequire()
+ runIn[This]Context(...)          #With runInContext():
+                                  #  - sets GLOBAL.__coverage__ to reference of same empty OBJ in both current context and child context
+                                  #  - can customnize '__coverage__' name using OPTS.coverageVariable
 unhookCreateScript|
- runIn[This]Context()           #
+ runIn[This]Context()             #
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:   ISTANBUL-LIB-SOURCE-MAPS    :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+INSTANBUL-LIB-SOURCE-MAPS ==>     #1.2.4
+                                  #Modifies line|column numbers in coverage results by applying a source map
+
+createSourceMapStore([OPTS])
+ ->MAPSTORE                       #
+MAPSTORE.transformCoverage(COVMAP)#Returns a new COVMAP2 with each FILECOV.inputSourceMap applied to each line|column number
+ ->{ map COVMAP2, sourceFinder }  #Uses mozilla source-map's CONSUMER.originalPositionFor() (see its doc)
+
+FILECOV.inputSourceMap            #SOURCE_MAP
+registerMap('PATH',SOURCE_MAP_OBJ)#Alternative way instead of specifying FILECOV.inputSourceMap
+registerURL('PATH', STR)          #STR is sourceMappingURL value (base64 or external file)
+
+sourceFinder('SOURCE_PATH')       #If available, uses sourceContent:
+ ->'FILE_CONTENT'                 #  - cached during MAPSTORE.transformConverage() into OPTS.sourceStore:
+                                  #     - 'memory' (def)
+                                  #     - 'file' at OPTS.tmpdir (def: OS.tmpdir())
+                                  #Otherwise, reads the file:
+                                  #  - relative to OPTS.baseDir 'DIR' (def: process.cwd())
+
 
 
 
@@ -158,90 +251,90 @@ unhookCreateScript|
 
 
 
-VERSION ==>                     #0.3.0
-                                #JavaScript test coverage generation
+VERSION ==>                       #0.3.0
+                                  #JavaScript test coverage generation
 
 
-CONF ==>                        #Can be:
-                                #  - ./.istanbul.json|yml
-                                #  - --config FILE.json|yml
-CONF.instrumentation.*          #CONFI
-CONF.reporting.*                #CONFR.
+CONF ==>                          #Can be:
+                                  #  - ./.istanbul.json|yml
+                                  #  - --config FILE.json|yml
+CONF.instrumentation.*            #CONFI
+CONF.reporting.*                  #CONFR.
 
 
-coverage.json                   #Low-level machine-friendly coverage output
+coverage.json                     #Low-level machine-friendly coverage output
 
-istanbul instrument FILE.js ... #Generates test coverage (coverage.json) by running FILE.js ...
-istanbul instrument DIR...      #Same but for DIR/**/.js and generating in --output DIR2
+istanbul instrument FILE.js ...   #Generates test coverage (coverage.json) by running FILE.js ...
+istanbul instrument DIR...        #Same but for DIR/**/.js and generating in --output DIR2
 
 CONFI.root DIR
---root DIR                      #Root DIR of files to cover (def: '.')
+--root DIR                        #Root DIR of files to cover (def: '.')
 CONFI.excludes STR_ARR
--x FILE...                      #Exclude files
+-x FILE...                        #Exclude files
 CONFI.default-excludes BOOL
---[no-]default-excludes         #Default excluded files to cover (def: '**/node_modules|test[s]/**')
+--[no-]default-excludes           #Default excluded files to cover (def: '**/node_modules|test[s]/**')
 
 CONFI.save-baseline BOOL
---save-baseline                 #Save to --baseline-file FILE instead of only stdout
+--save-baseline                   #Save to --baseline-file FILE instead of only stdout
 CONFI.baseline-file FILE
---baseline-file FILE            #Def: './coverage/coverage-baseline.json'
+--baseline-file FILE              #Def: './coverage/coverage-baseline.json'
 
 CONFI.embed-source BOOL
---embed-source                  #Embed JavaScript source code in coverage.json (def: false)
+--embed-source                    #Embed JavaScript source code in coverage.json (def: false)
 CONFI.complete-copy BOOL
---complete-copy                 #Embed non JavaScript source code in coverage.json (def: false)
+--complete-copy                   #Embed non JavaScript source code in coverage.json (def: false)
 CONFI.compact BOOL
---no-compact                    #Don't minimize output
+--no-compact                      #Don't minimize output
 
 
 /* istanbul ignore next
- [COMMENT] */                   #Skip next block|structure
+ [COMMENT] */                     #Skip next block|structure
 /* istanbul ignore WORD
- [COMMENT] */                   #Same with specific structure (if, else, etc.)
+ [COMMENT] */                     #Same with specific structure (if, else, etc.)
 
 
-FORMAT                          #Reporting, created from coverage.json. Can be:
-                                #  - lcov (html+lcov, def)
-                                #  - html
-                                #  - lcovonly
-                                #  - text[-summary] (stdout)
-                                #  - cobertura (XML)
-                                #  - teamcity
-                                #  - clover (XML)
+FORMAT                            #Reporting, created from coverage.json. Can be:
+                                  #  - lcov (html+lcov, def)
+                                  #  - html
+                                  #  - lcovonly
+                                  #  - text[-summary] (stdout)
+                                  #  - cobertura (XML)
+                                  #  - teamcity
+                                  #  - clover (XML)
 
 istanbul report [OPTS]
-[FORMAT [FILE...]]              #Turn coverage.json FILE... (def: **/coverage*.json) into FORMAT
+[FORMAT [FILE...]]                #Turn coverage.json FILE... (def: **/coverage*.json) into FORMAT
 
 CONFR.dir DIR
---dir DIR                       #Output DIR (def: './coverage/')
---root DIR                      #Prepended to FILE...
+--dir DIR                         #Output DIR (def: './coverage/')
+--root DIR                        #Prepended to FILE...
 
 CONFR.reports OBJ
---report FORMAT                 #
+--report FORMAT                   #
 
-CONFR.print STR                 #What to print on terminal among:
---print STR                     #  - summary
-                                #  - detail
-                                #  - both
-                                #  - none
+CONFR.print STR                   #What to print on terminal among:
+--print STR                       #  - summary
+                                  #  - detail
+                                  #  - both
+                                  #  - none
 CONF.verbose BOOL
--v                              #
+-v                                #
 
 
 
-istanbul cover FILE.js ...      #istanbul instrument + instanbul report
-                                #Same options
-istanbul test FILE.js ...       #Like istanbul cover except only do something if ENVVAR npm_config_coverage is set
-                                #(i.e. npm run SCRIPT --coverage)
+istanbul cover FILE.js ...        #istanbul instrument + instanbul report
+                                  #Same options
+istanbul test FILE.js ...         #Like istanbul cover except only do something if ENVVAR npm_config_coverage is set
+                                  #(i.e. npm run SCRIPT --coverage)
 
 
 
 istanbul check-coverage
---statements|functions|         #Exit code 1 if coverage < PERCENT
-branches|lines PERCENT [FILE...]#Do so by looking at coverage.json FILE... (def: '**/coverage*.json')
+--statements|functions|           #Exit code 1 if coverage < PERCENT
+branches|lines PERCENT [FILE...]  #Do so by looking at coverage.json FILE... (def: '**/coverage*.json')
 CONFR.watermarks.statements|
  lines|functions|branches
- [PERCENT, PERCENT2]            #PERCENT is error, PERCENT2 is warning
+ [PERCENT, PERCENT2]              #PERCENT is error, PERCENT2 is warning
 
 
 
@@ -252,37 +345,37 @@ CONFR.watermarks.statements|
                                              \=+===============================+=/
 
 
-CLIENT-SIDE TESTING ==>         #This was for server-side test. For client-side:
-                                #  - can use mocha-istanbul
-                                #  - or (easier) with karma-coverage:
-                                #     - preprocessors { SOURCE_FILE_GEXP: ["coverage"] ... }   //Instrument source code
-                                #     - reporter "coverage"                                    //Produce reports
-                                #     - CONFIGVAR coverageReporter:
-                                #        - OBJ: type FORMAT, dir DIR, file FILE, etc.
-                                #          Use DIR/BROWSER_VERSION_OS/FILE
-                                #        - or OBJ2: reporters OBJ_ARR for several different formats
-                                #  - and karma-threshold-reporter:
-                                #     - reporter "threshold" (after reporter "coverage" from karma-coverage)
-                                #     - CONFIGVAR thresholdReporter:
-                                #        - statements|branches|functions|lines NUM (e.g. 90)
+CLIENT-SIDE TESTING ==>           #This was for server-side test. For client-side:
+                                  #  - can use mocha-istanbul
+                                  #  - or (easier) with karma-coverage:
+                                  #     - preprocessors { SOURCE_FILE_GEXP: ["coverage"] ... }   //Instrument source code
+                                  #     - reporter "coverage"                                    //Produce reports
+                                  #     - CONFIGVAR coverageReporter:
+                                  #        - OBJ: type FORMAT, dir DIR, file FILE, etc.
+                                  #          Use DIR/BROWSER_VERSION_OS/FILE
+                                  #        - or OBJ2: reporters OBJ_ARR for several different formats
+                                  #  - and karma-threshold-reporter:
+                                  #     - reporter "threshold" (after reporter "coverage" from karma-coverage)
+                                  #     - CONFIGVAR thresholdReporter:
+                                  #        - statements|branches|functions|lines NUM (e.g. 90)
 
 gulp.src(SOURCE_FILES)
   .pipe(GULP-ISTANBUL([OBJ2]))
   .pipe
-  (GULP-ISTANBUL.hookRequire()) #Several actions (version 0.6.0):
-  .on("finish", function() {    #  - GULP-ISTANBUL() instrument the source files
-    gulp.src(TEST_FILES)        #  - summarizeCoverage() produce an IOSTREAM of OBJ with members
-      .pipe(GULP-MOCHA())       #    lines|statements|functions|branches OBJ2: total|covered|skipped|pct NUM
-      .pipe(GULP-ISTANBUL.      #  - writeReports() produce reports with OBJ:
-        summarizeCoverage()|    #     - dir DIR (def: "./coverage/")
-        writeReports(OBJ))      #     - reporters ARR (def: ["lcov"])
-      .on("end", FUNC())        #OBJ2:
-  });                           #  - includeUntested BOOL: if true (def: false), include non-required modules
+  (GULP-ISTANBUL.hookRequire())   #Several actions (version 0.6.0):
+  .on("finish", function() {      #  - GULP-ISTANBUL() instrument the source files
+    gulp.src(TEST_FILES)          #  - summarizeCoverage() produce an IOSTREAM of OBJ with members
+      .pipe(GULP-MOCHA())         #    lines|statements|functions|branches OBJ2: total|covered|skipped|pct NUM
+      .pipe(GULP-ISTANBUL.        #  - writeReports() produce reports with OBJ:
+        summarizeCoverage()|      #     - dir DIR (def: "./coverage/")
+        writeReports(OBJ))        #     - reporters ARR (def: ["lcov"])
+      .on("end", FUNC())          #OBJ2:
+  });                             #  - includeUntested BOOL: if true (def: false), include non-required modules
 
-GULP-COFFEE-ISTANBUL            #Like GULP-ISTANBUL, but for CoffeeScript
-                                #Version 0.7.0
+GULP-COFFEE-ISTANBUL              #Like GULP-ISTANBUL, but for CoffeeScript
+                                  #Version 0.7.0
 
-GULP-ISTANBUL-ENFORCER(OBJ)     #Do mocha check-coverage. OBJ:
-                                #  - thresholds OBJ: statements|branches|lines|functions NUM: --statements|etc.
-                                #  - coverageDirectory DIR: --dir
-                                #  - rootDirectory DIR: --rot
+GULP-ISTANBUL-ENFORCER(OBJ)       #Do mocha check-coverage. OBJ:
+                                  #  - thresholds OBJ: statements|branches|lines|functions NUM: --statements|etc.
+                                  #  - coverageDirectory DIR: --dir
+                                  #  - rootDirectory DIR: --rot
