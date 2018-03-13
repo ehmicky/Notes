@@ -22,46 +22,6 @@ Summary (from best to worst):
         - basic/digest do not use temp token but actual credentials (username:password)
         - use browser-specific unconditional caching, i.e. must force a request with invalid credentials to invalidate cache
 
-Credentials:
-  - types:
-     - can be:
-        - knowledge: 
-           - password/passphrase, secret questions, etc.
-           - problems:
-              - because need to memorized:
-                 - incentive to keep entropy low
-                 - might be written down
-              - easiest to steal
-        - possession:
-           - security token, key/lock
-           - can be disconnected (tells user credentials) or connected (tells computer credentials directly)
-           - problems: can be stolen
-        - inherence: 
-           - biometrics: fingerprint, retina reader, voice recognition
-           - problems: hard to implement
-     - multifactor authentication (MFA):
-        - using different types together
-        - 2-factor authentication (2FA): when two types
-  - lifetime:
-     - long-lived: most convenient, but if not confidential anymore, must revoke
-     - long-lived -> one-time|temp token: middle-way
-     - one-time|temp tokens: 
-        - less convenient, but if not confidential anymore, no need to revoke
-        - one-time|temp can be:
-           - time-wise: 
-              - server-side expiration time
-              - timestamp hashed in token (TOTP)
-           - request-wise: e.g. only for this specific request/response (using nonce)
-  - creation issuer:
-     - user-picked: more convenient but less entropy
-     - server-picked: less convenient but more entropy
-  - scope:
-     - shared among websites:
-        - often goes along user-picked
-        - if not confidential anymore, compromise other websites
-        - can prevent problem by persisting only hash
-     - unique for specific website
-
 General status codes:
   - 403 (Forbidden):
      - when using HTTP authentication, and user is authenticated but not authorized
@@ -90,27 +50,70 @@ HTTP Authentication:
 	   - server (failure or first request):
         - 401|407 WWW|Proxy-Authenticate: Digest VAR="VAL",... [S]
            - realm="REALM": like Basic Authentication
-           - qop="auth[, auth-int]": different algorithms let to client (optional)
-           - algorithm="MD5[-sess]": same but for different part of algo (optional)
-           - nonce="RANDOM_ALNUM": server-side nonce. Prevents building rainbow tables.
-           - opaque="RANDOM_ALNUM", domain="DOMAIN": used to pass state information around during the process (optional).
+           - domain="URI,..." (def: any): for which URIs the user agent should remember credentials
+           - algorithm="ALGO[-sess],..." (def: "MD5"): 
+              - hashing algorithm
+              - let client decide
+              - among: MD5, SHA2-256, SHA2-512/256
+           - qop="VARIANT,...":
+              - variants of algorithms
+              - among: auth, auth-int
+           - userhash="true|false" (def: "false")
+              - whether userhash is possible
+           - nonce="RANDOM_ALNUM": 
+              - server-side nonce. 
+              - prevents building rainbow tables.
+              - should be in base64 or hex
+           - opaque="RANDOM_ALNUM", domain="DOMAIN": 
+              - used to pass state information around during the process (optional).
+              - should be in base64 or hex
+           - stale="true":
+              - indicates that request failed because nonce was incorrect, maybe too old
+              - user agent should retry without prompting for credentials
+           - charset="CHARSET" (def: 'UTF-8', only value)
      - client:
         - [Proxy-]Authorization: Digest VAR="VAL",... [C]:
            - retake same VAR="VAL" as response (chooses gop|algorithm too)
-           - username="USERNAME"
+           - username[*]="USERNAME"
+              - * must be provided:
+                 - if USERNAME contains percent-encoding (using same notation as MIME type)
+              - if userhash true, use HASH(USERNAME:REALM)
            - response="HASHED_PASSWORD"
            - uri="URI": must match first request URL
-           - cnonce="RANDOM_ALNUM", nc="NUM": (if gop="auth-int"):
+           - cnonce="RANDOM_ALNUM", nc="NUM": 
+               - if gop "auth-int"
                - if Mallory can simulate Bob (not case if SSL), prevents him to build random tables using unique server nonce,
                  then guessing plaintext password from HASHED_PASSWORD
                - cnonce is the client nonce. nc is incrementing at each client request, keeping initial cnonce (allow reusing
                  same cnonce during a whole session)
-        - HASHED_PASSWORD: MD5(MD5(HA1):NONCE[:NC:CNONCE:QOP]:MD5(HTTPMETHOD:URI[:MD5(BODY)])):
-           - HA1:
-              - if algorithm="MD5", MD5(USERNAME:REALM:PASSWORD)
-              - if algorithm="MD5-sess", MD5(MD5(USERNAME:REALM:PASSWORD):NONCE:CNONCE)
-           - ":NC:CNONCE:QOP": if qop="auth[-int]". Prevents replay
-           - ":MD5(BODY)": if qop="auth-int". Provides message integrity of BODY
+        - HASHED_PASSWORD: HASH(HASH(A1):NONCE[:NC:CNONCE:QOP]:HASH(A2):
+           - HASH: algorithm ALGO
+           - A1:
+              - if algorithm="ALGO", USERNAME:REALM:PASSWORD
+              - if algorithm="ALGO-sess", HASH(USERNAME:REALM:PASSWORD):NONCE:CNONCE
+           - ":NC:CNONCE:QOP": 
+              - if qop="auth[-int]"
+              - Prevents replay
+           - A2:
+              - HTTPMETHOD:URI[:HASH(BODY)]
+              - HASH(BODY): 
+                 - if qop="auth-int". 
+                 - Provides message integrity of BODY
+     - server:
+        - optional
+        - on success
+        - goal:
+           - tells client it succeeded
+           - mutual authentication, because it tells server knows HASH(USERNAME:REALM:PASSWORD)
+        - [Proxy-]Authentication-Info: VAR=VAL,... [S]
+           - nextnonce: next nonce
+           - qop: same as request
+           - rspauth:
+              - same as request "reponse", except HTTPMETHOD not used
+              - mandatory if qop="auth[-int]"
+           - cnonce|nc: 
+              - same as request. 
+              - mandatory if qop="auth[-int]"
   - Token-based:
      - server (failure or first request):
         - 401|407 WWW|Proxy-Authenticate: Bearer VAR="VAL" [S]:
