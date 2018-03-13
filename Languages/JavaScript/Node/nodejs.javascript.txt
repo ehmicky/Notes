@@ -793,7 +793,7 @@ WRITESTREAM.hasColors([NUM][, process.env])  10*#Returns true if 2 ** getColorDe
 
 INTERFACE                                       #Interactive TTY
 
-createInterface(OBJ)->INTERFACE                 #OBJ:
+createInterface(OPTS)->INTERFACE                #OPTS:
                                                 #  - input ISTREAM
                                                 #  - output OSTREAM
                                                 #  - terminal BOOL (def: OSTREAM.isTTY):
@@ -831,9 +831,9 @@ INTERFACE.write(STR[, OBJ])                     #Prints STR on OSTREAM
                                                 #Be careful as it will be read by ISTREAM, if ISTREAM and OSTREAM point to same thing (e.g. terminal).
                                                 #  - like process.stdout.write(), but as opposed to console.*()
 
-INTERFACE.setPrompt(STR)                        #Change OBJ.prompt (see above)
-INTERFACE.prompt([BOOL])                        #Write in beginning of current OSTREAM line the OBJ.prompt
-                                                #If line was not empty, will place cursor at character number UINT of prompt (def) or, if true, at end of line.
+INTERFACE.setPrompt(STR)                        #Change OPTS.prompt (see above)
+INTERFACE.prompt([BOOL])                        #Write in beginning of current OSTREAM line the OPTS.prompt
+                                                #If false (def), move cursor back to beginning of line
 
 INTERFACE.question(STR, FUNC(STR2))             #Replace current prompt by STR on OSTREAM, and fires FUNC(STR2) on line event instead of normal line event.
 
@@ -865,74 +865,78 @@ OSTREAM.on('keypress', FUNC(STR, OBJ))          #STR is what to print (e.g. 'a',
                                              \=+===============================+=/
 
 
-REPLSERVER                                      #INTERFACE meant for read-eval-print loop.
+REPLSERVER                                      #Child of INTERFACE, meant for read-eval-print loop.
 
-DEFAULT REPL ==>                                #Uses REPL except:
-
-start([OBJ])->REPLSERVER                        #Uses INTERFACE options:
-                                                #  - OBJ.input|output (def: process.stdin|stdout)
-                                                #  - OBJ.prompt
-                                                #  - OBJ.terminal (def: true unless NODE_NO_READLINE=1)
-                                                #OBJ members are:
-                                                #  - eval(STR, OBJ, FILENAME, FUNC(ERROR, STR2)):
+start([OPTS])->REPLSERVER                       #Forwards to INTERFACE:
+                                                #  - forwards OPTS.input|output|prompt|historySize|terminal|completer
+                                                #  - def OPTS.input|output is process.stdin|stdout
+                                                #  - def OPTS.completer is JavaScript autocompletion
+                                                #OPTS:
+                                                #  - eval(STR, CONTEXT, FILENAME, FUNC(ERROR, VAL)):
                                                 #     - input handler:
                                                 #        - STR is input (including final newline)
-                                                #        - STR2 is printed output
-                                                #        - OBJ is current context (global object)
-                                                #        - FILENAME can be 'repl' if default REPL
+                                                #        - VAL is passed to OPTS.writer()
+                                                #        - FILENAME is 'repl' if default REPL
                                                 #        - if ERROR is new Recoverable(''), keep prompt ongoing (e.g. for multiline input)
                                                 #           - current input is added to next input
-                                                #     - def: eval()
-                                                #  - writer FUNC(VAL):
-                                                #     - output printing
-                                                #     - def: util.inspect()
-                                                #        - options are util.inspect.replDefaults
-                                                #           - def: same as util.inspect.defaultOptions except:
-                                                #              - showProxy true
-                                                #              - colors OBJ.useColors
-                                                #  - useColors BOOL (def: process.stdout.hasColors())
-                                                #  - useGlobal BOOL (def: false): use current context, and not local one
+                                                #     - def:
+                                                #        - VM.createScript(STR, {filename: FILENAME, displayErrors: true})
+                                                #        - then SCRIPT.runInContext(REPLSERVER.context, {breakOnSigint: OPTS.breakEvalOnSigint, displayErrors: true})
+                                                #  - writer(VAL)->STR:
+                                                #     - serialization
+                                                #     - def: util.inspect() using util.inspect.defaultOptions except:
+                                                #        - showProxy true
+                                                #        - colors OPTS.useColors (def: process.stdout.hasColors())
                                                 #  - ignoreUndefined BOOL (def: false): if true, doesn't print output when it is undefined
-                                                #  - replMode:
-                                                #     - can be:
-                                                #        - REPL_MODE_STRICT: "use strict"
-                                                #        - REPL_MODE_SLOPPY: inverse
-                                                #     - def is ENVVAR NODE_REPL_MODE 'sloppy|strict' (def: 'sloppy')
+                                                #  - useGlobal BOOL (def: false): see below
+                                                #  - replMode either:
+                                                #     - REPL_MODE_STRICT: "use strict"
+                                                #     - REPL_MODE_SLOPPY (def): inverse
                                                 #  - breakEvalOnSigint BOOL: if true (def: false), stops on CTRL-C
-REPLSERVER.on("reset", FUNC())                  #When ".clear" is called.
 REPLSERVER.on("exit", FUNC())                   #
+REPLSERVER.on("reset", FUNC())                  #When ".clear" or resetContext() is called.
 
-REPLSERVER.context                              #Global environment, as OBJ
-                                                #Also contains:
-                                                #  - all core modules, e.g. OBJ.child_process
-                                                #  - _ and _error
-                                                #REPL command ".clear" resets it.
+REPLSERVER.context                              #Global CONTEXT object
+                                                #If OPTS.useGlobal false (def):
+                                                #  - is a new CONTEXT (using VM.createContext())
+                                                #  - contains all core modules, e.g. GLOBAL.child_process
+                                                #Also contains the following:
 _                                               #Last expression evaluated
 _error                                        9*#Last uncaught exception
 
 REPL COMMANDS ==>                               #
-.save FILE                                      #Save all input so far to FILE
-.load FILE                                      #Input FILE
 .exit
 CTRL-D                                          #
 .break
 CTRL-C                                          #
 .editor                                         #Start multiline session
+REPLSERVER.resetContext()
+.clear                                          #Reinitialize REPLSERVER.context
 .help                                           #
-REPLSERVER.defineCommand('STR', OBJ|FUNC(...))  #Custom commands called .STR
-                                                #OBJ:
-                                                #  - action(...)
+REPLSERVER.defineCommand                        #Custom .COMMAND [...ARGS]
+ ('COMMAND', OBJ|FUNC(...ARGS))                 #OBJ:
+                                                #  - action(...ARGS)
                                                 #  - help STR
-REPLSERVER.displayPrompt([BOOL])                #Reshow the prompt using INTERFACE.prompt(BOOL)
+REPLSERVER.displayPrompt([BOOL])                #Like INTERFACE.prompt(BOOL) except if there is currently some input, use '...' prompt instead
+                                                #Meant to be used inside defineCommand() OBJ.action()
 REPLSERVER.clearBufferedCommand()             9*#Discard|ignore the line currently entered
                                               9*#Meant to be used inside defineCommand() OBJ.action()
 
-NODE_REPL_HISTORY ENVVAR                        #Def: ~/.node_repl_history
-NODE_REPL_HISTORY_SIZE ENVVAR                   #Def: 1000
-REPLSERVER.setupHistory                      11*#Use a history file.
- ('PATH', FUNC(ERROR, REPLSERVER))           11*#Automatically done in normal CLI
+REPLSERVER.setupHistory
+ ('PATH', FUNC(ERROR, REPLSERVER))           11*#Must be called to use history.
+.save FILE                                      #Save all input so far to FILE
+.load FILE                                      #Input FILE
 
 --experimental-repl-await                    10*#Allow using await top-level
+
+DEFAULT REPL ==>                                #Uses REPL except:
+                                                #  - calls REPLSERVER.setupHistory('PATH')
+                                                #     - using ENVVAR NODE_REPL_HISTORY (def: ~/.node_repl_history)
+                                                #  - OPTS.terminal can be set with ENVVAR NODE_NO_READLINE=1
+                                                #  - OPTS.replMode can be set with ENVVAR NODE_REPL_MODE 'sloppy|strict'
+                                                #  - OPTS.historySize can be set with ENVVAR NODE_REPL_HISTORY_SIZE (def: 1000)
+                                                #  - OPTS.breakEvalOnSigint true
+                                                #  - can override defaults util.inspect() options (for OPTS.writer()) with util.inspect.replDefaults
 
 
                                              /=+===============================+=\
