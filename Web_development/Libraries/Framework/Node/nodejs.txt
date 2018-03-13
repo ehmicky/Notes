@@ -336,7 +336,7 @@ BUFFER.includes(..., 'ENCODING')->BOOL          #  - VAL is BVAL
 BUFFER.fill(...[, 'ENCODING'])                  #  - can use 'ENCODING'
 
 BUFFER.write(STR[, UINT[, UINT2[, 'ENCODING']]])#Writes STR on BUFFER
- ->NUM                                          #UINT is offset (déf: 0) and UINT2 is length (déf: all)
+ ->NUM                                          #UINT is offset (def: 0) and UINT2 is length (def: all)
 BUFFER.copy(BUFFER2[, 3 UINT])->UINT4           #Copies bytes from BUFFER at position UINT to BUFFER2 from position UINT2 to UINT3 (def: BUFFER2.length)
 
 BUFFER.readFloat|Double|[U]Int8|16|32]LE|BE     
@@ -356,63 +356,66 @@ BUFFER.swap16|32|64()->BUFFER                   #Swaps every couple of 1|2|4 byt
 																						 \=+===============================+=/
 
 
+SVAL                                            #BUFFER or (if setEncoding() called) STR, or null if nothing to read
+OBJECT MODE ==>                                 #SVAL is any VAL (except null): 
+                                                #  - encoding is ignored
+                                                #  - both ISTREAM and OSTREAM must be in objectMode
+                                                #  - ISTREAM.read() NUM argument is ignored (always 1)
+
 ISTREAM ==>                                     #Input stream. Actually called Readable
-                                                #When says BUFFER|STR: depends on whether setEncoding() has been called, and
-                                                #is null if nothing to read.
-STREAM.Readable([OBJ])                          #Constructor for ISTREAM. OBJ members are:
-                                                #  - encoding STR (déf: null, i.e. uses BUFFER)
-                                                #  - objectMode BOOL: if true, ISTREAM.read(NUM) returns a single OBJ, 
-                                                #    whatever NUM is.
-                                                #  - highWaterMark NUM: buffer size (déf: 16kb). Buffering happens with
-                                                #    internal method ISTREAM.push() and OSTREAM.write()
-ISTREAM.read( [UINT] )                          #Returns BUFFER|STR de (max) UINT octets (déf: all available).
-                                                #If nothing available, returns null. Prefer using on("data")
-                                                #Will not return anything until some chunks of data are available:
-                                                #  - ISTREAM.on( "readable", FUNC() ): fired once when first chunks are there
-                                                #  - ISTREAM.on( "end", FUNC() ): all chunks have been read()
-                                                #  - ISTREAM.on( "close", FUNC() ): fired when underlying fd is closed 
-                                                #    (not all ISTREAM close)
-                                                #  - ISTREAM.on( "error", FUNC() )
-ISTREAM.on( "data", FUNC( BUFFER|STR ) )        #When chunk of data is available, fires FUNC(ISTREAM.read()).
-                                                #Usually only one chunk, but should accumulate and wait for "end" FUNC() event.
-                                                #Be careful: doesn't fire if ISTREAM is empty (e.g. REQ with no body).
+new STREAM.Readable([OBJ])                      #OBJ:
+                                                #  - encoding 'ENCODING' (def: null, i.e. uses BUFFER)
+                                                #  - objectMode BOOL: see above
+                                                #  - highWaterMark NUM: 
+                                                #     - buffer size (def: 16kb)
+                                                #     - on ISTREAM: data available for read but not read yet
+                                                #     - on OSTREAM: data not flushed yet
+                                                #     - if buffer full, waits
+ISTREAM.on("readable", FUNC())                  #New chunks available, or just before "end"
+ISTREAM.on("data", FUNC(SVAL))                  #Each new chunk available. Firing FUNC() consumes that chunk.
+                                                #Not fired if ISTREAM is empty
+ISTREAM.read([UINT])->SVAL                      #Like on("data") but:
+                                                #  - sync: waits until chunk available (i.e. prefer on("data"))
+                                                #  - specify (max) chunk size UINT (def: all)
+                                                #  - SVAL is null if ISTREAM empty
+ISTREAM.on("end", FUNC())                       #When all chunks have been read
+ISTREAM.on("close", FUNC())                     #When underlying fd is closed (not all ISTREAM close)
+ISTREAM.on("error", FUNC())                     #
 ISTREAM.pause|resume()                          #Makes it stop|resume emit "data" events.
 ISTREAM.isPaused()															#
-ISTREAM.setEncoding( STR )                      #Makes it return a STR instead of a BUFFER, with encoding STR (e.g. "utf8", 
-                                                #see BUFFER).
-ISTREAM.pipe(OSTREAM[, { end: BOOL }])          #Same as OSTREAM.write(ISTREAM.read()), but waits for "data" event.
-                                                #If end: true (déf), call OSTREAM.end() afterwards (except on stdout|stderr).
-                                                #Returns OSTREAM, so can chain to another pipe()
-ISTREAM.unpipe([OSTREAM])                       #Stop pipe() (déf: all OSTREAM)
-ISTREAM.unshift(BUFFER|STR)                     #Put last BUFFER|STR read back in ISTREAM
+ISTREAM.setEncoding('ENCODING')                 #
+ISTREAM.pipe(OSTREAM[, { end: BOOL }])->OSTREAM #Same as ISTREAM.on("data", sval => OSTREAM.write(SVAL))
+                                                #If BOOL true (def), call OSTREAM.end() on ISTREAM.on('end|error') (except on stdout|stderr)
+ISTREAM.unpipe([OSTREAM])                       #Stops pipe() (def: all)
+ISTREAM.unshift(SVAL)                           #Put last SVAL read back in ISTREAM
 
 OSTREAM ==>                                     #Output stream. Actually called Writable
 STREAM.Writable([OBJ])                          #Constructor for OSTREAM. OBJ members are:
-                                                #  - decodeStrings BOOL: if true (déf), decodes to BUFFER before writing
-                                                #  - objectMode BOOL: if true, OSTREAM.write(OBJ) becomes possible, and 
-                                                #    encoding is then ignored.
-OSTREAM.write(BUFFER|STR[, STR2[, FUNC()]])     #Writes chunks.
-                                                #STR2 is the encoding (when using a STR)
+                                                #  - decodeStrings BOOL: if true (def), decodes to BUFFER before calling underlying OSTREAM._write()
+                                                #  - objectMode BOOL: see above
+                                                #  - highWaterMark NUM: see above
+OSTREAM.write(SVAL[, 'ENCODING'[,FUNC()]])->BOOL#Writes chunks.
                                                 #FUNC() is fired when buffered + flushed.
-                                                #Returns false if data have been buffered but not flushed, which means one 
-                                                #should wait for the event "drain" to write again : OSTREAM.once( "drain", ...)
-OSTREAM.end(BUFFER|STR[, STR2[, FUNC()]])       #Writes final chunk. FUNC is the finish event handler
-                                                #Also returns true|false.
-OSTREAM.setDefaultEncoding(STR)                 #
-OSTREAM.[un]cork()                              #Forces buffering|flushing to disk. 
+                                                #BOOL:
+                                                #  - false if data cannot be buffered anymore (i.e. buffer is full)
+                                                #  - i.e. should wait for OSTREAM.once('drain') before writing again
+OSTREAM.end(SVAL[, 'ENCODING'[, FUNC()]])->BOOL #Same but for final chunk. FUNC is the finish event handler
+OSTREAM.setDefaultEncoding('ENCODING')->OSTREAM #
+OSTREAM.[un]cork()                              #cork() forces buffering to disk, uncork() flushes
                                                 #To do when writing a lot of small I/O, to make them all flush at once.
-OSTREAM.on( "finish", FUNC() )                  #Fired by end()
-OSTREAM.on( "[un]|pipe", FUNC(ISTREAM) )        #Fired by ISTREAM.[un]pipe()
-OSTREAM.on( "error", FUNC() )                   #
+OSTREAM.on("close", FUNC())                     #Like ISTREAM
+OSTREAM.on("finish", FUNC())                    #Fired when end() done
+OSTREAM.on("[un]pipe", FUNC(ISTREAM))           #Fired by ISTREAM.[un]pipe()
+OSTREAM.on("error", FUNC())                     #
 
 IOSTREAM ==>                                    #Implement both ISTREAM and OSTREAM. Actually called either:
                                                 #  - STREAM.Duplex
-                                                #  - STREAM.Transform: same but where there is a correlation between input and 
-                                                #    output (ex: crypto, but not socket). Only semantique.
+                                                #  - STREAM.Transform: 
+                                                #     - same but where there is a correlation between input and output (ex: crypto, but not HTTP) 
+                                                #     - only semantic
 
 INHERITING STREAMS ==>                          #To create STREAM child classes, just inherit them and reimplement functions
-                                                #._read(), ._write[v](), ._transform() or ._flush() (see online doc), without
-                                                #calling them directly.
+                                                #_read(), _write[v](), _transform() or _flush() (see online doc), without calling them directly.
 
 
 																						 /=+===============================+=\ 
@@ -432,7 +435,7 @@ createInterface(OBJ)                            #Returns an INTERFACE object, i.
                                                 #    Either returns [ STR2_ARR, STR ] or fire CALLBACK(ERROR, [ STR2_ARR,STR ])
                                                 #    If ARR is several elements, show them, otherwise complete current word,
                                                 #    providing it starts with same letters.
-                                                #  - terminal BOOL (déf: OSTREAM.isTTY) if tty
+                                                #  - terminal BOOL (def: OSTREAM.isTTY) if tty
 INTERFACE.close()                               #Destroy it.
                                                 #Called by ISTREAM.end(), CTRL-C and CTRL-D.
 INTERFACE.on("close", CALLBACK())               #
@@ -442,9 +445,9 @@ INTERFACE.write(STR|BUFFER[, OBJ])              #Prints STR|BUFFER on OSTREAM or
                                                 #Be careful as it will be read by ISTREAM, if ISTREAM and OSTREAM point to
                                                 #same thing (e.g. terminal).
 INTERFACE.prompt([BOOL])                        #Write in beginning of current OSTREAM line the STR set by 
-                                                #INTERFACE.setPrompt(STR) (déf: "> ").
+                                                #INTERFACE.setPrompt(STR) (def: "> ").
                                                 #If line was not empty, will place cursor at character number UINT of prompt 
-                                                #(déf) or, if true, at end of line.
+                                                #(def) or, if true, at end of line.
 INTERFACE.question(STR|BUFFER, CALLBACK(STR2))  #Replace current prompt by STR|BUFFER on OSTREAM, and fires CALLBACK(STR2) on
                                                 #line event instead of normal line event.
 INTERFACE.pause|resume()                        #Pause|resume ISTREAM. 
@@ -471,21 +474,21 @@ start(OBJ)                                      #Creates and returns a REPLSERVE
                                                 #This is what is used by node with no FILE.
                                                 #If NODE_NO_READLINE envvar is defined to 1, readline is not used.
                                                 #OBJ members are:
-                                                #  - prompt STR (déf: "> ")
-                                                #  - input ISTREAM (déf: process.stdin)
-                                                #  - output OSTREAM (déf: process.stdout)
-                                                #  - terminal BOOL (déf: OSTREAM.isTTY)
+                                                #  - prompt STR (def: "> ")
+                                                #  - input ISTREAM (def: process.stdin)
+                                                #  - output OSTREAM (def: process.stdout)
+                                                #  - terminal BOOL (def: OSTREAM.isTTY)
                                                 #  - eval FUNC(STR, OBJ, FILENAME, CALLBACK(ERROR, STR)): 
                                                 #    function to perform after each line. Déf. is async. wrapper of eval():
                                                 #      - STR is command. 
                                                 #      - OBJ is current context (global object)
                                                 #      - STR2 is current module.filename
-                                                #  - useColors BOOL (déf: same as terminal). 
+                                                #  - useColors BOOL (def: same as terminal). 
                                                 #    Can also use ENVVAR NODE_DISABLE_COLORS=1
-                                                #  - useGlobal BOOL (déf: false): use current context, and not local one
-                                                #  - ignoreUndefined BOOL (déf: false): if true, doesn't print output when
+                                                #  - useGlobal BOOL (def: false): use current context, and not local one
+                                                #  - ignoreUndefined BOOL (def: false): if true, doesn't print output when
                                                 #    it is undefined
-                                                #  - writer FUNC: output printing, déf. is util.inspect
+                                                #  - writer FUNC: output printing, def. is util.inspect
 REPLSERVER.on("reset", FUNC())                  #When ".clear" is called.
 REPLSERVER.on("exit", CALLBACK())               #
 REPLSERVER.context                              #Global environment, as OBJ
@@ -526,7 +529,7 @@ createSocket(STR|OBJ[, CALLBACK(BUFFER, OBJ2)]) #Returns a DGRAM.SOCKET
                                                 #CALLBACK is message event handler.
 DGRAM.SOCKET.address()                          #{ address, port, family }
 
-DGRAM.SOCKET.bind(UINT[, STR][, CALLBACK()])    #Start listening to port UINT, address STR (déf: all available)
+DGRAM.SOCKET.bind(UINT[, STR][, CALLBACK()])    #Start listening to port UINT, address STR (def: all available)
                                                 #Then fires CALLBACK()
                                                 #Program will block until DGRAM.SOCKET.close() is called. Can also use
                                                 #DGRAM.SOCKET.[un]ref()
@@ -565,9 +568,9 @@ SERVER.listen(UINT|STR[,STR2][,UINT2][,FUNC()]) #Makes the SERVER:
                                                 #  - listen to port number UINT|STR (if 0, random port).
                                                 #    Can fire error event with ERROR.code "EADDRINUSE" if another process 
                                                 #    already uses this port.
-                                                #  - listen to HOST STR2 (déf: INADDR_ANY, i.e. any available IP on the machine
+                                                #  - listen to HOST STR2 (def: INADDR_ANY, i.e. any available IP on the machine
                                                 #    will work)
-                                                #  - UINT2 is the max number of pending connections (déf: 511, OS limits are
+                                                #  - UINT2 is the max number of pending connections (def: 511, OS limits are
                                                 #    determined by sysctl settings like tcp_max_backlog and somaxconn)
                                                 #  - FUNC is the event hander for listening event.
                                                 #Program will block until SERVER.stop() is called and close event handlers have
@@ -613,8 +616,8 @@ SOCKET                                          #Socket of a single TCP connecti
                                                 #  - error event handler: FUNC(ERROR)
 SOCKET([OBJ])                                   #Constructor. OBJ members are:
                                                 #  - fd: UINT
-                                                #  - readable|writable BOOL (déf: false)
-                                                #  - allowHalfOpen BOOL (déf: false): if true, when other socket closes
+                                                #  - readable|writable BOOL (def: false)
+                                                #  - allowHalfOpen BOOL (def: false): if true, when other socket closes
                                                 #    connection, doesn't automatically call end(), which means:
                                                 #      - can still write to it (but non-readable)
                                                 #      - must manually call end()
@@ -625,7 +628,7 @@ SOCKET.on( "connect", FUNC() )                  #Used with client connections (c
 SOCKET.bufferSize                               #Currently buffered characters. If ever growing, should use pause|resume()
 SOCKET.destroy()                                #No more read|write. Only necessary when error happened.
 SOCKET.setTimeout(UINT[, FUNC() ])              #Trigger a timeout event (event handler FUNC()) after UINT ms of idleness
-                                                #(0 to disable (déf)), a single time.
+                                                #(0 to disable (def)), a single time.
                                                 #Event handler can end() or destroy()
 SOCKET.setNoDelay(BOOL)                         #If true, disable the buffering of emitting small data (to send data in chunks,
                                                 #more efficient when using a lot of small requests, but can delay them)
@@ -663,9 +666,9 @@ createServer(OBJ[, CALLBACK(TLSSOCKET)])        #Returns a TLS.SERVER, child of 
                                                 #  - key STR|BUFFER: server private key, in PEM format
                                                 #  - cert STR|BUFFER: server certificate, in PEM format
                                                 #  - pfx STR|BUFFER: key+cert+ca in PFX or PKCS12 format
-                                                #  - requestCert BOOL (déf: false): request authentication (with certificate)
+                                                #  - requestCert BOOL (def: false): request authentication (with certificate)
                                                 #    of other end (i.e. client)
-                                                #      - rejectUnauthorized BOOL (déf: false): throw error to other end if 
+                                                #      - rejectUnauthorized BOOL (def: false): throw error to other end if 
                                                 #        cannot authentify it.
                                                 #      - ca STR_ARR|BUFFER_ARR: list of root certificates, in PEM format.
                                                 #        By def., well-known root CAs. Otherwise, can be used to authorize
@@ -676,10 +679,10 @@ createServer(OBJ[, CALLBACK(TLSSOCKET)])        #Returns a TLS.SERVER, child of 
                                                 #  - secureProtocol STR: forces SSL version for client and/or server among 
                                                 #    "SSLv2|3|TLSv1_[client|server_]method". No client|server means both.
                                                 #    Otherwise, uses the best one accepted by client.
-                                                #  - honorCipherOrder BOOL: if true (recommended, but déf: false), server will
+                                                #  - honorCipherOrder BOOL: if true (recommended, but def: false), server will
                                                 #    choose cipher preference, not client. List is designated by ciphers STR,
                                                 #    which defaults to "AE128-GCM-SHA256:RC4:HIGH:!MD5:!aNULL:!EDH"
-                                                #  - handshakeTimeout (déf: 120000, in ms): when timing out, emits clientError
+                                                #  - handshakeTimeout (def: 120000, in ms): when timing out, emits clientError
                                                 #  - NPNProtocols|ALPNProtocols STR_ARR|BUFFER_ARR: list of application 
                                                 #    protocols that can be used, ordered by priority.
                                                 #  - SNICallback CALLBACK(STR,FUNC(ERROR,OBJ)): when client asks for SNI, 
@@ -780,7 +783,7 @@ SERVER.on( "connect",FUNC( REQ, SOCKET, BUFFER))#Fired when client sends an HTTP
                                                 #Client's body is in BUFFER. Client's connection is in SOCKET.
 SERVER.on( "upgrade",FUNC(REQ,SOCKET, BUFFER )) #Same for HTTP request with Upgrade [C].
 SERVER.on( "clientError", FUNC( ERROR, SOCKET)) #Fired when connection problem.
-SERVER.maxHeadersCount                          #Maximum number of headers incoming (déf: 1000, 0 for unlim)
+SERVER.maxHeadersCount                          #Maximum number of headers incoming (def: 1000, 0 for unlim)
 SERVER.setTimeout(UINT[, FUNC()])               #Do setTimeout(...) on all underlying SOCKET
 SERVER.timeout                                  #Def: 120000 (2 mins)
 
@@ -815,7 +818,7 @@ RES.setHeader(STR, STR2[_ARR])                  #STR2 sets a single header field
 RES.getHeader(STR)                              #
 RES.removeHeader(STR)                           #
 RES.writeHead( UINT[, STR][, OBJ] )             #Writes the header (must be done only once) :
-                                                #  - status code UINT (déf: 200) et STR
+                                                #  - status code UINT (def: 200) et STR
                                                 #  - OBJ sont les header fields : { STR, STR2[_ARR] }
 RES.statusCode|Message                          #Setting it is another way to set status code|message.
                                                 #If statusMessage not set, use STATUS_CODES[statusCode]
@@ -829,13 +832,13 @@ RES.on( "timeout", FUNC() )                     #See setTimeout()
 
 request(OBJ[, FUNC(REQ)])                       #Returns a CLIENTREQUEST, i.e. a request to be sent to another server.
                                                 #OBJ has members:
-                                                #  - host[name] STR (déf: "localhost") (prefer hostname)
+                                                #  - host[name] STR (def: "localhost") (prefer hostname)
                                                 #    Should not start with protocol. Will fire exception if non existing.
-                                                #  - port UINT (déf: 80)
+                                                #  - port UINT (def: 80)
                                                 #  - socketPath STR: incompatible with host[name] and port
                                                 #  - localAddress STR
-                                                #  - method STR (déf: "GET")
-                                                #  - path STR (déf: "/")
+                                                #  - method STR (def: "GET")
+                                                #  - path STR (def: "/")
                                                 #  - headers OBJ
                                                 #  - auth STR: e.g. "auth:password"
                                                 #  - agent: AGENT used. Can be undefined (default globalAgent), false
@@ -868,7 +871,7 @@ CLIENTREQUEST.flushHeaders()										#Like REQ.flush()
 
 AGENT                                           #Socket pools manager for requests (not server)
 new AGENT(OBJ)                                  #OBJ is:
-                                                #  - maxSockets NUM (déf: Infinity): max busy + free sockets per host.
+                                                #  - maxSockets NUM (def: Infinity): max busy + free sockets per host.
                                                 #    Increasing just affect pooling, i.e. more memory used but faster, but 
                                                 #    does not affect max. number of sockets per host (unlim.)
                                                 #  - maxFreeSockets NUM (def: 256): max free sockets. 
@@ -937,8 +940,8 @@ resolve(STR, STR2)                              #May STR be a URL with/without p
 
 
 stringify(OBJ[, STR[, STR2]])                   #Returns a percent-encoded GET query string for all members of OBJ as
-                                                #VAR=VAL&VAR2=VAL2, etc., with separator STR (déf: "&") and STR2 (déf: "=")
-parse(STR[, STR2[, STR3]][, { maxKeys: UINT }]) #Inverse. UINT is the max number of keys (déf: 1000, 0 for unlim)
+                                                #VAR=VAL&VAR2=VAL2, etc., with separator STR (def: "&") and STR2 (def: "=")
+parse(STR[, STR2[, STR3]][, { maxKeys: UINT }]) #Inverse. UINT is the max number of keys (def: 1000, 0 for unlim)
 [un]escape(STR)                                 #Same as en|decodeURIComponent, but can be overriden to change 
                                                 #stringify|parse() behavior
 
@@ -981,7 +984,7 @@ lookup(STR[, OBJ], CALLBACK(ERROR, STR3, STR4))	#DNS forward lookup.
                                                 #The ERROR.name can correspond to several DNS.*, like DNS.NOTFOUND, 
                                                 #DNS.NODATA, DNS.NOMEM, etc. (see online doc)
 lookupService(IP, PORT, FUNC(HOST, PROTOCOL))		#
-resolve(STR[, STR2], CALLBACK(ERROR, STR3_ARR)) #Same but STR2 can any PTR record type: "A" (déf), "AAAA", "MX", "TXT", "SRV", 
+resolve(STR[, STR2], CALLBACK(ERROR, STR3_ARR)) #Same but STR2 can any PTR record type: "A" (def), "AAAA", "MX", "TXT", "SRV", 
                                                 #"PTR", "NS", "CNAME", "SOA"
 resolveSTR2(STR, CALLBACK(ERROR, STR3_ARR))     #Same. STR2 is camelcase.
 reverse(STR, CALLBACK(ERROR, STR2_ARR))         #DNS reverse lookup.
@@ -1171,11 +1174,11 @@ fsync(FD_INT, CALLBACK(ERROR))                  #Flushes to disk
 
 readFile(STR|UINT, [OBJ, ]                      #Easier way than using open() and read()
 CALLBACK(ERROR,BUFFER|STR2))                    #STR|UINT is the path|fd. OBJ has members:
-                                                #  - encoding STR (déf: null, i.e. returns BUFFER, otherwise returns STR2)
-                                                #  - flag STR (déf: "r")
+                                                #  - encoding STR (def: null, i.e. returns BUFFER, otherwise returns STR2)
+                                                #  - flag STR (def: "r")
                                                 #Prefer createReadStream(...).pipe(OSTREAM)
 FS-EXTRA.readJson(...)                         ##Same as readFile(), but return as OBJ
-write|appendFile(STR|UINT, [STR2|BUFER,] [OBJ,] #OBJ has same members but also mode MODE_INT (déf: 0666)
+write|appendFile(STR|UINT, [STR2|BUFER,] [OBJ,] #OBJ has same members but also mode MODE_INT (def: 0666)
 CALLBACK(ERROR))                                #Déf flag is "w|a"
 FS-EXTRA.outputFile(...)                       ##Same as writeFile(), but calls ensureFile() first
 FS-EXTRA.writeJson|outputJson(...)             ##Same as writeFile|outputFile(), but with an OBJ (JSON.stringify'd).
@@ -1186,11 +1189,11 @@ createReadStream(STR[, OBJ])                    #Returns as ISTREAM.
                                                 #    (readFile())
                                                 #  - can use IOSTREAM as modular transforms functions (like Unix commands)
                                                 #OBJ has members:
-                                                #  - flags (déf: "r")
-                                                #  - encoding (déf: null)
-                                                #  - fd (déf: null)
-                                                #  - mode (déf: 0666)
-                                                #  - autoClose (déf: true): close the file descriptor on error|end event
+                                                #  - flags (def: "r")
+                                                #  - encoding (def: null)
+                                                #  - fd (def: null)
+                                                #  - mode (def: 0666)
+                                                #  - autoClose (def: true): close the file descriptor on error|end event
                                                 #  - start|end UINT: only use from bytes UINT to UINT2
                                                 #ISTREAM has extra:
                                                 #  - event "open", with event handler FUNC(FD_INT)
@@ -1276,24 +1279,24 @@ createGzip|Deflate[Raw]([OBJ])                  #Returns a COMPRESS, i.e. a IOST
                                                 #Raw: same but does not append a zlib header.
                                                 #OBJ can be:
                                                 #  - flush, among:
-                                                #     - Z_NO_FLUSH (déf)
+                                                #     - Z_NO_FLUSH (def)
                                                 #     - Z_PARTIAL_FLUSH
                                                 #     - Z_SYNC_FLUSH
                                                 #     - Z_FULL_FLUSH
                                                 #     - Z_FINISH
                                                 #     - Z_BLOCK
                                                 #     - Z_TREES
-                                                #  - chunkSize (déf: 16*1024)
-                                                #  - windowBits (déf: 15): from 8 to 15, higher means better compression but 
+                                                #  - chunkSize (def: 16*1024)
+                                                #  - windowBits (def: 15): from 8 to 15, higher means better compression but 
                                                 #    more memory.
-                                                #  - dictionary (deflate|inflate only) (déf: "")
+                                                #  - dictionary (deflate|inflate only) (def: "")
                                                 #OBJ (compression only):
                                                 #  - level: higher means better compression but slower, among:
-                                                #     - Z_DEFAULT_COMPRESSION (déf)
+                                                #     - Z_DEFAULT_COMPRESSION (def)
                                                 #     - Z_BEST_SPEED
                                                 #     - Z_BEST_COMPRESSION
                                                 #     - Z_NO_COMPRESSION
-                                                #  - memLevel (déf: 8): from 1 to 9, higher means better compression but more 
+                                                #  - memLevel (def: 8): from 1 to 9, higher means better compression but more 
                                                 #    memory.
                                                 #  - strategy, make compression better, according to type of data, among:
                                                 #     - Z_DEFAULT_STRATEGY: almost random data, and small values
@@ -1357,11 +1360,11 @@ on("beforeExit", FUNC(INT))                     #Fired when programs finishes be
 on("uncaughtException", FUNC(ERROR))						#Prefer using DOMAIN
 on('rejectionHandled, FUNC(PROMISE))            #On PROMISE rejected but handled.
 on('unhandledRejection, FUNC(VAL, PROMISE))     #On PROMISE rejected and not handled.
-exit([UINT])                                    #Exit with exit code UINT (déf: 0)
+exit([UINT])                                    #Exit with exit code UINT (def: 0)
 abort()                                         #Aborts: exits + produce a core file.
 
 pid                                             #
-kill(PID_INT[, SIGNAL_STR])                     #Sends a signal (déf: "SIGTERM").
+kill(PID_INT[, SIGNAL_STR])                     #Sends a signal (def: "SIGTERM").
                                                 #If PID_INT, doesn't exit, throw exception (can use SIGNAL_STR 0 to just test
                                                 #process existence).
 on(SIGNAL_STR, CALLBACK())                      #Fires when signal emitted on current process. Special cases:
@@ -1418,7 +1421,7 @@ spawn(STR[, STR2_ARR], OBJ)                     #Creates, runs and return a CHIL
                                                 #args STR2_ARR.
                                                 #OBJ (should be at least {}) are options among:
                                                 #  - cwd STR
-                                                #  - env OBJ (déf: process.env)
+                                                #  - env OBJ (def: process.env)
                                                 #  - uid|gid UINT
                                                 #  - detached BOOL: if true, becomes leader a new process group, i.e. will
                                                 #    not exit when parent does. Must not inherit any file descriptor from 
@@ -1452,7 +1455,7 @@ spawnSync(...)                                  #Same except:
                                                 #     - error ERROR
 fork(STR[, STR2_ARR], OBJ)                      #Same as spawn(), but:
                                                 #  - for a file STR. Use: 
-                                                #     - execPath STR: déf is "node", so STR is a JavaScript node.js file,
+                                                #     - execPath STR: def is "node", so STR is a JavaScript node.js file,
                                                 #       but could use Bash, Python, etc.
                                                 #     - execArgv STR_ARR to pass arguments.
                                                 #  - OBJ options are cwd, env, encoding, execPath, execArgv, uid|gid and:
@@ -1469,10 +1472,10 @@ exec(STR, OBJ, CALLBACK(ERROR,BUFFER,BUFFER2))  #Same as spawn() but current pro
                                                 #     - cwd STR
                                                 #     - env OBJ
                                                 #     - uid|gid UINT
-                                                #     - encoding STR (déf: "utf8")
-                                                #     - timeout UINT (déf: 0): if > 0, will send killSignal after UINT ms
-                                                #     - killSignal STR (déf: "SIGTERM")
-                                                #     - maxBuffer UINT (déf: 200KB): killSignal if more is used
+                                                #     - encoding STR (def: "utf8")
+                                                #     - timeout UINT (def: 0): if > 0, will send killSignal after UINT ms
+                                                #     - killSignal STR (def: "SIGTERM")
+                                                #     - maxBuffer UINT (def: 200KB): killSignal if more is used
                                                 #     - shell STR (def: "/bin/sh")
 execSync(STR[, OBJ])                            #Same but:
                                                 #  - extra argument: input STR|BUFFER (overrides stdio[0])
@@ -1540,13 +1543,13 @@ GOAL ==>                                        #A single process will only use 
 fork([OBJ])                                     #Like CHILD_PROCESS.fork(), but returns a WORKER, which gives extra functions.
                                                 #Can fork a separate file for children, but if forking the same file, should
                                                 #use if ( CLUSTER.isMaster|Worker ) in beginning of code.
-                                                #OBJ is env (déf: process.env).
+                                                #OBJ is env (def: process.env).
                                                 #Options are controlled by CLUSTER.settings, that is available for read once
                                                 #CLUSTER.setupMaster(OBJ) has been called to change it (only once):
-                                                #  - exec STR: the file the child is forked with (déf: process.argv[1])
-                                                #  - args STR (déf: process.argv.slice(2)): to worker
-                                                #  - execArgv STR_ARR (déf: process.execArgv): to node
-                                                #  - silent BOOL: like CHILDPROCESS.fork() (déf: false)
+                                                #  - exec STR: the file the child is forked with (def: process.argv[1])
+                                                #  - args STR (def: process.argv.slice(2)): to worker
+                                                #  - execArgv STR_ARR (def: process.execArgv): to node
+                                                #  - silent BOOL: like CHILDPROCESS.fork() (def: false)
                                                 #  - uid|gid UINT
                                                 #setupMaster() fire 'setup'(OBJ) event
 on("fork|online", CALLBACK(WORKER))             #Fired when a child process is created|ready to respond.
@@ -1566,7 +1569,7 @@ WORKER.send(VAL[,SOCKET|NET.SERVER])            #
 WORKER.on("message",
 CALLBACK(OBJ[,SOCKET|NET.SERVER]))              #
 WORKER.kill([STR])                              #Calls WORKER.disconnect(), then in:
-                                                #  - the parent, sends signal (déf: "SIGTERM")
+                                                #  - the parent, sends signal (def: "SIGTERM")
                                                 #  - the child processes, exit with error code 0
 
 WORKER.disconnect()                             #If listen() was called, don't accept new connections and emit SERVER.close()
@@ -1646,7 +1649,7 @@ createCipher(STR, BUFFER|STR2)                  #Same but for a CIPHER (sym. cip
                                                 #operation), as STR_ARR: includes AES, Blowfish, Camellia, CAST, DES, DES3, 
                                                 #DES-X, IDEA, RC2, RC4, SEED.
 createCipheriv(STR, BUFFER|STR2, BUFFER2|STR3)  #Same but IV is specified in third argument, not derived from key.
-CIPHER.setAutoPadding(BOOL)                     #If false (déf: true), disables padding (PKCS padding).
+CIPHER.setAutoPadding(BOOL)                     #If false (def: true), disables padding (PKCS padding).
                                                 #Use it for personalized padding, i.e. filling with nulls.
 CIPHER.getAuthTag()                             #Returns MAC as BUFFER, for sym. ciphers that produce one ("authenticated
                                                 #encryption"), i.e. "GCM" only.
@@ -1770,13 +1773,13 @@ new Console(OSTREAM[, OSTREAM2])                #Returns CONSOLE, same as consol
 
 inspect(VAL[, OBJ])                             #Print function used by repl. Returns as STR.
                                                 #OBJ members are:
-                                                #  - showHidden BOOL: if false (déf), doesn't show non-enumerable properties
-                                                #  - depth NUM (déf: 2): max recursion (null for infinite)
-                                                #  - colors BOOL (déf: false)
-                                                #  - customInspect BOOL: if true (déf), will call VAL.inspect(UINT)
+                                                #  - showHidden BOOL: if false (def), doesn't show non-enumerable properties
+                                                #  - depth NUM (def: 2): max recursion (null for infinite)
+                                                #  - colors BOOL (def: false)
+                                                #  - customInspect BOOL: if true (def), will call VAL.inspect(UINT)
                                                 #    (UINT is depth, and it returns STR) if it exists
                                                 #require("buffer").INSPECT_MAX_BYTES: number of bytes printed for BUFFER 
-                                                #(déf: 50)
+                                                #(def: 50)
 inspect.colors                                  #OBJ with members defining colors. styles points category (e.g. number) to
 inspect.styles                                  #color category, and colors point color category to color codes.
 
