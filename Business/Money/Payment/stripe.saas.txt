@@ -24,9 +24,6 @@ TODO:
         - https://stripe.com/en-US/radar/guide
   - go through each attribute, edit and try to make sense of them
   - check https://raw.githubusercontent.com/stripe/openapi/master/openapi/spec3.yaml
-  - what do publishable keys do?
-     - check what 'RETRIEVABLE WITH PUBLISHABLE KEY' means in API docs
-     - it seems like they are used with Stripe.js client library
   - difference Connect custom vs express vs standard
      - including in API it sometimes shows "Custom only" or "Custom and Express only"
      - including:
@@ -94,9 +91,9 @@ Content-Type: application/
 Accept: application/json [C]      #Response body: JSON
 
 Authorization: Bearer API_KEY [C] #Authentication
-                                  #4 keys by default:
-                                  #  - either production or testing
-                                  #  - either secret or public ("publishable")
+                                  #2 keys:
+                                  #  - server-side / secret
+                                  #  - client-side / public / "publishable": from Stripe.js library
                                   #Can create|delete more:
                                   #  - can be revoked
                                   #     - including with a timeout of 12 hours
@@ -107,13 +104,64 @@ Authorization: API_KEY [C]
 Stripe-Account:
  STRIPE_ACCOUNT.id [C]            #Authentication for Connect instead.
 
-TEST MODE ==>                     #  - separate data
+TEST MODE ==>                     #Each key has either a production or a test version
+                                  #  - sandbox / separate data
                                   #  - payments not processed by providers
                                   #  - simpler steps for some flows
                                   #  - fewer retries
+                                  #Forbidden by terms of service to use production key for testing.
 RESOURCE.livemode                 #BOOL on all RESOURCEs
                                   #Test transactions fire both test and production webhooks with WEBHOOK.connect true
                                   #  - i.e. those webhook handlers should check RESOURCE.livemode
+
+TEST DATA ==>                     #Can use test|fake SOURCE|TOKEN with following data.
+                                  #  - see all at https://stripe.com/docs/testing and in each of the payment method doc pages
+                                  #SOURCE:
+                                  #  - 'card':
+                                  #      - use SOURCE.TYPE.number
+                                  #      - different ones:
+                                  #         - SOURCE.TYPE.brand
+                                  #         - type of payment (credit|debit|etc.)
+                                  #         - SOURCE.country
+                                  #  - 'card' with 3D secure:
+                                  #      - use SOURCE.TYPE.number
+                                  #      - different ones:
+                                  #         - version 1 vs version 2
+                                  #         - requiredAndPerformed, notRequiredButPerformed, requiredButNotSupportedByBank, notSupported
+                                  #         - *_check states
+                                  #         - failure types
+                                  #         - radar risk levels
+                                  #         - country split pricing
+                                  #  - 'sepa_debit':
+                                  #      - use SOURCE.TYPE.iban
+                                  #      - different ones: success vs fail
+                                  #  - 'ach_credit_transfer':
+                                  #      - SOURCE.owner.email 'amount_AMOUNT@example.com'
+                                  #  - 'multibanco':
+                                  #      - SOURCE.owner.email 'ANYTHING+fill_never|now@ANY_DOMAIN' (user never initiate, or does it right away)
+                                  #  - 'sofort':
+                                  #      - SOURCE.owner.name: 'succeeding_charge|failing_charge'
+                                  #  - 'ach_debit':
+                                  #      - SOURCE.type.routing_number: 110000000
+                                  #      - SOURCE.type.account_number:
+                                  #         - different failure types
+                                  #      - PAYLOAD.amounts (verify endpoint):
+                                  #         - [32, 45]: success
+                                  #         - [any other]: failure
+                                  #  - 'amex_express_checkout':
+                                  #      - username: test_user
+                                  #      - password: password
+                                  #      - access code: 123456
+                                  #  - 'masterpass': https://developer.mastercard.com/page/masterpass-sandbox-testing-guidelines#new-web-experience
+                                  #  - 'visa checkout': https://developer.visa.com/capabilities/visa_checkout/docs#adding_visa_checkout_to_your_web_page
+                                  #TOKEN|PAYMENT_METHOD:
+                                  #  - use TOKEN|PAYMENT_METHOD.id
+                                  #  - same differences as 'card' SOURCE
+                                  #DISPUTE:
+                                  #  - through 'card' and 'sepa_debit' SOURCEs testing
+                                  #  - different ones:
+                                  #     - inquiry or normal DISPUTEs
+                                  #     - won or lost
 
 Request-Id: UUID [S]              #
 
@@ -385,6 +433,7 @@ RESOURCE.currency                 #STR (ISO 4217) (e.g. 'usd')
                                   #Available:
                                   #  - as sibling on any RESOURCE with MONEY properties.
                                   #  - on CUSTOMER|CARD|BANK_ACCOUNT|SKU|REPORT_RUN_PARAMS
+STRIPE_ACCOUNT.default_currency CU#STR
 CURRENCY CONVERSION ==>           #Conversion is automatic and has three stages:
                                   #  - customer's currency (specified by SOURCE, i.e. customer input)
                                   #     - used during CHARGE
@@ -422,9 +471,9 @@ EXCHANGE FEE ==>                  #Conversion exchange fee (if conversion needed
                                   #  - the difference between REFUND and its CHARGE is paid by destination not customer
                                   #     - i.e. customer always get back exactly what they paid
                                   #Currency rates are shown in dashboard.
-SOURCE.default_for_currency       #BOOL (def: false).
-                                  #When making payout to multiple SOURCEs:
-                                  #  - use the SOURCE with same currency
+SOURCE|EXTERNAL_ACCOUNT.        CU#BOOL (def: false).
+ default_for_currency             #When making payout to multiple SOURCE|EXTERNAL_ACCOUNTs:
+                                  #  - use the one with same currency
                                   #  - if multiple ones, use the one with BOOL true
 
 DATE_NUM                          #Unix timestamp in seconds.
@@ -493,33 +542,41 @@ FILE_LINK.file                  *C#FILE.id The file object this link points to.
 ?file=FILE.id                     #
 FILE_LINK.url                     #string The publicly accessible URL to download the file.
 
-EXTENSIONS ==>                    #Allow apps to do things on behalf of user's STRIPE_ACCOUNT using OAuth.
-                                  #Must be registered online.
-POST /oauth/[express/]authorize
-?client_id=CLIENT_ID
-?scope=read_write
-?response_type=STR                #Those are actual URL parameters
-STRIPE.oauth.authorizeUrl         #Returns '/oauth/authorize' full URL. OPTS:
- ([URL_PARAMS, ][OPTS])->'URL'    #  - express BOOL
-POST /oauth/token
-POST /oauth/deauthorize           #
-STRIPE.oauth.token|deauthorize()  #Endpoint is 'connect.stripe.com'
-STRIPE.setClientId('CLIENT_ID')
-STRIPE.getClientId()->'CLIENT_ID' #
-account.application.authorized    #'EVENT_TYPE' when a user authorizes an application.
-account.application.deauthorized  #'EVENT_TYPE' when a user deauthorizes an application.
+RESOURCE.statement_descriptor     #STR. Description in CUSTOMER's bank transaction statement.
+                                  #Only ASCII. Cannot contain <>"'*. Must contain a letter.
+                                  #Three parts:
+                                  #  - prefix among:
+                                  #     - PAYOUT: STRIPE_ACCOUNT.settings.payouts.statement_descriptor
+                                  #     - specific SOURCE: SOURCE.statement_descriptor
+                                  #     - 'card' SOURCE: STRIPE_ACCOUNT.settings.card_payments.statement_descriptor_prefix
+                                  #     - otherwise: STRIPE_ACCOUNT.settings.payments.statement_descriptor
+                                  #  - delimiter '* '
+                                  #  - suffix among: CHARGE|PINTENT|PAYOUT|TOPUP|INVOICE|SERVICE_PRODUCT.statement_descriptor
+                                  #     - for SERVICE_PRODUCT, if multiple at once, use the first one
+                                  #Total max length 22.
+STRIPE_ACCOUNT.settings.payouts.
+ statement_descriptor           CU#
+STRIPE_ACCOUNT.settings.
+ card_payments.
+ statement_descriptor_prefix    CU#
+STRIPE_ACCOUNT.settings.payments.
+ statement_descriptor           CU#
+SOURCE.statement_descriptor      C#
+CHARGE.statement_descriptor      C#
+PINTENT.statement_descriptor    CU#
+PAYOUT.statement_descriptor      C#
+TOPUP.statement_descriptor       C#
+INVOICE.statement_descriptor    CU#
+SERVICE_PRODUCT.
+ statement_descriptor           CU#
 
 STRIPE_ACCOUNT                    #Stripe account.
                                   #Also used with Connect.
 GET /accounts[/ID]
 POST /accounts[/ID]
 DELETE /accounts/ID               #
-POST /accounts/ID/reject          #Flag STRIPE_ACCOUNT as suspicious by setting payouts_enabled|charges_enabled to false.
-                                  #Payload: account, reason
 STRIPE.accounts.retrieve|list|
- create|update|del|reject()       #
-PAYLOAD.reason                    #STR. The reason for rejecting the account. Can be fraud, terms_of_service, or other.
-STRIPE_ACCOUNT.type             *C#Can be 'standard', 'express', or 'custom'.
+ create|update|del()              #
 STRIPE_ACCOUNT.country           C#COUNTRY. Cannot be changed.
                                   #Must match the bank account / credit card's country.
                                   #Impacts pricing and which currency are available for payouts.
@@ -552,50 +609,23 @@ STRIPE_COMPANY.
  tax_id_registrar               CU#Country-specific (Germany only) company jurisdiction .
 STRIPE_COMPANY.vat_id          RCU#Country-specific company VAT number.
 STRIPE_COMPANY.vat_id_provided    #BOOL
-STRIPE_ACCOUNT.account_token   RCU#TOKEN.id
-STRIPE_ACCOUNT.                 CU#The set of capabilities you want to unlock for this account (US only).
- requested_capabilities           #Each capability will be inactive until you have provided its specific requirements and Stripe has verified them.
-                                  #An account may have some of its requested capabilities be active and some be inactive.
-STRIPE_ACCOUNT.capabilities       #CAPABILITIES. A hash containing the set of capabilities that was requested for this account and their associated states.
-                                  #Keys may be card_payments, legacy_payments, or platform_payments. Values may be active, inactive, or pending.
-CAPABILITIES.card_payments        #string The status of the card payments capability of the account, or whether the account can directly process credit and debit card charges.
-CAPABILITIES.legacy_payments      #string The status of the legacy payments capability of the account.
-CAPABILITIES.platform_payments    #string The status of the platform payments capability of the account, or whether your platform can process charges on behalf of the account.
-STRIPE_ACCOUNT.charges_enabled    #boolean Whether the account can create live charges.
-STRIPE_ACCOUNT.
- default_currency               CU#string Three-letter ISO currency code representing the default currency for the account. This must be a currency that Stripe supports in the account's country.
-STRIPE_ACCOUNT.details_submitted  #boolean Whether account details have been submitted. Standard accounts cannot receive payouts before this is true.
-STRIPE_ACCOUNT.external_accounts  #EXTERNAL_ACCOUNT_LIST
-STRIPE_ACCOUNT.
- external_account              RCU#EXTERNAL_ACCOUNT
-STRIPE_ACCOUNT.payouts_enabled    #boolean Whether Stripe can send payouts to this account.
-STRIPE_ACCOUNT.requirements       #REQUIREMENTS. Information about the requirements for the account, including what information needs to be collected, and by when.
-REQUIREMENTS.current_deadline     #timestamp The date the fields in currently_due must be collected by to keep payouts enabled for the account.
-                                  #These fields might block payouts sooner if the next threshold is reached before these fields are collected.
-REQUIREMENTS.currently_due        #array containing strings The fields that need to be collected to keep the account enabled.
-                                  #If not collected by the current_deadline, these fields will appear in past_due as well, and the account will be disabled.
-REQUIREMENTS.disabled_reason      #string If the account is disabled, this string describes why the account can't create charges or receive payouts.
-                                  #Can be requirements.past_due, requirements.pending_verification, rejected.fraud, rejected.terms_of_service, rejected.listed, rejected.other, listed, under_review, or
-                                  #other.
-REQUIREMENTS.eventually_due       #array containing strings The fields that need to be collected assuming all volume thresholds are reached.
-                                  #As they become required, these fields will appear in currently_due as well, and the current_deadline will be set.
-REQUIREMENTS.past_due             #array containing strings The fields that weren't collected by the current_deadline. These fields need to be collected to re-enable the account.
-STRIPE_ACCOUNT.settings         CU#STRIPE_SETTINGS. Account options for customizing how the account functions within Stripe.
+STRIPE_ACCOUNT.tos_acceptance   CU#TOS_ACCEPTANCE. Stripe Terms Of Service.
+TOS_ACCEPTANCE.date             CU#DATE_NUM
+TOS_ACCEPTANCE.ip               CU#'IP'
+TOS_ACCEPTANCE.user_agent       CU#STR
+
+STRIPE_ACCOUNT.settings         CU#STRIPE_SETTINGS
 STRIPE_SETTINGS.branding        CU#BRANDING. Customize colors/logos in receipts, invoices and Checkout.
 BRANDING.icon                   CU#FILE.id. Icon logo. Square and min 128x128. JPG/PNG/GIF.
 BRANDING.logo                   CU#FILE.id. Full logo. Min 128x128. Max 512KB. JPG/PNG/GIF.
 BRANDING.primary_color          CU#'#CSS_HEX_COLOR'
-STRIPE_SETTINGS.card_payments   CU#CARD_SETTINGS. Settings specific to card charging on the account.
-CARD_SETTINGS.decline_on        CU#DECLINE_ON (see above).
-STRIPE_SETTINGS.dashboard         #DASHBOARD_SETTINGS. Settings used to configure the account within the Stripe dashboard.
-DASHBOARD_SETTINGS.display_name   #string The display name for this account. This is used on the Stripe Dashboard to differentiate between accounts.
-DASHBOARD_SETTINGS.timezone       #string The timezone used in the Stripe Dashboard for this account. A list of possible time zone values is maintained at the IANA Time Zone Database.
+STRIPE_SETTINGS.dashboard         #DASHBOARD_SETTINGS. Settings for Dashboard UI.
+DASHBOARD_SETTINGS.display_name   #STR
+DASHBOARD_SETTINGS.timezone       #STR
 STRIPE_SETTINGS.payments        CU#PAYMENTS_SETTINGS (see above).
+STRIPE_SETTINGS.card_payments   CU#CARD_SETTINGS
+CARD_SETTINGS.decline_on        CU#DECLINE_ON (see above).
 STRIPE_SETTINGS.payouts         CU#PAYOUTS_SETTINGS (see above).
-STRIPE_ACCOUNT.tos_acceptance   CU#TOS_ACCEPTANCE. Details on the acceptance of the Stripe Services Agreement
-TOS_ACCEPTANCE.date             CU#timestamp The Unix timestamp marking when the Stripe Services Agreement was accepted by the account representative
-TOS_ACCEPTANCE.ip               CU#string The IP address from which the Stripe Services Agreement was accepted by the account representative
-TOS_ACCEPTANCE.user_agent       CU#string The user agent of the browser from which the Stripe Services Agreement was accepted by the account representative
 
 PERSON                            #Persons associated with a STRIPE_ACCOUNT.
                                   #Verified by Stripe.
@@ -642,72 +672,6 @@ VERIF_DOC.details                 #STR. Human-friendly failure status like 'Iden
 VERIF_DOC.details_code            #STR. Machine-friendly failure status: document_corrupt, document_failed_copy, document_not_readable, document_failed_greyscale, document_not_uploaded,
                                   #document_id_type_not_supported, document_id_country_not_supported, document_failed_other, document_fraudulent, document_invalid, document_manipulated,
                                   #document_missing_back, document_missing_front, document_photo_mismatch, document_too_large, or document_failed_test_mode.
-PERSON.requirements               #Like STRIPE_ACCOUNT.requirements.
-PERSON.person_token            RCU#TOKEN.id used to securely provide details to the person.
-
-POST /accounts/ID/login_links     #
-STRIPE.loginLinks.create()        #
-LOGIN_LINK                        #Single-use login URL for Connect Express.
-LOGIN_LINK.url                    #string The URL for the login link.
-
-GET /balance                      #BALANCE
-                                  #Current Stripe "aggregated bank account".
-STRIPE.balance.retrieve()         #
-balance.available                 #'EVENT_TYPE' when your Stripe balance has been updated (e.g., when a charge is available to be paid out).
-                                  #By default, Stripe automatically transfers funds in your balance to your bank account on a daily basis.
-BALANCE.available                 #BALANCE_SUB_ARR. Money available.
-BALANCE.pending                   #BALANCE_SUB_ARR. Money not available yet due to 7-day rolling pay cycle.
-BALANCE.connect_reserved          #BALANCE_SUB_ARR. Money held.
-BALANCE_SUB                       #Subdivision of BALANCE for each currency and SOURCE
-BALANCE_SUB.amount                #MONEY
-BALANCE_SUB.source_types.TYPE     #INT. How amount is divided between account TYPE 'bank_account' or 'card'.
-
-GET /balance/history[/ID]         #BALANCE_TRANSACTION.
-                                  #BALANCE's single transaction
-STRIPE.balance.
- list|retrieveTransactions()      #
-BALANCE_TRANSACTION.amount        #PMONEY paid by sender
-BALANCE_TRANSACTION.fee           #PMONEY paid to Stripe or taxes
-BALANCE_TRANSACTION.fee_details   #FEE_DETAILS
-FEE_DETAILS.application           #STRIPE_ACCOUNT.id
-?payout=PAYOUT.id                 #
-FEE_DETAILS.amount                #PMONEY
-?currency=STR                     #
-FEE_DETAILS.description           #STR
-FEE_DETAILS.type                  #Can be: 'application_fee', 'stripe_fee' or 'tax'
-BALANCE_TRANSACTION.net           #amount - fee
-BALANCE_TRANSACTION.exchange_rate #NUM
-BALANCE_TRANSACTION.available_on  #DATE_NUM. When will be 'available' in BALANCE. Until then is 'pending'
-?available_on=CMP_FILTER          #
-BALANCE_TRANSACTION.status        #'pending' or 'available'
-BALANCE_TRANSACTION.type          #Can be:
-                                  #  - adjustment
-                                  #  - advance
-                                  #  - advance_funding
-                                  #  - application_fee
-                                  #  - charge
-                                  #  - connect_collection_transfer
-                                  #  - issuing_authorization_hold
-                                  #  - issuing_authorization_release
-                                  #  - issuing_transaction
-                                  #  - payment
-                                  #  - payout
-                                  #  - refund
-                                  #  - reserve_transaction
-                                  #  - reserved_funds
-                                  #  - stripe_fee
-                                  #  - stripe_fx_fee
-                                  #  - tax_fee
-                                  #  - topup
-                                  #  - topup_reversal
-                                  #  - transfer
-                                  #  - *_refund: for application_fee|payment|payment_failure|transfer
-                                  #  - *_cancel: for payout|transfer
-                                  #  - *_failure: for payout|refund|transfer
-?type=STR                         #
-BALANCE_TRANSACTION.source        #Related RESOURCE.id
-?source=SOURCE.id                 #
-BALANCE_TRANSACTION.description   #STR
 
 GET /payment_intents[/ID]
 POST /payment_intents[/ID]        #
@@ -722,6 +686,7 @@ PINTENT                           #SOURCE authentication + CHARGE creation
                                   #Can re-use SOURCE|PAYMENT_METHOD (CUSTOMER.sources|payment_method), but must re-authenticate for each CHARGE.
                                   #Meant to be used with PAYMENT_METHOD and replace SOURCE over time:
                                   #  - PINTENT.status|next_action is similar to SOURCE.flow
+                                  #  - only support types supported by PAYMENT_METHOD (i.e. 'card*')
 PINTENT.amount                 *CU#
 PINTENT.application_fee_amount  CU#
 PINTENT.source                  CU#
@@ -730,7 +695,6 @@ PINTENT.customer                CU#
 PINTENT.shipping                CU#
 PINTENT.application               #
 PINTENT.on_behalf_of             C#
-PINTENT.statement_descriptor    CU#
 PINTENT.description             CU#
 PINTENT.receipt_email           CU#
 PINTENT.invoice                   #
@@ -850,19 +814,6 @@ CHARGE.shipping                 CU#SHIPPING.
 CHARGE.application                #STRIPE_ACCOUNT.id
 CHARGE.on_behalf_of              C#STRIPE_ACCOUNT.id
                                   #When one made transaction of another's behalf
-CHARGE.statement_descriptor      C#STR. Shown to customer's bank transaction statement.
-                                  #Only ASCII. Cannot contain <>"'*. Must contain a letter.
-                                  #Prefixed by 'STR* ' where STR is:
-                                  #  - (specific SOURCE) SOURCE.statement_descriptor
-                                  #  - (credit card) STRIPE_ACCOUNT.settings.card_payments.statement_descriptor_prefix
-                                  #  - (otherwise) STRIPE_ACCOUNT.settings.payments.statement_descriptor
-                                  #Total max length 22.
-STRIPE_ACCOUNT.settings.
- card_payments.
- statement_descriptor_prefix    CU#STR
-STRIPE_ACCOUNT.settings.payments.
- statement_descriptor           CU#STR
-SOURCE.statement_descriptor      C#
 CHARGE.description              CU#STR. Shown in receipts.
 CHARGE.receipt_email            CU#'EMAIL' to send a receipt to.
                                   #Defaults to CHARGE.customer.email
@@ -1008,9 +959,6 @@ PAYOUT.status                     #STR among:
 PAYOUT.arrival_date               #Expected|actual DATE_NUM
 ?arrival_date=CMP_FILTER          #
 PAYOUT.description               C#Like CHARGE.*
-PAYOUT.statement_descriptor      C#Like CHARGE.*
-PAYOUTS_SETTINGS.
- statement_descriptor           CU#STR prefixing statement_descriptor (same as for CHARGE.*)
 PAYOUT.balance_transaction        #BALANCE_TRANSACTION.id
 PAYOUT.                          ?#If failed|canceled, BALANCE_TRANSACTION.id reversing it.
  failure_balance_transaction      #Takes up to 5 days to receive money back.
@@ -1123,7 +1071,7 @@ WITHDRAWAL ==>                    #Should always talk to customer, and try to fi
 
 AVOIDING DISPUTES ==>             #Billing:
                                   #  - using 3D secure makes us less liable to disputes.
-                                  #  - provide a good CHARGE.statement_descriptor
+                                  #  - provide a good *.statement_descriptor
                                   #  - send receipts
                                   #  - should always collect: name, email, card CVC, full billing address (including ZIP), shipping address (if different)
                                   #  - use STRIPE_ACCOUNT.settings.card_payments.decline_on.cvc_failure true
@@ -1361,7 +1309,7 @@ SOURCE TYPES ==>                  #Differences between source types:
                                   #  - 'card' with CARD.wallet.type:
                                   #      - digital wallets
                                   #      - put money on it usually with credit card
-                                  #      - includes personal information and address, i.e. more convenient
+                                  #      - includes personal information and address, i.e. more convenient (no need to ask for them)
                                   #      - some allow using with smartphone NFC
                                   #      - includes (CARD.wallet.type) 'visa_checkout', 'masterpass', 'amex_express_checkout'
                                   #  - 'card_present': credit card payment down from a physical terminal
@@ -1379,9 +1327,9 @@ SOURCE TYPES ==>                  #Differences between source types:
                                   #      - charge amount can be paid in separate/several payments
                                   #      - 'debit' vs 'credit':
                                   #         - 'debit': we pull money from customer's account
-                                  #            - more automated but more trust to other account
+                                  #            - more automated, less effort from customer but more risk of dispute
                                   #         - 'credit': customer puts money to our account
-                                  #      - 'debit' requires bank account to verified:
+                                  #      - 'debit' requires bank account to be verified:
                                   #         - done either through:
                                   #            - using another paid tool Plaid: https://stripe.com/docs/ach#using-plaid
                                   #               - instant
@@ -1391,25 +1339,31 @@ SOURCE TYPES ==>                  #Differences between source types:
                                   #               - we then call POST /customers/ID/sources/ID/verify
                                   #         - can use BANK_ACCOUNT entity
                                   #  - 'sepa_debit':
-                                  #     - similar to ACH but for EU
+                                  #     - similar to 'ach_debit' but for EU
                                   #     - uses IBAN (bank account number)
+                                  #        - can be collected from a previous purchase with a different method (e.g. 'bancontact')
                                   #     - user must fill and electronically sign a form with their information (MANDATE)
                                   #     - can take up to 14 days
                                   #  - 'sofort': Germany
-                                  #  - 'giropay': Germany
-                                  #  - 'eps': Austria
+                                  #     - can take up to 14 days
+                                  #  - 'giropay': Germany (10% market share)
+                                  #  - 'eps': Austria (20% market share)
                                   #  - 'ideal': Netherlands (>50% market share)
                                   #  - 'bancontact': Belgium (>30% market share)
                                   #  - 'p24': Poland
                                   #  - 'multibanco': Portugal
-                                  #     - requires action by customer, i.e. might take up to 7 days
+                                  #     - requires action by customer (entering amount and details on their bank website), i.e. might take up to 7 days
                                   #Payment provider companies controlled:
                                   #  - 'stripe_account': Connect
                                   #  - 'alipay' (called 'alipay_account' on create|update): Alibab, China (>50% market share)
                                   #     - terms of service are too restrictive, should not use
                                   #  - 'wechat': China
                                   #Tech companies controlled:
-                                  #  - 'card' with CARD.wallet.type: 'apple_pay', 'google_pay', 'microsoft_pay', 'samsung_pay'
+                                  #  - 'card' with CARD.wallet.type:
+                                  #     - 'apple_pay': holds balance, iPhone|iPad|Mac only
+                                  #     - 'google_pay': does not hold balance (only store other payment methods)
+                                  #     - 'microsoft_pay'
+                                  #     - 'samsung_pay'
                                   #Not supported:
                                   #  - wire transfer:
                                   #     - directly use bank underlying system (SWIFT)
@@ -1685,36 +1639,6 @@ SOURCE RENEWAL ==>                #For some countries, Stripe automatically upda
                                   #  - 'customer.source.updated' and 'payment_method.card_automatically_updated': emitted on change
                                   #  - 'customer.source.expiring': SOURCE will expire at end of month
 
-SOURCE TESTING ==>                #'sepa_debit':
-                                  #  - SOURCE.TYPE.iban:
-                                  #     - 'DE89370400440532013000': success CHARGE
-                                  #     - 'DE62370400440532013001': failed CHARGE
-                                  #     - 'DE35370400440532013002': success CHARGE but creates DISPUTE
-                                  #'ach_credit_transfer':
-                                  #  - SOURCE.owner.email 'amount_AMOUNT@example.com'
-                                  #'multibanco':
-                                  #  - SOURCE.owner.email 'ANYTHING+fill_never|now@ANY_DOMAIN' (user never initiate, or does it right away)
-                                  #'sofort':
-                                  #  - SOURCE.owner.name: 'succeeding_charge|failing_charge'
-                                  #'ach_debit':
-                                  #  - SOURCE.type.routing_number: 110000000
-                                  #  - SOURCE.type.account_number:
-                                  #     - 000123456789: success
-                                  #     - 000111111116: failure upon use
-                                  #     - 000111111113: account closed
-                                  #     - 000222222227: insufficient funds
-                                  #     - 000333333335: debit not authorized
-                                  #     - 000444444440: invalid currency
-                                  #  - PAYLOAD.amounts (verify endpoint):
-                                  #     - [32, 45]: success
-                                  #     - [any other]: failure
-                                  #'amex_express_checkout':
-                                  #  - username: test_user
-                                  #  - password: password
-                                  #  - access code: 123456
-                                  #'masterpass': https://developer.mastercard.com/page/masterpass-sandbox-testing-guidelines#new-web-experience
-                                  #'visa checkout': https://developer.visa.com/capabilities/visa_checkout/docs#adding_visa_checkout_to_your_web_page
-
 GET /payment_methods/ID
 GET /payment_methods?
  customer=CUSTOMER.id&type=STR
@@ -1788,8 +1712,12 @@ DELETE /accounts/ID/
 STRIPE.accounts.retrieve|list|
  create|update|
  deleteExternalAccount()          #
-EXTERNAL_ACCOUNT                  #Same as SOURCE|CARD|BANK_ACCOUNT, but for STRIPE_ACCOUNT (PAYOUT) and Connect.
-                                  #BANK_ACCOUNT verification (BANK_ACCOUNT.status) not run.
+EXTERNAL_ACCOUNT                  #Same as CARD|BANK_ACCOUNT, but for STRIPE_ACCOUNT (PAYOUTs and Connect).
+                                  #BANK_ACCOUNT verification not run, i.e. BANK_ACCOUNT.status either 'new' or 'errored'.
+                                  #Also differences below:
+EXTERNAL_ACCOUNT.object           #'card|bank_account'
+EXTERNAL_ACCOUNT.
+ external_account               *C#EXTERNAL_ACCOUNT payload on create
 
 GET /tokens/ID
 POST /tokens
@@ -1936,7 +1864,6 @@ INVOICE.period_end                #timestamp End of the usage period during whic
 INVOICE.period_start              #timestamp Start of the usage period during which invoice items were added to this invoice.
 INVOICE.receipt_number            #string This is the transaction number that appears on email receipts sent for this invoice.
 INVOICE.starting_balance          #integer Starting customer balance before the invoice is finalized. If the invoice has not been finalized yet, this will be the current customer balance.
-INVOICE.statement_descriptor    CU#string Extra information about an invoice for the customer's credit card statement.
 INVOICE.status                    #string The status of the invoice, one of draft, open, paid, uncollectible, or void.
 INVOICE.status_transitions        #STATUS_TRANSITIONS
 STATUS_TRANSITIONS.finalized_at   #timestamp The time that the invoice draft was finalized.
@@ -2273,6 +2200,126 @@ TAX_RATE.jurisdiction           CU#STR. The jurisdiction for the tax rate.
 TAX_RATE.active                 CU#BOOL (def: true)
 ?active=BOOL                      #When set to false, this tax rate cannot be applied to objects in the API, but will still be applied to subscriptions and invoices that already have it set.
 
+STRIPE_ACCOUNT.type             *C#Can be 'standard', 'express', or 'custom'.
+STRIPE_ACCOUNT.external_accounts  #EXTERNAL_ACCOUNT_LIST
+STRIPE_ACCOUNT.
+ external_account              RCU#EXTERNAL_ACCOUNT
+STRIPE_ACCOUNT.account_token   RCU#TOKEN.id
+PERSON.person_token            RCU#TOKEN.id
+
+POST /accounts/ID/login_links     #
+STRIPE.loginLinks.create()        #
+LOGIN_LINK                        #Single-use login URL for Connect Express.
+LOGIN_LINK.url                    #string The URL for the login link.
+
+EXTENSIONS ==>                    #Allow apps to do things on behalf of user's STRIPE_ACCOUNT using OAuth.
+                                  #Must be registered online.
+POST /oauth/[express/]authorize
+?client_id=CLIENT_ID
+?scope=read_write
+?response_type=STR                #Those are actual URL parameters
+STRIPE.oauth.authorizeUrl         #Returns '/oauth/authorize' full URL. OPTS:
+ ([URL_PARAMS, ][OPTS])->'URL'    #  - express BOOL
+POST /oauth/token
+POST /oauth/deauthorize           #
+STRIPE.oauth.token|deauthorize()  #Endpoint is 'connect.stripe.com'
+STRIPE.setClientId('CLIENT_ID')
+STRIPE.getClientId()->'CLIENT_ID' #
+account.application.authorized    #'EVENT_TYPE' when a user authorizes an application.
+account.application.deauthorized  #'EVENT_TYPE' when a user deauthorizes an application.
+
+POST /accounts/ID/reject          #Report STRIPE_ACCOUNT.
+                                  #Ask Stripe to set STRIPE_ACCOUNT.payouts_enabled|charges_enabled to false.
+                                  #Payload: reason
+PAYLOAD.reason                    #STR among 'fraud', 'terms_of_service', 'other'.
+STRIPE.reject()                   #
+STRIPE_ACCOUNT.payouts_enabled    #BOOL. Enable PAYOUTs.
+STRIPE_ACCOUNT.charges_enabled    #BOOL. Enable CHARGEs.
+STRIPE_ACCOUNT.
+ requested_capabilities         CU#
+STRIPE_ACCOUNT.capabilities.TYPE  #'pending', 'active' or 'inactive'
+                                  #TYPE can be 'card' (CHARGEs), 'legacy' or 'platform' (Connect)
+STRIPE_ACCOUNT|PERSON.           ?#REQUIREMENTS to:
+ requirements                     #  - re-enable STRIPE_ACCOUNT.*_enabled
+                                  #  - avoid disabling when reaching volume limit
+                                  #  - allow STRIPE_ACCOUNT.requested_capabilities (US only)
+REQUIREMENTS.disabled_reason     ?#STR among:
+                                  #  - 'requirements.pending_verification'
+                                  #  - 'requirements.past_due'
+                                  #  - 'rejected.fraud'
+                                  #  - 'rejected.terms_of_service'
+                                  #  - 'rejected.listed'
+                                  #  - 'rejected.other'
+                                  #  - 'listed'
+                                  #  - 'under_review'
+                                  #  - 'other'
+REQUIREMENTS.                     #'PROP'_ARR to fill on STRIPE_ACCOUNT
+ eventually|currently|past_due    #  - 'eventually_due': not required yet
+                                  #  - 'currently_due': required before 'current_deadline'
+                                  #  - 'past_due': past 'current_deadline'
+REQUIREMENTS.current_deadline     #DATE_NUM
+STRIPE_ACCOUNT.details_submitted  #BOOL. Whether account details have been submitted.
+                                  #If false, STRIPE_ACCOUNT.payouts_enabled will be false.
+
+GET /balance                      #BALANCE
+                                  #STRIPE_ACCOUNT "aggregated bank account".
+STRIPE.balance.retrieve()         #
+balance.available                 #'EVENT_TYPE' when your Stripe balance has been updated (e.g., when a charge is available to be paid out).
+                                  #By default, Stripe automatically transfers funds in your balance to your bank account on a daily basis.
+BALANCE.available                 #BALANCE_SUB_ARR. Money available.
+BALANCE.pending                   #BALANCE_SUB_ARR. Money not available yet due to 7-day rolling pay cycle.
+BALANCE.connect_reserved          #BALANCE_SUB_ARR. Money held.
+BALANCE_SUB                       #Subdivision of BALANCE for each currency and SOURCE
+BALANCE_SUB.amount                #MONEY
+BALANCE_SUB.source_types.TYPE     #INT. How amount is divided between account TYPE 'bank_account' or 'card'.
+
+GET /balance/history[/ID]         #BALANCE_TRANSACTION.
+                                  #BALANCE's single transaction
+STRIPE.balance.
+ list|retrieveTransactions()      #
+BALANCE_TRANSACTION.amount        #PMONEY paid by sender
+BALANCE_TRANSACTION.fee           #PMONEY paid to Stripe or taxes
+BALANCE_TRANSACTION.fee_details   #FEE_DETAILS
+FEE_DETAILS.application           #STRIPE_ACCOUNT.id
+?payout=PAYOUT.id                 #
+FEE_DETAILS.amount                #PMONEY
+?currency=STR                     #
+FEE_DETAILS.description           #STR
+FEE_DETAILS.type                  #Can be: 'application_fee', 'stripe_fee' or 'tax'
+BALANCE_TRANSACTION.net           #amount - fee
+BALANCE_TRANSACTION.exchange_rate #NUM
+BALANCE_TRANSACTION.available_on  #DATE_NUM. When will be 'available' in BALANCE. Until then is 'pending'
+?available_on=CMP_FILTER          #
+BALANCE_TRANSACTION.status        #'pending' or 'available'
+BALANCE_TRANSACTION.type          #Can be:
+                                  #  - adjustment
+                                  #  - advance
+                                  #  - advance_funding
+                                  #  - application_fee
+                                  #  - charge
+                                  #  - connect_collection_transfer
+                                  #  - issuing_authorization_hold
+                                  #  - issuing_authorization_release
+                                  #  - issuing_transaction
+                                  #  - payment
+                                  #  - payout
+                                  #  - refund
+                                  #  - reserve_transaction
+                                  #  - reserved_funds
+                                  #  - stripe_fee
+                                  #  - stripe_fx_fee
+                                  #  - tax_fee
+                                  #  - topup
+                                  #  - topup_reversal
+                                  #  - transfer
+                                  #  - *_refund: for application_fee|payment|payment_failure|transfer
+                                  #  - *_cancel: for payout|transfer
+                                  #  - *_failure: for payout|refund|transfer
+?type=STR                         #
+BALANCE_TRANSACTION.source        #Related RESOURCE.id
+?source=SOURCE.id                 #
+BALANCE_TRANSACTION.description   #STR
+
 GET /transfers[/ID]
 POST /transfers[/ID]              #
 STRIPE.transfers.
@@ -2280,18 +2327,18 @@ STRIPE.transfers.
 transfer.failed                   #'EVENT_TYPE' when a transfer failed.
 transfer.paid                     #'EVENT_TYPE' after a transfer is paid. For Instant Payouts, the event will be sent on the next business day, although the funds should be received well beforehand.
 transfer.reversed                 #'EVENT_TYPE' when a transfer is reversed, including partial reversals.
-TRANSFER                          #Transfer of money from a STRIPE_ACCOUNT to another one.
-TRANSFER.amount                 *C#MONEY
-TRANSFER.amount_reversed          #integer Amount in cents reversed (can be less than the amount attribute on the transfer if a partial reversal was issued).
-TRANSFER.balance_transaction      #BALANCE_TRANSACTION.id Balance transaction that describes the impact of this transfer on your account balance.
-TRANSFER.description            CU#string An arbitrary string attached to the object. Often useful for displaying to users.
-TRANSFER.destination             C#STRIPE_ACCOUNT.id
+TRANSFER                          #Like CHARGE but from current STRIPE_ACCOUNT. Can be towards another STRIPE_ACCOUNT2 (or not).
+TRANSFER.amount                 *C#
+TRANSFER.description            CU#Like CHARGE.*
+TRANSFER.amount_reversed          #Like CHARGE.amount_refunded
+TRANSFER.source_type             C#One of 'card' or 'bank_account'.
+TRANSFER.destination            ?C#STRIPE_ACCOUNT.id
 ?destination=STRIPE_ACCOUNT.id    #
-TRANSFER.destination_payment      #CHARGE.id If the destination is a Stripe account, this will be the ID of the payment that the destination account received for the transfer.
-TRANSFER.source_transaction      C#CHARGE.id ID of the charge or payment that was used to fund the transfer. If null, the transfer was funded from the available balance.
-TRANSFER.reversals                #TRAVERSAL_LIST
+TRANSFER.balance_transaction      #BALANCE_TRANSACTION.id of source.
+TRANSFER.source_transaction     ?C#CHARGE.id of source, if not enough in BALANCE.
+TRANSFER.destination_payment     ?#CHARGE.id of destination (if STRIPE_ACCOUNT).
 TRANSFER.reversed                 #boolean Whether the transfer has been fully reversed. If the transfer is only partially reversed, this attribute will still be false.
-TRANSFER.source_type             C#string The source balance this transfer came from. One of card or bank_account.
+TRANSFER.reversals                #TRAVERSAL_LIST
 TRANSFER.transfer_group          C#string A string that identifies this transaction as part of a group. See the Connect documentation for details.
 ?transfer_group=STR               #
 
@@ -2358,10 +2405,199 @@ TOPUP.expected_availability_date  #integer Date the funds are expected to arrive
 TOPUP.failure_code                #string Error code explaining reason for top-up failure if available (see the errors section for a list of codes).
 TOPUP.failure_message             #string Message to user further explaining reason for top-up failure if available.
 TOPUP.source                     C#SOURCE For most Stripe users, the source of every top-up is a bank account. This hash is then the source object describing that bank account.
-TOPUP.statement_descriptor       C#string Extra information about a top-up. This will appear on your source's bank statement. It must contain at least one letter.
 TOPUP.status                      #string The status of the top-up is either canceled, failed, pending, reversed, or succeeded.
 ?status=STR                       #
 TOPUP.transfer_group             C#string A string that identifies this top-up as part of a group.
+
+GET /orders[/ID]
+POST /orders[/ID]                 #
+POST /orders/ID/pay               #Create the CHARGE, trying to change status to 'paid'
+                                  #Payload: customer, application_fee, email, source
+PAYLOAD.source                    #Like CHARGE.source
+STRIPE.orders.
+ retrieve|list|create|update|pay()#
+ORDER                             #CHARGE for 1|several SKUs sold to a specific CUSTOMER
+                                  #Shipping:
+                                  #  - shipping costs to CHARGE
+                                  #  - trigger events to notify shipping logic:
+                                  #     - including integrations to providers
+                                  #     - shipping logic itself is not done by Stripe
+                                  #  - including taxes:
+                                  #     - can be tricky because country-specific
+                                  #     - including integrations to providers
+                                  #Checks|updates SKU.inventory
+                                  #Checks PRODUCT|SKU.active
+                                  #Some attributes can only be updated through custom callback (see below).
+?ids=ID_ARR                       #
+ORDER.amount
+ORDER.application_fee
+ORDER.application                 #Like CHARGE.*
+ORDER.amount_returned             #Like CHARGE.amount_refunded
+ORDER.customer                   C#Like CHARGE.*
+?customer=CUSTOMER.id             #
+ORDER.email                      C#'EMAIL' of CUSTOMER
+ORDER.charge                     ?#CHARGE.id. Present if status 'paid|fulfilled|refunded'
+ORDER.upstream_id                 #STR. Real-life order ID (if different from Stripe's)
+?upstream_ids=ID_ARR              #
+ORDER.items                      C#ORDER_ITEM_ARR of type 'sku'
+ORDER.status                     U#STR among:
+                                  #  - 'created'
+                                  #  - 'paid' (EVENT 'order.payment_succeeded|failed')
+                                  #  - 'canceled': REFUND before shipped
+                                  #  - 'fulfilled': paid + shipped
+                                  #  - 'returned': REFUND after shipped (RETURN)
+?status=STR                       #
+ORDER.status_transitions          #STATUS_TRANSITIONS
+STATUS_TRANSITIONS.
+ paid|fulfilled|returned|canceled #DATE_NUM
+?status_transitions=OBJ_ARR       #OBJ_ARR: canceled|fulfiled|paid|returned CMP_FILTER
+ORDER.updated                     #DATE_NUM
+ORDER.coupon                   RCU#COUPON.id to create a 'discount' ORDER_ITEM.
+                                  #Must be COUPON.duration 'once' and same currency as ORDER.
+ORDER.external_coupon_code        #Same
+ORDER.returns                     #RETURN_LIST
+ORDER.shipping                 ?CU#SHIPPING
+ORDER.shipping_methods           ?#Available SHIPPING_METHOD_ARR
+SHIPPING_METHOD.id                #STR
+SHIPPING_METHOD.amount            #PMONEY. Shipping cost.
+SHIPPING_METHOD.description       #STR to be shown to CUSTOMER
+SHIPPING_METHOD.delivery_estimate #DELIVERY_ESTIMATE. Expected delivery time.
+DELIVERY_ESTIMATE.type            #Either 'exact' or 'range'
+DELIVERY_ESTIMATE.date            #'YYYY-MM-DD'. If type 'exact'.
+DELIVERY_ESTIMATE.earliest|latest #'YYYY-MM-DD' If type 'range'.
+SHIPPING_METHOD.tax_items         #ORDER_ITEM_ARR of type 'tax'
+ORDER.selected_shipping_method  ?U#Chosen SHIPPING_METHOD.id
+                                  #Defaults to first ORDER.shipping_methods
+
+CHARGE CAPTURING ==>              #Must be done through dashboard among:
+																	#  - no capturing (def)
+																	#  - capture when status 'fulfilled'
+																	#  - must capture manually (with POST /charges/ID/capture)
+
+SHIPPING COSTS ==>                #How 'shipping' ORDER_ITEM are added.
+                                  #Must be done through dashboard among:
+																	#  - 'free' (def)
+																	#  - 'flat_rate' with OBJ_ARR:
+																	#     - amount PMONEY
+																	#     - free_above PMONEY
+																	#     - description STR
+																	#  - 'callback' with OBJ: url 'URL' (see below)
+																	#  - 'provider' 'easypost|shippo':
+                                  #     - see online doc for how to integrate
+                                  #     - must still create an account and do whole logic with them
+
+SHIPPING TAXES ==>                #How 'tax' ORDER_ITEM are added.
+                                  #Must be done through dashboard among:
+																	#  - 'included' (def)
+																	#  - 'percentage' with OBJ:
+																	#     - percent 0-1 FLOAT
+																	#     - description STR
+																	#  - 'callback' with OBJ: url 'URL' (see below)
+																	#  - 'provider' 'avalara|taxjar|taxamo':
+                                  #     - see online doc for how to integrate
+                                  #     - must still create an account and do whole logic with them
+
+SHIPPING CUSTOM LOGIC ==>         #When choosing 'callback', calls URL on ORDER creation.
+																	#PAYLOAD is ORDER
+																	#Need to respond with OBJ:
+																	#  - order_update OBJ:
+																	#     - order_id ORDER.id
+																	#     - ORDER attributes to update: items, shipping_methods, upstream_id, external_coupon_code
+																	#Can respond with 4**|5** with ERROR as payload:
+																	#  - type 'action_failed'
+																	#  - code STR among:
+																	#     - 'product_inactive': PRODUCT.active false
+																	#     - 'sku_inactive': SKU.active false
+																	#     - 'out_of_inventory': out of stock (SKU.inventory)
+																	#     - 'maximum_sku_quantity_exceeded': CUSTOMER ordered more than allowed quantity for this SKU
+																	#     - 'shipping_calculation_failed': could not compute shipping
+																	#     - 'taxes_calculation_failed': could not compute shipping's taxes
+																	#     - 'address_verification_failed': could not verify ORDER.shipping
+																	#     - 'upstream_order_creation_failed': generic error
+																	#  - message STR
+																	#  - param 'VARR':
+																	#     - must be 'items[NUM]' if code '*_inactive', 'out_of_inventory' or 'maximum_sku_quantity_exceeded'
+
+ORDER_ITEM                        #Either:
+                                  #  - 'sku': single SKU of an ORDER (ORDER.items). Max 25 items per ORDER.
+                                  #  - 'discount': single DISCOUNT of an ORDER (ORDER.coupon|external_coupon_code)
+                                  #  - 'shipping': shipping costs of an ORDER (ORDER.shipping_methods)
+                                  #  - 'tax': taxes on SHIPPING_METHOD's of an ORDER (SHIPPING_METHOD.tax_items)
+ORDER_ITEM.type                   #One of 'sku', 'discount', 'shipping', 'tax'
+ORDER_ITEM.parent                ?#DISCOUNT|SKU|SHIPPING_METHOD.id
+ORDER_ITEM.amount                 #PMONEY
+ORDER_ITEM.quantity               #INT. Only if type 'sku'
+ORDER_ITEM.description            #STR to be shown to CUSTOMER
+
+POST /orders/ID/returns
+STRIPE.orders.returnOrder()       #
+GET /order_returns[/ID]           #
+STRIPE.orderReturns.
+ list|retrieve()                  #
+RETURN                            #REFUND for an ORDER
+RETURN.order                    *C#ORDER.id
+?order=ORDER.id                   #
+RETURN.items                     C#ORDER_ITEM_ARR (def: all)
+RETURN.amount                     #PMONEY
+RETURN.refund                     #REFUND.id
+
+GET /skus[/ID]
+POST /skus[/ID]
+DELETE /skus/ID                   #
+STRIPE.skus.
+ list|retrieve|create|update|del()#
+SKU                               #Specific variation|packaging of a GOOD_PRODUCT:
+                                  #  - fixed quantity, price
+                                  #  - other attributes like size, colors, release number
+?ids=ID_ARR                       #
+SKU.product                    *CU#GOOD_PRODUCT.id
+?product=PRODUCT.id               #
+SKU.active                      CU#Overrides GOOD_PRODUCT.*
+?active=BOOL                      #
+SKU.package_dimensions          CU#Overrides GOOD_PRODUCT.*
+SKU.updated                       #Like GOOD_PRODUCT.*
+SKU.price                      *CU#PMONEY
+SKU.inventory                  *CU#INVENTORY. Whether SKU is in stock.
+INVENTORY.type                  CU#STR among: 'finite' (quantified), 'bucket' (not quantified), 'infinite'.
+INVENTORY.quantity              CU#INT. Number available in stock. Only if INVENTORY.type 'finite'
+?in_stock=BOOL                    #
+INVENTORY.value                 CU#STR among 'in_stock', 'limited', 'out_of_stock'. Only if INVENTORY.type 'bucket'
+SKU.attributes                  CU#OBJ where:
+                                  #  - keys are among GOOD_PRODUCT.attributes
+                                  #  - values are STR
+?attributes=OBJ                   #
+SKU.image                       CU#'URL' to be shown to CUSTOMER
+
+GET /products[/ID]
+POST /products[/ID]
+DELETE /products/ID               #
+STRIPE.products.
+ list|retrieve|create|update|del()#
+PRODUCT                           #Products being sold
+                                  #Can be populated from a feed (Google Product Feed) from the Dashboard.
+?ids=STR_ARR                      #
+PRODUCT.type                    *C#STR among:
+                                  #  - 'good': can use ORDER|SKU
+                                  #  - 'service': can use SUBSCRIPTION|PLAN
+?type=STR                         #
+PRODUCT.name                   *CU#STR. Shown to CUSTOMER.
+PRODUCT.active                  CU#BOOL. Currently available for purchase.
+                                  #If false, cannot create ORDER|SKU|SUBSCRIPTION|PLAN with it.
+?active=BOOL                      #
+PRODUCT.updated                   #DATE_NUM
+GOOD_PRODUCT.url                CU#'URL'
+?url=STR                          #
+GOOD_PRODUCT.caption            CU#Short STR to be shown to CUSTOMER.
+GOOD_PRODUCT.description        CU#Long STR to be shown to CUSTOMER.
+GOOD_PRODUCT.images             CU#'URL'_ARR to be shown to CUSTOMER.
+GOOD_PRODUCT.attributes         CU#STR_ARR (e.g. 'color', 'size', etc.) that can be used by SKU.attributes
+GOOD_PRODUCT.shippable          CU#BOOL
+?shippable=BOOL                   #
+GOOD_PRODUCT.package_dimensions CU#PACKAGE_DIMENSIONS. For shipping.
+PACKAGE_DIMENSIONS.
+ height|length|weight|width       #NUM (inches)
+GOOD_PRODUCT.deactivate_on      CU#ARR of CONNECT_ACCOUNT.id that cannot purchase this.
+SERVICE_PRODUCT.unit_label       U#STR. Unit shown in receipts|INVOICE. E.g. 'seat'.
 
 GET /country_specs[/ID]           #
 STRIPE.countrySpecs.
@@ -2617,132 +2853,6 @@ STRIPE.terminal.connectionTokens.
 CONNECTION_TOKEN.
  operator_account               RC#Like READER.*
 CONNECTION_TOKEN.secret           #string Your application should pass this token to the Stripe Terminal SDK.
-
-GET /products[/ID]
-POST /products[/ID]
-DELETE /products/ID               #
-STRIPE.products.
- list|retrieve|create|update|del()#
-PRODUCT                           #Products being sold
-?ids=STR_ARR                      #
-PRODUCT.active                  CU#boolean Whether the product is currently available for purchase.
-?active=BOOL                      #
-PRODUCT.attributes              CU#array containing strings A list of up to 5 attributes that each SKU can provide values for (e.g., ["color", "size"]). Only applicable to products of type=good.
-PRODUCT.caption                 CU#string A short one-line description of the product, meant to be displayable to the customer. Only applicable to products of type=good.
-PRODUCT.deactivate_on           CU#array containing strings An array of connect application identifiers that cannot purchase this product. Only applicable to products of type=good.
-PRODUCT.description             CU#string The product's description, meant to be displayable to the customer. Only applicable to products of type=good.
-PRODUCT.images                  CU#array containing strings A list of up to 8 URLs of images for this product, meant to be displayable to the customer. Only applicable to products of type=good.
-PRODUCT.name                   *CU#string The product's name, meant to be displayable to the customer. Applicable to both service and good types.
-PRODUCT.package_dimensions      CU#PACKAGE_DIMENSIONS. The dimensions of this product for shipping purposes.
-                                  #A SKU associated with this product can override this value by having its own package_dimensions.
-                                  #Only applicable to products of type=good.
-PACKAGE_DIMENSIONS.
- height|length|weight|width       #NUM (inches)
-PRODUCT.shippable               CU#boolean Whether this product is a shipped good. Only applicable to products of type=good.
-?shippable=BOOL                   #
-PRODUCT.statement_descriptor     U#string Extra information about a product which will appear on your customer's credit card statement.
-                                  #In the case that multiple products are billed at once, the first statement descriptor will be used.
-                                  #Only available on products of type=service.
-PRODUCT.type                    *C#string The type of the product.
-                                  #The product is either of type good, which is eligible for use with Orders and SKUs, or service, which is eligible for use with Subscriptions and Plans.
-?type=STR                         #
-PRODUCT.unit_label               U#string A label that represents units of this product, such as seat(s), in Stripe and on customers' receipts and invoices. Only available on products of type=service.
-PRODUCT.updated                   #timestamp
-PRODUCT.url                     CU#string A URL of a publicly-accessible webpage for this product. Only applicable to products of type=good.
-?url=STR                          #
-
-GET /skus[/ID]
-POST /skus[/ID]
-DELETE /skus/ID                   #
-STRIPE.skus.
- list|retrieve|create|update|del()#
-SKU                               #PRODUCT with quantity, price and other attributes.
-?ids=ID_ARR                       #
-SKU.active
-SKU.package_dimensions          CU#Like PRODUCT.*
-SKU.updated                       #Like PRODUCT.*
-?active=BOOL                      #
-SKU.product                    *CU#PRODUCT.id The product must be currently active.
-?product=PRODUCT.id               #
-SKU.attributes                  CU#OBJ. A dictionary of attributes and values for the attributes defined by the product.
-                                  #If, for example, a product's attributes are ["size", "gender"], a valid SKU has the following dictionary of attributes: {"size": "Medium", "gender": "Unisex"}.
-?attributes=OBJ                   #
-SKU.image                       CU#string The URL of an image for this SKU, meant to be displayable to the customer.
-SKU.inventory                  *CU#INVENTORY. Description of the SKU's inventory.
-INVENTORY.quantity              CU#positive integer or zero The count of inventory available. Will be present if and only if type is finite.
-?in_stock=BOOL                    #
-INVENTORY.type                  CU#string Inventory type. Possible values are finite, bucket (not quantified), and infinite.
-INVENTORY.value                 CU#string An indicator of the inventory available. Possible values are in_stock, limited, and out_of_stock. Will be present if and only if type is bucket.
-SKU.price                      *CU#PMONEY. The cost of the item.
-
-GET /orders[/ID]
-POST /orders[/ID]                 #
-POST /orders/ID/pay               #Add a SOURCE, i.e. initiate payment.
-                                  #Payload: customer, application_fee, email, source
-STRIPE.orders.
- retrieve|list|create|update|pay()#
-order.payment_failed              #'EVENT_TYPE' when an order payment attempt fails.
-order.payment_succeeded           #'EVENT_TYPE' when an order payment attempt succeeds.
-PAYLOAD.source                    #A payment source to be charged, such as a credit card.
-                                  #If you also pass a customer ID, the source must be the ID of a source belonging to the customer (e.g., a saved card).
-                                  #Otherwise, if you do not pass a customer ID, the source you provide must be a token, like the ones returned by Stripe.js.
-ORDER                             #SKU sold to a specific CUSTOMER
-?ids=ID_ARR                       #
-ORDER.amount                      #PMONEY Total amount for the order.
-ORDER.amount_returned             #integer
-ORDER.application                 #STRIPE_ACCOUNT.id
-ORDER.application_fee             #integer
-ORDER.charge                      #CHARGE.id Present if the order status is paid, fulfilled, or refunded.
-ORDER.customer                   C#CUSTOMER.id
-?customer=CUSTOMER.id             #
-ORDER.email                      C#string The email address of the customer placing the order.
-ORDER.coupon                   RCU#A coupon code that represents a discount to be applied to this order. Must be one-time duration and in same currency as the order.
-ORDER.external_coupon_code        #string
-ORDER.items                      C#ORDER_ITEM_ARR An order can have up to 25 items.
-ORDER.returns                     #RETURN_LIST
-ORDER.selected_shipping_method   U#string The shipping method that is currently selected for this order, if any.
-                                  #If present, it is equal to one of the ids of shipping methods in the shipping_methods array.
-                                  #At order creation time, if there are multiple shipping methods, Stripe will automatically selected the first method.
-ORDER.shipping                  CU#SHIPPING Present if the order is for goods to be shipped.
-ORDER.shipping_methods            #SHIPPING_METHOD_ARR A list of supported shipping methods for this order. The desired shipping method can be specified either by updating the order, or when paying it.
-SHIPPING_METHOD.id                #string Unique identifier for the object.
-SHIPPING_METHOD.amount            #PMONEY Total amount for the line item.
-SHIPPING_METHOD.delivery_estimate #DELIVERY_ESTIMATE. The estimated delivery date for the given shipping method. Can be either a specific date or a range.
-DELIVERY_ESTIMATE.date            #string If type is "exact", date will be the expected delivery date in the format YYYY-MM-DD.
-DELIVERY_ESTIMATE.earliest        #string If type is "range", earliest will be be the earliest delivery date in the format YYYY-MM-DD.
-DELIVERY_ESTIMATE.latest          #string If type is "range", latest will be the latest delivery date in the format YYYY-MM-DD.
-DELIVERY_ESTIMATE.type            #string The type of estimate. Must be either "range" or "exact".
-SHIPPING_METHOD.description       #string An arbitrary string attached to the object. Often useful for displaying to users.
-ORDER.status                     U#string Current order status. One of created, paid, canceled, fulfilled, or returned. More details in the Orders Guide.
-?status=STR                       #
-ORDER.status_transitions          #STATUS_TRANSITIONS. The timestamps at which the order status was updated.
-STATUS_TRANSITIONS.canceled       #timestamp
-STATUS_TRANSITIONS.fulfiled       #timestamp
-STATUS_TRANSITIONS.paid           #timestamp
-STATUS_TRANSITIONS.returned       #timestamp
-?status_transitions=OBJ_ARR       #OBJ_ARR: canceled|fulfiled|paid|returned CMP_FILTER
-ORDER.updated                     #timestamp
-ORDER.upstream_id                 #string The user's order ID if it is different from the Stripe order ID.
-?upstream_ids=ID_ARR              #
-
-ORDER_ITEM                        #An ORDER's single item
-ORDER_ITEM.amount                 #PMONEY Total amount for the line item.
-ORDER_ITEM.description            #string Description of the line item, meant to be displayable to the user (e.g., "Express shipping").
-ORDER_ITEM.parent                 #DISCOUNT|SKU.id
-ORDER_ITEM.quantity               #positive integer A positive integer representing the number of instances of parent that are included in this order item. Applicable/present only if type is sku.
-ORDER_ITEM.type                   #string The type of line item. One of sku, tax, shipping, or discount.
-
-POST /orders/ID/returns
-STRIPE.orders.returnOrder()       #
-GET /order_returns[/ID]           #
-STRIPE.orderReturns.
- list|retrieve()                  #
-RETURN                            #Reverting an ORDER
-RETURN.amount                     #PMONEY Total amount for the returned line item.
-RETURN.items                      #ORDER_ITEM_ARR
-RETURN.order                      #ORDER.id
-?order=ORDER.id                   #
-RETURN.refund                     #REFUND.id
 
 GET /sigma/scheduled_query_runs
  [/ID]                            #
