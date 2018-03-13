@@ -16,6 +16,134 @@ Schema functions:
      - in code, user documentation, eda, Google Notes
   - validate that args.params does not start with $, and does not override any existing schema variables (should have least priority anyway)
 
+Authorization:
+  - attr.readonly:
+     - allow using FUNC, passing $/$$
+     - do not add "This attribute is readonly" to attr.description if FUNC
+     - remove the fact that it is skipped on create actions
+     - change author|timestamp plugins accordingly
+     - put under authorization user documentation
+  - validateMissingIds middleware:
+     - not checked on top-level findMany|updateMany|deleteMany
+        - pass args.noMissingIds true to flag that
+        - reason (to document):
+           - makes it hard to know if a model is absent because ID does not exist, because it was filtered by authorization or because it was filtered by user-specified args.filter
+           - it is hard to check for missing models on paginated responses, e.g. for args.filter [{ id: 1 }, {}] or args.filter { id: { in: [10000 ids] } }
+     - still checked on:
+        - top-level replaceMany
+        - top-level *One
+        - nested actions, except with a nested filter (feature we don't have)
+     - how:
+        - transform args.filter OBJ[_ARR] into "modelIds":
+           - keeping only filter.id.eq|in
+           - merging all into a single array of ids
+           - remove duplicate ids
+        - if some "modelId" is not present in response:
+           - if there was no extra filter applied, i.e. if each args.filter OBJ was only { id: { eq|in } }, throw 404
+           - otherwise, query database with args.filter { id: { in "modelIds" } }:
+              - if response is not same length as "modelIds", throw 403
+     - database adapters should:
+        - not throw on invalid model ids
+        - not return any model as null|undefined
+        - document it
+  - model.authorize OBJ[_ARR]|BOOL:
+     - OBJ[_ARR] is same format as args.filter:
+        - leaves values can be schema functions, but are not given $/$$
+        - OBJ keys are either helper variables or "$$.ATTR"
+           - cannot be "$$.id"
+     - schema validate this is good format and possible keys.
+     - how it is checked:
+        - in action layer, after validateStableIds middleware:
+           - resolve non-$$ keys to BOOL
+           - if whole result is false, 403
+           - if some $$ keys, keep them as "authorizeFilter"
+        - in currentData midleware, merge authorizeFilter with args.filter, using top-level "and" node
+        - after patchData middleware, check authorizeFilter against args.newData, i.e. for create|replace|patch
+     - no more need for args.internal flag that bypasses authorization and pagination, except for orphans
+     - requires database features "search"
+  - model.authorize.COMMAND,... VAL:
+     - behaves like model.authorize VAL except action-wise
+     - if any is specified, others default to false
+     - patch action uses both "find" and "replace" permissions, with an "and" node
+        - no "and" node needed if "find,replace" VAL was specified together
+     - model.authorize VAL is normalized (during schema normalization) to { "find,replace,create,delete" VAL }
+     - remove schema|model.actions
+  - Fobidden actions:
+     - calculate forbiddenActions at compile-time, using any model.authorize.COMMAND === false, for each model
+        - add "patch" if either "find" or "replace" is included
+     - at beginning of first authorization middleware, if forbiddenActions.includes(action):
+        - throw 405
+        - set header X-Api-Engine-Allowed-Actions: find, ... [S] (depending on forbiddenActions)
+     - before sendReponse, add setProtocolHeaders middleware:
+        - calls protocolHandler.getHeaders() and filters only the ones starting with X-Api-Engine, removing the prefix and making it camelCase
+        - calls protocolHandler.setProtocolHandlers({ headers }) with those headers, which set protocol-specific headers using protocol-agnostic ones
+           - for HTTP, use X-Api-Engine-Allowed-Actions: find, ... [S] to set Allow: GET, ... [S]
+     - do not show forbidden actions in GraphQL schema
+  - models.all:
+     - similar to models.default except:
+        - merged instead of being overidden
+        - how the prop is merged is specific to each prop
+        - only limited set of valid props:
+           - models.all.authorize VAL
+
+Orphans:
+  - validation:
+     - attribute targeting another model have limited validation:
+        - the reason: they might be deleted|modified when the model they target is deleted, and that model deletion should not have to care about it, but in the same time we don't want invalid models
+        - forbidden: required, minItems, dependencies, contains, custom validation, being part of $data cross-attributes validation
+  - find dead links:
+     - for create|patch|replace commands
+     - find all ids+modelName that:
+        - have attr.target !== undefined
+        - are defined in args.data
+        - are a "leaf", e.g. in args.data { childA, childB: { ... } }, childA, not childB (since it will be created, it cannot be a dead link)
+     - for:
+        - create|patch:
+           - run in parallel of currentData middleware
+           - merged to same output, i.e. to currentData
+           - should reuse each other (results and pendingPromises)
+           - start at same time. end when both are over.
+        - replace:
+           - only args.data that are being modified, i.e. defined in args.data and different from currentData
+           - i.e. need to be run after currentData
+           - but output still merged to currentData
+     - goal: firing 404 if dead link or 403 if has no read access
+        - the extra currentData is just an added bonus to speed up next middleware
+  - remove dead links:
+     - middleware fired after currentData middleware, before mergePatchData middleware
+     - on delete commands
+     - first search for models with dead links:
+        - do find commands with args.filter { attr: { containsOrIs: ids } } where ids are the models being deleted, on the models that might target them
+           - if the model being deleted contains bidirectional links, can optimize with faster command (i.e. filter directly by id) because the models ids are known
+        - add args.filter { id: { neq: ids } } to exclude models already being deleted, i.e. already present in delete actions currentData
+     - merge the find commands results to currentData
+     - then create patch actions to remove dead links
+        - do not fire those patch actions, only stack them up at the end, and resolveWriteAction will take care of them
+        - those actions should bypass authorization, i.e. be "internal"
+  - bidirectional links:
+     - attr.reverse "attr2"
+        - schema validate (before normalization)
+           - forbid attr.reverse if attr.target is not defined
+        - schema pre-normalization:
+           - attr2.reverse "attr" is added, unless already present. I.e. link is truly the same on both ends.
+        - schema validation (after normalization):
+           - model2.attr2 must exist, and have attr2.target defined
+           - attr.target and attr2.target must be defined and point at each others models
+           - attr.reverse "attr2" and attr2.reverse "attr" must be defined and point at each other (using also attr[2].target)
+     - middleware:
+        - on create|patch|replace commands
+        - after currentData middleware, before removeDeadLinks middleware
+        - fired for any attribute:
+           - with attr.reverse defined
+           - and that is being modified, i.e. defined in args.data and different from currentData
+        - first merges into currentData some find commands results:
+           - all ids being modified should trigger find commands
+              - except if already present in currentData. This should cover all ids being added, since findDeadLinks middleware already searched for them.
+        - then create patch actions to modify all the reverse ids
+           - both the ones being added, and the ones being removed
+           - do not fire those patch actions, only stack them up at the end, and resolveWriteAction will take care of them
+           - those actions should bypass authorization, i.e. be "internal"
+
 Pagination:
   - problems (should document them in code):
      - parent actions are performed several times while going through the child action pages:
@@ -129,59 +257,6 @@ Pagination:
 Complex patches:
   - provide MongoDB-like patch syntax for patch action, including array manipulation
 
-Orphans:
-  - validation:
-     - attribute targeting another model have limited validation:
-        - the reason: they might be deleted|modified when the model they target is deleted, and that model deletion should not have to care about it, but in the same time we don't want invalid models
-        - forbidden: required, minItems, dependencies, contains, custom validation, being part of $data cross-attributes validation
-  - find dead links:
-     - for create|patch|replace actions
-     - find all ids+modelName that:
-        - have attr.target !== undefined
-        - are being modified, i.e. defined in args.data and different from currentData
-        - are a "leaf", e.g. in args.data { childA, childB: { ... } }, childA, not childB (since it will be created, it cannot be a dead link)
-     - run in parallel of currentData middleware:
-        - how can it be in parallel since it needs currentData???
-        - merged to same output, i.e. to currentData
-        - should reuse each other (results and pendingPromises)
-        - start at same time. end when both are over.
-     - goal: firing 404 if dead link
-        - the extra currentData is just an added bonus to speed up next middleware
-  - remove dead links:
-     - middleware fired after currentData middleware, before mergePatchData middleware
-     - on delete actions
-     - first search for models with dead links:
-        - do find actions with args.filter { attr: { containsOrIs: ids } } where ids are the models being deleted, on the models that might target them
-           - if the model being deleted contains bidirectional links, can optimize with faster actions (i.e. filter directly by id) because the models ids are known
-        - add args.filter { id: { $ne: ids } } to exclude models already being deleted, i.e. already present in delete actions currentData
-     - merge the find actions results to currentData
-     - then create patch actions to remove dead links
-        - do not fire those patch actions, only stack them up at the end, and resolveWriteAction will take care of them
-        - those actions should bypass authorization, i.e. be "internal"
-  - bidirectional links:
-     - attr.reverse "attr2"
-        - schema validate (before normalization)
-           - forbid attr.reverse if attr.target is not defined
-        - schema pre-normalization:
-           - attr2.reverse "attr" is added, unless already present. I.e. link is truly the same on both ends.
-        - schema validation (after normalization):
-           - model2.attr2 must exist, and have attr2.target defined
-           - attr.target and attr2.target must be defined and point at each others models
-           - attr.reverse "attr2" and attr2.reverse "attr" must be defined and point at each other (using also attr[2].target)
-     - middleware:
-        - on create|patch|replace actions
-        - after currentData middleware, before removeDeadLinks middleware
-        - fired for any attribute:
-           - with attr.reverse defined
-           - and that is being modified, i.e. defined in args.data and different from currentData
-        - first merges into currentData some find actions results:
-           - all ids being modified should trigger find actions
-              - except if alread present in currentData. This should cover all ids being addes, since findDeadLinks middleare already searched for them.
-        - then create patch actions to modify all the reverse ids
-           - both the ones being added, and the ones being removed
-           - do not fire those patch actions, only stack them up at the end, and resolveWriteAction will take care of them
-           - those actions should bypass authorization, i.e. be "internal"
-
 Atomicity/rollbacks:
   - in resolveWriteActions(), replace Promise.all() by something that waits for all promises to complete,
     even on failure, and return all of them
@@ -240,61 +315,6 @@ JSON-RPC:
   - no batch requests
   - both versions 1.0 and 2.0. Same endpoint, but use version field to distinguish.
   
-Authorization:
-  - schema functions for schema|model|attr.authorize:
-     - FUNC[_ARR]: ARR is && (normalized during schema transformation)
-     - can use schema functions variables|helpers
-  - command "patch" cannot be user-specified. Instead it checks both "find" and "replace" permissions
-  - schema.authorize FUNC[_ARR]:
-     - for all models, performed once per request, just before main operation middleware
-     - i.e. less schema functions variables, and no partial evaluation
-     - if resolves to false, do not perform query and returns 403
-  - model.authorize FUNC[_ARR]:
-     - model-wise
-     - if fails, returns 403 (except for find|delete commands which might augment arg.filter)
-     - according to command:
-        - find|delete: $/$$: augment arg.filter (see below)
-        - create: $/$$: use arg.data
-        - replace: $/$$: use both arg.data and args.currentData (tried after another)
-        - replace|create: if command.multiple, check model.authorize for each arg.data and each args.currentData.
-          If any fails, 403.
-     - in authorization middleware, just before dataValidation middleware
-     - find|delete commands use partial evaluation:
-        - exception during partial evaluation should throw 5** not 4**
-        - use resulting database query object, if there is one, by && it
-           - if resolves to false, do not perform query and returns 403
-        - must try partial evaluation during schema validation to make sure it works runtime
-        - do not pass $/$$ to non-inline functions, because cannot be partially evaluated
-     - find commands of replace command should not be affected (using args.authorization false)
-  - attr.authorize FUNC[_ARR]:
-     - same as model.authorize, except:
-        - can use $ (same as $$.ATTR)
-        - command when not authorized differs. Depending on command:
-           - find:
-              - silently removed in output
-              - only checked if defined in output (i.e. key is present)
-              - on all commands
-           - create|replace|delete:
-              - silently replace new value (arg.newData.ATTR) by current value (args.currentData.ATTR)
-              - only checked if new value !== current value
-              - in order: if current value is empty, use "create". If new value is empty, use "delete".
-                Otherwise, use "replace".
-              - on replace value only???
-  - model|attr.authorize.COMMANDS:
-     - like authorize, but applied according to current command
-     - authorize VAL is normalized (by schema transformation) to authorize.all VAL
-     - COMMANDS can be find|replace|create|delete|all. Can be comma-separated list.
-        - command.multiple does not matter, i.e. no authorization mismatch possible on nested commands
-     - replaces schema.commands and model.commands (which must be removed):
-        - forbidden commands:
-           - are commands whose authorize always return false for a
-             given set of protocol/operation schema functions variables + $COMMAND param (e.g. without $/$$)
-              - how to know? partial evaluation?
-           - 403 becomes 405 on forbidden commands
-           - forbidden commands not shown in GraphQL schema
-        - add Allow [S] on every response:
-           - does not show forbidden commands
-
 Aggregating:
   - are just other commands, following similar logic as the others
      - should also think of which other commands it requires, and which one it implies
@@ -645,7 +665,6 @@ Schema functions:
   - think if should use them in other parts of schema
   - Add variables related to device|browser detection
      - add them to logging requestInfo too
-  - think of we can simplify schema.helpers schema syntax
   - make schema variables immutable but:
      - not the helpers, cause they are external and might mutate
      - only once per schema variable per request, because setting immutability is slow
@@ -1044,14 +1063,15 @@ Positioning:
    - open source:
       - i.e. no vendor lock-in
 
- 30  MUST HAVE FEATURES
+ 25  MUST HAVE FEATURES
+ 0.5 Schema functions
+ 2.5 Authorization
+ 2   Orphans
  2   Pagination
  1   Complex patches
- 2   Orphans
  1   Atomicity/rollbacks
  1   REST
  0.5 JSON-RPC
- 3   Authorization
  4   Aggregating
 ?7   Compatibility layer
 ?7   Versioning/changes
