@@ -635,14 +635,19 @@ AGREEMENT: /agreements/AGREEMENT
   | isClosed|Open(): [not] signed|declined
   - lifecycle awaiting|active|ended
   | isAwaiting|Active|Ended()
-  - type b2b(def)|b2c|b2a
+  - agreement_type b2b(def)|b2c|b2a
   | isB2B|B2C()
-  - type one_time|one_time_w_duration|recurring|recurring_w_initial|not_set
+  - type one_time|one_time_w_duration|recurring|recurring_w_initial|not_set:
+     + recurring: notice_period (max 3) < duration. Can be canceled during notice_period
   | isOneOff[Duration]|Recurring[WithInitial]|NotSet()
+  | setType(VAL): if type recurring
   - duration NUM [V]: in months
-  - notice_period NUM [V]: in months, must be < duration if type recurring
+  - notice_period NUM [V]: in months
   - start_date|end_date DATETIME
+  | toggleStartDate(): from null to now
+  | toggleEndDate(): from null to now + duration
   - expire_date DATETIME
+  | getExpireTime()
   | hasExpireDatePassed(): now one day after expire_date
   - period_end_timestamp TIMESTAMP
   | inNoticePeriod(): state signed, type recurring[_w_initial], now is after ( period_end_timestamp - notice_period )
@@ -652,9 +657,14 @@ AGREEMENT: /agreements/AGREEMENT
   | isCanceled()
   | isTerminated(): canceled or lifecycle ended
   - publish_timestamp
+  | publish(STR, STR2): calls /agreements/AGREEMENT/publish with data { subject STR, message STR2 }, which changes state draft->pending and sends emails
+    Triggers "publish"
+  | cancel(): calls /agreements/AGREEMENT/cancel_recurring which sets state expired if type recurring and in notice_period
+    Triggers "cancel"
   - parent AGREEMENT
   | isCopy()
   - checksum STR
+  - discard(): calls destroy()
   - layoutmode:
      - get: inLayout|ViewMode()
      - set: setViewMode(Agreement.LAYOUT|VIEW_MODE)
@@ -738,15 +748,19 @@ AGREEMENT: /agreements/AGREEMENT
         + allow-edit true
         (not AGREEMENT.owner, or same AGREEMENT_COMPANY)
         + allow-remove|restore: state [not] disabled*
-  | get[My]Participant([POSITION])->PARTICIPANT: with same position (def: Flow.position)
+  | get[My]Participant([POSITION[, BOOL]])->PARTICIPANT: with same position (def: Flow.position)
+    If false (def), must be state enabled.
   | isParticipant([POSITION])
   | hasSigned|Declined|Concluded(): Flow.position.state signed|declined (or both)
   | hasVisibility(VAL): current PARTICIPANT has state disabled* or visiblity VAL
   | isVisible|Hidden(): same for visibility visible
+  | hide|unhide(): sets current PARTICIPANT visibility hidden_with_notifications|visible
   | hasCounterparts(): min 2 PARTICIPANT with state enabled and type decisionmaker
   | hasEnabledDecisionMakers([POSITION]): at least one PARTICIPANT with type decisionmaker, state enabled and same AGREEMENT_COMPANY
   | hasEveryoneSigned(): all PARTICIPANT with type decisionmaker have state signed|disabled
+  | getCounterpartAccounts()->{ ACCOUNT_ID: { account ACCOUNT, participant PARTICIPANT_ARR } }, except Flow.position ACCOUNT
   - box_order BOX_ID_ARR: used as BOX_COLL comparator
+  | enable|disableComments(): change state of BOX of type comments
   + trigger "boxes:change" when add|remove boxes, or change BOX.state
   - boxes BOX_ARR: /agreements/AGREEMENT/boxes/
      - agreement AGREEMENT
@@ -937,6 +951,7 @@ AGREEMENT: /agreements/AGREEMENT
        If no PARTICIPANT, gets prev_visit from localStorage
     || visible|hidden([PARTICIPANT]): returns non-subcollection COLL2 with first|last NUM items, where NUM is min between 3 and number of wasAddedSincePrevVisit(PARTICIPANT)
        COLL2 is in sync with parent COLL add|remove|reset events
+  + reset on AGREEMENT.fetch()
   - texts TEXT_ARR (only local, not used anymore)
   - events EVENT_ARR: /agreements/AGREEMENT/events/
      - agreement AGREEMENT
@@ -953,31 +968,30 @@ AGREEMENT: /agreements/AGREEMENT
      - created_ts TIMESTAMP: used as sort comparator for the SUBCOLLs
      - isNewUpdate()->BOOL: compare "created" with last visit time (current PARTICIPANT.prev_visit, or if not PARTICIPANT localStorage item)
      | updates(): subcollection on isNewUpdate()+isParent()
-
-
-FILTER[_DRAFT|OPEN|CLOSED] (only local): search criteria
-  + Single instances at AgreementFilter.PRESET_FILTERS.all|draft|open|closed
-  - direction Flow.OUTBOUND(def)|INBOUND|BOTH
-  - page NUM (def: 1)
-  - offset NUM (def: 0)
-  - limit NUM (def: 10, saved on localStorage)
-  - sort BOOL
-  - state VAL[_ARR]: null (FILTER), draft (DRAFT), pending,expired (OPEN), signed|declined (CLOSED)
-  - _cols STR_ARR: among:
-     - state
-     - created: not DRAFT
-     - magicDate: only OPEN|CLOSED
-     - stateDate: for no default FILTER
-     - ourSide
-     - counterparts
-     - documents: not if INBOUND. For no default FILTER
-     - insight: not if INBOUND. Only OPEN
-     - lc: for no default FILTER
-     - ending: only CLOSED
-  + AgreementsFilter.COLUMNS.STR: name of _cols (e.g. COLUMNS.magicDate)
-  - name|_name "all|draft|open|closed"
-  | asRoutePart()->"/f/_NAME"
-  | getQueryArray(): returns FILTER, without [_]name|_cols or null|"" values
+  x "agreements:request"(AGREEMENT): /agreements/request with AGREEMENT as data
+  - setFilter(FILTER): make fetch() use OBJ.data FILTER.fetchQueryArray(), which returns FILTER, without [_]name|_cols or null|"" values
+    FILTER[_DRAFT|OPEN|CLOSED] (only local) are search criteria:
+      + Single instances at AgreementFilter.PRESET_FILTERS.all|draft|open|closed
+      - direction Flow.OUTBOUND(def)|INBOUND|BOTH
+      - page NUM (def: 1)
+      - offset NUM (def: 0)
+      - limit NUM (def: 10, saved on localStorage)
+      - sort BOOL
+      - state VAL[_ARR]: null (FILTER), draft (DRAFT), pending,expired (OPEN), signed|declined (CLOSED)
+      - _cols STR_ARR: among:
+         - state
+         - created: not DRAFT
+         - magicDate: only OPEN|CLOSED
+         - stateDate: for no default FILTER
+         - ourSide
+         - counterparts
+         - documents: not if INBOUND. For no default FILTER
+         - insight: not if INBOUND. Only OPEN
+         - lc: for no default FILTER
+         - ending: only CLOSED
+      + AgreementsFilter.COLUMNS.STR: name of _cols (e.g. COLUMNS.magicDate)
+      - name|_name "all|draft|open|closed"
+      | asRoutePart()->"/f/_NAME"
  
 
 																						 /=+===============================+=\ 
