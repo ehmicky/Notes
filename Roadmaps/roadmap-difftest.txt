@@ -104,6 +104,38 @@ Test declaration:
      - reason: avoiding spawning lots of useless workers because of misconfiguration
   - if a test is declared twice by different workers, do not error, but only run test once
 
+Use worker threads / workers for each test file
+
+Any Node flags should be allowed as CLI flags:
+  - it should be passed as `execArgv` to workers
+  - should whitelist them, so that wrong CLI flags still trigger a validation error
+     - do not include flags that do not make sense like --interactive
+  - including --require
+     - make sure it works with "ts-node/register"
+     - document it
+  - including --inspect[-brk]:
+     - make sure it works
+     - document it
+  - --experimental-repl-await should always be passed
+
+CONF.timeout NUM (in secs):
+  - def: 10 minutes
+  - global timeout, because per-test timeout does not work with parallel tests
+  - when hit, report which tests are still running
+
+User interrupt:
+  - on SIGINT|SIGTERM|SIGQUIT|etc.
+  - if no tests finished in last 5 secs
+  - then report which tests are still running
+  - goal: allow debugging hanging code
+
+CONF.bail BOOL (-b|--bail)
+  - stops on first failure
+     - still run|report other data of same test
+  - "stops":
+     - terminate workers
+     - do not run|report any additional tests
+
 Assertion testing:
   - any assertion library works:
      - just need to throw error
@@ -169,16 +201,16 @@ CONF.input BOOL (-i|--input):
       - retry if invalid input
 
 Result types:
-   - "pass" assertion
-   - "fail" assertion
-   - "new" snapshots
-   - "removed" snapshots
-   - "same" snapshots (i.e. unchanged)
-   - "different" snapshots (same snapshot key but different snapshot)
-   - "renamed" snapshots (only file path or test title changed)
-   - "inconstant" snapshots (current test code created different snapshots when run several times)
-   - "input" snapshots (CONF.input)
-   - "process" errors
+   - "pass" assertion (light green)
+   - "fail" assertion (light red)
+   - "new" snapshots (dark green)
+   - "removed" snapshots (dark red)
+   - "same" snapshots (i.e. unchanged) (gray)
+   - "different" snapshots (same snapshot key but different snapshot) (dark yellow)
+   - "renamed" snapshots (only file path or test title changed) (dark cyan)
+   - "inconstant" snapshots (current test code created different snapshots when run several times) (dark magenta)
+   - "input" snapshots (CONF.input) (light cyan)
+   - "process" errors (light purple)
 
 "removed" snapshots:
   - only when file selection targets either:
@@ -225,6 +257,19 @@ Result types:
       - should try to keep snapshots layout (so there is no git diff)
    - rename the test title or the file path in the snapshot files
 
+"process" errors:
+  - use log-process-errors
+     - does not make process exit
+  - result type "process"
+  - reported the same way as assertion errors except:
+     - reported at end of test run
+     - reported type is "uncaughtException|unhandledRejection|..."
+     - filepath "", title "Process errors"
+  - CONF.processErrors STR_ARR
+     - which types creates failures (others are ignored)
+     - def: ["uncaughtException", "unhandledRejection"]
+        - default is conservative to avoid annoying users
+
 Reporting:
   - should take as input UI information: snapshots, titles, filepaths, data, whether an error was thrown|rejected, available actions, etc.
   - should not need to handle most logic including:
@@ -252,6 +297,13 @@ Reporting ordering:
      - when test() was called
      - result type: "same" > "different" > "new" > "removed"
      - argument order in parameters
+
+"shortest filepath"
+  - what is reported as file path
+  - is:
+      - if unique: filename without .EXT
+      - if differ only by .EXT: filename with .EXT
+      - otherwise, prepend first parent dir (and so on) until different (and do not use .EXT)
 
 CONF.level STR:
   - among 'silent', 'error', 'warn', 'info'
@@ -325,15 +377,8 @@ Default reporter:
   - tests with no data iteration:
      - single line:
         - result type:
-
-Branding:
-  - rebrand to "revolutionary testing|test runner"??? rebel???
-  - focus on: snapshot driven testing, data driven testing, fuzz testing, minimalist API.
-
-           - "new", "removed", "different", "same", "inconstant", "uncaughtException|unhandledRejection|..."
-           - background colored: "new" (backgroundGreen), "removed" (backgroundRed), "different" (backgroundYellow), "same" (backgroundGrey), "inconstant" (backgroundMagenta), "process" (backgroundPurple)
            - padded so they all have same length
-        - "shortest filepath" (see below) + test title: no background color, normal foreground color
+        - "shortest filepath" + test title: no background color, normal foreground color
      - content
   - tests with data iteration:
      - header:
@@ -352,47 +397,37 @@ Branding:
            - for "process", this is an explanatory text (like in log-process-errors)
            - no background color, normal foreground color
      - content
-  - tests with data or no data iteration:
+  - any tests:
      - test title: ellipsis in middle if needed
      - content (if any) either:
         - assertion error
+        - "process" error
         - snapshot:
            - first column:
               - "removed" snapshots: red minuses for all lines
               - "new" snapshots: green pluses for all lines
               - "different" snapshots: red minuses or green minuses for relevant lines
-              - "same" snapshots: nothing
               - "inconstant" snapshots: like "different" if snapshot exists, "new" otherwise
-              - "process" snapshots: nothing
+              - "same|renamed|input" snapshots: nothing
            - for "inconstant": data header + content is reported twice, because two snapshots are shown
 
 Use itself for unit testing, but its latest release (not direct require())
 
-Use worker threads / workers for each test file
-
-Timeout:
-  - CONF.timeout NUM (in secs):
-     - global timeout, because per-test timeout does not work with parallel tests
-     - def 10 minutes
-     - when hit, report which tests are still running
-  - on SIGINT/SIGTERM/SIGQUIT/etc.
-     - if no tests finished in last 5 secs
-     - then report which tests are still running
-     - goal: allow debugging hanging code
-
 Normalization:
    - to normalize snapshots, user needs to modify the return value of tests before returning it
    - create a separate package with some common normalization methods:
-       - separate some of those methods to own package if makes sense, including deep(), compose(), error(), duration()
-       - deep(FUNC(VAL)->VAL)->FUNC(OBJ)->OBJ:
-           - make a mapping FUNC recursive
-           - avoid infinite recursions
-           - only enumerated own properties
-           - applied to all methods in the package
+      - separate some of those methods to own package if makes sense, including deep(), compose(), error(), duration()
+      - deep(FUNC(VAL)->VAL)->FUNC(OBJ)->OBJ:
+         - make a mapping FUNC recursive
+         - avoid infinite recursions
+         - only enumerated own properties
+         - applied to all methods in the package
       - compose(FUNC,...)->FUNC: functional compose
       - trim(STR)->STR
       - error(STR)->STR: replace stack traces (lines starting with \s+at ...) by single "at STACK TRACE"
-          - should work on ERROR since error() is deep and should be applied to error.stack
+         - should work on ERROR since error() is deep and should be applied to error.stack
+         - should work on CLI error output (i.e. there is no available ERROR instance)
+         - should work for any browser
       - colors(STR)->STR: remove colors
       - duration(STR[, STR2])->STR: replace anything that looks like durations by STR2 (def: "100ms")
       - timestamp(STR[, STR2])->STR: replace anything that looks like timestamps by STR2 (with a default of epoch)
@@ -403,15 +438,11 @@ Normalization:
 
 Fuzz testing:
   - use test-each: NUM, input functions
-      - rely on opts.indexes from test-each to know whether they were originally used
-  - CONF.repeat NUM:
-      - append NUM to each set of data, i.e. repeat each test NUM times
+      - rely on t.indexes to know whether they were originally used
+  - CONF.repeat NUM (--repeat):
+      - def: 1
       - >= 0
-      - def:
-         - assertion testing: 1
-         - snapshot testing:
-            - 2 if new|different snapshot, 1 otherwise
-            - goal: checking for inconstant results, due to randomness in either input function or test function itself
+      - append NUM to each set of data, i.e. repeat each test NUM times
   - NUM as data dimension:
       - NUM is absent from test title or snapshot key
       - assertion testing: only report once, either all "pass" or the first one that "fail"
@@ -424,8 +455,8 @@ Fuzz testing:
                   - if any snapshot is same as current one, should use it as the first one
   - test title or snapshot key should be appended with ` | ${info.title}`
       - for snapshot testing (not assertion testing), input functions should:
-         - use `${FUNC.name}()` (or "function()" if anonymous) in snapshot key
-         - but generated value should be used in reporting
+         - use `${FUNC.name}()` (or "function()" if anonymous) in snapshot key instead of generated value
+            - generated value should be used in reporting
          - although test takes randomness as input, the test output should be consistent across runs, otherwise each new run will fail
 
 Fuzz data generation:
@@ -440,41 +471,6 @@ Fuzz data generation:
   - try to search for similar packages
   - separate package
   - link to it from documentation of both test-each and snapshot testing tool
-
-Any Node flags should be allowed as CLI flags:
-  - it should be passed as `execArgv` to workers
-  - should whitelist them, so that wrong CLI flags still trigger a validation error
-     - do not include flags that do not make sense like --interactive
-  - including --require
-     - make sure it works with "ts-node/register"
-     - document it
-  - including --inspect[-brk]:
-     - make sure it works
-     - document it
-  - --experimental-repl-await should always be passed
-
-CONF.bail BOOL (-b|--bail)
-  - stops on first failure
-     - still run|report other data of same test
-  - "stops":
-     - terminate workers
-     - do not run|report any additional tests
-
-"process" errors:
-  - use log-process-errors
-      - does not make process exit
-  - result type "process":
-      - reported at end of test run
-      - reported snapshot type is "uncaughtException|unhandledRejection|..."
-      - filepath "", title "Process errors"
-      - snapshot content is the main error value
-      - no prompt
-      - no snapshot
-      - test always fail
-  - CONF.processErrors STR_ARR
-      - which types creates failures (others are ignored)
-      - def: ["uncaughtException", "unhandledRejection"]
-          - default is conservative to avoid annoying users
 
 Watch mode:
   - CONF.watch BOOL (-w|--watch)
@@ -523,10 +519,7 @@ Snapshots???
      - or only allow overidding snapshot dir instead???
   - should try to keep existing sorting, so that git diff do not show changes due to sorting
   - key should be combination of:
-      - "shortest filepath":
-          - if unique: filename without .EXT
-          - if differ only by .EXT: filename with .EXT
-          - otherwise, prepend first parent dir (and so on) until different (and do not use .EXT)
+      - "shortest filepath"
       - test title
       - ARR of data serialized with same logic as snapshot
 
