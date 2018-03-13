@@ -875,6 +875,17 @@ COMMAND                           #Means a CLI command, either:
                                   #     - preferred for CMD|ENTRYPOINT
 DL4005                           ##Use SHELL when needed
 
+CHAINING ==>                      #Since each command creates a new layer, should chain commands, e.g.:
+                                  #  - RUN printf a > a \n RUN rm a: first layer is 1 byte, second 0 bytes
+                                  #  - RUN printf a > a && rm a: only one layer, 0 bytes
+                                  #Should use && to ensure each command succeeds (to ensure predictability):
+                                  #  - stops builds:
+                                  #     - RUN false && true;
+                                  #     - RUN false; false;
+                                  #     - RUN false && false;
+                                  #  - does not stop build:
+                                  #     - RUN false; true;
+
 PACKAGE INSTALLATION ==>          #Containers are always unprivileged:
                                   #  - can do apt-get install -y
                                   #  - but apt-get upgrade will fail on some core packages
@@ -890,6 +901,7 @@ DL3009                           ##Use apt-get clean && rm -rf /var/lib/apt/list
 
 
 RUN COMMAND                       #Dockerfile instruction. Run command, compile-time
+                                  #If COMMAND exit code !== 0, stop build
 DL3001                           ##Avoid COMMAND which do no make sense in a container, e.g. interactive or host-controlling (shutdown, ps, kill, etc.)
 DL4001                           ##Either use wget or curl, but not both
 
@@ -2345,6 +2357,7 @@ docker stats CONTAINER...         #Prints realtime runtime metrics of containers
 
 
 GOAL ==>                          #Repository (similar to GitHub) of Docker images
+                                  #Post-build images are stored, not Dockerfile, i.e. consumers can run it right away
                                   #Can create/edit via website.
 
 docker login [HOST]               #Authenticate to Docker Hub from CLI
@@ -2550,6 +2563,50 @@ Microcontainer:
 
 scratch:
   - IMAGE with nothing in it (i.e. 0 bytes)
-     - no binary, i.e. no shell, no apt-get
-     - usually need to use ADD|COPY
-     - is actually a no-op
+     - no binary, i.e.:
+        - no shell, no apt-get
+        - need to use ADD|COPY
+     - is actually a no-op (does not create a layer)
+  - a small Linux core is always created:
+     - on tmpfs: /dev/console, /dev/pts, /dev/shm, /proc, /sys
+     - minimal /etc: hosts, hostname, resolve.conf, mtab
+     - does not take image space, because always created (so does not need information in image)
+     - created runtime, so cannot manipulate them at buildtime
+  - binaries must be statically linked, or provide dynamic libraries (incuding ld and e.g. libc) to run
+
+busybox:
+  - 1MB 
+  - based on scratch, adding:
+     - stripped down version of usual Linux binaries (in /bin)
+     - /dev:
+         - std*, tty, ptmx, fd
+         - null, zero, random, urandom
+         - mqueue, fuse, core
+     - /etc: passwd, group, shadow, localtime
+     - empty /home, /root, /tmp, /usr/sbin, /var/spool/mail, /var/www
+  - also available as 2MB binary (only /bin)
+     - can configure a lot (e.g. removing binaries) compile-time
+
+alpine:
+  - 5MB
+  - based on busybox, adding:
+     - APK: small package manager
+     - ld: linker
+     - musl libc: small libc
+     - /etc/fstab: mounting
+     - iconv: charset conversion
+     - scanelf: ELF utilities
+     - sysctl: kernel features
+     - NSS, SSL: crypto
+     - cron
+     - Zlib
+     - /etc/TZ: small conf file with current timezone
+     - /etc/alpine-release: small conf file with alpine version
+     - SysVInit
+     - /etc/issue: welcome message for getty terminals
+
+/etc: logrotate.d modprobe.d modules modules-load.d motd network opt os-release profile profile.d protocols securetty services shells udhcpd.conf
+
+empty dir: /lib/firmware, /media/cdrom, /media/floppy, /media/usb, /mnt, /run, /srv, /usr/share/man, /usr/share/misc, /usr/local/bin, /usr/local/lib, /usr/local/share, /var/cache|lib/misc, /var/empty, /var/lib/udhcpd, /var/local, /var/lock/subsys, /var/log, /var/opt, /var/run
+/linuxrc -> /bin/busybox
+symlinks: many /sbin/*, /usr/bin/*, /usr/sbin/* to /bin/busybox
