@@ -100,8 +100,6 @@ G*_ATTR.constructor()             #Called instead of new G*_CTOR(...), so must, 
 
 
 OBJ..VAR                          #Means either OBJ.options[VAR] or OBJ[VAR]
-MEVENT(...)                       #Means either fire event MEVENT(...) or (if available) calls MOBJECT.onMEVENT(...), where 
-                                  #MEVENT has different case: "aa:bb:cc" -> "AaBbCc"
 
 MARIONETTE.Object                 #MOBJECT: is a G* with some extra methods
                                   #Main Marionette objects are MOBJECT: MAPPLICATION, MAPPROUTER, MVIEW, MBEHAVIOR, MREGION
@@ -112,12 +110,6 @@ MOBJECT.options                   #Is OBJ[()], which can be overriden by new MOB
 MOBJECT.getOption("VAR")          #Returns OBJ..VAR
 MOBJECT.mergeOptions
 (OBJ, STR[_ARR])                  #Adds each OBJ[STR] to MOBJECT[STR]
-MOBJECT.triggerMethod        
-("MEVENT"[, ...])                 #Fires MEVENT(...)
-MOBJECT.destroy()                 #Calls stopListening() and fires MEVENT [before:]destroy()
-MOBJECT.[un]bindEntityEvents      #OBJ is { EVENT: FUNC|"FUNC ..." ... }
-(EVENTS, OBJ[()])                 #Make events fired on EVENTS fire on MOBJECT too, by calling each
-                                  #MOBJECT.listenTo(EVENTS, "EVENT", FUNC|EVENTS.FUNC)
 
 
 																						 /=+===============================+=\ 
@@ -180,6 +172,17 @@ EVENTS.trigger(EVENT_STR[, ...])  #
 EVENTS.listenTo[Once](EVENTS2,...)
 EVENTS.stopListening              #Like EVENTS2.on|once|off(..., EVENTS), but semantically indicates that EVENTS "eavesdrops" 
 ([EVENTS2, ]...)                  #on another EVENTS2
+
+
+MEVENT(...)                       #Means either fire event MEVENT(...) or (if available) calls MOBJECT.onMEVENT(...), where 
+                                  #MEVENT has different case: "aa:bb:cc" -> "AaBbCc"
+                                  #Most of the time, "before:MEVENT" is before DOM manipulation, "MEVENT" after.
+MOBJECT.triggerMethod        
+("MEVENT"[, ...])                 #Fires MEVENT(...)
+MOBJECT.[un]bindEntityEvents      #OBJ is { EVENT: FUNC|"FUNC ..." ... }
+(EVENTS, OBJ[()])                 #Make events fired on EVENTS fire on MOBJECT too, by calling each
+                                  #MOBJECT.listenTo(EVENTS, "EVENT", FUNC|EVENTS.FUNC)
+MOBJECT.destroy()                 #Calls stopListening() and fires MEVENT [before:]destroy()
 
 
 																						 /=+===============================+=\ 
@@ -521,7 +524,7 @@ VIEW.template(OBJ[, OBJ2])        #Template function, e.g.:
  
 
 MARIONETTE.View                   #Child of VIEW
-                                  #Fires MEVENT dom:refresh() on EVENT show|render
+                                  #Fires MEVENT dom:refresh() on EVENT show|render, after show has been called once???
 MVIEW..model|collectionEvents     #Like MVIEW.events but:
                                   #  - listen to MVIEW.model|collection events
                                   #  - can use "FUNC ..." instead of "FUNC"
@@ -642,17 +645,21 @@ MCOLLVIEW.render()                #For each child MODEL:
                                   #  - can override MCOLLVIEW.isEmpty()->BOOL (def: no COLL or COLL.length === 0)
                                   #Fires MEVENT:
                                   #  - [before:]render(COLL)
-                                  #  - [before:]render:collection"COLL)
+                                  #     - [before:]render:collection(COLL): if not empty
+                                  #     - [before:]render:empty(): if empty
                                   #  - [before:]add|remove:child(CHILD_MVIEW)
-                                  #  - [before:]render|remove:empty()
+                                  #  - [before:]remove:empty()
 MCOLLVIEW..viewComparator         #Sort CHILD_MVIEW in the DOM according to their MODEL.
                                   #Can be "VAR", LFUNC(MODEL)->NUM or FUNC(MODEL, MODEL2)->-1|0|1
                                   #Sort when:
                                   #  - MCOLLVIEW.render()
+                                  #  - manual MCOLLVIEW.reorder():
+                                  #     - only does DOM manipulation (no MCOLLVIEW.render())
+                                  #     - fires MEVENT [before:]reorder()
                                   #  - COLL event "sort": 
-                                  #     - also re-render() unless MCOLLVIEW..reorderOnSort true
+                                  #     - calls MCOLLVIEW.render() if MCOLLVIEW..reorderOnSort false (def), otherwise
+                                  #       MCOLLVIEW.reorder()
                                   #     - disable with MCOLLVIEW..sort false (to force manual sorts)
-                                  #  - manual MCOLLVIEW.reorder(): also fires MEVENT [before:]reorder()
 MCOLLVIEW..filter
 (MODEL, NUM, COLL)->BOOL          #Do not show children returning false
 MCOLLVIEW.destroy()               #Like MOBJECT but also:
@@ -673,8 +680,10 @@ MARIONETTE.CompositeView          #MCOMPVIEW. Mix of a MCOLLVIEW and a MITEMVIEW
                                   #    else than MCOMPVIEW.$el (can be inside the MITEMVIEW) 
                                   #    (otherwise appended after the MITEMVIEW)
                                   #  - def CHILD_MVIEW_CTOR is MCOMPVIEW_CTOR
-                                  #Using MCOMPVIEW.model, is like MITEMVIEW but:
-                                  #  - fires MEVENT [before:]render:template()
+                                  #Using MCOMPVIEW.model, is like MITEMVIEW.
+                                  #Renders first MITEMVIEW, then MCOLLVIEW:
+                                  #  - MEVENT [before:]render(MCOMPVIEW) fired before|after MITEMVIEW+MCOLLVIEW
+                                  #  - MEVENT [before:]render:template() fired before|after MITEMVIEW
 
 
 																						 /=+===============================+=\ 
@@ -699,14 +708,19 @@ MREGION.show(MVIEW[, OBJ])        #Does:
                                   #  - if same, does nothing unless OBJ.forceShow true
                                   #  - is destroyed with MREGION.empty() unless OBJ.preventDestroy true
                                   #Fires MEVENT:
-                                  #  - on MREGION:
-                                  #     - [before:]swap[Out](MVIEW[2], MREGION, OBJ): when MVIEW2 changes for another MVIEW
-                                  #     - [before:]show(MVIEW, MREGION, OBJ)
-                                  #  - on MVIEW:
-                                  #     - [before:]attach(MVIEW, MREGION): unless:
-                                  #        - OBJ|MREGION.trigger[Before]Attach false (to improve performance if a lot of MVIEW)
-                                  #        - or MREGION not attached to DOM
-                                  #     - [before:]show(MVIEW, MREGION, OBJ)
+                                  #  - with parameters (MVIEW, MREGION, OBJ): no OBJ for [before:]attach()
+                                  #  - after MVIEW.render(), before|after attached to DOM, except:
+                                  #     - [before:]swapOut(): before|after MVIEW.render()
+                                  #  - if:
+                                  #     - [before:]swap[Out]: MVIEW2 changes for another MVIEW
+                                  #     - [before:]show(): always
+                                  #     - [before:]attach(): MREGION attached to DOM.
+                                  #       Can prevent with OBJ|MREGION.trigger[Before]Attach false (to improve performance)
+                                  #  - recursion:
+                                  #     - [before:]swap[Out](): none
+                                  #     - [before:]attach(): MCOLL children, MLAYOUTVIEW currently shown MVIEW
+                                  #     - [before:]show(): MCOLL current children, and (together with [before:]add:child()) 
+                                  #       on new children 
 MREGION.currentView MVIEW
 MREGION.attachView(MVIEW)         #Adds already render()'d MVIEW. Does not fire any MEVENT.
 MREGION.empty([OBJ])              #Remove MVIEW.
@@ -746,7 +760,8 @@ new MLAYOUTVIEW_CTOR([OBJ])       #  - use MLAYOUTVIEW|OBJ..regions { R_NAME: VA
 MLAYOUTVIEW.render()              #Calls MITEMVIEW.render() and MREGIONMANAGER.removeRegions()
 MLAYOUTVIEW.showChildView         #Same as getRegion(R_NAME).show(MVIEW)
 (R_NAME, MVIEW)                   #If MVIEW is a MLAYOUTVIEW, it should do MLAYOUTVIEW.showChildView() on its children in its
-                                  #before:show handler in order to be recursive
+                                  #before:show handler in order to be recursive.
+                                  #Careful too: if child MLAYOUTVIEW has same R_NAME, can pick either randomly.
 MLAYOUTVIEW.getChildView(R_NAME)
 ->MVIEW
 MLAYOUTVIEW.childEvents           #Like MCOLLVIEW, including children events triggering "PREFIX:EVENT"
