@@ -19,9 +19,29 @@ CONF.branches.only|except     #LBRANCH_STR|REGEXP[_ARR]
 EXCLUDING COMMIT              #If commit message includes "[ci skip]"
 CONF.git.submodules           #BOOL (def: true): automatically init and update git submodules if .gitmodules
 
-CONF.STEP                     #'BASH'[_ARR] or true (skipped)
+BUILD ==>                     #Sets of jobs
+
+CONF.jobs.include             #JOB_ARR
+JOB.script                    #'BASH'[_ARR] or 'skip|ignore|true'
                               #  - should use ARR not 'STR; STR2'
-                              #STEP (also called "jobs"):
+                              #Required
+                              #Must use sudo for privileges (don't require password typing), e.g. apt-get
+JOB.name                      #STR
+JOB.stage                     #'STAGE' (def: same as previous item in JOB_ARR, 'test' if first item)
+                              #Stages are run serially
+                              #Jobs within same stage are run in parallel
+                              #If a job fails (exit code !== 0), parallel jobs are still run, but not next serial jobs.
+                              #Jobs are each run in a separate VM/container.
+CONF.stages                   #'STAGE'|STAGE_ARR
+                              #Stages serial order (def: first-defined stages first)
+STAGE.name                    #'STAGE'
+
+set -e                        #Recommended in Bash scripts (exit whole file when one statement has exit code !== 0)
+
+CONF.script 'BASH'???
+
+CONF.STEP                     #Same value as JOB.script
+                              #Steps are pre-defined job stages:
                               #  - before_install:
                               #     - e.g. apt-get update -qq
                               #  - install:
@@ -42,23 +62,60 @@ CONF.STEP                     #'BASH'[_ARR] or true (skipped)
                               #     - run once (including before|after_deploy) per provider
                               #  - after_deploy
                               #  - after_script
-PRIVILEGES ==>                #Must use sudo for privileges (don't require password typing), e.g. apt-get
+                              #How do they interact with non-predefined job stages???
+                              #Failures in:
+                              #  - after_* do not stop build
+                              #  - [before_]install and before_script stop parallel jobs
 
-FAILURES ==>                  #If STEP with exit code !== 0, stops build
-                              #  - only for [before_]install|script|deploy
-                              #  - "script" also lets other commands of same step run
-CONF.matrix.allow_failures    #MATRIX_OBJ_ARR
-                              #Do not make build fail when job fails
-CONF.matrix.fast_finish       #BOOL (def: false): build marked as finished even if allowed failured not finished
-set -e                        #Recommended in Bash scripts (exit whole file when one statement has exit code !== 0)
-
-MATRIX ==>                    #One job is run for each combination (cartesian product) of:
+MCONF                         #CONF.* but limited to:
                               #  - CONF.env
                               #  - language-specific environment CONF.* (e.g. CONF.node_js)
+                              #  - stage 'STAGE': only do matrix for specific stage
+                              #     - if pre-defined stages, which is used???
+                              #     - if non-pre-defined stages, do it on all stages by default???
+                              #     - with non-pre-defined stages, can use MCONF.* inside JOB.*???
+MATRIX ==>                    #One job is run in parallel for each combination (cartesian product) of MCONF
                               #Max 200 total combinations.
-CONF.matrix.include           #CONF_ARR (only CONF.env and language-specific environment CONF.*)
+CONF.matrix.include           #MCONF_ARR
                               #Specify matrix combinations instead of using cartesian product.
-CONF.matrix.exclude           #Same but instead exclude matrix combinations from cartesian product.
+CONF.matrix.exclude           #MCONF_ARR. Same but instead exclude matrix combinations from cartesian product.
+CONF.matrix.allow_failures    #MCONF_ARR
+                              #Do not make build fail when those specific combinations fail
+CONF.matrix.fast_finish       #BOOL (def: false): do not wait for "allow_failures" combinations to complete to mark whole build
+                              #as "completed"
+
+CONF.jobs.include is alias of CONF.matrix.include???
+
+CONF|STAGE|JOB.if CONDITION   #Filters build|stage|job according to CONDITION
+                              #Possible VARs:
+                              #  - type 'push' (normal trigger), 'pull_request', 'api' (REST API), 'cron'
+                              #  - repo 'USER/REPO'
+                              #  - branch 'LBRANCH'
+                              #  - head_repo|branch: same for pull requests
+                              #  - tag 'TAG'
+                              #  - commit_message STR
+                              #  - sender 'USER'
+                              #  - fork BOOL (if repo is a fork)
+                              #  - os STR
+                              #  - dist STR (OS distribution)
+                              #  - group STR (container image)
+                              #  - language STR
+                              #  - sudo BOOL
+                              #Types:
+                              #  - true|false
+                              #  - "STR" 'STR' or unquoted STR
+                              #  - /REGEXP/ or "REGEXP"
+                              #  - (VAL,...) (array)
+                              #Operators:
+                              #  - VAL == != VAL2
+                              #  - STR =~ !~ REGEXP
+                              #  - VAL [not] in ARR
+                              #  - VAL is [not] present|blank
+                              #  - ! || && (aliases: not or and)
+                              #  - ()
+                              #Functions:
+                              #  - env('ENVVAR') (only the ones defined in CONF)
+                              #  - concat(STR,...)
 
 TIMEOUT ==>                   #Job-wise: 50mins (logging stops at 10mins)
 
