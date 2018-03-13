@@ -80,7 +80,14 @@ Exception handling:
   - add all `generic.title`
 
 GraphQL:
+  - wait for https://github.com/apollographql/graphql-anywhere/issues/34 for proper operationName support
+  - GraphQL introspection:
+     - fix GraphQL __typename, it's wrong
+     - support mixing GraphQL introspection query (e.g. __schema) with non-introspection query
   - look at GraphQL spec validation chapter, to make sure my validation layer conforms
+  - GraphQL schema:
+     - add __metadata, including pagination
+      - arg.filter can be 'JSL', {ATTR: VAL} or {ATTR: 'JSL'}
 
 Pagination:
   - pagination error messages on wrong cursors are not clear
@@ -150,17 +157,6 @@ Nested models:
      - this should solve the fact that nested models do not inherit the refered model.id's default|transform|compute[_out]
        attributes (while they should)
   - nested arrays+objects in IDL definition do not really work
-
-Modularity:
-  - reusing server as part of a bigger project:
-     - e.g. multiple instances at once
-     - problem: currently server assumes it owns process, e.g. calls process.exit|kill|on() and Error.stackTraceLimit.
-       There should be a serverOpts.ownsProcess BOOL to disable those parts.
-
-Actions:
-  - HEAD is different from noOutput settings:
-     - Content-Length should not be 0.
-     - it should be at protocol level, just sending the same response headers but no content
   - what happens when a recursive action is applied twice to same model?
      - E.g. top-level action update model.attr to 1, but nested action update same model.attr to 2, i.e. the return value
        will show two copies of model, but with different value for attr, which is confusing and inconsistent.
@@ -174,72 +170,75 @@ Actions:
         - after createBestFriend(), update parent.best_friend using the response
            - that update should not be affected by def.actions restrictions
         - parent.best_friend resolver should wait for parent.createBestFriend resolver to end, and use its value
-  - wait for https://github.com/apollographql/graphql-anywhere/issues/34 for proper operationName support
-  - GraphQL introspection:
-     - fix GraphQL __typename, it's wrong
-     - support mixing GraphQL introspection query (e.g. __schema) with non-introspection query
+
+Modularity:
+  - reusing server as part of a bigger project:
+     - e.g. multiple instances at once
+     - problem: currently server assumes it owns process, e.g. calls process.exit|kill|on() and Error.stackTraceLimit.
+       There should be a serverOpts.ownsProcess BOOL to disable those parts.
+
+HEAD:
+  - add support for HEAD method, different from noOutput settings:
+     - Content-Length should not be 0.
+     - it should be at protocol level, just sending the same response headers but no content
+
+HTTP details:
   - Add support for 204 status code, with any write goal
 
 Authorization:
-  - do not pass $/$$ to non-inline functions
-  - can use JSL params and helpers
-  - partial evaluation:
-      - apply same logic to both arg.filter and authorize
-      - stages:
-           - partial evaluation of what can be evaluated (i.e. all but $/$$ and ancestor chain)
-           - replace false && VAL by false, true || VAL by true
-           - unless end result is true|false, convert to database query. If cannot (e.g. operator cannot be converted to
-             db query) fails.
-  - authorize JSL[_ARR]: ARR is && (normalized during IDL transformation)
-  - model.authorize is model-wise
-  - idl.authorize is for all models:
-      - performed once per request, just before main operation middleware
-      - i.e. less JSL params, and no partial evaluation
-  - model.ATTR.authorize (attribute authorization):
-      - whether authorized or not is same logic as model.authorize except can use $ (same as $$.ATTR)
-      - action when not authorized differ though. Depending on command:
-          - read:
-               - silently removed in output
-               - only checked if defined in output (i.e. key is present)
-               - on all commands
-          - create|update|delete:
-               - silently replace new value (arg.data.ATTR) by current value (sysArgs.current.ATTR)
-               - only checked if new value !== current value
-               - in order: if current value is undefined, use "create". If new value is undefined, use "delete".
-                 If current value is null, use "create". If new value is null, use "delete". Otherwise, use "update".
-               - on update command only
-  - find commands of replace|upsert action should not be affected by authorize (using sysArgs.authorization false)
-  - just before dbValidation layer
-  - returns 403 if authorize evaluates to false after evaluation or partial evaluation (i.e. before db main query).
-    Otherwise, no effect.
-  - according to command:
-      - find|delete:
-           - $/$$: augment arg.filter:
-               - do partial evaluation (see above)
-               - exception during partial evaluation should throw 5** not 4**
-               - use resulting database query object, if there is one, by && it
-               - must try partial evaluation during IDL validation to make sure it works runtime
-      - create:
-           - $/$$: use arg.data
-      - update:
-           - $/$$: use both arg.data and sysArgs.current (tried after another)
-      - update|create:
-           - if command.multiple, check authorize JSL for each arg.data and each sysArgs.current. If any fails, 403.
-   - IDL validate syntax of authorize and authorize.COMMANDS (e.g. COMMANDS is correct, etc.)
-   - authorize.COMMANDS:
-       - like authorize, but applied according to current command
-       - authorize VAL is normalized (by IDL transformation) to authorize.create,read,update,delete VAL
-       - COMMANDS can be read|update|create|delete. Can be comma-separated list.
-            - command.multiple does not matter, i.e. no authorization mismatch possible on nested actions
-       - replaces idl.actions and model.actions (which must be removed):
-           - remove the fact that deleteMany is forbidden by default
-           - forbidden goals:
-               - are goals whose authorize always return false for a
-                 given set of protocol/operation JSL params + COMMAND param (e.g. without $/$$)
-                   - how to know? partial evaluation?
-               - 403 becomes 405 on forbidden goals
-               - forbidden goals not shown in GraphQL schema
-               - Allow [S] does not show forbidden goals (i.e. need to add support for Allow [S])
+  - JSL for idl|model|attr.authorize:
+     - JSL[_ARR]: ARR is && (normalized during IDL transformation)
+     - can use JSL params and helpers
+  - idl.authorize JSL[_ARR]:
+     - for all models, performed once per request, just before main operation middleware
+     - i.e. less JSL params, and no partial evaluation
+     - if resolves to false, do not perform query and returns 403
+  - model.authorize JSL[_ARR]:
+     - model-wise
+     - if fails, returns 403 (except for find|delete commands which might augment arg.filter)
+     - according to command:
+        - find|delete: $/$$: augment arg.filter (see below)
+        - create: $/$$: use arg.data
+        - update: $/$$: use both arg.data and args.currentData (tried after another)
+        - update|create: if command.multiple, check authorize JSL for each arg.data and each args.currentData.
+          If any fails, 403.
+     - in authorization middleware, just before dataValidation middleware
+     - find|delete commands use partial evaluation like arg.filter normalization:
+        - exception during partial evaluation should throw 5** not 4**
+        - use resulting database query object, if there is one, by && it
+           - if resolves to false, do not perform query and returns 403
+        - must try partial evaluation during IDL validation to make sure it works runtime
+        - do not pass $/$$ to non-inline functions, because cannot be partially evaluated
+     - find commands of replace|upsert action should not be affected (using args.authorization false)
+  - attr.authorize JSL[_ARR]:
+     - same as model.authorize, except:
+        - can use $ (same as $$.ATTR)
+        - action when not authorized differs. Depending on command:
+           - read:
+              - silently removed in output
+              - only checked if defined in output (i.e. key is present)
+              - on all commands
+           - create|update|delete:
+              - silently replace new value (arg.newData.ATTR) by current value (args.currentData.ATTR)
+              - only checked if new value !== current value
+              - in order: if current value is undefined, use "create". If new value is undefined, use "delete".
+                If current value is null, use "create". If new value is null, use "delete". Otherwise, use "update".
+              - on update command only
+  - model|attr.authorize.COMMANDS:
+     - like authorize, but applied according to current command
+     - authorize VAL is normalized (by IDL transformation) to authorize.create,read,update,delete VAL
+     - COMMANDS can be read|update|create|delete. Can be comma-separated list.
+        - command.multiple does not matter, i.e. no authorization mismatch possible on nested actions
+     - replaces idl.actions and model.actions (which must be removed):
+        - remove the fact that deleteMany is forbidden by default
+        - forbidden goals:
+           - are goals whose authorize always return false for a
+             given set of protocol/operation JSL params + COMMAND param (e.g. without $/$$)
+              - how to know? partial evaluation?
+           - 403 becomes 405 on forbidden goals
+           - forbidden goals not shown in GraphQL schema
+        - add Allow [S] on every response:
+           - does not show forbidden goals
 
 Aggregating:
   - are just other actions, following similar logic as the others
@@ -250,17 +249,8 @@ Aggregating:
     it as JavaScript, parsed as MongoDB aggregate object???
   - think of interaction with pagination
 
-Data correctness:
-  - Atomicity:
-     - if any supermodel|submodel fails, make whole action fail, and revert previous changes
-  - Isolation:
-     - when writing on several models, do a snapshot so that the return value is consistent. Not sure if worth.
-     - problem on multi-queries actions:
-        - update -> A finds model, then updates it, but B deleted it in-between
-        - upsert -> A finds model, then updates it, but B deleted it in-between.
-          Or A does not find model, then creates it, but B created it in-between
-  - Durabillity
-  - Allow no orphans:
+No orphans:
+  - allow no orphans, considering that:
      - model relations can be:
         - optional|required for each part:
            - first part:
@@ -277,10 +267,23 @@ Data correctness:
            - removing first part, which might happen during delete|update|replace|upsert
            - removing second part, which happens during delete
            - should trigger cascade removal when any part would become orphan (according to requiredness)
+
+Data correctness:
   - code makes assumptions about database correctness:
      - e.g. that created_time is defined
      - should list those assumptions
      - should have a way to check and report database incorrectness
+
+ACID:
+  - Atomicity:
+     - if any supermodel|submodel fails, make whole action fail, and revert previous changes
+  - Isolation:
+     - when writing on several models, do a snapshot so that the return value is consistent. Not sure if worth.
+     - problem on multi-queries actions:
+        - update -> A finds model, then updates it, but B deleted it in-between
+        - upsert -> A finds model, then updates it, but B deleted it in-between.
+          Or A does not find model, then creates it, but B created it in-between
+  - Durabillity
 
 Compatibility layer:
   - reporting deprecation
@@ -295,70 +298,6 @@ Compatibility layer:
        or find followed by replace, both should be idempotent, but default|transform would actually be applied
   - should it generate redirects when name has changed?
   - feature flags
-
-Transformation:
-  - rethink:
-     - writeOnce
-     - readOnly
-     - compute
-     - transforms:
-        - are complex to interact with other layers
-        - used for different purposes: normalization, backward compatibility
-  - check that transforms are idempotent:
-     - i.e. when transform[Out] is applied twice, it should return same result as when applied once
-     - the reason is: transforms are meant to bring the value to a 'stable' state, not to augment it.
-       Otherwise, it would break basic CRUD semantics clients expect when it comes to request idempotency.
-     - should be done during IDL validation
-     - allow turning off that check by using attribute.idempotent false
-
-null|undefined handling:
-  - both should behave the same.
-    Only different is informative, i.e. undefined means attribute has never been set, null is has been set but deleted.
-    I.e. cannot go back from non-undefined to undefined, and must keep as undefined if not set.
-  - null|undefined allowed or not according to model.required
-  - Uncomment code in transforms/compute related to: when transform/compute sets to undefined, set to null instead
-  - JSON schema type validation need to always allow null, unless required
-  - add middleware that transform undefined (i.e. there is a key but no value) to null in args.data
-
-arg.filter:
-  - should transform JSL into MongoDB query objects:
-     - instead of compiling JSL (as is currently done)
-     - this means using a restricted version of JavaScript
-     - should do just before normalization middleware
-  - validation:
-     - how to perform when arg.filter JSL
-     - some validations might not make sense for filters argument, e.g. minimum|maximum, so should not be performed.
-       Others do though, e.g. type
-
-JSL:
-  - JSL validation:
-     - arg.filter:
-        - validates sub-expression, e.g. ($ === ($ === 1)) should not be allowed
-  - maybe using JSL in other parts of IDL
-  - Add variables related to device|browser detection
-     - add them to logging requestInfo too
-
-Custom code:
-  - using a more plugin-oriented architecture, e.g. allow users to write support for new protocols, operations, etc.
-    by separating them from main package and publishing API/constraint for each component
-
-Async actions:
-  - Async actions must be well thought as they slow down requests, there should be jobs reported to users and users
-    should be able to control max wait time.
-    When this is figured out, think of how async JSL would work within that
-    Try to think if need generic async actions output (e.g. HTTP 202, Prefer: respond-async [C], Prefer: wait=NUM [C])
-  - see REST doc for more info
-  - allow JSL to be async (i.e. to return PROMISE), by using await
-
-Custom actions:
-  - must be declared in IDL file
-  - are global, not model-wise? if model-wise, nesting?
-  - middleware at beginning of action layer
-  - must contain:
-      - handler function:
-          - can call core actions with normal args|sysArgs
-          - get input from operation layer
-     - information to build its GraphQL schema, and do input|output validation
 
 Versioning/changes:
   - can probably link together versioning, changes and undelete features
@@ -390,38 +329,83 @@ Versioning/changes:
   - maybe use HTTP memento
   - maybe use semantic links, e.g. Link: <URI>; rel="alternate|canonical|latest-version|working-copy|predecessor-version|
     successor-version|version-history" [S]
+  - must version IDL file format itself, and also apiEngine itself
 
-Database layer:
+null|undefined handling:
+  - both should behave almost the same:
+     - only different is informative, i.e. undefined means attribute has never been set, null is has been set but deleted.
+       i.e. cannot go back from non-undefined to undefined, and must keep as undefined if not set.
+  - null|undefined allowed or not according to model.required
+  - add middleware that transform undefined (i.e. there is a key but no value) to null in args.newData
+  - uncomment code in transforms/compute related to: when transform/compute sets to undefined, set to null instead
+  - JSON schema type validation need to always allow null, unless required
+
+JSL:
+  - think if should use JSL in other parts of IDL
+  - Add variables related to device|browser detection
+     - add them to logging requestInfo too
+
+Custom code:
+  - using a more plugin-oriented architecture, e.g. allow users to write support for new protocols, operations, etc.
+    by separating them from main package and publishing API/constraint for each component
+
+Async actions:
+  - Async actions must be well thought as they slow down requests:
+     - there should be jobs reported to users and users should be able to control max wait time.
+     - when this is figured out, think of how async JSL would work within that
+     - try to think if need generic async actions output (e.g. HTTP 202, Prefer: respond-async [C], Prefer: wait=NUM [C])
+  - see REST doc for more info
+
+Custom actions:
+  - must be declared in IDL file
+  - are global, not model-wise? if model-wise, nesting?
+  - middleware at beginning of action layer
+  - must contain:
+     - handler function:
+        - can call core actions with normal args
+        - get input from operation layer
+     - information to build its GraphQL schema, and do input|output validation
+
+arg.filter normalization:
+  - done during normalization middleware
+  - partial evaluation of what can be evaluated (i.e. all but $/$$ and ancestor chain)
+  - replace false && VAL by false, true || VAL by true
+  - unless end result is true|false, convert to database query.
+     - if cannot (e.g. operator cannot be converted to db query) fails.
+  - since args.nFilter format changes from that point, needs to fix all the following middleware
+  - validate that arg.filter.id is defined and is the only one, when command readOne|deleteOne
+     - do this during filter normalization middleware
+  - add aliasing on args.filter:
+     - similarly to args.order_by aliasing, simply rename any aliased attribute name to the canonical attribute name
+     - do this on normalized filter object
+     - do it also on args.before|after tokens (similarly to args.before|after current aliasing for `order_by`)
+     - make sure $$.ALIAS_ATTR_NAME works in args.filter
+  - arg.filter can be an ARR of OBJ|STR, to mean "or" (alternative)
+  - think is some dataValidation makes sense for args.filter, e.g. minimum|maximum
+
+Waterline ORM:
   - add a layer just before database action layer, where:
      - if actionType replace|upsert, replace arg.data.id by arg.filter { id } (for *One)
        or arg.data[*].id by arg.filter OBJ_ARR { id } (for *Many)
   - add Waterline ORM:
-     - parse arg.filter as ORM object instead of JSL:
-        - make it part of filter normalization middleware
-        - validate arg.filter:
-           - validate that arg.filter.id is defined and is the only one, when command readOne|deleteOne
-              - do this during filter normalization middleware
-           - validate arg.filter against IDL attribute constraints:
-              - not all make sense, i.e. type validation makes sense, but not minimum|maximum
-              - do this with other arg.data IDL validation middleware
-        - add arg.filter parsing separately from adding Waterline ORM (i.e. at first does not use any filter),
-          to make it easier
-        - add aliasing on args.filter:
-           - similarly to args.order_by aliasing, simply rename any aliased attribute name to the canonical attribute name
-           - do this on normalized filter object
-           - do it also on args.before|after tokens (similarly to args.before|after current aliasing for `order_by`)
-           - make sure $$.ALIAS_ATTR_NAME works in args.filter
+     - parse arg.filter as ORM object instead of JSL (see arg.filter normalization)
      - pagination on updateMany|deleteMany must only be applied on output, not mutation itself
      - equality must be deep equality for ARR|OBJ, so people can do { filter: { attr: ARR|OBJ } }
-  - arg.filter can be an ARR of OBJ|STR, to mean "or" (alternative)
-  - Database transformation layer (before database action), e.g. one model in two tables, two models in one table,
-    database-specific info, for both input|output
-     - should allow single server to use multiple databases with different technologies (e.g. MongoDB + Redis) too
-  - allow validation to be input-only, e.g. when adding a new constraint but keeping old data without migration
+
+Database transformation layer:
+  - before database action middleware
+  - e.g. one model in two tables, two models in one table, database-specific info, for both input|output
+  - should allow single server to use multiple databases with different technologies (e.g. MongoDB + Redis) too
+
+Direct database access:
   - how to handle when modification is done directly on the database, not through the API layer?
      - example when this might create problems: no versioning done, no validation done, no transformation done, etc.
      - should direct access to database be readonly? Should there be a Cron task fixing data instead?
-  - database constraints: uniqueness, indexes, non-null
+
+Database constraints:
+  - uniqueness
+  - indexes
+  - non-null
 
 Fake server:
   - fake data generation (using IDL to guess type/constraints), including mixed with real data
@@ -452,19 +436,19 @@ Operations:
   - JSON-RPC
   - others
 
-Concurrency
-  - realtime:
-     - protocol-agnostic, i.e. WebSocket protocol is just one option
-     - subscriptions (on-demand or automatic after a query|mutation)
-     - maybe something like:
-        - create an endpoint to setup connection, where specify if want automatic or on-demand
-        - if on-demand, must then pass extra parameter to operations (via params) or actions (via arguments)
-          to specify want to subscribe
-  - conflicts:
-     - locking or MVCC (automatic merge conflicts)
-     - preconditions, including HTTP (e.g. If-Match [C])
-     - errors, including HTTP 409
-     - see concurrency chapter in to_learn.txt
+Realtime:
+  - protocol-agnostic, i.e. WebSocket protocol is just one option
+  - subscriptions (on-demand or automatic after a query|mutation)
+  - maybe something like:
+     - create an endpoint to setup connection, where specify if want automatic or on-demand
+     - if on-demand, must then pass extra parameter to operations (via params) or actions (via arguments)
+       to specify want to subscribe
+
+Concurrency conflicts:
+  - locking or MVCC (automatic merge conflicts)
+  - preconditions, including HTTP (e.g. If-Match [C])
+  - errors, including HTTP 409
+  - see concurrency chapter in to_learn.txt
 
 Output format:
   - offer other formats as data input|output: YAML, CSV, protobuf, XML, etc.
@@ -481,33 +465,33 @@ Output format:
 
 Meta-information:
   - schema retrieval:
-     - provide way to retrieve a model's JSON schema through the API, e.g. /MODEL/schema.
-     - should have Content-Type: application/schema+json [S], and be directly usable with a library like AJV
-     - should also be linked to by each response as Link: <URI>; rel="describedby" [S]
-  - provide a versioned URI for IDL validation file, same for any server:
-     - make schema.$schema an URI pointing to it, instead of a tag: URI
+     - through API, e.g. /MODEL/schema
+     - validation:
+        - model's validation JSON schema:
+           - Content-Type: application/schema+json [S]
+           - can be directly usable with a library like AJV
+        - model's IDL schema:
+           - should also be linked to by each response as Link: <URI>; rel="describedby" [S]
   - semantic web
   - HATEOAS:
      - see REST documentation for ideas
   - general API "home document":
      - could use OPTIONS with HTTP as well
-  - Allow [S] on every request
-
-GraphQL schema:
-  - add __metadata to GraphQL schema
-     - including pagination
-  - arg.filter can be 'JSL', {ATTR: VAL} or {ATTR: 'JSL'}
 
 Debugging:
+  - use GraphQL voyager instead of GraphiQL
   - graphiql should be according to Accept [C] (not route) with potential override
     with query variable like 'raw' to see raw result
-  - use GraphQL voyager instead of GraphiQL
   - HTML interactive output format when requesting from a browser
 
-Documentation:
-  - dev documentation is all over the place right now, sometimes duplicated.
-    Create a clean user documentation, directly in README.md with clear parts:
+Dev documentation:
+  - is all over the place right now, sometimes duplicated
+  - create a clean user documentation, directly in README.md with clear parts:
     starting startup, IDL file, making queries, arguments, settings, etc.
+  - use jsdoc, esdoc or similar
+  - API engine documentation website
+
+API documentation:
   - description:
      - build it using not only schema.description, but also schema.examples, schema.title and schema.* related to validation.
      - should be done during IDL compile-time transformation
@@ -521,17 +505,15 @@ Documentation:
      - see REST doc for idea of everything that can be documented
      - provide API console for experimentation
      - code examples
-  - API engine documentation website
-  - changelog
-  - use jsdoc, esdoc or similar
+  - changelog generation
   - add error_uri URL in error messages, pointing to documentation
   - parse comments in IDL file to include them in documentation and changelog.
     E.g. good to describe business-specific JSL.
 
 Main command input:
-  - Improve how conf is loaded, using same logic as rc/nconf
-  - Try to avoid using process.env in the code (at the moment, only NODE_ENV is used), using serverOpts instead.
-    Then we can allow defaulting serverOpts to environment variables (similar to rc/nconf)
+  - improve how conf is loaded, using same logic as rc or nconf
+  - try to avoid using process.env in the code (at the moment, only NODE_ENV is used), using serverOpts instead.
+    Then we can allow defaulting serverOpts to environment variables (similar to rc or nconf)
     Like this we have only one serverOpts object, but with several ways to be defined
 
 Code quality:
@@ -555,17 +537,13 @@ Code quality:
            - might require adding this.caller to each middleware context, so they can stop previous middleware perf
            - check if it's worth using a Proxy for that
 
-Callbacks/events (maybe):
+Callbacks/events:
+  - not sure if this is a good idea
   - on new|finished layers
-  - events are async, callback are sync and allow modification of input/output
-  - have an event on successful server shutdown (besides the logging callback)
+  - while events are async, callbacks are sync and allow modification of input/output
 
-Connection:
+Protocols:
   - HTTP server events "checkContinue" (for 100-continue [C]), "connect" (for CONNECT), "upgrade" (for Upgrade [C])
-
-Normalization:
-  - arg.filter:
-     - use JavaScript parser instead of RegExp to replace $ by $$.ATTR
 
 Pagination:
   - use Range [C] and Accept-Ranges [S] for pagination
