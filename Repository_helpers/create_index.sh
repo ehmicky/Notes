@@ -10,6 +10,7 @@ fi
 md-file-tree | sed '
   1 d;
   /LICENSE\]/ d;
+  /\[README/ d;
   /swp\]/ d;
   /~\]/ d;
   s_Notes/__;
