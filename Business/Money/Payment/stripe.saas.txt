@@ -20,16 +20,17 @@ VERSION ==>                       #2019-03-14
                                   #See:
                                   #  - https://stripe.com/en-US/blog/changelog
                                   #  - https://stripe.com/docs/upgrades
-Stripe-Version: VERSION [C]       #Must be sent
+Stripe-Version: VERSION [C]       #Defaults to latest.
 
 ENDPOINT ==>                      #https://api.stripe.com/v1/
 
 Content-Type: application/
  x-www-form-urlencoded [C]        #Request body: x-www-form-urlencoded (but must keep [] not encoded)
+?PARAM                            #Are actually request body parameters, not URL variables.
 Accept: application/json [C]      #Response body: JSON
 
 Authorization: Bearer API_KEY [C] #Authentication
-Stripe-Account: ACCOUNT.id [C]    #4 keys by default:
+                                  #4 keys by default:
                                   #  - either production and one testing:
                                   #     - separate data
                                   #     - payments not processed by providers
@@ -43,6 +44,9 @@ Stripe-Account: ACCOUNT.id [C]    #4 keys by default:
                                   #  - can be scoped to:
                                   #     - specific endpoints
                                   #     - read/write, read-only, none
+Authorization: API_KEY [C]
+Stripe-Account:
+ CONNECT_ACCOUNT.id [C]           #Authentication for Connect instead.
 
 Request-Id: UUID [S]              #
 
@@ -1951,125 +1955,65 @@ new STRIPE-NODE
  ->STRIPE                         #
 
 STRIPE.setApiKey('API_KEY')       #Def: none
-STRIPE.setApiVersion('VERSION')   #Def: none
+STRIPE.setApiVersion('VERSION')   #Stripe-Version [C]. Def: none
 
-STRIPE.setHost('HOST')            #Def: 'api.stripe.com'
-STRIPE.setPort('PORT')            #Def: 443
-STRIPE.setProtocol('SCHEME')      #Def: 'https'
+STRIPE.RESOURCE.*([PATH_VAL,...]  #Call REST API endpoint.
+ DATA_OBJ, OPTS|'API_KEY')        #RESOURCE:
+ ->PROMISE                        #  - is camelCase, in plural
+                                  #  - can be checkout|issuing|radar|reporting|sigma|terminal.*
+                                  #  - e.g. 'radar.valueLists'
+                                  #PATH_VAL are URL variables.
+																	#DATA_OBJ:
+																	#  - request payload (including ?PARAM)
+																	#  - DATE are serialized to DATE_NUM
+																	#OPTS:
+																	#  - api_key 'API_KEY'
+																	#  - stripe_version 'VERSION'
+																	#  - idempotency_key Idempotency-Key [C]
+																	#  - stripe_account Stripe-Account [C]
+																	#PROMISE either:
+																	#  - resolved with response OBJ, with additional:
+																	#     - lastResponse RES
+                                  #        - requestId STR
+																	#  - rejected with ERROR
+STRIPE.RESOURCE.create(...)       #Common method for `POST /`
+STRIPE.RESOURCE.list(...)         #Common method for `GET /`
+STRIPE.RESOURCE.retrieve(...)     #Common method for `GET /ID` (URL param 'id')
+STRIPE.RESOURCE.update(...)       #Common method for `POST /ID` (URL param 'id')
+STRIPE.RESOURCE.del(...)          #Common method for `DELETE /ID` (URL param 'id')
+STRIPE.RESOURCE.setMetadata
+ ('ID', OBJ|null[, 'API_KEY'])    #Like update({ metadata: OBJ })
+ ->PROMISE:                       #OBJ can also be 'VAR', VAL
+STRIPE.RESOURCE.getMetadata
+ ('ID'[, API_KEY])->PROMISE_OBJ   #Like retrieve().metadata
 
-STRIPE.setMaxNetworkRetries(NUM)  #Def: 0
-                                  #Retry on 409 (any method) or 5** (not POST)
-                                  #If not 0, defaults Idempotency-Key [C] to a UUIDv4
-                                  #Uses exponential backoff
-STRIPE.setTimeout(NUM)            #Def: 2 mins (like Node.js core)
-STRIPE.setAgent(AGENT)            #Def: AGENT with keepAlive true
+PAGINATION ==>                    #For list endpoints, returned PROMISE is also an ASYNC_ITERATOR (with each OBJ model).
+                                  #The following methods are also available:
+STRIPE.RESOURCE.autoPagingEach    #Iterates over all, in streaming mode.
+ ([FUNC(OBJ)][, FUNC2([ERROR])])  #PROMISE resolved with undefined once iteration done.
+ ->PROMISE                        #FUNC() is called with each model OBJ:
+                                  #  - can return false to stop iteration
+                                  #  - can be async
+                                  #FUNC2() is called at end
+STRIPE.RESPONSE.autoPagingToArray #Iterates over all at once.
+ (OPTS)->PROMISE_OBJ_ARR          #OPTS:
+                                  #  - limit NUM (required) (max 10000): stops if more than that (but no errors)
 
-STRIPE.setAppInfo(APPINFO)        #Added to User-Agent [C] as 'NAME[/VERSION] [(URL)]'
-                                  #APPINFO: name, version, url, partner_id
-STRIPE.setTelemetryEnabled(true)  #Send X-Stripe-Client-Telemetry: JSON [C] of OBJ:
-                                  #  - last_request_metrics OBJ_ARR:
-                                  #     - request_id RESPONSE.requestId
-                                  #     - request_duration_ms NUM
-                                  #Def: disabled
-
-STRIPE.RESOURCE.*                 #RESOURCE is camelCase, in plural
-                                  #RESOURCE can be checkout|issuing|radar|reporting|sigma|terminal.*
-
-STRIPE.balances.retrieve(DATA_OBJ, OPTS)->PROMISE
-  - DATA_OBJ: request payload + URL params
-  - OPTS:
-     - api_key: override 'API_KEY'
-     - idempotency_key
-     - stripe_account
-     - stripe_version: override 'VERSION'
-  - PROMISE either:
-     - rejected with ERROR
-     - resolved with OBJ:
-        - also has OBJ.lastResponse RES
-
-SPEC:
-  - method STR (def: 'GET')
-  - basePath 'PATH' (def: '/v1/')
-     - + RESOURCE.path (e.g. 'balance')
-  - path 'PATH'
-     - can contain '{[optional!]}', replaced and URI encoded
-  - urlParams ARR (def: []): PATH parameters
-  - encode FUNC (def: noop): transform DATA_OBJ
-  - host STR (def: 'api.stripe.com')
-  - headers OBJ
-  - validator(DATA_OBJ, { headers }): can throw error
-  - requestDataProcessor('METHOD', DATA_OBJ, HEADERS, FUNC(ERROR, DATA)): override HTTP request making
-  - transformResponseData(RESPONSE)->RESPONSE
-  - includeBasic BOOL (def: false):
-     - add the following endpoints:
-        - create(): `POST /`
-        - list(): `GET /`
-        - retrieve(): `GET /{id}`
-        - update(): `POST /{id}`
-        - del(): `DELETE /{id}`
-     - add:
-        - setMetadata('ID', OBJ|null[, 'API_KEY'])->PROMISE:
-           - like update({ metadata: OBJ })
-           - OBJ can also be 'VAR', VAL
-        - getMetadata('ID'[, API_KEY])->PROMISE_OBJ
-           - like retrieve().metadata
-  - methodList 'list':
-     - make PROMISE an ASYNC_ITERATOR returning each result OBJ
-     - add pagination methods:
-        - autoPagingEach([FUNC(OBJ)][, FUNC2()])->PROMISE:
-           - iterates over all
-           - PROMISE resolved with undefined once iteration done
-           - FUNC() is called with each batch
-              - can return false to stop iteration
-              - can be async
-           - FUNC2() is called at end
-        - autoPagingToArray(OPTS)->PROMISE_OBJ_ARR
-           - iterates over all
-           - OPTS:
-              - limit NUM (required) (max 10000)
-
-HTTP request:
-  - DATE are serialized to DATE_NUM
-  - User-Agent: Stripe/v1 NodeBindings/{PACKAGE.version} [C]
-  - X-Stripe-Client-User-Agent: JSON [C] with JSON of OBJ:
-     - bindings_version PACKAGE.version
-     - lang 'node'
-     - lang_version: process.version
-     - platform: process.platform
-     - publisher 'stripe'
-     - uname `uname -a`
-     - application APPINFO
-
-Errors:
-  - 'api_connection_error':
-     - timeout
-     - other connection errors
-  - 'authentication_error':
-     - 401
-  - 'permission_error':
-     - 403
-  - 'rate_limit_error':
-     - 429
-  - 'card_error', 'invalid_request_error', 'api_error', 'idempotency_error': using RESPONSE.error.type
-  - 'generic_error': unknown RESPONSE.error.type
-  - 'signature_verification_error': webhooks verification
-  - 'api_error':
-     - response not JSON
-
-ERROR.type STR: e.g. 'StripeConnectionError', etc.
-(only set on { error } response)
-ERROR.headers OBJ
-ERROR.requestId STR: from Request-Id [S]
-ERROR.statusCode NUM
-(optional)
-ERROR.code STR
-ERROR.param 'PROP'
-ERROR.detail ERROR2
+ERROR.type                        #Like REST API except:
+                                  #  - PascalCase and prepended with 'Stripe'
+                                  #  - e.g. 'StripeConnectionError' or 'StripeAPIError'
+ERROR.code|param                  #Same as REST API response if set.
+ERROR.detail                      #ERROR2. When there is a sub-error
+ERROR.headers                     #HEADERS_OBJ
+                                  #Only set when a response (event 4**|5**) was received
+ERROR.requestId STR               #Request-Id [S]
+                                  #Only set when a response (event 4**|5**) was received
+ERROR.statusCode NUM              #Only set when a response (event 4**|5**) was received
 
 STRIPE.on('request', FUNC(OBJ))   #OBJ:
                                   #  - method 'METHOD'
                                   #  - path '/PATH'
-                                  #  - account ACCOUNT.id
+                                  #  - account CONNECT_ACCOUNT.id
                                   #  - idempotency_key STR
                                   #  - api_version 'VERSION'
 STRIPE.on('response', FUNC(OBJ))  #Like 'request' but also:
@@ -2084,3 +2028,49 @@ STRIPE[-NODE].webhooks.signature. #Throw error if webhook request is invalid.
 STRIPE[-NODE].webhooks.           #Like verifyHeader() except:
  constructEvent(REQUEST_PAYLOAD,  #  - returns JSON.parse(REQUEST_PAYLOAD)
  HEADER, SECRET, NUM)->OBJ        #  - def tolerance is 5 minutes
+
+STRIPE.setHost('HOST')            #Def: 'api.stripe.com'
+STRIPE.setPort('PORT')            #Def: 443
+STRIPE.setProtocol('SCHEME')      #Def: 'https'
+
+STRIPE.setMaxNetworkRetries(NUM)  #Def: 0
+                                  #Retry on 409 (any method) or 5** (not POST)
+                                  #If not 0, defaults Idempotency-Key [C] to a UUIDv4
+                                  #Uses exponential backoff
+STRIPE.setTimeout(NUM)            #Def: 2 mins (like Node.js core)
+STRIPE.setAgent(AGENT)            #Def: AGENT with keepAlive true
+
+User-Agent: Stripe/v1
+ NodeBindings/{PACKAG.version} [C]#
+X-Stripe-Client-User-Agent:       #Set with analytics. JSON of OBJ:
+ JSON [C]                         #  - bindings_version PACKAGE.version
+                                  #  - lang 'node'
+                                  #  - lang_version: process.version
+                                  #  - platform: process.platform
+                                  #  - publisher 'stripe'
+                                  #  - uname `uname -a`
+                                  #  - application APPINFO
+STRIPE.setAppInfo(APPINFO)        #Analytics info used in:
+                                  #  - User-Agent [C] as 'NAME[/VERSION] [(URL)]' at end
+                                  #  - X-Stripe-Client-User-Agent [C]
+                                  #APPINFO: name, version, url, partner_id
+                                  #Meant for Stripe plugins.
+STRIPE.setTelemetryEnabled(true)  #Send X-Stripe-Client-Telemetry: JSON [C] of OBJ:
+                                  #  - last_request_metrics OBJ_ARR:
+                                  #     - request_id STR: Request-Id [S]
+                                  #     - request_duration_ms NUM
+                                  #Def: disabled
+
+SPEC:
+  - method STR (def: 'GET')
+  - basePath 'PATH' (def: '/v1/'): will also use RESOURCE.path (e.g. 'balance')
+  - path 'PATH': can contain '{[optional!]}', replaced and URI encoded
+  - urlParams ARR (def: []): PATH parameters
+  - encode FUNC (def: noop): transform DATA_OBJ
+  - host STR (def: 'api.stripe.com')
+  - headers OBJ
+  - validator(DATA_OBJ, { headers }): can throw error
+  - requestDataProcessor('METHOD', DATA_OBJ, HEADERS, FUNC(ERROR, DATA)): override HTTP request making
+  - transformResponseData(RESPONSE)->RESPONSE
+  - includeBasic BOOL (def: false): add create|list|retrieve|update|del|setMetadata|getMetadata()
+  - methodList 'list': add pagination methods
