@@ -2,7 +2,7 @@ Database features:
   - "order_by"
   - "limit"
   - "offset"
-  
+
 model.database "ADAPTER":
   - def "memory"
   - guess which database is enabled with this instead of the "enabled" flag
@@ -18,7 +18,24 @@ Create currentData:
   - if query returns some models, throw DB_MODEL_CONFLICT
   - then make create action an upsert instead, to avoid concurrency problem if another client created the model in-between
   - i.e. database adapter does not need to handle DB_MODEL_CONFLICT anymore
-  - this would also solve the "create dryrun" problem (see eda doc)
+  - this would also solve the "create dryrun" problem (see below)
+
+Create dryruns:
+  - problem:
+     - create* dryruns must fail if models already exist
+     - database adapters should be agnostic to this, i.e. should just perform find queries to check for model existence
+     - we want to avoid doing one query for each model, but still handle the situation where some models exist,
+       while some others do not
+  - solution:
+     - create* dryruns transform to a find query (like delete dryruns)
+        - add args.filter.id using args.newData. Remove args.filter as soon as database check finishes, so that next middleware
+          do not use it
+        - add args.createDryRun true so that databaseExecute middleware knows
+     - a findMany query is performed:
+        - if *all* model ids returned a 404, catch the error and return same response as replace dryrun
+           - this requires database adapters to return *all* failing ids when throwing a 404, which I am unsure whether
+             it is too much to ask???
+        - if *any* model id does not return a 404, throw same error as when trying to create a model that already exist
 
 Problem of modifying nested attributes:
   - if attr.target !== undefined:
@@ -73,6 +90,20 @@ Reintroduce upsert action:
   - check commit that removed it to make sure I did not miss anything
   - both create and upsert actions must perform a databaseAdapter upsert command (not a create command)
 
+Atomicity/rollbacks:
+  - in resolveWriteActions(), replace Promise.all() by something that waits for all promises to complete,
+    even on failure, and return all of them
+  - then, if any failed, it:
+       - does a rollback on each of them, success or not
+       - wait for rollback completion
+       - rethrow initial error
+       - if rollback itself threw an error, set rollback error stack trace to initial error.failedRollback STR,
+         using error.extra
+  - rollback reverse the command, and must be idempotent, i.e.:
+       - create -> delete, with no 404 thrown
+       - patch|replace|delete -> upsert with currentData
+       - upsert -> either of the two above, depending on whether currentData is defined
+    
 Complex patches:
   - provide MongoDB-like patch syntax for patch action, including array manipulation
 
@@ -238,20 +269,6 @@ Pagination:
   - system defaults:
      - move all of them to their respective middleware
 
-Atomicity/rollbacks:
-  - in resolveWriteActions(), replace Promise.all() by something that waits for all promises to complete,
-    even on failure, and return all of them
-  - then, if any failed, it:
-       - does a rollback on each of them, success or not
-       - wait for rollback completion
-       - rethrow initial error
-       - if rollback itself threw an error, set rollback error stack trace to initial error.failedRollback STR,
-         using error.extra
-  - rollback reverse the command, and must be idempotent, i.e.:
-       - create -> delete, with no 404 thrown
-       - patch|replace|delete -> upsert with currentData
-       - upsert -> either of the two above, depending on whether currentData is defined
-    
 REST:
   - including:
      - selecting
@@ -587,23 +604,6 @@ GraphQL:
      - support mixing GraphQL introspection query (e.g. __schema) with non-introspection query
      - maybe do this by reusing code from Graphql.js
   - go through GraphQL spec validation chapter again
-
-Create dryruns:
-  - problem:
-     - create* dryruns must fail if models already exist
-     - database adapters should be agnostic to this, i.e. should just perform find queries to check for model existence
-     - we want to avoid doing one query for each model, but still handle the situation where some models exist,
-       while some others do not
-  - solution:
-     - create* dryruns transform to a find query (like delete dryruns)
-        - add args.filter.id using args.newData. Remove args.filter as soon as database check finishes, so that next middleware
-          do not use it
-        - add args.createDryRun true so that databaseExecute middleware knows
-     - a findMany query is performed:
-        - if *all* model ids returned a 404, catch the error and return same response as replace dryrun
-           - this requires database adapters to return *all* failing ids when throwing a 404, which I am unsure whether
-             it is too much to ask???
-        - if *any* model id does not return a 404, throw same error as when trying to create a model that already exist
 
 Model naming:
   - schema.models.MODEL.names STR_ARR:
@@ -1047,10 +1047,10 @@ Positioning:
 
  25  MUST HAVE FEATURES
  1   Wrapup
+ 1   Atomicity/rollbacks
  1   Complex patches
  2   Orphans
  2   Pagination
- 1   Atomicity/rollbacks
  1   REST
  0.5 JSON-RPC
  4   Aggregating
@@ -1085,7 +1085,6 @@ Positioning:
  0.5 Proxies
  0.5 HTTP details
  2   GraphQL
- 0.5 create dry runs
  1   Model naming
 ?3   Database transformation layer
 ?2   Custom actions
