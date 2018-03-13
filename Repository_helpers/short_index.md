@@ -1,1 +1,1 @@
-__Architecture__
+  - [time_complexity](Architecture@/Algorithms@/time_complexity@.txt)
