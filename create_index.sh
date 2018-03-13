@@ -10,7 +10,7 @@ md-file-tree | sed '
   1 d;
   /swp\]/ d;
   /~\]/ d;
-  s_Koi/_/blob/master/_;
+  s_Notes/_/blob/master/_;
   s/\.txt\]/]/;
   s/^  //;
   s/^- /\n/;
