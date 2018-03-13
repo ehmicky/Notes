@@ -399,7 +399,7 @@ require(STR)                                    #  - 'FILE' (absolute or relativ
                                                 #  - 'MODULE':
                                                 #     - i.e. anything that does not start with / or .
                                                 #     - tries require('DIR2/MODULE'), with DIR2 [.../[..]]./node_modules/
-                                                #Paths can omit extensions: .mjs, .js, .json, .node
+                                                #Paths can omit extensions: .js, .mjs, .cjs, .json, .node
                                                 #If not found, throw ERROR with code "MODULE_NOT_FOUND"
 
 require.resolve(STR[, OPTS])->'ID'              #How [MODULE.]require(STR) would resolve
@@ -408,6 +408,8 @@ require.resolve(STR[, OPTS])->'ID'              #How [MODULE.]require(STR) would
                                                 #    Their [.../[..]]./node_modules will always be searched
 require.resolve.paths(STR)->'DIR'_ARR           #Directories that would be looked into when [MODULE.]require(STR) would resolve
 createRequireFromPath('PATH')->require(STR)  10*#require(STR) will load 'PATH/STR' (PATH is relative to __dirname)
+                                             10*#require() is CommonJS, i.e. can be used to use CommonJS in ESM with
+                                             10*#  createRequireFromPath(URL.fileURLToPath(import.meta.url))
 
 require.cache[ID]                               #[MODULE.]require(STR) cache (i.e. modules are only loaded once).
                                                 #ID is require.resolve(STR) result
@@ -445,17 +447,38 @@ CLI ==>                                         #require.main, process.mainModul
                                                 #exports is undefined (but not MODULE.exports)
 
 import|export ...                               #ES modules
-                                                #Must:
-                                                #  - use node --experimental-modules
-                                                #     - --experimental-vm-modules for use in VM
-                                                #  - use FILE.mjs instead of FILE.js
-                                                #     - .mjs can require .js
-                                                #     - .js can require .mjs only with import()
+                                                #Must use node --experimental-modules
+                                                #  - --experimental-vm-modules for use in VM
+                                                #Declaring file as ESM|CommonJS:
+                                                #  - FILE.mjs|cjs
+                                                #  - FILE.js use PACKAGE.type 'module|commonjs' (def: 'commonjs')
+                                                #     - `package.json` can be in nested directories
+                                                #  - stdin|--eval|--print use --input-type module|commonjs (def: 'commonjs')
+                                                #Mixing:
+                                                #  - ESM can import CommonJS
+                                                #     - only default import or dynamic import() (no named|namespace import)
+                                                #     - but can use dynamic require() with createRequireFromPath()
+                                                #  - CommonJS cannot import ESM
+                                                #     - including if ESM is a package (node_modules)
+                                                #     - but can use dynamic import(), which allows importing ESM
                                                 #Loading:
-                                                #  - use same algorithm to find module
-                                                #  - PATH are URL (only file: supported), i.e. need to be URI encoded
+                                                #  - use same algorithm to find node_modules
+                                                #  - cannot omit file extension or use index.js
+                                                #     - unless --es-module-specifier-resolution=node (def: 'explicit')
+                                                #  - cannot import FILE.json
+                                                #     - unless --experimental-json-modules
+                                                #  - cannot import FILE.node
+                                                #  - PATH is actually URI:
+                                                #     - need to be URI encoded
+                                                #     - must use file:/// if absolute
+                                                #     - can use #HASH or ?QUERY
+                                                #        - included in cache key if imported file is ESM, otherwise not
+                                                #        - i.e. can load twice a file by using different ?QUERY (if ESM)
+                                                #     - can use fileURLToPath|pathToFileURL() to convert
                                                 #No CommonJS, i.e. no require|module|exports|__filename|__dirname
                                                 #Supports import(), import.meta.url
+                                                #Can monkey-patch core modules by modifying their default import.
+                                                #Top-level `this` is `undefined` (instead of `module.exports`)
 
 DIFFERENCES ==>                                 #Difference from require(), import and import()
                                                 #Steps:
@@ -510,20 +533,23 @@ NODE-ONLY RESOLVER LOGIC ==>                    #Browsers cannot:
                                                 #  - require node_modules / packages
                                                 #However some of this is usually done through a dependency bundler.
 
-node --loader FILE.mjs                          #Customize the behavior of "import"
-                                                #FILE must export OBJ.resolve('PATH', 'URL', import())->{ url, format }:
-                                                #  - called instead of normal import behavior
-                                                #  - 'PATH' is relative path
-                                                #  - 'URL' is absolute base. Is a URL, e.g. file: protocol with filesystem
-                                                #  - url is resolved absolute URL
-                                                #  - format can be 'esm' (.mjs), 'cjs' (.js), 'json' (.json), 'addon' (.node),
-                                                #    'builtin' (core module) or 'dynamic'
-                                                #When returning format 'dynamic', the loading process is customized as well,
-                                                #and FILE must export async OBJ.dynamicInstantiate(URL)->{ exports, execute(EXPORTS) }:
-                                                #  - URL is the resolved absolute URL returned by OBJ.resolve()
-                                                #  - exports is the 'VAR'_ARR of exported variables
-                                                #  - execute() must call EXPORTS.VAR.get()|set(VAL) to set the value of the
-                                                #    exported variables
+node --loader FILE                              #Customize the behavior of "import"
+                                                #FILE must be ESM, and export:
+                                                #  - resolve('PATH', 'URL', import())->{ url, format }:
+                                                #     - customize resolution
+                                                #     - 'PATH' is relative path
+                                                #     - 'URL' is absolute base
+                                                #        - is a URL, e.g. file: protocol with filesystem
+                                                #        - can be undefined, e.g. REPL
+                                                #     - url is resolved absolute URL
+                                                #     - format can be 'module' (ESM), 'commonjs', 'json', 'addon', 'builtin' (core module) or 'dynamic'
+                                                #  - dynamicInstantiate(URL)->PROMISE_{ exports, execute(EXPORTS) }:
+                                                #     - customize loading, for custom formats beyong ESM/CommonJS/JSON
+                                                #     - when returning format 'dynamic'
+                                                #     - URL is the resolved absolute URL returned by OBJ.resolve()
+                                                #     - exports is the 'VAR'_ARR of exported variables
+                                                #     - execute() must call EXPORTS.VAR.get()|set(VAL) to set the value of the
+                                                #       exported variables
 
 
                                              /=+===============================+=\
