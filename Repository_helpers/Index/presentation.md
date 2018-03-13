@@ -20,7 +20,9 @@ This covers:
 # Size #
 
 _Number of files_: NUMBER_OF_FILES
+
 _Number of lines_: NUMBER_OF_LINES
+
 _Number of pages (if it was a printed book)_: NUMBER_OF_PAGES
 
 # Structure #
