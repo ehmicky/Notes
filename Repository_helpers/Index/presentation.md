@@ -2,7 +2,7 @@ This repository contains notes I took when using diverse tools and reading IT-re
 
 It should give a good idea of what I can work with, although it is primarly intended for my own usage.
 This covers:
-  - _[Theory]()_: [design patterns](), [data structures](), [algorithms](), [type theory]()
+  - _[Theory](Theory)_: [design patterns](Theory), [data structures](Theory/Modelling/data_structures.theory.txt), [algorithms](Theory/Algorithms), [type theory](Theory/Types)
   - _[Languages]()_: [JavaScript]() (including [ES6](), [Node](), [DOM](), [Web APIs]()), [HTML](), [CSS](), [Bash](), [C](), [C++](), [ASM x86](), [R](), [VBA]()
      - _Transcompiled languages_: [CoffeeScript](), [Jade](), [Sass](), [Less](), [PostCSS]()
   - _Procotols_: [HTTP]() (including [REST]()), [WebSocket](), [TCP]()
