@@ -10,7 +10,7 @@ md-file-tree | sed '
   1 d;
   /swp\]/ d;
   /~\]/ d;
-  s_Koi/_//github.com/ehmicky/Koi/blob/dev/_;
+  s_Koi/_//github.com/ehmicky/Koi/blob/master/_;
   s/\.txt\]/]/;
   s/^  //;
   s/^- /\n/;
