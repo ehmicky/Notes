@@ -18,10 +18,10 @@ This covers:
   - _[Automating](Non_functional_requirements/Maintainability/Operability/Automation)_: [build automation](Non_functional_requirements/Maintainability/Operability/Automation/Build_automation), [continuous integration](Non_functional_requirements/Maintainability/Operability/Automation/Continuous_integration)
   - _Others_: [analytics](Functional_requirements/Analytics), [realtime](Functional_requirements/Realtime)
 
-# Size #
+# Size
 
 Number of files: NUMBER_OF_FILES  
 Number of lines: NUMBER_OF_LINES  
 Number of pages (if it were a printed book): NUMBER_OF_PAGES  
 
-# List of files #
+# List of files
