@@ -12,32 +12,44 @@ Logo:
   - "difftest" and include green + and red - inside letters
   - nice sans-serif non-monospace font
 
-test|snapshot("TITLE", [...ARR], FUNC(...ARG)->[PROMISE_]VAL [, ...OPTS])->PROMISE
+test|snapshot("TITLE", [...ARR], FUNC(t, ...ARG)->[PROMISE_]VAL [, ...OPTS])->PROMISE
   - must be called synchronously during file load
   - named export `test|snapshot` (not default export)
-  - test(): assertion testing (must throw errors), no snapshot
-  - snapshot(): returned value or thrown exception creates snapshot
+
+test():
+  - assertion testing (no snapshot)
+
+snapshot():
+  - snapshot testing
+  - should return VAL to snapshot
+  - if return PROMISE, await it
+  - exceptions or rejected PROMISEs:
+     - snapshot the ERROR
+     - serializer should always snapshot ERRORs with String() (i.e. no stack trace)
+     - snapshot (including reporting) should include the fact that it's been either thrown or rejected (async BOOL, errored BOOL)
 
 "TITLE":
    - not optional
    - must be unique within file
 
-...ARR + FUNC:
-   - use test-each
-   - `info` not passed to FUNC
+...ARR + FUNC: use test-each
 
-FUNC:
-   - should return VAL to snapshot
-   - should be fired on next tick
-   - if return PROMISE, await it
+FUNC: should be fired on next tick
 
-PROMISE:
+t OBJ:
+  - index, indexes: like test-each
+  - name STR
+  - title STR: name + stringified data used for reporting
+  - snapshot BOOL: whether snapshot() or test() was called
+  - log(VAL,...)
+
+Returned PROMISE:
   - resolved value:
       - OBJ:
          - title STR, args: ARR_ARR, options OPTS
          - tests OBJ_ARR: success BOOL, type 'new|removed|same|different|inconstant', action 'next|update|remove|move|input', value VAL, snapshot STR, args ARR, async BOOL, errored BOOL
          - others???
-      - not documented. Meant for plugins.
+      - meant for plugins.
   - always resolved, even on test failure
 
 Re-using:
@@ -53,11 +65,6 @@ Hooks not needed:
    - afterAll(): use await Promise.all(...PROMISE) using returned PROMISEs
    - before|afterEach(): just repeat code at beginning|end of FUNC
 
-Exceptions or rejected PROMISEs:
-  - snapshot the ERROR
-  - serializer should always snapshot ERRORs with String() (i.e. no stack trace)
-  - snapshot (including reporting) should include the fact that it's been either thrown or rejected (async BOOL, errored BOOL)
-
 CLI runner:
   - called "dt" to make it fast to type
 
@@ -72,13 +79,19 @@ Files selection:
      - node_modules, bower_components, jspm_packages
 
 Tests selection:
-  - OPTS.skip BOOL (def: false):
+  - CONF.skip REGEXP_ARR (-s|--skip):
+     - partial matching
+     - on the CLI, is 'REGEXP' case-insensitive
+     - matched against test titles
+     - def: /[skip]/i
      - do not run
      - do not report, except in summary
      - do not make snapshots "removed"
-  - OPTS.only BOOL (def: false):
-     - like adding OPTS.skip true to all other tests
-     - priority over OPTS.skip
+     - skip in CONF.remove|input true
+  - CONF.only REGEXP_ARR (-o|--only):
+     - like adding CONF.skip true to all other tests
+     - def: /[skip]/i
+     - priority over CONF.skip
      - file-wise, i.e. user might need to use files selection too
 
 Test declaration:
@@ -117,9 +130,7 @@ CONF.remove BOOL (-r|--remove):
   - more snapshots in snapshot files
   - do not run tests
   - no reporting
-  - only for the snapshots that were used:
-     - not for skipped tests
-     - not for not selected files
+  - only for the snapshots that were used: not for skipped tests or not selected files
   - not compatible with CONF.update|input true
 
 "removed" result type:
@@ -175,14 +186,42 @@ Result types:
    - "same" snapshots (i.e. unchanged)
    - "different" snapshots (same snapshot key but different snapshot)
    - "inconstant" snapshots (current test code created different snapshots when run several times)
-   - "process" snapshots (process errors)
+   - "process" errors
+
+CONF.input BOOL (-i|--input):
+  - goal: test-first development for snapshots
+  - not compatible with CONF.update|remove true
+  - only report existing snapshot tests, i.e. do not report:
+      - assertion tests
+      - removed tests
+      - "process" errors
+  - file|test selection applies as normal
+  - result type always "input"
+  - content is either:
+      - if new test: empty
+      - otherwise: current snapshot
+         - reported the same way as "same" snapshots
+         - we are reporting currently persisted snapshots only (as opposed to snapshot() return value), so it's clear we are only updating them through inputs
+  - tests are not run (not needed)
+      - but files are loaded, so we know about which tests are defined
+  - each result should prompt:
+      - if submit without entering anything, noop:
+          - must distinguish from explicitely entering undefined
+      - if submitting something:
+           - updates snapshot in snapshot file with it
+           - do not erase the prompt, so user can see previous prompts
+           - moves to next one
+      - use Node REPL ("readline" or "repl" core module)
+      - can multiple statements (use the last one)
+      - can use history (arrow up) to re-use previous inputs
+      - retry if invalid input
 
 CONF.level STR:
-  - among 'error', 'warn', 'info', 'silent'
+  - among 'silent', 'error', 'warn', 'info'
   - do not report "pass|same" result types:
-     - for 'error|warn' but not 'info|silent'
+     - for 'silent|error|warn' but not 'info'
   - do not report content (but still report header) of tests, except first failed one of each test + result type
-     - for 'error' but not 'warn|info|silent'
+     - for 'silent|error' but not 'warn|info'
   - for any reporters
   - default value:
      - pretty|tap|notify: 'error'
@@ -296,6 +335,18 @@ Reporting ordering:
      - when test() was called
      - result type: "same" > "different" > "new" > "removed"
      - argument order in parameters
+
+Logging:
+  - workers should not redirect stdout|stderr to parent
+  - t.log(VAL,...):
+     - if a test is passing and CONF.level 'error|warn' (but not 'silent'), still report it if it contains t.log()
+     - report VAL:
+        - all lines prefixed with =>
+        - in gray
+        - multiline formatting, same as snapshot reporting
+     - if several VAL: reported on separate lines
+     - TAP comment with tap reporter (no prefix, colors), single line
+     - print always after snapshot content
 
 Use itself for unit testing, but its latest release (not direct require())
 
