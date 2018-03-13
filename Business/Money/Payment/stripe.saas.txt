@@ -15,14 +15,18 @@ TODO:
         - https://stripe.com/docs/development/checklist
         - https://stripe.com/docs/stripe-js/reference
         - https://stripe.com/docs/payments/checkout
+           - including the Checkout section on https://stripe.com/docs/receipts
         - https://stripe.com/docs/payments/3d-secure
   - go through each attribute, edit and try to make sense of them
   - check https://raw.githubusercontent.com/stripe/openapi/master/openapi/spec3.yaml
+  - what do publishable keys do?
+     - check what 'RETRIEVABLE WITH PUBLISHABLE KEY' means in API docs
   - difference Connect custom vs express vs standard
      - including in API it sometimes shows "Custom only" or "Custom and Express only"
   - go through all undocumented endpoints, see if they are documented elsewhere
   - pricing
   - go through Stripe dashboard
+     - including https://stripe.com/docs/receipts#automatically-send-receipts-when-using-billing
   - compare with other providers like PayPal
   - https://stripe.com/works-with
 
@@ -383,6 +387,47 @@ ADDRESS.postal_code               #STR
 ADDRESS.line1                     #STR (e.g. street)
 ADDRESS.line2                     #STR (e.g. appt)
 
+GET /files[/ID]                   #For POST:
+POST /files                       #  - endpoint is https://files.stripe.com
+                                  #  - Content-Type is multipart/form-data
+                                  #  - with Node.js library:
+                                  #     - request payload is either:
+                                  #        - OBJ where:
+                                  #           - key is filename
+                                  #           - value is BUFFER|STR or { [type: 'MIME', ]data BUFFER|STR }
+                                  #        - STREAM: filename will be 'file'
+                                  #     - def files MIME is 'application/octet-stream'
+STRIPE.files.
+ retrieve|list|create()           #
+FILE                              #Any file
+FILE.filename                     #string A filename for the file, suitable for saving to a filesystem.
+FILE.links                        #FILE_LINK_LIST
+FILE.file_link_data             RC#FILE_LINK:
+                                  #  - create (required) BOOL: set this to true to create a file link for the newly created file.
+                                  #    Creating a link is only possible when the file’s purpose is one of the following: business_icon, business_logo, customer_signature, dispute_evidence, pci_document,
+                                  #    or tax_document_user_upload.
+                                  #  - expires_at, metadata
+FILE.purpose                    *C#string The purpose of the file.
+                                  #Possible values are:
+                                  #  - 'identity_document': PERSON.verification.document.front|back
+                                  #  - business_icon, business_logo, customer_signature, dispute_evidence, finance_report_run, pci_document, sigma_scheduled_query, tax_document_user_upload.
+?purpose=STR                      #
+FILE.size                         #integer The size in bytes of the file object.
+FILE.title                        #string A user friendly title for the document.
+FILE.type                         #string The type of the file returned (e.g., csv, pdf, jpg, or png).
+FILE.url                          #string The URL from which the file can be downloaded using your live secret API key.
+
+GET /file_links[/ID]
+POST /file_links[/ID]             #Link sharing a FILE publicly.
+STRIPE.fileLinks.
+ retrieve|list|create|update()    #
+FILE_LINK.expired                 #boolean Whether this link is already expired.
+?expired=BOOL                     #
+FILE_LINK.expires_at            CU#timestamp Time at which the link expires.
+FILE_LINK.file                  *C#FILE.id The file object this link points to.
+?file=FILE.id                     #
+FILE_LINK.url                     #string The publicly accessible URL to download the file.
+
 GET /balance                      #BALANCE
                                   #Current Stripe "aggregated bank account".
 STRIPE.balance.retrieve()         #
@@ -465,7 +510,7 @@ CHARGE.source                   *C#Can be:
                                   #  - SOURCE|CARD|BANK_ACCOUNT: requires CHARGE.customer
                                   #  - STRIPE_ACCOUNT.id
 CHARGE.payment_method             #PAYMENT_METHOD.id
-CHARGE.payment_method_details     #PAYMENT_METHOD_DETAILS
+CHARGE.payment_method_details     #Like SOURCE.type + SOURCE.TYPE.*
 CHARGE.customer                 CU#CUSTOMER.id
 ?customer=CUSTOMER.id             #
 CHARGE.application                #STRIPE_ACCOUNT.id
@@ -476,24 +521,15 @@ CHARGE.statement_descriptor      C#STR. Shown to customer's bank transaction sta
                                   #Prefixed by PAYMENTS_SETTINGS.statement_descriptor + '* '.
                                   #Total max length 22.
 CHARGE.description              CU#STR. Shown in receipts.
-CHARGE.dispute                    #DISPUTE.id
-CHARGE.invoice                    #INVOICE.id
-CHARGE.order                      #ORDER.id
-CHARGE.payment_intent             #PINTENT.id
-CHARGE.review                     #REVIEW.id
-CHARGE.transfer                   #TRANSFER.id. Only applicable if the charge was created using the destination parameter.
-CHARGE.source_transfer            #TRANSFER.id. Only present if the charge came from another Stripe account.
-CHARGE.receipt_email            CU#'EMAIL' receipt was sent to. null until sent.
-CHARGE.receipt_number             #STR.
-CHARGE.receipt_url                #STR. Kept up-to-date.
-CHARGE.billing_details            #BILL_DETAILS.
-CHARGE.shipping                 CU#SHIPPING.
-CHARGE.fraud_details             U#FRAUD_DETAILS
-FRAUD_DETAILS.stripe_report       #'fraudulent' (set by Stripe)
-FRAUD_DETAILS.user_report         #'fraudulent|safe' (set by current user)
+CHARGE.receipt_email            CU#'EMAIL' to send a receipt to.
+                                  #Defaults to CHARGE.customer.email
+                                  #Can be resent|previewed from the dashboard.
+CHARGE.receipt_url                #'URI'. Kept up-to-date.
+CHARGE.receipt_number             #STR. Unique number appearing on receipts.
 CHARGE.outcome                    #OUTCOME. Whether payment was accepted.
+OUTCOME.type                      #STR among 'authorized', 'manual_review', 'issuer_declined', 'blocked', 'invalid'.
 OUTCOME.network_status            #STR among:
-                                  #  - 'approved_by_network'
+                                  #  - 'approved_by_network': success
                                   #  - 'declined_by_network'
                                   #  - 'not_sent_to_network'
                                   #  - 'reversed_after_approval': bank authorized, but Stripe blocked
@@ -508,7 +544,18 @@ OUTCOME.risk_score                #0-100
                                   #Undefined for non-card payments
 OUTCOME.rule                      #Radar's rule ID
 OUTCOME.seller_message            #STR. Explanation.
-OUTCOME.type                      #STR among 'authorized', 'manual_review', 'issuer_declined', 'blocked', 'invalid'.
+CHARGE.dispute                    #DISPUTE.id
+CHARGE.invoice                    #INVOICE.id
+CHARGE.order                      #ORDER.id
+CHARGE.payment_intent             #PINTENT.id
+CHARGE.review                     #REVIEW.id
+CHARGE.transfer                   #TRANSFER.id. Only applicable if the charge was created using the destination parameter.
+CHARGE.source_transfer            #TRANSFER.id. Only present if the charge came from another Stripe account.
+CHARGE.billing_details            #BILL_DETAILS.
+CHARGE.shipping                 CU#SHIPPING.
+CHARGE.fraud_details             U#FRAUD_DETAILS
+FRAUD_DETAILS.stripe_report       #'fraudulent' (set by Stripe)
+FRAUD_DETAILS.user_report         #'fraudulent|safe' (set by current user)
 CHARGE.refunded                   #BOOL. False if not refunded or partially refunded.
 CHARGE.refunds                    #REFUND_LIST. Refunds that have been applied.
 CHARGE.transfer_data             C#TRANSFER_DATA.
@@ -641,47 +688,6 @@ EVIDENCE.shipping_tracking_number #string The tracking number for a physical pro
 EVIDENCE.uncategorized_file       #FILE.id Any additional evidence or statements.
 EVIDENCE.uncategorized_text       #string Any additional evidence or statements.
 
-GET /files[/ID]                   #For POST:
-POST /files                       #  - endpoint is https://files.stripe.com
-                                  #  - Content-Type is multipart/form-data
-                                  #  - with Node.js library:
-                                  #     - request payload is either:
-                                  #        - OBJ where:
-                                  #           - key is filename
-                                  #           - value is BUFFER|STR or { [type: 'MIME', ]data BUFFER|STR }
-                                  #        - STREAM: filename will be 'file'
-                                  #     - def files MIME is 'application/octet-stream'
-STRIPE.files.
- retrieve|list|create()           #
-FILE                              #Any file
-FILE.filename                     #string A filename for the file, suitable for saving to a filesystem.
-FILE.links                        #FILE_LINK_LIST
-FILE.file_link_data             RC#FILE_LINK:
-                                  #  - create (required) BOOL: set this to true to create a file link for the newly created file.
-                                  #    Creating a link is only possible when the file’s purpose is one of the following: business_icon, business_logo, customer_signature, dispute_evidence, pci_document,
-                                  #    or tax_document_user_upload.
-                                  #  - expires_at, metadata
-FILE.purpose                    *C#string The purpose of the file.
-                                  #Possible values are:
-                                  #  - 'identity_document': PERSON.verification.document.front|back
-                                  #  - business_icon, business_logo, customer_signature, dispute_evidence, finance_report_run, pci_document, sigma_scheduled_query, tax_document_user_upload.
-?purpose=STR                      #
-FILE.size                         #integer The size in bytes of the file object.
-FILE.title                        #string A user friendly title for the document.
-FILE.type                         #string The type of the file returned (e.g., csv, pdf, jpg, or png).
-FILE.url                          #string The URL from which the file can be downloaded using your live secret API key.
-
-GET /file_links[/ID]
-POST /file_links[/ID]             #Link sharing a FILE publicly.
-STRIPE.fileLinks.
- retrieve|list|create|update()    #
-FILE_LINK.expired                 #boolean Whether this link is already expired.
-?expired=BOOL                     #
-FILE_LINK.expires_at            CU#timestamp Time at which the link expires.
-FILE_LINK.file                  *C#FILE.id The file object this link points to.
-?file=FILE.id                     #
-FILE_LINK.url                     #string The publicly accessible URL to download the file.
-
 GET /payment_intents[/ID]
 POST /payment_intents[/ID]        #
 POST /payment_intents/ID/confirm  #Set payment's method and start payment.
@@ -703,11 +709,23 @@ payment_intent.                   #'EVENT_TYPE' when a PaymentIntent has funds t
 payment_intent.payment_failed     #'EVENT_TYPE' when a PaymentIntent has failed the attempt to create a source or a payment.
 payment_intent.succeeded          #'EVENT_TYPE' when a PaymentIntent has been successfully fulfilled.
 PINTENT                           #Ongoing flow to pay by a CUSTOMER.
-PINTENT.amount                 *CU#MONEY Amount intended to be collected by this PaymentIntent.
+PINTENT.amount                 *CU#
+PINTENT.application               #
+PINTENT.application_fee_amount  CU#
+PINTENT.customer                CU#
+PINTENT.description             CU#
+PINTENT.invoice                   #
+PINTENT.on_behalf_of             C#
+PINTENT.payment_method          CU#
+PINTENT.receipt_email           CU#
+PINTENT.review                    #
+PINTENT.shipping                CU#
+PINTENT.source                  CU#
+PINTENT.statement_descriptor    CU#
+PINTENT.transfer_data            C#
+PINTENT.transfer_group          CU#Like CHARGE.*
 PINTENT.amount_capturable         #MONEY Amount that can be captured from this PaymentIntent.
 PINTENT.amount_received           #MONEY Amount that was collected by this PaymentIntent.
-PINTENT.application               #STRIPE_ACCOUNT.id ID of the Connect application that created the PaymentIntent.
-PINTENT.application_fee_amount  CU#integer The amount of the application fee (if any) for the resulting payment. See the PaymentIntents Connect usage guide for details.
 PINTENT.canceled_at               #timestamp Populated when status is canceled, this is the time at which the PaymentIntent was canceled. Measured in seconds since the Unix epoch.
 PINTENT.cancellation_reason       #string User-given reason for cancellation of this PaymentIntent, one of duplicate, fraudulent, requested_by_customer, or failed_invoice.
 PINTENT.capture_method           C#string Capture method of this PaymentIntent, one of automatic or manual.
@@ -715,21 +733,7 @@ PINTENT.charges                   #CHARGE_LIST
 PINTENT.client_secret             #string The client secret of this PaymentIntent.
                                   #Used for client-side retrieval using a publishable key.
                                   #Please refer to dynamic authentication guide on how client_secret should be handled.
-PINTENT.customer                CU#CUSTOMER.id ID of the Customer this PaymentIntent is for if one exists.
-PINTENT.description             CU#string An arbitrary string attached to the object. Often useful for displaying to users.
-PINTENT.invoice                   #INVOICE.id ID of the invoice that created this PaymentIntent, if it exists.
-PINTENT.last_payment_error        #LPERROR. The payment error encountered in the previous PaymentIntent confirmation.
-LPERROR.type                      #string The type of error returned.
-                                  #One of api_connection_error, api_error, authentication_error, card_error, idempotency_error, invalid_request_error, or rate_limit_error
-LPERROR.charge                    #CHARGE.id For card errors
-LPERROR.code                      #string For some errors that could be handled programmatically, a short string indicating the error code reported.
-LPERROR.decline_code              #string For card errors resulting from a card issuer decline, a short string indicating the card issuer’s reason for the decline if they provide one.
-LPERROR.doc_url                   #string A URL to more information about the error code reported.
-LPERROR.message                   #string A human-readable message providing more details about the error. For card errors, these messages can be shown to your users.
-LPERROR.param                     #string If the error is parameter-specific, the parameter related to the error. For example, you can use this to display a message near the correct form field.
-LPERROR.payment_intent            #PINTENT The PaymentIntent object for errors returned on a request involving a PaymentIntent.
-LPERROR.payment_method            #PAYMENT_METHOD
-LPERROR.source                    #SOURCE
+PINTENT.last_payment_error        #The payment ERROR encountered in the previous PaymentIntent confirmation.
 PINTENT.next_action               #NEXT_ACTION. If present, this property tells you what actions you need to take in order for your customer to fulfill a payment using the provided source.
 NEXT_ACTION.redirect_to_url       #REDIRECT_TO_URL. Contains instructions for authenticating a payment by redirecting your customer to another page or application.
 REDIRECT_TO_URL.return_url        #string If the customer does not exit their browser while authenticating, they will be redirected to this specified URL after completion.
@@ -737,18 +741,11 @@ REDIRECT_TO_URL.url               #string The URL you must redirect your custome
 NEXT_ACTION.type                  #string Type of the next action to perform, one of redirect_to_url or use_stripe_sdk.
 NEXT_ACTION.use_stripe_sdk        #OBJ. When confirming a PaymentIntent with Stripe.js, Stripe.js depends on the contents of this object to invoke authentication flows.
                                   #The shape of the contents is subject to change and is only intended to be used by Stripe.js.
-PINTENT.on_behalf_of             C#string The account (if any) for which the funds of the PaymentIntent are intended. See the PaymentIntents Connect usage guide for details.
-PINTENT.payment_method          CU#PAYMENT_METHOD.id
 PINTENT.payment_method_types    CU#array containing strings The list of payment method types (e.g. card) that this PaymentIntent is allowed to use.
-PINTENT.receipt_email           CU#string Email address that the receipt for the resulting payment will be sent to.
-PINTENT.review                    #REVIEW.id
 PINTENT.save_payment_method    RCU#Set to true to save the PaymentIntent’s payment method (either source or payment_method) to the associated customer.
                                   #If the payment method is already attached, this parameter does nothing.
                                   #This parameter defaults to false and applies to the payment method passed in the same request or the current payment method attached to the PaymentIntent and must be
                                   #specified again if a new payment method is added.
-PINTENT.shipping                CU#SHIPPING
-PINTENT.source                  CU#CARD|BANK_ACCOUNT|SOURCE.id
-PINTENT.statement_descriptor    CU#string Extra information about a PaymentIntent. This will appear on your customer’s statement when this PaymentIntent succeeds in creating a charge.
 PINTENT.status                    #string Status of this PaymentIntent, one of requires_payment_method, requires_confirmation, requires_action, processing, requires_authorization, requires_capture,
                                   #canceled, or succeeded.
 PINTENT.confirm                 RC#Set to true to attempt to confirm this PaymentIntent immediately.
@@ -760,8 +757,6 @@ PINTENT.confirmation_method      C#string Confirmation method of this PaymentInt
                                   #When the confirmation method is manual, all payment attempts must be made using a secret key.
                                   #The PaymentIntent will return to the requires_confirmation state after handling next_actions, and requires your server to initiate each payment attempt with an explicit
                                   #confirmation.
-PINTENT.transfer_data            C#TRANSFER_DATA. The data with which to automatically create a Transfer when the payment is finalized. See the PaymentIntents Connect usage guide for details.
-PINTENT.transfer_group          CU#string A string that identifies the resulting payment as part of a group. See the PaymentIntents Connect usage guide for details.
 
 GET /payouts[/ID]
 POST /payouts[/ID]                #
@@ -873,143 +868,6 @@ REFUND.reverse_transfer         RC#Optional, default is false
                                   #The transfer will be reversed proportionally to the amount being refunded (either the entire or partial amount).
                                   #A transfer can be reversed only by the application that created the charge.
 
-GET /tokens/ID                    #
-POST /tokens                      #Payload must use one of: pii, account card+customer, bank_account+customer
-STRIPE.tokens.retrieve|create()   #
-TOKEN                             #Representation of a card or bank account information.
-                                  #Goal is to avoid leaking those information by using a TOKEN instead.
-                                  #One-time usage. Expires after few minutes.
-TOKEN.pii                       RC#OBJ: id_number STR
-                                  #Personally Identifiable Information.
-TOKEN.account                   RC#STRIPE_ACCOUNT except:
-                                  #  - only business_type, company and individual
-                                  #  - also tos_shown_and_accepted BOOL
-                                  #  - ATTR_provided BOOL -> ATTR STR
-                                  #  - no *.details|status
-                                  #  - no invididual.relationship|requirements
-TOKEN.card                       C#CARD
-                                  #On create:
-                                  #  - only currency, name, exp_*, cvc, address_*
-                                  #  - also number STR
-                                  #  - required: number, exp_*, cvc
-TOKEN.bank_account               C#BANK_ACCOUNT
-                                  #On create:
-                                  #  - only country, currency, account_holder_*, routing_number
-                                  #  - also account_number STR
-                                  #  - required: country, currency, account_number
-TOKEN.customer                  RC#CUSTOMER.id
-TOKEN.client_ip                   #string IP address of the client that generated the token.
-TOKEN.type                        #string Type of the token: account, bank_account, card, or pii.
-TOKEN.used                        #boolean Whether this token has already been used (tokens can be used only once).
-
-payment_method.attached           #'EVENT_TYPE' when a new payment method is attached to a customer.
-payment_method.
- card_automatically_updated       #'EVENT_TYPE' when a card payment method's details are automatically updated by CAU.
-payment_method.detached           #'EVENT_TYPE' when a payment method is detached from a customer.
-PAYMENT_METHOD_DETAILS            #Several ways to pay of a CUSTOMER.
-PAYMENT_METHOD_DETAILS.type 'TYPE'#Payment provider among:
-                                  #  - 'ach_credit_transfer'
-                                  #  - 'ach_debit'
-                                  #  - 'alipay'
-                                  #  - 'bancontact'
-                                  #  - 'card'
-                                  #  - 'card_present'
-                                  #  - 'eps'
-                                  #  - 'giropay'
-                                  #  - 'ideal'
-                                  #  - 'multibanco'
-                                  #  - 'p24'
-                                  #  - 'sepa_debit'
-                                  #  - 'sofort'
-                                  #  - 'stripe_account'
-                                  #  - 'wechat'
-PAYMENT_METHOD_DETAILS.TYPE       #METHOD_DETAILS. Each TYPE has its own attributes, but some are shared.
-METHOD_DETAILS.reference          #STR. Unique reference for this payment.
-                                  #Only with multibanco|p24.
-METHOD_DETAILS.verified_name      #STR. Owner's full name according to provider.
-                                  #Only with bancontact|eps|giropay|ideal|p24|sofort.
-METHOD_DETAILS.country            #Bank account's COUNTRY.
-                                  #Only with ach_debit|card|card_present|sofort.
-METHOD_DETAILS.account_holder_type#STR. Whether bank account holder is 'individual' or 'company'.
-                                  #Only with ach_debit.
-METHOD_DETAILS.preferred_language #STR. Customer's preferred language among 'en', 'de', 'fr', 'nl'.
-                                  #Only with bancontact.
-METHOD_DETAILS.entity             #STR. Entity number.
-                                  #Only with multibanco.
-METHOD_DETAILS.account_number     #STR. Account number to transfer funds to.
-                                  #Only with ach_credit_transfer.
-METHOD_DETAILS.routing_number     #STR. Routing transit number of the destination bank account.
-                                  #Only with ach_credit_transfer|ach_debit.
-METHOD_DETAILS.fingerprint        #STR. Checksum|fingerprint of the bank account or card number.
-                                  #Only with ach_debit|card|card_present.
-METHOD_DETAILS.last4              #STR. Last four digits of the bank account or card number.
-                                  #Only with ach_debit|card|card_present.
-METHOD_DETAILS.iban_last4         #STR. Last four characters of the IBAN.
-                                  #Only with bancontact|ideal|sofort.
-METHOD_DETAILS.bank               #STR. Bank name among 'abn_amro', 'asn_bank', 'bunq', 'handelsbanken', 'ing', 'knab',
-                                  #'moneyou', 'rabobank', 'regiobank', 'sns_bank', 'triodos_bank', 'van_lanschot'.
-                                  #Only with ideal.
-METHOD_DETAILS.bank_name          #STR. E.g. 'WELLS FARGO'
-                                  #Only with ach_credit_transfer|ach_debit|bancontact|giropay|sofort.
-METHOD_DETAILS.bank_code          #STR. Code of the bank.
-                                  #Only with bancontact|giropay|sofort.
-METHOD_DETAILS.bic                #STR. Bank Identifier Code.
-                                  #Only with bancontact|giropay|ideal|sofort.
-METHOD_DETAILS.swift_code         #STR. Bank's SWIFT code.
-                                  #Only with ach_credit_transfer.
-METHOD_DETAILS.brand              #STR. Card brand among 'amex', 'diners', 'discover', 'jcb', 'mastercard', 'unionpay', 'visa', 'unknown'.
-                                  #Only with card|card_present.
-METHOD_DETAILS.exp_month          #INT. Card's expiration month (1-12)
-                                  #Only with card|card_present.
-METHOD_DETAILS.exp_year           #INT. Card's expiration year.
-                                  #Only with card|card_present.
-METHOD_DETAILS.funding            #STR. Card funding type among 'credit', 'debit', 'prepaid', 'unknown'.
-                                  #Only with card|card_present.
-METHOD_DETAILS.checks             #Check results and CVC with OBJ:
-                                  #Only with card.
-                                  #  - address_line1_check STR: 'pass', 'failed', 'unavailable', 'unchecked' (if address line1 was defined)
-                                  #  - address_postal_code_check STR: same for postal_code
-                                  #  - cvc_check STR: same for cvc
-METHOD_DETAILS.read_method        #STR. How card was read among 'contact_emv', 'contactless_emv', 'magnetic_stripe_fallback', 'magnetic_stripe_track2', 'contactless_magstripe_mode'
-                                  #Only with card_present.
-METHOD_DETAILS.generated_card    ?#CARD.id
-                                  #Only with card_present.
-METHOD_DETAILS.three_d_secure    ?#Populated if this transaction used 3D Secure authentication. OBJ:
-                                  #  - supported BOOL
-                                  #Only with card.
-METHOD_DETAILS.emv_auth_data      #STR. Authorization response cryptogram.
-                                  #Only with card_present.
-METHOD_DETAILS.wallet             ?#WALLET. Card's wallet.
-                                  #Only with card.
-WALLET.type                       #STR. 'amex_express_checkout', 'apple_pay', 'google_pay', 'masterpass', 'samsung_pay', 'visa_checkout'
-WALLET.dynamic_last4              #STR. For tokenized numbers only. The last four digits of the device account number.
-WALLET.TYPE.billing_address       #ADDRESS. For 'masterpass', 'visa_checkout' only.
-WALLET.TYPE.shipping_address      #ADDRESS. For 'masterpass', 'visa_checkout' only.
-WALLET.TYPE.email                 #STR. For 'masterpass', 'visa_checkout' only
-WALLET.TYPE.name                  #STR. Owner's name. For 'masterpass', 'visa_checkout' only
-METHOD_DETAILS.receipt            #OBJ. Fields to print on receipts. Only required for EMV transactions.
-                                  #Only with card_present.
-
-GET /payment_methods/ID
-GET /payment_methods?
- customer=CUSTOMER.id&type=STR
-POST /payment_methods[/ID]        #
-POST /payment_methods/ID/attach
-POST /payment_methods/ID/detach   #Set|unset PAYMENT_METHOD.customer and CUSTOMER.sources. No payload
-STRIPE.paymentMethods.retrieve|
- list|create|update|attach|
-  detach()                        #
-PAYMENT_METHOD                    #Single payment method of a CUSTOMER, by credit card.
-                                  #Same properties as METHOD_DETAILS for type 'card[_present]'
-                                  #  - required on create: type
-                                  #  - only creatable|updatable: card[_present]
-                                  #  - with extra properties:
-PAYMENT_METHOD.TYPE.generated_from#GENERATED
-GENERATED.charge                  #CHARGE.id
-GENERATED.payment_method_details  #PAYMENT_METHOD_DETAILS
-PAYMENT_METHOD.billing_details   U#BILL_DETAILS
-PAYMENT_METHOD.customer           #CUSTOMER.id
-
 GET /sources/ID
 POST /sources[/ID]
 STRIPE.sources.
@@ -1020,10 +878,80 @@ source.chargeable                 #'EVENT_TYPE' when a source transitions to cha
 source.failed                     #'EVENT_TYPE' when a source fails.
 source.mandate_notification       #'EVENT_TYPE' when a source mandate notification method is set to manual.
 source.refund_attributes_required #'EVENT_TYPE' when the refund attributes are required on a receiver source to process a refund or a mispayment.
-SOURCE                            #Abstraction of CARD and BANK_ACCOUNT.
-                                  #Same properties as PAYMENT_METHOD_DETAILS:
-                                  #  - required on create: type
-                                  #  - with extra properties:
+payment_method.attached           #'EVENT_TYPE' when a new payment method is attached to a customer.
+payment_method.
+ card_automatically_updated       #'EVENT_TYPE' when a card payment method's details are automatically updated by CAU.
+payment_method.detached           #'EVENT_TYPE' when a payment method is detached from a customer.
+SOURCE                            #Payment method of a CUSTOMER.
+SOURCE.type 'TYPE'              *C#Specific payment method among:
+                                  #  - 'card'
+                                  #  - 'card_present'
+                                  #  - 'ach_credit_transfer'
+                                  #  - 'ach_debit'
+                                  #  - 'stripe_account'
+                                  #  - 'alipay'
+                                  #  - 'bancontact'
+                                  #  - 'eps'
+                                  #  - 'giropay'
+                                  #  - 'ideal'
+                                  #  - 'multibanco'
+                                  #  - 'p24'
+                                  #  - 'sepa_debit'
+                                  #  - 'sofort'
+                                  #  - 'wechat'
+SOURCE.TYPE                       #SOURCE_DETAILS. Each TYPE has its own attributes, but some are shared.
+SOURCE.card*.brand                #STR. Card brand among 'amex', 'diners', 'discover', 'jcb', 'mastercard', 'unionpay', 'visa', 'unknown'.
+SOURCE.card*.exp_month            #INT. Card's expiration month (1-12)
+SOURCE.card*.exp_year             #INT. Card's expiration year.
+SOURCE.card*.funding              #STR. Card funding type among 'credit', 'debit', 'prepaid', 'unknown'.
+SOURCE.card.checks                #Check results and CVC with OBJ:
+                                  #  - address_line1_check STR: 'pass', 'failed', 'unavailable', 'unchecked' (if address line1 was defined)
+                                  #  - address_postal_code_check STR: same for postal_code
+                                  #  - cvc_check STR: same for cvc
+SOURCE.card.three_d_secure       ?#Populated if this transaction used 3D Secure authentication. OBJ:
+                                  #  - supported BOOL
+SOURCE.card.wallet               ?#WALLET. Card's wallet.
+WALLET.type                       #STR. 'amex_express_checkout', 'apple_pay', 'google_pay', 'masterpass', 'samsung_pay', 'visa_checkout'
+WALLET.dynamic_last4              #STR. For tokenized numbers only. The last four digits of the device account number.
+WALLET.TYPE.name                  #STR. Owner's name. For 'masterpass', 'visa_checkout' only
+WALLET.TYPE.email                 #STR. For 'masterpass', 'visa_checkout' only
+WALLET.TYPE.billing_address       #ADDRESS. For 'masterpass', 'visa_checkout' only.
+WALLET.TYPE.shipping_address      #ADDRESS. For 'masterpass', 'visa_checkout' only.
+SOURCE.card_present.read_method   #STR. How card was read among 'contact_emv', 'contactless_emv', 'magnetic_stripe_fallback', 'magnetic_stripe_track2', 'contactless_magstripe_mode'
+SOURCE.card_present.emv_auth_data #STR. Authorization response cryptogram.
+SOURCE.card_present.receipt       #OBJ. Fields to print on receipts. Only required for EMV transactions.
+                                  #Only with card_present.
+SOURC.card_present.generated_card?#CARD.id
+SOURCE.card*|ach_debit.last4      #STR. Last four digits of the bank account or card number.
+SOURCE.card*|ach_debit.fingerprint#STR. Checksum|fingerprint of the bank account or card number.
+SOURCE.card*|ach_debit|sofort.
+ country                          #Bank account's COUNTRY.
+SOURCE.ach*.routing_number        #STR. Routing transit number of the destination bank account.
+SOURCE.ach_debit.
+ account_holder_type              #STR. Whether bank account holder is 'individual' or 'company'.
+SOURCE.
+ ach_credit_transfer.
+ account_number                   #STR. Account number to transfer funds to.
+SOURCE.ach_credit_transfer.
+ swift_code                       #STR. Bank's SWIFT code.
+SOURCE.
+ ach*|bancontact|giropay|sofort.
+ bank_name                        #STR. E.g. 'WELLS FARGO'
+SOURCE.bancontact|eps|giropay|
+ p24|sofort|ideal.verified_name   #STR. Owner's full name according to provider.
+SOURCE.bancontact|sofort|ideal.
+ iban_last4                       #STR. Last four characters of the IBAN.
+SOURCE.
+ bancontact|giropay|sofort|ideal.
+ bic                              #STR. Bank Identifier Code.
+SOURCE.bancontact|giropay|sofort.
+ bank_code                        #STR. Code of the bank.
+SOURCE.multibanco|p24.reference   #STR. Unique reference for this payment.
+SOURCE.multibanco.entity          #STR. Entity number.
+SOURCE.ideal.bank                 #STR. Bank name among 'abn_amro', 'asn_bank', 'bunq', 'handelsbanken', 'ing', 'knab',
+                                  #'moneyou', 'rabobank', 'regiobank', 'sns_bank', 'triodos_bank', 'van_lanschot'.
+SOURCE.bancontact.
+ preferred_language               #STR. Customer's preferred language among 'en', 'de', 'fr', 'nl'.
 SOURCE.amount                    C#PMONEY This is the amount for which the source will be chargeable once ready. Required for single_use sources.
 SOURCE.client_secret              #string The client secret of the source. Used for client-side retrieval using a publishable key.
 SOURCE.code_verification          #CODE_VERIF. Information related to the code verification flow. Present if the source is authenticated by a verification code (flow is code_verification).
@@ -1080,6 +1008,24 @@ SOURCE RENEWAL ==>                #For some countries, Stripe automatically upda
                                   #EVENT 'customer.source.updated' is emitted.
                                   #EVENT 'customer.source.expiring' is also emitted.
 
+GET /payment_methods/ID
+GET /payment_methods?
+ customer=CUSTOMER.id&type=STR
+POST /payment_methods[/ID]        #
+POST /payment_methods/ID/attach
+POST /payment_methods/ID/detach   #Set|unset PAYMENT_METHOD.customer and CUSTOMER.sources. No payload
+STRIPE.paymentMethods.retrieve|
+ list|create|update|attach|
+  detach()                        #
+PAYMENT_METHOD                    #Credit card SOURCE + CUSTOMER
+PAYMENT_METHOD.type             *C#Like SOURCE.*
+PAYMENT_METHOD.card[_present]   CU#Like SOURCE.*
+PAYMENT_METHOD.TYPE.generated_from#GENERATED
+GENERATED.charge                  #CHARGE.id
+GENERATED.payment_method_details  #PAYMENT_METHOD
+PAYMENT_METHOD.billing_details   U#BILL_DETAILS
+PAYMENT_METHOD.customer           #CUSTOMER.id
+
 GET /customers/ID/sources/ID
 GET /customers/ID/sources?object=
  card&customer=ID
@@ -1087,8 +1033,9 @@ POST /customers/ID/sources[/ID]
 DELETE /customers/ID/sources/ID   #
 STRIPE.sources.list|retrieve|
  create|update|deleteSource()     #
-CARD                              #Single payment method of a CUSTOMER, by credit card.
-                                  #Same properties as METHOD_DETAILS for type 'card' (only exp_* updatable), with extra properties:
+CARD                              #Similar to PAYMENT_METHOD.
+CARD.*                            #Same properties as SOURCE.card
+                                  #None can be created. Only CARD.exp_* are updatable.
 CARD.name                        U#string Cardholder name.
 CARD.account                      #STRIPE_ACCOUNT.id This attribute will not be in the card object if the card belongs to a customer or recipient instead.
 CARD.customer                     #CUSTOMER.id This attribute will not be in the card object if the card belongs to an account or recipient instead.
@@ -1118,13 +1065,9 @@ POST
 STRIPE.sources.list|retrieve|
  create|update|delete|
  verifySource()                   #
-BANK_ACCOUNT                      #Single payment method of a CUSTOMER, by bank account.
-BANK_ACCOUNT.account_holder_type U#Like METHOD_DETAILS.*
-BANK_ACCOUNT.bank_name
-BANK_ACCOUNT.country
-BANK_ACCOUNT.fingerprint
-BANK_ACCOUNT.last4
-BANK_ACCOUNT.routing_number       #Like METHOD_DETAILS.*
+BANK_ACCOUNT                      #ach_debit SOURCE + CUSTOMER.
+BANK_ACCOUNT.*                    #Same properties as SOURCE.ach_debit
+                                  #None can be created. Only BANK_ACCOUNT.account_holder_type is updatable.
 BANK_ACCOUNT.account              #STRIPE_ACCOUNT.id
 BANK_ACCOUNT.account_holder_name U#string The name of the person or business that owns the bank account.
 BANK_ACCOUNT.customer             #CUSTOMER.id
@@ -1139,6 +1082,35 @@ BANK_ACCOUNT.status               #string For bank accounts, possible values are
                                   #Validations aren’t run against external accounts because they’re only used for payouts.
                                   #This means the other statuses don’t apply.
                                   #If a transfer fails, the status is set to errored and transfers are stopped until account details are updated.
+
+GET /tokens/ID                    #
+POST /tokens                      #Payload must use one of: pii, account card+customer, bank_account+customer
+STRIPE.tokens.retrieve|create()   #
+TOKEN                             #Representation of a card or bank account information.
+                                  #Goal is to avoid leaking those information by using a TOKEN instead.
+                                  #One-time usage. Expires after few minutes.
+TOKEN.pii                       RC#OBJ: id_number STR
+                                  #Personally Identifiable Information.
+TOKEN.account                   RC#STRIPE_ACCOUNT except:
+                                  #  - only business_type, company and individual
+                                  #  - also tos_shown_and_accepted BOOL
+                                  #  - ATTR_provided BOOL -> ATTR STR
+                                  #  - no *.details|status
+                                  #  - no invididual.relationship|requirements
+TOKEN.card                       C#CARD
+                                  #On create:
+                                  #  - only currency, name, exp_*, cvc, address_*
+                                  #  - also number STR
+                                  #  - required: number, exp_*, cvc
+TOKEN.bank_account               C#BANK_ACCOUNT
+                                  #On create:
+                                  #  - only country, currency, account_holder_*, routing_number
+                                  #  - also account_number STR
+                                  #  - required: country, currency, account_number
+TOKEN.customer                  RC#CUSTOMER.id
+TOKEN.client_ip                   #string IP address of the client that generated the token.
+TOKEN.type                        #string Type of the token: account, bank_account, card, or pii.
+TOKEN.used                        #boolean Whether this token has already been used (tokens can be used only once).
 
 GET /checkout/sessions/ID
 POST /checkout/sessions           #
@@ -1652,10 +1624,10 @@ REQUIREMENTS.eventually_due       #array containing strings The fields that need
                                   #As they become required, these fields will appear in currently_due as well, and the current_deadline will be set.
 REQUIREMENTS.past_due             #array containing strings The fields that weren’t collected by the current_deadline. These fields need to be collected to re-enable the account.
 STRIPE_ACCOUNT.settings         CU#STRIPE_SETTINGS. Account options for customizing how the account functions within Stripe.
-STRIPE_SETTINGS.branding        CU#BRANDING. Settings used to apply the account’s branding to email receipts, invoices, Checkout, and other products.
-BRANDING.icon                   CU#FILE.id An icon for the account. Must be square and at least 128px x 128px.
-BRANDING.logo                   CU#FILE.id A logo for the account that will be used in Checkout instead of the icon and without the account’s name next to it if provided. Must be at least 128px x 128px.
-BRANDING.primary_color          CU#string A CSS hex color value representing the primary branding color for this account
+STRIPE_SETTINGS.branding        CU#BRANDING. Customize colors/logos in receipts, invoices and Checkout.
+BRANDING.icon                   CU#FILE.id. Icon logo. Square and min 128x128. JPG/PNG/GIF.
+BRANDING.logo                   CU#FILE.id. Full logo. Min 128x128. Max 512KB. JPG/PNG/GIF.
+BRANDING.primary_color          CU#'#CSS_HEX_COLOR'
 STRIPE_SETTINGS.card_payments   CU#CARD_SETTINGS. Settings specific to card charging on the account.
 CARD_SETTINGS.decline_on        CU#DECLINE_ON. Automatically declines certain charge types regardless of whether the card issuer accepted or declined the charge.
 DECLINE_ON.avs_failure          CU#boolean Whether Stripe automatically declines charges with an incorrect ZIP or postal code.
