@@ -518,7 +518,7 @@ ACCOUNT: /accounts
      + COLL constructor must use OBJ.account_id
      - account ACCOUNT
      - agreement AGREEMENT
-    || getByAgreement(AGREEMENT): non-subcollection COLL
+    || getByAgreement(AGREEMENT)->TEMPLATE
      - owner POSITION
      - name STR [V]: uses as comparator
      - visible 1|0
@@ -615,7 +615,7 @@ AGREEMENT: /agreements/AGREEMENT
      - company_orgnr [V]
      - company_country [V]
      + updates Flow.company.company_* on save|patch()
-     - consumer 0|1: seller|buyer
+     - consumer 0|1: seller|consumer
      | isConsumer()
      | hasInfoMatching(COMPANY|ACCOUNT): same company_*
   - owner POSITION
@@ -674,7 +674,7 @@ AGREEMENT: /agreements/AGREEMENT
      - prev_visit[_ts] "ISO"|TIMESTAMP
      - last_visit_ts TIMESTAMP
      | getInviteDate(): returns min of created or AGREEMENT.publish_timestamp
-     | contactMeOneflow(): calls /agreements/AGREEMENT/participants/PARTICIPANT/contact_me
+     | contactMeOneflow(): calls /agreements/AGREEMENT/participants/PARTICIPANT/contact_me -> { signup_token /signup/HASH }
      | getSignupToken(): calls /agreements/AGREEMENT/participants/PARTICIPANT/contact_me
      + permissions:
         + reset on change:state|type, sign|decline, AGREEMENT.permissions:reset, AGREEMENT.participant:sign
@@ -1080,6 +1080,8 @@ modal:
         - same but create a default MVIEW, with OBJ: header|content STR, cancel|confirm.color|text STR, theme STR (CSS class STR-theme)
         - triggers MVIEW.on("confirm:true|false",FUNC())
      - "modal:close"(BOOL)
+  - ModalCountdown mixin:
+     - _modalCountdown(NUM, JQ): show countdown, then calls "modal:close"
 
 MultiActionButton:
   - button with an arrows that shows more options (use Bootstrap)
@@ -1407,139 +1409,177 @@ Agreement layoutmode:
 
 Agreement ParticipantBar:
   - "participants:view"(AGREEMENT):
-     - if not template: 
-        - ParticipantsLayout:
-           - MODEL AGREEMENT
-           - regions:
-              - logo: AgreementBrandingView:
-                 - MODEL SETTINGS_ACCOUNT (of AGREEMENT.owner)
-                 - inherits from BrandingView (but different presentation)
-                    - if ACCOUNT.account-brand-logo:
-                       - 1: adds <img> with src="ACCOUNT.getLogoURL(true)" (i.e. /ACCOUNT_ID/logo.png)
-                       - undefined: upload image (using fineUploader) -> sets ACCOUNT.account-brand-logo 1
-              - companies CompaniesView MCOLLVIEW:
-                 - (if AGREEMENT_COMPANY.consumer 1 (i.e. buyer)) ConsumerView
-                     - MODEL from AGREEMENT.companies with state enabled, but actually uses first PARTICIPANT from each AGREEMENT_COMPANY, according to:
-                        - fullname
-                        - consumer_orgnr: view, and also an input to edit (does patch())
-                        - consumer_country (if AGREEMENT._is_international true, i.e. several different consumer_country)
-                     - clicking on it: popover editable with ConsumerPopoverView to change PARTICIPANT:
-                        - fullname, consumer_orgnr|country, phone_number, (actually on POSITION) email
-                        - "Remove from contract": change state (with patch()).
-                          If is current POSITION, "modal:confirm:show"() first, then (unless guest) "agreements:list-view:current:show"()
-                        + permissions:
-                           - "Remove from contract": allow-remove (same as "Remove FULLNAME" below)
-                     - mixin setState():
-                        - updates CSS: signed|declined (POSITION state)
-                        - updates "state-text": "Signed|Declined DATE" (POSITION state, state_timestamp), "Email delivery failed|bounced DATE" (PARTICIPANT.email_status, email_timestamp)
-                     - BoxMenu "Edit FULLNAME": does not do anything???
-                     - BoxMenu "Remove FULLNAME": does not do anything???
+     - ParticipantsLayout:
+        - MODEL AGREEMENT
+        - regions:
+           ([not] template)
+           - logo: AgreementBrandingView:
+              - MODEL SETTINGS_ACCOUNT (of AGREEMENT.owner)
+              - inherits from BrandingView (but different presentation)
+                 - if ACCOUNT.account-brand-logo:
+                    - 1: adds <img> with src="ACCOUNT.getLogoURL(true)" (i.e. /ACCOUNT_ID/logo.png)
+                    - undefined: upload image (using fineUploader) -> sets ACCOUNT.account-brand-logo 1
+           (template)
+           - companies TemplateSettingsView:
+              - MODEL TEMPLATE (of current AGREEMENT): 
+                 - name (does patch())
+              - also bound to AGREEMENT language|agreement_type (does patch())
+                 - if language changed, reload by doing "agreements:agreement:show"() again
+           (not template)
+           - companies CompaniesView MCOLLVIEW:
+              - (if consumer) ConsumerView
+                  - MODEL from AGREEMENT.companies with state enabled, but actually uses first PARTICIPANT from each AGREEMENT_COMPANY, according to:
+                     - fullname
+                     - consumer_orgnr: view, and also an input to edit (does patch())
+                     - consumer_country (if AGREEMENT._is_international true, i.e. several different consumer_country)
+                  - clicking on it: popover editable with ConsumerPopoverView to change PARTICIPANT:
+                     - fullname, consumer_orgnr|country, phone_number, (actually on POSITION) email
+                     - "Remove from contract": change state (with patch()).
+                       If is current POSITION, "modal:confirm:show"() first, then (unless guest) "agreements:list-view:current:show"()
                      + permissions:
-                        - PARTICIPANT allow-edit (i.e.  AGREEMENT|AGREEMENT_COMPANY|POSITION.owner and for AGREEMENT PARTICIPANT (or same COMPANY)): popover
-                        - BoxMenu "Edit FULLNAME": AGREEMENT not state signed|declined, PARTICIPANT, not USER state guest, PARTICIPANT allow-edit
-                        - BoxMenu "Remove FULLNAME": same but allow-remove (same but also not AGREEMENT.owner, or same AGREEMENT_COMPANY, and PARTICIPANT state not disabled*)
-                 - (if AGREEMENT_COMPANY.consumer 0 (i.e. seller)) CompanyLayout MLAYOUTVIEW
-                     - MODEL from AGREEMENT.companies with state enabled:
-                        - company_name
-                        - company_orgnr: view, and also an input to edit (does patch())
-                        - company_country (if AGREEMENT._is_international true)
-                     - clicking on it: popover editable with CompanyPopoverView: same as ConsumerPopoverView but for AGREEMENT_COMPANY company_*
-                     - "Add Participant" or BoxMenu "Add Participant": "modal:show" with container AddParticipantModalView MCOMPVIEW
-                        - MODEL: new PARTICIPANT:
+                        - "Remove from contract": allow-remove (same as "Remove FULLNAME" below)
+                  - mixin setState():
+                     - updates CSS: signed|declined (POSITION state)
+                     - updates "state-text": "Signed|Declined DATE" (POSITION state, state_timestamp), "Email delivery failed|bounced DATE" (PARTICIPANT.email_status, email_timestamp)
+                  + permissions:
+                     - PARTICIPANT allow-edit (i.e.  AGREEMENT|AGREEMENT_COMPANY|POSITION.owner and for AGREEMENT PARTICIPANT (or same COMPANY)): popover
+              - (if seller) CompanyLayout MLAYOUTVIEW
+                  - MODEL from AGREEMENT.companies with state enabled:
+                     - company_name
+                     - company_orgnr: view, and also an input to edit (does patch())
+                     - company_country (if AGREEMENT._is_international true)
+                  - clicking on it: popover editable with CompanyPopoverView: same as ConsumerPopoverView but for AGREEMENT_COMPANY company_*
+                  - "Add Participant" or BoxMenu "Add Participant": "modal:show" with container AddParticipantModalView MCOMPVIEW
+                     - MODEL: new PARTICIPANT:
+                        - fullname|title
+                        - type: according to delegate:
+                           - 1 (when clicking on OpenActionsView "Need someone else to sign?") no DisabledParticipantView and POSITION.role always decisionmaker
+                           - 0 (otherwise)
+                        - email:
+                           - use "agreements:position:get:email"(AGREEMENT, EMAIL, isConsumer()) to get POSITION_COLL
+                           - error message if is already PARTICIPANT or if no associated POSITION
+                           - fills in fullname|title and (if none so far) company_*
+                           - if different AGREEMENT_COMPANY, warning message with the two company_*: can either close or reopen new AddParticipantModalView with the new company
+                        - company_*:
+                           - only if no company yet
+                           - company_name use Typeahead, with COMPANY list, setting company_*
+                        - filled with owner current POSITION, agreement, agreement_company
+                        - when submitted, adds it (with a save())
+                     - invite form:
+                        - if AGREEMENT.isPublished()
+                        - sets subject|message (taken from Flow.settings.position-agreement-invite-header|content)
+                        - if checkbox, sets Flow.settings.position-* when submitted (with patch())
+                     - DisabledParticipantView:
+                        - MODEL PARTICIPANT from PARTICIPANTs on same AGREEMENT_COMPANY with state disabled
+                           - fullname, also (if seller) AGREEMENT_COMPANY.company_name
+                        - "Restore": change state to enabled (with patch())
+                  - BoxMenu "Restore FULLNAME" (for each PARTICIPANT): like "Restore" above
+                  - any AGREEMENT_COMPANY save|patch() changing current ACCOUNT shows Flash notification
+                  - regions:
+                     - decisionMakers: CompanyParticipantsView MCOLLVIEW of ParticipantView:
+                        - MODEL PARTICIPANT with state enabled and type decisionmaker:
                            - fullname|title
-                           - type: according to delegate:
-                              - 1 (when clicking on OpenActionsView "Need someone else to sign?") no DisabledParticipantView
-                              - 0 (otherwise): cannot change PARTICIPANT type
-                           - email:
-                              - use "agreements:position:get:email"(AGREEMENT, EMAIL, isConsumer()) to get POSITION_COLL
-                              - error message if is already PARTICIPANT or if no associated POSITION
-                              - fills in fullname|title and (if none so far) company_*
-                              - if different AGREEMENT_COMPANY, warning message with the two company_*: can either close or reopen new AddParticipantModalView with the new company
-                           - company_*:
-                              - only if no company yet
-                              - company_name use Typeahead, with COMPANY list, setting company_*
-                           - filled with owner current POSITION, agreement, agreement_company
-                           - when submitted, adds it (with a save())
-                        - invite form:
-                           - unless AGREEMENT.isPublished()
-                           - sets subject|message (taken from Flow.settings.position-agreement-invite-header|content)
-                           - if checkbox, sets Flow.settings.position-* when submitted (with patch())
-                        - DisabledParticipantView:
-                           - MODEL PARTICIPANT from PARTICIPANTs on same AGREEMENT_COMPANY with state disabled
-                              - fullname, also (unless consumer) AGREEMENT_COMPANY.company_name
-                           - "Restore": change state to enabled (with patch())
-                     - BoxMenu "Restore FULLNAME" (for each PARTICIPANT): change PARTICIPANT state (does a patch())
-                     - any AGREEMENT_COMPANY save|patch() changing current ACCOUNT shows Flash notification
-                     - regions:
-                        - decisionMakers: CompanyParticipantsView MCOLLVIEW of ParticipantView:
-                           - MODEL PARTICIPANT with state enabled and type decisionmaker:
-                              - fullname|title
-                           - clicking on it: popover editable with ParticipantPopoverView: like ConsumerPopoverView but for PARTICIPANT email|fullname|title|type
-                           - mixin setState(): like above, but also "Decision maker" (PARTICIPANT type)
-                           - any PARTICIPANT save|patch() changing current POSITION shows Flash notification
-                        - influencers: same but with type influencers and:
-                           - only shown if there are some influencers. If > 3, mixinShowHide used
-                     + permissions:
-                       - "Add Participant": allow-add-participants (i.e. seller and AGREEMENT state not draft|template). BoxMenu also: is PARTICIPANT and AGREEMENT state not signed|declined
-                       - "Restore FULLNAME": allow-restore on that PARTICIPANT (like allow-remove, but PARTICIPANT state disabled*)
-              - actions: (bottom right actions)
-                 - if AGREEMENT state not signed|declined: OpenActionsView:
+                        - clicking on it: popover editable with ParticipantPopoverView: like ConsumerPopoverView but for PARTICIPANT email|fullname|title|type
+                        - mixin setState(): like above, but also "Decision maker" (PARTICIPANT type)
+                        - any PARTICIPANT save|patch() changing current POSITION shows Flash notification
+                     - influencers: same but with type influencers and:
+                        - only shown if there are some influencers. If > 3, mixinShowHide used
+                  + permissions:
+                    - "Add Participant": allow-add-participants (i.e. seller and AGREEMENT state not draft|template). BoxMenu also: is PARTICIPANT and AGREEMENT state not signed|declined
+                    - "Restore FULLNAME": allow-restore on that PARTICIPANT (like allow-remove, but PARTICIPANT state disabled*)
+           (not template)
+           - actions: (bottom right actions)
+              - if AGREEMENT state not signed|declined: OpenActionsView:
+                 - MODEL AGREEMENT:
+                    - expire_date: with editable popoverDate
+                       - warning messages: state draft and expire_date too old, or state expired
+                 - warning messages:
+                    - "Unfinished sections" if AGREEMENT not draft|template but some BOX draft, and permission visible-sign
+                    - "Missing registration number": one AGREEMENT_COMPANY (apart from current) is enabled, seller and has no company_orgnr. 
+                      Also is PARTICIPANT, state pending
+                    - "Missing social security number": one PARTICIPANT (apart from current) is enabled, consumer and has no consumer_orgnr.
+                      Also is PARTICIPANT, state pending
+                    - "Waiting for signature from" + list of PARTICIPANT.fullname:
+                       - if state pending
+                       - from PARTICIPANT enabled, decisionmaker, not state signed
+                 - ConversionBehavior: appends to .js-conversion ConversionView:
+                    - "Sign up for a free trial" pitch
+                    - "Try it now": 
+                       - getSignupToken(), i.e. calls /agreements/AGREEMENT/participants/PARTICIPANT/contact_me
+                       - then redirect to response { signup_token /signup/HASH }
+                    - MODEL current PARTICIPANT
+                    - only if PARTICIPANT not consumer, state signed|declined and not USER state registered
+                    - not if account in noSalesPitch config hack list
+                 - "Add counterpart" (or if min 2 PARTICIPANT enabled and decisionmaker) "Add Participant in Another Company"
+                    - AddParticipantModalView: like above, but does not fill AGREEMENT_COMPANY
+                    - if is consumer, AddConsumerModalView instead, same but:
+                       - use consumer_* and nothing related to AGREEMENT_COMPANY, including PARTICIPANT.company_*
+                       - PARTICIPANT.phone_number instead of PARTICIPANT.title
+                       - PARTICIPANT.role always decisionmaker
+                 - "Sign contract": 
+                    - calls all BOX "save:all" (Forms, Products, Attachments):
+                       - if problem, shows "help:popover:show"() on sign button with "Missing information" or "Could not save form"
+                    - then "modal:show" SignModalView:
+                       - MODEL AGREEMENT
+                       - Also shows current PARTICIPANT:
+                          - (if consumer) fullname|consumer_orgnr
+                          - (otherwise) fullname|title + AGREEMENT_COMPANY company_*
+                       - if current AGREEMENT_COMPANY and ACCOUNT different company_*, or current USER and POSITION different fullname|title:
+                          - warning message, showing them
+                          - disable "Sign contract" until "Yes I am sure" clicked on
+                       - Action: PARTICIPANT.sign(), 
+                       - "Sign contract": PARTICIPANT.sign(), i.e. /agreements/AGREEMENT/participants/PARTICIPANT/sign with data { checksum AGREEMENT.checksum }
+                          - if response 409, checksum mismatch alert and cannot decline anymore
+                          - otherwise if USER state new|invited|guest:
+                             - if everyone signed, "modal:show" SignCompleteModalView:
+                                - MODEL AGREEMENT
+                                - shows owner logo
+                                - "Download contract receipt": like below
+                                - "Yes contact me": same as "Try it now" above. Only if agreement_type b2b and not in noSalesPitch config hack
+                             - otherwise, "modal:show" SignSuccessModalView:
+                                - same but instead of "Download contract receipt", "We are waiting for FULLNAME to sign" among PARTICIPANT enabled, decisionmaker, state not signed
+                             - shown again once SignCompleteModalView when revisits agreement
+                 - "No thank you, not interested": "modal:show" DeclineModalView:
                     - MODEL AGREEMENT
-                       - expire_date: with editable popoverDate
-                          - warning messages: state draft and expire_date too old, or state expired
-                    - warning messages:
-                       - "Unfinished sections" if AGREEMENT not draft|template but some BOX draft, and permission visible-sign
-                       - "Missing registration number": one AGREEMENT_COMPANY (apart from current) is enabled, not consumer and has no company_orgnr. 
-                         Also is PARTICIPANT, state pending
-                       - "Missing social security number": one PARTICIPANT (apart from current) is enabled, consumer and has no consumer_orgnr.
-                         Also is PARTICIPANT, state pending
-                    - "Add counterpart" (or if already one) "Add Participant in Another Company"
-                       - AddParticipantModalView: like above, but does not fill AGREEMENT_COMPANY
-                       - if is consumer, AddConsumerModalView instead, same but:
-                          - use consumer_* and nothing related to AGREEMENT_COMPANY, including PARTICIPANT.company_*
-                          - PARTICIPANT.phone_number instead of PARTICIPANT.title
-                          - PARTICIPANT.role always decisionmaker
-                    - "Please contact me": 
-                       - if agreement_type b2c and consumer 1
-                       - "modal:confirm:show"()
-                       - adds and saves new MESSAGE with body "Contact me", type CONTACT_ME
-                    - "Print contract" -> "/contracts/AGREEMENT/print"
-                    + permissions:
-                       - edit expire_date: allow-update
-                       - "Add counterpart"/"Add Participant in Another Company": allow-add-participants (i.e. state not draft|template, and is seller)
-                       - "Sign contract": allow-sign. visible-sign to only see but disabled.
-                       - "No thank you, not interested": same with allow|visible-decline
-                       - "Need someone else to sign?": same with allow|visible-delegate
-                 - if AGREEMENT state signed: SignedActionsView:
-                    - MODEL AGREEMENT
-                    - "Download contract receipt": 
-                       - shows "Generating receipt" when signinprogress
-                       - link pointing to DOCUMENT (with state receipt) getPDFContractURL(), i.e. /agreements/AGREEMENT/assets/contract.pdf?download=contract.pdf
-                    - "Print contract" -> "/contracts/AGREEMENT/print"
-                    - "Cancel contract": "modal:show" CancelModalView
-                       - MODEL AGREEMENT:
-                          - start_timestamp|initial_duration|duration|notice_period|period_start_timestamp|period_end_timestamp
-                          - getCounterpartAccounts().participants[0] AGREEMENT_COMPANY.company_name
-                          (consumer 1)
-                          - PARTICIPANT.fullname|title|consumer_orgnr
-                          (consumer 0)
-                          - AGREEMENT_COMPANY.company_name|company_orgnr
-                       - "Cancel contract" -> AGREEMENT.cancel(), i.e. /agreements/AGREEMENT/cancel_recurring which sets cancel_timestamp
-                         Then AGREEMENT.fetch()
-                       - Notice warning if AGREEMENT.inNoticePeriod()
-                   + permissions: 
-                      - "Cancel contract": allow-cancel (i.e. signinprogress|signed|expired, decisionmaker and not lifecycle ended, type recurring)
-     - if template, same but:
-        - no regions actions
-        - regions companies: TemplateSettingsView:
-           - MODEL TEMPLATE_COLL (of current AGREEMENT)
-           - inSidebar true
-  - "participants:sign:view"(AGREEMENT): SignActionsViews:
-     - use OpenActionsView but with isTopSign true, i.e. without the warning messages nor "Print contract", only the actions
-  - "participants:template-settings:view"(AGREEMENT): when SingleColView and template
-     - returns TemplateSettingsView: like above but inSidebar false
-  - permissions:
-     - Cancel contracts: allow-cancel, i.e. signinprogress|signed|expired, decisionmaker and not lifecycle ended, type recurring
+                    - "Decline contract": PARTICIPANT.decline(), like above but with "decline"
+                 - "Need someone else to sign?": AddParticipantModalView (see above) with delegate 1
+                 - "Please contact me": 
+                    - if agreement_type b2c and is consumer
+                    - "modal:confirm:show"()
+                    - adds and saves new MESSAGE with body "Contact me", type CONTACT_ME
+                 - "Print contract" -> "/contracts/AGREEMENT/print"
+                 + permissions:
+                    - edit expire_date: allow-update
+                    - "Add counterpart"/"Add Participant in Another Company": allow-add-participants (i.e. state not draft|template, and is seller)
+                    - "Sign contract": allow-sign. visible-sign to only see but disabled.
+                    - "No thank you, not interested": same with allow|visible-decline
+                    - "Need someone else to sign?": same with allow|visible-delegate
+              - if AGREEMENT state signed: SignedActionsView:
+                 - MODEL AGREEMENT
+                 - ConversionBehavior: see above
+                 - "Download contract receipt": 
+                    - shows "Generating receipt" when signinprogress
+                    - link pointing to DOCUMENT (with state receipt) getPDFContractURL(), i.e. /agreements/AGREEMENT/assets/contract.pdf?download=contract.pdf
+                 - "Print contract" -> "/contracts/AGREEMENT/print"
+                 - "Cancel contract": "modal:show" CancelModalView
+                    - MODEL AGREEMENT:
+                       - start_timestamp|initial_duration|duration|notice_period|period_start_timestamp|period_end_timestamp
+                       - getCounterpartAccounts().participants[0] AGREEMENT_COMPANY.company_name
+                       (consumer)
+                       - PARTICIPANT.fullname|title|consumer_orgnr
+                       (seller)
+                       - AGREEMENT_COMPANY.company_name|company_orgnr
+                    - "Cancel contract" -> AGREEMENT.cancel(), i.e. /agreements/AGREEMENT/cancel_recurring which sets cancel_timestamp
+                      Then AGREEMENT.fetch()
+                    - Notice warning if AGREEMENT.inNoticePeriod()
+                + permissions: 
+                   - "Cancel contract": allow-cancel (i.e. signinprogress|signed|expired, decisionmaker and not lifecycle ended, type recurring)
+  - "participants:sign:view"(AGREEMENT): when SingleColView and OpenActionsView would be shown:
+      - SignActionsViews, i.e. like OpenActionsView only, and with isTopSign true, i.e.:
+         - Only sign|decline|delegate|contactMe actions
+         - providing view mode and visible-sign
+  - "participants:template-settings:view"(AGREEMENT): when SingleColView, layout mode and TemplateSettingsView would be shown
+     - returns TemplateSettingsView only (with slightly different CSS)
 
 Agreement Toolbar
   - MDL_EVENT "toolbar-view"(AGREEMENT)->MVIEW
