@@ -1,136 +1,3 @@
-Implementation:
-     0) input is URI, cache, parent URI
-       Default is: URI "", new cache object, pwd for parent URI
-     - resolve URI to absolute URI
-       Use parent URI's dirname as base
-       If "", use parent URI (throw if none)
-       For URI.node, use node module's path (throw if does not exist)
-     - if cache[absolute URI] exists, return it
-     - load and parse local file using URI (throw if does not exist)
-     - set absolute URI as a symbol property, using direct mutation
-     - add object to cache[absolute URI].
-       Directly mutate so that parallel promises can share.
-     - for each child $ref:
-        - in parallel, i.e. using Promise.all()
-        - resolve to a VAL using 0)
-          Pass arguments: $ref as URI, cache, absolute URI as parent URI
-        - merge back to parent
-          Directly mutate so that cached object is mutated too. Do not create any shallow|deep copy.
-          Also merge symbol properties, including when merging to siblings
-
-JSON references:
-  - syntax:
-     - $ref [URI][#[PATH]]
-     - default values (including "")
-        - URI: current document
-        - #PATH and PATH: #/
-     - URI can be "MODULE.node"
-     - can have siblings, in which case it is deeply merged, with lower priority
-     - PATH can be:
-        - /PATH relative to current document's (not root document's) root
-        - NUM/PATH relative to current position:
-           - 0 is $ref/../ i.e. siblings (if merged)
-        - should unescape / ~ but not percent encoding
-        - absolute|relative PATH should allow containing another JSON reference, which is then followed
-        - when ending with trailing slash, strip it
-     - recursive references:
-        - should be handled, not an error
-        - should work for:
-           - recursion with URI, or with PATH
-           - reference to parent
-           - reference to self
-           - mutual references to parents
-           - mutual references to selves
-  - errors:
-     - when using relative path, and going above document's root
-     - when using relative path, and URI is not ""
-     - when using absolute|relative path, and some path part (excluding last one) is not OBJ|ARR
-        - if part was undefined, error message should be different
-     - when URI does not exist or is wrong format (including URI.node)
-  - implementation:
-     0) input is REF "[URI][#[/PATH]], cache, parent URI, pathBase
-       Default is: new cache object, pwd for parent URI
-     - divide REF into URI and [NUM]/PATH
-       Default is: URI "", [NUM]/PATH "/"
-        - throw if URI !== "" but NUM is defined
-     - resolve URI to absolute URI
-       Use parent URI's dirname as base
-       If "", use parent URI (throw if none)
-       For URI.node, use node module's path (throw if does not exist)
-     - if cache[absolute URI] exists, use it and jump to 1)
-     - load and parse local file using URI (throw if does not exist)
-     - set absolute URI as a symbol property, using direct mutation
-     - add object to cache[absolute URI].
-       Directly mutate so that parallel promises can share.
-     - for each child $ref:
-        - including child $ref not included by current [NUM]/PATH
-        - in parallel, i.e. using Promise.all()
-        - resolve to a VAL using 0)
-          Pass arguments: $ref as URI + [NUM]/PATH, cache, absolute URI as parent URI, normalized absolute path
-          (within document) of $ref/../ as pathBase
-        - merge back to parent.
-          Directly mutate so that cached object is mutated too. Do not create any shallow|deep copy.
-          Also merge symbol properties, including when merging to siblings
-     1) apply [NUM]/PATH:
-        - if NUM/PATH, resolve to /PATH using pathBase as base for NUM 0, pathBase/../ for NUM 1, etc.
-           - throw if goes above root
-        - when /PATH ends with trailing slash, strip it
-        - if /PATH is "", keep same reference
-        - otherwise pick the subfield (relative to current object):
-           - without creating any shallow|deep copy
-           - since it is only a pick, this should not mutate cached value
-           - throw error if some path part (excluding last one) is not OBJ|ARR
-           - use json-ptr, which should take care of unescaping / ~
-        - set /PATH as a symbol property, using direct mutation
-  - other:
-     - at the moment, if databases.memory.save true and databases.memory.data did not use JSON reference, throws.
-       We should also throw if a JSON reference was used but with a [NUM]/PATH (except if it resolved to "")
-     - pass option to throw on circular references, and use it
-        - be careful as the fact that cache[absolute URI] does not necessarily mean it is circular
-          (two siblings could require the same reference for example)
-        - maybe cache[absolute URI] could be { value, paths [absolute URIs,...] } and if current absolute URI
-          is among absolute URIs, throw
-  - possible features:
-     - using actual URI, i.e. not only local files
-        - including for top-level config file
-        - can be disabled with an option
-        
-Formats:
-  - remove difference type "conf" vs "payload"
-     - expose findByMime() and findByExt() instead of findFormat()
-        - loadFile() and saveFile() should use findByExt(), and HTTP content negotiation should use findByMime()
-     - remove formatAdapter.types
-     - add formatAdapter.safe BOOL:
-        - defaults to true
-        - false for JavaScript
-        - add OPTS.safe BOOL (def: false) to findByExt|findByMime|loadFile|saveFile() to disallow unsafe formats
-           - use OPTS.safe true during HTTP content negotiation parsing
-        - throw in protocol format middleware if args.format safe is false, e.g. when doing ?format=javascript
-     - fix user documentation
-        - including that JavaScript is not allowed in args.format
-  - default format:
-     - "raw" format:
-        - parse(): identity function
-        - stringify():
-           - if input is string, identity function
-           - if input is buffer, BUFFER.toString()
-           - otherwise, JSON.stringify(val, null, 2)
-     - DEFAULT_FORMAT constant is still "raw"
-     - both findByMime() and findByExt() should return DEFAULT_FORMAT if cannot find any format
-        - this means config file and JSON references will now default to being parsed as string.
-     - findFormat() used in loadFile|saveFile() cannot return undefined anymore, so no error handling needed
-     - findFormat() used to validate config file has right format should compare to "raw"
-     - make sure that when databases.memory.data format is wrong (i.e. when it is loaded as a string), it throws an error and does not try to save data back on exit
-     - Content-Type [C] parsing still defaults to "raw", when specified
-     - Accept [C] parsing should throw if format is DEFAULT_FORMAT (instead of throwing on undefined)
-     - protocol format middleware should still default to "json"
-     - payload parsing does not need any specific code for args.format being undefined since it cannot happen anymore
-     - response serialization: "format normalization" is not needed anymore
-     - update user documentation
-
-Patch operators:
-  - 'number' type should include 'integer'
-
 Errors:
   - ajv:
      - upgrade 6.0.0-rc.1
@@ -700,6 +567,54 @@ Batch requests:
   - should allow using the JSON-RPC-specific way when using JSON-RPC
   - how to handle limits such as maxpayload and request timeout???
 
+JSON references:
+  - recursive references:
+     - should be handled, not an error
+     - should work for:
+        - recursion with URI, or with PATH
+        - reference to parent
+        - reference to self
+        - mutual references to parents
+        - mutual references to selves
+        - siblings merging, including with self
+     - possible approach:
+        - on recursive reference, instead of throwing, store the promise as { $ref: PROMISE }
+        - once whole document is resolved, Promise.resolve() each promise as { $ref: VALUE }
+        - merge VALUE
+        - problems:
+           - VALUE might contain JSON references itself, including references to self
+           - needs to work with siblings merging, including with self
+     - pass option to throw on circular references, and use it
+        - be careful as the fact that cache[absolute URI] does not necessarily mean it is circular
+          (two siblings could require the same reference for example)
+        - maybe cache[absolute URI] could be { value, paths [absolute URIs,...] } and if current absolute URI
+          is among absolute URIs, throw
+  - add possibility to use [URI][#[PATH]]:
+     - default values (including "")
+        - URI: current document
+        - #PATH and PATH: #/
+     - PATH can be:
+        - /PATH relative to current document's (not root document's) root
+        - NUM/PATH relative to current position:
+           - 0 is $ref/../ i.e. siblings (if merged)
+        - should unescape / ~ but not percent encoding
+        - absolute|relative PATH should allow containing another JSON reference, which is then followed
+        - when ending with trailing slash, strip it
+     - should work with:
+        - siblings merging
+        - target value being a STR|NUM|BOOL|null
+     - errors:
+        - when using relative path, and going above document's root
+        - when using relative path, and URI is not ""
+        - when using absolute|relative path, and some path part (excluding last one) is not OBJ|ARR
+           - if part was undefined, error message should be different
+     - should use json-ptr library
+     - at the moment, if databases.memory.save true and databases.memory.data did not use JSON reference, throws.
+       We should also throw if a JSON reference was used but with a [NUM]/PATH (except if it resolved to "")
+  - using actual URI, i.e. not only local files
+     - including for top-level config file
+     - can be disabled with an option
+        
 Code quality:
   - auto-beautifier
   - escomplex
@@ -1057,11 +972,6 @@ Positioning:
       - i.e. no vendor lock-in
 
  25  MUST HAVE FEATURES
- 0.2 exit
- 0.8 JSON references
- 0.3 Formats
- 0.2 Patch operators
-
  3   Errors
  1   inputValidation
  0.5 JSON schema $data
@@ -1110,6 +1020,7 @@ Positioning:
  2   Server-client state
  1   Views
  1   Batch requests
+ 2   JSON references
 
  55  SOFTWARE QUALITY
  1   code quality
