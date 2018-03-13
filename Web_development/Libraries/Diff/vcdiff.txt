@@ -44,12 +44,14 @@ ENCODING ALGORITHM ==>            #I/O:
                                   #  - COPY SIZE, ADDRESS: 
                                   #     - append SIZE bytes from ADDRESS
                                   #     - ADDRESS is byte index inside concatenation of source window + target window
+                                  #        - can copy parts of target window as long as it will already have been decoded
                                   #Max SIZE: 255
                                   #Target|source windows: target|source chunks compared against each other
                                   #Implementation-dependant:
                                   #  - how to figure out instructions ("string matching")
                                   #  - windows (e.g. their sizes)
                                   #     - the bigger the window, the most efficient, but the more resource-hungry
+                                  #     - source window should be a bit larger than target window to increase matching chances
                                   #  - custom code table
                                   #  - secondary compressor
 
@@ -64,6 +66,16 @@ DECODING ALGORITHM ==>            #I/O:
 																						\  :_______________________________:  /    
 																						 \=+===============================+=/
 
+
+GOAL ==>                          #Only specifies list of instructions (e.g. RUN SIZE, BYTE) but:
+                                  #  - efficiently:
+                                  #     - secondary compressor
+                                  #     - code table data for often-used instructions
+                                  #     - efficient COPY addresses:
+                                  #        - SAME_CACHE for often used addresses
+                                  #        - NEAR_CACHE for addresses close to each other
+                                  #        - "MODE 1" for addresses close to source segment current pointer
+                                  #  - use windows
 
 FORMAT ==>                        #Header:
 																	#  - 'VCD' (magic number)
@@ -104,32 +116,31 @@ PORTABILITY ==>                   #  - byte order is defined
 																						 \=+===============================+=/
 
 
-SOURCE SEGMENT ==>                #Used for???
-                                  #According to:
-                                  #  - window indicator:
-                                  #     - 0x00: the window itself
-                                  #     - 0x01: the source file
-                                  #     - 0x02: the target file
-                                  #  - source segment size|position
-
 INSTRUCTIONS AND SIZES ==>        #Three fields (describing two encoded instructions):
                                   #  - inst BYTE: index in "code table"
-                                  #  - size1 BYTE
-                                  #  - size2 BYTE
-                                  #Present if delta indicator 0x02
+                                  #  - [size1 BYTE]
+                                  #  - [size2 BYTE]
 
 CODE TABLE ==>                    #Code table:
                                   #  - 256 entries
                                   #  - each entry describes 2 encoded instructions
                                   #Custom:
-                                  #  - there is a default one with common instructions
+                                  #  - there is a default one with common instructions:
+                                  #     - RUN|ADD|COPY 0 (i.e. size1|size2)
+                                  #     - ADD 1-17
+                                  #     - COPY 4-18
+                                  #     - ADD 1-4 + COPY 4-6
+                                  #     - COPY 4 + ADD 1
                                   #  - if Header indicator 0x02
                                   #  - Code table data:
                                   #     - Size of near cache BYTE:
                                   #        - instead of 4
                                   #        - if different, will change lower-upper limits used in MODE
                                   #     - Size of same cache BYTE: same for "same cache"
-                                  #     - code table
+                                  #     - code table:
+                                  #        - VCDIFF delta of default code table with custom one
+                                  #        - default|custom code table being encoded as each column (i.e. 256 bytes)
+                                  #          after another: command1, command2, firstArg1, firstArg2, secondArg1, secondArg2
 
 ENCODED INSTRUCTIONS ==>          #Three fields (describing an instruction efficiently):
                                   #  - command COPY|ADD|RUN|NOOP
@@ -139,17 +150,23 @@ ENCODED INSTRUCTIONS ==>          #Three fields (describing an instruction effic
                                   #  - MODE, describing second argument:
                                   #     - for ADD|RUN: 
                                   #        - SIZE next bytes in "data for ADDs and RUNs"
-                                  #           - that section is present if delta indicator 0x01
                                   #        - MODE is 0
                                   #     - for COPY:
                                   #        - ADDR_NUM = next byte in "address for COPYs"
-                                  #           - that section is present if delta indicator 0x04
                                   #        - ADDRESS depends on MODE:
                                   #           - 0: ADDRESS = ADDR_NUM
                                   #           - 1: ADDRESS = HERE - ADDR_NUM
-                                  #              - HERE is current target window pointer
+                                  #              - HERE is source segment current pointer
                                   #           - 2-5: ADDRESS = ADDR_NUM - NEAR_CACHE[0-3]
                                   #           - 6-8: ADDRESS = SAME_CACHE[(0-2)*256 + ADDR_NUM]
+
+SOURCE SEGMENT ==>                #Used for COPY instructions with MODE 1
+                                  #According to:
+                                  #  - window indicator:
+                                  #     - 0x00: the window itself
+                                  #     - 0x01: the source file
+                                  #     - 0x02: the target file
+                                  #  - source segment size|position
 
 CACHES ==>                        #NEAR_CACHE: 
                                   #  - ARR of 4 ADDRESSes 
@@ -160,6 +177,10 @@ CACHES ==>                        #NEAR_CACHE:
                                   #  - filled with each COPY with new ADDRESS at ADDRESS % ((0-2)*256)
                                   #  - used for absolute positioning with recent addresses
 
-SECONDARY COMPRESSOR ==>          #  - compresses ???
-                                  #  - if Header indicator 0x01
+SECONDARY COMPRESSOR ==>          #  - compresses each of the three last sections of "delta encoding" section
+                                  #     - if Header indicator 0x01
+                                  #     - delta indicator specifies which section is compressed:
+                                  #        - 0x01: data for ADDs and RUNs
+                                  #        - 0x02: instructions and sizes
+                                  #        - 0x04: addresses for COPYs
                                   #  - Secondary compressor ID: to indicate which algo is used
