@@ -32,15 +32,17 @@ s/\([[]\)_/\1/
 
 # Put technology between parenthesis
 s/\.\([^].]\+\)\]/ (\u\1)]/
+# Capitalize each technology
 s/_\([[:lower:]][^()]\+)\]\)/_\u\1/
 s/_\([[:lower:]][^()]\+)\]\)/_\u\1/
 s/_\([[:lower:]][^()]\+)\]\)/_\u\1/
 s/_\([[:lower:]][^()]\+)\]\)/_\u\1/
 s/_\([[:lower:]][^()]\+)\]\)/_\u\1/
 s/_\([[:lower:]][^()]\+)\]\)/_\u\1/
+# Fix case
+s/(\([^)]*\)Cli\([^)]*\))]/(\1CLI\2)/
 #s/(Aws)/(AWS)/
 #s/(Javascript)/(JavaScript)/
-#s/(\([^)]*\)Cli\([^)]*\))]/(\1CLI\2)/
 
 # Replace _ by spaces.
 s/\(\[[^]]\+\)_/\1 /
