@@ -410,7 +410,9 @@ docker create IMAGE               #Does:
                                   #  - "unless-stopped": restarts unless explicitely stopped by admin
                                   #Restarts use exponential delay
                                   #Should not be used if a process manager is used, e.g. systemd, forever or pm2
-
+-e ENVVAR=VAL
+--env ENVVAR=VAL                  #
+--env-file FILE                   #Same with newline-separated ENVVAR=VAL file
 --name CONTAINER_NAME             #Def: random
 
 
@@ -638,10 +640,6 @@ docker create IMAGE
 -P                                #Forward any exposed CONTAINER_PORT to a random HOST_PORT (ephemeral port range)
 --publish-all                     #See EXPOSE instruction
 
-docker service create ...
---network NETWORK
--p ...                            #Like above
-
 
                                              /=+===============================+=\ 
                                             /  :                               :  \  
@@ -861,7 +859,7 @@ docker create ...
 --label VAR[=VAL]                 #Sets labels
 --label-file FILE                 #Same from newline-delimited file, which can include # COMMENTS
 
-docker volume|network|servive 
+docker volume|network|service 
  create ...
 --label VAR[=VAL]                 #Sets labels
 
@@ -920,18 +918,34 @@ See:???
   - https://docs.docker.com/engine/userguide/networking/get-started-overlay/, whole thing
   - https://docs.docker.com/engine/userguide/networking/overlay-security-model/
 
-CONCEPTS ==>                      #A "swarm" is a cluster of "nodes":
-                                  #  - dockerd server
+CONCEPTS ==>                      #Swarm:
+                                  #  - cluster of nodes
+                                  #  - does: load balancing, high availability, basic orchestration
+                                  #Node:
+                                  #  - is a dockerd server
                                   #  - can be:
-                                  #     - manager: manages workers:
-                                  #        - orchestration: only one manager is elected to do this ("leader")
-                                  #        - assigning "tasks"
-                                  #           - i.e. CONTAINER execution
-                                  #           - a "service" is the template of a task, i.e. an IMAGE + COMMAND + configuration (e.g. number of containers)
-                                  #           - once assigned, cannot move to another node
-                                  #           - automatically load balanced between nodes
-                                  #     - worker: execute a task
-                                  #     - can be both
+                                  #     - manager: 
+                                  #        - manages workers:
+                                  #           - orchestration
+                                  #           - assigning tasks to nodes
+                                  #        - only one manager does it ("leader"):
+                                  #           - but can ask any manager to do it, which will forward to leader
+                                  #           - other managers only purpose is to possibly be elected to leader
+                                  #           - if leader is down:
+                                  #              - an election ("raft consensus") determines a new leader
+                                  #              - for it to work, there should be odd number of managers
+                                  #              - (n-1)/2 can be down without swarm being down
+                                  #           - managers must be connected to each other, to be able to tell each others' state:
+                                  #              - must use datastore for this, if it is multi-host
+                                  #     - worker: 
+                                  #        - execute a task
+                                  #        - managers are also workers, unless availability is "drained"
+                                  #Service:
+                                  #  - template of a task, i.e. an IMAGE + COMMAND + configuration (e.g. number of containers)
+                                  #Task:
+                                  #  - a CONTAINER execution
+                                  #  - once assigned, cannot move to another node
+                                  #  - automatically load balanced between nodes
                                   #Those ports must be opened:
                                   #  - 2377 (TCP): orchestration
                                   #  - 7946 (TCP+UDP): inter-nodes orchestration
@@ -939,14 +953,21 @@ CONCEPTS ==>                      #A "swarm" is a cluster of "nodes":
                                   #  - 50 (TCP): if --opt encrypted (uses IPSec)
 
 docker swarm init                 #Starts a new swarm
-                                  #Current node will be a leader
+                                  #Current node will be a leader manager
                                   #Fires docker swarm join-token worker
---advertise-addr IP               #External, load-balanced IP of the swarm
-                                  #Also used by other nodes to communicate to manager
+--advertise-addr IP               #Each manager has an advertised IP for:
+                                  #  - external, load-balanced communication to the swarm
+                                  #  - communicating to manager for orchestration purpose
+                                  #By def, main IP address and port 2377
 
 docker swarm update               #Sets swarm options.
                                   #Same options as docker swarm init except:
                                   #  - no --advertise|listen-addr, --force-new-cluster
+
+
+SWARM_TOKEN                       #Confidential token specific to a swarm, allowing nodes to join it
+                                  #There is one for workers, and one for managers
+                                  #Can be rotated
 
 
 docker swarm join HOST:PORT       #Make current node a worker node of a swarm
@@ -956,6 +977,9 @@ docker swarm join HOST:PORT       #Make current node a worker node of a swarm
 
 docker swarm join-token           
  worker|manager                   #Prints SWARM_TOKEN and instructions on how to use docker swarm join
+-q
+--quiet                           #Only prints token
+--rotate                          #Changes SWARM_TOKEN
 
 docker swarm leave                #Inverse of docker swarm join. Must be worker node
 
@@ -965,9 +989,11 @@ docker node promote|demote NODE...#Sets NODE to manager or worker
 docker node update NODE           #Sets nodes properties
 --role worker|manager             #Same as docker node promote|demote
 --availability STR                #Can be:
-                                  #  - active: normal
-                                  #  - pause: can get new tasks, but not running
-                                  #  - drain: reject getting new tasks
+                                  #  - active: running, can get new tasks
+                                  #  - pause: running, cannot get new tasks
+                                  #  - drain: 
+                                  #     - not running, cannot get new tasks
+                                  #     - when switching, currently running tasks are transfered to other nodes
 
 docker node rm NODE...            #
 --force                           #Forces even if availability is "active"
@@ -985,9 +1011,25 @@ SERVICE                           #Either SERVICE_ID (can be truncated) or SERVI
 
 docker service create IMAGE       
  [COMMAND [ARGS...]]              #Creates a swarm service, and launches containers on available nodes to support it (if replicas > 0)
+-e
+--env
+-l
+--label
+--log-driver
+--log-opt
+--network
+-p
+--publish
+-u
+--user
+-w
+--workdir                         #Like docker create
 --name SERVICE_NAME               #
---replicas NUM                    #Number of containers (def: 0)
---update-delay TIME               #Delay between updates ("docker service updates")
+--replicas NUM                    #Number of tasks (i.e. containers) (def: 0), running same IMAGE in parallel
+                                  #Will be enforced, e.g. new tasks will be started if one task terminates or fails healthchecks
+--mode replicated|global          #If global (def: replicated), --replicas NUM is "1 per node"
+                                  #Good for services that must be run on every node, usually not main task, e.g. monitoring
+--update-delay TIME               #Delay between updates (docker service update)
                                   #TIME is [NUMh][NUMm][NUMs]
 --update-parallelism              #Apply updates to all nodes at same time (as opposed to def serial)
 --update-failure pause|continue   #When an update on a single node fails, pauses (def) updates on all nodes
