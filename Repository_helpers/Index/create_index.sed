@@ -34,7 +34,7 @@ s/\([[]\)_/\1/
 s/\.\([^].]\+\)\]/ (\u\1)]/
 s/(Aws)/(AWS)/
 s/(Javascript)/(JavaScript)/
-s/(Cli)/(CLI)/
+s/(\([^)]*\)Cli\([^)]*\))]/(\1CLI\2)/
 
 # Replace _ by spaces.
 s/\(\[[^]]\+\)_/\1 /
