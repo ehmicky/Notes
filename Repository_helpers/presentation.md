@@ -2,10 +2,10 @@ This repository contains notes I took when using diverse tools or reading IT-rel
 
 It should give a good idea of what I can work with, although it is primarly intended for my own usage.
 This covers:
-  - Languages: JavaScript (including ES6, DOM, Web APIs), HTML, CSS, Bash, C, C++, ASM x86, R, VBA
-     - transcompiled languages: CoffeeScript, Jade, Sass, Less, PostCSS
-  - Theory: design patterns, data structures, algorithms, type theory
-  - Procotols: HTTP (including REST), WebSocket
+  - _Theory_: design patterns, data structures, algorithms, type theory
+  - _Languages_: JavaScript (including ES6, DOM, Web APIs), HTML, CSS, Bash, C, C++, ASM x86, R, VBA
+     - _Transcompiled_ _languages_: CoffeeScript, Jade, Sass, Less, PostCSS
+  - _Procotols_: HTTP (including REST), WebSocket, TCP, UDP
   - Frameworks: Node (including Express, Sails), React, Flux/Redux, Angular, Backbone (including Marionette)
   - Platforms: mobile, Chrome extensions
   - Cloud: AWS
