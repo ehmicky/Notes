@@ -87,7 +87,9 @@ TYPE SYSTEM ==>                   #Nominative.
                                              \=+===============================+=/
 
 
-VAR                               #[[:alnum:]_-]+, can use Unicode chars
+VAR                               #[[:alnum:]_]+, can use Unicode chars. Should not start with __
+                                  #FUNC, CLASS, INTERFACE, TRAIT, NS names are case-insensitive
+                                  #Keywords, normal variables, const variables and LABEL are case-sensitive
 
 $VAR,...                          #Declaration. Optional.
 $VAR = VAL                        #[Declaration +] Assignment, by value
@@ -95,15 +97,16 @@ $VAR = VAL                        #[Declaration +] Assignment, by value
 $VAR                              #Dereferencement
 
 
-define("VAR", VAL)                #"Constants". Same as global variables except:
+define("VAR", VAL[, BOOL])        #"d-constant". Same as global variables except:
                                   #  - read-only
-                                  #  - can only resolve to STR|BOOL|NUM|ARR|RES
+                                  #  - cannot resolve to OBJ
                                   #  - referenced as VAR, not $VAR
                                   #     - i.e. ${EXPR} or $$VAR cannot be used
-                                  #     - if undefined, defaults to "VAR" itself, with a notice
+                                  #     - if undefined, defaults to "VAR" itself, with a notice or (if namespaced) an exception
                                   #  - uppercase by convention
                                   #  - cannot use instanceof
-const VAR = VAL,...               #Same but evaluated compile-time not runtime.
+                                  #If BOOL true, VAR name is case-insensitive
+const VAR = VAL,...               #"c-constant". Same but evaluated compile-time not runtime.
                                   #This implies following restrictions:
                                   #  - VAL cannot contain FUNC(), but can contain builtin operators like + -
                                   #  - must be top-level scope, and not in any block
@@ -111,71 +114,16 @@ const VAR = VAL,...               #Same but evaluated compile-time not runtime.
 
 
 UNDEFINED VALUES ==>              #I.e. not assigned, or after unset()
-                                  #Dereferencement:
-                                  #  - prints notice
-                                  #  - use falsy value, i.e.:
-                                  #     - STR: ""
-                                  #     - BOOL: false
-                                  #     - NUM: 0
-                                  #     - ARR: []
-                                  #As such undefined !== null, but undefined is not a valid keyword by itself
+                                  #Resolves to null. Difference with variables with actual null values:
+                                  #  - prints notice when dereferenced
+                                  #     - except if rvalue of an assignment by reference
 unset(VAR)                        #Removes a variable, i.e. make it undefined
 
 
 UNDERLYING MODEL ==>              #The spec defines following concepts:
                                   #  - VAR ("VSlot"): pointer to VAL
-                                  #  - VAL ("VStore", "zval"): either scalar value or pointer to OBJ|ARR_VAL
+                                  #  - VAL ("VStore", "zval"): either scalar value or pointer to OBJ|RES|ARR_VAL
                                   #  - OBJ|ARR_VAL ("Hstore") ("zobj"): VARs container
-
-
-                                             /=+===============================+=\ 
-                                            /  :                               :  \  
-                                            )==:      GARBAGE COLLECTION       :==(   
-                                            \  :_______________________________:  /    
-                                             \=+===============================+=/
-
-
-TYPE ==>                          #Use reference-counting garbage collection, with periodic tracing gargage collection
-
-REFERENCE COUNTING GC ==>         #Increments refcount:
-                                  #  - alias-reference ("is_ref=1")
-                                  #     - incremented by any VAL assignment by reference:
-                                  #        - including $FUNC = function () use (&$VAR) {...}; ($FUNC will carry a reference to $VAR)
-                                  #     - if the rval is not a reference yet, it will be made one
-                                  #        - i.e. will increment by 2
-                                  #        - e.g.:
-                                  #           $VAR = "a";    // $VAR      refcount=0, is_ref=0
-                                  #           $VAR2 &= $VAR; // $VAR[2]   refcount=2, is_ref=1
-                                  #           $VAR3 &= $VAR; // $VAR[2|3] refcount=3, is_ref=1
-                                  #  - pointer-reference ("is_ref=0")
-                                  #     - incremented by OBJ|ARR assignment by value
-                                  #     - when an OBJ becomes a reference, it keeps its pointer-reference (since it actually references a pointer)
-                                  #        - e.g.:
-                                  #           OBJ = new stdClass; // OBJ    refcount=1, is_ref=0
-                                  #           OBJ2 = OBJ;         // OBJ[2] refcount=2, is_ref=0
-                                  #           OBJ3 =& OBJ;        // OBJ2   refcount=2, is_ref=0; OBJ[3] refcount=2, is_ref=1
-                                  #                               // Because OBJ[3] are 2 references to first pointer, and OBJ2 is second pointer
-                                  #Decrements refcount:
-                                  #  - on unset()
-                                  #  - when out of scope, i.e. exit of function where it was declared
-                                  #When refcount === 0:
-                                  #  - cleans memory
-                                  #  - OBJ|ARR unset() their members
-
-REFERENCE CYCLES ==>              #Reference cycles are not cleared by reference-counting gc, but are by tracing gc
-                                  #E.g.: OBJ.self = OBJ; unset(OBJ); // OBJ.self not unset by reference-counting gc, i.e. refcount === 1
-
-TRACING GC ==>                    #Fired:
-                                  #  - at program exit
-                                  #  - when there are 10000 root objects
-enable_gc                         #CONFVAR 0|1 (def: 1)
-gc_enable|disable()               #Sets CONFVAR enable_gc
-gc_enabled()->BOOL                #
-gc_collect_cycles()->NUM          #Forces tracing gc now. Returns number of cycles found
-
-
-debug_zval_dump(VAL,...)          #Similar to var_dump(), except also shows refcounts and is_ref (with & symbol)
-                                  #Since it makes a copy of VAL, and counts the copy as reference, it gives strange results: prefer xdebug_debug_zval()
 
 
                                              /=+===============================+=\ 
@@ -234,8 +182,12 @@ REFERENCE ==>                     #There is no directionality:
                                   #  - $VAR referencing $VAR2 is same as $VAR2 referencing $VAR
                                   #  - i.e. they both point to same content
                                   #Can work either like:
-                                  #  - a pointer-reference, i.e. content changes affects all references
-                                  #  - an alias-reference, i.e. content changes + new assignment affects all references
+                                  #  - an alias-reference:
+                                  #      - VAR (VSlot) reference to VAL (VStore)
+                                  #      - references share content but also new assignments
+                                  #  - a pointer-reference:
+                                  #      - VAL (VStore) reference to OBJ|RES_VAL or ARR[*]_VAL (HStore)
+                                  #      - references share only content
                                   #E.g.:
                                   #  - content change: 
                                   #     $a = new stdClass; $b = $a; $a->c = 1; $b->c === 1; $b->c = 2; $a->c === 2;
@@ -248,8 +200,8 @@ REFERENCE ==>                     #There is no directionality:
 
 VALUE VS REFERENCE ==>            #Arguments|return values|assignment are done:
                                   #  - &-syntax (see below): by alias-reference
-                                  #  - OBJ: by pointer-reference
-                                  #  - ARR: container by value, but each element by pointer-reference, e.g. ARR = ARR2:
+                                  #  - OBJ|RES: by pointer-reference
+                                  #  - ARR: container by value, but each element by pointer-reference, e.g. after ARR = ARR2:
                                   #     - all ARR2[KEY] and ARR[KEY] are pointer-references to each other
                                   #     - but adding keys to ARR|ARR2 would not add it to other array
                                   #  - others: by value
@@ -278,6 +230,58 @@ foreach
 
 GLOBAL/STATIC VARIABLES ==>       #Assigning a value by alias-reference to global|static $VAR makes it non-global|static.
                                   #For global, can avoid it by assigning alias-reference to $GLOBALS["VAR"] instead
+
+
+                                             /=+===============================+=\ 
+                                            /  :                               :  \  
+                                            )==:      GARBAGE COLLECTION       :==(   
+                                            \  :_______________________________:  /    
+                                             \=+===============================+=/
+
+
+TYPE ==>                          #Use reference-counting garbage collection, with periodic tracing gargage collection
+
+REFERENCE COUNTING GC ==>         #Increments refcount:
+                                  #  - alias-reference ("is_ref=1")
+                                  #     - incremented by any VAL assignment by reference:
+                                  #        - including $FUNC = function () use (&$VAR) {...}; ($FUNC will carry a reference to $VAR)
+                                  #     - if the rval is not a reference yet, it will be made one
+                                  #        - i.e. will increment by 2
+                                  #        - e.g.:
+                                  #           $VAR = "a";    // $VAR      refcount=0, is_ref=0
+                                  #           $VAR2 &= $VAR; // $VAR[2]   refcount=2, is_ref=1
+                                  #           $VAR3 &= $VAR; // $VAR[2|3] refcount=3, is_ref=1
+                                  #  - pointer-reference ("is_ref=0")
+                                  #     - incremented by OBJ|RES|ARR assignment by value
+                                  #     - when an OBJ|RES becomes a reference, it keeps its pointer-reference (since it actually references a pointer)
+                                  #        - e.g.:
+                                  #           OBJ = new stdClass; // OBJ    refcount=1, is_ref=0
+                                  #           OBJ2 = OBJ;         // OBJ[2] refcount=2, is_ref=0
+                                  #           OBJ3 =& OBJ;        // OBJ2   refcount=2, is_ref=0; OBJ[3] refcount=2, is_ref=1
+                                  #                               // Because OBJ[3] are 2 references to first pointer, and OBJ2 is second pointer
+                                  #Decrements refcount:
+                                  #  - on unset()
+                                  #  - when out of scope, i.e. exit of function where it was declared
+                                  #When refcount === 0:
+                                  #  - cleans memory
+                                  #  - OBJ|ARR unset() their members
+
+REFERENCE CYCLES ==>              #Reference cycles are not cleared by reference-counting gc, but are by tracing gc
+                                  #E.g.: OBJ.self = OBJ; unset(OBJ); // OBJ.self not unset by reference-counting gc, i.e. refcount === 1
+
+TRACING GC ==>                    #Fired:
+                                  #  - at program exit
+                                  #  - when there are 10000 root objects
+enable_gc                         #CONFVAR 0|1 (def: 1)
+gc_enable|disable()               #Sets CONFVAR enable_gc
+gc_enabled()->BOOL                #
+gc_collect_cycles()->NUM          #Forces tracing gc now. Returns number of cycles found
+
+
+xdebug_debug_zval('VAR',...)      #See XDebug
+debug_zval_dump(VAL,...)          #Similar to var_dump(), except also shows refcounts and is_ref (with & symbol)
+                                  #Since it makes a copy of VAL, and counts the copy as reference, it gives strange results: prefer xdebug_debug_zval()
+
 
 
                                              /=+===============================+=\ 
@@ -319,7 +323,6 @@ function [FUNC]                   #Declaration.
                                   #Semicolon optional after }
                                   #Can fire FUNC(...), but not use FUNC as a normal variable
                                   #Cannot redefine already existing functions.
-                                  #Case-insensitive name
                                   #Arguments:
                                   #  - VAL_LIT: default value
                                   #  - ...$ARR: 
@@ -449,14 +452,15 @@ null                              #Case-insensitive
 
 TYPE CASTING ==>                  #To STR:
                                   #  - BOOL: false -> "", true -> "1"
-                                  #  - INT
+                                  #  - INT: "INT"
                                   #  - FLOAT: 
+                                  #     - "FLOAT"
                                   #     - might use exponent notation
                                   #     - decimal point uses locale
-                                  #  - ARR: "Array" (avoid)
-                                  #  - OBJ: uses CLASS.__toString()->STR (must be defined)
-                                  #  - RES: "Resource id #NUM" (unique string)
                                   #  - NULL: ""
+                                  #  - ARR: invalid
+                                  #  - OBJ: uses CLASS.__toString()->STR (must be defined), otherwise invalid
+                                  #  - RES: implementation-specific, usually "Resource id #ID"
 
 
 '...'                             #STR
@@ -468,7 +472,7 @@ TYPE CASTING ==>                  #To STR:
 "..."                             #Like '...', with extra parsing: 
                                   #  - VARR (see below)
                                   #  - backslash-escaping sequences:
-                                  #     - among: \n \r \t \v \f \0N[N[N]] \xN[N] \u[N[N[N[N]]]]
+                                  #     - among: \n \r \t \v \f \e \[0]N[N[N]] \xN[N] \u{[N[N[N[N[N]]]]]}
                                   #Must escape " $ instead of '
 "...$VARR..."                     #Variable expansion. $VARR can be:
                                   #  - $VAR[VAL_LIT]
@@ -522,7 +526,7 @@ TYPE CASTING ==>                  #To BOOL:
                                   #  - NUM: 0 -> false, else true
                                   #  - ARR: length > 0
                                   #  - NULL: false
-                                  #  - else: true
+                                  #  - OBJ|RES: true
 
 
 true
@@ -554,25 +558,27 @@ TYPE CASTING ==>                  #To NUM:
                                   #  - STR:
                                   #     - tries to parse as INT first, then as FLOAT
                                   #     - non-numerical characters at end are ignored
-                                  #     - if error, 0
+                                  #     - otherwise -> 0
                                   #  - BOOL: false -> 0, true -> 1
                                   #  - FLOAT -> INT:
                                   #     - round towards zero
                                   #     - overflow -> not defined
                                   #     - NAN|INF -> 0
                                   #  - NULL: 0
-                                  #  - else: not defined
+                                  #  - ARR: [] -> 0, otherwise -> 1
+                                  #  - RES: resource ID
+                                  #  - OBJ: not possible
 
 
 [-|+]NUM                          #INT (signed integers)
-                                  #NUM can be prefixed by 0 (octal), 0x|0X (hex) or 0b (binary)
+                                  #NUM can be prefixed by 0 (octal), 0x|0X (hex) or 0b|0B (binary)
                                   #Limits:
-                                  #  - PHP_INT_SIZE, PHP_INT_MIN|MAX
+                                  #  - PHP_INT_SIZE (in bytes), PHP_INT_MIN|MAX
                                   #  - depends if OS is 32 or 64 bits
                                   #  - if overflow, parsed as FLOAT instead
 
 [-|+]NUM[.NUM2][e|E[-|+]NUM3]     #FLOAT
-                                  #Size: OS dependent, but usually double
+                                  #Size: OS dependent, but at least double
 NAN                               #FLOAT
                                   #NAN != NAN
                                   #Case sensitive
@@ -663,19 +669,19 @@ ARRAYACCESS.offsetUnset(VAL)      #unset(OBJ[KEY])
 
 
 TYPE CASTING ==>                  #To OBJ:
-                                  #  - ARR: reuse key|values, except KEY_NUM:
-                                  #     - numbers are not proper VAR, i.e.:
+                                  #  - ARR: reuse key|values, but beware of KEY_NUM:
+                                  #     - numbers are not proper VAR:
                                   #        - OBJ->{"1"} !== OBJ->{1} 
-                                  #        - OBJ->{1} and OBJ->1 are illegal
-                                  #     - i.e. cannot be directly accessed, but can be iterated over
+                                  #        - OBJ->{1} and OBJ->1 are illegal syntax, i.e. cannot be accessed
+                                  #     - but can be iterated over
                                   #  - NULL: {}
-                                  #  - other VAL: { scalar: VAL }
+                                  #  - STR|BOOL|NUM|RES: { scalar: VAL }
 stdClass                          #CLASS with no properties.
                                   #Used when typecasting object to CLASS
                                   #Not used as a base class otherwise. There is no base class.
 
 COMPARISON ==>                    #OBJ === OBJ2: true if same instance
-                                  #OBJ == OBJ2: same class, keys and values (using ==), recursively, but not necessarily same instance
+                                  #OBJ == OBJ2: deep comparison, i.e. same class, keys and values (using ==), recursively, but not necessarily same instance
 
 
 [abstract] class CLASS 
@@ -712,9 +718,10 @@ new class[(...)] [...] { ... }    #OBJ instantiation, using anonymous class. CLA
 
 
 clone OBJ                         #Returns copy OBJ2:
-                                  #  - shallow copy, that keep alias-references
-                                  #  - i.e. iterating over first level of OBJ, does OBJ2.VAR = OBJ.VAR or (if OBJ.VAR alias-reference) OBJ2.VAR &= OBJ.VAR
+                                  #  - shallow copy, i.e. iterate over first level of OBJ, doing OBJ2.VAR = OBJ.VAR
+                                  #  - keep alias-references, i.e. if OBJ.VAR alias-reference, does OBJ2.VAR &= OBJ.VAR instead
 CLASS.__clone()                   #Called after clone OBJ completion, if defined
+                                  #Can e.g. be used to implement deep copy
 
 
 CLASS.__construct(...)            #Constructor, i.e. fired by new CLASS
@@ -1013,8 +1020,9 @@ yield from TRAVERSABLE|ARR|OBJ    #Does a series of yield, by iterating over arg
 
 TYPE CASTING ==>                  #Not allowed
 
-RES                               #Resource, i.e. handle with an unspecified binary format, extension-specific
+RES                               #Resource, i.e. handle with an unspecified binary format, extension-specific.
                                   #E.g. file or network connection
+                                  #Behaves like OBJ when it comes to assignment, references, etc.
 
 
                                              /=+===============================+=\ 
@@ -1179,10 +1187,10 @@ return [VAL];                     #Stops execution of current script, and pass r
                                   #Def: 1
 
 __FUNCTION__                      #Current function name. "" if top-level
+                                  #Prepended by "NS\" if not in global namespace
 __CLASS__                         #Current class|trait, when inside a method. "" otherwise
                                   #Prepended by "NS\" if not in global namespace
 __TRAIT__                         #On non-redefined inherited methods, uses the class|trait that defined the method, not the one that inherited it
-                                  #Prepended by "NS\" if not in global namespace
 __METHOD__                        #Current method name, i.e. __CLASS__::__FUNCTION__. "" if none
 
 __LINE__                          #Line number. 1 if CLI
