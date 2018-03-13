@@ -96,16 +96,37 @@ loggers                           #CONTAINER singleton
                                              \=+===============================+=/
 
 
-LOGINFO                           #OBJ:
-                                  #  - level LEVEL
-                                  #     - normalized to LOGINFO[TRIPLE-BEAM.LEVEL] when inside FORMAT|TRANSPORT
-                                  #  - message 'MESSAGE': what is logged
-                                  #  - any other property
-
 LOGGER.log([LEVEL, ]LOGINFO)
 LOGGER.log
  (LEVEL, 'MESSAGE'[, LOGINFO])    #
 LOGGER.LEVEL(...)                 #Same as LOGGER.log(LEVEL, ...)
+
+LOGINFO                           #OBJ:
+                                  #  - level LEVEL
+                                  #  - [TRIPLE-BEAM.LEVEL]:
+                                  #     - same as LOGINFO.level
+                                  #     - Winston internal code uses [TRIPLE-BEAM.LEVEL] but most transports use LOGINFO.level
+                                  #  - message 'MESSAGE'
+                                  #  - [TRIPLE-BEAM.MESSAGE] STR
+                                  #     - as opposed to LOGINFO.message, it is serialization of full LOGINFO.*
+                                  #     - set by FORMAT.json|prettyPrint|simple|printf|cli|logstash()
+                                  #  - any other property
+
+LOGINFO CONSUMPTION ==>           #LOGINFO is consumed by TRANSPORTs in different ways before of transports based on older
+                                  #Winston transports:
+                                  #  - latest version either:
+                                  #     - log a string, i.e. print LOGINFO[TRIPLE-BEAM.MESSAGE] only:
+                                  #        - transports: stream (non-ObjectMode), console, file, daily-rotate-file, syslog, fast-file-rotate, newrelic
+                                  #     - log an object, i.e. print LOGINFO.*:
+                                  #        - transports: stream (ObjectMode), http
+                                  #  - older version:
+                                  #     - print LOGINFO.level|message
+                                  #     - sometimes also print LOGINFO.meta|splat|[TRIPLE-BEAM.SPLAT]|stack or rest of LOGINFO.* (as metadata)
+                                  #        - note that latest Winston only sets LOGINFO[TRIPLE-BEAM.SPLAT] not LOGINFO.splat
+                                  #     - transports: winston-cloudwatch|azuretable|logsene|mail|mongodb|winston-aws-cloudwatch|elasticsearch|redis|logzio|@google-cloud/logging-winston
+                                  #  - oldest version:
+                                  #     - use TRANSPORT.log(LEVEL, MESSAGE, META) instead of TRANSPORT.log(LOGINFO)
+                                  #     - transports: airbrake|dynamodb|firehose|sns|cassandra|spark|cloudant|graylog2|papertrail|pusher|simpledb|sumologic|koa-sse|winlog2|couchdb|loggly|riak
 
 
                                              /=+===============================+=\
@@ -141,7 +162,10 @@ format.*                          #Reference to module 'logform' (1.10.0)
 
 LOGGER|OPTS|TOPTS.format          #FORMAT
                                   #Def: format.json()
-FORMAT                            #LOGINFO reducer performed on every log.
+FORMAT                            #LOGINFO reducer performed on every log. Usually:
+                                  #  - transform LOGINFO.message|level (padding, colors, prefix, templating, etc.)
+                                  #  - set some LOGINFO.* (ms|timestamp|splat)
+                                  #  - serialize LOGINFO.* to LOGINFO[TRIPLE-BEAM.MESSAGE] (meant to be last)
                                   #If reduce to false, silent log.
 FORMAT.transform(LOGINFO, FOPTS)
  ->LOGINFO|false                  #Method to implement
@@ -151,16 +175,19 @@ format
  ->FUNC2([FOPTS])->FORMAT         #Turn any reducer FUNC into a FORMAT generator
 format.combine(FORMAT...)->FORMAT #Turn several FORMAT into one, running them serially
 
-format.json([FOPTS])->FORMAT      #LOGINFO.message = JSON.stringify(LOGINFO)
+format.json([FOPTS])->FORMAT      #LOGINFO[TRIPLE-BEAM.MESSAGE] = JSON.stringify(LOGINFO)
                                   #Uses FAST-SAFE-STRINGIFY (see its doc)
                                   #FOPTS: replacer|space (arguments to JSON.stringify())
                                   #Default replacer allow stringifying BUFFER (using BUFFER.toString('base64'))
-format.prettyPrint([FOPTS])       #LOGINFO.message = UTIL.inspect(LOGINFO, FOPTS)
+format.prettyPrint([FOPTS])       #LOGINFO[TRIPLE-BEAM.MESSAGE] = UTIL.inspect(LOGINFO, FOPTS)
  ->FORMAT                         #Can only use FOPTS.depth|colorize
-format.simple()->FORMAT           #LOGINFO.message = 'LEVEL: LOGINFO.message JSON_LOGINFO'
+format.simple()->FORMAT           #LOGINFO[TRIPLE-BEAM.MESSAGE] = 'LEVEL: LOGINFO.message JSON_LOGINFO'
                                   #  - JSON_LOGINFO is JSON.stringify(LOGINFO) without LOGINFO.level|message
+format.cli([FOPTS])->FORMAT       #Combines format.colorize() and format.padLevels() but set to LOGINFO[TRIPLE-BEAM.MESSAGE]
+                                  #Also prepends 'LEVEL:' to LOGINFO[TRIPLE-BEAM.MESSAGE]
+format.logstash()->FORMAT         #LOGINFO[TRIPLE-BEAM.MESSAGE] = { @fields LOGINFO, @message LOGINFO.message, @timestamp LOGINFO.timestamp }
 format.printf
- (FUNC(LOGINFO)->'MESSAG')->FORMAT#LOGINFO.message = 'MESSAGE'
+ (FUNC(LOGINFO)->'MESSAG')->FORMAT#LOGINFO[TRIPLE-BEAM.MESSAGE] = 'MESSAGE'
 
 format.colorize([FOPTS])->FORMAT  #Colorize LOGINFO.level|message
                                   #Color is according to LOGINFO.level
@@ -186,8 +213,6 @@ format.padLevels([FOPTS])->FORMAT #Left pads LOGINFO.message according to LOGINF
                                   #FOPTS:
                                   #  - levels (def: config.npm.levels)
                                   #  - filler STR (def: ' ')
-format.cli([FOPTS])->FORMAT       #Combines format.colorize() and format.padLevels()
-                                  #Also prepends 'LEVEL:' to LOGINFO.message
 
 format.timestamp([FOPTS])->FORMAT #LOGINFO.timestamp = 'DATE'
                                   #FOPTS:
@@ -196,13 +221,11 @@ format.timestamp([FOPTS])->FORMAT #LOGINFO.timestamp = 'DATE'
 format.ms()->FORMAT               #LOGINFO.ms = '+NUM ms|s|m|h' with the time spent since last log (0 if was first log)
 format.label([FOPTS])->FORMAT     #If FOPTS.message false (def), LOGINFO.label = FOPTS.label
                                   #Otherwise, prepends '[FOPTS.label] ' to LOGINFO.message
-format.metadata([FOPTS])->FORMAT  #Move LOGINFO.* -> LOGINFO.metadata.*
+format.metadata([FOPTS])->FORMAT  #Move LOGINFO.* -> LOGINFO.metadata.* (for backward compatibility with older Winston)
                                   #FOPTS:
                                   #  - metadataKey 'PROP' (def: 'metadata')
                                   #  - fillExcept 'PROP'_ARR (def: ['level', 'message']): do not move those keys
                                   #  - fillWith 'PROP'_ARR: only move those keys
-
-format.logstash()->FORMAT         #Transform LOGINFO to { @fields LOGINFO, @message LOGINFO.message, @timestamp LOGINFO.timestamp }
 
 
                                              /=+===============================+=\
