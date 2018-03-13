@@ -1,0 +1,146 @@
+
+               
+   ENGINE.IO   
+               
+
+
+VERSION ==>                   #1.3.1
+                              #Websocket server|client (similar to HTTP[S] but for WEBSOCKET). 
+                              #Like WS (use it at low-level) but with not only websockets. Goal: provide cross-browser using
+                              #different transports:
+                              #  - "polling": long polling, GET client->server, POST server->client
+                              #     - can be done over XHR (must support CORS) or JSONP
+                              #  - "websocket"
+                              #Uses long polling fallback (starts with it).
+                              #Client is web script too.
+                              #Automatically CORS enabled.
+
+PROTOCOL ==>                  #Websocket Upgrade request can have query variables:
+                              #  - transport: "polling|flashsocket|websocket"
+                              #  - t: timestamp
+                              #  - j: for "polling"
+                              #  - b64: 1 if can send binary data as base64 using "polling"
+                              #  - sid: SESSIONID:
+                              #     - kept in session cookie "io"
+                              #     - goal:
+                              #        - to maintain client ID accross reconnections
+                              #        - to perform allowRequest() only at first connection
+                              #Also, first byte of each packet is UINT:
+                              #  - 0: first packet JSON when a new transport opened with:
+                              #     - sid SESSIONID
+                              #     - upgrades TRANSPORT_ARR
+                              #     - pingTimeout NUM: for client when it pings server
+                              #  - 1: close transport
+                              #  - 2: ping 
+                              #  - 3: pong (should contain same payload as ping)
+                              #  - 4: message
+                              #  - 5: switch transport
+                              #  - 6: noop
+
+
+																						 /=+===============================+=\ 
+																						/  :                               :  \  
+							 														  )==:            SERVER             :==(   
+																						\  :_______________________________:  /    
+																						 \=+===============================+=/
+
+
+SETUP ==>                     #Either:
+                              #  - ENGINE-IO.Server([OBJ])->ESERVER:
+                              #     - ESERVER.handleUpgrade(...) in "upgrade" event handler of HTTP[S].SERVER
+                              #     - ESERVER.handleRequest(...) in "request" event handler of HTTP[S].SERVER
+                              #     -> handle Upgrade requests of HTTP[S].ESERVER (use HTTPS to use WSS)
+                              #  - ENGINE-IO(HTTP[S].SERVER[, OBJ])->ESERVER: shortcut
+                              #  - ENGINE-IO.listen(NUM[, OBJ][, FUNC()])->ESERVER: 
+                              #     - same on a empty created HTTP[S] server, which returns 501 on HTTP[S] requests
+                              #     - FUNC() is listen event handler
+                              #OBJ:
+                              #  - pingInterval NUM (def: 25000): sends ping packets. 
+                              #    After pingTimeout NUM (def: 60000) with no pong, close connection.
+                              #  - maxHttpBufferSize NUM (def: 10e7): when long polling, to avoid DoS
+                              #  - allowRequest FUNC(REQ, FUNC2(ERROR, BOOL)): 
+                              #     - on upgrade request, to check for Origin [C] for example
+                              #  - cookie STR (def: "io", can be false)
+                              #  - transports STR_ARR (def: [ "polling", "websocket" ])
+                              #     - can see current with ESOCKET.transport OBJ
+                              #     - ESOCKET.upgraded true when changed (only ESERVER-side)
+                              #OBJ (only when attaching via ENGINE-IO(HTTP[S].SERVER)):
+                              #  - path STR (def: "/engine.io")
+                              #  - destroyUpgrade BOOL: if true (def), stop Upgrade requests after destroyUpgradeTimeout NUM
+                              #    (def: 1000)
+
+ESERVER.on
+("connection", FUNC(ESOCKET)) #
+ESERVER.clients               #{ ID: ESOCKET ... }
+ESERVER.clientsCount          #
+ESERVER.close()               #Close all connections
+ESERVER.ws                    #Underlying WSOCKETSERVER (see WS). clientTracking set to false. Cannot pass options.
+ESERVER.httpServer            #Underlying HTTP[S].SERVER
+
+
+																						 /=+===============================+=\ 
+																						/  :                               :  \  
+							 														  )==:            CLIENT             :==(   
+																						\  :_______________________________:  /    
+																						 \=+===============================+=/
+
+
+EIO                           #Global object for client in web script, require("engine.io-client") for Node
+new EIO(WS[S]_URL[, OBJ])     #Returns ESOCKET
+                              #OBJ:
+                              #  - path STR (def: "/engine.io")
+                              #  - transports STR_ARR (def: [ "polling", "websocket" ])
+                              #  - agent AGENT (passed to WS)
+                              #  - upgrade BOOL: if true (def), should try to upgrade from "polling"
+                              #  - timestampRequests BOOL: true (def), always true on IE and Android
+                              #  - timestampParam STR (def: "t"): for upgrade request, as a query parameter
+                              #  - policyPort NUM (def: 843)
+
+
+																						 /=+===============================+=\ 
+																						/  :                               :  \  
+							 														  )==:            SOCKETS            :==(   
+																						\  :_______________________________:  /    
+																						 \=+===============================+=/
+
+
+ESOCKET.id                    #
+
+ESOCKET.server                #ESERVER (only ESERVER-side)
+ESOCKET.request               #REQ of the Upgrade request (to check for cookies, auth, etc.) (only ESERVER-side)
+
+ESOCKET.send
+(STR|BUFFER|ARRAYBUFFER[VIEW]
+[, FUNC()])                   #FUNC() is fired when message flushed
+ESOCKET.on("message", 
+FUNC(STR|BUFFER|              #When receiving text|binary packet
+ARRAYBUFFER[VIEW]))           #Type of received binary packets decided by ESOCKET.binaryType "blob|arraybuffer" (browser) or
+                              #"buffer|arraybuffer" (Node)
+ESOCKET.on("packet", 
+FUNC(TYPE, STR|BUFFER))       #When receiving any packet
+ESOCKET.on("packetCreate",
+FUNC(TYPE, STR|BUFFER))       #When sending a packet
+
+ESOCKET.on("open", FUNC())    #
+ESOCKET.on
+("close", FUNC(UINT, STR))    #
+ESOCKET.on
+("error", FUNC(ERROR))        #
+ESOCKET.close()               #
+ESOCKET.readyState            #Like DOM WEBSOCKET.readyState, but as STR
+
+ESERVER.on                    #When sending all pending messages STR_ARR to ESOCKET (flushing).
+("flush",FUNC(ESOCKET,STRARR))#Can alter them using ENGINE.IO-CONFLATION.createConflater(FUNC3(STR_ARR)->STR_ARR2)
+                              #->FUNC(ESOCKET,STR_ARR)
+                              #Altering can be used for conflation, i.e. when sending a lot of messages (high traffic), only
+                              #keeping the interesting ones.
+ESERVER.on
+("drain", FUNC(ESOCKET))      #When finished flushing ESOCKET
+ESOCKET.on
+("flush",FUNC(ARRAY))         #
+ESOCKET.on("drain", FUNC())   #
+
+ESOCKET.on
+("upgrade[Error]", FUNC())    #
+ESOCKET.on
+("poll[Complete]", FUNC())    #When using "polling"

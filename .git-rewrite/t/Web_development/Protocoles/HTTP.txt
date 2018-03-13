@@ -1,0 +1,449 @@
+
+          
+   HTTP   
+          
+
+Architecture:
+  - application layer
+  - en général au-dessous de TCP/IP
+     - SSDP est similaire à HTTP, mais au-dessus de UDP
+  - client-server:
+     - client ("user agents", e.g. web browser, web crawler, app, etc.) asks a specific resource to a server
+        - resource might have been modified (static pages) or not (dynamic: .php, .asp, etc.) by the server before being sent.
+  - uses sessions:
+    - set of HTTP requests bound to a single TCP session/socket.
+       - e.g. if multiple resources (e.g. images in a single web page):
+          - HTTP 1.1: let client guess and request additional resources
+          - SPDY:
+             - server can help client:
+                - guess additional resources, with server hints: 
+                   - like Link prefetching, but for subresources on a pages
+                   - tells client list of resources to download in headers, instead of letting client guess it once response 
+                     body is received
+                   - Header Link: <URL>; rel=prefetch [S] or HTML <link rel="subresource" href="URL">
+                - no need to requests additional resources, with server pushes:
+                  - like server hints, but do no wait for client request
+                  - less roundtrips than server hints, but careful not to push cached resources, and push only resources that 
+                    would have been requested
+                  - use in case where would have used Data URI before
+       - how:
+          - HTTP 1.0: Connection: Keep-Alive [C|S] indicates to keep connection
+          - HTTP 1.1: Connection is opened until variable timeout is used. Can explicitely close with Connection: close [C|S]
+          - SPDY 3: keep TCP connection opened as long as client still on one domain (i.e. one tab opened for browser clients)
+          - SPDY 4: one TCP connection by server, not by domain (for server with multiple domains)
+       - is detrimental when using mostly single requests (e.g. image hosting), because keep extra sessions up for longer
+       - HTTP pipeling: 
+          - HTTP 1.0:
+             - client need to wait for answer to request again
+          - HTTP 1.1:
+             - client can make all requests without waiting for answers
+             - but answers need to be delivered in same order
+          - SPDY:
+             - multiplexing: answers can be sent out of request order
+    - stateless: requêtes indépendantes des autres.
+      - utiliser cookies, etc. pour avoir des sessions
+  - version 1.1
+  - case insensitive
+
+SPDY/HTTP2:
+  - HTTP2: SPDY version 4
+  - SPDY:
+     - layer between TLS and HTTP:
+        - keep HTTP semantics (HTTP headers, status code, etc.)
+        - but transfer HTTP packets differently
+     - features:
+        - forces using TLS
+        - compress HTTP headers
+        - replace status line with headers:
+           - request status line with :host: URL [C], :method METHOD [C], :path PATH [C], :scheme: https [C], 
+             :version HTTP/1.1 [C]
+           - response line with version: HTTP/1.1 [C], status: UINT STR [S]
+        - TCP connection remain opened
+        - HTTP pipeling multiplexed
+        - server hints 
+        - server pushes
+     - uses NPN/ALPN for client to let server know it supports SPDY
+  - hostname sharding:
+     - some clients limit number of parallel requests per domain.
+     - sharding: intentionally using different domains on a page to overcome it. Useless with SDPY/HTTP2
+
+Request from client (newline is \n\r) :
+  - METHODE URL HTTP/1.1
+    VAR: VAL... (header fields, separated by newline. Host is mandatory)
+
+    [BODY] (second newline if none)
+  - Explication : 
+    - METHODE :
+      - "safe" (lecture) :
+        - GET : ask resource
+        - HEAD : ask resource (header only)
+        - OPTIONS : ask metadata (e.g. functionalities of web server). Usually use * as URL
+        - TRACE : echoes request (to see changes introduced by servers|proxies)
+      - "unsafe" (écriture) :
+        - idempotent (plusieurs requêtes donnent le même résultat) :
+          - PUT : create resource
+          - DELETE : erase resource
+        - ou non :
+          - POST : modify resource completely
+          - PATCH: modify resource partially
+          - CONNECT: do HTTP Tunneling
+    - URL : relatif à DOMAIN, e.g. "/images/image.pgn"
+    - Header fields:
+      - in theory no limit, but in practice e.g. Apache limits 8MB/header and 1000 headers, Node.js 80KB/header
+      - options, VAR: VAL (written [S|C] for server|client in my doc), followed by newlines
+    - BODY :
+      - data sent from client to server (usually for unsafe methods)
+
+Response from server:
+  - HTTP/1.1 UINT STR
+    [VAR: VAL...]
+
+    [BODY]
+  - Décomposition :
+    - UINT : 
+      - numéro du status code (sorte d'exit code) (others are mentioned in this doc)
+        Can also use Status: UINT STR [S]:
+         - 1** : information
+            - 100 (Continue): 
+               - when request body is large and request might be rejected (inefficient), sends header first, then body
+               - client uses Expect: "100-continue" [C]
+               - server sends 100 status code after receiving header, then client sends body. Otherwise, sends 417 status code
+                 (Expectation Failed)
+         - 2** : succès
+            - 200 (OK) : simple succès
+            - 201 (Created) : ressource créée (PUT). Use Location: URL [S] for new resource URL.
+            - 202 (Accepted): same but not processed yet
+            - 204 (No Content): OK, but nothing is to be returned: successful DELETE, If-Modified-Since header, etc.
+         - 3** : redirection (à faire par le Client, sauf pour un GET ou HEAD ou le Server peut le faire)
+         - 4** : échec (côté client)
+            - 400 (Bad request): syntax error
+            - 403 (Forbidden): problème de droits d'accès
+            - 404 (Not Found): wrong URL, but correct domain.
+               - avoiding them: analysis of all links of website (miss redirection from other websites), of all internet, or
+                 of server log pointing 404 errors.
+            - 405 (Method not allowed)
+            - 408 (Request Timeout): client request didn't come fast enough
+            - 409 (Conflict): multithread pb
+            - 410 (Gone): like 404, but indicates URL was present before (and not moved)
+         - 5** : échec (côté server)
+            - 500 (Internal server error): bug in server, e.g. syntax error
+            - 501 (Not implemented): new feature not available yet
+            - 502 (Bad gateway): sent by proxy when it received error from server
+            - 503 (Service unavailable): server is down
+            - 504 (Gateway timeout): sent by proxy when server was too long to respond
+            - 505 (HTTP version not supported)
+    - STR : status code, sous forme STR
+    - Header fields
+    - BODY :
+      - dépend de requête
+
+<meta http-equiv="HEADER" content="VAL">:
+  - client (not server) will add HTTP HEADER: VAL to the server's response. 
+  - Does not always work.
+
+Redirections:
+  - Redirection is using Location: URL [S]
+     - Can also avoid redirecting by fetching it, but notify with Content-Location: URL [S]
+  - More than five redirections is considered infinite loop.
+  - Use 3** status codes:
+     - can either:
+        - be permanent: 301 (Moved Permanently) or 308 (Permanent Redirect), or be temp: 303 (See Other) and 307 (Temporary Redirect)
+        - change HTTP method: 301/303, or not: 307/308
+  - Refresh: NUM, url=URL [S], like <meta http-equiv="refresh" content="NUM; url=URL"> redirection 
+  - Retry-After: NUM|DATE [S], tells client to try again after a specific period of time
+
+Time:
+  - Date: DATE [C]: when request was sent 
+  - Accept-Datetime [C]: which response it wants, to allow getting older versions.
+
+Browser sending data:
+  - <form action="URL" method="post|get" enctype="STR">:
+      - Submit (<input|button type="submit">) le formulaire change current URL2 to URL, using POST|GET METHOD.
+      - Will send VAR=VAL&... as "application/x-www-urlencoded" via:
+         - GET: query string ?VAR=VAL&VAR2=VAL2
+         - POST: HTTP request body
+      - VAR are fields "name", VAL "value".
+      - Can use VAR[VAR2]=VAL to send OBJ, but must be supported by server:
+         - query string: supported by Express REQ.query
+         - request body: supported by Express BODY-PARSER
+      - Query strings:
+         - only advantage is VAR=VAL is kept in a state (the URL), so can bookmark, send, etc.
+         - but:
+            - it clutters URL, and is bad practice (bad SEO)
+            - value are often limited in chars
+      - enctype (for POST):
+         - "application/x-www-form-urlencoded" (déf): 
+             - percent-encoded, but space converted to + instead of %20
+	       - "multipart/form-data; boundary=STR": more efficient than percent-encoding for binary/big payload, e.g. file upload.
+		 	       STR	
+			       Content-Disposition: form-data; name="VAR"[; filename="FILE"] //filename only if <input type="file">
+			       [Content-Type: TYPE]
+			       content as is
+	         STR should be long enough and random. Can include a graphical line with "------" for humans reading the request.
+         - "text/plain" : no change. For mailto:. Only with GET.
+  - When "multipart/form-data" is sent from server to browser:
+     - browser will download it (download box)
+     - note: 
+         - when no Content-Type is not "multipart/form-data" but another supported by browser renderer (e.g. binary), it
+           will do the same thing
+         - but e.g. pictures can be rendered, so must use "multipart/form-data" to tell clients to download instead
+     - if no filename="...", will create a default one according to Content-Type
+  - AJAX requests with XHR.send():
+      - doesn't reload page
+      - can choose request headers, body and methods
+
+Software identity:
+  - User-agent: STR [C] and Server: STR [S]. Can also instruct rendering engine to client with 
+    X-UA-Compatible: BROWSER=VAL [S]
+  - X-Powered-By: STR [S], e.g. "PHP/5.4.0"
+  - X-Request-With: FUNC (e.g. XMLHttpRequest) [C], often used in AJAX
+  - Pragma: VAL [C|S], for server-specific lingo
+
+Client identity:
+  - From: EMAIL_ADDRESS [C]
+
+Destination:
+  - Host: HOST[:PORT] [C], mandatory. DOMAIN might be case-sensitive on some servers.
+     - virtual hosting (several HOST on same machine): 
+       - name-based: 
+          - using several HOST names under same IP. 
+          - Is harder to implement with HTTPS. 
+          - When DNS doesn't work, harder to reach directly through IP.
+       - IP-based:
+          - using one IP by HOST
+
+Content:
+  - content negotiation (client gives several options, and server picks one):
+     - server-side:
+        - Content-Type: MIME_TYPE[; charset=CHARSET] [S]. 
+        - Accept: MIME_TYPE and Accept-Charset: CHARSET [C] to notify the server. 
+          Server can use status code 514 (Unsupported Media Type)
+        - Accept-language: LANGUAGE [C], Content-language: LANG [S]
+        - Accept-features: FEATURE [C]
+        - each header [C] can be followed by [; q=NUM] to put preferences on each option
+        - 406 (Not Acceptable): wrong Accept-* [C]
+     - transparent:
+        - Negociate [C] then server:
+           - respond with normal response body after server-side negotiation
+              - unless 300 status code and TCN: list [S], otherwise TCN: choice [S]
+           - Alternates: URL,... [S]
+           - sends 506 when server has circular references due to choice picking
+        - Negociate: VAL [C]:
+           - trans: support, but don't ask for it
+           - vlist: support and ask for it
+        - Goal: not having to send too many Accept* [C], which increase packet size and allow privacy concern (fingerprinting)
+        - Problem: need to perform two requests
+  - Content-Disposition: attachment[; filename="..."] [S], ask to download with a file chooser
+
+Control:
+  - Content-MD5: CHECKSUM [C|S], usually with Trailer: HEADER_VAR [S]
+
+Cache:
+	- vocabulary:
+		 - cache hits ratio: % of requests that could use the cache
+		 - stale resources: cached but not valid any more
+  - proxy/server caching:
+		 - CDN: fast servers for caching, spurned across several geographical regions to be closer to clients
+		 - Memcached/Redis are between the server and the DB, while web accelerators are between server and client
+		 - proxy caching:
+		    - types: 
+	 				 - ISP can cache
+	 				 - web accelerator: reverse proxy dedicated to caching (closer to end client)
+				- Vary: HEADER [S] tells the client to use different entry caches for requests on same URLs but using different
+				  request HEADER value.
+					Usually used with Vary: Accept-Encoding towards cache proxies, so they don't serve gzipped cache entries to clients
+					not able to gunzip, or cleartext cache entries to clients that requested gzipped and will try to gunzip.
+					Also sometimes Vary: User-Agent if served files vary according to User-Agent (will increase SEO)
+		 - server and proxy caching can cache for all clients based on the request of a single client
+	- cache HTTP headers tell browser how to cache given response (if none, browser guess using heuristic, to avoid):
+		 - unconditional caching:
+				- browser should not ask server and only use cache for a given time period
+          Does not apply on page refresh.
+				- fastest cache method, but requires timestamp updates, so should be done on asset files (CSS, images, JavaScript,
+					etc.) but not HTML (it would break timestamping).
+					Usually asset files are in /static PATH on server, and in Express served with static file server, while rest is not.
+		    - Cache-Control: STR,... [S] where STR can be:
+					 - [s-]max-age NUM: how long to cache
+						 "s-" is for cache proxies only like CDN
+						 Should not be more than 1 year later, but:
+ 							 - if fingerstamping ok, should be as long as possible (so should be 1 year)
+							 - otherwise, set longest time you estimate clients can have a good experience with a stale resource
+					   Can also use instead Expires: DATE [S]:
+						   - same but using a given DATE
+							 - older header
+					 - public|private: can [not] be cached by intermediate proxy, not only end-client:
+					    - public: allow proxy caching
+							- private: good if data is sensitive, including headers e.g. cookies (even if SSL if the proxy needs to 
+							  decrypt/encrypt in the middle)
+					 - no-transform: don't allow proxy to recompress images/videos.
+					   Some proxies also inject Javascript code which might mess up with the application.
+           - must|proxy-revalidate: 
+              - when expires, if conditional caching setup, will do conditional cache request
+              - however it is the default of most clients
+				- Cache-Control: STR,... [C]:
+           - max-age=0: forces all proxies in between to use conditional caching, and server to check if need to respond with 
+             304
+			 	   - no-cache: forces all proxies in between not to use conditional caching, and server not to respond with 304
+				-	timestamping:
+				   - using an ID in the URL (e.g. version of Javascript file). 
+					 - When resource changes, change ID, update links to resource.
+					 - new calls will get new version (because different URL).
+           - query string is taken into account: careful not to timestamp a resource by mistake by unconditionally caching a 
+             URL with query string
+				- When using conditional caching too (ETag or Last-Modified):
+           - unconditional caching has precedence
+           - but when unconditional cache expires, uses conditional caching, so good idea to set it
+		 - conditional caching:
+				- browser should first send request to check if resource has changed. If 304 response, should use cache.
+				- best cache method when it's impractical to timestamp, e.g. HTML and AJAX calls.
+				  Faster to get 304 response with empty body, and no need for server to fetch data.
+				- Headers:
+					 - Can be based on (cannot be both):
+					    - mtime: Last-Modified: DATE [S], If-Modified-Since: DATE [C]
+				      - content hash: ETag: HASH [S], If-None-Match: HASH [C]:
+                 - W/"...": weak, which means are just identical semantically, but not byte by byte. Used with dynamic websites
+                 - "...": strong
+					 - If-Unmodified-Since, If-Match: inverse, e.g. to do PUT only if resource is still the same
+             Uses 412 instead of 304
+		 - no caching:
+		    - faster than conditional caching if resource is never the same (avoid 304 response)
+        - often done for security reasons
+				- Cache-Control: no-cache, no-store, private, must-revalidate
+				  Pragma: no-cache
+					Expires: 0
+				   - both values are same but for different browsers
+					 - Pragma if for HTTP 1.0
+        - can use no-cache="HEADER" for a specific header
+	 - can see all in chrome://cache on Chrome
+	 - security:
+	    - client's cache entries containing confidential info (e.g. login info) could be accessed (by exploiting another 
+			  vulnaribility or someone else having physical access to computer)
+			- POST replay attack: use same URL to authenticate (thanks to cached entry) even if logged out
+			- countermeasure: no caching for sensitive body or headers
+
+Long response:
+  - Content-Length [C|S]: nombre d'octets du BODY:
+      - If required, server can send status-code 411 (Length Required) or 413 (Request Entity too large). 
+      - There is also (for the URL) 414 (Request URI too long) and 431 (Request header fields too large).
+  - Can use Transfer-Encoding: chunked [S] instead, which will send BODY in several times, signalling end by sending empty 
+    BODY. 
+      - can be requested by TE: chunked [C]
+      - Trailer: HEADER_VAR [S], sends additional headers, but at the end.
+      - Good for big file or HTTP live streaming (different from HTTP streaming)
+      - Should be used with compression
+  - Another approach is byte serving: knowing size but dividing it:
+     - Range: bytes=NUM-NUM2 [C], and If-Range: ETAG [C] (sends rest if still the same). 
+       Accept-Ranges: bytes [S] and Content-Range: bytes NUM-NUM2/TOTAL [S] with status code 206 (Partial content)
+       Server can use 416 (Requested Range Not Satisfiable)
+
+Proxies:
+  - X-Forwarded-For: HOST... [C], indidates previous clients in a proxy chain.
+  - X-Forwarded-Proto: PROTOCOL... [C], same for protocols, when changing protocols along the chain (e.g. HTTP to HTTPS)
+  - X-Forwarded-Port: PORT... [C]: same for port
+  - Via: HTTP_VERSION URL SERVER ... [C|S], proxies
+  - Max-Forwards: NUM [C], max number of proxies
+
+Security: See Websites_security
+
+Tracking:
+  - Referer: URL [C], current URL (so new URL can see where navigation originates)
+    <link|a rel="noreferrer"> asks client not to send it.
+  - DNT: 1 [C], "Do-not-track" tells server:
+     - doesn't want any trace/unique ID/cookie that could correlates its visit of different websites
+     - this includes tracking cookies, third-party ads tracking, but does not include Google Analytics, user preferences on 
+       one site or targetting ads according to one single site preferences
+  - Set-Cookie: VAR=VAL;SVAR=VAL;... [S]:
+     - Asks client to send Cookie: VAR=VAL[;...] [C] again when visiting a specific path on a specific domain
+     - Used to introduce a state: authentication, tracking, etc.
+     - One Set-Cookie [S] per cookie, but one Cookie [C] for all cookies
+     - VAL are percent-encoded
+     - SVAR are:
+        - path (récursif) (e.g. "/index.html") et domain (e.g. "www.a.org"):
+           - when same as current: first-party cookies, often for authentication or for traffic analytics.
+           - when different: third-party cookie
+              - often tracking cookies : same domain accross different visited websites to connect different websites 
+                someone visits, for advertising purposes
+              - needs to trick the browser which otherwise blocks it (can only use cookie from same domain), e.g. hidden 
+                iframes.
+        - expires|max-age: DATE|NUM secondes before expiration (nothing for end of session). Put to 0 to delete cookie.
+        - secure: can only transmit|receive via https.
+        - HttpOnly: can't be used via Javascript (document.cookies) (considered unsecure), can be used e.g. by PHP
+     - Zombie cookie :
+        - copies in several places.
+        - if some absent, reduplicate them 
+        - evercookie is an open source implementation
+  - Private browsing :
+     - a private session erases at the end all the traces (history, cookies, cache) it created.
+     - called Incognito in Chrome
+
+Compression:
+  - Accept-Encoding: PROGRAM... [C], then Content-encoding: PROGRAM [S]
+  - PROGRAM can be: 
+      - "identity" (none) 
+      - "gzip/deflate": Zlib. Same compression but different header (gzip conserves files info but bigger). 
+        However, as a client should ask for gzip, because deflate is handled differently by some servers.
+        Other compression methods are way less supported.
+      - "bzip2" 
+      - "lzma"
+      - "shdc": by Google, supported natively by Chrome (seems inactive)
+  - server should cache the input/output of compression to avoid doing twice the same compression on same input, because
+    compression is long
+
+HTTPS:
+  - using HTTP over SSL/TLS over TCP
+  - needs to be enable on all website resources, including scripts, all pages, etc., otherwise could attack on specific
+    unsecure resources
+     - this includes cookies. To have secure cookies, provide the secure attribute, which says it can only be used with HTTPS
+  - Strict-Transport-Security: max-age=NUM (seconds from now); includeSubDomains [S]: specify clients it only allows HTTPS 
+    connections. Client should resend the request using HTTPS if HTTP was used.
+  - Upgrade: PROTOCOL/VERSION [C] is to start a session in HTTP then continue in HTTPS. 
+     - Should not be used. Client can just specify https:// to signify it wants HTTPS
+     - Server sends 426 if require Upgrade: HTTPS [C]
+     - Server sends 101 if switch protocols
+
+Profiling:
+  - X-Response-Time: NUM [S]: time taken by server to process answer
+
+REST:
+  - X-HTTP-Method-Override: METHOD [C]:
+     - tells server that request should be interpreted as if HTTP METHOD has been used. 
+	   - goal is to overcome network limitations (firewalls, etc.) protecting client from using methods like PUT, DELETE, etc. 
+       on a REST API
+
+Push technologies / server push:
+  - allow server to initiate message to client
+  - types:
+     - short polling with AJAX requests
+     - HTTP server push / HTTP streaming: using Transfer-encoding: chunked [S]
+     - Comet:
+        - Pushlet: leaves HTTP connection open, sending new bits from time to time
+        - Long polling: waits for server events to return the reply to client, then ask client to request again. Uses timeouts.
+           - BOSH: variation of long polling
+     - Server-sent events (SSE)
+     - TCP socket used by plugins like Flash or Java: bi-directional
+     - Websockets: same idea but standardized
+
+Lower latency (keep TCP connection):
+  - Require smaller packets (not HTTP):
+     - Websockets: for small messages
+     - WebRTC: for video/audio/etc.
+  - SPDY
+  - Link prefetching:
+     - Headers (only with <link rel="..." href="URL">):
+        - Prefetch: URL, request URL
+        - DNS-Prefetch: URL, only request DNS records
+        - Prerender: URL, request URL and renders it in background:
+           - keeps it only if user doesn't navigate away
+           - aborts it if user interaction required, or media autoplay
+     - Careful:
+        - Will provide "fake views"
+        - If prefetching everything, will be very slow initial load time
+        - Happens serially (one URL at a time)
+
+HTTP Tunneling:
+  - client wraps a TCP packet in a HTTP packet request body
+  - tells proxy to unwrap HTTP packet and send TCP packet, and wrap received TCP packets as HTTP packet
+  - can be used to bypass firewalls
+  - CONNECT method:
+     - use only first HTTP handshake with proxy, then use TCP connection
+     - can be used to access HTTPS using a HTTP proxy (TCP between client-proxy, SSL between proxy-server)

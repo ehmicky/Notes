@@ -1,0 +1,184 @@
+
+                      
+   SHARED_LIBRARIES   
+                      
+
+Nom du paquet :
+  - une library runtime se présente sous la forme PACKET, une library development sous la forme PACKET-dev, une library debug sous la forme PACKET-dbg
+  - PACKET se termine par "-java" si library Java. Même chose pour perl
+  - si deux major versions sont maintenues de manière concurrente, PACKET est suivi, sans espace, du major version number
+  - si une major version a cassé la retro compatibility, on peut maintenir un second packet PACKET-compat
+  - types possibles :
+    - une library runtime PACKET n'a que les *.so et *.a (et la licence ???)
+    - une library avec development files PACKET-dev a aussi les headers et la doc
+    - une library avec debugging symbols PACKET-dbg a été compilé avec des flags pour debugging (ex : gcc -g3 -ggdb)
+    - une library de doc PACKET-doc a de la documentation sur l'API
+    - une library de ressouces PACKET-data a les ressouces (image, vidéo, etc.)
+
+Différents names :
+  - linkername : lib*.so
+    - pointe ou vers le prochain soname, ou vers le real name
+    - utilisé par le linker (ex : gcc -l)
+  - soname : lib*.so.VERSION[.MINOR]
+    - liens symboliques intermédiaires (1 ou 2, si VERSION + VERSION.MINOR)
+      pointant vers le real name
+  - real name : lib*.so.VERSION.MINOR[.RELEASE]
+    - contient le code
+    - souvent avec RELEASE
+    - version est souvent == celle de la doc, mais pas toujours
+
+Installer library :
+  - root :
+    - copier vers /usr/lib/ ou autre sous forme de realname
+    - créer les sonames
+    - faire ldconfig :
+      - update le cache de ld /etc/ld.so.cache
+  - user :
+    - copier dans répertoire tel que /home/$USER/PROGRAM/
+    - créer les sonames
+    - utiliser -L/home/$USER/PROGRAM avec gcc, ou modifier /etc/ld.so.conf.d/ pour que gcc -l herche dans ce répertoire
+
+______________________________________________________________________________
+
+Avec shared library, on peut changer la bibliothèque, sans avoir à recompiler les binaries l'utilisant.
+Cependant, certains changements exigent de les recompiler, car elles sont incompatibles avec des choses inscrites compile-time dans les binaries utilisant la bibliothèque :
+  - il y a lors problème de "retro-compatibility"
+  - il faut utiliser un nouveau soname
+  - il faut recompiler les binaires
+
+Exemples généraux :
+  - modifier contrat d'une fonction de l'interface publique (preconditions, postconditions, invariants, type, nombre, valeur et signification des return value et arguments, exceptions lancées, side effects)
+  - modifier valeur d'une variable/typedef/macro publique
+  - supprimer une fonction/variable/typedef/macro publique
+
+Conseils en conséquence :
+  - ajouter de nouvelles fonctions, pas supprimer les anciennes
+  - conserver les fonctions périmées pendant un certain temps, mais ne plus les documenter
+  - faire une encapsulation maximum, pour pouvoir modifier l'implémentation à loisir, mais avoir une interface publique stable
+  - avoir un bon design, pour ne pas avoir à le modifier
+  - avoir un design extensible
+
+Exemples en C++ :
+  - changer implémentation d'une virtual function (car évaluée compile-time)
+  - ajouter/supprimer une virtual function (car modifie virtual table, évaluée compile-time)
+  - modifier le type d'une private CLASSFK accédée par une inline function
+  - modifier inheritance d'une classe (mais ajout de nouveaux enfants possibles)
+  - ajouter/supprimer une private CLASSDT d'une classe parente
+  - supprimer une CLASSFK non-private et non-inline
+  - mettre inline une CLASSFK non-private
+  - modifier une inline function
+  - modifier nom d'un membre (car souvent compris dans le mangled name)
+
+______________________________________________________________________________
+
+Static library / archive :
+  - juste des object files liés avec lors du linking (chemin direct ou via gcc -l)
+  - jamais shared par conséquent
+  - .a sous Linux, .lib sous Windows
+  - s'ajoutent inline, donc légèrement plus rapide, mais quasiment plus utilisés
+
+Shared library :
+  - séparée du fichier compilé (pas inline, mais via un call)
+  - application l'utilisant n'a pas besoin d'être recompilée si library est 
+    mise à jour, sauf si mise à jour casse la retro-compatibility
+  - pas forcément dynamic, mais souvent le cas
+
+Dynamic library :
+  - l'exécutable a des symboles, mais ne sait pas où est le chemin de la library, ceci étant résolu loadtime (late-binding)
+
+Dynamic loading / lazy loading :
+  - faire que les bibliothèques partagées ne sont pas chargées / déchargées lors du loadtime / fermeture, mais lors du runtime (lors utilisation d'une de leur fonction uniquement)
+  - Utilisation :
+    - si modules / plugins (pas forcément utilisés lors du lancement du programme, dépend de l'inclusion ou non de ces addons)
+    - plusieurs bibliothèques différentes provide the same functionnality, and the user choses which one. Permet donc de ne pas réécrire de code, et de choisir celle choisie par l'user.
+  - les libraries n'ont pas forcément à être présentes lors du loadtime
+  - Avec :
+    - POSIX/Unix : il faut utiliser dlopen(), dlclose() et dlsym(), et inclure <dlfcn.h> et lier libdl
+    - Windows : utiliser LoadLibrary[Ex], GetProcAddress, FreeLibrary, et inclure <windows.h> et lier Kernel32.dll
+
+Loader et linker GNU/Linux :
+  - ld : /lib/ld-linux.so.VERSION
+  - /etc/ld.so.conf (qui icnlue souvent tous les *.conf de /etc/ld-so-conf.d/) : chaque ligne ajoute un chemin au $LD_PATH
+  - ldconfig :
+     - génère un /etc/ld.so.cache, à partir de $LD_PATH, utilisé par ld lors du loadtime.
+     - à faire après toute création/suppression de bibliothèques, ou modification de $LD_PATH
+
+Variables ld :
+  - LD_PATH : par défaut /lib, /usr/lib, /usr/local/lib (+ même chose avec lib64 s'il y a lieu). Chemins recherchés par défaut par l'option -l de gcc et ldconfig
+  - LD_LIBRARY_PATH : si déclaré, override $LD_PATH (à éviter)
+  - LD_PRELOAD : si déclaré, concaténée à LD_PATH, et a précédence sur libraries homonymes (à éviter)
+
+Sous GNU/Linux, presque tout binary est lié avec libc et ld.
+
+______________________________________________________________________________
+
+Nécessité :
+  - utiliser gcc -shared pour indiquer qu-il s'agit d'une shared library
+  - utiliser gcc -fPIC ou -fpic :
+    - Position Independant Code
+    - But : 
+      - sinon, il y aurait des text relocations (relocation de symboles contenus dans le segment .text), ce qu'il faut éviter. La GOT et PLT permettent d'éviter cela.
+    - Conséquence :
+      - ebx est réservé pour contenir la base adresse de la GOT. Il est initialisé au début de chaque fonction.
+      - crée une GOT et PLT
+      - supprime des optimisations supposant que le .text est le premier objet mappé, et non une dépendance, ce qui est faux pour une shared library
+  - flag -Wl,-soname,LIBNAME : passe l'option -soname=LIBNAME à ld, et donc LIBNAME devient le linkname
+  - flag -Wl,-E : passe l'option -E à ld, en cas de "reverse dependencies" ?
+  - enregistrer sous la forme "lib*.so" : devra être placé dans /usr/lib/, l'utilisateur l'appelant via gcc -l*
+
+Recommandé :
+  - minimiser taille de .data : préférer utiliser le stack, puis .rodata, puis .bss
+  - Réduction de la taille du fichier produit :
+    - variables globales :
+      - types :
+        - initialized (pas à 0) : 
+          - TYPE VAR = VAL;
+          - Va dans .data -> prend de la place
+        - non-initialized : 
+          - TYPE VAR [= 0];
+          - doit mettre explicitement mot "extern" pour les exporter
+          - mais compiler les optimise automatiquement en common variables, sauf si flag gcc -fno-common
+          - Va dans .bss -> ne prend pas de place
+        - common : 
+          - TYPE VAR;
+          - Va dans .bss
+          - Différence avec "non-initialized" :
+            - automatiquement exportées ("extern") : ainsi, pas d'erreur si autre déclaration ou définition dans un autre fichier.
+            - Variables common usuelles : déclaration de variables globales dans un header
+      - préférer .bss, et préférer common variables, donc :
+        - ne pas initialiser, et si obligé, initialiser à 0
+          - pas de panique, les common et non-initialized variables sont initialisées à 0 compile-time, car dans .bss
+        - ex :
+          - boolean variable globale devrait être initialisée à false
+          - si l'une des VAL d'un enum est utilisée pour initialiser une variable globale, mettre cette VAL à 0 (ou simplement la mettre au début de l'enum)
+  - utiliser const autant que possible
+    - cela comprend aussi les variables globales initialisées (ou non-initialisées et ne devant jamais l'être)
+
+Optimisation (efficience) :
+  - Réduire taille des noms de symboles produit pour réduire temps du symbol lookup :
+    - réduire taille des noms de namespace, fonctions et variables
+    - permet aussi aux users de taper plus vite ces noms
+  - utiliser des char[] locales plutôt que des char* locales :
+    - char* crée un pointeur local vers la chaine de caractères se trouvant dans .rodata.
+    - const char[] push la chaine de caractères sur le stack
+      -> pas de relocation time cost, et fait partie du code segment 
+      -> partagée (tandis que le segment .rodata est privé à chaque exécutable utilisant la librarie)
+      - une STR_VAL utilisée comme argument est automatiquement une char* : préférer instantier avant alors une const char[], et utiliser cette dernière comme argument.
+    - char[] devant être const cependant, utiliser char* si la chaîne est susceptible d'être modifiée (notamment par les fonctions l'utilisant)
+
+Sécurité :
+  - éviter de rendre nécessaire les relocations du text segment, sinon il serait writable :
+    - utiliser POT et GLT
+    - ne pas faire de self-modifying code
+  - section .data.rel :
+    - variables ayant besoin d'une relocation, mais pouvant être mises dans une section read-only après relocations
+    - ex : un const pointeur de const array
+    - pour mettre cette section en read-only après relocation :
+      - option -z relro de ld
+      - seuls les early relocations seront affectées => si sécurité est important, on peut supprimer les lazy relocations avec option -z now de ld (ou LD_BIND_NOW)
+
+Stabilité de l'API :
+
+Profiling du relocation et loading time :
+  - environment variable LD_PROFILE et LD_DEBUG=statistics
+

@@ -1,0 +1,376 @@
+
+                  
+   X87 SYNTHESE   
+                  
+
+x87 est une extension de x86, au même titre que MMX, SSE, etc.
+Depuis SSE2, moins utile, sauf pour les opérations sur des extended-precision floats.
+x87 a pour but de faire des opérations sur les floats.
+
+________________________________________________________________________________
+
+                                      ESC
+
+Toutes les instructions x87 commence par le même pattern, ESC, 11011b, qui passe la main au coprecesseur x87.
+
+________________________________________________________________________________
+
+                                  ST* REGISTER
+
+8 FPU data registers, st0 à st7 de 80 bits (enregistrés en interne en extended-precision donc)
+Ces 8 registres sont un stack, dont le top (de taille max 8 registres) est st0,
+au début initialisés avec une valeur d'erreur :
+  - Ŝpush VAL signifie pusher VAL sur ce stack
+  - Ŝpop signifie popper le stack
+  - Ŝpop VAL signifie popper le stack et stocker dans VAL
+
+Les registres :
+  - pas encore initialisés
+  - pushed sur un stack avec déjà 8 registres
+  - sortis du stack (si plus de 8 registres ont été pushed)
+sont "empty", et donc égaux à -nan. Les autres registres ne sont pas affectés
+
+________________________________________________________________________________
+
+                                 FSTAT REGISTER
+
+fstat (status word register) :
+  - indique le status du FPU
+  - 16 bits :
+    - Exception flags, activés lors de l'exception concernée :
+      - bit 0x0 : invalid operation
+      - bit 0x1 : denormalized operand
+      - bit 0x2 : divide by zero
+      - bit 0x3 : overflow
+      - bit 0x4 : underflow
+      - bit 0x5 : arrondissement effectué
+    - bit 0x6 : stack fault
+    - ces précédents bits sont sticky : il faut les clear manuellement via les instructions f[n]clex
+    - bit 0x7 : error summary status, mis à 1 si l'un des bits précédents est activé
+    - bit 0x8 : c0
+    - bit 0x9 : c1
+    - bit 0xa : c2
+    - bits 0xb à 0xd : TOP, nombre de registre st* sur le stack actuel
+    - bit 0xe : c3
+    - bit 0xf : Busy-Bit, pas utilisé
+  - c0 à c3 sont les conditions de codes :
+    - utilisés pour les branchements : cf ci-dessous
+    - autre utilisations :
+      - tous :
+        - fxam modifie :
+          - c1 = signe de $1
+          - c3c2c0 = nature de $1 :
+            - 0 : bad format
+            - 1 : NaN 
+            - 2 : nombre normal
+            - 3 : ∞
+            - 4 : 0
+            - 5 : empty 
+            - 6 : nombre denormalized
+        - fprem1 : si réduction incomplète, c2 == 1, sinon c0c3c1 == 3 LSB du quotient.
+      - c1 :
+        - lorsque fstat[5] == 1 : si c1 == 1, arrondissement vers le haut, sinon vers le bas
+        - lorsque fstat[6] == 1 : overflow si c1 == 1, underflow sinon
+      - c2 :
+        - fptan, fsin, fco, fsincos : c2 == 1 si opérande est en dehors de [-2^63 ; 2^63], 0 sinon
+  - instructions liées : f[n]stsw
+
+________________________________________________________________________________
+
+                                 FCTRL REGISTER
+
+fctrl (control word register) :
+  - 16 bits :
+    - bit 0 à 5 : bit mask rendant impossible les bits d'exceptions correspondantes dans le fstat d'être activées
+    - bit 8 et 9 : PC-bits, taille des registres st* utilisés en interne :
+      - 0 : single precision
+      - 2 : double précision
+      - 4 : double extended precision (défaut)
+    - bit 0xa et 0xb : RC-bits, arrondissement :
+      - 0 : vers le plus proche 
+      - 1 : vers -∞
+      - 2 : vers +∞
+      - 3 : vers 0
+    - bit 0xc : X-bit, infinity control, pas utilisé
+    - reste : pas utilisé
+  - instructions liées : fldcw, f[n]stcw
+
+________________________________________________________________________________
+
+                                 FTAG REGISTER
+
+ftag (tag word register) : 16 bits
+  - bit 0 et 1 :
+    - indique si st0 est :
+      - 0 : valeur vide
+      - 1 : == 0
+      - 2 : NaN, +- inf. ou denorm. value
+      - 3 : empty
+  - bit 2 et 3 : même chose pour st1
+  - bit 4 et 5 : même chose pour st2
+  - etc.
+  - Utilisé pour lancer stack underflow fault si empty register est utilisé ; ou stack overflow dans cas inverse.
+
+________________________________________________________________________________
+
+                                AUTRES REGISTERS
+
+fioff:fisel : 
+  - SELECTOR(16 bits):OFFSET(32 bits) de la dernière instruction exécutée
+fooff:fosel : 
+  - SELECTOR(16 bits):OFFSET(32 bits) de la dernière opérande manipulée par une instruction
+
+fop : 11 bits
+  - "fopcode", dernier opcode utilisé (1er et second opcode byte, en enlevant tout préfixe, ainsi que ESC)
+  - bit 2 d'IA32_MISC_ENABLE MSR doit être enabled (par défaut disabled apparemment, mais pas pour moi)
+
+________________________________________________________________________________
+
+                          OPERATIONS SUR LES REGISTERS
+
+f[n]stenv : sauvegarde fstat, fctrl, ftag, fop, fioff, fisel, fooff, fosel
+f[n]save : comme f[n]stenv + les registres st*, et invoque f[n]init
+Leurs contreparts sont fldenv et frstor
+Le format de ces sauvegardes dépendent du mode (dans tous les cas 24 octets (+ 80 octets pour les st*)):
+  - protected-mode 32 bits : fctrl, #, fstat, #, ftag, #, fioff, fisel, fop, 00000b, fooff, fosel, #
+  - real-mode 32 bits : fctrl, #, fstat, #, ftag, #, fioff, #, fop, 0b, fisel, 0000b, fooff, #, 000000000000b, fosel, 0000b
+  - # représente une partie réservée de 2 octets
+
+f[n]init réinitialise tous les registres :
+  - fctrl : 0x37f : bit mask entièrement activé, PC == double extended, RC == nearest, X == 0
+  - fstat : 0x0000
+  - ftag : 0xffff : stack empty
+  - fiseg, fioff, foseg, fooff, fop : 0x0
+  - st* : 0x0, soit -NaN
+________________________________________________________________________________
+
+Le TYPE d'un M de 80 bits est "tword"
+
+________________________________________________________________________________
+
+                     FLOATING POINT ARGUMENT / RETURN VALUE
+
+Passer FLOAT_VAL comme argument : la pusher sur le stack :
+  - single-precision : 
+    - mov Rd, Ŝd
+      push  Rd
+  - double et extended-precision :
+    - push ne permet pas d'avoir un $1 de 64 bits, il faut donc assigner 
+      directement à [esp].
+    - Pour assigner à [esp] une valeur de 64 ou 80 bits, deux solutions :
+      - passer par un VAR, via fld puis fstp :
+        - VAR dq  FLOAT_VAL
+          fld VAR
+          fstp  [esp]
+      - faire une suite de mov :
+        - VAR dq  FLOAT_VAL
+          mov dword [esp], [VAR]
+          mov dword [esp+4], [VAR+4]
+          mov dword [esp+8], [VAR+8]
+
+Argument FLOAT_VAL passé par le caller se trouve dans [ebp + 8] (TYPE peut être 
+dword, qword ou tword). Ex :
+  - fld TYPE [ebp + 8]
+
+Renvoyer une FLOAT_VAL en return value : la placer dans st0
+Récupérer une return value FLOAT_VAL : elle se trouve dans st0
+
+Une fonction doit faire exactement 1 push de plus que son nombre de pops. Ainsi, il faut souvent popper le stack à la fin de la fonction (sauf st0).
+
+________________________________________________________________________________
+
+                           OPERATIONS PROBLEMATIQUES
+
+Obtention de :
+  - +∞ :
+    - float-number positif / 0
+    - aller au-delà de std::numeric_limits<>::max()
+  - -∞ :
+    - float-number négatif / 0
+    - aller en-deça de std::numeric_limits<>::min()
+  - -nan :
+    - cf ci-dessus
+    - 0 / 0
+-nan, +∞ et -∞ restent telles quelles après tout +, -, / et *, sauf changement de signe après * et / avec un nombre négatif (sauf -nan)
+
+-nan converti en TOUINT donne std::numeric_limits<TOUINT>::min().
+
+Il y a deux NaN :
+  - QNaN et SNaN ("quiet" et "signaling")
+  - une comparaison provoquant une exception quand une de ses opérandes est un QNaN ou SNaN est "ordered"
+  - une comparaison qui ne provoque une exception qu'avec SNaN est "unordered"
+
+________________________________________________________________________________
+
+                                  BRANCHEMENTS
+
+Ŝcmp : Est comme cmp, sauf que ce sont les condition flags c0 à c3 qui sont utilisés :
+  - leur disposition est == celle de ZF (c3), PF (c2), bit inutilisé (c1) et CF (c0).
+  - utiliser les branchements via SF et OF (ceux sur unsigned numbers) est donc impossible, mais ce n'est pas grave car les floats sont en quelque sorte signed.
+  - pour les utiliser :
+    - faire un fstsw ax, suivi de sahf, afin de modifier eflags sur le modèle des condition flags
+    - faire le branchement je, jne, etc.
+
+ŜŜcmp : contrairement à Ŝcmp, modifie eflags directement.
+
+________________________________________________________________________________
+
+S         ==> Désigne un registre st*
+Ŝ[LETTRE]  ==> Un M pointant vers un float numbers :
+                f : single-precision
+                g : double-precision
+                h : extended-precision
+M[LETTRE] ==> Un M pointant vers un nombre entier :
+                w : 16 bits
+                d : 32 bits
+                q : 64 bits
+                t : 80 bits
+                NOMBRE : NOMBRE bits
+"autre"   ==> registre "autre" (ex : ax)
+
+Cf x86 pour signification de ARG1, ARG2 et ARCHI
+Si $1 est entre [ ], cela signifie que $1 est par défaut st1.
+Si $2 est entre [ ], cela signifie que $1 est par défaut st0.
+
+Quand il y a deux variantes avec ou sans "n" :
+   - version avec "n" : ne checke pas les pending FPU exceptions avant de procéder.
+
++-------+---------+-------+---------------------------+------------------------+
+| NOM   |  ARG1   |  ARG2 |         EFFET             |         ARCHI          |
++-------+---------+-------+---------------------------+------------------------+
+| fnop  |         |       | Ne fait rien.             |                        |
++-------+---------+-------+---------------------------+------------------------+
+| fld   |[Ŝ S]    |       | Ŝpush $1                  |                        |
+| fild  | Mw-q    |       | Ŝpush $1                  |                        |
+| fbld  | Mt      |       | Ŝpush $1 (BCD)            |                        |
+| fldz  |         |       | Ŝpush 0                   |                        |
+| fld1  |         |       | Ŝpush 1                   |                        |
+| fldpi |         |       | Ŝpush π                   |                        |
+| fldl2e|         |       | Ŝpush log₂(℮)             |                        |
+| fldl2t|         |       | Ŝpush log₂(10)            |                        |
+| fldlg2|         |       | Ŝpush log₁₀(2)            |                        |
+| fldln2|         |       | Ŝpush logₙ(2)             |                        |
++-------+---------+-------+---------------------------+------------------------+
+| fst   |[Ŝfg S]  |       | $1 = st0                  |                        |
+| fist  | Mwd     |       |                           |                        |
+| fstp  |[Ŝ S]    |       | Ŝpop $1                   |                        |
+| fistp | Mw-q    |       |                           |                        |
+| fisttp| Mw-q    |       | Ŝpop $1 (troncature, quel | Pentium 4              |              
+|       |         |       | que soit fctrl)           |                        |              
+| fbstp | Mt      |       | Ŝpop $1 (BCD)             |                        |
++-------+---------+-------+---------------------------+------------------------+
+| fxch  | S       |       | swap $1 et st0            |                        |
+| ffree | S       |       | supprime $1 du stack      |                        |
+| ffreep| S       |       | supprime $1 du stack ;Ŝpop|                        |
++-------+---------+-------+---------------------------+------------------------+
+| fadd  |[Ŝfg S Md]|      | st0 += $1                 |                        |
+|       | S       | st0   | $1 += st0                 |                        |
+| faddp | [S]     | st0   | $1 += st0 ; Ŝpop          |                        |
+| fiadd | Mwd     |       | st0 += $1                 |                        |
++-------+---------+-------+---------------------------+------------------------+
+| fsub  |         |       | équivaut à fsubp          |                        |
+|       | Ŝfg S   |       | st0 -= $1                 |                        |
+|       | S       | st0   | $1 -= st0                 |                        |
+| fisub | Mwd     |       | st0 -= $1                 |                        |
+| fsubp | [S]     |       | $1 -= st0 ; Ŝpop          |                        |
+| fsubr |         |       | équivaut à fsubrp         |                        |
+|       | Ŝfg S   |       | st0 = $1 - st0            |                        |
+|       | S       | st0   | $1 = st0 - $1             |                        |
+| fisubr| Mwd     |       | $1 = st0 - $1             |                        |
+| fsubrp| [S]     |       | $1 = st0 - $1 ; Ŝpop      |                        |
++-------+---------+-------+---------------------------+------------------------+
+| fmul  |[Ŝfg S Md]|      | st0 *= $1                 |                        |
+|       | S       | st0   | $1 *= st0                 |                        |
+| fmulp | [S]     | st0   | $1 *= st0 ; Ŝpop          |                        |
+| fimul | Mwd     |       | st0 *= $1                 |                        |
++-------+---------+-------+---------------------------+------------------------+
+| fdiv  |         |       | équivaut à fdivp          |                        |
+|       | Ŝfg S   |       | st0 /= $1                 |                        |
+|       | S       | st0   | $1 /= st0                 |                        |
+| fidiv | Mwd     |       | st0 /= $1                 |                        |
+| fdivp | [S]     |       | $1 /= st0 ; Ŝpop          |                        |
+| fdivr |         |       | équivaut à fdivrp         |                        |
+|       | Ŝfg S   |       | st0 = $1 / st0            |                        |
+|       | S       | st0   | $1 = st0 / $1             |                        |
+| fidivr| Mwd     |       | $1 = st0 / $1             |                        |
+| fdivrp| [S]     |       | $1 = st0 / $1 ; Ŝpop      |                        |
++-------+---------+-------+---------------------------+------------------------+
+| fcom  |[Ŝfg S Md]|      | Ŝcmp $1, st0              |                        |
+| fcomp |[Ŝfg S Md]|      | Ŝcmp $1, st0 ; Ŝpop       |                        |
+| fcompp|         |       | Ŝcmp st0, st1 ; Ŝpop ;    |                        |
+|       |         |       | Ŝpop                      |                        |
+| ficom | Mwd     |       | Ŝcmp st0, $1              |                        |
+| ficomp| Mwd     |       | Ŝcmp st0, $1 ; Ŝpop       |                        |
+| ftst  |         |       | Ŝcmp st0, 0               |                        |
+| fcomi | S       |       | ŜŜcmp $1, st0             | PPro                   |
+| fcomip| S       |       | ŜŜcmp $1, st0 ; Ŝpop      | PPro                   |
+|fucom  |[Ŝfg S Md]|      | Ŝcmp $1, st0 (unordered)  |                        |
+|fucomp |[Ŝfg S Md]|      | Ŝcmp $1, st0 ; Ŝpop ;     |                        |
+|       |         |       | (unordered)               |                        |
+|fucompp|         |       | Ŝcmp st0, st1 ; Ŝpop ;    |                        |
+|       |         |       | (unordered)               |                        |
+|fucomi | S       |       |ŜŜcmp $1, st0 (unordered)  | PPro                   |
+|fucomip| S       |       |ŜŜcmp $1, st0 ; Ŝpop ;     | PPro                   |
+|       |         |       | (unordered)               |                        |
++-------+---------+-------+---------------------------+------------------------+
+|fcmove | S       |       | st0 = $1 si ZF (1 si      | PPro                   |
+|       |         |       | prec Ŝcmp : $1 == $2)     |                        |
+|fcmovne| S       |       | st0 = $1 si ~ZF (1 si     | PPro                   |
+|       |         |       | prec Ŝcmp : $1 != $2)     |                        |
+|fcmovb | S       |       | st0 = $1 si CF (1 si      | PPro                   |
+|       |         |       | prec Ŝcmp : $1 < $2)      |                        |
+|fcmovbe| S       |       | st0 = $1 si CF | ZF (1    | PPro                   |
+|       |         |       | si prec Ŝcmp : $1 <= $2)  |                        |
+|fcmovnbe| S      |       | st0 = $1 si ~CF & ~ZF (1  | PPro                   |
+|       |         |       | si prec Ŝcmp : $1 > $2)   |                        |
+|fcmovnb| S       |       | st0 = $1 si ~CF (1 si     | PPro                   |
+|       |         |       | prec Ŝcmp : $1 >= $2)     |                        |
+|fcmovu | S       |       | st0 = $1 si PF (1 si      | PPro                   |
+|       |         |       |prec Ŝcmp: $1 ou $2 == QNaN|                        |
+|fcmovnu| S       |       | st0 = $1 si ~PF (1 si     | PPro                   |
+|       |         |       |prec Ŝcmp: $1 ou $2 == QNaN|                        |
++-------+---------+-------+---------------------------+------------------------+
+| fxam  |         |       | Modifie fstat en fonction |                        |
+|       |         |       | de st0                    |                        |
++-------+---------+-------+---------------------------+------------------------+
+| fchs  |         |       | st0 = ~st0                |                        |
+| fabs  |         |       | st0 = |st0|               |                        |
+| fsqrt |         |       | st0 = √st0                |                        |
+| fcos  |         |       | st0 = cos(st0)            |                        |
+| fsin  |         |       | st0 = sin(st0)            |                        |
+| fptan |         |       | st0 = tan(st0) ; Ŝpush 1  |                        |
+|fsincos|         |       | Ŝpush cos(st0) ;          |                        |
+|       |         |       | st1 = sin(st1)            |                        |
+| fpatan|         |       | st1 = arctan(st1/st0) ;   |                        |
+|       |         |       | Ŝpop                      |                        |
+| fscale|         |       | st0 = st0 * 2^st1         |                        |
+| fyl2x |         |       | st1 = st1 * log₂(st0);Ŝpop|                        |
+|fyl2xpi|         |       | st1=st1 * log₂(st0+1);Ŝpop|                        |
+|frndint|         |       | st0 = floor(st0)          |                        |
++-------+---------+-------+---------------------------+------------------------+
+| fprem1|         |       | "Partial remainder" : Si  |                        |
+|       |         |       | st0 > st1 / 2, renvoie    |                        |
+|       |         |       | st0-st1, sinon renvoie st0|                        |
+|fxtract|         |       | Sépare exponent et base : |                        |
+|       |         |       | Ancien st0 = st0 * 2^st1  |                        |
++-------+---------+-------+---------------------------+------------------------+
+| fstsw | Mw ax   |       | $1 = fstat                |                        |
+| fnstsw|         |       |                           |                        |
+| fstcw | Mw      |       | $1 = fctrl                |                        |
+| fldcw | Mw      |       | fctrl = $1                |                        |
+| fclex |         |       | fctrl[0-5] = 0            |                        |
+| fnclex|         |       |                           |                        |
+| fldenv| M224    |       | registres f* = $1         |                        |
+| fstenv| M224    |       | $1 = registres f*         |                        |
+|fnstenv| M224    |       |                           |                        |
+| fsave | M864    |       | registres f* et st* = $1 ;|                        |
+| fnsave|         |       | finit                     |                        |
+| frstor| M864    |       | $1 = registres f* et st*  |                        |
+| finit |         |       |Réinit. registres f* et st*|                        |
+| fninit|         |       |                           |                        |
+|fsave64| M864    |       | Versions 64 bits, légères |                        |
+|frstor64| M864   |       | différences dans le dump  |                        |
++-------+---------+-------+---------------------------+------------------------+
+|fdecstp|         |       | st0 = st1 ; ...; st7 = st0|                        |
+|fincstp|         |       | st0 = st7 ; ...; st7 = st6|                        |
++-------+---------+-------+---------------------------+------------------------+

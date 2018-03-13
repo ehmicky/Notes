@@ -1,0 +1,844 @@
+
+        
+   S3   
+        
+
+
+GOAL ==>                      #Online static files storage (deployment, backups, static files)
+                              #Version from 2014-06-12
+
+CONCEPTS ==>                  #  - Bucket: virtual folder
+                              #  - Object: virtual file
+                              #     - can use PATH, giving impression of subfolder
+                              #       - should avoid using a sequence (e.g. serial or timestamp) in beginning of PATH: 
+                              #         it impacts performance (how S3 internally stores object). 
+                              #         Should prefix with random STR.
+                              #     - has metadata
+                              #     - has subresources: versioning, policy, acl, torrent, lifecycle, website, cors
+                              #Other functions: StorageClass (Glacier, ReducedRedundancy), lifecycle, LocationConstraint, 
+                              #custom metadata, custom headers (caching, content-type, etc.), versioning, torrent, static
+                              #website, CORS, multipart upload, bucket logging, encryption, payment, pre-signed URL.
+
+ARN ==>                       #  - arn:aws:s3:::BUCKET
+                              #  - arn:aws:s3:::BUCKET/OBJECT
+
+PERMISSIONS ==>               #Some unusual:
+                              #  - DeleteBucketCors -> PutCORSConfiguration
+                              #  - Get|PutBucketCors -> Get|PutBucketCORS
+                              #  - DeleteBucketLifecycle -> PutLifecycleConfiguration
+                              #  - Get|PutBucketLifecycle -> Get|PutLifecycleConfiguration
+                              #  - DeleteBucketTagging -> PutBucketTagging
+                              #  - If VersionId in request parameter, Object -> ObjectVersion
+                              #  - Head* -> Get*
+                              #  - PostObject, CopyObject, Multipart writes (except AbortMultipartUpload) -> PutObject
+                              #  - ListBuckets -> ListAllMyBuckets
+                              #  - ListObjects, ListParts, ListObjectVersions -> GetObject
+                              #  - DeleteBucketTagging -> PutBucketTagging
+                              #  - GetBucketLocation -> GetBucket
+                              #  - DeleteObjects -> DeleteObject
+                              #  - ListMultipartUploads -> ListMultipartUploadParts
+                              #  - Get|PutRequestPayment -> Get|PutBucketRequestPayment
+
+POLICYVAR ==>                 #  - s3:x-amz-acl|x-amz-grant-* STR
+                              #  - s3:x-amz-copy-source STR
+                              #  - s3:x-amz-server-side-encryption STR
+                              #  - s3:x-amz-metadata-directive STR
+                              #  - s3:VersionId STR
+                              #  - s3:prefix STR
+                              #  - s3:delimiter STR
+                              #  - s3:max-keys STR
+                              #  - s3:LocationConstraint REGION: for s3:CreateBucket only STR
+
+PRICING ==>                   #  - amount bytes stored (20% cheaper for "reduced redundancy")
+															#     - each object has 8KB of metadata
+                              #  - in|out traffic:
+                              #     - in GB: 
+                              #        - in (Exterior -> S3): free
+                              #        - out (S3 -> Exterior): reduced prices after 10|40|100|350TB
+                              #        - intra (S3 -> another region / same region CloudFront):
+															#           - 6 times cheaper than out
+															#           - Must be done explicitly (e.g. copying OBJECT)
+                              #        - intra (S3 -> same region EC2): free
+                              #     - in number of requests (GET 10 times cheaper than other methods, DELETE free)
+                              #  - region: cheapest Virginia/Oregon/Ireland/Singapore, 10%+ Norther California/Japan/Sidney, 
+                              #    30%+ SouthAmerican/USGov
+                              #Main cost: amount bytes, number of non-GET requests, traffic out
+
+
+																						 /=+===============================+=\ 
+																						/  :                               :  \  
+							 														  )==:              API              :==(   
+																						\  :_______________________________:  /    
+																						 \=+===============================+=/
+
+
+REST API ==>                  #  - Domain: https://[BUCKET.]s3[-REGION].amazonaws.com  
+                              #     - Can use /BUCKET/ as beginning of PATH instead
+                              #        - Must then use REGION
+                              #        - Gives 301 redirection if not in right REGION
+                              #     - using BUCKET as subdomain:
+                              #        - allows accessing BUCKET_DNS_ALIAS as a domain name
+                              #        - makes BUCKET root (practical for robots.txt, favicon.ico, etc.)
+                              #  - Apart from listBuckets(), operations are either on BUCKET "/" or OBJECT "/OBJECT"
+															#  - "Unusual" REST API
+
+JAVASCRIPT SDK ==>            #  - all but listBuckets() must use REQ_OBJ.Bucket BUCKET
+                              #  - all OBJECT actions must use REQ_OBJ.Key OBJECT
+                              #  - no postObject()
+                              #  - waitFor() STATE:
+                              #     - "bucket[Not]Exists": polls headBucket() every 5 secs
+                              #     - "object[Not]Exists": polls headObject() every 5 secs
+															
+LIMITS ==>										#Buckets:
+                              #  - max 100
+                              #  - unlimited number of objects
+                              #  - name: 3-63 chars, [[:alnum:]-] like a DNS address (but not IP address). 
+                              #    Must be unique (should be ended by .ORGANIZATION)
+                              #  - creation: can be slow
+                              #  - deletion: only if empty. Can be slow.
+															#Objects:
+															#  - content: 5TB (5GB if torrent)
+															#     - write over 5GB must use Multipart API (min|max part size is 5MB|5GB)
+															#  - key length: 1KB
+															#  - key: [[:alnum:]-_.*'()!] (others URL-encoded)
+                              #ACL: max 100 Grants
+
+PAGINATION ==>                #  - IsTruncated BOOL: true if pagination
+                              #  - MaxParts NUM (def: 1000):
+                              #     - can restrict even more with max-parts [C]
+                              #  - NextKEYMarker VAL:
+                              #     - must use KEY-marker VAL [C] in next request, using KEY according to alphabetical order
+                              #     - KEY depends on call, can be ""
+                              #     - Not always there, if not, just guess next KEY-marker (or use SDK methods) 
+                              #  - KEYMarker VAL: which KEYMarker VAL [C] was used
+															
+
+																						 /=+===============================+=\ 
+																						/  :                               :  \  
+							 														  )==:        HIGH-LEVEL CLI         :==(   
+																						\  :_______________________________:  /    
+																						 \=+===============================+=/
+
+
+aws s3 COMMAND [ARGS...]			#High-level S3 CLI.
+															#Can use either: 
+															#  - PATH, FILE, DIR
+															#  - S3PATH, S3FILE, S3DIR, e.g. s3://BUCKET[/OBJECT]
+															#     - S3DIR can be s3://BUCKET/OBJECTPATH (not whole OBJECT), to target "subfolders"
+															#Globbing not possible as is, but can use --exclude "*" --include "GLOB"
+--debug                       #To see underlying HTTP
+
+aws s3 cp|mv 
+[S3]PATH [S3]PATH2						#
+--recursive										#If [S3]DIR, targets also all contained files.
+--exclude|include GLOB_STR		#To use with --recursive. Priority on the one on the right.
+--source-region STR						#
+
+--storage-class STR						#"STANDARD|REDUCED_REDUDANCY"
+--grants "STR=STR2=STR3"...		#STR is "read|write[acl]" or "full"
+															#STR2 is "uri|emailaddress|id", specified by STR3.
+--acl ACL_STR									#
+--website-redirect STR				#
+--sse													#
+--expires STR									#
+--cache-control STR						#
+--content-disposition STR			#
+--content-encoding STR				#
+--content-language STR				#
+--no-guess-mime-type					#
+--content-type STR						#	
+
+--follow-symlinks							#
+--dryrun											#
+--quiet												#
+
+aws s3 rm S3PATH							#
+--recursive										#
+--exclude|include GLOB_STR		#
+--dryrun											#
+--quiet												#
+
+aws s3 sync [S3]PATH [S3]PATH2#Make dest path copy of source path, possibly erasing some stuff in PATH2.
+															#Like aws cp but only if:
+															#  - files have different size.
+															#Or if (unless --size-only):
+															#  - file doesn't exist in dest path
+															#  - file has newer mtime (unless --exact-timestamps)
+															#Same options as aws cp|mv, plus:
+--delete											#If file exist in dest path, but not in source path, remove it.
+
+aws s3 ls [S3BUCKET]					#If no S3BUCKET, do listAllBuckets() (show ctime+BUCKET)
+															#Otherwise listBucket() (show mtime+size+OBJECT)
+--recursive										#
+
+aws s3 mb S3BUCKET						#createBucket()
+aws s3 rb S3BUCKET						#deleteBucket(). If OBJECT exists and --force, deleteObject() first.
+
+aws s3 website S3BUCKET
+--index|error-document STR		#Modifies it
+
+
+																						 /=+===============================+=\ 
+																						/  :                               :  \  
+							 														  )==:            BUCKET             :==(   
+																						\  :_______________________________:  /    
+																						 \=+===============================+=/
+
+
+GET / (no BUCKET)             #Returns:
+listBuckets()                 #  - Owner:
+                              #     - ID USER_IAM_ARN
+                              #     - DisplayName USER_STR
+                              #  - Buckets OBJ_ARR:
+                              #     - Name STR
+                              #     - CreationDate DATE_STR
+GET /                         #Uses pagination with KEY "". Marker is the start prefix, by alphabetical order.
+listObjects()                 #Query variables:
+                              #  - prefix STR: only OBJECT that start with STR
+                              #  - delimiter STR: group OBJECT according to STR (usually "/")
+                              #Returns:
+                              #  - Name BUCKET
+                              #  - Prefix STR
+                              #  - Delimiter STR
+                              #  - CommonPrefix STR: common prefix of all returned OBJECT, up to last Delimiter of the prefix
+                              #  - Contents:
+                              #     - Key OBJECT
+                              #     - LastModified DATE_STR
+                              #     - ETag STR
+                              #     - Size NUM
+                              #     - StorageClass STR
+                              #     - Owner:
+                              #        - ID USER_IAM_ARN
+                              #        - DisplayName USER_STR
+HEAD /                        
+headBucket()                  #Check existence of BUCKET
+PUT /                         #Request body:
+createBucket()                #  - CreateBucketConfiguration:
+                              #     - LocationConstraint REGION
+DELETE /
+deleteBucket()                #
+
+GET /?location
+getBucketLocation()           #Returns { LocationConstraint REGION }
+
+
+																						 /=+===============================+=\ 
+																						/  :                               :  \  
+							 														  )==:            OBJECT             :==(   
+																						\  :_______________________________:  /    
+																						 \=+===============================+=/
+
+
+GET /OBJECT					  				#Returns raw OBJECT
+getObject()										#Can use Range [C] and conditional caching (including If-Match [C] and If-Unmodified-Since [C])
+															#Client can override some response headers by putting it in request headers:
+                              #  - Response-Content-Disposition: to allow downloading as attachment
+                              #  - Response-Expires, Response-Cache-Control: to manipulate caching
+                              #  - Response-Content-Type, Response-Content-Encoding, Response-Content-Language
+                              #Returns x-amz-meta-* [S] if set.
+                              #Must use last argument FILE with CLI
+HEAD /OBJECT
+headObject()                  #Same functionalities as getObject(), but only returns headers.
+PUT /OBJECT                   #Creates an OBJECT
+putObject|copyObject()        #Uses eventual consistency:
+                              #  - writes take some time to complete
+                              #  - take time to propagate, so different clients might return different results
+                              #Generic headers:
+                              #  - Can specify Cache-Control [C], Content-Disposition [C], Content-Encoding [C], 
+                              #    Content-Type [C], Expires [C] to be served to client.
+                              #  - Can use Expect [C] with 100 status code
+                              #Can set user-defined metadata with x-amz-meta-* [C] (Metadata.* in SDKs)
+                              #Returns:
+                              #  - ETag STR
+                              #  - LastModified DATE_STR
+                              #copyObject() is when using x-amz-copy-source [C] that get the request body from another OBJECT:
+                              #  - x-amz-copy-source STR [C]: 
+                              #     - STR is /BUCKET/OBJECT
+                              #  - conditional copy:
+                              #     - x-amz-copy-source-if-[none-]match STR [C]
+                              #     - x-amz-copy-source-if-[un]modified-since DATE_STR [C]
+                              #  - can use all request|response headers of putObject() except Generic headers:
+                              #     - x-amz-metadata-directive "COPY|REPLACE":
+                              #        - "REPLACE": replace all headers [C] specified
+                              #        - "COPY" (def): only replace server-side-encryption, storage-class and
+                              #          website-redirect-location [C] (if not specified, erase them) 
+                              #     - ACL is recreated private
+                              #Returns: CopyObjectResult OBJ:
+                              #  - ETag STR
+                              #  - LastModified DATE_STR
+POST /                        #Like putObject() but:
+postObject()                  #  - uses multipart/form-data request body
+                              #  - client-side communicates directly with Amazon, so less load on server
+                              #  - client-side must include a policy and acl, signed (like signedUrl)
+                              #Same request|response headers as putObject() but:
+                              #  - uses request params:
+                              #     - file STR: content (must be last field)
+                              #     - key OBJECT: can be used as ${filename} in policy OBJ
+                              #     - success_action_status NUM or success_action_redirect URL
+                              #     - x-amz-algorithm|credential|date|security-token|signature
+                              #     - Policy OBJ, as Base64:
+                              #        - expiration DATE_STR
+                              #        - conditions OBJ_ARR2_ARR:
+                              #           - ARR2 is [ STR, STR2, STR3 ], according to STR:
+                              #              - "eq": STR2 == STR3, can also use { STR2: STR3 } instead of ARR2
+                              #              - "starts-with": STR3 can be ""
+                              #              - "content-length-range" NUM2 NUM3
+                              #          - STR2 can be "acl", "bucket", "content-length-range" or any field name
+                              #          - can use $FIELDNAME for any field name (e.g. [ "start-with", "$key", "user1/" ])
+                              #     - acl ACL_STR
+                              #     - AWSAccessKeyId ACCESS_KEY_ID
+                              #  - returns:
+                              #     - Bucket|Key BUCKET|OBJECT
+                              #     - Location URL
+                              #     - ETag STR
+DELETE /OBJECT                
+deleteObject()                #
+POST /?delete                 #Delete several OBJECT. Request body: Delete OBJ:
+deleteObjects()               #  - Quiet BOOL
+                              #  - Objects OBJ_ARR:
+                              #     - Key OBJECT
+                              #     - VersionId VERSION_ID (optional)
+                              #Returns:
+                              #  - Deleted OBJ_ARR:
+                              #     - Key OBJECT
+                              #     - VersionId VERSION_ID (optional)
+                              #     - DeleteMarker BOOL
+                              #     - DeleteMarkerVersionId VERSION_ID
+                              #  - Errors OBJ_ARR:
+                              #     - Key OBJECT
+                              #     - VersionId VERSION_ID (optional)
+                              #     - Code STR
+                              #     - Message STR
+
+GET /OBJECT?torrent           #Returns .bittorrent file for downloading OBJECT:
+getObjectTorrent()            #  - if lot of people downloading same file, will increase their download speed, and also
+                              #    cost less (because download between themselves, not only S3 endpoint)
+                              #  - first request creates the TORRENT_FILE, so should do it yourself before sending link
+                              #  - using getObjectTorrent, only if s3:GetObject allowed for anonymous access
+
+
+																						 /=+===============================+=\ 
+																						/  :                               :  \  
+							 														  )==:        MULTIPART WRITE        :==(   
+																						\  :_______________________________:  /    
+																						 \=+===============================+=/
+
+
+MULTIPART WRITE ==>						#For large objects write.
+															#Steps: 
+                              #  - createMultipartUploads()
+                              #  - several uploadPart[Copy]()
+                              #  - final complete|abortMultipartUpload()
+POST /OBJECT?uploads          #Can use same request headers as putObject()
+createMultipartUpload()       #Returns:
+                              #  - UploadId UPLOAD_ID
+                              #  - Bucket BUCKET
+                              #  - Key OBJECT
+PUT /OBJECT?uploadId=UPLOAD_ID#Must use query variable partNumber NUM (position from 1 to 10000)
+uploadPart[Copy]()            #Can use Expect [C]
+                              #Response header ETag STR [S]
+                              #uploadPartCopy use instead:
+                              #  - x-amz-copy-*: see copyObject()
+                              #  - x-amz-copy-source-range STR: same STR as in Range [C]
+                              #Response is instead:
+                              #  - ETag STR
+                              #  - LastModified STR
+POST /OBJECT?uploadId=UPLOADID#Request body: MultipartUpload OBJ:
+completeMultipartUpload()     #  - Parts OBJ_ARR
+                              #     - PartNumber NUM
+                              #     - ETag STR
+                              #Returns:
+                              #  - Location URL
+                              #  - Bucket BUCKET
+                              #  - Key OBJECT
+                              #  - ETag STR
+DELETE /OBJECT?uploadId=UPLDID
+abortMultipartUpload()        #
+GET /OBJECT?uploadId=UPLOAD_ID#Uses pagination with KEY "PartNumber"
+listParts()                   #Returns:
+                              #  - Bucket BUCKET
+                              #  - Key OBJECT
+                              #  - UploadId UPLOAD_ID
+                              #  - Initiator|Owner:
+                              #     - ID USER_IAM_ARN
+                              #     - DisplayName USER_STR
+                              #  - StorageClass STR
+                              #  - Parts OBJ_ARR:
+                              #     - PartNumber NUM
+                              #     - LastModified DATE_STR
+                              #     - ETag STR
+                              #     - Size NUM
+GET /                         #Uses pagination with KEY "UploadId" and KEY "" (alphabetical order). 
+listMultipartUploads()        #Uses max-uploads instead of max-keys
+                              #Query variables:
+                              #  - delimiter|prefix STR: see listObjects()
+                              #Returns:
+                              #  - Bucket BUCKET
+                              #  - Delimiter|Prefix STR
+                              #  - CommonPrefixes OBJ_ARR:
+                              #     - Prefix STR
+                              #  - Upload OBJ_ARR:
+                              #     - Key OBJECT
+                              #     - UploadId UPLOAD_ID
+                              #     - Initiator|Owner
+                              #        - ID USER_IAM_ARN
+                              #        - DisplayName USER_STR
+                              #     - StorageClass STR
+                              #     - Initiated DATE_STR
+                              
+
+																						 /=+===============================+=\ 
+																						/  :                               :  \  
+							 														  )==:          VERSIONING           :==(   
+																						\  :_______________________________:  /    
+																						 \=+===============================+=/
+
+
+PUT /?versioning              #Switches on|off versioning.
+putBucketVersioning()         #Request body VERSIONING_OBJ:
+                              #  - VersioningConfiguration:
+                              #     - Status "Enabled|Suspended" (def: disabled)
+															#     - MfaDelete "Enabled|Disabled":
+															#        - Only for versioned objects, for delete objects.
+      												#        - Cannot use lifecycle
+                              #        - require deleteObject[s]() to include x-amz-mfa "DEVICE_ID TOKEN" [C]
+                              #  - MFA "DEVICE_ID TOKEN"
+                              #Versioning:
+                              #  - when modify object, keep previous versions 
+                              #  - Use x-amz-version-id VERSION_ID and x-amz-delete-marker BOOL as request params and response 
+                              #    headers:
+                              #     - returned [S] by getObject[Acl](), putObject[Acl](), copyObject(), deleteObject(),
+                              #       deleteObjects() (in response body), uploadPartCopy(), completeMultipartUpload()
+                              #     - can use versionId VERSION_ID query variable in getObject[Acl](), putObjectAcl(), 
+                              #       copyObject(), deleteObject(), deleteObjects() (in request body), uploadPartCopy()
+                              #  - copyObject(), uploadPartCopy() also return x-amz-copy-source-version-id [S]
+															#Can suspend versioning after enabling it and already having some previous versions:
+															#  - VERSION_ID will be null, overwritting any current version with VERSION_ID null,
+															#    but keeping previous versions (so versioning is only freezed)
+															#Restoring: 
+															#  - copy previous version (adds copy on top of versioning stack)
+															#  - permanently erase all versions up to previous version (not recommended)
+                              #Deletion:
+															#  - when deleting object, previous versions still here and can be retrieved, but last 
+															#    VERSION_ID is null and has x-amz-delete-marker true
+															#  - can do a permanent delete of specific previous versions though, or use lifecycle 
+															#    with NonCurrentVersion* to erase them
+                              #Notes:
+                              #  - keeping previous versions can increase storage costs
+                              #  - ACL are at the version-level
+GET /?versioning
+getBucketVersioning()         #Returns VERSIONING_OBJ
+GET /?versions                #Query variables:
+listObjectVersions()          #  - prefix|delimiter STR: see listObjects()
+                              #Uses pagination with KEY "VersionId" and KEY "" (alphabetical order)
+                              #Returns:
+                              #  - Name BUCKET
+                              #  - Prefix|Delimiter STR: see listObjects()
+                              #  - CommonPrefixes OBJ_ARR:
+                              #     - Prefix STR
+                              #  - Versions OBJ_ARR:
+                              #     - Key OBJECT
+                              #     - VersionId VERSION_ID
+                              #     - IsLatest BOOL
+                              #     - ETag STR
+                              #     - LastModified DATE_STR
+                              #     - Size NUM
+                              #     - StorageClass STR
+                              #     - Owner:
+                              #        - ID USER_IAM_ARN
+                              #        - DisplayName USER_STR
+                              #  - DeleteMarkers OBJ_ARR: Key, VersionId, IsLatest, LastModified, Owner
+
+
+																						 /=+===============================+=\ 
+																						/  :                               :  \  
+							 														  )==:            STORAGE            :==(   
+																						\  :_______________________________:  /    
+																						 \=+===============================+=/
+
+
+STORAGE CLASS ==>             #Can specify with:
+                              #  - non-GLACIER: x-amz-storage-class STR [C] with putObject()
+                              #  - GLACIER: putBucketLifecycle()
+                              #STR can be:
+															#  - "STANDARD" (def) 
+															#  - "REDUCED_REDUNDANCY" (RRS): 
+                              #     - less durability (1/10^5 deletes a year instead of 1/10^11) but 20% cheaper
+                              #     - returns 405 if lost
+															#  - "GLACIER": 
+                              #     - put on same cost/storage as AWS Glacier, but must be manipulated with S3
+                              #        - getObject, copyObject() doesn't work unless restored by restoreObject() with request
+                              #          body params:
+POST /OBJECT?restore          #           - RestoreRequest:
+restoreObject()               #              - Days NUM
+                              #        - creates a copy as "STANDARD", that will expire in NUM days (doesn't delete "GLACIER"
+                              #          archive)
+                              #        - can retrieve status with x-amz-restore [S] returned by getObject()
+                              #        - cannot specify how long to retrieve the archive (typically 3-5 hours)
+
+PUT /?notification            #Send SNS notification if RRS object lost.
+putBucketNotification()       #Request body NOTIF_OBJ:
+                              #  - NotificationConfiguration (none if disabling):
+                              #     - TopicConfiguration:
+                              #        - Event "s3:ReducedRedundancyLostObject"
+                              #        - Topic TOPIC_SNS_ARN
+                              #First send a test notification. Returns x-amz-sns-test-message-id ID [S]
+                              #Message is:
+                              #  - Service "Amazon S3"
+                              #  - Event "s3:ReducedRedundancyLostObject"
+                              #  - Time "TIMESTAMP"
+                              #  - Bucket BUCKET
+                              #  - Key OBJECT
+                              #  - VersionId VERSION_ID
+                              #  - RequestId ID
+                              #  - HostId: ID identifying requester host
+GET /?notification
+getBucketNotification()       #Returns NOTIF_OBJ
+
+PUT /?lifecycle               #Lifecycle:
+putBucketLifecycle()          #  - applied to all objects matching a Prefix
+															#     - can be empty for all
+															#     - if overlaps, last one has priority
+															#  - If versioning, matches previous or current version according to "NoncurrentVersion"
+															#    NoncurrentVersionExpiration do an actual delete, Expiration only a x-amz-delete-marker
+                              #      - can only use NoncurrentDays, not Days or Date
+															#  - Example of rotation with versioning: 
+															#     - old versions: Glacier after 1 month, expires after 1 year
+															#     - new versions: Glacier after 1 year, expires after 10 years
+                              #Request body: LifecycleConfiguration LIFECYCLE_OBJ:
+                              #  - Rules OBJ_ARR:
+															#     - Id RULE_ID 
+															#     - Status "Enabled|Disabled"
+															#     - Prefix STR
+															#     - [NonCurrentVersion]Transition: transfer to x-amz-storage-class "GLACIER" after some
+															#       time:
+															#        - Days NUM or Date DATE_STR|DATE|EPOCH_NUM: Days NUM are according to mtime not ctime
+															#        - StorageClass "GLACIER"
+															#     - [NoncurrentVersion]Expiration: erases object after some time
+															#        - Days NUM or Date DATE_STR|DATE|EPOCH_NUM
+                              #        - Expiration (without NoncurrentVersion) will set x-amz-expiration [S]:
+                              #           - VAL is expiry-date=DATE, rule-id=RULE_ID
+                              #           - returned by getObject(), putObject(), uploadPartCopy(),completeMultipartUpload()
+GET /?lifecycle               
+getBucketLifecycle()          #Returns LIFECYCLE_OBJ
+DELETE /?lifecycle
+deleteBucketLifecycle()       #
+
+
+																						 /=+===============================+=\ 
+																						/  :                               :  \  
+							 														  )==:         POLICY / ACL          :==(   
+																						\  :_______________________________:  /    
+																						 \=+===============================+=/
+
+
+PUT /?policy                  #Resource-based policy, at bucket-level:
+putBucketPolicy()             #  - object owner are creators, not necessarily bucket owner
+															#  - only applies to objects created by bucket owner
+                              #Request parameter: Policy POLICY_JSON_STR
+DELETE /?policy
+deleteBucketPolicy()          #
+GET /?policy                  
+getBucketPolicy()             #Returns POLICY_OBJ
+
+ACL ==>                       #What:
+                              #  - limited sets of permissions, that apply on top of resource-based policy
+															#  - at bucket or object-level
+                              #  - only useful at the object-level and (for the bucket-level) for LogDelivery
+															#  - bucket owner has only those rights on objects not owned, in a bucket owned: control ACL, 
+                              #    delete, archive|restore:
+                              #      - additional rights use ACL
+                              #      - def. ACL for new objects will grant FULL_CONTROL to BUCKET_OWNER, but object owner can 
+                              #        override, unless a conditional policy forbids it
+                              #Structure
+															#  - ACL_OBJ:
+															#     - Owner:
+															#        - ID CANONICAL_ACCOUNT_ID|ACCOUNT_EMAIL or URL among:
+                              #           - http://acs.amazonaws.com/groups/global/AuthenticatedUsers: any authenticated
+                              #             request
+                              #           - http://acs.amazonaws.com/groups/global/AllUsers: any request
+                              #           - http://acs.amazonaws.com/groups/s3/LogDelivery: logger (see below)
+                              #        - DisplayName
+															#     - AccessControlList OBJ_ARR:
+															#        - Grant:
+															#           - Grantee:
+															#              - ID CANONICAL_ACCOUNT_ID|ACCOUNT_EMAIL|URL
+                              #              - DisplayName
+															#           - Permission (depends if on a BUCKET or OBJECT):
+                              #              - "READ": 
+                              #                 - s3:ListBucket[MultipartUploads], s3:ListBucketVersions
+                              #                 - s3:GetObject[Torrent|Version]
+                              #              - "WRITE":
+                              #                 - s3:PutObject, s3:DeleteObject, (if bucket owner) 
+                              #                   s3:DeleteObject[Version]
+                              #                 - nothing
+                              #              - "READ_ACP":
+                              #                 - s3:GetBucketAcl
+                              #                 - s3:GetObject[Version]Acl
+                              #              - "WRITE_ACP":
+                              #                 - s3:PutBucketAcl
+                              #                 - s3:PutObject[Version]Acl
+                              #              - "FULL_CONTROL": "READ" + "READ|WRITE_ACP"
+                              #  - ACL_STR (shortcut):
+                              #     - private: 
+                              #        - BUCKET|OBJECT_OWNER FULL_CONTROL
+                              #     - public-read[-write]: 
+                              #        - BUCKET|OBJECT_OWNER FULL_CONTROL
+                              #        - AllUsers READ [and WRITE]
+                              #     - authenticated-read: 
+                              #        - BUCKET|OBJECT_OWNER FULL_CONTROL
+                              #        - AuthenticatedUsers READ
+                              #     - bucket-owner-full-control (for OBJECT)
+                              #       - BUCKET|OBJECT_OWNER FULL_CONTROL
+                              #     - bucket-owner-read (for OBJECT):
+                              #        - OBJECT_OWNER FULL_CONTROL
+                              #        - BUCKET_OWNER READ
+                              #     - log-delivery-write (for BUCKET):
+                              #        - LogDelivery WRITE and READ_ACP
+                              #How:
+                              #  - x-amz-acl ACL_STR:
+                              #     - write [C] by putObject[Acl](), createBucket(), putBucketAcl()
+                              #  - x-amz-grant-private|read|write[-acp]|full-control VAL,...:
+                              #     - VAL can be:
+                              #        - id=CANONICAL_ACCOUNT_ID
+                              #        - emailAddress=ACCOUNT_EMAIL
+                              #        - uri=URL
+                              #     - write [C] by putObject[Acl](), createBucket(), putBucketAcl()
+PUT /OBJECT?acl               #  - write [C] by putObject|BucketAcl() with ACL_OBJ in request body
+putObjectAcl()                
+PUT /?acl
+putBucketAcl()                #
+GET /OBJECT?acl               
+getObjectAcl()                
+GET /?acl
+getBucketAcl()                #Returns ACL_OBJ
+
+
+																						 /=+===============================+=\ 
+																						/  :                               :  \  
+							 														  )==:        STATIC WEBSITE         :==(   
+																						\  :_______________________________:  /    
+																						 \=+===============================+=/
+
+
+PUT /?website                 #Optimizes BUCKET for static website hosting.
+putBucketWebsite()            #Request body: WebsiteConfiguration OBJ:
+                              #  - ErrorDocument:
+                              #     - Key OBJECT: returned for 4** errors (instead of XML)
+                              #  - IndexDocument:
+                              #     - Suffix STR: GET|HEAD to a DIR appends STR (e.g. "index.html")
+                              #  - RedirectsAllRequestsTo:
+                              #     - HostName STATIC_URL: by def., URL http://BUCKET.s3 -> http://BUCKET.s3-website
+                              #     - Protocol "http[s]" (def: both)
+                              #  - RoutingRules OBJ_ARR:
+                              #     - Condition:
+                              #        - HttpErrorCodeReturnedEquals STR
+                              #        - KeyPrefixEquals STR: if OBJECT starts with STR
+                              #     - Redirect (where to redirect):
+                              #        - Protocol "http[s]"
+                              #        - HostName STR
+                              #        - HttpRedirectCode UINT_STR
+                              #        - ReplaceKey[Prefix]With STR
+                              #When on STATIC_URL:
+                              #  - can only be used with usual browser GET|HEAD requests, not REST API actions
+                              #  - can't use https://
+                              #  - can do buckets|objects 301 redirects with x-amz-website-redirect-location URL|PATH [C]
+                              #     - write [C] by putObject()
+                              #     - read [S] by getObject()
+
+
+																						 /=+===============================+=\ 
+																						/  :                               :  \  
+							 														  )==:             CORS              :==(   
+																						\  :_______________________________:  /    
+																						 \=+===============================+=/
+
+
+PUT /?cors                    #Sets CORS (bucket-level)
+putBucketCors()               #Request body CORS_OBJ:
+                              #  - CORSConfiguration:
+                              #     - CORSRules OBJ_ARR:
+															#        - ID STR
+															#        - AllowedMethod STR_ARR
+															#        - AllowedOrigin STR_ARR
+															#        - AllowedHeader STR_ARR. Can be "*"
+															#        - MaxAgeSeconds NUM: caching the preflight request
+															#        - ExposeHeader STR_ARR (e.g. server side encryption)
+GET /?cors
+getBucketCors()               #Returns CORS_OBJ
+DELETE /?cors
+deleteBucketCors()            #
+
+
+																						 /=+===============================+=\ 
+																						/  :                               :  \  
+							 														  )==:            LOGGING            :==(   
+																						\  :_______________________________:  /    
+																						 \=+===============================+=/
+
+
+PUT /?logging                 #Enable|disable logging of all BUCKET owned access, written to log OBJECTs
+putBucketLogging()            #Different from CloudTrail. 
+                              #Process:
+                              #  - from time to time (few hours), written to log OBJECTs named after current time
+                              #     - LOG_PREFIXYYYY-MM-DD-HH-MM-SS-RANDOM_STR
+                              #     - means any logs <= this date, and after last log write
+                              #  - not garentee that everything is logged
+                              #Must be BUCKET owner. Can set who can write|read log OBJECTs with TargetGrants.
+                              #Must give PutObject and GetBucketAcl permissions to logger (see above)
+                              #Request body LOGGING_OBJ:
+                              #  - BucketLoggingStatus:
+                              #     - LoggingEnabled (none to disable):
+                              #        - TargetBucket BUCKET: where to store the logs
+                              #        - TargetPrefix PREFIX: prefix to the log OBJECTs
+                              #        - TargetGrants OBJ: same as Grant OBJ in ACL_OBJ, except using Type 
+                              #          "CanonicalUser|AmazonCustomerByEmail|Group" and ID|EmailAddress|DisplayName
+                              #Log lines are (space-delimited):
+                              #  - owner CANONICAL_ACCOUNT_ID
+                              #  - BUCKET
+                              #  - [TIMESTAMP]
+                              #  - IP
+                              #  - requester CANONICAL_ACCOUNT_ID
+                              #  - RANDOM_STR (to avoid overwritting)
+                              #  - REST|WEBSITE.HTTP_METHOD.ACTION
+                              #  - URL (without query variables)
+                              #  - HTTP_METHOD + URL (without query variables, except any VAR x-*)
+                              #  - Response HTTP status|code
+                              #  - Bytes sent
+                              #  - Object size
+                              #  - Time (ms) first byte request received -> last byte sent
+                              #  - Time (ms) last byte request received -> first byte sent
+                              #  - Referrer
+                              #  - User-Agent
+                              #  - VersionId
+GET /?logging
+getBucketLogging()            #Must be BUCKET owner.
+
+
+																						 /=+===============================+=\ 
+																						/  :                               :  \  
+							 														  )==:          ENCRYPTION           :==(   
+																						\  :_______________________________:  /    
+																						 \=+===============================+=/
+
+
+SERVER-SIDE-ENCRYPTION ==>    #Encrypts objects before writing, decrypts before reading
+                              #Uses AES-256 with:
+                              #  - keys managed by Amazon: a unique key derived from rotating master key.
+                              #     - Must use x-amz-server-side-encryption "AES256" [C] in putObject(), uploadPart[Copy]()
+                              #     - Will return same header [S] for getObject(), putObject(), uploadPart[Copy]()
+                              #  - keys managed by client: 
+                              #     - Must use headers [C] in putObject(), uploadPart():
+                              #        - x-amz-server-side-custom-algorithm "AES256"
+                              #        - x-amz-server-side-encryption-customer-key BASE64_STR (for both writing and reading)
+                              #          (discarded after use)
+                              #        - x-amz-server-side-encryption-customer-key-MD5 STR: Integrity MD5 hash of BASE64_STR
+                              #     - Will return same header [S] except *-customer-key for getObject(), putObject(), 
+                              #       uploadPart[Copy](), completeMultipartUpload()
+                              #  - for copyObject() and uploadPartCopy(), can use x-amz-copy-source-server-* for source OBJECT
+
+
+																						 /=+===============================+=\ 
+																						/  :                               :  \  
+							 														  )==:            PAYMENT            :==(   
+																						\  :_______________________________:  /    
+																						 \=+===============================+=/
+
+
+PUT /?requestPayment          #Make requester pay for transfer costs (but not storage costs):
+putRequestPayment()           #  - must use x-amz-request-payer: requester [C], and request not fail (unless BUCKET owner)
+															#  - does not work with BitTorrent and logging
+                              #Request body PAYMENT_OBJ:
+                              #  - RequestPaymentConfiguration
+                              #     - Payer: "Requester|BucketOwner" (def: "BucketOwner")
+GET /?requestPayment
+getRequestPayment()           #Returns PAYMENT_OBJ
+
+DEVPAY ==>                    #Goal:
+                              #  - Charges requester for S3 costs. 
+                              #  - Induces a transaction percentage fee.
+                              #Requests must send:
+                              #  - product token: ID of client application
+                              #  - user token: ID of client application user
+                              #Requests authentication as usual except:
+                              #  - if client-side, client should not access SECRET_ACCESS_KEY, so needs to derive a second
+                              #    SECRET_ACCESS_KEY2
+
+PUT /?tagging                 #Apply tags to BUCKET
+putBucketTagging()            #Request body TAG_OBJ:
+                              #  - Tagging:
+                              #     - Tags OBJ_ARR:
+                              #        - Key STR
+                              #        - Value STR
+DELETE /?tagging
+deleteBucketTagging()         #
+GET /?tagging
+getBucketTagging()            #Returns TAG_OBJ
+
+
+																						 /=+===============================+=\ 
+																						/  :                               :  \  
+							 														  )==:        PRE-SIGNED URL         :==(   
+																						\  :_______________________________:  /    
+																						 \=+===============================+=/
+
+
+PRE-SIGNED URL ==>						#Allow anonymous to do a specific S3 ACTION for specific BUCKET+OBJECT.
+															#BUCKET or OBJECT can be non-existing if write operation.
+															#Is time-limited (uses expiration). Uses STS under the hood.
+															#For example: private URL for a getObject(), or to create a file with putObject()
+                              #Must use Javascript SDK:
+                              #  - S3.getSignedUrl(ACTION_STR, REQ_OBJ, FUNC(ERROR, URL))
+                              #     - REQ_OBJ can have member Expires NUM too
+
+
+																						 /=+===============================+=\ 
+																						/  :                               :  \  
+							 														  )==:           S3FS-FUSE           :==(   
+																						\  :_______________________________:  /    
+																						 \=+===============================+=/
+
+
+MUST INSTALL MANUALLY ==>     #  - download from GitHub
+                              #  - dependencies: build-essential git libfuse-dev libcurl4-openssl-dev libxml2-dev mime-support 
+                              #    automake libtool
+                              #  - ./autogen.sh, ./configure --prefix=/usr --with-openssl, make, make install
+
+MOUNTING ==>                  #Either:
+                              #  - s3fs ... (manually)
+                              #  - /etc/fstab: s3fs#BUCKET DIR fuse nodev,nosuid,rw,OPT... 0 0
+                              #     - where OPT is any below, e.g. allow_other
+                              #     - it seems it bugs, and needs to be remounted at startup: umount DIR, mount DIR (as root)
+
+CREDENTIALS ==>               #  - ENVVAR WSACCESSKEYID, AWSSECRETACCESSKEY
+	                            #  - or ~/.passwd-s3fs (permission 600), /etc/passwd-s3fs (permission 640) or --passwd_file FILE
+	                            #     - content "accessKeyId:secretAccessKey"
+                              #     - ~ is /root/ if root
+                              #  - or use option iam_role ROLE
+
+s3fs BUCKET DIR -oVAR=VAL     #BOOL is 1 or nothing
+use_cache TMP_DIR             #Caching mechanism (limit number of downloads) (only for reads, except first download)
+allow_other BOOL              #(def: false) allow other OS_USER to use it
+ahbe_conf FILE                #To add HTTP headers when writing. Each line:
+                              #  [.EXT] HEADER_VAR [HEADER_VAL]
+                              #Can use #comment
+retries NUM                   #(def: 2)
+default_acl ACL_STR           #(def: "private")
+use_rrs BOOL                  #(def: false) (ReducedRedundancy)
+use_sse BOOL                  #(def: false) (Server side encryption)
+nomultipart BOOL              #(def: false)
+multireq_max NUM              #(def: 500): max number of parallel requests when paginating
+parallel_count NUM            #(def: 5): max number of parallel multipart upload requests (use multipart over 20MB)
+enable_content_md5 BOOL       #(def: false)
+public_bucket BOOL            #(def: false): anonymous access
+connect_timeout NUM           #(def: 10 secs)
+readwrite_timeout NUM         #(def: 30 secs)
+max_stat_cache_size NUM       #(def: 10000, e.g. about 4MB)
+enable_noobj_cache BOOL       #(def: false): cache non-existing files, to limit the number of calls to ListBucket()
+stat_cache_expire NUM         #(def: no expire)
+url "https://s3.amazonaws.com"#To use HTTPS instead
+nodnscache BOOL               #
+
+NOTES ==>                     #  - Max file size 64GB
+	                            #  - Supports modes (chmod), mtime, uid|gid (chown) using x-amz-meta-mode|mtime|uid|gid
+                              #  - Sets Content-Type

@@ -1,0 +1,876 @@
+
+             
+   OPSWORK   
+             
+
+
+OPSWORKS ==>                  #Version from 2013-12-05
+                              #Global service, so must use REGION us-east-1
+
+GOAL ==>                      #Apply Chef recipes on sets of AWS resources.
+                              #How it works:
+                              #  - stack, layer, AWS resources, apps fill in ATTR_JSON
+                              #  - during events (automatic) or manually (deployment), recipes are executed that uses ATTR_JSON
+
+LESS FLEXIBILITY ==>          #Using OpsWorks give a bit less flexibility:
+                              #  - EC2 instances: 
+                              #     - less parameters than EC2 CreateInstance()
+                              #     - CloudWatch metrics only available through AWS console
+                              #  - AutoScalingGroup: less parameters, including for HealthChecks, and can only access through
+                              #    OpsWorks
+                    
+
+																						 /=+===============================+=\ 
+																						/  :                               :  \  
+							 														  )==:            GENERAL            :==(   
+																						\  :_______________________________:  /    
+																						 \=+===============================+=/
+
+
+STACK ==>                     #  - Sets of Layers with also:
+                              #     - EC2 instances default launch configuration (main parameters)
+                              #     - Chef configuration
+                              #  - DescribeStackSummary(): can see number of instances according to launch state
+                              #  - OpsWorks uses ServiceRoleArn, a ROLE to operate on AWS resource (different from instances 
+															#    DefaultInstanceProfileArn).
+                              #     - Def. allows ec2|elasticloadbalancing|rds:*, cloudwatch:GetMetricStatistics, iam:PassRole
+  
+LAYER ==>                     #  - Set of similar EC2-related resources (e.g. fleet of Node.js servers) with common:
+                              #     - Chef recipes
+                              #     - default configuration (Elastic IP, SecurityGroup, instance profile, EBS Volumes)
+                              #  - EC2-related resources:
+                              #     - EC2, EBS, ELB, AutoScaling, RDS (VPC is stack-level)
+                              #     - Usually ELB, EC2+EBS+AutoScaling, RDS would be in separate layers
+                              #     - Can be in several layers (useful when hosting several functions on same machine)
+                              #  - Often has one layer for each major branch, e.g. production, development, release candidates
+                              #  - There are predefined layers, by using Type and Attributes (all EC2 instances except RDS):
+                              #     - Web server: Java (Tomcat), Node.js, PHP, Rails, Static (Nginx)
+                              #     - Database: RDS, MySQL, Memcached
+                              #     - LoadBalancer: HAProxy
+                              #     - Monitoring server: Ganglia
+                              #  - Default recipes:
+                              #     - Custom:
+                              #        - Setup:
+                              #           - opsworks_initial_setup
+                              #           - ssh_host_keys
+                              #           - ssh_users
+                              #           - mysql::client
+                              #           - dependencies: affected by ATTR_JSON.dependencies.upgrade|udpate_debs false
+                              #           - ebs
+                              #           - opsworks_ganglia::client
+                              #        - Configure:
+                              #           - opsworks_ganglia::configure-client
+                              #           - ssh_users
+                              #           - agent_version
+                              #        - Deploy:
+                              #           - deploy::default
+                              #        - Shutdown:
+                              #           - opsworks_shutdown::default
+                              #     - Other use same as custom plus others afterwards:
+                              #        - Node.js:
+                              #           - Setup:
+                              #              - opsworks_nodejs
+                              #              - opsworks_nodejs::npm
+                              #           - Configure:
+                              #              - opsworks_nodejs::configure
+                              #           - Deploy:
+                              #              - opsworks_nodejs
+                              #              - opsworks_nodejs::npm
+                              #              - deploy::nodejs
+                              #           - Undeploy:
+                              #              - deploy::nodejs-undeploy
+                              #           - Shutdown:
+                              #              - deploy::nodejs-stop
+  
+OPSWORKS-RELATED AWS          #  - Must be registered|attached with registering functions, meaning assigned to a stack or layer
+RESOURCES ==>                 #     - modifications after registration will not be kept when resource is restarted unless an 
+															#       Update*() function exists (case of all but LoadBalancer and AutoScalingGroup)
+                              #  - Can create some with creator functions, same as using the relevant AWS service but:
+                              #     - automatically registered
+                              #     - simpler (fewer options)
+                              #  - Can use some helper functions: like creator functions (simpler than using AWS service 
+															#    directly) but not related to creation
+                              #  - Resources:
+                              #     - Layer-level:
+                              #        - Non-RDS instance:
+                              #           - creator functions Create|UpdateInstance(): since no registering functions, must use
+															#             creator function (which has less options that EC2 CreateInstance())
+                              #           - helper functions Start|Stop|RebootInstance()
+                              #           - Automatically sets up Hostname STR
+                              #              - can also GetHostnameSuggestion(), which uses HostnameTheme (stack-level) to 
+                              #                generate names according to list (e.g. Greek_Deities). 
+                              #                Otherwise def: Layer Shortname + number
+                              #              - Same stack other instances hostnames are mapped to each instance using 
+															#                /etc/hosts
+                              #           - OS must be Amazon Linux, or Ubuntu 12.04|14.04 LTS (3 specific AMIs)
+                              #              - Can specify CustomOs with ImageId, but AMI must be based on the AMI above, 
+															#                customized from starting point:
+                              #                 - OpsWorks CreateInstance(): 
+                              #                    - must temporary disable AutoHealing while creating temporary instance to 
+															#                      get AMI from
+                              #                    - if do not want OpsWorks, stop two OpsWorks daemons and rm OpsWorks 
+															#                      directories /etc/aws/opsworks/, /opt/aws/opsworks/, /var/log/aws/opsworks/
+															#                      /var/lib/aws/opsworks/, /etc/monit.d/opsworks-agent.monitrc ,
+                              #                      /etc/monit/conf.d/opsworks-agent.monitrc, /var/lib/cloud/
+                              #                 - EC2 with any AMI above
+                              #           - run two OpsWorks daemons SERVICE: monit and opsworks-agent
+                              #        - LoadBalancer (only one per layer):
+                              #           - registering functions Attach|DetachElasticLoadBalancer()
+                              #        - AutoScalingGroup:
+                              #           - creator functions SetLoad|TimeBasedAutoScaling() (Time-based is instance-level):
+                              #              - Uses metrics average over all EC2 instances, and uses either CPU, RAM or Load
+                              #           - LaunchConfiguration is actually an OpsWorks Instance, with AutoScalingType 
+                              #             "load|timer"
+                              #              - This instance can't be started manually
+                              #           - HealthCheck:
+                              #              - If EnableAutoHealing true (def)
+                              #              - Not AutoScalingGroup nor ELB health check, but use monit daemon on EC2 instance:
+                              #                 - communicates every 5 mins with OpsWorks
+                              #                 - Checks that daemon can communicate, not that server is up
+                              #                 - If fail, terminates then starts new instance with same conf
+                              #                 - Don't consider EC2 instances stopped with OpsWorks StopInstance() unhealthy 
+															#                   (but any other way to stop is consider unhealthy, so will start a new 
+															#                   instance)
+                              #           - Cannot access AutoScalingGroup with normal AutoScaling SERVICE
+                              #        - Instance profile: 
+                              #           - registering parameter CustomInstanceProfileArn 
+                              #           - creator parameter DefaultInstanceProfileArn (stack-level)
+                              #        - SecurityGroups: 
+                              #           - registering parameter CustomSecurityGroupIds
+                              #           - creator parameter UseOpsworksSecurityGroups true (def) (stack-level) to use default
+															#             ones depending on Layer type
+                              #     - Stack-level:
+                              #        - RDS instance:
+                              #           - registering functions RegisterRdsDbInstance()
+                              #        - VPC:
+                              #           - EC2 instances must be able to communicate with OpsWorks service (EC2 daemon) and 
+															#             download App URLs.
+                              #        - EBS Volume:
+                              #           - either:
+                              #              - registering functions RegisterVolume()
+                              #              - helper functions UpdateVolume() and AssignVolume() (instance must be stopped)
+                              #           - or creator parameter VolumeConfigurations + UseEbsOptimizedInstances BOOL
+                              #              - can specify RaidLevel to have RAID volumes 
+                              #           - MountPoint is not /dev/* but actual mount point
+                              #        - ElasticIp:
+                              #           - registering functions RegisterElasticIp()
+                              #           - helper functions [Dis]associateElasticIp()
+                              #           - Can AutoAssignElasticIps true or AutoAssignPublicIps true (both layer-level): 
+															#             create, register and associate
+                              #        - ROLE assumed by OpsWorks when doing actions on AWS resources
+                              #     - ACCOUNT_ID-level: 
+                              #        - IAM User:
+                              #           - creator functions Create|UpdateUserProfile()
+                              #           - helper functions SetPermission():
+                              #              - like IAM policies (stack-level), but does not show up in IAM (manipulates
+                              #                recipes instead)
+                              #              - include SSH connection (and SSH username) and sudo rights
+
+APP ==>                       #  - Source code of application, used by Deploy commands
+                              #     - "git" (git, HTTPS, SSH)
+                              #     - "svn"
+                              #     - "archive" (.zip, .gz, .bz2, .tar, .war)
+                              #     - "s3" (for public buckets, prefer "archive") 
+															#       (must specify ACCESS_KEY_ID and SECRET_ACCESS_KEY ENVVAR)
+                              #     - Can set up the document root
+                              #     - depends on predefined layer:
+                              #        - Node.js: 
+                              #           - /server.js or /package.json
+                              #           - port 80 or 443
+                              #           - copies SSL config to ../../shared/config/ssl.crt|key|ca
+                              #           - copy source to /srv/www/APP_SHORTNAME/
+                              # - Can also:
+                              #    - change ATTR_JSON.deploy.APP_SHORTNAME.deploy_to
+                              #    - Set up ENVVAR
+                              #       - dispo at ../../shared/config/app.env (as export VAR=VAL ... file)
+                              #       - Can be set Secure, meaning they are not displayed from OpsWorks, but can be displayed
+                              #         when connecting to the EC2 instance
+                              #    - EnableSsl: sets up SSL
+                              #    - OS user|group deploying with ATTR_JSON.deploy[.APP_SHORTNAME].user|group
+                              #  - DataSources:
+                              #     - Configure event sets the database connection to be used by RDS or MySQL on EC2
+                              #     - Can also be set with a file on the app root, depending on the App type:
+                              #        - Node.js: ../../shared/config/opsworks.js which must require() and returns:
+                              #           - OBJ.db: adapter STR, database STR, password STR, username STR, host URL, port NUM,
+                              #             reconnect BOOL, data_source_provider "rds"
+                              #           - or OBJ.memcached: port NUM, host URL
+
+
+																						 /=+===============================+=\ 
+																						/  :                               :  \  
+							 														  )==:      RECIPES EXPLANATION      :==(   
+																						\  :_______________________________:  /    
+																						 \=+===============================+=/
+
+
+CHEF RECIPES ==>              #  - sent by OpsWorks and executed by opsworks-agent on each instance
+                              #  - an execution is called a "command"
+                              #  - triggered either:
+                              #     - automatically:
+                              #        - during layer lifecycle events:
+                              #           - Setup: instance finished booting
+                              #           - Configure: EC2 instance (not server/app) enters|leaves online state. 
+                              #             Triggered on all the online instances.
+                              #           - Deploy: 
+                              #              - after Setup event, or with createDeployment() "deploy"
+                              #              - Usually recipes:
+                              #                 - Download and install App (depends on App Type)
+                              #                 - if ATTR_JSON.deploy.APP_SHORTNAME.stack.needs_reload true, reloads the 
+                              #                   server
+                              #              - Configure automatically includes same as Deploy: Deploy is only for redeploying
+                              #           - Undeploy: after deleting an app, or with createDeployment() "undeploy"
+                              #           - Shutdown: stops instance (delays shutdown for max 4 secs)
+                              #        - can add recipes to lifecycle events
+                              #        - Events fired:
+                              #           - StartInstance(): Setup, Configure (all)
+                              #           - RebootInstance(): none
+                              #           - StopInstance(): Shutdown
+                              #     - manually ("Deployment"): 
+                              #        - run predefined recipes (or custom with "execute_recipes")
+                              #        - depends on layer type
+                              #        - stack-level:
+                              #           - "execute_recipes": custom recipes
+                              #           - "install_dependencies": 
+                              #              - Run "dependencies" recipe on all instances
+                              #              - based on layer-level Packages STR_ARR
+                              #              - run on instance boot if InstallUpdatesOnBoot true (stack-level or 
+															#                instance-level). 
+                              #           - "update_dependencies"
+                              #              - Run "dependencies" recipe on all instances
+                              #           - "update_custom_cookbooks": udpates cookbooks cache on EC2 instances
+                              #        - instance-level:
+                              #           - "setup|configure|deploy|undeploy": trigger lifecycle event
+                              #           - "rollback": 
+                              #              - Runs the second-last "deploy" command again
+                              #              - NUM last "deploy" are kept, where NUM is ATTR_JSON.deploy.deploy_keep_releases 
+                              #                (def: 5) or ATTR_JSON.deploy.APP_SHORTNAME.keep_releases
+                              #           - "start": Starts the server
+                              #           - "restart": 
+                              #              - Restart the server. 
+                              #              - Can specify ATTR_JSON.deploy.APP_SHORTNAME.restart_command (shell command) to be
+															#                executed before restarting
+                              #           - "stop": Stops the server
+                              #  - all config from OpsWork actually fills in ATTR_JSON, which is executed by opswork-agent:
+                              #     - AWS resources and OpsWorks configuration: 
+															#       ATTR_JSON.opsworks|recipes|opsworks_custom_cookbooks
+                              #     - App: ATTR_JSON.deploy|applications
+                              #     - Permission: ATTR_JSON.ssh_users
+                              #     - Builtin layer type: 
+                              #        - attribute files ATTR_JSON.apache|haproxy|memcached|mysql|nginx|opswork_berkshelf|
+															#          opswork_java|passenger|ruby|unicorn
+                              #     - CustomJson, merged with ATTR_JSON, either:
+                              #        - for all events (Create|Clone|UpdateStack()) 
+                              #        - for one specific createDeployment()
+                              #  - Cookbooks are cached:
+                              #     - not downloaded every time recipes are run 
+                              #     - but downloaded when:
+                              #        - any instance is created
+                              #        - "update_custom_cookbooks" is run
+                              #  - Customization:
+                              #     - Chef configuration:
+                              #        - Chef version: Stack attributes
+                              #        - Berkshelf: Stack attributes enabled|version, ATTR_JSON.opswork_berkshelf.debug
+                              #        - ATTR_JSON.opsworks.deploy_chef_provider
+                              #        - ATTR_JSON.opsworks.run_cookbook_tests: using Minitest Chef handler
+                              #     - Possibilities:
+                              #        - Overriding attribute with either:
+                              #           - CustomJson: easier
+                              #           - Custom attribute file: needs to create a file (after a custom cookbook), so harder
+															#             but more durable and can be versioned with Git
+                              #        - Overriding recipe templates
+                              #        - Creating custom cookbooks/recipes:
+                              #           - Stack attributes UseCustomCookbooks|CustomCookbooksSource
+                              #     - Attributes precedence:
+                              #        - if previous exist, can either overrides it according to top ATTR_JSON VAR: "normal" 
+															#          (yes) or "default" (not)
+  
+opsworks-agent-cli ... [EVENT]#Tools installed by OpsWorks.
+[DATE]                        #Must be root.
+                              #Following are commands.
+get_json                      #Returns the ATTR_JSON
+stack_state                   #Show ATTR_JSON too, but shorter version
+list_commands                 #List recipes that have been executed
+run_command [JSON_FILE]       #
+show_log                      #
+instance_report               #Show general info about instance state and type
+agent_report                  #Shorter version
+
+ATTR_JSON                     #  - opsworks:
+                              #     - stack:
+                              #        - id
+                              #        - name
+                              #        - vpc_id
+                              #        - rds_instances OBJ_ARR:
+                              #           - arn
+                              #           - address
+                              #           - region
+                              #           - availability_zone
+                              #           - multi_az BOOL
+                              #           - allocated_storage NUM
+                              #           - auto_minor_version_upgrade BOOL
+                              #           - backup_retention_period NUM
+                              #           - db_instance_class
+                              #           - db_instance_identifier
+                              #           - db_instance_status
+                              #           - db_name
+                              #           - db_parameter_groups OBJ_ARR:
+                              #              - db_parameter_group_name
+                              #              - parameter_apply_status
+                              #           - option_group_memberships OBJ_ARR:
+                              #              - option_group_name
+                              #              - status
+                              #           - db_security_groups OBJ_ARR:
+                              #              - db_security_group_name
+                              #              - status
+                              #           - vpc_security_groups STR_ARR
+                              #           - db_user
+                              #           - engine
+                              #           - instance_create_time DATE_STR
+                              #           - license_model
+                              #           - port NUM
+                              #           - preferred_backup|maintenance_window
+                              #           - publicly_accessible BOOL
+                              #           - read_replica_db_instance_identifiers STR_ARR
+                              #           - status_infos STR_ARR
+                              #        - elb-load-balancers OBJ_ARR:
+                              #           - dns_name
+                              #           - name
+                              #           - layer_id
+                              #     - layers: 
+                              #        - db-master|java-app|lb|monitoring-master|memcached|nodejs-app|php-app|rails-app|web:
+                              #           - id: OpsWork InstanceId, not EC2
+                              #           - name (shortname)
+                              #           - instances:
+                              #              - INSTANCE_SHORTNAME:
+                              #                 - instance_type
+                              #                 - region
+                              #                 - availability_zone
+                              #                 - backends NUM_STR
+                              #                 - booted_at|created_at DATE_STR
+                              #                 - [private|elastic_]ip
+                              #                 - private|public_dns_name
+                              #                 - status "requested|booting|running_setup|online|setup_failed|start_failed|
+                              #                   terminating|terminated|stopped|connection_lost" 
+                              #     - instance: 
+                              #        - aws_instance_id
+                              #        - id: OpsWork InstanceId, not EC2
+                              #        - architecture "i386|x86_64"
+                              #        - instance_type
+                              #        - region
+                              #        - availability_zone
+                              #        - backends NUM_STR: number of server threads
+                              #        - layers STR_ARR (shortnames)
+                              #        - [private_]ip
+                              #        - private|public_dns_name
+                              #        - hostname
+                              #     - applications OBJ_ARR:
+                              #        - application_type "php|rails|node|web|other"
+                              #        - name
+                              #        - slug_name (shortname)
+                              #     - activity EVENT
+                              #     - agent_version
+                              #     - deploy_chef_provider "Branch|Revision|Timestamped" (def: "Timestamped")
+                              #     - run_cookbook_tests BOOL
+                              #     - sent_at DATE_NUM
+                              #     - deployment: Deployment ID
+                              #     - ruby_stack|version (Ruby)
+                              #     - rails_stack (Ruby)
+                              #  - deploy (for Deploy event or createDeployment()): 
+                              #     - deploy_keep_releases NUM
+                              #     - user|group
+                              #     - APP_SHORTNAME:
+                              #        - application
+                              #        - application_type "db-master|java-app|lb|monitoring-master|memcached|nodejs-app|
+                              #          php-app|rails-app|web"
+                              #        - database:
+                              #           - adapter STR
+                              #           - database STR: database name
+                              #           - data_source_provider "mysql|rds"
+                              #           - host IP
+                              #           - port NUM
+                              #           - username STR
+                              #           - password STR
+                              #           - reconnect BOOL (Ruby only)
+                              #        - deploy_to DIR
+                              #        - domains STR_ARR
+                              #        - document_root DIR
+                              #        - environment_variables: VAR
+                              #        - user|group
+                              #        - keep_releases NUM
+                              #        - memcached: host, port
+                              #        - mounted_at
+                              #        - restart_command
+                              #        - scm:
+                              #           - scm_type "git|svn|s3|archive|other"
+                              #           - user|password
+                              #           - repository
+                              #           - revision
+                              #           - ssh_key
+                              #        - stack: needs_reload BOOL
+                              #        - symlinks OBJ
+                              #        - ssl_support BOOL
+                              #        - ssl_certificate[_ca|key]
+                              #        - auto_bundle_on_deploy BOOL (Ruby)
+                              #        - migrate BOOL (Ruby)
+                              #        - rails_env (Ruby)
+                              #        - symlink_before_migrate OBJ (Ruby)
+                              #  - recipes STR_ARR, as "COOKBOOK::RECIPE"
+                              #  - opsworks_custom_cookbooks:
+                              #     - enabled BOOL
+                              #     - recipes STR_ARR
+                              #  - dependencies: 
+                              #     - upgrade|update_debs BOOL: whether to apt-get update|upgrade
+                              #     - gem_binary PATH (Ruby)
+                              #  - ssh_users:
+                              #     - USER_ID:
+                              #        - name
+                              #        - email
+                              #        - public_key
+                              #        - sudoer BOOL
+                              #  - languages OBJ
+                              #  - opswork_berkshelf: debug BOOL
+                              #  - ganglia (Ganglia)
+                              #  - mysql (MySQL)
+                              #  - ruby|rails|passenger|passenger_apache2|opsworks_bundler|opsworks_rubygems|unicorn (Ruby)
+                              #  - opswork_java (Java)
+                              #  - nginx (Nginx)
+                              #  - memcached (Memcached)
+                              #  - haproxy (HAProxy)
+                              #  - apache (PHP)
+                              
+CLOUDWATCH ==>                #Same as underlying services: 
+                              #  - EBS, RDS, ELB
+                              #  - but not EC2: must use OpsWorks console
+                              #     - Metrics CPU (user/system/IO wait/nice), Memory (used/cached/free/swap), Load (1/5/15 min)
+                              #       Processes (number)
+                              #Can also see directly in OpsWorks console
+  
+LIMITS ==>                    #  - 20KB Custom JSON
+  
+
+																						 /=+===============================+=\ 
+																						/  :                               :  \  
+							 														  )==:         STACKS/LAYERS         :==(   
+																						\  :_______________________________:  /    
+																						 \=+===============================+=/
+
+
+Create|Clone|UpdateStack()    #Request parameters STACK:
+                              #  - Name STR
+                              #  - Region REGION (not "Update")
+                              #  - VpcId STR (not "Update")
+                              #  - DefaultSubnetId STR
+                              #  - DefaultAvailabilityZone ZONE
+                              #  - DefaultOs "Amazon Linux|Ubuntu 12.04 LTS|14.04 LTS" (def: "Amazon Linux")
+                              #  - DefaultRootDeviceType "ebs|instance-store"
+                              #  - DefaultSshKeyName STR
+                              #  - DefaultInstanceProfileArn STR
+                              #  - ServiceRoleArn STR
+                              #  - UseOpsworksSecurityGroups BOOL
+                              #  - HostnameTheme "Layer_Dependent" (def) or "Baked_Goods|Clouds|European_Cities|Fruits|
+                              #    Greek_Deities|Legendary_Creatures_from_Japan|Planets_and_Moons|Roman_Deities|
+                              #    Scottish_Islands|US_Cities|Wild_Cats"
+                              #  - Attributes: Color STR: in the AWS console
+                              #  - StackId (only "Update")
+                              #  - SourceStackId STR (only "Clone")
+                              #  - CloneAppIds STR_ARR (only "Clone")
+                              #  - ClonePermissions BOOL (only "Clone")
+                              #  - ConfigurationManager:
+                              #     - Name "Chef"
+                              #     - Version STR
+                              #  - ChefConfiguration:
+                              #     - BerkshelfVersion STR
+                              #     - ManageBerkshelf BOOL
+                              #  - UseCustomCookbooks BOOL
+                              #  - CustomCookbooksSource SOURCE
+                              #  - CustomJson STR
+                              #Response body: StackId STR
+Start|StopStack()             #Request parameters: StackId STR
+DeleteStack()                 #Request parameters: StackId STR
+DescribeStacks()              #Request parameters: StackIds STR_ARR
+                              #Response body: Stacks OBJ_ARR:
+                              #  - Same as STACK ("Create")
+                              #  - Arn STR
+                              #  - CreatedAt DATE
+DescribeStackSummary()        #Request parameters: StackId STR
+                              #Response body: StackSummary:
+                              #  - StackId STR
+                              #  - Arn STR
+                              #  - Name STR
+                              #  - LayersCount NUM
+                              #  - AppsCount NUM
+                              #  - InstancesCount: Pending|Requested|Booting|RunningSetup|StartFailed|Online|ConnectionLost|
+                              #    Rebooting|ShuttingDown|Stopping|Stopped|Terminating|Terminated NUM
+
+Create|UpdateLayer()          #Request parameters LAYER:
+                              #  - StackId STR (only "Create")
+                              #  - LayerId STR (only "Update")
+                              #  - Name STR
+                              #  - Shortname STR
+                              #  - Type "java-app|lb|web|php-app|rails-app|nodejs-app|memcached|db-master|monitoring-master|
+                              #    custom"  (only "Create")
+                              #  - Attributes:
+                              #     ("lb")
+                              #     - EnableHaproxyStats STR
+                              #     - HaproxyStatsUrl STR
+                              #     - HaproxyStatsUser STR
+                              #     - HaproxyStatsPassword STR
+                              #     - HaproxyHealthCheckUrl STR
+                              #     - HaproxyHealthCheckMethod STR
+                              #     ("db-master")
+                              #     - MysqlRootPassword STR
+                              #     - MysqlRootPasswordUbiquitous STR
+                              #     ("monitoring-master")
+                              #     - GangliaUrl STR
+                              #     - GangliaUser STR
+                              #     - GangliaPassword STR
+                              #     ("memcached")
+                              #     - MemcachedMemory STR
+                              #     ("nodejs-app")
+                              #     - NodejsVersion STR
+                              #     ("rails-app")
+                              #     - RubyVersion STR
+                              #     - RubygemsVersion STR
+                              #     - ManageBundler STR
+                              #     - BundlerVersion STR
+                              #     - RailsStack STR
+                              #     - PassengerVersion STR
+                              #     ("java-app")
+                              #     - Jvm STR
+                              #     - JvmVersion  STR
+                              #     - JvmOptions STR
+                              #     - JavaAppServer STR
+                              #     - JavaAppServerVersion STR
+                              #  - CustomRecipes RECIPE:
+                              #     - Configure STR_ARR
+                              #     - Deploy STR_ARR
+                              #     - Setup STR_ARR
+                              #     - Shutdown STR_ARR
+                              #     - Undeploy STR_ARR
+                              #  - Packages STR_ARR
+                              #  - InstallUpdatesOnBoot BOOL
+                              #  - EnableAutoHealing BOOL
+                              #  - AutoAssignElasticIps BOOL
+                              #  - AutoAssignPublicIps BOOL
+                              #  - CustomInstanceProfileArn STR
+                              #  - CustomSecurityGroupIds STR_ARR
+                              #  - UseEbsOptimizedInstances BOOL
+                              #  - VolumeConfigurations OBJ_ARR:
+                              #     - Iops NUM
+                              #     - MountPoint STR
+                              #     - NumberOfDisks NUM
+                              #     - RaidLevel NUM
+                              #     - Size NUM
+                              #     - VolumeType "standard|PIOPS|gp2"
+                              #Response body: LayerId STR
+DeleteLayer()                 #Request parameters: LayerId STR
+DescribeLayers()              #Request parameters:
+                              #  - LayerIds STR_ARR
+                              #  - StackId STR
+                              #Response body: Layers LAYER_ARR ("Create"+"Update"), with also:
+                              #  - CreatedAt DATE 
+                              #  - DefaultRecipes RECIPE
+
+
+																						 /=+===============================+=\ 
+																						/  :                               :  \  
+							 														  )==:            RECIPES            :==(   
+																						\  :_______________________________:  /    
+																						 \=+===============================+=/
+
+
+Create|UpdateApp()            #Request parameters APP:
+                              #  - AppId STR (Only If "Update")
+                              #  - StackId STR (Only if "Create")
+                              #  - Name STR
+                              #  - Shortname STR (Only if "Create")
+                              #  - Description STR
+                              #  - Type "java|rails|php|nodejs|static|other"
+                              #  - AppSource SOURCE:
+                              #     - Type "git|svn|archive|s3"
+                              #     - Url STR
+                              #     - Username STR
+                              #     - Password STR
+                              #     - SshKey STR (for Git with SSH)
+                              #     - Revision STR (for Git/SVN: COMMIT (LBRANCH, COMMIT_ID or TAG))
+                              #  - Attributes:
+                              #     - DocumentRoot STR
+                              #     - RailsEnv STR
+                              #     - AutoBundleOnDeploy STR
+                              #  - DataSources OBJ_ARR:
+                              #     - Arn STR: MySQL instances ID or RDS Layer ID
+                              #     - DatabaseName STR
+                              #     - Type "AutoSelectOpsworksMysqlInstance|OpsworksMysqlInstance|RdsDbInstance"
+                              #  - Environment OBJ_ARR:
+                              #     - Key STR
+                              #     - Value STR
+                              #     - Secure BOOL
+                              #  - Domains STR_ARR: overriding default domain name
+                              #  - EnableSsl BOOL
+                              #  - SslConfiguration:
+                              #     - Certificate STR
+                              #     - Chain STR
+                              #     - PrivateKey STR
+                              #Response body: AppId STR (Only if "Create")
+DeleteApp()                   #Request parameters: AppId STR
+DescribeApps()                #Request parameters:
+                              #  - AppIds STR_ARR
+                              #  - StackId STR
+                              #Response body: Apps APP_ARR (like "Update"+"Create"), with also:
+                              #  - CreatedAt DATE
+                        
+DescribeCommands()            #Request parameters:
+                              #  - CommandIds STR_ARR
+                              #  - DeploymentId STR
+                              #  - InstanceId STR
+                              #Response body: Commands OBJ_ARR:
+                              #  - AcknowledgedAt DATE
+                              #  - CommandId STR
+                              #  - CompletedAt DATE
+                              #  - CreatedAt DATE
+                              #  - DeploymentId STR
+                              #  - ExitCode NUM
+                              #  - InstanceId STR
+                              #  - LogUrl STR 
+                              #  - Status "failed|successful|skipped|pending"
+                              #  - Type COMMAND                       
+CreateDeployment()            #Request parameters DEPLOYMENT:
+                              #  - StackId STR
+                              #  - AppId STR
+                              #  - InstanceIds STR_ARR
+                              #  - Command: 
+                              #     - Args: VAR: STR_ARR
+                              #     - Name COMMAND
+                              #  - Comment STR
+                              #  - CustomJson STR
+                              #Response body: DeploymentId STR
+DescribeDeployments()         #Request parameters:
+                              #  - AppId STR
+                              #  - DeploymentIds STR_ARR
+                              #  - StackId STR
+                              #Response body: Deployments DEPLOYMENT_ARR:
+                              #  - CompletedAt|CreatedAt DATE
+                              #  - DeploymentId STR
+                              #  - Duration NUM
+                              #  - IamUserArn STR
+                              #  - Status STR
+     
+
+																						 /=+===============================+=\ 
+																						/  :                               :  \  
+							 														  )==:         AWS RESOURCES         :==(   
+																						\  :_______________________________:  /    
+																						 \=+===============================+=/
+
+
+Create|UpdateInstance()       #Request parameters INSTANCE:
+                              #  - InstanceId STR (only "Update")
+                              #  - StackId STR (not "Update")
+                              #  - LayerIds STR_ARR
+                              #  - InstanceType STR
+                              #  - Architecture "x86_64|i386"
+                              #  - Os "Amazon Linux|Ubuntu 12.04 LTS|Ubuntu 14.04 LTS|Custom"
+                              #  - AmiId STR (if "Custom")
+                              #  - AvailabilityZone ZONE (not "Update")
+                              #  - EbsOptimized BOOL
+                              #  - RootDeviceType "ebs|instance-store"  (not "Update")
+                              #  - SshKeyName STR
+                              #  - SubnetId STR (not "Update")
+                              #  - VirtualizationType "paravirtual|hvm" (not "Update")
+                              #  - Hostname STR
+                              #    Can use GetHostnameSuggestion():
+                              #     - Request parameters: LayerId STR
+                              #     - Response body: LayerId STR, Hostname STR
+                              #  - InstallUpdatesOnBoot BOOL
+                              #  - AutoScalingType "load|timer"
+                              #Response body: InstanceId STR
+Start|Stop|RebootInstance()   #Request parameters: InstanceId STR
+DeleteInstance()              #Request parameters:
+                              #  - DeleteElasticIp BOOL
+                              #  - DeleteVolumes BOOL
+                              #  - InstanceId STR
+DescribeInstances()           #Request parameters:
+                              #  - InstanceIds STR_ARR
+                              #  - LayerId STR
+                              #  - StackId STR
+                              #Response body: Instances INSTANCE_ARR ("Update"+"Create"), with also:
+                              #  - CreatedAt DATE 
+                              #  - Ec2InstanceId STR
+                              #  - ElasticIp STR
+                              #  - InstanceProfileArn STR
+                              #  - LastServiceErrorId STR
+                              #  - Private|PublicDns|Ip STR
+                              #  - RootDeviceVolumeId STR
+                              #  - SecurityGroupIds STR_ARR
+                              #  - SshHostDsa|RsaKeyFingerprint STR
+                              #  - Status "requested|pending|booting|running_setup|online|terminating|shutting_down|terminated|
+                              #    stopped"
+           
+RegisterRdsDbInstance()       #Request parameters:
+                              #  - DbPassword STR
+                              #  - DbUser STR
+                              #  - RdsDbInstanceArn STR
+                              #  - StackId STR
+DeregisterRdsDbInstance()     #Request parameters: RdsDbInstanceArn STR
+UpdateRdsDbInstance()         #Request parameters:
+                              #  - DbPassword STR
+                              #  - DbUser STR
+                              #  - RdsDbInstanceArn STR
+DescribeRdsDbInstances()      #Request parameters:
+                              #  - RdsDbInstanceArns STR_ARR
+                              #  - StackId STR
+                              #Response body OBJ_ARR:
+                              #  - Same as RegisterRdsDbInstance()
+                              #  - Address STR
+                              #  - DbInstanceIdentifier STR
+                              #  - Engine STR
+                              #  - MissingOnRds BOOL
+                              #  - Region REGION
+                              
+RegisterVolume()              #Request parameters:
+                              #  - Ec2VolumeId STR
+                              #  - StackId STR
+                              #Response body: VolumeId STR
+DeregisterVolume()            #Request parameters: VolumeId STR
+UpdateVolume()                #Request parameters:
+                              #  - MountPoint STR
+                              #  - Name STR
+                              #  - VolumeId STR
+AssignVolume()                #Request parameters:
+                              #  - InstanceId STR
+                              #  - VolumeId STR
+UnassignVolume()              #Request parameters: VolumeId STR
+DescribeVolumes()             #Request parameters: 
+                              #  - StackId STR
+                              #  - InstanceId STR
+                              #  - RaidArrayId STR
+                              #  - VolumeIds STR_ARR
+                              #Response body: Volumes OBJ_ARR:
+                              #  - VolumeId STR
+                              #  - EC2VolumeId STR
+                              #  - InstanceId STR
+                              #  - Name STR
+                              #  - VolumeType STR
+                              #  - Iops NUM
+                              #  - Device STR
+                              #  - MountPoint STR
+                              #  - Size NUM
+                              #  - Status STR
+                              #  - AvailabilityZone ZONE
+
+DescribeRaidArrays()          #Request parameters:
+                              #  - StackId STR
+                              #  - InstanceId STR
+                              #  - RaidArrayIds STR_ARR
+                              #Response body: RaidArrays OBJ_ARR:
+                              #  - AvailabilityZone ZONE
+                              #  - CreatedAt DATE
+                              #  - Device STR
+                              #  - InstanceId STR
+                              #  - Iops NUM
+                              #  - MountPoint STR
+                              #  - Name STR
+                              #  - NumberOfDisks NUM
+                              #  - RaidArrayId STR
+                              #  - RaidLevel NUM
+                              #  - Size NUM
+                              #  - StackId STR
+                              #  - VolumeType STR
+
+RegisterElasticIp()           #Request parameters:
+                              #  - ElasticIp STR
+                              #  - StackId STR
+                              #Response body: ElasticIp STR
+DeregisterElasticIp()         #Request parameters: ElasticIp STR
+AssociateElasticIp()          #Request parameters:
+                              #  - ElasticIp STR
+                              #  - InstanceId STR
+DisassociateElasticIp()       #Request parameters: ElasticIp STR
+UpdateElasticIp()             #Request parameters:
+                              #  - ElasticIp STR
+                              #  - Name STR
+DescribeElasticIps()          #Request parameters:
+                              #  - InstanceId STR
+                              #  - Ips STR_ARR
+                              #  - StackId STR
+                              #Response body: ElasticIps OBJ_ARR:
+                              #  - Domain STR
+                              #  - InstanceId STR
+                              #  - Ip STR
+                              #  - Name STR
+                              #  - Region REGION
+
+Attach|Detach                 #Request parameters:
+ElasticLoadBalancer()         #  - ElasticLoadBalancerName STR
+                              #  - LayerId STR
+DescribeElasticLoadBalancers()#Request parameters:
+                              #  - LayerIds STR_ARR
+                              #  - StackId STR
+                              #Response body: ElasticLoadBalancers OBJ_ARR:
+                              #  - AvailabilityZones ZONE_ARR
+                              #  - DnsName STR
+                              #  - Ec2InstanceIds STR_ARR
+                              #  - ElasticLoadBalancerName STR
+                              #  - LayerId STR
+                              #  - Region REGION
+                              #  - StackId STR
+                              #  - SubnetIds STR_ARR
+                              #  - VpcId STR
+                              
+SetLoadBasedAutoScaling()     #Request parameters LOAD_BASED_AUTO_SCALING:
+                              #  - LayerId STR
+                              #  - Down|UpScaling:
+                              #     - Cpu|Load|MemoryThreshold DOUBLE
+                              #     - ThresholdsWaitTime NUM
+                              #     - IgnoreMetricsTime NUM
+                              #     - InstanceCount NUM (increment)
+                              #  - Enable BOOL
+DescribeLoadBasedAutoScaling()#Request parameters: LayerIds STR_ARR
+                              #Response body: LoadBasedAutoScalingConfigurations LOAD_BASED_AUTO_SCALING_ARR:
+SetTimeBasedAutoScaling()     #Request parameters TIME_BASED_AUTO_SCALING:
+                              #  - InstanceId STR
+                              #  - AutoScalingSchedule:
+                              #     - Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday: 0-23: "on|off"
+DescribeTimeBasedAutoScaling()#Request parameters: InstanceIds STR_ARR
+                              #Response body: TimeBasedAutoScalingConfigurations TIME_BASED_AUTO_SCALING_ARR
+
+Create|UpdateUserProfile()    #Request parameters USER_PROFILE:
+                              #  - AllowSelfManagement BOOL: allow user to set its own SSH parameters
+                              #  - IamUserArn STR
+                              #  - SshPublicKey STR
+                              #  - SshUsername STR
+                              #Response body: IamUserArn STR (only if "Create")
+UpdateMyUserProfile()         #Request parameters: SshPublicKey STR
+DeleteUserProfile()           #Request parameters: IamUserArn STR
+DescribeMyUserProfile()       #Request parameters: UserProfile USER_PROFILE
+DescribeUserProfiles()        #Request parameters: IamUserArn STR_ARR
+                              #Response body: UserProfiles USER_PROFILE_ARR, with also:
+                              #  - Name STR
+
+SetPermission()               #Request parameters PERMISSION:
+                              #  - IamUserArn STR
+                              #  - StackId STR
+                              #  - AllowSsh BOOL, AllowSudo BOOL: sets ATTR_JSON (not IAM policy)
+                              #  - Level STR: sets IAM policy that:
+                              #     - "iam_only" (def): does not set any IAM policy
+                              #     - "deny": allows nothing
+                              #     - "show": allows OpsWorks::Describe* except IAM-related ones
+                              #     - "deploy": same but also OpsWorks::CreateDeployment, OpsWorks::UpdateApp
+                              #     - "manage": allows OpsWorks::* except IAM-related ones and Create|CloneStack
+DescribePermissions()         #Request parameters:
+                              #  - IamUserArn STR
+                              #  - StackId STR
+                              #Response body: Permissions PERMISSION_ARR
+
+DescribeServiceErrors()       #Shows Amazon servers errors.
+                              #Request parameters:
+                              #  - StackId STR
+                              #  - InstanceId STR
+                              #  - ServiceErrorIds STR_ARR
+                              #Response body: ServiceErrors OBJ_ARR:
+                              #  - CreatedAt DATE
+                              #  - InstanceId STR
+                              #  - Message STR
+                              #  - ServiceErrorId STR
+                              #  - StackId STR
+                              #  - Type STR

@@ -1,0 +1,434 @@
+
+               
+   BEANSTALK   
+               
+
+
+ELASTICBEANSTALK ==>					#Version from 2014-05-05
+
+GOAL ==>                      #Launching sets of resources fast, with preconfigured options.
+
+DIFFERENCE FROM CLOUDFORMATION#Easier but less configuration:
+ ==>                          #  - Based on already baked CloudFormation stacks (SolutionStacks)
+                              #  - Uses few options instead of full template
+                              #  - Can manage several versions
+                              #  - Helpers: monitoring, CNAME
+
+CONCEPTS ==>                  #  - Application: sets of ApplicationVersions, Environments, [Configuration]Options, 
+                              #    ConfigurationTemplates
+                              #  - ApplicationVersion:
+                              #     - code to deploy for a specific version, as a S3 object (e.g. for Node, package.json):
+                              #        - .war or .zip file
+                              #        - max 512MB
+                              #     - can use CreateStorageLocation() to create S3 Bucket named 
+                              #       elasticbeanstalk-REGION-ACCOUNT_ID
+                              #  - Environment: AWS resource running an ApplicationVersion
+                              #  - [Configuration]Options: AWS resources configuration. Can be changed runtime.
+                              #  - SolutionStack: Sets of possible Options (called also "container type"):
+                              #     - most Options are common
+                              #     - but some are specific to the main engine used on EC2 (will change EC2 UserData and
+                              #       ImageId)
+                              #     - possible SolutionStacks:
+                              #        - Amazon Linux with Ruby, Docker, Node.js, PHP, Python, Tomcat/Java
+                              #        - Windows Server 2012 with IIS
+                              #  - ConfigurationTemplates: template for Options
+
+OTHERS ==>                    #  - EnvironmentTier: "WebServer" (public) or "Worker" (private), changes default 
+                              #    Resources/Options
+
+DEFAULT CONFIGURATION ==>     #  - LoadBalancer (EnvironmentType "LoadBalanced"):
+                              #     - Public DNS NAME.elasticbeanstalk.com (NAME is CNAMEPrefix)
+                              #        - can CheckDNSAvailability() for this domain name before creating
+                              #        - can SwapEnvironmentCNAMEs() to put development Environment to production with no 
+                              #          downtime
+                              #     - HTTP->HTTP
+                              #  - AutoScalingGroup in all AvailabilityZones (EnvironmentType "LoadBalanced")
+                              #     - 2 ScalingPolicy depending on two CloudWatch alarms for < 2000000 and > 6000000 NetworkOut
+                              #  - EC2:
+                              #     - images depend on SolutionStack
+                              #     - run extra software "HostManager", responsible for monitoring logs, events, metrics and 
+                              #       deploying (EnvironmentTier "WebServer")
+                              #     - UserData: uses cloud_final_modules: [ scripts-user, always ]
+                              #     - daemon sqsd (EnvironmentTier "Worker"):
+                              #        - reads from a SQS queue (OPTION WorkerQueueURL)
+															#        - HTTP POST SQS messages to http://localhost/URL, where URL is OPTION HttpPath:
+															#           - User-Agent: aws-sqsd/1.1 [C]
+															#           - x-aws-sqsd-sqsd-queue SQS_QUEUE [C]
+															#           - x-aws-sqsd-sqsd-msgid SQS_MESSAGE_ID [C]
+															#           - x-aws-sqsd-receive-count NUM [C]
+															#           - x-aws-sqsd-first-received-at DATE [C]
+															#           - Content-Type OPTION MimeType [C]
+															#        - If URL responds with 200 exit code, sqs:DeleteMessage()
+															#        - Can configure HTTP POST connections:
+															#           - OPTION ConnectTimeout: connection timeout
+															#           - OPTION InactivityTimeout: response timeout
+															#           - OPTION MaxRetries (then moves to SQS DeadLetter queue)
+															#           - OPTION HttpConnections: max. number of connections at once
+                              #  - VPC:
+                              #     - public DNS/URL (if EnvironmentTier "WebServer")
+                              #     - EC2 SecurityGroup allowing in-traffic HTTP from LoadBalancer SecurityGroup, and all 
+                              #       out-traffic
+                              #        - no SSH allowed by default, nor KeyPair
+                              #     - LoadBalancer SecurityGroup allowing all in HTTP, all out
+                              #  - SNS notifications, RDB DBInstance: not setup by default, but can be
+                              #  - Sets tags: aws:cloudformation:logical-id|stack-id|stack-name, 
+                              #    elasticbeanstalk:environment-id|name on many resources
+
+MONITORING ==>                #Logs:
+                              #  - Can Request|RetrieveEnvironmentInfo(): EC2 instances syslog logs, full or "tail" 
+                              #    (last 100 lines)
+                              #  - If OPTION LogPublicationControl true, put them on to S3
+                              #  - Can also see logs in /var/log/eb-*
+                              #Health "Green|Yellow|Red|Grey":
+                              #  - ELB HealthCheck: ok, failed but not up to UnhealthyThreshold, failed, and not ready yet
+                              #  - if HealthCheck fails, do additional checks: existence of LoadBalancer|AutoScalingGroup, 
+                              #    at least once EC2 instance "InService", SecurityGroup allow HealthCheck, 
+                              #    CNAME points to right LoadBalancer, EC2 instances can communicate
+                              #Status STR: EC2 status checks
+
+RESTARTING ==>                #RestartAppServer():
+                              #  - Restart the server (e.g. nodejs), but not the EC2 instances
+                              #  - done when changing OPTION in namespace "aws:elasticbeanstalk:application:environment", 
+                              #    EnvironmentVariables, "aws:elasticbeanstalk:container:nodejs"
+                              #RebuildEnvironment()
+                              #  - Erases and recreates all AWS resources
+                              #  - Can use rolling update to avoid terminating everything at once:
+                              #     - Goal: frequent update with no downtime
+                              #     - Terminates MaxBatchSize NUM instances, with a MinInstancesInService NUM, then waits 
+                              #       PauseTime for next batch
+                              #  - done when changing OPTION in namespace "aws:autoscaling:launchconfiguration", 
+                              #    "aws:elasticbeanstalk:environment"
+                              #When deploying, can specify an OPTION Timeout
+
+OPTIONS ==>                   #First reference is the namespace.
+                              #For an ARR, use "STR,..."
+                              #"aws:autoscaling:asg": AutoScalingGroup
+                              #  - MinSize NUM (def: 1)
+                              #  - MaxSize NUM (def: 4)
+                              #  - "Availability Zones" "Any[ 1|2|3]" (def: "Any", meaning all available)
+                              #  - "Custom Avalability Zones" REGION_ARR (def: none)
+                              #  - Cooldown NUM (def: 360)
+                              #"aws:autoscaling:launchconfiguration": LaunchConfiguration
+                              #  - ImageId STR (def: none)
+                              #  - InstanceType STR (def: "t1.micro")
+                              #  - EC2KeyName STR (def: none)
+                              #  - IamInstanceProfile NAME|ARN (def: none)
+                              #  - MonitoringInterval "1|5 minute" (def: "5 minute")
+                              #  - SecurityGroups STR_ARR (def: "elasticbeanstalk-default")
+                              #  - SSHSourceRestriction "PROTOCOL, FROMPORT, TOPORT, IP" (def: "tcp,22,22,0.0.0.0/0"): 
+                              #    modifies SecurityGroup
+                              #  - BlockDeviceMappings STR_ARR, as "PARTITION=VAL", where VAL is either SNAPSHOT_ID,
+                              #    INSTANCE_STORE_NAME or :SIZE (def: none)
+                              #  - RootVolumeType "standard|gp2|io1" (def: depends on container type)
+                              #  - RootVolumeSize NUM (def: depends on container type)
+                              #  - RootVolumeIOPS NUM (def: depends on container type)
+                              #"aws:autoscaling:trigger": ScalingPolicy
+                              #  - Lower|UpperBreachScaleIncrement NUM (def: -1, 1)
+                              #"aws:autoscaling:trigger": MetricAlarm used by AutoScalingGroup
+                              #  - MeasureName STR (def: "NetworkOut")
+                              #  - Period NUM (def: 5)
+                              #  - BreachDuration NUM (def: 5)
+                              #  - Statistic STR (def: "Average")
+                              #  - Unit STR (def: "Bytes")
+                              #  - Lower|UpperThreshold NUM (def: 2000000, 6000000)
+                              #"aws:autoscaling:updatepolicy:rollingupdate"
+                              #  - RollingUpdateEnabled BOOL (def: false)
+                              #  - MaxBatchSize NUM (def: 1/3 (rounded to superior) of AutoScalingGroup MaxSize)
+                              #  - MinInstancesInService NUM (def: AutoScalingGroup MinSize (-1 if MinSize == MaxSize))
+                              #  - PauseTime "PT[..H][..M][..S]" (each .. is NUM) (0 to 1 hours) (def: depends on instance type
+                              #    and container)
+                              #"aws:ec2:vpc": several VPC
+                              #  - VPCId STR (def: none)
+                              #  - Subnets SUBNET_ID_ARR (def: none): assigned to AutoScalingGroup
+                              #  - ELBSubnets SUBNET_ID_ARR (def: none): assigned to LoadBalancer
+                              #  - DBSubnets SUBNET_ID_ARR (def: none): assigned to RDB DBInstance
+                              #  - ELBScheme STR (def: none): LoadBalancer Scheme
+                              #  - AssociatePublicIpAddress BOOL (def: none): AutoScalingGroup Subnet MapPublicIpOnLaunch
+                              #"aws:elasticbeanstalk:application": LoadBalancer HealthCheck
+                              #  - "Application HealthCheck URL" URL (def: "/"): HealthCheck Target
+                              #"aws:elb:healthcheck": LoadBalancer HealthCheck
+                              #  - [Un]HealthyThreshold NUM (def: 5 "Unhealthy", 3 "Healthy") (2 to 10)
+                              #  - Interval NUM (def: 30)
+                              #  - Timeout NUM (def: 5)
+                              #  - Target STR (def: "TCP:80")
+                              #"aws:elb:loadbalancer": LoadBalancer
+                              #  - LoadBalancerHTTP[S]Port NUM (def: 80 and "OFF")
+                              #  - LoadBalancer[SSL]PortProtocol STR (def: "HTTP" and "HTTPS")
+                              #  - SSLCertificateId STR (def: none)
+                              #  - CrossZone BOOL (def: false)
+                              #"aws:elb:policies": LoadBalancer policies
+                              #  - "Stickiness Cookie Expiration" NUM  (def: 0)
+                              #  - "Stickiness Policy" BOOL (def: false)
+                              #"aws:elb:policies": LoadBalancer
+                              #  - ConnectionDrainingEnabled BOOL (def: false)
+                              #  - ConnectionDrainingTimeout NUM (def: 60)
+                              #"aws:elasticbeanstalk:sns:topics"
+                              #  - "Notification Endpoint" STR (def: none)
+                              #  - "Notification Protocol" STR (def: "email")
+                              #  - "Notification Topic ARN|Name" STR (def: none)
+                              #"aws:rds:dbinstance": RDS DBInstance
+                              #  - DBEngine STR (def: "mysql")
+                              #  - DBEngineVersion STR
+                              #  - DBInstanceClass STR (def: "db.t1.micro")
+                              #  - DBUser STR (def: "ebroot")
+                              #  - DBPassword STR (def: none)
+                              #  - DBAllocatedStorage NUM (def: depends on DBEngine)
+                              #  - DBDeletionPolicy "Delete|Snapshot" (def: "Delete"): DeleteDBInstance() SkipFinalSnapshot
+                              #  - DBSnapshotIdentifier STR (def: none)
+                              #  - MultiAZDatabase BOOL (def: false)
+                              #"aws:elasticbeanstalk:command"
+                              #  - Timeout NUM (def: 480): deployment timeout
+                              #  - BatchSizeType "Percentage|Fixed" (def: "Percentage")
+                              #"aws:elasticbeanstalk:control":
+                              #  - RollbackLaunchOnFailure BOOL (def: false)
+                              #  - LaunchTimeout NUM (def: 0)
+                              #  - DefaultSSHPort NUM (def: 22)
+                              #  - LaunchType "Normal|Migration" (def: "Normal")
+                              #"aws:elasticbeanstalk:environment"
+                              #  - EnvironmentType "SingleInstance|LoadBalanced" (def: "LoadBalanced")
+                              #"aws:elasticbeanstalk:monitoring"
+                              #  - "Automatically Terminate Unhealthy Instances" BOOL (def: true): whether AutoScalingGroup
+                              #    terminates unhealthy EC2 instances
+                              #"aws:elasticbeanstalk:sqsd": SQS and sqsd
+                              #  - WorkerQueueURL STR (def: automatic new one)
+                              #  - VisibilityTimeout NUM (def: 5 mins)
+                              #  - RetentionPeriod NUM (def: 4 days)
+                              #  - HttpPath STR (def: "/"): for HTTP POST
+                              #  - MimeType STR (def: "application/json"): for HTTP POST 
+                              #  - HttpConnections NUM (def: 50) (1 to 100)
+                              #  - ConnectTimeout NUM (def: 5) (1 to 60)
+                              #  - InactivityTimeout NUM (def: 2 mins) (up to 30 mins)
+                              #  - MaxRetries NUM (def: 10)
+                              #"aws:elasticbeanstalk:application:environment": EC2 instance UserData:
+                              #  - ENVVAR (any)
+                              #"aws:elasticbeanstalk:container:nodejs": EC2 instance UserData:
+                              #  - NodeCommand STR: command to fire. If FILE, do "nodejs FILE". Def: "app.js", then "server.js"
+                              #    then "npm start"
+                              #  - NodeVersion STR (def: "0.10.26")
+                              #  - ProxyServer "nginx|apache|none" (def: "nginx"): to handle static files
+                              #  - GzipCompression BOOL (def: false): if ProxyServer, whether Node server compresses output
+                              #"aws:elasticbeanstalk:container:nodejs:staticfiles": EC2 instance UserData:
+                              #  - "DIR" (e.g. "/public") STR (def: none): the static files directory
+                              #"aws:elasticbeanstalk:hostmanager": EC2 instance UserData:
+                              #  - LogPublicationControl BOOL (def: false): copies EC2 instance log files to HostManager
+                              #    S3 bucket
+                              #"aws:cloudformation:template:parameter":
+                              #  - EnvironmentVariables STR_ARR 
+                              #    (def: "AWS_ACCESS_KEY_ID=,AWS_SECRET_KEY=,PARAM1=,PARAM2=,PARAM3=,PARAM4=,PARAM5=")
+                              #  - ServerPort NUM (def: 8080)
+                              #  - InstancePort NUM (def: 80)
+                              #  - StaticFiles STR_ARR (def: none)
+                              #  - AppSource STR
+
+.ebextensions/ANYTHING.config #File that fills underlying AWS::CloudFormation::Init (cfn-init always called), but YAML not JSON
+                              #It can also contain:
+                              #  - Resources: 
+                              #      - like CloudFormation.
+                              #      - RESOURCE_VAR of usual ElasticBeanstalk resources is
+                              #        "AWSEBAutoScalingGroup[Configuration]|EnvironmentName|LoadBalancer|RDSDatabase|
+                              #        SecurityGroup"
+                              #      - Can use { "Fn::GetOptionSetting", { OptionName OPTION, DefaultValue STR } }
+                              #  - Outputs: like CloudFormation
+
+PRICING ==>                   #Free
+
+PAGINATION ==>								#  - Request parameters: MaxRecords NUM, NextToken STR
+															#  - Response body: NextToken STR
+
+
+																						 /=+===============================+=\ 
+																						/  :                               :  \  
+							 														  )==:            METHODS            :==(   
+																						\  :_______________________________:  /    
+																						 \=+===============================+=/
+
+
+Create|UpdateApplication()		#Request parameters: 
+															#  - ApplicationName STR
+															#  - Description STR 
+															#Response body: Application APP:
+															#  - ApplicationName STR
+															#  - ConfigurationTemplates STR_ARR
+															#  - DateCreated|Updated DATE
+															#  - Description STR
+															#  - Versions STR_ARR
+DeleteApplication()						#Request parameters: 
+															#  - ApplicationName STR
+															#  - TerminateEnvByForce BOOL
+DescribeApplications()				#Request parameters: ApplicationNames STR_ARR
+															#Response body: Applications APP_ARR
+
+Create|Update									#Request parameters: 
+ApplicationVersion()					#  - ApplicationName STR
+															#  - AutoCreateApplication BOOL (only "Create")
+															#  - Description STR
+															#  - SourceBundle: (only "Create")
+															#     - S3Bucket BUCKET
+															#     - S3Key OBJECT
+															#  - VersionLabel STR
+															#Response body: ApplicationVersion APP_VERSION
+															#  - Same as request except AutoCreateApplication
+															#  - DateCreated|Updated DATE
+DeleteApplicationVersion()		#Request parameters: 
+															#  - ApplicationName STR
+															#  - DeleteSourceBundle BOOL
+															#  - VersionLabel STR
+DescribeApplicationVersions()	#Request parameters: 
+															#  - ApplicationName STR
+															#  - VersionLabels STR_ARR
+															#Response body: ApplicationVersions APP_VERSION_ARR
+
+ListAvailableSolutionStacks()	#Response body:
+															#  - SolutionStackDetails OBJ_ARR:
+															#     - PermittedFileTypes STR_ARR, among "zip" or "war"
+															#     - SolutionStackName STR
+															#  - SolutionStacks STR_ARR
+
+Create|UpdateEnvironment()		#Request parameters: 
+															#  - ApplicationName STR (only if "Create")
+															#  - VersionLabel STR
+															#  - EnvironmentName STR (EnvironmentId if "Update")
+															#  - CNAMEPrefix STR (only if "Create")
+															#  - Description STR
+															#  - SolutionStackName STR (only if "Create")
+															#  - OptionSettings OPT_SETTINGS_ARR:
+															#     - Namespace STR
+															#     - OptionName STR
+															#     - Value STR
+															#  - OptionsToRemove OPTIONS_ARR:
+															#     - Namespace STR
+															#     - OptionName STR
+															#  - Tags TAG_ARR: Key STR, Value STR (only if "Create")
+															#  - TemplateName STR
+															#  - Tier:
+															#     - Name "WebServer|Worker"
+															#     - Version "1.0"
+															#     - Type "Standard|SQS/HTTP"
+															#Response body ENVIRONMENT:
+															#  - Same as request but:
+															#     - CNAMEPrefix -> CNAME STR
+															#     - no Options*, Tags
+															#  - DateCreated|Updated DATE
+															#  - EndpointURL URL
+															#  - EnvironmentId STR
+															#  - Resources: LoadBalancer: 
+															#     - Domain STR
+															#     - Listeners OBJ_ARR: Port NUM, Protocol STR
+															#     - LoadBalancerName STR
+															#  - Health "Red|Yellow|Green|Grey"
+															#  - Status "Launching|Updating|Ready|Terminating|Terminated"
+RebuildEnvironment()					#Request parameters: EnvironmentId|Name STR
+RestartAppServer()						#Request parameters: EnvironmentId|Name STR
+TerminateEnvironment()				#Request parameters: 
+															#  - EnvironmentId|Name STR
+															#  - TerminateResources BOOL
+															#Response body ENVIRONMENT
+DescribeEnvironments()				#Request parameters: 
+															#  - ApplicationName STR
+															#  - EnvironmentIds|Names STR_ARR
+															#  - IncludeDeleted BOOL
+															#  - IncludedDeletedBackTo DATE
+															#  - VersionLabel STR
+															#Response body: Environments ENVIRONMENT_ARR
+DescribeEnvironmentResources()#Request parameters: EnvironmentId|Name STR
+															#Response body: EnvironmentResources OBJ_ARR:
+															#  - AutoScalingGroups OBJ_ARR: Name STR
+															#  - EnvironmentName STR
+															#  - Instances OBJ_ARR: Id STR
+															#  - LaunchConfigurations OBJ_ARR: Name STR
+															#  - LoadBalancers OBJ_ARR: Name STR
+															#  - Queues OBJ_ARR: Name STR, URL STR
+															#  - Triggers OBJ_ARR: Name STR
+
+DescribeConfigurationSettings	#Request parameters: 
+															#  - ApplicationName STR
+															#  - EnvironmentName STR
+															#  - TemplateName STR
+															#Response body: ConfigurationSettings CONFIG_TEMPLATE_ARR
+DeleteEnvironmentConfiguration#Request parameters: 
+															#  - ApplicationName STR
+															#  - EnvironmentName STR
+
+DescribeConfigurationOptions()#Request parameters: 
+															#  - SolutionStackName STR
+															#  - ApplicationName STR
+															#  - EnvironmentName STR
+															#  - Options OPTIONS_ARR
+															#  - TemplateName STR
+															#Response body:
+															#  - SolutionStackName STR
+															#  - Options OBJ_ARR:
+															#     - Namespace STR
+															#     - Name STR
+															#     - ValueType "Scalar|KeyValueList|List|CommaSeparatedList|Boolean"
+															#     - ValueOptions STR_ARR
+															#     - DefaultValue STR
+															#     - MaxLength NUM
+															#     - Min|MaxValue NUM
+															#     - Regex:
+															#        - Label STR: description
+															#        - Pattern REGEXP_STR
+															#     - UserDefined BOOL
+															#     - ChangeSeverity "NoInterruption|RestartEnvironment|RestartApplicationServer"
+ValidateConfigurationSettings #Request parameters: 
+															#  - ApplicationName STR
+															#  - EnvironmentName STR
+															#  - OptionSettings OPT_SETTINGS_ARR
+															#  - TemplateName STR
+															#Response body: Messages OBJ_ARR:
+															#  - Message STR
+															#  - Namespace STR
+															#  - OptionName STR
+															#  - Severity "error|warning"
+															
+Create|Update									#Request parameters: 
+ConfigurationTemplate()				#  - ApplicationName STR
+															#  - TemplateName STR
+															#  - SourceConfiguration: (only "Create") to copy
+															#     - ApplicationName STR
+															#     - TemplateName STR
+															#  - Description STR
+															#  - EnvironmentId STR (only "Create")
+															#  - OptionSettings OPT_SETTINGS_ARR
+															#  - OptionsToRemove OPTIONS_ARR (only "Update")
+															#  - SolutionStackName STR (only "Create")
+															#Response body CONFIG_TEMPLATE:
+															#  - Same as request (for "Create") but:
+															#     - EnvironmentId -> EnvironmentName STR
+															#     - no SourceConfiguration
+															#  - DateCreated|Updated DATE
+															#  - DeploymentStatus "null|pending|deployed|failed"
+DeleteConfigurationTemplate()	#Request parameters: 
+															#  - ApplicationName STR
+															#  - TemplateName STR
+                              
+CheckDNSAvailability()				#Request parameters: CNAMEPrefix STR
+															#Response body:
+															#  - Available BOOL
+															#  - FullyQualifiedCNAME STR
+SwapEnvironmentCNAMEs()				#Request parameters: Source|DestinationEnvironmentId|Name STR
+															
+CreateStorageLocation()				#Response body: S3Bucket BUCKET
+
+RequestEnvironmentInfo()			#Request parameters: 
+															#  - EnvironmentId|Name STR
+															#  - InfoType "tail" (optional)
+RetrieveEnvironmentInfo()			#Request parameters: same as RequestEnvironmentInfo()
+															#Response body: EnvironmentInfo:
+															#  - Ec2InstanceId STR
+															#  - InfoType STR
+															#  - Message STR
+															#  - SampleTimestamp DATE
+
+DescribeEvents()							#Request parameters: 
+															#  - ApplicationName STR
+															#  - VersionLabel STR
+															#  - EnvironmentId|Name STR
+															#  - TemplateName STR
+															#  - StartTime|EndTime DATE
+															#  - RequestId STR
+															#  - Severity "TRACE|DEBUG|INFO|WARN|ERROR|FATAL"
+															#Response body: Events OBJ_ARR
+															#  - Same as request but no StartTime|EndTime, EnvironmentId
+															#  - EventDate DATE
+															#  - Message STR

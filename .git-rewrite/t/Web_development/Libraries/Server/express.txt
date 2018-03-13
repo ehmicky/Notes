@@ -1,0 +1,262 @@
+
+             
+   EXPRESS   
+             
+
+
+STRUCTURE ==>									#Order of main file:
+															#  - APPVAR
+															#  - MIDWR (APP.use()) 
+															#     - logging middlewares
+															#     - utility middlewares
+															#  - routing (APP.METHOD|route() (sorted by directories))
+															#  - error handling middlewares
+															#  - APP.listen()
+															#Routing:
+															#  - sorted by "branch" (directories/topics):
+															#     - all APP.METHOD of one branch call APP.METHOD(..., OBJ.FUNC()) with same OBJ
+															#       (required module) but different OBJ.FUNC()
+															#     - Data should be specific to each branch if possible.
+															#  - Instead of calling APP.METHOD over and over:
+															#     - use a function APP.map(OBJ):
+															#			   - iterates recursively over it
+															#        - calls proper APP.METHOD(DIR, FUNC)
+															#        - OBJ:
+															#           - METHOD: FUNC
+															#           - DIR: OBJ (recursive)
+															#     - see https://github.com/visionmedia/express/blob/master/examples/route-map/index.js
+
+
+																						 /=+===============================+=\ 
+																						/  :                               :  \  
+							 														  )==:             MAIN              :==(   
+																						\  :_______________________________:  /    
+																						 \=+===============================+=/
+
+
+CONNECT()											#Returns APP like EXPRESS but only with APP.use|listen() and limited functionalities.
+                              #Version 3.0.2
+
+EXPRESS()											#Returns APP (version 4.10.4)
+															#Uses DEBUG
+															#All methods returns their object, so that be chained.
+HTTP[S].createServer(APP)			#APP is a FUNC(REQ, RES) that should be used as the request event handler of HTTP[S].SERVER
+APP.listen(...)								#Same as HTTP.createServer(APP).listen(...)
+
+APP.use([PATH, ]							#MIDWR are middleware functions: 
+MIDWR([ERROR, ]REQ, RES			  #  - they modify incoming|outcoming REQ|RES
+[, NEXT([ERROR])])...)			  #  - they only apply to requests to PATH:
+                              #     - excluding query string or hash
+                              #     - PATH is "mounted", meaning it is stripped from REQ.url (not REQ.originalUrl)
+                              #       Can see current mounting with APP.mountpath
+															#     - PATH ("route") is STR (exact match): 
+                              #        - can use PARAM (see below)
+                              #        - can use globbing
+                              #        - "PATH" == "PATH/" unless APPVAR "strict routing" true
+															#        - can use APPVAR "case sensitive routing" (def: false) 
+															#  - they are usually Node.js modules
+															#  - can use several MIDWR(...)... or a MIDWR_ARR. 
+															#  - NEXT(...):
+															#     - proceed to the next registered MIDWR
+															#     - the "end point", i.e. the final middleware (usually delivering the content to the client)
+															#       should not call NEXT()
+															#     - Can be an end point only on condition, e.g. static MIDWR using NEXT() if it doesn't
+															#       find the file, which allow chaining several static MIDWR to use different folders by
+															#       order of preference.
+															#     - If NEXT(ERROR) or throw ERROR, will call the next APP.use() with four arguments
+                              #       ERROR_MIDWR(ERROR, REQ, RES, NEXT(VAL))
+                              #        - default ERROR_MIDWR will send 500 status code with response ERROR
+                              #        - should be redefined, so that it prints ERROR.stack and send 500 status code with 
+                              #          error message using RES.send() if REQ.xhr, or RES.status() + RES.render() otherwise.
+                              #     - if no MIDWR has intercepted a request, will send a 404 with small HTML saying 
+                              #       "Cannot METHOD PATH"
+                              #       To redefine it, put a last APP.use(MIDWR(...)) (but not ERROR_MIDWR)
+APP.use([PATH, ]APP2)         #APP2:
+                              #  - will be used when requests made to PATH
+                              #  - Since PATH is "mounted":
+                              #     - APP2 paths will be relative to PATH (if they are not absolute, i.e. starting with '/')
+                              #     - so APP2 has no knowledge of APP, but thanks to REQ.originalUrl can rewrite to real URL.
+                              #       For example, RES.redirect|location() with relative PATH will use REQ.originalUrl
+                              #  - Goal is to create sub-apps, which is why every app should be assigned to module.exports,
+                              #    and only use APP.listen() if ( ! module.parent )
+
+APP.METHOD(PATH,MIDWR(...)...)#Like APP.use(...) except:
+                              #  - cannot use APP.METHOD(PATH, APP2) nor APP.METHOD(ERROR, ...)
+															#  - only when using HTTP METHOD ("all" for any, "get" also catches "head")
+                              #  - PATH can be REGEXP (partial match): parenthesis matches are available at REQ.params ARR 
+                              #    (empty if no parenthesis)
+                              #  - Can by bypass next MIDWR(...)... of current APP.METHOD() by calling NEXT("route").
+                              #    Ex. usage: authentication failure.
+                              #  - APP.METHOD() is usually used for end points
+APP.route(PATH)								#Returns a ROUTE where ROUTE.METHOD(...) is same as APP.METHOD(PATH, ...) and returns ROUTE 
+															#(for chaining). Simplify syntax and avoid redundancy.
+EXPRESS.Router([OBJ])					#Returns ROUTER, which is a MIDWR dedicated to routing. 
+															#Has ROUTER.use|param|route|METHOD(...) like APP functions, but not APPVAR or listen().
+															#OBJ: 
+															#  - caseSensitive BOOL: like APPVAR "case sensitive routing"
+															#  - strict BOOL: like APPVAR "strict routing"
+
+APPVAR												#Like ENVVAR but only for APP. Uses:
+															#  - APP.set(VAR, VAL), APP.get(VAR)
+															#  - APP.disable[d]|enable[d](VAR): like set|get() but for VAL true|false
+APPVAR "x-powered-by"					#Adds response header X-Powered-By: Express (def: true)
+APPVAR "env"									#Defines whether it is run in "development" or "production" (some MIDWR behaves accordingly).
+                              #Default to ENVVAR NODE_ENV or, if unset, "development".
+															#Useful to load different configuration files according to dev|production.
+
+PARAM													#Any part of URL in APP.METHOD() that matches /\??:([^/]+)/. If "?", optional. 
+															#([^/]+) is available at REQ.params.PARAM_VAR = PARAM_VAL
+APP.param(PARAM_VAR, 					
+MIDWR(..., PARAM_VAL))				#Fires FUNC() each time a route taken includes PARAM_VAR.
+APP.param
+(FUNC(PARAM_VAR, PARAM_VAL)->
+MIDWR(..., PARAM_VAL)))				#Same for any PARAM_VAR.
+APP.param(PARAM_VAR, REGEXP)	#Only validates PARAM if PARAM_VAL partially matches REGEXP.
+															#Also, if REGEXP uses parenthesis groups, REQ.params is an ARR of matches, where first element 
+                              #is the whole REGEXP match.
+															#Must use EXPRESS-PARAMS.extend(APP)
+APP.param(PARAM_VAR, 					#Filters PARAM_VAR
+FUNC(VAL)->BOOL)							#Must use EXPRESS-PARAMS.extend(APP)
+
+
+
+
+																						 /=+===============================+=\ 
+																						/  :                               :  \  
+							 														  )==:              REQ              :==(   
+																						\  :_______________________________:  /    
+																						 \=+===============================+=/
+
+
+REQ														#Same as Node.js but augmented with:
+REQ.query											#GET variables as OBJ. 
+                              #Use QS, so can use OBJ with depth (e.g. "VAR[VAR]=VAL&...")
+                              #Can use QUERYSTRING instead if APPVAR "query parser" is "simple"
+REQ.body											#Only defined with BODY-PARSER
+REQ.param(VAR_STR)						#Look in REQ.params, then .body, then .query
+															#Avoid if possible
+
+REQ.route.methods.METHOD      #BOOL
+REQ.url|originalUrl						#originalUrl doesn't take "mounting" into account.
+REQ.path											#
+REQ.route.path							  #Original PATH in APP.METHOD|use(...)
+REQ.host											#Without PORT
+REQ.subdomains								#As a STR_ARR, without main domain and top-level domain
+REQ.ip												#If APPVAR "trust proxy", upstream address and can get all proxies+client address with 
+															#REQ.ips ARR (header X-Forwarded-For)
+REQ.protocol									#"http" or "https". If APPVAR "trust proxy", affected by header X-Forwarded-Proto
+REQ.secure										#Same as REQ.protocol == "https"
+
+REQ.get(VAR)									#Like REQ.headers.VAR, except VAR is case insensitive
+REQ.xhr												#True if X-Requested-With header is present (set by AJAX requests made by libraries 
+															#(jQuery, Angular, etc.))
+
+REQ.accepts(MIME[_ARR]...)		#Returns:
+                              #  - MIME if Accept header with Content-Type is compatible
+                              #     - MIME can contain *, e.g. "text/*" or "*/*" (returned as is)
+															#     - If several arguments, returns the best match.
+                              #  - undefined otherwise: should respond with error code 406 "Not Acceptable"
+                              #  - if no Accept header, same as Accept: "*/*"
+REQ.acceptsCharset|Language|
+Encoding(...)                 #Same for Accept-charset|language headers
+REQ.is(MIME[_ARR]...)					#Same as accepts() but for the request body, using request Content-Type header.
+
+REQ.fresh                     #Returns true if:
+                              #  - method is GET|HEAD
+                              #  - RES.statusCode is 2** or 304
+                              #  - REQ doesn't use Cache-Control: no-cache | max-age=0
+                              #  - REQ If-Modified-Since or If-None-Match is present
+                              #  - either:
+                              #     - REQ If-Modified-Since > RES Last-Modified
+                              #        - set automatically by RES.sendFile|download()
+                              #     - REQ If-None-Match = RES ETag
+                              #        - set automatically by send|sendFile|download() if GET|HEAD
+                              #        - send() ETag function can be changed with APPVAR "etag fn" FUNC(STR, ENCODING) or use
+                              #          default according to APPVAR:
+                              #            - "weak" (def): content-based, 'W/"LENGTH-CRC32HASH"'
+                              #            - "strong": content-based, '"MD5HASH"'
+                              #        - sendFile|download() ETag function is always content-based, 'W/"MD5HASH"'
+                              #Used by RES.send(): if REQ.fresh, sends 304 (Not Modified)
+REQ.stale                     #Inverse
+
+
+																						 /=+===============================+=\ 
+																						/  :                               :  \  
+							 														  )==:              RES              :==(   
+																						\  :_______________________________:  /    
+																						 \=+===============================+=/
+
+
+RES														#Same as Node.js but augmented with:
+RES.status(NUM)								#Changes RES.statusCode
+RES.set(VAR, VAL)
+RES.set(OBJ)									#Like RES.setHeader(), but can use an OBJ
+RES.get(VAR)									#Like RES.getHeader()
+RES.location(URL|PATH)				#Sets Location header
+RES.type(MIME)								#Sets Content-Type.
+RES.links(OBJ)								#Sets Links header with <URL_VAL>; rel: VAR (e.g. "next|last")
+															#It is the HTTP version of <link rel=VAR href=URL>
+RES.cookie(VAR_STR, STR2|OBJ	
+[, OBJ2])											
+RES.clearCookie(VARSTR[,OBJ2])#See COOKIE-PARSER
+															
+RES.send([NUM, ][VAL])				#Similar to RES.end(STR) but also:
+															#  - sets RES.statusCode to NUM (def: 200)
+															#  - if no VAL, assign HTTP.STATUS_CODES[NUM]
+															#  - VAL can be BUFFER|STR|ARR|OBJ, then if not already set, sets Content-Type header to
+															#    "application/octet-stream" (BUFFER), "text/html" (STR), "application/json" (ARR|OBJ)
+															#  - if not already set, sets Content-Length header
+                              #  - if 204 (No Content) or 304 (Not Modified), don't send headers Content-Type|Length nor
+                              #    Transfer-Encoding
+                              #  - doesn't send body if HEAD method
+                              #  - caching: see REQ.fresh
+                              #Avoid NUM, prefer RES.status(NUM).send(VAL)
+RES.json(...)									#Same as RES.send(...) for an OBJ, but forces conversion to OBJ if native type.
+															#Can use APPNAME "json replacer" to replace FUNC of JSON.stringify(VAL[, FUNC])
+                              #Can use APPNAME "json spaces" as third argument to JSON.stringify() (def: 0 if APPVAR "env"
+                              #"production", 2 otherwise)
+RES.jsonp(...)								#Same for JSONP. Can change APPVAR "jsonp callback name" (def: "?callback=")
+RES.sendStatus(NUM)           #Like RES.status(NUM).send(STR), where STR is the usual representation.
+
+RES.sendFile(PATH[, OBJ]			#Similar to RES.send(), but: 
+[, FUNC([ERROR])])						#  - sends file content instead. 
+                              #  - sets Last-Modified
+                              #  - when done sending, fires FUNC()
+                              #  - does automatically byte serving (Accept-Ranges: "bytes")
+                              #  - sets Cache-Control: public, max-age=OBJ.maxAge (def: 0) if not already set
+                              #  - Can set OBJ.root DIR for relative path
+EXPRESS.static(DIR[, OBJ])    #Express MIDWR that serves static files using RES.sendFile(). Same as SERVE-STATIC
+                              #OBJ:
+                              #  - maxAge: see sendFile()
+                              #  - redirect BOOL: if true (def), request to DIR redirects to DIR/
+                              #  - index FILE: requests to "/" (only) redirects to /FILE (def: "index.html")
+                              #  - dotfiles "allow|deny|ignore": "deny" sends 403, "ignore" (def) calls NEXT()
+                              #  - setHeader FUNC(): event handler like ONHEADERS
+                              #No caching.
+
+APP|RES.render(FILE[, OBJ]    #FILE is looked under APPVAR "views" STR[_ARR] (def: ./views)
+[, FUNC2(ERROR, STR2)])       #Then APP|RES.render(...) fires FUNC(...), where FUNC:
+                              #  - is registered:
+                              #     - by extension, using APP.engine(EXT_STR, FUNC(...)) (def: none)
+                              #       EXT_STR does not have the dot.
+                              #     - if no extension, call APPVAR "view engine" EXT_STR (def: none)
+                              #  - can use CONSOLIDATE for FUNC(...)
+                              #OBJ:
+                              #  - is automatically filled by APP|RES.locals OBJ
+															#  - if OBJ.cache true or APPVAR "view cache", use FILE path-based cache (see CONSOLIDATE)
+                              #RES, as opposed to APP, can omit FUNC2(), in which case it will RES.send(STR2)
+
+RES.format(OBJ)								#OBJ has members MIME: FUNC():
+															#  - fires FUNC() according to REQ.accepted (content negociation), and sets Content-Type header 
+															#    accordingly
+															#  - if none works, automatically throw a 406 response ERROR, or fires OBJ.default() if defined
+RES.attachment([PATH])				#Sets Content-Disposition: attachment[; filename="PATH"] header, which means RES.send(VAL) will
+															#open a download box for client.
+                              #If PATH, also sets Content-Type, so PATH must exist
+RES.download(PATH[, PATH2]    
+[, FUNC([ERROR])])						#Same as RES.attachment([PATH2]), but fires RES.sendFile(...)
+
+RES.redirect([NUM, ]URL|PATH)	#NUM is 302 by def.
+															#PATH can be "back", meaning Referer header URL (if none, "/")
+
+ONHEADERS(RES, FUNC())       ##Fires FUNC() (with RES as this) just before RES starts sending headers. Node module (0.0.0)

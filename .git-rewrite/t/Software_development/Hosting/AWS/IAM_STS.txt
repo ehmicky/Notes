@@ -1,0 +1,642 @@
+
+             
+   IAM STS   
+             
+
+
+VERSION ==>                   #2014/07/16
+
+GOAL ==>                      #Multiple accounts/groups for same organization:
+                              #  - one root (AWS account)
+                     				  #     - associated with:
+                              #        - a ACCOUNT_ID: 
+                              #           - can have 1 alias [[:alnum:]-] (hyphen only in middle)
+                              #        - a CANONICAL_ACCOUNT_ID: longer version, used in very specific cases
+															#     - Should only use web app (password) and not programatic use (access keys)
+                              #  - multiple IAM users
+                              #  - using MFA device, 1-time password, server SSL certificates
+                              #  - applying permissions for actions on resources, organizing in groups
+                              #  - temporary tokens and users (roles), e.g. for EC2 instances
+                              #  - integration of SAML, other logins (Facebook, etc.)
+                              #Consolidating billing too.
+                              #Free
+
+LIMITS ==>			    					#  - 100 groups
+															#  - 5000 users, where 1 user has:
+															#     - 10 groups 
+															#     - 2 access_key
+															#     - 2 signing certificates
+															#     - 1 MFA device
+															#     - 1 login profile
+															#  - 250 roles
+															#  - 100 instance profiles, where 1 instance profile has:
+															#     - 1 role
+															#  - 20 server certificates
+															#  - 100 SAML providers, where 1 provider has:
+															#     - 10 identity providers
+															#     - 10 keys
+
+IAM_ARN ==>                   #arn:aws:iam::ACCOUNT_ID:PATH/RESOURCE, where PATH and RESOURCE can be:
+                              #  - root (no PATH)
+                              #  - user|group|role|instance-profile|federated-user|mfa|server-certificate|saml-provider|
+                              #    assumed-role/NAME
+                              #     - NAME can have a PATH as prefix
+
+
+																						 /=+===============================+=\ 
+																						/  :                               :  \  
+							 														  )==:           CONCEPTS            :==(   
+																						\  :_______________________________:  /    
+																						 \=+===============================+=/
+
+
+AUTHORIZATION ==>							#  - First identification with credentials. 
+                              #     - Some services (e.g. S3) can allow anonymous (by using resource-based policy with
+                              #       Principal: "*")
+															#  - Then check IAM policies.
+															
+CREDENTIALS ==>								#Can use any of:
+                              #  - Login profiles
+                              #     - for web app:
+                              #        - for non-root: username and password
+                              #          Can sign-in at https://ACCOUNT_ID.signin.aws.amazon.com/console/
+                              #        - for root: email address and password (prefer login with admin user)
+                              #     - ASCII
+															#     - password policy (does not apply to root): min length, specific chars, allow changing, 
+															#       expiration (and prevent reusing, and force contacting admin if did not change before
+															#       expiration)
+															#  - Access key (for programatic use): ACCESS_KEY_ID (20 chars) + SECRET_ACCESS_KEY (40 chars)
+                              #     - SECRET_ACCESS_KEY can only be retrieved during signup
+                              #     - Can be temp and accompanied by a SESSION_TOKEN (see STS)
+                              #  - Asym key pairs (only EC2 and CloudFront)
+															#  - Signing certificates (client X.509 certs, deprecated)
+															#New users have no credentials.
+
+STS ==>												#Security Token Service:
+															#  - one-time passwords 
+                              #     - used with roles
+                              #     - or used for normal users
+															#  - only option if client-side (including mobile app) in order to keep user's access key secret.
+															#    Usually through login options.
+                              #  - not possible with CloudHSM, Beanstalk, FPS, FWS, Marketplace Management Portal,
+                              #    Mechanical Turk, WorkSpaces
+
+USERS ==>		    							#  - Users: real person / non-AWS application
+                              #  - Groups: of users. 
+															#     - User can belong to 0, 1 or several groups.
+															#     - Easier to manage group permissions that users
+															#     - Good idea to create admin group that can do everything (Action: "*", Resource: "*")
+															#  - Roles:
+															#     - like a group with temporary assigned users:
+															#        - only use temp tokens (STS) and no long-term credentials
+                              #        - AssumeRolePolicyDocument: 
+                              #           - default policy
+                              #           - Must specify sts:ACTION
+                              #           - Must specify Principal
+                              #        - Everyone can assume the role, so must set conditions in sts:ACTION
+															#        - use trust policy (who is allowed to assume the role):
+															#           - AWS service (e.g. EC2 instance)
+															#           - AWS account (cross-account API access)
+															#						- SAML provider 
+                              #						- other logins (e.g. login with Facebook, Google, etc.)
+                              #						- custom proxy authentication system
+															#     - instance profile: 
+                              #        - container for roles (1 instance profile -> 1 role)
+                              #        - used by ec2:runInstances IamInstanceProfile to make EC2 instance call sts:AssumedRole
+                              #          at launch time
+
+
+																						 /=+===============================+=\ 
+																						/  :                               :  \  
+							 														  )==:         AUTHORIZATION         :==(   
+																						\  :_______________________________:  /    
+																						 \=+===============================+=/
+
+
+POLICY ==>										#Permissions:
+															#  - Can be:
+															#     - assigned to a user|group: can specify "Resource"
+															#     - assigned to a resource (only S3, SNS, SQS, OpsWork): can specify user|group ("Principal")
+															#  - Can assign several policies to one user|group|resource
+															#  - By def., uses whitelisting: by def., all is forbidden (except for root)
+                              #     - NotAction|Resource|Principal uses blacklisting (like * with exception)
+															#  - Policies are or'd, but a matching policy using Effect: "Deny" matches denies all others
+                              #Is POLICY_OBJ:
+															#  - Version "2012-10-17"
+															#  - Statement OBJ_ARR:
+															#     - Id|Sid: 
+															#        - optional ID|sub-ID.
+															#        - Id should be unique, e.g. including a GUID
+															#        - For IAM policies, Id = Sid
+															#     - Effect: "Allow|Deny"
+															#     - [Not]Action POLICY_ACTION_STR_ARR:
+															#				 - "SERVICE:SDK_ACTION" (can use wildcard *)
+                              #				 - SDK_ACTION starts with capital letter
+															#     - [Not]Resource ARN[_ARR]
+															#     - [Not]Principal:
+															#        - used for resource-based policies, and roles (trust policies)
+															#        - Can be:
+                              #           - "*": anonymous usage (S3 only)
+															#           - Service: "SERVICE.amazonaws.com", for AWS service-based roles
+															#           - AWS:
+															#							 - IAM_ARN|ACCOUNT_ID[_ARR]:
+															#                 - ACCOUNT_ID is same as root IAM_ARN
+															#                 - use user IAM_ARN or role IAM_ARN
+															#                 - for resource-based policies, AWS accounts-based or proxy-based roles
+                              #           - CanonicalUser: CANONICAL_ACCOUNT_ID (only S3)
+															#           - Federated:
+															#              - saml-provider IAM_ARN, for SAML provider-based roles
+                              #                 - can also use AWS: IAM_ARN
+                              #                 - should use Condition to test saml:aud and saml:iss, and maybe others
+                              #              - DOMAIN (e.g. accounts.google.com) for other logins-based roles
+                              #                 - should use Condition to test DOMAIN:aud|app_id
+															#     - Condition:
+															#        - { TEST: { POLICYVAR: VAL[_ARR] ... } ... }
+                              #        - Policy applies only if passing a TEST
+															#        - VAL can use wildcard *
+															#        - TEST:
+															#           - on VAL:
+															#              - STR: String[not]Equals[IgnoreCase], String[Not]Like (globbing)
+															#              - NUM: Numeric[not]Equals, NumericLess|GreaterThan[Equals]
+															#              - DATE: Date[not]Equals, DateLess|GreaterThan[Equals]
+															#              - BOOL: Bool
+															#              - BASE64_BUFFER: BinaryEquals
+															#              - IP_STR (can use mask): [Not]IpAddress
+															#              - ARN: Arn[Not]Equals|Like
+															#              - all types:
+															#                 - Null (BOOL): if VAR is [not] undefined
+															#                 - TEST[IfExists]: for any TEST except null, means only if VAR is not undefined 
+															#           - on VAL_ARR ("Set operations"):
+															#              - "ForAnyValue:TEST": Or
+															#              - "ForAllValue:TEST": And
+
+POLICYVAR ==>                 #Can be used in:
+                              #  - Policy Resource, as ${POLICYVAR}
+                              #  - Condition:
+                              #     - POLICYVAR key, as POLICYVAR
+                              #     - VAL, as ${POLICYVAR}
+                              #If ${POLICYVAR}, can preprend|append STR.
+                              #Can be:
+															#  - aws:username|userid STR
+															#  - aws:CurrentTime DATE "YYYY-MM-DDTHH:MM:SSZ"
+															#  - aws:EpochTime NUM
+															#  - aws:TokenIssueTime DATE "YYYY-MM-DDTHH:MM:SSZ": if STS temp tokens
+															#  - aws:MultiFactorAuthAge NUM (in sec.): for MFA tokens
+															#  - aws:principaltype: 
+															#     - "Account": aws:userid ACCOUNT_ID (for root)
+															#     - "User": aws:username (friendly name), aws:userid (Unique ID) (for user|group)
+															#     - "FederatedUser": aws:userid ACCOUNT_ID:CALLER (AWS services-based or other logins-based
+                              #       roles)
+															#     - "AssumedRole": aws:userid ROLE_ID:CALLER (for AWS account-based or SAML provider-based 
+                              #       roles) (only AWS account-based roles have aws:userid)
+															#     - "Anonymous" (AWS services-based roles that can be anonymous)
+															#  - aws:SecureTransport BOOL: if SSL
+															#  - aws:SourceArn ARN: 
+                              #     - only for Service Principals, for some services like SQS
+                              #     - checks that Principal is an AWS service matching ARN
+                              #  - aws:SourceOwner ACCOUNT_ID: same with AWS service owner
+															#  - aws:SourceIp IP_STR
+															#  - aws:UserAgent STR
+															#  - aws:FederatedProvider DOMAIN_STR: for Federated Principals
+															#  - DOMAIN:aud|sub|app_is|user_id|id STR: for Federated Principals, user|app ID, depends on
+															#    the provider
+															#  - cognito-identity.amazonaws.com:amr STR_ARR: ["unauthenticated"] or 
+															#    ["authenticated", DOMAIN]
+															#  - saml:aud|iss|sub|...: for Federated Principals using SAML
+															#  - others for some AWS services
+                              #S3-specific:
+
+MFA ==>												#Multi-factor authentication: 
+															#  - require a MFA device (hardware or mobile app) after entering username + password
+															#  - personal to each user
+															#  - setup:
+															#     - code 1|2: generated by mobile app (after browsing a URL, e.g. QR code) or hardwarde 
+															#       device ID
+															#     - might need to redo it sometimes (synchronizing)
+															#  - can deactivate
+
+SAML PROVIDER ==>							#To interoperate existing authentication system with AWS using SAML
+
+SERVER CERTIFICATES ==>				#  - X.509 certificates used by Elastic Load Balancing, CloudFront and OpsWorks
+															#  - Still need to create X.509 certificates manually
+																														
+
+																						 /=+===============================+=\ 
+																						/  :                               :  \  
+							 														  )==:              API              :==(   
+																						\  :_______________________________:  /    
+																						 \=+===============================+=/
+
+
+PAGINATION ==>								#Use request parameters MaxItems (def|max: 100) and Marker STR
+															#Response include IsTruncated BOOL, Marker STR
+							
+
+																						 /=+===============================+=\ 
+																						/  :                               :  \  
+							 														  )==:        USER/GROUP/ROLE        :==(   
+																						\  :_______________________________:  /    
+																						 \=+===============================+=/
+
+
+CreateUser|Group|Role()				#Request parameters:
+															#  - User|Group|RoleName NAME
+															#  - Path PATH (must start and end with "/")
+															#  - (Role only) AssumeRolePolicyDocument POLICY_OBJ_STR
+                              #Create user|group|role/[PATH/]NAME
+															#Response: User|Group|Role USER|GROUP|ROLE_OBJ:
+															#  - Arn ARN
+															#  - CreateDate DATE
+															#  - User|Group|RoleId USER|GROUP|ROLE_ID
+															#  - User|Group|RoleName NAME
+															#  - Path PATH
+															#  - (Role only) AssumeRolePolicyDocument POLICY_OBJ_STR
+DeleteUser|Group|Role()				#Request parameters: User|Group|RoleName
+GetUser|Group|Role()					#Request parameters: User|Group|RoleName
+															#Response:
+															#  - User|Group|Role USER|GROUP|ROLE_OBJ
+															#  - (Group only) Users USER_OBJ_ARR
+UpdateUser|Group()						#Request parameters:
+															#  - User|GroupName
+															#  - NewUser|GroupName
+															#  - NewPath
+ListUsers|Groups[ForUser]|		#Request parameters: PathPrefix or (if "ForUser") UserName
+Roles()												#Response: Users|Groups|Roles USER|GROUP|ROLE_OBJ
+															#Paginates
+Add|RemoveUserToGroup()				#Request parameters:
+															#  - GroupName
+															#  - UserName
+
+Create|DeleteAccountAlias()		#Request parameters: AccountAlias
+ListAccountAliases()					#Response: AccountAliases STR_ARR
+															#Paginates
+
+
+																						 /=+===============================+=\ 
+																						/  :                               :  \  
+							 														  )==:          CREDENTIALS          :==(   
+																						\  :_______________________________:  /    
+																						 \=+===============================+=/
+
+
+CreateAccessKey()							#Request parameters: UserName
+															#Response: AccessKey ACCESS_KEY_OBJ:
+															#  - AccessKeyId
+															#  - SecretAccessKey
+															#  - UserName
+															#  - CreateDate DATE
+															#  - Status "Active|Inactive"
+DeleteAccessKey()							#Request parameters: AccessKeyId, UserName
+UpdateAccessKey()							#Request parameters: AccessKeyId, Status, UserName
+ListAccessKeys()							#Request parameters: UserName
+															#Response: AccessKeyMetadata ACCESS_KEY_OBJ (all but SecretAccessKey)
+															#Paginates
+															
+ChangePassword()							#Request parameters: Old|NewPassword
+UpdateAccountPasswordPolicy()	#Request parameters PASSWORD_POLICY_OBJ:
+															#  - AllowUsersToChangePassword BOOL (def: false)
+															#  - ExpirePasswords BOOL
+															#  - MaxPasswordAge NUM (in days)
+															#  - HardExpiry BOOL: can change expired password (and not before it expires)
+															#  - MinimumPasswordLength NUM (def: 6)
+															#  - PasswordReusePrevention NUM
+															#  - RequireLowercaseCharacters BOOL
+															#  - RequireNumbers BOOL
+															#  - RequireSymbols BOOL
+														  #  - RequireUppercaseCharacters BOOL 
+DeleteAccountPasswordPolicy()	#
+GetAccountPasswordPolicy()		#Response: PasswordPolicy PASSWORD_POLICY_OBJ
+
+CreateLoginProfile()					#Request parameters:
+															#  - Password
+															#  - PasswordResetRequired BOOL (def: false)
+															#  - UserName
+															#Response:
+															#  - LoginProfile LOGIN_PROFILE_OBJ:
+															#     - CreateDate DATE
+															#     - PasswordResetRequired BOOL
+															#     - UserName
+UpdateLoginProfile()					#Same request parameters as CreateLoginProfile()
+DeleteLoginProfile()					#Request parameters: UserName
+GetLoginProfile()							#Request parameters: UserName
+															#Response: LoginProfile LOGIN_PROFILE_OBJ
+															
+
+																						 /=+===============================+=\ 
+																						/  :                               :  \  
+							 														  )==:            POLICY             :==(   
+																						\  :_______________________________:  /    
+																						 \=+===============================+=/
+
+
+PutUser|Group|RolePolicy()		#Request parameters POLICY_INFO:
+															#  - PolicyDocument POLICY_OBJ_STR
+															#  - PolicyName
+															#  - User|Group|RoleName
+UpdateAssumeRolePolicy()			#Request parameters:
+															#  - PolicyDocument POLICY_OBJ_STR
+															#  - RoleName
+DeleteUser|Group|RolePolicy()	#Request parameters: POLICY_INFO (wihout PolicyDocument)
+GetUser|Group|RolePolicy()		#Request parameters: POLICY_INFO (wihout PolicyDocument)
+															#Response: POLICY_INFO
+ListUser|Group|RolesPolicies()#Request parameters:
+															#  - User|Group|RoleName
+															#Response:
+															#  - PolicyNames STR_ARR
+															#Paginates
+															
+
+																						 /=+===============================+=\ 
+																						/  :                               :  \  
+							 														  )==:       INSTANCE PROFILE        :==(   
+																						\  :_______________________________:  /    
+																						 \=+===============================+=/
+
+
+CreateInstanceProfile()				#Request parameters:
+															#  - InstanceProfileName NAME
+															#  - Path PATH
+															#Response: InstanceProfile INSTANCE_PROFILE_OBJ:
+															#  - Arn
+															#  - CreateDate DATE
+															#  - InstanceProfileId
+															#  - InstanceProfileName
+															#  - Path
+															#  - Roles ROLE_OBJ_ARR		
+DeleteInstanceProfile()				#Request parameters: InstanceProfileName
+GetInstanceProfile()					#Request parameters: InstanceProfileName
+															#Response: InstanceProfile INSTANCE_PROFILE_OBJ
+ListInstanceProfiles()				#Request parameters: PathPrefix
+															#Response: InstanceProfiles INSTANCE_PROFILE_OBJ_ARR
+															#Paginates
+															
+Add|													#Request parameters:
+RemoveRoleToInstanceProfile()	#  - InstanceProfileName
+															#  - RoleName
+ListInstanceProfilesForRole()	#Request parameters: RoleName
+															#Response: InstanceProfiles INSTANCE_PROFILE_OBJ_ARR
+															#Paginates
+
+
+																						 /=+===============================+=\ 
+																						/  :                               :  \  
+							 														  )==:             SAML              :==(   
+																						\  :_______________________________:  /    
+																						 \=+===============================+=/
+
+
+CreateSAMLProvider()					#Request parameters:
+															#  - Name
+															#  - SAMLMetadataDocument
+															#Response: SAMLProviderArn
+UpdateSAMLProvider()					#Request parameters:
+															#  - SAMLProviderArn
+															#  - SAMLMetadataDocument
+															#Response: SAMLProviderArn
+DeleteSAMLProvider()					#Request parameters: SAMLProviderArn
+GetSAMLProvider()							#Request parameters: SAMLProviderArn
+															#Response:
+															#  - SAMLMetadataDocument
+															#  - CreateDate DATE
+															#  - ValidUntil DATE
+ListSAMLProviders()						#Response: SAMLProviderList OBJ_ARR:
+															#  - Arn
+															#  - CreateDate DATE
+															#  - ValidUntil DATE
+
+
+																						 /=+===============================+=\ 
+																						/  :                               :  \  
+							 														  )==:              MFA              :==(   
+																						\  :_______________________________:  /    
+																						 \=+===============================+=/
+
+
+EnableMFADevice()							#Request parameters:
+															#  - AuthenticationCode1|2
+															#  - SerialNumber
+															#  - UserName
+ResyncMFADevice()							#Same request parameters as EnableMFADevice()
+DeactivateMFADevice()					#Request parameters:
+															#  - SerialNumber
+															#  - UserName
+ListMFADevices()							#Request parameters: UserName
+															#Response: MFADevices OBJ_ARR:
+															#  - EnableDate DATE
+															#  - SerialNumber STR
+															#  - UserName STR
+															#Paginates
+
+CreateVirtualMFADevice()			#Request parameters:
+															#  - Path
+															#  - VirtualMFADeviceName
+															#Response: VirtualMFADevice VIRTUAL_MFA_OBJ:
+															#  - Base32StringSeed BLOB
+															#  - EnableDate DATE
+															#  - QRCodePNG BLOB
+															#  - SerialNumber
+															#  - User USER_OBJ
+DeleteVirtualMFADevice()			#Request parameters: SerialNumber
+ListVirtualMFADevices()				#Request parameters: AssignmentStatus "Assigned|Unassigned|Any"
+															#Response: VirtualMFADevices VIRTUAL_MFA_OBJ_ARR
+															#Paginates
+
+
+																						 /=+===============================+=\ 
+																						/  :                               :  \  
+							 														  )==:      SERVER CERTIFICATE       :==(   
+																						\  :_______________________________:  /    
+																						 \=+===============================+=/
+
+
+UploadServerCertificate()			#Request parameters:
+															#  - CertificateBody STR: X.509 certificate in PEM format
+															#  - CertificateChain STR: concatenation of public keys in PEM format
+															#  - PrivateKey STR: private key in PEM format
+															#  - ServerCertificateName NAME
+															#  - Path PATH (optional)
+															#Response:
+															#  - ServerCertificateMetadata CERT_METADATA_OBJ
+UpdateServerCertificate()			#Request parameters:
+															#  - NewPath
+															#  - ServerCertificateName
+															#  - NewServerCertificateName
+DeleteServerCertificate()			#Request parameters: ServerCertificateName
+GetServerCertificate()				#Request parameters: ServerCertificateName
+															#Response: ServerCertificate:
+															#  - CertificateBody
+															#  - CertificateChain
+															#  - ServerCertificateMetadata CERT_METADATA_OBJ:
+															#     - Arn
+															#     - Expiration
+															#     - Path
+															#     - ServerCertificateId
+															#     - ServerCertificateName
+															#     - UploadDate DATE
+ListServerCertificates()			#Request parameters: PathPrefix
+															#Response: ServerCertificateMetadataList CERT_METADATA_OBJ_ARR
+															#Paginates
+
+
+																						 /=+===============================+=\ 
+																						/  :                               :  \  
+							 														  )==:      CLIENT CERTIFICATE       :==(   
+																						\  :_______________________________:  /    
+																						 \=+===============================+=/
+
+
+UploadSigningCertificate()		#Request parameters:
+															#  - CertificateBody STR: X.509 certificate in PEM format
+															#  - UserName
+															#Response: Certificate CERT_OBJ:
+															#  - CertificateBody
+															#  - CertificateId
+															#  - Status "Active|Inactive"
+															#  - UploadDate DATE
+															#  - UserName
+UpdateSigningCertificate()		#Request parameters:
+															#  - CertificateId
+															#  - Status "Active|Inactive"
+															#  - Username
+															#Response: Certificate CERT_OBJ
+DeleteSigningCertificate()		#Request parameters:
+															#  - CertificateId
+															#  - UserName
+ListSigningCertificates()			#Request parameters: UserName
+															#Response: Certificates CERT_OBJ_ARR
+															#Paginates
+
+
+																						 /=+===============================+=\ 
+																						/  :                               :  \  
+							 														  )==:            REPORTS            :==(   
+																						\  :_______________________________:  /    
+																						 \=+===============================+=/
+
+
+GenerateCredentialReport()		#Response:
+															#  - Description
+															#  - State "STARTED|INPROGRESS|COMPLETE"
+GetCredentialReport()					#Response:
+															#  - Content BASE64_STR, CSV has following fields: 
+                              #     - user, arn, user_ctime
+                              #     - password_enabled|last_changed|next_rotation 
+                              #     - mfa_active
+                              #     - access_key|cert_1|2_active|last_rotated
+															#  - GeneratedTime DATE
+															#  - ReportFormat MIME_STR
+															
+GetAccountSummary()						#Response: SummaryMap:
+															#  - AccessKeysPerUserQuota NUM
+															#  - AccountMFAEnabled NUM
+															#  - AssumeRolePolicySizeQuota NUM
+															#  - GroupPolicySizeQuota NUM
+															#  - Groups[Quota] NUM
+															#  - GroupsPerUserQuota NUM
+															#  - InstanceProfiles[Quota] NUM
+															#  - MFADevices[InUse] NUM
+															#  - RolePolicySizeQuota NUM
+															#  - Roles[Quota] NUM
+															#  - ServerCertificates[Quota] NUM
+															#  - SigningCertificatesPerUserQuota NUM
+															#  - UserPolicySizeQuota NUM
+															#  - Users[Quota] NUM
+
+
+																						 /=+===============================+=\ 
+																						/  :                               :  \  
+							 														  )==:              STS              :==(   
+																						\  :_______________________________:  /    
+																						 \=+===============================+=/
+
+
+ROLES ==>                     #Sets of policies, that temp tokens requesters "assume".
+
+CREATING TEMP TOKENS ==>      #Uses API calls:
+                              #  - Role-based:
+                              #     - AssumeRole: AWS account-based or AWS service-based roles
+                              #     - AssumeRoleWithWebIdentity: other logins-based roles
+                              #     - AssumeRoleWithSAML: SAML-based roles
+                              #  - Same permissions as another user:
+                              #     - GetSessionToken: normal users.
+                              #     - GetFederationToken: proxy-based roles
+                              #Permissions:
+                              #  - anyone (except root) can assume a ROLE, so policy sts:* with Condition must be set
+                              #    (usually in AssumeRolePolicyDocument)
+                              #     - exception: to use ec2:RunInstances() with instance profile, USER must also have
+                              #       permission iam:PassRole on ROLE_ARN
+                              #     - It is also good idea to give user iam:ListInstanceProfiles permission
+                              #  - get policies of ROLE, including default POLICY (AssumeRolePolicyDocument)
+                              #  - Permission is sts:AssumeRole for all except sts:GetFederationToken
+                              #Credentials are temp and include a SessionToken, to include with other credentials in calls.
+
+getSessionToken()             #Request parameters:
+                              #  - DurationSeconds NUM
+                              #  - SerialNumber STR, TokenCode STR
+                              #Response body:
+                              #  - Credentials CREDENTIALS (temp):
+                              #     - AccessKeyId ACCESS_KEY_ID
+                              #     - SecretAccessKey SECRET_ACCESS_KEY
+                              #     - SessionToken SESSION_TOKEN
+                              #     - Expiration DATE
+GetFederationToken()          #Request parameters:
+                              #  - DurationSeconds NUM
+                              #  - Name STR
+                              #  - Policy POLICY_OBJ
+                              #Response body:
+                              #  - Credentials CREDENTIALS (temp):
+                              #  - FederatedUser:
+                              #     - Arn
+                              #     - FederatedUserId STR
+                              #  - PackedPolicySize NUM
+
+AssumeRole()                  #Request parameters:
+                              #  - RoleArn ROLE_ARN: ROLE to assume
+                              #  - RoleSessionName NAME: temporary session NAME
+                              #  - DurationSeconds NUM:
+                              #     - min. 15 min, max 36h (def: 12h) for GetSession|FederationToken (except if root)
+                              #     - min. 15 min, max. 1h (def) for others
+                              #  - ExternalId STR
+                              #     - becomes POLICYVAR sts:ExternalId, shared secret for further restrictions (policy must
+                              #       use Condition to check it)
+                              #  - Policy JSON_STR: optional extra policy OBJ (only to restrict more)
+                              #  - SerialNumber STR, TokenCode STR: if MFA
+                              #Response body:
+                              #  - AssumedRoleUser ASSUMED_ROLE_USER:
+                              #     - Arn ROLE_ARN/NAME
+                              #     - AssumedRoleId
+                              #  - Credentials CREDENTIALS
+                              #  - PackedPolicySize NUM: percentage of allowed max. size
+AssumeRoleWithSAML()          #Request parameters:
+                              #  - RoleArn
+                              #  - DurationSeconds NUM
+                              #  - Policy JSON_STR
+                              #  - PrincipalArn SAML_PROVIDER_ARN
+                              #  - SAMLAssertion BASE64_STR
+                              #Response body:
+                              #  - AssumedRoleUser ASSUMED_ROLE_USER
+                              #  - Credentials CREDENTIALS
+                              #  - PackedPolicySize NUM
+                              #  - Audience|Issuer STR
+                              #  - Subject STR
+                              #  - SubjectType STR
+                              #  - NameQualifier STR: Hash(Issuer, ACCOUNT_ID, SAML_PROVIDER_ARN), identifying a user
+AssumeRoleWithWebIdentity()   #Request parameters:
+                              #  - RoleArn
+                              #  - RoleSessionName
+                              #  - DurationSeconds NUM
+                              #  - Policy JSON_STR
+                              #  - ProviderId DOMAIN
+                              #  - WebIdentityToken OAUTH2_TOKEN_STR
+                              #Response body:
+                              #  - AssumedRoleUser ASSUMED_ROLE_USER
+                              #  - Credentials CREDENTIALS
+                              #  - PackedPolicySize NUM
+                              #  - Audience STR
+                              #  - Provider STR
+                              #  - SubjectFromWebIdentity STR: identifying a user
+
+DecodeAuthorizationMessage()  #Permission error sometimes gives an "encoded authorization failure message" token, that needs
+                              #to be decoded.
+                              #Request parameters: EncodedMessage STR
+                              #Response body: DecodedMessage STR

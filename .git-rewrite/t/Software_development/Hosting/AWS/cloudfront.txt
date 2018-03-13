@@ -1,0 +1,332 @@
+
+                
+   CLOUDFRONT   
+                
+
+
+CLOUDFRONT ==>																		#Version from 2014-08-27
+
+GOAL ==>																					#Reduce latency when requesting static content:
+																									#  - use edge locations (around 1 to 5 by region) to be closer to end-user,
+																									#    even if in different region
+																									#  - proxies requests to origin server (proxy caching)
+																																																	
+PROXY CACHING ==>																	#Proxy caches for multiple clients.
+																									#According to:
+																									#  - only GET|HEAD requests
+																									#  - request URL
+																									#     - if file is directory, presence|absence of trailing slash counts in
+																									#       request URL (so should be consistent to avoid having twice same
+																									#       cached directory with two different keys)
+																									#  - can be also with (def: without) (according to ForwardedValues):
+																									#     - query variables
+																									#     - cookies: caches according to Cookie [C]
+																									#     - headers: 
+																									#        - not supported on Accept-Encoding, Connection, TE, Upgrade,
+																									#          Proxy-Authorization [C] 
+                                                  #        - Cookie [C]: use ForwardedValues.Cookies instead
+																									#        - Must forward CORS headers if CORS enabled.
+																									#  - to forward cookies|headers but not cache: 
+                                                  #    Cache-Control: No-Cache="Cookie|HEADER" [S]
+                                                  #  - forwards (but ignores) other Cache-Control [C|S], so can still set up
+                                                  #    normal caching policy
+																									#Also:
+																									#  - proxy caches Range [C] requests (if origin server supports it)
+																									#  - Understands Vary: Accept-Encoding [S] from origin server
+                                                  #     - other Vary [S] don't work
+																									#     - With S3, must duplicate FILE and FILE.gz with proper Content-Type
+																									#       ("binary/octet-stream") and Content-Encoding ("gzip")
+																									#Expiration:
+																									#  - at greater of either:
+                                                  #     - MinTTL (def: 1 day, can be 0)
+																									#        - CustomErrorResponses uses separate MinTTL (def: 5 minutes)
+                                                  #     - Cache-Control: [s-]max-age [S] or Expires [S] (must be specified,
+                                                  #       otherwise, does not work)
+																									#  - invalidation: 
+																									#     - can use fingerprinting
+																									#     - or explicitly send invalidations:
+                                                  #        - It affects all proxy caches of a request URL 
+                                                  #          (with any query variables, cookies, headers)
+                                                  #        - Takes about 10 minutes to complete
+																									#        - invalidate single file even if directory (not recursive)
+																									#  - proxy caches are sometimes removed if never requested
+
+PROXY ==>																					#Forwarded only if ForwardedValues.Headers true:
+																									#  - Accept, Accept-Charset, Accept-Encoding (not gzip), Accept-Language, 
+																									#    Expect, [Proxy-]Authorization (GET|HEAD only), Referer, TE, Upgrade [C]
+                                                  #Everything else is forwarded including:
+																									#  - server redirections
+																									#  - Cache-Control [C|S], conditional caching
+																									#Added:
+                                                  #  - Age NUM [S]: how many seconds in edge locations (if > 0)
+																									#  - Via: 1.1 NUM.cloudfront.net (CloudFront) [S] 
+                                                  #  - X-Amz-Cf-Id [S|C]: ID to log, for debugging purpose
+                                                  #  - X-Cache: Miss|Hit from cloudfront [S]
+																									#  - X-Forwarded-For IP [C]
+                                                  #Added (if ForwardedValues.Headers true) (usually used for varying caching):
+																									#  - CloudFront-Is-Desktop|Mobile|Tablet-Viewer (can be Desktop+Tablet), 
+																									#    CloudFront-Viewer-Country "FR", CloudFront-Forwarded-Proto "http[s]" [C]
+																									#Replaced (unless ForwardedValues.Headers true):
+																									#  - Connection: keep-alive
+                                                  #  - Host: EC2_URL (instead of Host: *.cloudfront.net)
+																									#  - User-Agent: Amazon CloudFront [C]
+	
+CONCEPTS ==>																			#Origin server: 
+																									#  - Can be:
+																									#     - S3 BUCKET: must permit anonymous access 
+																									#     - any web server (not if RTMP)
+																									#  - Can specify several (for mirrors, or with different configs)
+																									#Distribution: sets of origin servers, with configuration
+																									#  - changing it take about 15 mins to propagate to edge locations
+																									#  - can redirect to different origin servers according to CacheBehavior
+																									#    (e.g. country, HTTP/HTTPS, signed URL, etc.)
+
+LOGGING ==>																				#  - log requests to edge locations 
+																									#  - takes 24 hours
+																									#  - filename is PREFIX/DIST_ID.YYYY-MM-DD-HH.RANDOM.gz
+																									#  - Fields (tab-separated, URL-encoded):
+																									#     - x-edge-request-id
+																									#     - date, time
+																									#     - cs-protocol, c-ip IP, cs-method, cs(Host), x-host-header, 
+																									#       cs-uri-stem, cs-uri-query
+																									#     - x-edge-location: location
+																									#     - sc|cs-bytes: size (server-client, client-server), time-taken
+																								  #     - sc-status: HTTP status
+																								  #     - cs(Cookie), cs(Referer), cs(User-Agent)
+																								  #     - x-edge-result-type: "Hit" (proxy cached), "RefreshHit" (not proxy
+																									#       cached but 403), "Miss" (not proxy cached), "LimitExceeded",
+																									#       "CapacityExceeded" (CloudFront perf error),"Error" (CloudFront error)
+
+MONITORING ==>                                    #Can also see on the AWS console:
+                                                  #  - number of HTTP[S] requests, data transfer over HTTP[S] [from only 
+                                                  #    end-user to edge locations, or edge locations or origin server)
+                                                  #  - daily/hourly
+
+LOAD TESTING BEST PRACTICES ==>										#Must distribute across edge locations servers to get best performance.
+                                                  #DNS lookup:
+                                                  #  - choose edge location according to IP's geographic region, so must
+                                                  #    use different IPs from different regions
+                                                  #  - returns several IPs (several servers in one edge location), so:
+                                                  #     - each client should use domain name (new DNS lookup), not use IP 
+                                                  #     - must use random of the IPs returned by DNS lookup
+																									
+PRICING ==>																				#  - S3 storage, and data transfer|requests from|to edge locations
+																									#     - transfer is only when getting new versions or versions expired
+																									#  - Edge location transfer out to internet: 
+                                                  #     - 1$/8GB/month: 
+                                                  #        - like S3 for lower traffic
+                                                  #        - 10% to twice cheaper than S3 if high traffic 
+                                                  #          (starting from 10TB/month)
+																									#     - 1$/1000000 HTTP requests, 1$/800000 HTTPS requests: 2 to 3 times
+                                                  #       more expensive than S3
+																									#  - Edge location transfer out to origin server: 1$/50GB/month
+																									#  - Invalidation requests: 1$/200/month invalidation (first 1000/month free)
+																									#     - price not affected by regions
+																									#  - Regions: 
+																									#     - Can be:
+																									#        - US/Europe: prices indicated here
+																									#        - India: 40% more
+																								  #        - Asia, Australia: 60% more
+																									#        - South America: twice more
+																									#     - PriceClass: restrict possible regions for edge locations to avoid
+																									#       expensive ones:
+																									#        - All (def): no restriction
+																									#        - 200: no South America, Australia
+																									#        - 100: only US/Europe
+																									
+
+																						 /=+===============================+=\ 
+																						/  :                               :  \  
+							 														  )==:              API              :==(   
+																						\  :_______________________________:  /    
+																						 \=+===============================+=/
+
+
+API ==>																						#Domain: 
+                                                  #  - https://cloudfront.amazonaws.com/VERSION/, where VERSION is 2014-05-31
+																									#XML. ARR is <ARR></ARR>...
+																									#Uses request|response headers.
+																									#Q_TYPE_ARR means { Quantity NUM, Items TYPE_ARR }
+																									#QE_TYPE_ARR means { Enabled BOOL, Quantity NUM, Items TYPE_ARR }
+																									#QR_TYPE_ARR means 
+																									#{RestrictionType: "blacklist|whitelist|none", Quantity NUM, Items TYPE_ARR}
+															
+PAGINATION ==>																		#  - Request variable: Marker STR, MaxItems NUM
+																									#  - Response body: Marker STR, NextMarker STR, MaxItems NUM,IsTruncated BOOL
+																									
+LIMITS ==>																				#  - 1000 requests/seconds, 125MB/s
+																									#  - 200 Distribution, 100 StreamingDistribution
+																									#  - 100 Aliases (CNAME)
+																									#  - 25 Origins
+																									#  - 25 CacheBehavior
+																									#  - 10 whitelisted headers, 10 whitelisted cookies
+																									
+
+																						 /=+===============================+=\ 
+																						/  :                               :  \  
+							 														  )==:         DISTRIBUTION          :==(   
+																						\  :_______________________________:  /    
+																						 \=+===============================+=/
+
+
+ANY http[s]://ID.cloudfront.net/...								#Proxies to origin server, unless present in cache.
+																									#Can also set up own domain name:
+																									#  - Can use alternate domain name, e.g. wildcards.
+																									#  - Can use Route53 alias resource record set instead of CNAME
+																									
+POST .../distribution															#Request parameters: DistributionConfig DIST_CONFIG:
+createDistribution()															#  - CallerReference STR: unique ID of DIST_CONFIG, used to ensure no
+																									#    duplicate request (could be hash of all content)
+																									#  - Aliases Q_STR_ARR: CNAMEs
+																									#  - Origins Q_OBJ_ARR:
+																									#     - DomainName DOMAIN
+																									#     - Id STR: used in TargetOriginId below
+																									#     - CustomOriginConfig:
+																									#        - HTTP[S]Port NUM (if not S3 bucket) (80, 443, 1024-65535)
+																									#        - OriginProtocolPolicy "http-only|match-viewer": communication 
+																									#          HTTP or HTTP[S] between edge location and origin server
+																									#          For S3: always "match-viewer". Otherwise def "http-only"
+																									#     - S3OriginConfig (if S3 bucket): OriginAccessIdentity STR
+																									#  - DefaultCacheBehavior CACHE_BEHAVIOR:
+																									#     - TargetOriginId STR: for a specific origin server
+																									#     - ForwardedValues: how to forward|cache to origin servers (see above):
+																									#        - Cookies:
+																									#           - Forward "none|whitelist|all"
+																									#           - WhitelistedNames Q_STR_ARR
+                                                  #           - whether to forward Cookie [C] and Set-Cookie [S]
+																									#           - Forwards name and value, but not other attributes 
+                                                  #             (Path, Secure, etc.)
+																									#        - QueryString BOOL (def: false)
+																									#        - Headers Q_STR_ARR (can be "*" for all, meaning no caching
+                                                  #          (because of X-Amz-Cf-Id [C]))
+																									#     - MinTTL NUM: 
+																									#     - TrustedSigners QE_ACCOUNT_ID_ARR: require signed URLs, by any of 
+																									#       those accounts
+																									#     - ViewerProtocolPolicy "allow-all|https-only|redirect-to-https":
+																									#       communication HTTP[S] between client and edge location.
+                                                  #       Def: "allow-all"
+																									#     - AllowedMethods Q_STR "GET,HEAD[,PUT,POST,PATCH,DELETE,OPTIONS]"
+																									#       (def: "GET,HEAD"). Non-GET|HEAD are not stored in edge locations.
+																									#     - SmoothStreaming BOOL: if serving Microsoft Smooth Streaming with
+																									#       Microsoft IIS server (Silverlight)
+																									#  - CacheBehaviors Q_CACHE_BEHAVIOR_ARR, with also:
+																									#     - PathPattern STR: targets a specific path. 
+																									#       Can include * (recursive) or ?
+																									#       First ones have higher priorities even if less|more restrictive glob.
+																									#  - Comment STR
+																									#  - DefaultRootObject STR: object returned when requesting root domain
+																									#    (def: "index.html")
+																									#  - Enabled BOOL (def: false)
+																									#  - Logging (see above)
+																									#     - Bucket BUCKET
+																									#     - Prefix PREFIX
+																									#     - Enabled BOOL
+																									#     - IncludeCookies BOOL (def: false)
+																									#  - PriceClass "PriceClass_100|200|All"
+																									#  - CustomErrorResponses Q_OBJ_ARR: Specific objects served for specific 
+																									#    error code (only 400, 403-405, 414, 500-504):
+																									#     - ErrorCode NUM: error code that was going to be sent
+																									#     - ResponseCode NUM: error code that will be sent 
+																									#     - ResponsePagePath STR: path to the file to send
+																									#     - ErrorCachingMinTTL NUM: MinTTL for ResponsePagePath file
+																									#  - Restrictions: (based on IP)
+																									#     - GeoRestriction QR_STR_ARR: 2-letter coutry code
+																									#       RestrictionType is "none" (def), "whitelist" or "blacklist"
+																									#  - ViewerCertificate:
+																									#     - CloudFrontDefaultCertificate BOOL (def: true): false if using SSL and
+																									#       a custom domain name. Following members are if false.
+																									#     - IAMCertificateId STR: SSL certificate Id (from IAM) 
+																									#     - SSLSupportMethod "sni-only|vip": "sni-only" will make requests fail
+																									#       for older clients (IE6), not "vip" (but is 600$/month), if using 
+																									#       the CloudFront URL (not the custom domain name)
+																									#Response body: Distribution DIST:
+																									#  - Id STR
+                                                  #  - DomainName "ID.cloudfront.net"
+																									#  - LastModifiedTime DATE
+                                                  #  - Status "InProgress|Deployed"
+																									#  - InProgressInvalidationBatches NUM: invalidation batches in progress
+																									#  - ActiveTrustedSigners QE_OBJ_ARR:
+																									#     - KeyPairIds: Items STR_ARR
+																									#  - DistributionConfig DIST_CONFIG
+GET .../distribution/DIST_ID											#Request parameters: Id STR
+getDistribution()																	#Response body: 
+																									#  - Distribution DIST
+																									#  - ETag STR
+GET .../distribution															#Response body: DistributionList: Items DIST_ARR
+listDistributions()																#Paginates
+PUT .../distribution/DIST_ID/config								#Request parameters:
+updateDistribution()															#  - DistributionConfig DIST_CONFIG
+																									#  - Id STR
+																									#  - IfMatch STR
+																									#Response body: 
+																									#  - Distribution DIST
+																									#  - ETag STR
+GET .../distribution/DIST_ID/config								#Request parameters: Id STR
+getDistributionConfig()														#Response body:
+																									#  - DistributionConfig DIST_CONFIG
+																									#  - ETag STR
+DELETE .../distribution/DIST_ID/config						#Request parameters:
+deleteDistribution()															#  - Id STR
+																									#  - IfMatch STR
+
+POST .../streaming-distribution										
+createStreamingDistribution()											#
+GET .../streaming-distribution/SDIST_ID						#For serving streaming files (.flv, .mp4, etc.) using RTMP[T][E]
+getStreamingDistribution()												#  - the media player must be served using a separate normal Distribution
+GET .../streaming-distribution										#    (does not use the client player)
+listStreamingDistributions()											#  - media file must be at DOMAIN/cfx/st/FILE
+PUT .../streaming-distribution/SDIST_ID/config		#  - cannot specify a crossdomain.xml
+updateStreamingDistribution()											#Same as *Distribution() but:
+GET .../streaming-distribution/SDIST_ID/config		#  - only Aliases, CallerReference, Comment, Enabled, Logging, PriceClass
+getStreamingDistributionConfig()									#  - Distribution -> StreamingDistribution
+DELETE .../streaming-distribution/SDIST_ID/config	#  - Origins -> S3Origin: DomainName STR, OriginAccessIdentity STR
+deleteStreamingDistribution()											#  - DefaultCacheBehavior.TrusterSigners -> TrustedSigners QE_STR_ARR
+
+POST .../origin-access-identity/cloudfront				#Is like a ROLE assumed by a Distribution.
+createCloudFrontOriginAccessIdentity()						#Goal is to give sole access to BUCKET to CFOA_ID, and remove other access
+																									#to BUCKET, so clients can only access BUCKET via CloudFront.
+																									#Request parameters: CloudFrontOriginAccessIdentityConfig ACC_ID_CONFIG:
+																									#  - CallerReference STR
+																									#  - Comment STR
+																									#Response body ACC_ID (except Location):
+																									#  - CloudFrontOriginAccessIdentity:
+																									#     - Id CFOA_ID
+																									#     - CloudFrontOriginAccessIdentityConfig ACC_ID_CONFIG
+                                                  #     - S3CanonicalUserId CFOA_CANONICAL_ID
+																									#  - Location "https://cloudfront.amazonaws.com/VERSION/
+                                                  #    origin-access-identity/cloudfront/CFOA_ID"
+																									#  - ETag STR
+GET .../origin-access-identity/cloudfront/ORIG_ID	#Request parameters: Id STR
+getCloudFrontOriginAccessIdentity()								#Response body ACC_ID
+GET .../origin-access-identity/cloudfront					#Response body: CloudFrontOriginAccessIdentityList: Items ID_CONFIG_ARR
+listCloudFrontOriginAccessIdentities()						#Paginates
+PUT .../origin-access-identity/cloudfront/				#Request parameters: 
+ORIG_ID/config																		#  - CloudFrontOriginAccessIdentityConfig ID_CONFIG
+updateCloudFrontOriginAccessIdentity()						#  - Id STR
+																									#  - IfMatch STR
+																									#Response body ACC_ID
+GET .../origin-access-identity/cloudfront/				
+ORIG_ID/config																		#Request parameters: Id STR
+getCloudFrontOriginAccessIdentityConfig()					#Response body ACC_ID
+DELETE .../origin-access-identity/cloudfront/			#Request parameters:
+ORIG_ID/config																		#  - Id STR
+deleteCloudFrontOriginAccessIdentity()						#  - IfMatch STR
+
+PUT .../distribution/DIST_ID/invalidation					#Request parameters:
+createInvalidation()															#  - DistributionId STR
+																									#  - InvalidationBatch INVAL_BATCH:
+																									#     - CallerReference STR
+																									#     - Paths Q_PATH_ARR
+																									#Response body:
+																									#  - Location PATH
+																									#  - Invalidation INVAL:
+																									#     - Id STR
+																									#     - CreateTime DATE
+																									#     - InvalidationBatch INVAL_BATCH
+GET .../distribution/DIST_ID/invalidation					#Request parameters: DistributionId STR
+listInvalidations()																#Response body: InvalidationList INVAL_ARR
+																									#Paginates
+GET .../distribution/DIST_ID/invalidation/INVAL_ID#Request parameters:
+getInvalidation()																	#  - DistributionId STR
+																									#  - Id STR
+																									#Response body: Invalidation INVAL
