@@ -22,14 +22,6 @@ This covers:
 
 Number of files: NUMBER_OF_FILES  
 Number of lines: NUMBER_OF_LINES  
-Number of pages (if it was a printed book): NUMBER_OF_PAGES  
-
-# Structure #
-
-The directory structure reflects how I [design](Theory) systems:
-  - I do not believe in a single language or framework which can solve any problem. Tools come and go. That's why they are at the lowest level in the directory structure (before the file extension).
-  - What matters is to pick the best architecture to fulfill a set of [functional requirements](Functional_requirements)
-  - In order to so, [non-functional requirements](Non_functional_requirements) must be considered, usually resulting in trade-offs (e.g. _featureful_ vs. _simple_, _stable_ vs. _cutting-edge_, or _optimized_ vs. _easy to maintain_)
-  - This results in choosing a specific [architecture](Architecture): platform, languages, IPC, etc.
+Number of pages (if it were a printed book): NUMBER_OF_PAGES  
 
 # List of files #
