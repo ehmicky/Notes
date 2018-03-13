@@ -1,0 +1,615 @@
+Summary (by priority):
+  API models: rethink nesting, `id` enhancing
+  Actions: rethink nesting, minor improvements, dry runs
+  Aggregating
+  Data correctness: atomicity/rollbacks, isolated queries, durability, no orphans
+  Authorization layer
+  Compatibility layer: deprecation reporting, breaking changes, [auto]versioning, migrations, redirects, feature flags
+  Transformation: rethink
+  JSL: parse into database query object, arg.data JSL, restrict IDL complexity, minor improvements
+
+  IDL validation: small checks here and there
+  Schema strictness, polymorphism: schemaless properties, mixed arrays, union types, subtyping
+  API base types: enum, others
+  Async actions
+  RPC-like actions
+  Versioning/changes: model versioning, listening for changes, undelete
+  Database layer: ORM, database transformation layer, restrict direct manipulation
+
+  Code quality: coding style, code complexity, dead code, duplicated code, dependencies deprecation/security automatic check
+  Streaming: input|output, pagination
+  Optimization: compression, query batching, compile-time step, general optimization
+  Testing: CI, CD, unit, integration, load testing, performance
+  Logging/monitoring: logging, monitoring, analytics
+  DevOps: PaaS, multiple envs, Docker
+  Other parts of the system: authentication, routing/scaling/load balancing, database
+
+  Documentation: API auto-documentation, API engine documentation, changelog, jsdoc, better GraphQL schema printing
+  Caching: simple, featureful
+  Security: TLS, COS, rate limiting, XSS, CSRF, general
+  Protocol: HTTP/2, proxies
+
+  API validation: better reporting, deepRequired|deepProperties
+  Custom code: plugin-oriented architecture
+  Fake server: fake data, mock server
+  Interfaces: REST, JSON-RPC, others
+  Concurrency: realtime, conflicts
+  Output format: other formats, content negotiation, prettify
+  Meta-information: JSON schema retrieval, semantic web/HATEOAS/discovery
+  Debugging: HTML interactive output, small improvements
+  Main command input: better conf loading
+  Error handling: timeouts
+  Client: isomorphism, frontend frameworks integrations, client auto-generation
+  Administration: CLI, content management
+  Misc: small improvements
+
+  IDL format: more formats, conversion from Swagger|RAML|API blueprint
+  Offline-first
+  i18n
+  Frameworks: older Node.js
+  Other programming languages
+  IDL edition: web app, BaaS API
+  Commercial-only: user management, commercial website, ads
+
+IDL format:
+  - IDL file format:
+     - allow IDL to be in other formats according to file extension (def: 'yaml'):
+       JSON (i.e. use faster JSON.parse()), CSV, TOML, HJSON, etc.
+     - should also add related custom parsers to $ref utility (json-schema-ref-parser) to handle those types
+  - convert Swagger|RAML|API blueprint conf files into IDL format
+     - allows those conf files as input, converting them first
+  - yamllint the IDL meta-schema
+
+IDL validation:
+  - IDL syntax:
+     - for parts of the schema that are not a top-level model, not a nested model and not a attribute, e.g. definitions
+       or members of a combination property like anyOf, propertyName validation is too loose.
+       E.g. one can define an attribute: {my_attribute: {type: "string", anyOf: [model: "mode"]}}:
+       model should be forbidden here
+     - should only use validation properties for the current model|attribute's type
+       E.g. should not use maxLength if the attribute is a boolean
+       Note: type might be absent during IDL validation, as IDL transform assign default values to them
+  - attribute can specify a "default" if it is a required attribute
+     - when done, remove the runtime check done for this in userDefaults middleware
+  - JSL:
+     - validate that only attributes that can have JSL|function have JSL|function
+     - values that use JSL like transform or helpers|variables are not currently validated:
+        - if JSL, they should be string and be valid JSL
+        - otherwise (for ones like transform), they should be same type as current attribute
+     - make sure JSL does not use unknown params, which is challenging because:
+        - params are determined runtime
+        - function body might not be readable, e.g. if function is bound
+     - run ESLint to at least look for undefined vars, maybe do more
+
+API validation:
+  - error reasons:
+     - rationalize|reduce error reasons, not in terms of guessing where error was triggered, but in terms of how client should
+       respond.
+       E.g. it does not matter if InputValidation error is because args.data is wrong or args.filter, what matters is that
+       client displays that input is wrong.
+     - should add `extra` information to any throw ERROR that possess interesting information.
+       All errors with the same `reason` should expose the same `extra` variables
+     - add all `generic.title`
+  - layer validation middlewares:
+     - should all validate the response too, e.g. that type is set, and that content matches type
+     - redo how args|dbArgs|sysArgs are being validated:
+        - each validation middleware should validate what it can
+        - some validation from the database validation middleware should probably be placed earlier
+        - make sure layer validation middlewares give 4** when it is client. E.g. wrong action or command is 4** not 5**
+        - validate unknown arguments
+  - differentiate between required array (ARR != null) and required array items (ARR.items.length > 0)
+  - look at GraphQL spec validation chapter, to make sure my validation layer conforms
+  - JSON schema:
+     - improve error messages for composed types: schema.contains|propertyNames|not|anyOf|oneOf|if|then|else (others are fine)
+     - add support for deepRequired:
+         - be careful as required is a special validation attribute as it has impact on other parts of the system
+           (e.g. documentation).
+         - also deepRequired uses absolute JSON pointers, which might create problems as the user might not understand
+           what the root is
+     - add support for deepProperties
+  - reporting:
+     - offer option to set validation error message data path as JSON pointer or JSON path
+     - error response should include parsable info for validation errors, e.g. data path, rule (e.g. 'exclusiveMinimum'), etc.
+     - validation messages are not descriptive enough, i.e. validation layer does not know which part of GraphQL query
+       triggered error, because it is interface-agnostic, but it would be useful to have that info in validation messages
+     - add `locations` attribute to GraphQL errors, and possibly other documented in my GraphQL doc
+     - be better about wrong|mispelled action name, with automatic autocorrection in error message, but interface-independent
+     - message should include the data that failed, not just its path
+  - 405 errors should include Allow [S]
+
+Schema strictness, polymorphism:
+  - think about additional properties (not specified in schema), and whether to allow them in input, and in output:
+     - if want looser schema, think of impact on:
+        - schema.additionalProperties validation of those
+        - GraphQL schema
+  - allow mixed arrays:
+     - i.e. using schema.items SCHEMA_ARR instead of schema.items SCHEMA
+     - also schema.additionalItems
+     - re-verify error messages for those two properties
+  - overloading, i.e. union types:
+     - in GraphQL, use "union" maybe.
+     - could be done by passing array of schema.type or schema.model
+     - should support array of schema.type as it is standard JSON schema
+  - subtyping:
+     - both nominal (e.g. guessing type using an attribute as differentiator)
+     - or structural (e.g. guessing type from which attributes are there, or which are their types)
+     - in GraphQL, use "interface" maybe
+
+API base types:
+  - enum type:
+     - with possibility to add metadata (description, deprecation, etc.) on each value
+     - think if needs to allow transform between database representation and API representation
+     - might use schema.constant|enum in JSON schema
+     - might use GraphQL enum
+  - new types beyond JSON ones:
+     - must still be serializable|parsable from JSON
+     - must be of the correct type when in API layer
+     - must work with arg.filter normalization
+     - must work with pagination cursor serialization
+     - might want special GraphQL types for proper schema, e.g. special GraphQL scalar types
+     - validation layer must handle them correctly
+     - e.g. undefined, function, Infinity|NaN
+     - allow custom types
+
+API models:
+  - separate how model is refered to in IDL (idl.models.MODEL) and how it is communicated to client
+    (idl.models.MODEL.name, def to IDL.models.MODEL, can be an array of aliases)
+  - rethink nested models:
+     - at the moment, normalizer copy the refered model, but what it should do instead, is creating two attributes:
+       one copying the refered model's `id` property, and one copying the refered model
+       Then GraphQL schema builder would pick the ones it needs, and so would input|output validation layer
+     - need to think about which value gets overriden when copying refered model, which value does not get overriden,
+       and which value cannot get copied (e.g. description)
+     - this should solve the fact that nested models do not inherit the refered model.id's default|transform|compute[_out]
+       attributes (while they should)
+  - nested arrays+objects in IDL definition do not really work
+  - `id` attribute:
+     - allow configuring name and type of `id` attribute, including with findOne(), etc. methods that use that argument.
+     - allow alternate ids, e.g. a query can either use machine-friendly `id` attribute, or human-friendly `name` attribute
+
+Actions:
+  - HEAD is wrong:
+     - Content-Length should not be 0.
+     - it should not be part of No-Content put instead be at protocol level, just sending the same response headers but no
+       content
+  - what happens when a recursive action is applied twice to same model?
+     - E.g. top-level action update model.attr to 1, but nested action update same model.attr to 2, i.e. the return value
+       will show two copies of model, but with different value for attr, which is confusing and inconsistent.
+     - also problematic for deletions.
+     - this can also happen when the nested action of a Many action is the same accross invocations,
+       e.g. deletePets() { deleteBestFriend() } where all pets have same bestFriend
+  - nested create|replace|upsert:
+     - if createPet's data.best_friend is missing and (nested) createBestFriend() is specified in query:
+        - fill data.best_friend with dummy values, e.g. "", 0 (depending on type), single or array
+        - do not pass any data.id in createBestFriend()
+        - after createBestFriend(), update parent.best_friend using the response
+           - that update should not be affected by def.actions restrictions
+        - parent.best_friend resolver should wait for parent.createBestFriend resolver to end, and use its value
+  - wait for https://github.com/apollographql/graphql-anywhere/issues/34 for proper operationName support
+  - GraphQL introspection:
+     - fix GraphQL __typename, it's wrong
+     - support mixing GraphQL introspection query (e.g. __schema) with non-introspection query
+  - Add support for 204 status code, with any write method
+
+Aggregating:
+  - are just other actions, following similar logic as the others
+     - should also think of which other actions it requires, and which one it implies
+  - e.g. countUsers, groupUsers, etc.
+  - arg.distinct "ATTR": no duplicates
+  - is basically asking for server-side multi/single-ATTR/OBJ operations, so maybe try to allow client to specify
+    it as JavaScript, parsed as MongoDB aggregate object???
+  - think of interaction with pagination
+
+Data correctness:
+  - Atomicity:
+     - if any supermodel|submodel fails, make whole action fail, and revert previous changes
+  - Isolation:
+     - when writing on several models, do a snapshot so that the return value is consistent. Not sure if worth.
+     - problem on multi-queries actions:
+        - update -> A finds model, then updates it, but B deleted it in-between
+        - upsert -> A finds model, then updates it, but B deleted it in-between.
+          Or A does not find model, then creates it, but B created it in-between
+  - Durabillity
+  - Allow no orphans:
+     - model relations can be:
+        - optional|required for each part:
+           - first part:
+              - required means that second part => first part
+              - not that first model's property is required
+           - second part: inverse
+        - single|multiple for each part
+     - model relations can be changed by:
+        - adding for each part:
+           - adding first part, which might happen during create|update|replace|upsert
+           - adding second part, which happens during create
+           - should make whole action fail if any part would become orphan (according to requiredness)
+        - removing for each part:
+           - removing first part, which might happen during delete|update|replace|upsert
+           - removing second part, which happens during delete
+           - should trigger cascade removal when any part would become orphan (according to requiredness)
+  - code makes assumptions about database correctness:
+     - e.g. that created_time is defined
+     - should list those assumptions
+     - should have a way to check and report database incorrectness
+
+Compatibility layer:
+  - reporting deprecation
+  - breaking changes:
+     - notify when schema change introduces breaking change (e.g. graphql.js provides that)
+  - think about how to version IDL file
+  - autoversioning:
+     - might be related to breaking changes feature
+  - migrations helpers
+     - when changing IDL constraints, should migrate data so they conform to new constraints
+     - when adding default|transform, should migrate data, otherwise when doing update with empty data,
+       or find followed by replace, both should be idempotent, but default|transform would actually be applied
+  - should it generate redirects when name has changed?
+  - feature flags
+
+Transformation:
+  - rethink:
+     - writeOnce
+     - readOnly
+     - compute
+     - transforms:
+        - are complex to interact with other layers
+        - used for different purposes: normalization, backward compatibility
+  - check that transforms are idempotent:
+     - i.e. when transform[Out] is applied twice, it should return same result as when applied once
+     - the reason is: transforms are meant to bring the value to a 'stable' state, not to augment it.
+       Otherwise, it would break basic CRUD semantics clients expect when it comes to request idempotency.
+     - should be done during IDL validation
+     - allow turning off that check by using attribute.idempotent false
+
+arg.filter:
+  - should transform JSL into MongoDB query objects:
+     - instead of compiling JSL (as is currently done)
+     - this means using a restricted version of JavaScript
+     - should do just before normalization middleware
+  - validation:
+     - how to perform when arg.filter JSL
+     - some validations might not make sense for filters argument, e.g. minimum|maximum, so should not be performed.
+       Others do though, e.g. type
+
+JSL:
+  - JSL validation:
+     - arg.filter:
+        - validates sub-expression, e.g. ($ === ($ === 1)) should not be allowed
+  - maybe using JSL in other parts of IDL
+  - Add variables related to device|browser detection
+
+Custom code:
+  - using a more plugin-oriented architecture, e.g. allow users to write support for new protocols, interfaces, etc.
+    by separating them from main package and publishing API/constraint for each component
+
+Async actions:
+  - Async operations must be well thought as they slow down requests, there should be jobs reported to users and users
+    should be able to control max wait time.
+    When this is figured out, think of how async JSL would work within that
+    Try to think if need generic async operation output (e.g. HTTP 202, Prefer: respond-async [C], Prefer: wait=NUM [C])
+  - see REST doc for more info
+  - allow JSL to be async (i.e. to return PROMISE), by using await
+
+RPC-like actions
+
+Versioning/changes:
+  - can probably link together versioning, changes and undelete features
+  - versioning:
+     - on any model modification
+     - should allow restoring
+        - including undeleting:
+           - use query parameter "show_deleted" and model attribute "deleted"
+     - should allow searching
+     - maybe, instead of introducing new methods, use special attributes to search or update
+  - listening for changes:
+     - should emit change events, but not know how they are used, i.e. not know the subscriber side
+     - should allow listeners to catch up if they missed some events because of network problems
+     - should allow listeners to target specific: model, attribute, value, condition on value (e.g. value < 5),
+       request context, request user, etc.
+       Does not mean emitter perform those checks, but that it allows them to be performed
+     - make it easy to integrate with SaaS integrations, e.g. "use this service to send an email"
+  - separate from rest:
+     - done after the request was handed back to client, i.e. no impact on performance
+     - done in different database
+        - could be single table with streams of changes
+  - can problably use standard diff format, e.g. JSON patch or JSON merge patch.
+    Could also store models in full
+  - can limit max number of versioned models by time or by absolute number or a combination
+     - need to make sure change listeners can still get all events without model being removed from their reach
+  - maybe use HTTP memento
+  - maybe use semantic links, e.g. Link: <URI>; rel="alternate|canonical|latest-version|working-copy|predecessor-version|
+    successor-version|version-history" [S]
+
+Database layer:
+  - add a layer just before database action layer, where:
+     - if actionType replace|upsert, replace arg.data.id by arg.filter { id } (for *One)
+       or arg.data[*].id by arg.filter OBJ_ARR { id } (for *Many)
+  - add Waterline ORM:
+     - parse arg.filter as ORM object instead of JSL:
+        - do arg.filter validation that was commented out because of difficulty to parse JSL:
+           - validate arg.filter against IDL attribute constraints
+           - validate that arg.filter.id is defined (client_input_syntax.js) when findOne|deleteOne|updateOne
+        - make it part of filter normalization middleware
+     - pagination on updateMany|deleteMany must only be applied on output, not mutation itself
+     - equality must be deep equality for ARR|OBJ, so people can do { filter: { attr: ARR|OBJ } }
+  - Database transformation layer (before database action), e.g. one model in two tables, two models in one table,
+    database-specific info, for both input|output
+     - should allow single server to use multiple databases with different technologies (e.g. MongoDB + Redis) too
+  - allow validation to be input-only, e.g. when adding a new constraint but keeping old data without migration
+  - how to handle when modification is done directly on the database, not through the API layer?
+     - example when this might create problems: no versioning done, no validation done, no transformation done, etc.
+     - should direct access to database be readonly? Should there be a Cron task fixing data instead?
+  - database constraints: uniqueness, indexes, non-null
+
+Fake server:
+  - fake data generation (using IDL to guess type/constraints), including mixed with real data
+  - easy mock server generation for client, by using IDL file
+
+Interfaces:
+  - REST, including:
+     - selecting
+     - populating
+     - HEAD method
+     - right status codes, e.g. 201 + Location [S]
+     - Accept-Patch [S]
+     - different envelope, i.e.:
+        - REST:
+            data
+              ...modelData
+              findSubModel
+                data: subModelData
+                metadata: subModelMetadata
+            metadata: modelMetadata
+        - GraphQL:
+            data:
+              findModel
+                ...modelData
+                findSubModel
+                  ...subModelData
+                  __metadata: subModelMetadata
+                __metadata: modelMetadata
+  - JSON-RPC
+  - other interfaces
+
+Concurrency
+  - realtime:
+     - WebSocket protocol
+     - subscriptions (on-demand or automatic after a query|mutation)
+  - conflicts:
+     - locking or MVCC (automatic merge conflicts)
+     - preconditions, including HTTP (e.g. If-Match [C])
+     - errors, including HTTP 409
+     - see concurrency chapter in to_learn.txt
+
+Output format:
+  - offer other formats as data input|output: YAML, CSV, protobuf, XML, etc.
+  - content negotiation
+  - HTTP Content-Disposition
+  - option to prettify output:
+     - agnostic to output format.
+     - should be as featureful as my JSON viewer Chrome extension: highligting, lines folding|collapsing, auto-URL-linker,
+       toggle button to show raw, data available in console
+     - automatically on when requesting from a browser.
+
+Meta-information:
+  - schema retrieval:
+     - provide way to retrieve a model's JSON schema through the API, e.g. /MODEL/schema.
+     - should have Content-Type: application/schema+json [S], and be directly usable with a library like AJV
+     - should also be linked to by each response as Link: <URI>; rel="describedby" [S]
+  - provide a versioned URI for IDL validation file, same for any server:
+     - make schema.$schema an URI pointing to it, instead of a tag: URI
+  - semantic web
+  - HATEOAS:
+     - see REST documentation for ideas
+  - general API "home document":
+     - could use OPTIONS with HTTP as well
+  - Allow [S] on every request
+
+GraphQL schema:
+  - add __metadata to GraphQL schema
+     - including pagination
+  - arg.filter can be 'JSL', {ATTR: VAL} or {ATTR: 'JSL'}
+
+Debugging:
+  - graphiql should be according to Accept [C] (not route) with potential override
+    with query variable like 'raw' to see raw result
+  - use GraphQL voyager instead of GraphiQL
+  - HTML interactive output format when requesting from a browser
+
+Documentation:
+  - description:
+     - build it using not only schema.description, but also schema.examples, schema.title and schema.* related to validation.
+     - should be done during IDL compile-time transformation
+  - printSchema():
+     - better sorting
+     - maybe change endpoint or way to get there.
+     - improve syntax highlighting.
+     - also maybe offer option to show full version, and offer simplified version by default,
+       e.g. showing only one method, and not showing variants (nested, singular|plural, etc.)
+  - API auto-documentation:
+     - see REST doc for idea of everything that can be documented
+     - provide API console for experimentation
+     - code examples
+  - API engine documentation website
+  - changelog
+  - use jsdoc, esdoc or similar
+  - add error_uri URL in error messages, pointing to documentation
+
+Main command input:
+  - Improve how conf is loaded, using same logic as rc/nconf
+
+Code quality:
+  - coding style:
+     - eslint
+     - auto-beautifier
+  - code complexity
+  - dead code
+  - duplicated code
+  - dependencies deprecation/security automatic check
+
+Callbacks/events (maybe):
+  - on new|finished layers
+  - events are async, callback are sync and allow modification of input/output
+
+Normalization:
+  - arg.filter:
+     - use JavaScript parser instead of RegExp to replace $ by $$.ATTR
+
+Pagination:
+  - use Range [C] and Accept-Ranges [S] for pagination
+     - e.g. transforming them into pagination regular arguments
+  - returning total size:
+     - page_count NUM returned in countModels() aggregation query
+     - page_count NUM + total_size NUM in paginated query metadata response
+        - is there a way to do it without an extra query?
+  - first|last|previous|next:
+     - like first|last|previous|next_token, but prepended with URL to perform the query
+     - URL might have different action than current action, e.g. delete|update output is paginated, but pagination should
+       use find, e.g. delete|update -> find
+     - for GraphQL, need to put query in the URL query string
+     - for nested models, is the URL that would be used if those models were not nested
+     - also as HTTP Link: <URL>; rel="first|last|prev|next|self[ ...]"; action="findPets.findFriends":
+        - should be single Link, not two, if have same URL
+
+Streaming:
+  - input|output streaming:
+     - protocol-level, e.g. HTTP
+     - format-level, e.g. ndjson or YAML streams
+  - Expect: 100-continue [C]
+  - Prefer: return=minimal|representation [C]
+
+Caching:
+  - protocol-level caching, including HTTP caching
+  - automatic request caching, and invalidation:
+     - between API and database
+     - between client library and API
+     - between client and client library, e.g. creating a client library that gets push from server on invalidation,
+       so it does not even perform any request
+     - saved on key-value store, so can be shared between instances
+  - delta encoding
+
+GraphQL relay:
+  - must add clientMutationId, see https://facebook.github.io/relay/graphql/mutations.htm
+  - must follow https://facebook.github.io/relay/graphql/objectidentification.htm
+
+Optimization:
+  - protocol-level compression, including HTTP compression
+  - in database layer, add a layer to group requests. E.g. using facebook data-loader
+  - make transformation/validation compile-time, using Gulp task
+    Check what can be moved compile-time, e.g. GraphQL generation
+  - look for memory leaks
+     - check for memory leaks in memoize(), i.e. new requests should not increase memoize() memory retention
+  - do performance profiling to see which parts are slow
+  - memoize JSL:
+     - runJsl() should be memoized but:
+        - to avoid memory leaks:
+           - should not memoize client-provided JSL
+           - should be reset for each request (e.g. by creating a new memoized function per request)
+        - non-inline helpers: same memoization
+        - should memoize only the arguments that are used, i.e. need to figure out which ones are used, e.g. by
+          parsing AST tree
+           - problem: if function body is not available
+
+Security:
+  - TLS
+  - CORS
+  - rate limiting:
+     - should be shared between server instances
+     - maybe at API gateway-level
+     - see HTTP doc for standard headers and status codes
+  - XSS
+  - CSRF
+  - general utilities, like "helmet"
+  - should be protocol-agnostic as much as possible
+
+Error handling:
+  - timeouts:
+     - see HTTP doc for standard headers and status codes
+
+Offline-first
+
+i18n
+
+Protocol:
+  - HTTP/2
+  - make sure it works well with proxies
+
+Frameworks:
+  - allow using other Node.js version than the latest
+
+Other programming languages:
+  - specified by using top-level property "language" in IDL file
+  - allow other programming languages in JSL
+     - should convert JSL into non-JSL as soon as possible, e.g. for arg.filter, to make it language-agnostic
+  - allow other programming languages in functions imported by $ref
+  - each new programming language must reimplement common functions like underscore.string
+  - make sure JavaScript-specific logic does not apply to other languages
+
+Testing:
+  - CI
+  - CD
+  - unit tests:
+     - test coverage
+     - data-driven tests
+     - fuzz testing
+  - integrated tests
+  - load testing
+  - performance testing
+  - greenkeeper
+
+Logging/monitoring:
+  - logging
+  - monitoring:
+     - host metrics
+     - alerting
+     - status page
+  - distributed request tracing
+  - analytics
+  - performance monitoring:
+     - how much time spent on each middleware
+     - total request time, using X-Response-time [S]
+
+DevOps:
+  - PaaS/FaaS
+  - easy to spawn multiple environments (stage, A/B testing, etc.)
+  - Docker container
+
+Other parts of the system:
+  - authentication
+  - routing:
+     - maybe as API gateway
+     - load balancing
+     - autoscaling
+  - Database:
+     - DaaS
+     - backups
+     - high-evailability
+     - scalability
+
+Administration:
+  - Admin dashboard (like Mr.Wolf, but automated) for content management
+  - CLI tool for doing both administration, IDL edition, or custom functions
+
+IDL edition:
+  - IDL editor client app
+  - central BaaS API deploying backends using IDL
+
+Client:
+  - Make some parts isomorphic, e.g. data validation, IDL file loading, IDL validation, etc.
+  - Integration with frontend frameworks, client auto-generation
+
+Commercial-only:
+  - Guessing an IDL from existing database.
+  - IDL file's user management (who can modify IDL)
+  - commercial website
+  - ads:
+     - X-Powered-By [S]
+
+Misc:
+  - replace circular-json by stringify helper with options:
+     - {boolean} [canonical=true] - use stable-json-stringify (from debitoor) instead of JSON.stringify
+     - {boolean} [circular=true] - apply json-js cycle.js first
+  - simplify promise handling with GraphQL-anywhere once they support it (there is a pull request #51)
+  - maybe rethink transform helper
+  - the "modifiers" (e.g. no_output) are quite ugly from an architecture standpoint
+  - set HTTP status 204 if no_output was used top-level, and method is 'delete'
