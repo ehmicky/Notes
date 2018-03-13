@@ -1123,33 +1123,29 @@ alter materialized view
 TABLE rename 
 COL_VAR to COL_VAR2    ##
 
-with [recursive] TABLE ##Makes it possible to refer to the TABLE returned by GETCOMMAND inside COMMAND2 or inside further TABLE
-[( COL_VAR...)]        ##as (GETCOMMAND). 
-as (GETCOMMAND),...    ##Is a prettier shortcut that avoids nesting subqueries (CTE, "Common Table Expressions")
-COMMAND2               ##GETCOMMAND is done before COMMAND2, and is executed only once, even if COMMAND2 references it several
-                       ##times.
-                       ##If GETCOMMAND is not a select, COMMAND2 needs to be top-level (not a subquery), but subqueries can 
-                       ##see TABLE from superqueries anyway.
+with [recursive] TABLE ##Makes it possible to refer to the TABLE returned by GETCOMMAND inside COMMAND2 or inside further TABLE as (GETCOMMAND). 
+[(COL_VAR...)]         ##Is a prettier shortcut that avoids nesting subqueries (CTE, "Common Table Expressions"), similar to assigning subqueries to variables
+as (GETCOMMAND),...    ##GETCOMMAND is done before COMMAND2, and is executed only once, even if COMMAND2 references it several times.
+COMMAND2               ##If GETCOMMAND is not a select, COMMAND2 needs to be top-level (not a subquery), but subqueries can see TABLE from superqueries anyway.
                        ##COL_VAR... define new column name for the return TABLE.
                        ##If recursive, TABLE can be used inside GETCOMMAND:
-                       ## - usually this is a:
-                       ##     select VAL union select ... from TABLE ... where BOOL 
-                       ##     (recursion stops when BOOL is false) 
-                       ## - It usually also use ( COL_VAR... ) so the calling recursion can select the columns of the last 
-                       ##   recursion (which is just select VAL).
-                       ## - only select ... will be possible (with possible union, etc.) in GETCOMMAND
+                       ##  - usually this is a:
+                       ##      select VAL union select ... from TABLE ... where BOOL (recursion stops when BOOL is false) 
+                       ##  - it usually also use (COL_VAR...) so the calling recursion can select the columns of the last recursion (which is just select VAL).
+                       ##  - only select ... will be possible (with possible union, etc.) in GETCOMMAND
 
-create [temp] sequence  #Creates a SEQUENCE, which is a special TABLE-like (can be used as TABLE_VAL) storing a streaming
-SEQUENCE                #BIGINT algorithm. Columns are:
+create [temp] sequence  #Creates a SEQUENCE, which is a special TABLE-like (can be used as TABLE_VAL) storing a streaming BIGINT algorithm
+SEQUENCE                #Columns are:
 [increment by BIGINT]   #  - sequence_name STR
 [min|maxvalue BGNT]     #  - is_called BOOL (def: false): whether setval() or nextval() have been called
-[start BIGINT]          #  - last_value INT (def: 1): current value
-[cache BIGINT] [cycle]  #  - start_value INT (def: 1): first value (if not is_called)
-[owned by TABL.COL]     #  - increment_by INT (def: 1): how much to increment after each nextval()
-                        #  - min|max_value (def: 1 to bigintmax)
-                        #  - cache_value (def: 1): how many numbers to cache in advance. If more than 1 and concurrency, still
-                        #    works, but cache reserve the numbers, which produce "holes" (but numbers are still unique)
-                        #  - is_cycled (def: false): when reaching end, either go to start, or produce error.
+[start BIGINT]          #  - last_value BIGINT (def: 1): current value
+[cache BIGINT] [cycle]  #  - start_value BIGINT (def: 1): first value (if not is_called)
+[owned by TABL.COL]     #  - increment_by BIGINT (def: 1): how much to increment after each nextval()
+                        #  - min|max_value BIGINT (def: 1 to bigintmax)
+                        #  - cache_value (def: 1): 
+                        #     - how many numbers to cache in advance
+                        #     - if more than 1 and concurrency, still works, but cache reserve the numbers, which produces "holes" (but numbers are still unique)
+                        #  - is_cycled BOOL (def: false): when reaching end, either go to start, or produce error
                         #If temp, session-only, and can't use any SCHEMA.
                        ##If owned by TABLE.COL, if COL is dropped, SEQUENCE is dropped. Must be in same SCHEMA and same owner.
 alter sequence SEQUENCE #Same ... as create sequence ... but:
@@ -1170,63 +1166,62 @@ BIGINT[, BOOL])        ##Change last_value and is_called (def: true)
                                              \=+===============================+=/
 
 
-select [distinct        #Renvoie COL_VAL... de TABLE_VAL, with records filtered by BOOL
-[on( COL_VAL... )]]     #VAL can be [TABLE.]* to mean all columns (considere bad practice).
-VAL [[as] COL_ALIAS]... #  - ALIAS:
-[from TABLE_VAL]        #     - goal:   
-[[ as] TABLE_ALIAS]...  #        - shorter version    
-[where BOOL]            #        - can give name to temporary VAL (e.g. AFUNC(COL) or COL + VAL)
-[order by COL_VAL...    #        - necessary for subqueries
-[asc|desc|using OP]     #     - can be:
-[nulls first|last]]     #        - TABLE_ALIAS: TABLE_ALIAS[( COL_ALIAS... )]     
-[group by COL_VAL       #        - COL_ALIAS     
-[having BOOL]]          #     - ALIAS is the new name (former VAR will not be usable anymore in current query)       
-[offset UINT]           #     - as is recommended       
-[fetch first UINT2 rows #  - VAL... can be:
-only]                   #     - COL_VAL
-                        #     - any VAL (e.g. select NUM;)
-                        #     - FUNC()
-                        #  - from TABLE_VAL:
-                        #     - can use ... join (see below)
-                       ##     - can use a FUNC() returning a TABLE_VAL.
-                        #       In standard SQL, from FUNC(...) -> from lateral (select FUNC(...)) ALIAS
-                       ##     - can be ommitted, e.g. select VAL;
-                        #  - distinct: 
-                        #    - remove rows will all entries duplicate.
-                       ##    - on ( COL_VAL... ): only targets COL_VAL..., which must be among the leftmost COL_VAL... in
-                       ##      order by ...
-                        #  - where BOOL: filter rows according to BOOL
-                        #  - group by COL_VAL:
-                        #    - all COL_VAL2... in select ... (except COL_VAR if group by COL_VAR) must be scalar values,
-                        #      typically through a AFUNC()
-                        #    - can also be NUM like order by
-                        #    - only non-duplicate entries of COL_VAL are selected, and COL_VAL2 are aggregated according to
-                        #      groups of duplicate COL_VAL, using AFUNC() if provided.
-                        #  - having BOOL: 
-                        #    - like where BOOL, but on the groups created by group by
-                        #    - must use scalar values, typically though a AFUNC()
-                        #  - order by: 
-                        #    - trie selon COL_VAL... (def: asc, and nulls first for desc, nulls last for asc)
-                        #    - using OP: using < is like asc, etc.
-                        #    - can also be NUM, to be the VAL... numero NUM
-                        #  - offset and fetch: select only the first UINT2 rows, or according to an offset UINT. 
-                        #    order by should also be used to be consistent.
+select [distinct        #Returns COL_VAL... of TABLE_VAL, with records filtered by BOOL
+[on (COL_VAL...)]]      #VAL can be [TABLE.]* to mean all columns (bad practice in production)
+VAL [[as] COL_ALIAS]... #ALIAS:
+[from TABLE_VAL]        #  - goal:   
+[[ as] TABLE_ALIAS]...  #     - shorter version    
+[where BOOL]            #     - can give name to temporary VAL (e.g. AFUNC(COL) or COL + VAL)
+[order by COL_VAL...    #     - necessary for subqueries
+[asc|desc|using OP]     #  - can be:
+[nulls first|last]]     #     - TABLE_ALIAS: TABLE_ALIAS[( COL_ALIAS... )]     
+[group by COL_VAL       #     - COL_ALIAS     
+[having BOOL]]          #  - ALIAS is the new name (former VAR will not be usable anymore in current query)       
+[offset UINT]           #  - "as" is recommended       
+[fetch first UINT2 rows #VAL... can be:
+only]                   #  - COL_VAL
+                        #  - any VAL (e.g. select NUM;)
+                        #  - FUNC()
+                        #from TABLE_VAL:
+                        #  - can use ... join (see below)
+                       ##  - can use a FUNC() returning a TABLE_VAL.
+                        #    In standard SQL, from FUNC(...) -> from lateral (select FUNC(...)) ALIAS
+                       ##  - can be ommitted, e.g. select VAL;
+                        #distinct: 
+                        #  - remove rows will all entries duplicate.
+                       ##  - on (COL_VAL...): only targets COL_VAL..., which must be among the leftmost COL_VAL... in order by ...
+                        #where BOOL: 
+                        #  - filter rows according to BOOL
+                        #group by COL_VAL:
+                        #  - all VAL... in select ... (except COL_VAR if group by COL_VAR) must be scalar values, typically through a AFUNC()
+                        #  - can also be NUM like order by
+                        #  - only non-duplicate entries of COL_VAL are selected, and COL_VAL2 are aggregated according to groups of duplicate COL_VAL, using AFUNC() if provided.
+                        #having BOOL: 
+                        #  - like where BOOL, but on the groups created by group by
+                        #  - must use scalar values, typically though a AFUNC()
+                        #order by: 
+                        #  - sort according to COL_VAL... (def: asc, and nulls first for desc, nulls last for asc)
+                        #  - using OP: using < is like asc, etc.
+                        #  - can also be NUM, to be the VAL... number NUM
+                        #offset and fetch: 
+                        #  - select only the first UINT2 rows, or according to an offset UINT
+                        #  - order by should also be used to be consistent
                         #Order of execution: 
-                        #  - select 7 from 2, (1) where 3 group by 4 having 5 order by 8 offset|fetch 9 (1 is a subquery)
+                        #  - select 6 from 2, (1) where 3 group by 4 having 5 order by 7 offset|fetch 8 (1 is a subquery)
 
-TABLE_VAL [QUAL] join   #Produce a TABLE_VAL from two TABLE_VAL, for a select ... from TABLE2_VAL:
+TABLE_VAL [QUAL] join   #Produces a TABLE_VAL from two TABLE_VAL, for a select ... from TABLE2_VAL:
 TABLE2_VAL              #  - can use all TABLE_VAL in the other clauses. Should qualify all COL by using TABLE_VAL.COL
 [on BOOL|               #Conditions are impossible for cross join, necessary for others:
-using(COL_VAR...)]      #  - on BOOL: filtre selon BOOL
-                        #  - using( COL... ) and natural: avoid them (can do same with on BOOL)
+using(COL_VAR...)]      #  - on BOOL: filter according to BOOL
+                        #  - using(COL...) and natural: avoid them (can do same with on BOOL)
                         #QUAL can be :
                         #  - cross:
-                        #     - uses the cartesian product of the TABLE_VAL... (all combinations of values, starting from first
-                        #       TABLE) e.g. a TABLE_VAL with length = product of lengths of all TABLE_VAL. 
+                        #     - uses the cartesian product of the TABLE_VAL...:
+                        #        - all combinations of values, starting from first TABLE
+                        #        - i.e. a TABLE_VAL with length = product of lengths of all TABLE_VAL
                         #     - can also be written TABLE_VAL, TABLE2_VAL
                         #  - inner (def): same (but can use on BOOL)
-                        #  - left: same but instead of filtering, fill TABLE2_VAL with null, and remove duplicate rows that
-                        #    have been filled this way.
+                        #  - left: same but instead of filtering, fill TABLE2_VAL with null, and remove duplicate rows that have been filled this way.
                         #  - right: same but fill with null in TABLE_VAL
                         #  - full: left outer + right outer
 SELF JOIN ==>           #Are used to output twice the same column. 
