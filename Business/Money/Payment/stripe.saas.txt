@@ -21,6 +21,7 @@ TODO:
   - check https://raw.githubusercontent.com/stripe/openapi/master/openapi/spec3.yaml
   - what do publishable keys do?
      - check what 'RETRIEVABLE WITH PUBLISHABLE KEY' means in API docs
+     - it seems like they are used with Stripe.js client library
   - difference Connect custom vs express vs standard
      - including in API it sometimes shows "Custom only" or "Custom and Express only"
      - including https://stripe.com/docs/disputes#disputes-on-connect-platforms
@@ -378,8 +379,10 @@ CURRENCY CONVERSION ==>           #Conversion is automatic and has three stages:
                                   #        - not when money is re-used with a REFUND or a Connect transaction
 AVAILABLE CURRENCIES ==>          #Customer's currency and CHARGE.currency:
                                   #  - see full list at https://stripe.com/docs/currencies
-                                  #  - credit cards with JCB, Discover and Diners Club can only be 'usd'
-                                  #  - with alipay, CHARGE.currency must be same as destination currency
+                                  #  - payment method-specifics for CHARGE.currency:
+                                  #     - 'usd' only for card with JCB, Discover, Diners Club, and for 'ach*'
+                                  #     - 'eur' for bancontact
+                                  #     - same as destination currency for 'alipay'
                                   #Destination currency:
                                   #  - must match main currency of STRIPE_ACCOUNT.country
                                   #  - but PAYOUT can be to another country with same currency (e.g. Eurozone)
@@ -728,6 +731,10 @@ REFUND                            #Reverting a CHARGE.
                                   #Can fail:
                                   #  - e.g. if customer's SOURCE is not valid anymore.
                                   #  - refund is reversed under 30 days.
+                                  #Payment-method specifics:
+                                  #  - alipay: within 90 days
+                                  #  - ach_credit_transfer, bancontact, eps, giropay, ideal, multibanco, p24: within 180 days
+                                  #  - sepa_debit: done through DISPUTEs instead
 REFUND.charge                   *C#CHARGE.id that was refunded.
 ?charge=CHARGE.id                 #
 REFUND.amount                    C#MONEY.
@@ -825,6 +832,11 @@ DISPUTE ==>                       #When a CUSTOMER questions our CHARGE. Also ca
                                   #  - wrong billing (e.g. transaction sent twice to bank)
                                   #  - technical (e.g. expired authorization)
                                   #Should prefer using the Dashboard instead of API for this.
+                                  #Payment method-specific:
+                                  #  - 'bancontact', 'eps', 'giropay', 'ideal', 'multibanco', 'p24': no DISPUTE possible
+                                  #  - 'sepa_debit':
+                                  #     - before 8 weeks, always won by CUSTOMER
+                                  #     - within 8-13 weeks, only if fraud
 
 DISPUTE AND REFUNDS ==>           #  - cannot create a REFUND on a disputed CHARGE
                                   #  - cannot create a DISPUTE on a refunded CHARGE
@@ -1071,7 +1083,6 @@ POST /sources[/ID]
 STRIPE.sources.
  retrieve|create|update()         #
 customer.source.expiring          #'EVENT_TYPE' when a card or source will expire at the end of the month.
-source.mandate_notification       #'EVENT_TYPE' when a source mandate notification method is set to manual.
 source.refund_attributes_required #'EVENT_TYPE' when the refund attributes are required on a receiver source to process a refund or a mispayment.
 payment_method.attached           #'EVENT_TYPE' when a new payment method is attached to a customer.
 payment_method.
@@ -1091,29 +1102,34 @@ SOURCE.type 'TYPE'              *C#Specific payment method among:
                                   #      - some allow using with smartphone NFC
                                   #      - includes (CARD.wallet.type) 'visa_checkout', 'masterpass', 'amex_express_checkout'
                                   #  - 'card_present': credit card payment down from a physical terminal
-                                  #  (bank-controlled)
+                                  #  (bank-consortium controlled)
                                   #  - 'bank_account':
                                   #      - generic TYPE for all bank accounts payments
                                   #      - create|update only
                                   #  - 'ach_debit', 'ach_credit_transfer':
-                                  #      - uses ACH (Automated Clearing House)
+                                  #      - US
                                   #      - with bank account number and routing number
                                   #      - can take few days
                                   #      - more automated than credit card, because do not need to re-authorize
                                   #         - i.e. more convenient but needs more trust
+                                  #      - charge amount can be paid in separate/several payments
                                   #      - 'debit' vs 'credit':
                                   #         - 'debit': we pull money from customer's account
                                   #            - more automated but more trust to other account
                                   #         - 'credit': customer puts money to our account
-                                  #  (bank-consortium controlled online payment method)
-                                  #  - 'sepa_debit': EU
+                                  #  - 'sepa_debit':
+                                  #     - similar to ACH but for EU
+                                  #     - uses IBAN (bank account number)
+                                  #     - user must fill and electronically sign a form with their information (MANDATE)
+                                  #     - can take up to 14 days
                                   #  - 'sofort': Germany
                                   #  - 'giropay': Germany
                                   #  - 'eps': Austria
                                   #  - 'ideal': Netherlands (>50% market share)
                                   #  - 'bancontact': Belgium (>30% market share)
-                                  #  - 'multibanco': Portugal
                                   #  - 'p24': Poland
+                                  #  - 'multibanco': Portugal
+                                  #     - requires action by customer, i.e. might take up to 7 days
                                   #  (payment provider companies controlled)
                                   #  - 'stripe_account': Connect
                                   #  - 'alipay' (called 'alipay_account' on create|update): Alibab, China (>50% market share)
@@ -1137,18 +1153,28 @@ SOURCE.type 'TYPE'              *C#Specific payment method among:
                                   #     - no possible refunds
                                   #     - high fees
                                   #Availability:
-                                  #  - right away: 'card', 'stripe_account', 'apple_pay', 'google_pay', 'microsoft_pay', 'samsung_pay'
-                                  #  - US bank accounts + USD only: 'ach*'
+                                  #  - right away: 'card', 'ach*', 'stripe_account', 'apple_pay', 'google_pay', 'microsoft_pay', 'samsung_pay'
                                   #  - must have processed payments for 30 days: 'sepa_debit'
                                   #  - behind feature toggles in dashboard settings, and agree to additional terms of service:
                                   #     - 'visa_checkout', 'masterpass', 'amex_express_checkout'
                                   #     - 'sofort', 'giropay', 'eps', 'ideal', 'bancontact', 'multibanco', 'p24'
                                   #     - 'alipay', 'wechat'
+                                  #Country availability:
+                                  #  - US (destination): 'ach*'
+                                  #  - Germany (customer), US/EU (destination): 'giropay'
+                                  #  - Netherlands (customer), US/EU (destination): 'ideal'
+                                  #  - Austria (customer), US/EU (destination): 'eps'
+                                  #  - Belgium (customer), US/EU (destination): 'bancontact'
+                                  #  - Poland (customer), US/EU (destination): 'p24'
+                                  #  - Portugal (customer), EU (destination): 'multibanco'
+                                  #  - China (customer): 'alipay'
                                   #Differences:
                                   #  - how customer inputs the information (SOURCE.TYPE)
                                   #  - sync vs async CHARGEs (see CHARGE webhooks above)
                                   #  - SOURCE.flow
                                   #  - SOURCE.usage
+                                  #  - how refunds are done (see above)
+                                  #  - how disputes are done (see above)
 SOURCE.TYPE                       #SOURCE_DETAILS. Each TYPE has its own attributes, but some are shared.
                                   #On update, should use SOURCE.* not SOURCE.TYPE.*
 SOURCE.card*.number            *RC#STR. Credit card number.
@@ -1220,7 +1246,8 @@ CARD_RECEIPT.
 CARD_RECEIPT.
  transaction_status_information   #STR. An indication of various EMV functions performed during the transaction.
 SOURC.card_present.generated_card?#CARD.id
-SOURCE.card*|ach_debit.last4      #STR. Last four digits of the bank account or card number.
+SOURCE.card*|ach_debit|sepa_debit.
+ last4                            #STR. Last four digits of the bank account or card number.
 SOURCE.card*|ach_debit|alipay.
  fingerprint                      #STR. Checksum|fingerprint of the bank account or card number.
 SOURCE.bank_account|card*|
@@ -1249,11 +1276,18 @@ SOURCE.
 SOURCE.bancontact|giropay|sofort.
  bank_code                        #STR. Code of the bank.
 SOURCE.multibanco|p24.reference   #STR. Unique reference for this payment.
+                                  #For multibanco, should be communicated to user as they will need it to initiate payment.
+                                  #For p24, should be communicated to user as they help them finding the payment transaction.
 SOURCE.multibanco.entity          #STR. Entity number.
-SOURCE.ideal.bank                 #STR. Bank name among 'abn_amro', 'asn_bank', 'bunq', 'handelsbanken', 'ing', 'knab',
+                                  #Should be communicated to user as they will need it to initiate payment.
+SOURCE.ideal.bank                C#STR. Bank name among 'abn_amro', 'asn_bank', 'bunq', 'handelsbanken', 'ing', 'knab',
                                   #'moneyou', 'rabobank', 'regiobank', 'sns_bank', 'triodos_bank', 'van_lanschot'.
+                                  #If not provided, user is redirected to a page asking for it.
 SOURCE.bancontact.
- preferred_language               #STR. Customer's preferred language among 'en', 'de', 'fr', 'nl'.
+ preferred_language              C#STR. Customer's preferred language among 'en', 'de', 'fr', 'nl'.
+SOURCE.sepa_debit.mandate_url     #'URL' to download copy of MANDATE
+SOURCE.sepa_debit.
+ mandate_reference                #STR. MANDATE reference to communicate to customer.
 SOURCE.alipay_account           RC#STR. A token returned by Stripe representing the user’s Alipay account details.
 SOURCE.alipay.username            #STR.
 SOURCE.alipay.reusable            #BOOL. False if it's one-time payment method.
@@ -1262,11 +1296,13 @@ SOURCE.alipay.payment_amount      #PMONEY if one-time payment.
 
 SOURCE.token                    RC#TOKEN.id. Use TOKEN to populate properties.
 SOURCE.usage                     C#Either:
-                                  #  - 'reusable': for SOURCE.type 'card*', 'ach*', 'sepa_debit', 'alipay'
-                                  #  - 'single_use': for all others SOURCE.type, and also 'alipay'
+                                  #  - must be 'reusable': for SOURCE.type 'card*', 'ach*'
+                                  #  - must be 'single_use': for all others SOURCE.type
+                                  #  - can be either: 'alipay', 'sepa_debit'
 SOURCE.amount                    C#PMONEY if SOURCE.usage 'single_use'
 SOURCE.customer                   #CUSTOMER.id This will not be present when the source has not been attached to a customer.
 SOURCE.owner                   RCU#BILL_DETAILS
+                                  #Strongly recommended to decrease DISPUTEs and faciliate payment UX flow.
 
 SOURCE.status                     #STR among:
                                   #  - 'pending': SOURCE not ready for payment yet
@@ -1276,21 +1312,33 @@ SOURCE.status                     #STR among:
                                   #      - not used, with SOURCE.usage 'single_use' (EVENT 'source.canceled')
                                   #      - cannot charge SOURCE anymore
                                   #      - for:
-                                  #         - 'alipay':
+                                  #         - 'alipay', 'bancontact', 'eps', 'giropay', 'ideal', 'multibanco', 'p24':
                                   #            - SOURCE.status must be 'chargeable' within 6 hours
                                   #            - CHARGE must be created then within 1 hour
                                   #  - 'consumed': already charge, with SOURCE.usage 'single_use'
 SOURCE.flow                      C#How the SOURCE is authenticated among:
                                   #  - 'none':
-                                  #      - nothing required
-                                  #      - for SOURCE.type 'card*' (no 3D secure) and 'sepa_debit'
+                                  #      - for SOURCE.type:
+                                  #         - 'card*' (no 3D secure): nothing required
+                                  #         - 'sepa_debit': through a MANDATE
                                   #  - 'redirect':
                                   #      - redirected to payment provider's URL, then payment provider redirects back
-                                  #      - for SOURCE.type 'card*' (3D secure), 'ach_debit', 'alipay', 'bancontact', 'eps', 'giropay', 'ideal', 'p24', 'wechat', 'sofort'
+                                  #      - for SOURCE.type 'card*' (3D secure), 'ach_debit', 'alipay', 'bancontact', 'eps', 'giropay', 'ideal', 'p24', 'wechat', 'sofort', 'multibanco'
                                   #  - 'code_verification': a code is sent (e.g. by SMS)
                                   #      - for SOURCE.type 'ach_debit'
-                                  #  - 'receiver': authenticate a specific amount towards a specific destination (e.g. with cryptocurrencies)
-                                  #      - for SOURCE.type 'ach_credit_transfer' and 'multibanco'
+                                  #  - 'receiver': requires other separate action from customer, such as logging in to their account and initiate the payment
+                                  #      - for SOURCE.type:
+                                  #         - 'ach_credit_transfer'
+                                  #         - 'multibanco' (can also use 'redirect instead')
+                                  #Can test by using:
+                                  #   - SOURCE.TYPE.iban:
+                                  #      - for 'sepa_debit':
+                                  #         - 'DE89370400440532013000': success CHARGE
+                                  #         - 'DE62370400440532013001': failed CHARGE
+                                  #         - 'DE35370400440532013002': success CHARGE but creates DISPUTE
+                                  #   - SOURCE.owner.email:
+                                  #      - for 'ach_credit_transfer': 'amount_AMOUNT@example.com'
+                                  #      - for 'multibanco': 'ANYTHING+fill_never|now@ANY_DOMAIN' (user never initiate, or does it right away)
 SOURCE.redirect                  C#REDIRECT. If SOURCE.flow 'redirect'
 REDIRECT.url                      #'URL' of payment provider to redirect user to.
 REDIRECT.return_url              C#'URL' to redirect after successful authentication.
@@ -1315,30 +1363,43 @@ CODE_VERIF.status                 #STR among:
                                   #  - 'succeeded' or 'failed'
 SOURCE.receiver                  C#RECEIVER. If SOURCE.flow 'receiver'.
 RECEIVER.address                  #STR. Destination to send funds to. Should communicate to customer.
-RECEIVER.amount_charged           #MONEY given by CUSTOMER.
-RECEIVER.amount_returned          #MONEY given to CUSTOMER.
+RECEIVER.amount_*                 #Updated by Stripe using CHARGE.*
+RECEIVER.amount_charged           #CHARGE.amount
+RECEIVER.amount_returned          #MONEY (negative) left to be paid by CUSTOMER.
+                                  #Once 0, SOURCE.status goes from 'chargeable' to 'pending' (ready for re-use)
 RECEIVER.amount_received          #amount_charged + amount_returned
-RECEIVER.refund_attributes_method #How to refund among 'email', 'manual', 'none'.
-RECEIVER.refund_attributes_status #Refund status among 'missing', 'requested', 'available'.
+RECEIVR.refund_attributes_method C#How to refund among 'email', 'manual', 'none'.
+RECEIVER.refund_attributes_status #Refund status among:
+                                  #  - 'missing': none requested
+                                  #  - 'requested'
+                                  #  - 'available': ready for CUSTOMER to withdraw
+SOURCE.mandate                 RCU#MANDATE. Form filled and signed by CUSTOMER with their information and consent. For 'sepa_debit'
+                                  #Also a standard text must be shown to CUSTOMER (seen here: https://stripe.com/docs/sources/sepa-debit#prerequisite)
+MANDATE.amount                  CU#PMONEY. Defaults to full amount.
+MANDATE.interval                CU#Payment recurrence among:
+                                  #  - 'one_time'
+                                  #  - 'scheduled' (regular interval)
+                                  #  - 'variable' (variable interval)
+MANDATE.notification_method     CU#How to notify CUSTOMER of payment (including recurring one):
+                                  #  - 'email': email sent to CUSTOMER
+                                  #  - 'manual': emit an EVENT 'source.mandate_notification' and we must communicate to CUSTOMER ourselves
+                                  #  - 'none' (def): no EVENT and we must communicate ourselves
+                                  #When doing 'manual'|'none':
+                                  #  - should be sent within 14 days.
+                                  #  - must include:
+                                  #     - SOURCE.sepa_debit.last4|mandate_reference
+                                  #     - MANDATE.amount
+                                  #     - SEPA creditor identifier (must ask our own bank online for it)
+                                  #     - contact information
+MANDATE.acceptance              CU#ACCEPTANCE
+ACCEPTANCE.status              *CU#Either 'accepted' or 'refused'
+ACCEPTANCE.type                 CU#Whether this is done 'online' or 'offline'.
+ACCEPTANCE.online|offline       CU#ACCEPTANCE_ONLINE|OFFLINE. Depends on ACCEPTANCE.type
+ACCEPTANCE[_ONLINE].date       *CU#DATE_NUM
+ACCEPTANCE[_ONLINE].ip         *CU#'IP'
+ACCEPTANCE[_ONLINE].user_agent *CU#'USER_AGENT'
+ACCEPTANCE_OFFLN.contact_email *CU#'EMAIL' to contact us if a copy is requested.
 
-SOURCE.mandate                 RCU#MANDATE. Information about a mandate possibility attached to a source object (generally for bank debits) as well as its acceptance status.
-MANDATE.acceptance                #ACCEPTANCE. The parameters required to notify Stripe of a mandate acceptance or refusal by the customer.
-ACCEPTANCE.online                 #ACCEPTANCE_ONLINE. The parameters required to store a mandate accepted online. Should only be set if mandate[type] is online
-ACCEPTANCE.offline                #ACCEPTANCE_OFFLINE. The parameters required to store a mandate accepted offline. Should only be set if mandate[type] is offline
-ACCEPTANCE.status                *#The status of the mandate acceptance. Either accepted (the mandate was accepted) or refused (the mandate was refused).
-ACCEPTANCE[_ONLINE].date         *#The unix timestamp the mandate was accepted or refused at by the customer.
-ACCEPTANCE[_ONLINE].ip           *#The IP address from which the mandate was accepted or refused by the customer.
-ACCEPTANCE_OFFLINE.contact_email *#An email to contact you with if a copy of the mandate is requested, required if type is offline.
-ACCEPTANCE.type                   #The type of acceptance information included with the mandate. Either online or offline
-ACCEPTANCE[_ONLINE].user_agent   *#The user agent of the browser from which the mandate was accepted or refused by the customer. This can be unset by updating the value to null and then saving.
-MANDATE.amount                    #The amount specified by the mandate. (Leave null for a mandate covering all amounts)
-MANDATE.interval                  #The interval of debits permitted by the mandate.
-                                  #Either one_time (just permitting a single debit), scheduled (with debits on an agreed schedule or for clearly-defined events), or variable(for debits with any frequency)
-MANDATE.notification_method       #The method Stripe should use to notify the customer of upcoming debit instructions and/or mandate confirmation as required by the underlying debit network.
-                                  #Either:
-                                  #  - email (an email is sent directly to the customer)
-                                  #  - manual (a source.mandate_notification event is sent to your webhooks endpoint and you should handle the notification)
-                                  #  - none (the underlying debit network does not require any notification)
 
 SOURCE RENEWAL ==>                #For some countries, Stripe automatically updates SOURCE.* when information is updated (e.g. new card).
                                   #EVENT 'customer.source.updated' is emitted.
