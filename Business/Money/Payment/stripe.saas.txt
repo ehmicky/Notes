@@ -6,7 +6,7 @@
 
 
 TODO:
-  - stopped at https://stripe.com/docs/sources
+  - stopped at https://stripe.com/docs/strong-customer-authentication
   - https://stripe.com/docs
      - go back to:
         - https://stripe.com/docs/billing/webhooks
@@ -28,8 +28,9 @@ TODO:
   - difference Connect custom vs express vs standard
      - including in API it sometimes shows "Custom only" or "Custom and Express only"
      - including:
-        - https://stripe.com/docs/disputes#disputes-on-connect-platforms
+        - https://stripe.com/docs/sources/connect
         - https://stripe.com/docs/ach#connect
+        - https://stripe.com/docs/disputes#disputes-on-connect-platforms
   - go through all undocumented endpoints, see if they are documented elsewhere
   - pricing
      - including differences based on where the Stripe account was created
@@ -345,6 +346,9 @@ Idempotency-Key: RANDOM [C]       #Memoize using:
                                   #Only for 24 hours.
                                   #Only memoize requests that passed input validation layer.
                                   #Only for `POST`
+                                  #Recommended for POST /charges
+                                  #  - using the order ID, or the SOURCE.id (unless reusable), etc.
+                                  #  - to avoid DISPUTEs on duplicated charges
 
 RESOURCE.id                       #STR
 RESOURCE.object                   #Either:
@@ -549,20 +553,22 @@ CHARGE.balance_transaction        #BALANCE_TRANSACTION.id
 CHARGE.paid                       #BOOL for success
 CHARGE.status                     #First 'pending' then either 'succeeded' or 'failed'.
                                   #EVENTS 'charge.pending|succeeded|failed' fired:
-                                  #  - 'card' SOURCEs are sync:
+                                  #  - most SOURCEs are sync:
                                   #     - response status is never 'pending'
                                   #     - no need to use webhooks
-                                  #  - other SOURCEs are async
+                                  #  - some SOURCEs are async
                                   #     - must use webhooks
+                                  #     - only SOURCE.type 'ach_*', 'sepa_debit' and 'sofort'
 CHARGE.refunds                    #REFUND_LIST
 CHARGE.refunded                   #BOOL. False if only partially refunded.
 CHARGE.amount_refunded            #PMONEY. 0 if none.
 CHARGE.source                   *C#Can be:
-                                  #  - SOURCE|CARD|BANK_ACCOUNT: requires CHARGE.customer
+                                  #  - TOKEN
+                                  #  - SOURCE|CARD|BANK_ACCOUNT:
+                                  #     - must be reusable
+                                  #     - requires CHARGE.customer
                                   #  - STRIPE_ACCOUNT
-                                  #On create:
-                                  #  - must be id
-                                  #  - can be TOKEN.id too
+                                  #On create, must be ID
 CHARGE.payment_method             #PAYMENT_METHOD.id
 CHARGE.payment_method_details     #Like SOURCE.type + SOURCE.TYPE.*
 CHARGE.customer                 CU#CUSTOMER.id
@@ -1057,18 +1063,29 @@ EVIDENCE.uncategorized_file       #Any other FILE.id
 EVIDENCE.uncategorized_text       #Any other STR.
 
 CUSTOMER                          #Entity/person paying.
-                                  #Can be used to re-use information accross payments (payment methods, email, addresses, invoice info)
+                                  #Can be used to re-use information accross payments:
+                                  #  - SOURCE (only if SOURCE.usage 'reusable')
+                                  #  - email
+                                  #  - addresses
+                                  #  - invoice info
 GET /customers[/ID]
 POST /customers[/ID]
 DELETE /customers/ID              #
 STRIPE.customers.
  retrieve|list|create|update|del()#
+POST /payment_methods/ID/attach
+POST /payment_methods/ID/detach   #Set|unset CUSTOMER.sources and PAYMENT_METHOD.customer. No payload
+STRIPE.paymentMethods.
+ attach|detach()
 CUSTOMER.sources                  #TOKEN|SOURCE|BANK_ACCOUNT|CARD_LIST
+                                  #Emits EVENTs 'payment_method.attached|detached' on change.
+                                  #Should only use for reusable SOURCEs. Should avoid TOKENs.
 CUSTOMER.default_source          U#TOKEN|SOURCE|BANK_ACCOUNT|CARD
 CUSTOMER.source                RCU#Change default_source.
                                   #Also creates the TOKEN|SOURCE|BANK_ACCOUNT|CARD.
 CUSTOMER.payment_method         RC#PAYMENT_METHOD.id
                                   #Like CUSTOMER.source but for already created PAYMENT_METHOD
+SOURCE.customer                  ?#CUSTOMER.id. Only if attached
 CUSTOMER.email                  CU#'EMAIL'.
 ?email=STR                        #
 CUSTOMER.description            CU#STR.
@@ -1095,16 +1112,21 @@ GET /sources/ID
 POST /sources[/ID]
 STRIPE.sources.
  retrieve|create|update()         #
-customer.source.expiring          #'EVENT_TYPE' when a card or source will expire at the end of the month.
-source.refund_attributes_required #'EVENT_TYPE' when the refund attributes are required on a receiver source to process a refund or a mispayment.
-payment_method.attached           #'EVENT_TYPE' when a new payment method is attached to a customer.
-payment_method.
- card_automatically_updated       #'EVENT_TYPE' when a card payment method's details are automatically updated by CAU.
-payment_method.detached           #'EVENT_TYPE' when a payment method is detached from a customer.
 SOURCE                            #Payment method of a CUSTOMER.
 
-SOURCE.type 'TYPE'              *C#Specific payment method among:
-                                  #  (credit card companies controlled. Banks are clients)
+SOURCE TYPES ==>                  #Differences between source types:
+                                  #  - how customer inputs the information (SOURCE.TYPE)
+                                  #     - including client-side integration
+                                  #  - sync vs async CHARGEs (see CHARGE webhooks above)
+                                  #  - SOURCE.flow (how customer add payment method)
+                                  #  - SOURCE.usage (whether can be re-used)
+                                  #  - how long payment takes
+                                  #  - how refunds are done (see above)
+                                  #  - how disputes are done (see above)
+                                  #  - country availability (see below)
+                                  #  - currencies availability (see above)
+                                  #  - how testing is done
+                                  #Credit card companies controlled (banks are clients):
                                   #  - 'card':
                                   #      - credit card
                                   #      - fast
@@ -1116,7 +1138,7 @@ SOURCE.type 'TYPE'              *C#Specific payment method among:
                                   #      - some allow using with smartphone NFC
                                   #      - includes (CARD.wallet.type) 'visa_checkout', 'masterpass', 'amex_express_checkout'
                                   #  - 'card_present': credit card payment down from a physical terminal
-                                  #  (bank-consortium controlled)
+                                  #Bank-consortium controlled:
                                   #  - 'bank_account':
                                   #      - generic TYPE for all bank accounts payments
                                   #      - create|update only
@@ -1153,12 +1175,12 @@ SOURCE.type 'TYPE'              *C#Specific payment method among:
                                   #  - 'p24': Poland
                                   #  - 'multibanco': Portugal
                                   #     - requires action by customer, i.e. might take up to 7 days
-                                  #  (payment provider companies controlled)
+                                  #Payment provider companies controlled:
                                   #  - 'stripe_account': Connect
                                   #  - 'alipay' (called 'alipay_account' on create|update): Alibab, China (>50% market share)
                                   #     - terms of service are too restrictive, should not use
                                   #  - 'wechat': China
-                                  #  (tech companies controlled)
+                                  #Tech companies controlled:
                                   #  - 'card' with CARD.wallet.type: 'apple_pay', 'google_pay', 'microsoft_pay', 'samsung_pay'
                                   #Not supported:
                                   #  - wire transfer:
@@ -1175,15 +1197,14 @@ SOURCE.type 'TYPE'              *C#Specific payment method among:
                                   #     - more anonymous, more fraud-friendly
                                   #     - no possible refunds
                                   #     - high fees
-                                  #Availability:
-                                  #  - right away: 'card', 'stripe_account', 'apple_pay', 'google_pay', 'microsoft_pay', 'samsung_pay'
-                                  #  - must have processed payments for 30 days: 'sepa_debit'
-                                  #  - behind feature toggles in dashboard settings, and agree to additional terms of service:
-                                  #     - 'ach*'
-                                  #     - 'visa_checkout', 'masterpass', 'amex_express_checkout'
-                                  #     - 'sofort', 'giropay', 'eps', 'ideal', 'bancontact', 'multibanco', 'p24'
-                                  #     - 'alipay', 'wechat'
-                                  #Country availability:
+SOURCE TYPES AVAILABILITY ==>     #Right away: 'card', 'stripe_account', 'apple_pay', 'google_pay', 'microsoft_pay', 'samsung_pay'
+                                  #Must have processed payments for 30 days: 'sepa_debit'
+                                  #Behind feature toggles in dashboard settings, and agree to additional terms of service:
+                                  #  - 'ach*'
+                                  #  - 'visa_checkout', 'masterpass', 'amex_express_checkout'
+                                  #  - 'sofort', 'giropay', 'eps', 'ideal', 'bancontact', 'multibanco', 'p24'
+                                  #  - 'alipay', 'wechat'
+SOURCE TYPES COUNTRIES ==>        #Countries availability:
                                   #  - US (destination): 'ach*'
                                   #  - Germany|Austria|Netherlands|Belgium|Italy|Spain (customer), US/EU (destination): 'sofort'
                                   #  - Germany (customer), US/EU (destination): 'giropay'
@@ -1193,13 +1214,7 @@ SOURCE.type 'TYPE'              *C#Specific payment method among:
                                   #  - Poland (customer), US/EU (destination): 'p24'
                                   #  - Portugal (customer), EU (destination): 'multibanco'
                                   #  - China (customer): 'alipay'
-                                  #Differences:
-                                  #  - how customer inputs the information (SOURCE.TYPE)
-                                  #  - sync vs async CHARGEs (see CHARGE webhooks above)
-                                  #  - SOURCE.flow
-                                  #  - SOURCE.usage
-                                  #  - how refunds are done (see above)
-                                  #  - how disputes are done (see above)
+SOURCE.type 'TYPE'              *C#Specific payment method (see values above)
 SOURCE.TYPE                       #SOURCE_DETAILS. Each TYPE has its own attributes, but some are shared.
                                   #On update, should use SOURCE.* not SOURCE.TYPE.*
 SOURCE.card*.number            *RC#STR. Credit card number.
@@ -1330,8 +1345,8 @@ SOURCE.usage                     C#Either:
                                   #  - must be 'reusable': for SOURCE.type 'card*', 'ach*'
                                   #  - must be 'single_use': for all others SOURCE.type
                                   #  - can be either: 'alipay', 'sepa_debit'
+                                  #For 'reusable', must attach SOURCE to CUSTOMER before first usage, to be able to re-use it.
 SOURCE.amount                    C#PMONEY if SOURCE.usage 'single_use'
-SOURCE.customer                   #CUSTOMER.id This will not be present when the source has not been attached to a customer.
 SOURCE.owner                   RCU#BILL_DETAILS
                                   #Strongly recommended to decrease DISPUTEs and faciliate payment UX flow.
 
@@ -1345,7 +1360,10 @@ SOURCE.status                     #STR among:
                                   #      - done if:
                                   #         - SOURCE.status takes more than 6 hours to become 'chargeable'
                                   #         - CHARGE is not created within 1 hour after being 'chargeable'
-                                  #  - 'consumed': already charge, with SOURCE.usage 'single_use'
+                                  #  - 'consumed': already charged, either:
+                                  #      - with SOURCE.usage 'single_use'
+                                  #      - with SOURCE.usage 'reusable' if not attached to a CUSTOMER
+                                  #Should always use those EVENTs except for SOURCE.type 'card*'
 SOURCE.flow                      C#How the SOURCE is authenticated among:
                                   #  - 'none':
                                   #      - for SOURCE.type:
@@ -1364,36 +1382,6 @@ SOURCE.flow                      C#How the SOURCE is authenticated among:
                                   #      - for SOURCE.type:
                                   #         - 'ach_credit_transfer'
                                   #         - 'multibanco' (can also use 'redirect instead')
-                                  #Can test by using:
-                                  #  - 'sepa_debit':
-                                  #     - SOURCE.TYPE.iban:
-                                  #        - 'DE89370400440532013000': success CHARGE
-                                  #        - 'DE62370400440532013001': failed CHARGE
-                                  #        - 'DE35370400440532013002': success CHARGE but creates DISPUTE
-                                  #  - 'ach_credit_transfer':
-                                  #     - SOURCE.owner.email 'amount_AMOUNT@example.com'
-                                  #  - 'multibanco':
-                                  #     - SOURCE.owner.email 'ANYTHING+fill_never|now@ANY_DOMAIN' (user never initiate, or does it right away)
-                                  #  - 'sofort':
-                                  #     - SOURCE.owner.name: 'succeeding_charge|failing_charge'
-                                  #  - 'ach_debit':
-                                  #     - SOURCE.type.routing_number: 110000000
-                                  #     - SOURCE.type.account_number:
-																	#        - 000123456789: success
-																	#        - 000111111116: failure upon use
-																	#        - 000111111113: account closed
-																	#        - 000222222227: insufficient funds
-																	#        - 000333333335: debit not authorized
-																	#        - 000444444440: invalid currency
-                                  #     - PAYLOAD.amounts (verify endpoint):
-                                  #        - [32, 45]: success
-                                  #        - [any other]: failure
-                                  #  - 'amex_express_checkout':
-                                  #     - username: test_user
-                                  #     - password: password
-                                  #     - access code: 123456
-                                  #  - 'masterpass': https://developer.mastercard.com/page/masterpass-sandbox-testing-guidelines#new-web-experience
-                                  #  - 'visa checkout': https://developer.visa.com/capabilities/visa_checkout/docs#adding_visa_checkout_to_your_web_page
 W3C PAYMENT REQUEST API ==>       #Users save payment information in browser:
                                   #  - can be synced cross-device
                                   #Supported by all browsers but IE, Android browser.
@@ -1428,7 +1416,10 @@ RECEIVER.amount_charged           #CHARGE.amount
 RECEIVER.amount_returned          #MONEY (negative) left to be paid by CUSTOMER.
                                   #Once 0, SOURCE.status goes from 'chargeable' to 'pending' (ready for re-use)
 RECEIVER.amount_received          #amount_charged + amount_returned
-RECEIVR.refund_attributes_method C#How to refund among 'email', 'manual', 'none'.
+RECEIVR.refund_attributes_method C#How to notify CUSTOMER of refunds among:
+                                  #  - 'email': sent by Stripe
+                                  #  - 'manual': EVENT 'source.refund_attributes_required' then must communicate ourselves
+                                  #  - 'none' (def): no EVENT and we must communicate ourselves
 RECEIVER.refund_attributes_status #Refund status among:
                                   #  - 'missing': none requested
                                   #  - 'requested'
@@ -1461,18 +1452,46 @@ ACCEPTANCE[_ONLINE].user_agent *CU#'USER_AGENT'
 ACCEPTANCE_OFFLN.contact_email *CU#'EMAIL' to contact us if a copy is requested.
 
 SOURCE RENEWAL ==>                #For some countries, Stripe automatically updates SOURCE.* when information is updated (e.g. new card).
-                                  #EVENT 'customer.source.updated' is emitted.
-                                  #EVENT 'customer.source.expiring' is also emitted.
+                                  #EVENTs:
+                                  #  - 'customer.source.updated' and 'payment_method.card_automatically_updated': emitted on change
+                                  #  - 'customer.source.expiring': SOURCE will expire at end of month
+
+SOURCE TESTING ==>                #'sepa_debit':
+                                  #  - SOURCE.TYPE.iban:
+                                  #     - 'DE89370400440532013000': success CHARGE
+                                  #     - 'DE62370400440532013001': failed CHARGE
+                                  #     - 'DE35370400440532013002': success CHARGE but creates DISPUTE
+                                  #'ach_credit_transfer':
+                                  #  - SOURCE.owner.email 'amount_AMOUNT@example.com'
+                                  #'multibanco':
+                                  #  - SOURCE.owner.email 'ANYTHING+fill_never|now@ANY_DOMAIN' (user never initiate, or does it right away)
+                                  #'sofort':
+                                  #  - SOURCE.owner.name: 'succeeding_charge|failing_charge'
+                                  #'ach_debit':
+                                  #  - SOURCE.type.routing_number: 110000000
+                                  #  - SOURCE.type.account_number:
+                                  #     - 000123456789: success
+                                  #     - 000111111116: failure upon use
+                                  #     - 000111111113: account closed
+                                  #     - 000222222227: insufficient funds
+                                  #     - 000333333335: debit not authorized
+                                  #     - 000444444440: invalid currency
+                                  #  - PAYLOAD.amounts (verify endpoint):
+                                  #     - [32, 45]: success
+                                  #     - [any other]: failure
+                                  #'amex_express_checkout':
+                                  #  - username: test_user
+                                  #  - password: password
+                                  #  - access code: 123456
+                                  #'masterpass': https://developer.mastercard.com/page/masterpass-sandbox-testing-guidelines#new-web-experience
+                                  #'visa checkout': https://developer.visa.com/capabilities/visa_checkout/docs#adding_visa_checkout_to_your_web_page
 
 GET /payment_methods/ID
 GET /payment_methods?
  customer=CUSTOMER.id&type=STR
 POST /payment_methods[/ID]        #
-POST /payment_methods/ID/attach
-POST /payment_methods/ID/detach   #Set|unset PAYMENT_METHOD.customer and CUSTOMER.sources. No payload
-STRIPE.paymentMethods.retrieve|
- list|create|update|attach|
-  detach()                        #
+STRIPE.paymentMethods.
+ retrieve|list|create|update()    #
 PAYMENT_METHOD                    #Credit card SOURCE + CUSTOMER
 PAYMENT_METHOD.type             *C#Like SOURCE.*
 PAYMENT_METHOD.card[_present]   CU#Like SOURCE.*
