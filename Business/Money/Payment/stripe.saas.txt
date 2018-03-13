@@ -154,6 +154,7 @@ TEST DATA ==>                     #Can use test|fake SOURCE|TOKEN with following
                                   #  - each of the payment method doc pages
                                   #  - https://stripe.com/docs/connect/testing
                                   #  - https://stripe.com/docs/billing/testing
+                                  #  - https://stripe.com/docs/radar/testing
                                   #SOURCE for CHARGE|PINTENT:
                                   #  - 'card':
                                   #      - use SOURCE.TYPE.number
@@ -222,6 +223,7 @@ TEST DATA ==>                     #Can use test|fake SOURCE|TOKEN with following
                                   #  - must use a physical test card sent by Stripe
                                   #  - use CHARGE.amount
                                   #  - different ones: failure codes
+                                  #CARD|TOKEN for CHARGE.outcome.risk_level
 
 Request-Id: UUID [S]              #
 
@@ -795,33 +797,6 @@ CHARGE.receipt_email            CU#'EMAIL' to send a receipt to.
                                   #There is a dashboard setting to let Stripe fill this automatically.
 CHARGE.receipt_url                #'URI'. Kept up-to-date.
 CHARGE.receipt_number             #STR. Unique number appearing on receipts.
-CHARGE.outcome                    #OUTCOME. Whether payment was accepted.
-OUTCOME.type                      #STR among:
-                                  #  - 'authorized': success
-                                  #  - 'invalid': invalid parameters
-                                  #  - 'manual_review': Radar requests a review first
-                                  #  - 'blocked': Stripe blocked before sending to bank
-                                  #  - 'issuer_declined': bank rejected
-OUTCOME.network_status            #STR among:
-                                  #  - 'approved_by_network': success
-                                  #  - 'not_sent_to_network': Stripe blocked before sending to bank (Radar or invalid parameters)
-                                  #  - 'declined_by_network': bank rejected
-                                  #  - 'reversed_after_approval': bank authorized, but Stripe blocked
-OUTCOME.reason                    #STR among:
-                                  #  - ERROR.decline_code
-                                  #  - 'highest|elevated_risk_level': blocked by Radar
-                                  #  - 'rule': blocked by custom rule
-OUTCOME.rule                      #Radar's rule ID
-OUTCOME.risk_level                #STR among:
-                                  #  - 'normal', 'elevated', 'highest'
-                                  #  - 'not_assessed': non-card payments
-                                  #  - 'unknown'
-OUTCOME.risk_score                #0-100
-                                  #Undefined for non-card payments
-OUTCOME.seller_message            #STR. Explanation. Should not be shown to customers.
-CHARGE.fraud_details             U#FRAUD_DETAILS. Set when blocked by Radar.
-FRAUD_DETAILS.stripe_report       #Always 'fraudulent'.
-FRAUD_DETAILS.user_report        U#Either 'fraudulent' or 'safe'. Meant to override Radar's blocking ("Mark as safe")
 CHARGE.dispute                    #DISPUTE.id
 CHARGE.invoice                    #INVOICE.id
 CHARGE.order                      #ORDER.id
@@ -845,7 +820,8 @@ CHARGE.capture                  RC#BOOL. Delayed payment:
                                   #  - lightweight refund by holding money (cannot be spent by customer) without withdrawing it
                                   #     - e.g. when merchant must do some work before customer pays, and wants to avoid wasting
                                   #       this is customer cancels, while still allowing easy refunds
-                                  #  - delaying payment when it might look fraudulent (see below).
+                                  #  - delaying payment when it might look fraudulent
+                                  #     - e.g. first check if it creates a REVIEW
                                   #Some banks show not-processed yet (but authorized) payments as if it was processed, which
                                   #can confuse some customers.
                                   #Only works with card* SOURCEs
@@ -1415,8 +1391,9 @@ SOURCE.card.CHECK_TYPE_check      #Checks performed by the bank.
                                   #  - however this might indicate fraud, so we should not use this SOURCE
                                   #Can be:
                                   #  - 'unchecked' (pending)
-                                  #  - 'pass' or 'failed'
-                                  #  - 'unavailable' (could not check)
+                                  #  - 'pass' or 'fail'
+                                  #  - 'unavailable' (not supported by bank)
+                                  #  - 'not_provided' (could not check)
                                   #CHECK_TYPE are:
                                   #  - cvc: CVC. Guarantees customer physically possesses the card.
                                   #  - address_line1 and address_postal_code ("AVS check"):
@@ -3118,58 +3095,189 @@ PACKAGE_DIMENSIONS.
 GOOD_PRODUCT.deactivate_on      CU#ARR of CONNECT_ACCOUNT.id that cannot purchase this.
 SERVICE_PRODUCT.unit_label       U#STR. Unit shown in receipts|INVOICE. E.g. 'seat'.
 
+RADAR FROM FRAUD TEAMS ==>        #Adds:
+                                  #  - REVIEW
+                                  #  - Custom Radar rules
+                                  #  - OUTCOME.risk_score
+
+CHARGE.outcome                    #OUTCOME. Whether payment was accepted.
+OUTCOME.type                      #STR among:
+                                  #  - 'authorized': success
+                                  #  - 'invalid': invalid parameters
+                                  #  - 'manual_review': Radar requests a review first
+                                  #  - 'blocked': Stripe blocked before sending to bank
+                                  #  - 'issuer_declined': bank rejected
+OUTCOME.network_status            #STR among:
+                                  #  - 'approved_by_network': success
+                                  #  - 'not_sent_to_network': Stripe blocked before sending to bank (Radar or invalid parameters)
+                                  #  - 'declined_by_network': bank rejected
+                                  #  - 'reversed_after_approval': bank authorized, but Stripe blocked
+OUTCOME.reason                    #STR among:
+                                  #  - ERROR.decline_code
+                                  #  - 'elevated|highest_risk_level': flagged by Radar
+                                  #  - 'rule': blocked by custom Radar rule
+OUTCOME.risk_score                #'0-100', when OUTCOME.reason '*_risk_level'
+                                  #Undefined for non-card payments
+OUTCOME.risk_level                #STR among:
+                                  #  - 'highest' (75-100):
+                                  #     - blocked|rejected
+                                  #     - cannot revert but can allow this payment method for future CHARGEs, using Dashboard
+                                  #  - 'elevated' (50-75):
+                                  #     - allowed but create REVIEW
+                                  #  - 'normal' (0-50)
+                                  #  - 'not_assessed': non-card payments
+                                  #  - 'unknown'
+OUTCOME.seller_message            #STR. Explanation of OUTCOME.risk_level. Should not be shown to customers.
+OUTCOME.rule                      #STR. Custom Radar rule when OUTCOME.reason 'rule'
+CHARGE.fraud_details             U#FRAUD_DETAILS. Set when blocked by Radar.
+FRAUD_DETAILS.stripe_report       #Always 'fraudulent'.
+FRAUD_DETAILS.user_report        U#Either 'fraudulent' or 'safe'. Meant to override Radar's blocking ("Mark as safe")
+
 GET /reviews[/ID]
 POST /reviews/ID/approve          #Set REVIEW.open to false.
 STRIPE.reviews.
  retrieve|list|approve()          #
-review.closed                     #'EVENT_TYPE' when a review is closed. The review's reason field indicates why: approved, disputed, refunded, or refunded_as_fraud.
-review.opened                     #'EVENT_TYPE' when a review is opened.
-REVIEW                            #CHARGE pending because flagged as suspicious by Stripe Radar.
-REVIEW.billing_zip                #string The ZIP or postal code of the card used, if applicable.
+REVIEW                            #CHARGE flagged as suspicious by Radar:
+                                  #  - automatic, using machine learning:
+                                  #     - data comes from client behavior, i.e. must use Stripe clients (e.g. Checkout, Stripe elements, etc.)
+                                  #        - should include Stripe.js on every page, to monitor whole client behavior
+                                  #        - privacy policy should tell users about this data collection (https://stripe.com/docs/radar#requirements)
+                                  #     - should use CUSTOMER.* for repeated payments
+                                  #     - should collect CUSTOMER.name|email|shipping|billing_details
+                                  #  - manual with custom Radar rules
+                                  #Those CHARGEs have not been blocked, i.e. they have been processed successfully.
+                                  #  - however should REFUND if suspicious
+REVIEW.open                       #BOOL
+                                  #EVENT 'review.opened|closed'
+REVIEW.reason                     #If REVIEW.open, same as opened_reason. Otherwise same as closed_reason
+REVIEW.opened_reason              #Either:
+                                  #  - 'rule'
+                                  #  - 'manual'
+REVIEW.closed_reason             ?#Which action was taken among:
+                                  #  - 'approved': nothing
+                                  #  - 'refunded': REFUND
+                                  #  - 'refunded_as_fraud': REFUND + report to Stripe: only meant to improve their machine learning algorithm
+                                  #  - 'disputed': a DISPUTE was created before we take any action
+                                  #Only if REVIEW.open false
+                                  #Must be updated in Dashboard
 REVIEW.charge                     #CHARGE.id
-REVIEW.closed_reason              #string The reason the review was closed, or null if it has not yet been closed. One of approved, refunded, refunded_as_fraud, or disputed.
-REVIEW.ip_address                 #string The IP address where the payment originated.
-REVIEW.ip_address_location        #IP_LOCATION. Information related to the location of the payment.
-                                  #Note that this information is an approximation and attempts to locate the nearest population center - it should not be used to determine a specific address.
-IP_LOCATION.city                  #string The city where the payment originated.
-IP_LOCATION.country               #string Two-letter ISO code representing the country where the payment originated.
-IP_LOCATION.latitude              #decimal The geographic latitude where the payment originated.
-IP_LOCATION.longitude             #decimal The geographic longitude where the payment originated.
-IP_LOCATION.region                #string The state/county/province/region where the payment originated.
-REVIEW.open                       #boolean If true, the review needs action.
-REVIEW.opened_reason              #string The reason the review was opened. One of rule or manual.
 REVIEW.payment_intent             #PINTENT.id
-REVIEW.reason                     #string The reason the review is currently open or closed. One of rule, manual, approved, refunded, refunded_as_fraud, or disputed.
-REVIEW.session                    #REVIEW_SESSION. Information related to the browsing session of the user who initiated the payment.
-REVIEW_SESSION.browser            #string The browser used in this browser session (e.g., Chrome).
-REVIEW_SESSION.device             #string Information about the device used for the browser session (e.g., Samsung SM-G930T).
-REVIEW_SESSION.platform           #string The platform for the browser session (e.g., Macintosh).
-REVIEW_SESSION.version            #string The version for the browser session (e.g., 61.0.3163.100).
+REVIEW.billing_zip               ?#STR. Payment method ZIP code.
+REVIEW.ip_address                 #'IP'
+REVIEW.ip_address_location        #IP_LOCATION
+IP_LOCATION.country               #COUNTRY
+IP_LOCATION.region                #STR. State|province|region
+IP_LOCATION.city                  #STR
+IP_LOCATION.latitude              #FLOAT
+IP_LOCATION.longitude             #FLOAT
+REVIEW.session                    #REVIEW_SESSION. Payment browser session.
+REVIEW_SESSION.browser            #STR (e.g. 'Chrome')
+REVIEW_SESSION.version            #STR. Browser version (e.g. '61.0.3163.100')
+REVIEW_SESSION.platform           #STR (e.g. 'Macintosh')
+REVIEW_SESSION.device             #STR (e.g. 'Samsung SM-G930T')
+
+BUILT-IN RADAR RULES ==>          #Enabled by default:
+                                  #  - Request 3DS if :risk_level: = 'highest'
+                                  #  - Request 3DS if :card_3d_secure_support: = 'required'
+                                  #  - Allow if :is_3d_secure_authenticated: and :has_liability_shift:
+                                  #  - Block if :risk_level: = 'highest'
+                                  #  - Block if :ATTR: in @VAR_blocklist
+                                  #     - @VAR_blocklist are builtin REVIEW_VALUES, initially empty
+                                  #     - VAR: charge_description|card_country|card_bin|card_fingerprint|email|email_domain|client_ip_country|client_ip_address
+                                  #     - when CHARGE.fraud_details.user_report 'fraudulent' or REFUND with reason 'fraudulent':
+                                  #        - automatically adds to card_fingerprint_blacklist|email
+                                  #        - including CUSTOMER's other CARDs
+                                  #  - Block if not :cvc_check:
+                                  #Disabled by default:
+                                  #  - Request 3DS if :card_3d_secure_support: = 'optional|recommended'
+                                  #  - Block if not :address_zip_check:
+                                  #  - Review if :risk_level: = 'elevated'
+
+CUSTOM RADAR RULES ==>            #Custom rules that can automatically reject, create REVIEW or require 3D secure.
+                                  #Must be set in Dashboard.
+                                  #For Connect, must be set for each ACCOUNT.
+ACTION if CONDITIONS              #Custom rule syntax
+ACTION                            #In priority order:
+																	#  - Request 3DS: require 3D secure
+																	#  - Allow: allow
+																	#  - Block: reject, do not create REVIEW
+																	#  - Review: allow, create REVIEW
+CONDITIONS                        #[NOT] CONDITION [AND|OR CONDITON2...]
+                                  #Operators are case-insensitive.
+                                  #Can use parentheses.
+CONDITION                         #Either:
+                                  #  - ATTR [OP VALUE], where ATTR can be:
+                                  #      :BOOL_ATTR: -> no OP VALUE
+                                  #      :STR_ATTR: -> = != 'STR' or IN ('STR',...) or IN @REVIEW_VALUES
+                                  #      :NUM_ATTR: -> = != < <= > >= NUM
+                                  #      ::[customer|destination:]ATTR:: -> like STR|NUM_ATTR but using CHARGE|PINTENT|CUSTOMER|ACCOUNT.metadata.ATTR
+                                  #  - is_missing(ATTR):
+                                  #     - by default rules are false if ATTR value missing
+ATTR                              #All STR_ATTR are case-insensitive except card_fingerprint and *_check.
+                                  #Available ones:
+																	#  - risk_score NUM: OUTCOME.risk_score
+																	#  - risk_level STR: OUTCOME.risk_level
+																	#  - *_check STR: CARD.*_check
+																	#  - amount_in_CURRENCY PMONEY: CHARGE.amount
+																	#  - is_recurring BOOL: from SUBSCRIPTION
+																	#  - charge_description STR: CHARGE.descrition
+																	#  - STATUS_per_FILTER_number_FREQUENCY NUM: number of CHARGEs on current ACCOUNT for past hour|day for this CARD|CUSTOMER|IP
+                                  #    that were successful, declined (by bank) or blocked (by Radar)
+																	#     - number of CHARGEs on current ACCOUNT
+																	#     - STATUS: 'charge_attempts' (started), 'auths' (successful), 'declines' (declined by bank), 'blocks' (by Radar)
+																	#     - FILTER 'card|customer|ip_address': for this CARD|CUSTOMER|IP
+																	#     - FREQUENCY: for past 'hour|day'
+																	#  - is_checkout	BOOL: used Checkout
+																	#  - card_3d_secure_support STR: CARD 3D support among 'required', 'recommended', 'optional', 'not_supported'
+																	#  - is_3d_secure BOOL: payment method can use 3D secure
+																	#  - is_3d_secure_authenticated BOOL: payment method completed 3D secure (including if the bank provided an exemption)
+																	#  - has_liability_shift	BOOL: whether fraud liability is not against us (e.g. after using 3D secure)
+																	#  - card_country COUNTRY: SOURCE.country
+																	#  - card_funding STR: CARD.funding
+																	#  - card_bin STR: Bank Identification Number (BIN), i.e. CARD.number first six digits
+																	#  - card_brand STR: CARD.brand
+																	#  - card_fingerprint STR: CARD.fingerprint
+																	#  - ip_address STR: REVIEW.ip_address
+																	#  - ip_country COUNTRY: REVIEW.ip_address's country
+																	#  - is_my_login_ip BOOL: is yourself
+																	#  - is_anonymous_ip	BOOL: no IP
+																	#  - destination	STR: TRANSFER_DATA.destination
+																	#  - email STR: CHARGE.receipt_email, CUSTOMER.email or inside CHARGE|CUSTOMER.description
+																	#  - email_domain STR: same but domain only
+																	#  - is_disposable_email	BOOL
+																	#  - billing|shipping_address STR: CHARGE.billing_details|shipping
+																	#  - billing|shipping_address_* STR: CHARGE.billing_details|shipping.*
 
 GET /radar/value_lists[/ID]
 POST /radar/value_lists[/ID]
 DELETE /radar/value_lists/ID      #
 STRIPE.radar.valueLists.
  retrieve|list|create|update|del()#
-REVIEW_VALUES                     #Custom Radar rules
-REVIEW_VALUES.alias            *CU#string The name of the value list for use in rules.
+REVIEW_VALUES                     #ENUM constant that can be used in custom Radar rules (see above)
+REVIEW_VALUES.name             *CU#STR. For display.
+REVIEW_VALUES.alias            *CU#STR. For rules writing.
 ?alias=STR                        #
-REVIEW_VALUES.created_by          #string The name or email address of the user who created this value list.
-REVIEW_VALUES.item_type          C#string The type of items in the value list. One of card_fingerprint, card_bin, email, ip_address, country, string, or case_sensitive_string.
+REVIEW_VALUES.item_type          C#One of:
+                                  #  - 'card_bin': credit card Bank Identification Number
+                                  #  - 'card_fingerprint'
+                                  #  - 'country'
+                                  #  - 'email'
+                                  #  - 'ip_address'
+                                  #  - '[case_sensitive_]string': others
 REVIEW_VALUES.list_items          #REVIEW_VALUE_LIST
 ?contains=STR                     #Filters by REVIEW_VALUE.value
-REVIEW_VALUES.name             *CU#string The name of the value list.
+REVIEW_VALUES.created_by          #STR. User name.
 
 GET /radar/value_list_items[/ID]?
  value_list=ID
 POST /radar/value_list_items
-DELETE /radar/value_list_items/ID #REVIEW_VALUES single item
+DELETE /radar/value_list_items/ID #Each REVIEW_VALUES item
 STRIPE.radar.valueListItems.
  retrieve|list|create|del()       #
-REVIEW_VALUE.created_by           #string The name or email address of the user who added this item to the value list.
-REVIEW_VALUE.value              *C#string The value of the item.
-?value=STR                        #
 REVIEW_VALUE.value_list         *C#REVIEW_VALUES.id
+REVIEW_VALUE.value              *C#STR
+?value=STR                        #
+REVIEW_VALUE.created_by           #STR. User name
 
 GET /issuing/cards[/ID]
 POST /issuing/cards[/ID]          #
@@ -3761,7 +3869,7 @@ STRIPE.setTelemetryEnabled(true)  #Send X-Stripe-Client-Telemetry: JSON [C] of O
 
 STRIPE.JS ==>                     #Client-side library.
                                   #Should be loaded from Stripe CDN, not bundled, to remain PCI-compliant.
-                                  #Should be on every page, as Stripe tracks user behavior for Radar fraud detection.
+                                  #Should be on every page, for Radar (see above).
 
 STRIPE ELEMENTS ==>               #Part of Stripe.js
                                   #UI inputs to:
