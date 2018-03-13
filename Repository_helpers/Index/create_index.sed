@@ -30,13 +30,6 @@ s/\.txt\]/]/
 s/___/__/
 s/\([[]\)_/\1/
 
-# Add subheaders
-s/^__\(.*\)__/## \1 ##/
-s/^- __\(.*\)__/### \1 ###/
-
-# Decrease indent again
-s/^  //
-
 # Put technology between parenthesis
 s/\.\([^].]\+\)\]/ (\u\1)]/
 # Capitalize each technology
@@ -72,4 +65,9 @@ s/\(__.*\)_\(.*__\)/\1 \2/
 s/\(__.*\)_\(.*__\)/\1 \2/
 s/\(__.*\)_\(.*__\)/\1 \2/
 
+# Add subheaders
+s/^__\(.*\)__/## \1 ##/
+s/^- __\(.*\)__/### \1 ###/
 
+# Decrease indent again
+s/^  //
