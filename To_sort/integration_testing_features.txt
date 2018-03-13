@@ -1,38 +1,161 @@
-Helpers:
-  - make TAP reporter work with error.nested:
-     - at the moment it does not work with error.nested (it creates extra tests)
+Upgrade:
+  - cross-fetch 2.2.2
+  - yargs 12.0.1:
+     - can probably remove line that does omitBy(optsC, value => value === undefined)
+  - prettier 1.13.7
+  - eslint 5.0.1
+  - eslint-comments 3.0.1
+  - eslint-plugin-imports 2.13.0
+
+Variables:
+  - rename from "helpers" to "variables"
+  - new syntax to use them:
+     - $$VARR: returns config.variables.VARR
+     - { $$VARR: ARG } returns config.variables.VARR(ARG, context, advancedContext)
+        - if ARG is ARR, destructured to VARR(...ARG, context, advancedContext)
+        - use same logic as current one when it comes to knowing whether it is should be evaluated or not (only one property, etc.)
+  - escaping: like current solution (adding extra $)
+  - enforce config.variables.VARR where VARR matches /^\$\$[^\$]/
+  - no more:
+     - need for "options" anymore
+     - config.variables.custom
+     - use of MODULE. Instead users can use JSON references if needs to.
+  - recursion:
+     - evaluation recursively called on $$VARR value
+        - reason: allowing aliases
+     - not on { $$VAR: ARG } return value
+        - reasons:
+           - most likely not desired intention
+           - would require complex escaping if not desired
+           - recursion can be achieved by manually calling context.variable()
+     - not automatically on variables return value (remove this feature)
+     - not on plugin return values
+  - if variable value is undefined or if part of VARR does not exist:
+     - omit parent key
+     - do not throw any error
   - re-check whole thing
-     - including error handling
      - and organize in several files
-  - task return value should use helper's substituted values
-     - even though they are part of originalTask
-  - using helpers in plugins:
-     - at the moment, helpers are directly required
-        - e.g. `spec` directly requires $env (for HOST|PORT) and $random
-     - instead, for every `run` handler, add context.helper({ $FUNC: ARG }):
-        - is evaluateNode() with `info` bound
-           - `task` is `originalTask` before helpers evaluation
-     - should be used by `helpers` plugin `run` handler itself
-        - i.e. behave same in `helpers` plugin and in other plugins
-           - same arguments:
-              - including `context.task`
-           - recursive evaluation
-     - think about possible errors thrown from context.helper()
-     - using context.helper() in helpers themselves???
-        - recursion problems???
+  - task return value should use config.variables' substituted values
+     - if error during `variables` plugin, should use non-substituted values instead
+     - how: replace config.originalTasks by:
+        - assign "task[originalTaskSymbol] = task" during task loading/normalization
+        - `variables` plugin should return { ...task, [originalTaskSymbol]: task }, i.e. override it
+        - getTaskReturn() should use task[originalTaskSymbol]
+  - error handler that adds error.value|property:
+     - should remove error.expected if it exists
+     - error.value should be ARG if function { $$VARR: ARG } and config.variables.VARR value (before recursion) if non-function $$VARR
+     - done by 1)
+        - do it by passing context.variable(VAL, { addErrorProps: true })
+           - checked by error handler
+           - not passed down to nested context.variable()
+     - not done by 2) 3):
+        - reason: caller should not be aware that thrown exception came from a context.variable() call inside that plugin return value
+  - context.variable(VAL):
+     - VAL is crawled and evaluated like in tasks
+        - including recursivity
+        - i.e. what `variables` plugin currently does
+     - i.e. can be (deeply) "$$VARR" or { $$VARR: ARG } or non-variable
+        - if VAL has no variables, returned as is
+     - set to context passed to all `run` handlers
+     - used by:
+         1) `variables` plugin to parse task
+         2) variables functions { $$VARR: ARG } within `variables` plugin
+         3) other plugins
+        - use context.variable() instead of directly requiring variables
+           - e.g. `call` directly requires $env (for HOST|PORT) and `spec` uses $random
+        - should not allow infinite recursion of context.variable():
+           - within a given task
+           - for a given $FUNC + ARG
+           - how:
+              - context.variable({ stack, context, advancedContext }, VAL)
+              - top-level one is bound with stack [], context|advancedContext from `run` handlers
+                 - but context is { ...context, helpers: nestedVariables }
+              - nested one is bound with same context|advancedContext but with added stack
+              - runTask() should naturally reset the stack since it is bound to top-level context
   - remove `deps` plugin
-  - core helpers:
-     - should have less priority during loading to both config.helpers.custom.* and node modules test-openapi-helper-FUNC
-     - $random(jsonSchema)
+  - core variables:
+     - remove $var
+     - $env: $$env.VARR instead
+        - must use getter functions to still allow case insensitivity
+     - $$task: keep as is
+     - $$random(jsonSchema)
         - no options
         - re-use logic from `random` plugin, and remove it
            - must adjust `spec` plugin accordingly
-           - spec plugin must access random utility code directly
-     - $faker({ METHOD_VARR: VAL })
+     - $$faker({ METHOD_VARR: VAL })
         - no options
         - call faker.METHOD.VARR(VAL)
+  - is actually a template system:
+     - use it in autoserver???
+     - check template libraries instead???
+     - abstract in its own module
 
-Use JSON schema when loading YAML
+Loading:
+  - MODULE:
+     - require() either:
+        - exports OBJ directly
+           - will only work when MODULE is used as value not key, i.e. for config.plugins not config.report
+        - "test-openapi-TYPE-MODULE": node module library
+        - "src/TYPE/MODULE": core library
+     - in that priority order:
+        - i.e. can override core
+     - for TYPE: plugin, report
+        - should use shared code
+  - new syntax:
+     - config.plugins MODULE_ARR
+     - config.report.MODULE OPTS_OBJ
+        - i.e. reporter options are now reporter-specific
+           - no more global config.report.level|output|options
+        - OPTS_OBJ: level (def to REPORTER.level), output, any reporter-specific options
+        - if config.report undefined or empty object, use pretty reporter
+
+Task nesting:
+  - task.nested ARR instead of task.error.nested OBJ
+     - i.e. nested tasks successful or not
+     - might be challenging to do without too much boilerplate considering:
+           - runTask() might be run in parallel (as they are in $task helpers)
+           - runTask() might throw instead of returning
+     - maybe pushing to a shared array could solve those issues
+     - only for runTask() with getError !== undefined (i.e. for $task not for `repeat` plugin)
+  - reporting:
+     - iterates over siblings (children reported before next sibling)
+     - apply task.nested.filter(({ error }) => error !== undefined) recursively, unless level "debug"
+        - task.nested omitted if results in empty array
+     - pretty reporter:
+        - nested task header shows "PARENT_TASK.key > NESTED_TASK.key > ..." instead of "Nested task: ..."
+        - use color red|green|gray using same logic as parent task (i.e. based on nested task's resultType)
+  - error.nested should be last in properties order in return value and in "data" reporter
+  - make TAP reporter work with error.nested:
+     - at the moment it does not work with error.nested (it creates extra tests)
+     - instead skip nested tasks and print top-level task with "nested" as an error property:
+        - JSON stringified (on single line)
+        - only print first element OBJ of each error.nested ARR with OBJ.error !== undefined
+           - recursively
+
+Spec:
+  - task.spec.definition URL|PATH
+     - config.spec.definition is just its default value
+  - task.spec.operation OPERATION_ID
+     - defaults to key prefix "OPERATION_ID:"
+        - must be followed by colon
+  - if any is undefined, do nothing
+  - memoize instead of doing things during start handlers
+
+Invalid:
+  - task.call.*: "invalid"
+  - during `spec` plugin, before $$random generation, wrap param schema with { not: ... } if going to merge into param with value "invalid"
+  - previous code is still there, unused: re-use or remove it
+
+call.path:
+  - use Express-style path parameters markers instead of OpenAPI-style
+     - richer syntax
+     - allows optional path parameters
+  - re-use same library I use in autoserver
+  - `spec` plugin should convert from OpenAPI syntax to Express-style syntax
+
+Other programming languages:
+  - should include WebAssembly
+  - Node.js script runner core plugin should use JSON references, i.e. allowing several programming languages
 
 JSON references:
   - use same code as autoserver:
@@ -50,7 +173,6 @@ Function parameters:
      - add an ajv format handler
   - passed by user using JSON references
   - use it for validate.custom FUNC(task.call)->BOOL
-
 
 $data:
   - only for JSON schemas
@@ -79,34 +201,6 @@ config.maxParallel:
   - buffered in the beginning of runTask, i.e.:
      - depReqs count as one task
      - repeated tasks each count as one task
-
-CPU parallelism:
-  - run tasks in several worker processes
-  - only for 'run' handlers
-     - 'start', 'complete' and 'end' are run in master process
-        - we need 'complete' handlers in same process because they are stateful,
-          e.g. tasks ordering, TAP index incrementing, progress bar, etc.
-  - check async to_learn for inspiration
-  - should respect maxParallel
-  - should allow sending to remote worker, i.e. allowing fleet of remote worker
-     - should allow sending to FaaS
-  - plugin.start|end() must be run once on each child process. Reason:
-     - return value of plugin.start() might not be JSON serializable
-     - if plugin.start() open a socket, we want it to be on the remote worker if the child process is a remote worker
-  - handle when child process crashes or is not reachable anymore???
-  - config, tasks, thrown error properties and new task props should be JSON serializable (for IPC)
-      - also it ensures reporting matches return values
-  - probably cannot pass simply the task:
-      - some plugins require network connection from start handler, runTask() or list of plugins, none of which are JSON serializable
-      - i.e. probably need to fork() whole project or part of it
-          - including start|end handlers and pligins load
-          - report plugin could be done only on master
-  - child processes should return each task one by one (i.e. stream) not all at once when done
-  - should tasks input be passed from master to children one by one or all at once???
-      - one by one: can send to workers with the smallest load
-           - send some extra tasks as buffer to avoid idle workers waiting for new task???
-      - all at once: fastest to communicate tasks
-  - load config and tasks files in master???
 
 Custom properties:
   - config|tasks|task.x-*
