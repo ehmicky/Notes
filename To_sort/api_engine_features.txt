@@ -1,37 +1,33 @@
 Patch operators:
-  - args.data parsing:
-     - validate OP_VAL:
-        - OP_OBJ.attribute|argument STR_ARR "boolean|integer|number|string|TYPE[]":
-           - required
-           - OP_OBJ.attribute|argument min length 1
-           - `argument` is for arg, `attribute` is for attribute
-           - behaves similarly to OP_OBJ.check otherwise
-           - If OP_OBJ.attribute TYPE but attribute is TYPE[], still valid
-             If OP_OBJ.attribute TYPE[] but attribute is TYPE, not valid
-     - attribute maxsize can be bypassed by using patch operators???
+  - remove mixed array limitation
+  - attribute maxsize can be bypassed by using patch operators???
   - check unknownAttrs middleware
   - check stableIds middleware
   - during patchData middleware:
+     - maybe move some logic of patchData middleware to /src/patch/
      - if value to set has { _OP: OP_VAL }, treat as complex patch:
         - if ATTR_VAL before patch is == null, skip modification for that attribute, i.e. keep as is
         - applies OP_OBJ.value FUNC(ATTR_VAL, OP_VAL)->ATTR_VAL:
            - required
            - error thrown are 5**
         - when on an array, and the operation is not specific to arrays, apply operation on each element of array.
-     - maybe move some logic of patchData middleware to /src/patch/
   - "$model.ATTR":
      - args.data parsing:
         - must validate it is a known attribute
         - should perform OP_OBJ.argument by following "$model.ATTR"
+           - filter out "null|null[]" argument types
+              - i.e. only check against non-null types
+              - if after filtering, OP_OBJ.argument is empty array, evaluate to true
         - can use VARR for deep models:
            - including .NUM for arrays
      - during patchData middleware:
         - replace any value that is "$model.ATTR"
-        - OP_OBJ.check() should be performed after replacement
         - if path does not exist at runtime, replaced value is undefined, with no errors
-        - if replaced value is == null, whole attribute update is skipped
-           - e.g. data: { ATTR: { _push: ["$model.ATTR2", "$model.ATTR3", 10] } } is applied only on models where both
-             ATTR, ATTR2 and ATTR3 are != null
+        - after replacement:
+           - throw error if:
+              - replace value == null && !OP_OBJ.argument.includes('null')
+              - replace value is ARR that contains null && !OP_OBJ.argument.includes('null[]')
+           - OP_OBJ.check() should be performed
   - operators:
      - on any:
         - _set VAL: =
@@ -41,7 +37,7 @@ Patch operators:
         - _mul NUM2: *
         - _div NUM2: /
      - on BOOL:
-        - _invert true: "not"
+        - _invert null: "not"
      - on STR:
         - _slicestr [INDEX, [LENGTH]]: INDEX and LENGTH can be negative for from end.
         - _insertstr [INDEX, STR]: INDEX can be negative for from end.
@@ -49,20 +45,30 @@ Patch operators:
      - on ARR:
         - _push [VAL...]
         - _unshift [VAL...]
-        - _pop true
-        - _shift true
+        - _pop null
+        - _shift null
         - _remove [VAL...]
         - _sort "asc|desc"
         - _slice [INDEX, [LENGTH]]: INDEX and LENGTH can be negative for from end.
         - _insert [INDEX, VAL...]: INDEX can be negative for from end.
+     - for each operator:
+        - think if should allow null, and what behavior to give them
+        - try to think of everything that could go wrong, and put that in check()
+           - some things do not need to be checked, e.g. can set to a value with wrong type, since dataValidation
+             middleware will catch it
   - schema.operators.NAME OP_OBJ:
      - custom patch operators
      - NAME must be __[a-z0-9_]+
      - OP_OBJ.value must have FUNC.length <= 2 (to make sure people know ARG is used as variadic).
      - schema validation:
-        - OP_OBJ.attribute|argument required, and min length 1
+        - OP_OBJ.attribute|argument required, min length 1, uniqItems, valid item:
+           - OP_OBJ.attribute STR_ARR "boolean|integer|number|string|TYPE[]":
+           - OP_OBJ.argument STR_ARR "boolean|integer|number|string|object|null|TYPE[]":
   - user documentation:
      - OP_OBJ.value should not throw
+     - only non-empty attributes are patched
+     - OP_VAL can only be empty if OP_OBJ.argument includes null
+     - mixed arrays are allowed, e.g. if taking [NUM, STR] argument. Explains how that works
 
 Pagination:
   - top-level action:
@@ -428,6 +434,7 @@ Schema strictness/polymorphism:
         - validation: see related JSON schema keywords: prohibited, additionalProperties, patternProperties, patternRequired,
           propertyNames, additionalItems
         - GraphQL schema
+        - patch operators type validation, i.e. OBJ.attribute|argument 'TYPE'_ARR
      - should it be allowed to specify an unknown ATTR in args.order, args.aggregate, etc.?
   - type object|object[]:
      - probably not a good idea because:
