@@ -1,55 +1,3 @@
-Summary (by priority):
-  API models: rethink nesting, `id` enhancing
-  Actions: rethink nesting, minor improvements
-  Aggregating
-  Data correctness: atomicity/rollbacks, isolated queries, durability, no orphans
-  Authorization layer
-  Compatibility layer: deprecation reporting, breaking changes, [auto]versioning, migrations, redirects, feature flags
-  Transformation: rethink
-  JSL: parse into database query object, arg.data JSL, restrict IDL complexity, minor improvements
-
-  IDL validation: small checks here and there
-  Schema strictness, polymorphism: schemaless properties, mixed arrays, union types, subtyping
-  API base types: enum, others
-  Async actions
-  RPC-like actions
-  Versioning/changes: model versioning, listening for changes, undelete
-  Database layer: ORM, database transformation layer, restrict direct manipulation
-
-  Code quality: coding style, code complexity, dead code, duplicated code, dependencies deprecation/security automatic check
-  Streaming: input|output, pagination
-  Optimization: compression, query batching, compile-time step, general optimization
-  Testing: CI, CD, unit, integration, load testing, performance
-  Logging/monitoring: logging, monitoring, analytics
-  DevOps: PaaS, multiple envs, Docker
-  Other parts of the system: authentication, routing/scaling/load balancing, database
-
-  Documentation: API auto-documentation, API engine documentation, changelog, jsdoc, better GraphQL schema printing
-  Caching: simple, featureful
-  Security: TLS, COS, rate limiting, XSS, CSRF, general
-  Protocol: HTTP/2, proxies
-
-  API validation: better reporting, deepRequired|deepProperties
-  Custom code: plugin-oriented architecture
-  Fake server: fake data, mock server
-  Operations: REST, JSON-RPC, others
-  Concurrency: realtime, conflicts
-  Output format: other formats, content negotiation, prettify
-  Meta-information: JSON schema retrieval, semantic web/HATEOAS/discovery
-  Debugging: HTML interactive output, small improvements
-  Main command input: better conf loading
-  Client: isomorphism, frontend frameworks integrations, client auto-generation
-  Administration: CLI, content management
-  Misc: small improvements
-
-  IDL format: more formats, conversion from Swagger|RAML|API blueprint
-  Offline-first
-  i18n
-  Frameworks: older Node.js
-  Other programming languages
-  IDL edition: web app, BaaS API
-  Commercial-only: user management, commercial website, ads
-
 IDL format:
   - IDL file format:
      - allow IDL to be in other formats according to file extension (def: 'yaml'):
@@ -81,6 +29,27 @@ IDL validation:
      - run ESLint to at least look for undefined vars, maybe do more
 
 API validation:
+  - do not try to make IDL a JSON schema anymore. Put validation stuff under model|atribute.validate
+  - validateInput vs validateData:
+     - attr.validate is shortcut to specify both
+     - common traits:
+          - validates arg.data according to IDL validation keywords
+          - both on input and output
+     - differences:
+          - when it is performed:
+               - validateInput: before arg.data is modified, e.g. by transforms or aliases, or generated,
+                 e.g. by default values or transforms. I.e. probably at beginning of command layer.
+               - validateData: at beginning of database layer
+          - goal:
+               - validateInput: reporting bad input|output to client
+               - validateData: ensuring data consistency/quality
+          - status:
+               - validateInput: on input, client error, e.g. 4**. On output, server error, e.g. 5**
+               - validateData: server error, e.g. 5** (e.g. wrong transform)
+     - when validation is same (on input or output) between validateInput and validateData,
+       i.e. same model|attribute and same validation keywords, per request (to avoid memory leaks)
+     - add `validateData`, `validateInput` and `validate` to the list of properties that are incompatible with
+       using `compute`, during IDL validation
   - error reasons:
      - rationalize|reduce error reasons, not in terms of guessing where error was triggered, but in terms of how client should
        respond.
@@ -172,6 +141,12 @@ API models:
   - `id` attribute:
      - allow configuring name and type of `id` attribute, including with findOne(), etc. actions that use that argument.
      - allow alternate ids, e.g. a query can either use machine-friendly `id` attribute, or human-friendly `name` attribute
+
+Modularity:
+  - reusing server as part of a bigger project:
+     - e.g. multiple instances at once
+     - problem: currently server assumes it owns process, e.g. calls process.exit() and process.on() and Error.stackTraceLimit.
+       There should be a serverOpts.ownsProcess BOOL to disable those parts.
 
 Actions:
   - HEAD is different from noOutput settings:
@@ -327,6 +302,15 @@ Transformation:
      - should be done during IDL validation
      - allow turning off that check by using attribute.idempotent false
 
+null|undefined handling:
+  - both should behave the same.
+    Only different is informative, i.e. undefined means attribute has never been set, null is has been set but deleted.
+    I.e. cannot go back from non-undefined to undefined, and must keep as undefined if not set.
+  - null|undefined allowed or not according to model.required
+  - Uncomment code in transforms/compute related to: when transform/compute sets to undefined, set to null instead
+  - JSON schema type validation need to always allow null, unless required
+  - add middleware that transform undefined (i.e. there is a key but no value) to null in args.data
+
 arg.filter:
   - should transform JSL into MongoDB query objects:
      - instead of compiling JSL (as is currently done)
@@ -357,7 +341,15 @@ Async actions:
   - see REST doc for more info
   - allow JSL to be async (i.e. to return PROMISE), by using await
 
-RPC-like actions
+Custom actions:
+  - must be declared in IDL file
+  - are global, not model-wise? if model-wise, nesting?
+  - middleware at beginning of action layer
+  - must contain:
+      - handler function:
+          - can call core actions with normal args|sysArgs
+          - get input from operation layer
+     - information to build its GraphQL schema, and do input|output validation
 
 Versioning/changes:
   - can probably link together versioning, changes and undelete features
@@ -504,6 +496,9 @@ Debugging:
   - HTML interactive output format when requesting from a browser
 
 Documentation:
+  - dev documentation is all over the place right now, sometimes duplicated.
+    Create a clean user documentation, directly in README.md with clear parts:
+    starting startup, IDL file, making queries, arguments, settings, etc.
   - description:
      - build it using not only schema.description, but also schema.examples, schema.title and schema.* related to validation.
      - should be done during IDL compile-time transformation
@@ -538,6 +533,18 @@ Code quality:
   - dead code
   - duplicated code
   - dependencies deprecation/security automatic check
+  - refactoring:
+     - clean src/idl/
+     - clean graphql_schema/types.js
+     - should try make response and input.args immutable.
+       This would improve functional style, and allow to remove many cloneDeep(),
+       including maybe the ones done during JSL runs.
+     - simplifying performance logging, because `perf` calls pollute everywhere, and it's easy to forget them,
+       for me or someone else:
+        - problem is wrapping functions would double/complicate the stack trace
+        - might add an option to chain() to wrap each middleware:
+           - might require adding this.caller to each middleware context, so they can stop previous middleware perf
+           - check if it's worth using a Proxy for that
 
 Callbacks/events (maybe):
   - on new|finished layers
@@ -590,6 +597,26 @@ GraphQL relay:
   - must add clientMutationId, see https://facebook.github.io/relay/graphql/mutations.htm
   - must follow https://facebook.github.io/relay/graphql/objectidentification.htm
 
+Compile-time step:
+  - make src/idl/ produce optimized version (JSON file)
+  - problems:
+        - serialization of GraphQL schema
+        - serialization of functions:
+             - cannot rely on FUNC.toString() because might be bound function
+             - must also be able to parse functions called by each function
+        - possible solutions:
+             - serialized IDL would be accompanied with directory of libraries
+             - directory must be built by simple file copy, without looking at content.
+                  - but how to know what to include in directory? If we leave users do it, they might put too much, i.e. too big.
+                  - must also figure out how to translate path
+                  - can do (inside utilities/ref_parser's requireFile()) if (typeof file === 'function') { file.__url = require.resolve(url); } to get functions absolute file paths
+    - make IDL serializable, then re-parsable (using stringifyJSON and parseJSON utilities). Serialize to a directory.
+    - validate serialization does not lose info, by performing Lodash.isEqual(oldIdl, newIdl)
+    - make server use optimized version on startup, instead of rebuilding it.
+    - make nodemon part of Gulp
+    - setup Gulp task that recreate optimized version on src/idl/ or examples/ changes, then that restart the server, and make nodemon ignore src/idl/ and examples/ but listens to optimized version change
+    - adjust performance logging since this means some directories will move
+
 Optimization:
   - remove ajv anywhere it is used, except compile-time, and dataValidation middleware
   - protocol-level compression, including HTTP compression
@@ -599,8 +626,6 @@ Optimization:
      - do this operation-independant.
      - do this action-wise
      - see facebook data-loader for inspiration
-  - make transformation/validation compile-time, using Gulp task
-    Check what can be moved compile-time, e.g. GraphQL generation
   - look for memory leaks
      - check for memory leaks in memoize(), i.e. new requests should not increase memoize() memory retention
   - do performance profiling to see which parts are slow
