@@ -19,7 +19,6 @@ md-file-tree | sed '
   s/^  //;
   s/^- /\n/;
   s/^  //;
-  s/___\(.\)/__\u\1/;
 ' > "$dir/index.md"
 
 # Updates README.md
