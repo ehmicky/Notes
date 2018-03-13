@@ -607,7 +607,7 @@ AGREEMENT: /agreements/AGREEMENT
      | isConsumer()
      | hasInfoMatching(COMPANY|ACCOUNT): same company_*
   - owner POSITION
-  | isOwner([POSITION[, BOOL]]): same POSITION or (if true) same AGREEMENT_COMPANY
+  | isOwner([POSITION[, BOOL[, BOOL2]]]): same POSITION or (if BOOL[2] true) same AGREEMENT_COMPANY. Must be a PARTICIPANT unless BOOL2 true
   - requester POSITION
   | isRequester(POSITION)
   - participants PARTICIPANT_ARR /agreements/AGREEMENT/participants/
@@ -716,7 +716,7 @@ AGREEMENT: /agreements/AGREEMENT
      + permissions:
         (if:
           1) is PARTICIPANT and not AGREEMENT type declined|signed|signinprogress
-          2) not AGREEMENT type template (except allow-disable)
+          2) not AGREEMENT type template (except allow-disable and allow-set-read-only)
           3) if AGREEMENT type pending|expired, AGREEMENT_COMPANY enabled and with a company_orgnr
           4) not isManagerLocked() (unless PARTICIPANT.is_manager))
           5) is AGREEMENT.owner
@@ -768,16 +768,8 @@ AGREEMENT: /agreements/AGREEMENT
      - getTotalPrice1|2()->NUM: sum all price_1|2 x count
      (form box)
      + KEY is "data", VALUE DATA_CONTENT_COLL (with subtype "form_input")
-        - referenced by MATRIX CELL.item DATA.value:
-           - value STR
-           - description STR
-           - label STR
-           - placeholder STR
-           - required 0|1
-           - colspan NUM: when changed|set, changes CELL.colspan too
-           - size 0-5
-           - type "field|text": big|small box
         - instantiated from FORM_BOX.config.order
+        - referenced by CELL.item
      - config:
         - colCount NUM (def: 2)
         - order DATA_ID|null_ARR_ARR (def: each DATA.id)
@@ -854,7 +846,7 @@ AGREEMENT: /agreements/AGREEMENT
         - _id: removed from toJSON()
         - _data DATA
         (form_input)
-        - type "field|text" or "" (same as "field")
+        - type "field|text" or "" (same as "field"): big|small box
         | isField|isText()
         - size 0-5
         | getSize()->OBJ: className "input-20-100", label: "20-100%"
@@ -863,6 +855,7 @@ AGREEMENT: /agreements/AGREEMENT
         - required 0|1: only if !AGREEMENT.isOwner()
         - placeholder STR [V]
         - description STR [V]
+         - colspan NUM: when changed|set, changes CELL.colspan too
         (product)
         - count NUM
         - count_type single|multiple (def: multiple) [V]: multiple let count NUM different from 0|1 (checkbox vs entry box)
@@ -1594,9 +1587,12 @@ Boxes:
   - duration:
      - MDL_EVENT:
         - "boxes:duration:disable:text"()->"HTML": text added when confirmation modal to remove from layout mode
-     - according to AGREEMENT:
-        - type (5 duration types)
-        - start_date|end_date|duration|notice_period
+     - DurationView:
+        - MODEL AGREEMENT:
+           - type|start_date|end_date|initial_duration|duration|notice_period
+           - BoxMenu: manipulate those
+           - template depends on type
+           - use editable popoverNumber|Date on UI
   - text:
      - TextView:
         - MODEL VALUE[0] (i.e. AGREEMENT_DATA_COLL[0])
@@ -1612,29 +1608,24 @@ Boxes:
               - MODEL MESSAGE:
                  - agreement AGREEMENT, position POSITION, justPosted true
                  - body STR: linked to UI
-              - "Post comment": validateAndSave() MESSAGE, create new one
-           - visibleList|hiddenList: CommentView MCOLLVIEW:
-              - MESSAGE_COLL AGREEMENT.messages.visible|hidden()
+              - "Post comment": validateAndSave() MESSAGE, adds to AGREEMENT.messages, create new one
+           - visibleList|hiddenList: MCOLLVIEW of CommentView:
+              - MODEL MESSAGE from AGREEMENT.messages.visible|hidden()
               - renders according to PARTICIPANT.fullname, MESSAGE.created|subject|body
               - button to toggle truncate
               - CSS according to MESSAGE.wasAddedSincePrevVisit()
      - LayoutMode: Comments.LayoutContentView:
         - MODEL BOX
         - checkboxes toggle BOX.state and BOX.config.enable_in_receipt BOOL (does save())
-     - mixinShowHide(): button to show more|less
-     - according to:
-        - BOX.agreement.messages
-        - BOX.config.enable_in_receipt BOOL
   - history:
      - LayoutMode: simple sentence, but not shown by BoxManager
      - ViewMode
         - model AGREEMENT
         - if state draft|template, only shows simple sentence saying nothing is tracked until agreement sent
         - mixinShowHide() to show more|less
-        - region eventList: EventListView
-           - EVENT_COLL AGREEMENT.events.getParents()
-              - reset
-              - created
+        - region eventList: EventListView MCOLLVIEW:
+           - MODEL EVENT from AGREEMENT.events.getParents()
+              - according to reset, created
               - rest goes through format(EVENT):
                  - forwarding to different functions according to EVENT.type, and returning
                     - text STR
@@ -1677,7 +1668,30 @@ Boxes:
      - permissions:
         - allow-replace and not mobile: "Replace document"
   - attachments:
+     - MDL_EVENT "boxes:attachments:save:all": like clicking on all ATTACHMENTS_BOX "Save" (and validating them too)
      - according to BOX_CONTENT.documents OBJ: name STR
+     - FilesView MCOMPVIEW:
+        - MODEL ATTACHMENTS_BOX
+        - "Add attachment" button|BoxMenu -> "file:upload:show"(ATTACHMENTS_BOX)
+        - "Allow all participants to add attachments" -> toggle config.counterpart_edit
+        - jQuery UI sortable -> ATTACHMENTS_BOX.moveFile(AGREEMENT_DOCUMENT, AGREEMENT_DOCUMENT2)
+        - "Cancel": restore previous model, set by restorePoint when clicking anywhere
+        - BoxMenu "Restore" (on each AGREEMENT_DOCUMENT from VALUE with state disabled): change state to enabled
+        - FileView
+           - MODEL AGREEMENT_DOCUMENT from VALUE.active().enabled(), i.e. not _removed, state enabled or (if isOwner()) draft
+              - according to name, pages, has_file, file_extension, owner.fullname
+              - name: editable popoverText
+           - "Download" points to AGREEMENT_DOCUMENT.generateDownloadURL()
+           - "View" (shown if AGREEMENT_DOCUMENT.pages exist) -> "modal:show" with container ViewModalLayout:
+              - MODEL AGREEMENT_DOCUMENT: according to name
+              - region pages: same as documentBox PagesView MCOLLVIEW
+           - "Remove":
+              - if last one, "modal:confirm:show" -> ATTACHMENTS_BOX.disable()
+              - if draft, AGREEMENT_DOCUMENT_CONTENT_COLL.remove(AGREEMENT_DOCUMENT). Otherwise, AGREEMENT_DOCUMENT.disable()
+        - NoFilesView:
+           - "Add attachment": see above
+     - permissions:
+        - add-attachment and ATTACHMENTS_BOX.config.counterpart_edit true: "Add attachment" button|BoxMenu
   - products:
      - MDL_EVENT "boxes:products:save:all": like clicking on all PRODUCTS_BOX "Save" (and validating them too)
      - ProductsView:
@@ -1719,14 +1733,14 @@ Boxes:
      - according to:
         - BOX.getContent("data") DATA_CONTENT_COLL, through BOX.getFieldMatrix()->MATRIX CELL.item DATA
      - views:
-        - FormView (composite):
+        - MCOMPVIEW FormView:
            - MODEL MATRIX
            - "Add row" -> MATRIX.addEmptyRow()
            - "Rearrange rows" -> Fields are sortable (jQuery UI) -> MATRIX.moveRow(ROW)
            - Dropdown -> MATRIX.setColCount(NUM)
-           - "Save" -> validate BOX, then BOX.save() (saves only BOX.config: MATRIX.toJSON()???)
+           - "Save" -> validate BOX, then BOX.save() (saves only BOX.config: MATRIX.toJSON())
            - BoxMenu: MATRIX.setColCount(NUM), addEmptyRow(), show edit buttons
-           - COLL RowView (composite):
+           - MCOMPVIEW RowView:
               - MODEL ROW
               - "Remove row" -> MATRIX.removeRow(ROW)
               - COLL CellView (layout):
