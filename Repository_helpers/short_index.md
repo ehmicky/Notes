@@ -1,110 +1,18 @@
 
-# Documentation list (long version) #
-
-
 __Architecture__
 - __Algorithms__
 - __Modelling__
 - __Paradigms__
 - __Types__
 
-__Design__
-- __Languages__
-  - __CSS__
-    - __Transcompilation__
-      - __Sass__
-      - __JavaScript__
-        - __React__
-  - __C_C++__
-    - __Compiling__
-  - __HTML__
-    - __Transcompilation__
-  - __JavaScript__
-    - __DOM__
-    - __Transcompilation__
-  - __VBA__
-- __Networking__
-  - __Offline__
-  - __RPC__
-    - __Format_negotiation__
-    - __Serialization__
-      - __CSV__
-      - __JSON__
-      - __Redux__
-      - __XML__
-    - __HTTP__
-      - __Client__
-        - __Crawler__
-      - __REST__
-      - __Proxy__
-      - __Server__
-        - __Static__
-          - __AWS__
-        - __Framework__
-          - __Node__
-          - __Express__
-          - __Sails__
-      - __Syntax__
-        - __Body__
-          - __Express__
-        - __Methods__
-          - __Express__
-        - __Statuses__
-        - __Headers__
-        - __URI__
-          - __Express__
-  - __Routing__
-- __Platform__
-  - __Browser__
-    - __Extensions__
-    - __Headless__
-    - __Routing__
-      - __React__
-      - __Redux__
-  - __Cloud__
-    - __IaaS__
-      - __AWS__
-    - __SaaS__
-    - __PaaS__
-      - __AWS__
-  - __Command_line__
-  - __Mobile__
-    - __Gesture__
-    - __Orientation__
-  - __Native_desktop__
-    - __Desktop_automation__
-    - __Desktop_notifications__
-  - __Phones__
-- __State__
-  - __Client_server__
-    - __Cookies__
-    - __Express__
-  - __Client_side__
-  - __Database__
-    - __Document_oriented__
-    - __Key_value__
-    - __Relational__
-    - __Relations__
-      - __Backbone__
-    - __Theory__
-  - __Identifiers__
-    - __Human-friendly__
-    - __Decentralized__
-    - __Full-content__
-    - __Hash__
-    - __Theory__
-    - __Others__
-    - __URI__
-      - __DNS__
-
 __Functional_requirements__
 - __Analytics__
+- __Date_time__
+  - __Date_picker__
 - __Filesystem__
   - __Network__
   - __Watchers__
     - __Reloading__
-- __Date_time__
-  - __Date_picker__
 - __Games__
   - __2D__
     - __C__
@@ -122,58 +30,149 @@ __Functional_requirements__
 - __Text__
   - __Diff__
   - __Encoding__
-  - __Manipulation__
   - __Parsing__
+  - __Manipulation__
   - __Pattern_matching__
   - __Sanitation__
 - __Typography__
+
+__Project_management__
+
+__Design__
+- __Languages__
+  - __CSS__
+    - __Transcompilation__
+      - __JavaScript__
+        - __React__
+      - __Sass__
+  - __C_C++__
+    - __Compiling__
+  - __HTML__
+    - __Transcompilation__
+  - __JavaScript__
+    - __Transcompilation__
+    - __DOM__
+  - __VBA__
+- __Networking__
+  - __Offline__
+  - __RPC__
+    - __Serialization__
+      - __JSON__
+      - __CSV__
+      - __Redux__
+      - __XML__
+    - __Format_negotiation__
+    - __HTTP__
+      - __REST__
+      - __Proxy__
+      - __Client__
+        - __Crawler__
+      - __Server__
+        - __Framework__
+          - __Express__
+          - __Node__
+          - __Sails__
+        - __Static__
+          - __AWS__
+      - __Syntax__
+        - __Body__
+          - __Express__
+        - __Methods__
+          - __Express__
+        - __Headers__
+        - __Statuses__
+        - __URI__
+          - __Express__
+  - __Routing__
+- __Platform__
+  - __Browser__
+    - __Routing__
+      - __React__
+      - __Redux__
+    - __Headless__
+    - __Extensions__
+  - __Cloud__
+    - __SaaS__
+    - __IaaS__
+      - __AWS__
+    - __PaaS__
+      - __AWS__
+  - __Command_line__
+  - __Mobile__
+    - __Gesture__
+    - __Orientation__
+  - __Native_desktop__
+    - __Desktop_notifications__
+    - __Desktop_automation__
+  - __Phones__
+- __State__
+  - __Client_server__
+    - __Cookies__
+    - __Express__
+  - __Client_side__
+  - __Database__
+    - __Document_oriented__
+    - __Key_value__
+    - __Relations__
+      - __Backbone__
+    - __Relational__
+    - __Theory__
+  - __Identifiers__
+    - __Full-content__
+    - __Decentralized__
+    - __Human-friendly__
+    - __Hash__
+    - __Others__
+    - __Theory__
+    - __URI__
+      - __DNS__
 
 __Non_functional_requirements__
 - __Maintainability__
   - __Extensibility__
     - __Portability__
       - __Cross-browser__
-      - __ORM__
       - __Device_identification__
-  - __Scalability__
-    - __AWS__
+      - __ORM__
   - __Operability__
     - __Abstraction__
-      - __Functional__
-        - __React__
       - __MVC__
         - __Data_binding__
           - __Backbone__
-        - __Templates__
-          - __Virtual_DOM__
-            - __React__
         - __Frameworks__
-          - __View__
-            - __React__
-          - __State__
-            - __Flux__
-            - __Redux__
           - __Full__
             - __Angular__
             - __Backbone__
+          - __State__
+            - __Flux__
+            - __Redux__
+          - __View__
+            - __React__
+        - __Templates__
+          - __Virtual_DOM__
+            - __React__
+      - __Functional__
+        - __React__
+    - __Static_analysis__
+      - __General__
+      - __Beautify__
+      - __Linting__
     - __Modularity__
       - __Dependencies__
       - __Module_loaders__
       - __Packaging__
         - __Package_manager__
     - __Automation__
-      - __Boilerplate__
       - __Build_automation__
       - __Configuration__
         - __Management__
           - __AWS__
         - __Declaration__
+      - __Boilerplate__
       - __Continuous_integration__
     - __Deploying__
-    - __Static_analysis__
-      - __Beautify__
-      - __General__
-      - __Linting__
+  - __Scalability__
+    - __AWS__
 - __Marketability__
   - __Legal__
   - __Promotion__
@@ -183,43 +182,43 @@ __Non_functional_requirements__
     - __Logging__
       - __AWS__
   - __Stability__
-    - __Availability__
-      - __AWS__
-    - __Integrity__
     - __Compatibility__
       - __Versioning__
+    - __Integrity__
+    - __Availability__
+      - __AWS__
+    - __Testing__
+      - __CSS__
+      - __Stress__
+      - __Performance__
+      - __Browser_testing__
+      - __Test_runners__
+      - __Unit_tests__
+        - __Coverage__
+        - __Data-driven__
+        - __Mocking__
+          - __React__
+        - __Expectations__
+    - __Validation__
+      - __Redux__
     - __Security__
-      - __Authorization__
-        - __AWS__
       - __Authentication__
         - __AWS__
-      - __Cryptography__
-        - __Key__
-        - __Hash__
+      - __Authorization__
+        - __AWS__
       - __Brute_force__
+      - __Cryptography__
+        - __Hash__
+        - __Key__
       - __On_premise__
         - __AWS__
       - __Protocols__
         - __SSL__
           - __Express__
-    - __Testing__
-      - __Browser_testing__
-      - __CSS__
-      - __Stress__
-      - __Performance__
-      - __Test_runners__
-      - __Unit_tests__
-        - __Coverage__
-        - __Data-driven__
-        - __Expectations__
-        - __Mocking__
-          - __React__
-    - __Validation__
-      - __Redux__
   - __Vulnerability__
     - __Debugging__
-      - __Express__
       - __React__
+      - __Express__
       - __Redux__
 - __Social_impact__
   - __Empathy__
@@ -228,67 +227,65 @@ __Non_functional_requirements__
   - __Design__
     - __UI__
       - __Animations__
-        - __CSS_libraries__
         - __Scrolling__
-      - __Components_framework__
-      - __Icons__
+        - __CSS_libraries__
       - __Components__
         - __Carousel__
+        - __Menu__
+        - __Modal__
         - __Notifications__
           - __Favicon__
-        - __Modal__
         - __Progress__
           - __Progress_bar__
           - __Spinner__
-        - __Menu__
-        - __Table__
         - __Scrollbar__
+        - __Table__
+      - __Components_framework__
+      - __Icons__
       - __Input__
         - __Dropdown__
         - __Input_number__
-        - __Textarea__
-        - __Search__
         - __RTF__
+        - __Search__
+        - __Textarea__
       - __Layout__
         - __Grid__
         - __Slides__
-  - __Internationalization__
   - __Manageability__
     - __Discoverability__
       - __Protocols__
+  - __Internationalization__
   - __Performance__
     - __Async__
-      - __Control_flow__
-        - __AWS__
       - __Promises__
         - __Redux__
+      - __Queue__
+        - __AWS__
+      - __Control_flow__
+        - __AWS__
       - __Events__
       - __Streams__
         - __Node__
-      - __Queue__
-        - __AWS__
     - __Caching__
     - __Compression__
       - __C++__
         - __libzpaq__
       - __JavaScript__
         - __Express__
-        - __Gulp__
         - __Node__
+        - __Gulp__
       - __Theory__
-    - __Concurrency__
     - __Lazy_loading__
-    - __Minify__
     - __Pagination__
       - __Express__
       - __Infinite_scrolling__
+    - __Minify__
+    - __Concurrency__
     - __Pooling__
   - __Usability__
+    - __Ease_of_use__
     - __Documenting__
       - __Tutorial__
-    - __Ease_of_use__
-
-__Project_management__
 
 __Tosort__
 - __ASM__
@@ -314,27 +311,27 @@ __Tosort__
 - __Non-dev__
   - __Crypto_Stego_Compression__
     - __Compression__
+    - __Information_Theory__
     - __Crypto__
       - __Autres__
-      - __Cryptanalyse__
-      - __Lois_Societe__
       - __Algos__
-      - __Pratique__
+      - __Lois_Societe__
+      - __Cryptanalyse__
       - __Theorie__
-    - __Information_Theory__
+      - __Pratique__
     - __Stego__
   - __Maths__
   - __Statistics__
+- __To_sort__
 - __Utilities_to_sort__
   - __C__
     - __Glibc__
     - __Standard_library__
       - __C89__
-      - __C95__
       - __C99__
+      - __C95__
   - __C++__
+    - __Standard_library__
     - __Boost__
       - __Images__
-    - __Standard_library__
-- __To_sort__
 

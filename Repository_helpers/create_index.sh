@@ -2,12 +2,10 @@
 #Creates a list of files at index.md
 
 dir="Repository_helpers"
-if [[ ! -f "$dir/long_index.md" ]]; then
+if [[ ! -f "$dir/index.md" ]]; then
   echo "Error: current directory must be the project root" >&2
   exit 1
 fi
-
-cat "$dir/intermediate.md" > "$dir/long_index.md"
 
 md-file-tree | sed '
   1 d;
@@ -22,11 +20,13 @@ md-file-tree | sed '
   s/^- /\n/;
   s/^  //;
   s/\([[_]\)@/\1/;
-' >> "$dir/long_index.md"
+' > "$dir/index.md"
+
+cat "$dir/intermediate.md" "index.md" > "$dir/long_index.md"
 
 sed '
   /\[/ d
-' "$dir/long_index.md" > "$dir/short_index.md"
+' "$dir/index.md" > "$dir/short_index.md"
 
 # Updates README.md
 cat "$dir/presentation.md" "$dir/short_index.md" "$dir/long_index.md" > README.md
