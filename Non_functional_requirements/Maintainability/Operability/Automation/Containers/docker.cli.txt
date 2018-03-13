@@ -29,11 +29,12 @@ IMAGE                             #Stateless filesystem snapshot, with metadata
                                   #  - IMAGE_ID:
                                   #     - can be shortened
                                   #     - SHA256 content hash
-                                  #  - [HOSTNAME/][REPO_USER/]IMAGE_NAME[:TAG]:
+                                  #  - [HOSTNAME/][REPO_USER/]IMAGE_NAME[:TAG][@sha256:HASH]:
                                   #     - def HOSTNAME: registry-1.docker.io
                                   #     - REPO_USER (if push|pull, def: docker): see Docker Hub
                                   #     - IMAGE_NAME: [[:alnum:]._-]
                                   #     - def TAG: latest
+                                  #     - HASH: content hash
 CONTAINER                         #Running instance of an image
                                   #Is either:
                                   #  - CONTAINER_ID:
@@ -74,9 +75,11 @@ DOCKERDIR                         #Runtime directory for docker with notably:
                                   #  - swarm/: swarm state
                                   #Def: /var/lib/docker/                  
                                   
+DOCKERHOME                        #~/.docker/
+
 DOCKERCONF                        #Either:
                                   #  - docker --config=FILE
-                                  #  - ~/.docker/config.json
+                                  #  - DOCKERHOME/config.json
 
 
                                              /=+===============================+=\ 
@@ -86,10 +89,11 @@ DOCKERCONF                        #Either:
                                              \=+===============================+=/
 
 
-docker daemon/server:
-  - binds to Unix socket:
-     - owned by "docker" group if it exists, "root" (avoid) otherwise
-  - client is connected to daemon (client-server architecture)
+
+CLIENT-SERVICE ARCHITECTURE ==>   #Client is connected to server (daemon)
+                                  #Server binds to Unix socket:
+                                  #  - owned by "docker" group if it exists, "root" (avoid) otherwise
+                                  #Server must be run as root (see below)
 
 dockerd                           #Starts server
                                   #Can change binary path with ENVVAR DOCKERD
@@ -98,10 +102,7 @@ dockerd                           #Starts server
                                   #  - systemd: e.g. start (at each boot) with: sudo systemctl enable docker
                                   #  - upstart
 -H PROTO://HOST[:PORT]
---host PROTO://HOST[:PORT]        #Address server listens to (def: /var/run/docker.sock)
---tls=true                        #Enables TLS
---tlscert=PATH                    #
---tlskey=PATH                     #
+--host PROTO://HOST[:PORT]        #Address server listens to (def: /var/run/docker.sock, or ENVVAR DOCKER_HOST)
 -D
 --debug=true                      #
 --live-restore                    #Do not shut down containers if server goes down
@@ -258,6 +259,8 @@ HEALTHCHECK [--OPT] CMD COMMAND   #Adds a "health status" to a CONTAINER, in add
                                   #Can be inspected with:
                                   #  - docker inspect, ps, etc.
                                   #  - health_status event (with "docker events")
+                                  #Used by:
+                                  #  - swarm (to maintain number of replicas)
                                   #Only last HEALTHCHECK will be used
 --interval=NUM                    #Def: 30 (in secs)
 --timeout=NUM                     #Def: 30 (in secs)
@@ -1092,6 +1095,46 @@ docker service inspect SERVICE... #Gives debug information about SERVICE
 
 
 
-ISOLATION ==>                     #Uses LXC:
+ISOLATION ==>                     #Uses LXC, at kernel level:
                                   #  - provides namespaces, i.e. cannot read nor write parent filesystem
+                                  #     - except for volumes, which should be used with caution
                                   #  - each container uses its own network interfaces
+
+CONTROL GROUPS ==>                #Ensures for each process (i.e. container), at kernel level:
+                                  #  - resource (e.g. CPU, memory, I/O) limiting
+                                  #  - resource prioritization, e.g. one container should get more CPU
+                                  #  - logging/monitoring #  - freezing processes
+                                  #Security-wise: this mitigates DDoS, etc.
+                                  #Can be hierarchical
+
+DAEMON USER ==>                   #Server must be run as root (see below), so must be sure to protect "docker" group
+
+CONTAINER USER ==>                #Different from host's:
+                                  #  - Docker uses "user namespaces", i.e. container root user does not have to map to host's root user
+                                  #Containers usually do not require root access:
+                                  #  - so should use unprivileged user (see USER above)
+
+CONTAINER CAPABILITIES ==>        #Most capabilities (i.e. kernel feature available to root) are disabled to containers:
+                                  #  - unless using docker create --privileged
+                                  #  - can adjust with docker create --cap-add|drop VAL
+
+TLS ==>                           #
+dockerd|docker ...                #dockerd is for client to authenticate server, docker is inverse
+                                  #Should run on port 2376 (instead of default 2375)
+--tls                             #Uses TLS for self
+--tlsverify                       #Uses TLS for self and other endpoint
+                                  #Can use ENVVAR DOCKER_TLS_VERIFY=1
+--tlscacert=FILE                  #Def: public CA list
+--tlscert=FILE                    #
+--tlskey=FILE                     #
+
+CONTENT TRUST ==>                 #Verifying Docker registry (like Docker Hub) images tags (i.e. their connection to hash content) with TLS signatures ("trusted images")
+                                  #  - for docker push|pull and docker build|create
+                                  #  - bypassed if IMAGE contains HASH
+                                  #  - bypassed if no TAG (except for pull, which uses "latest" by default)
+                                  #  - signing is automatically done by docker
+                                  #     - creates keys in DOCKERHOME/trust/
+                                  #     - passphrases can be provided in interactive shell or using ENVVAR DOCKER_CONTENT_TRUST_ROOT|REPOSITORY_PASSPHRASE
+DOCKER_CONTENT_TRUST=1            #ENVVAR that must be enabled
+docker push|pull|build|create
+--disable-trust-content           #
