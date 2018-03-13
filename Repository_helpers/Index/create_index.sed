@@ -23,19 +23,19 @@ s/^  //
 s/^- /\n/
 s/^  //
 
-# Add subheaders
-s/^__\(.*\)__/## \1 ##/
-s/^- __\(.*\)__/### \1 ###/
-
-# Decrease indent again
-s/^  //
-
 # Remove file extension
 s/\.txt\]/]/
 
 # Remove leading _ from filenames
 s/___/__/
 s/\([[]\)_/\1/
+
+# Add subheaders
+s/^__\(.*\)__/## \1 ##/
+s/^- __\(.*\)__/### \1 ###/
+
+# Decrease indent again
+s/^  //
 
 # Put technology between parenthesis
 s/\.\([^].]\+\)\]/ (\u\1)]/
