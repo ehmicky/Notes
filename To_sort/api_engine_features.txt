@@ -37,16 +37,11 @@ Compile-time step:
      - might need to make nodemon part of Gulp
   - optimize startup performance, e.g. options validation is very slow
 
-JSL:
-  - performance:
-     - memoize run per request
-  - go through this file, as there might be some things JSL-related already done now
+IDL functions:
+  - memoize IDL functions run per request. Instead of stringifying ifv, use === comparison
   - create utility for all the decorators that add try|catch
 
 Performance:
-  - must avoid CPU-intensive tasks (like JSL or event handlers) because they hold the whole server.
-    Request should be very fast. Find a way to make those tasks faster, or run them in a separate process
-    (which can shared, pooled or created on-the-fly)
   - try to remove excess async/await, as it might improve performance, since every await adds around 1ms
   - perf middleware:
       - remove setTimeout() but keep comment
@@ -86,21 +81,21 @@ arg.filter normalization:
   - think is some dataValidation makes sense for args.filter, e.g. minimum|maximum or type
 
 Authorization:
-  - JSL for idl|model|attr.authorize:
-     - JSL[_ARR]: ARR is && (normalized during IDL transformation)
-     - can use JSL params and helpers
-  - idl.authorize JSL[_ARR]:
+  - IDL functions for idl|model|attr.authorize:
+     - FUNC[_ARR]: ARR is && (normalized during IDL transformation)
+     - can use IDL functions variables|helpers
+  - idl.authorize FUNC[_ARR]:
      - for all models, performed once per request, just before main operation middleware
-     - i.e. less JSL params, and no partial evaluation
+     - i.e. less IDL functions variables, and no partial evaluation
      - if resolves to false, do not perform query and returns 403
-  - model.authorize JSL[_ARR]:
+  - model.authorize FUNC[_ARR]:
      - model-wise
      - if fails, returns 403 (except for find|delete commands which might augment arg.filter)
      - according to command:
         - find|delete: $/$$: augment arg.filter (see below)
         - create: $/$$: use arg.data
         - update: $/$$: use both arg.data and args.currentData (tried after another)
-        - update|create: if command.multiple, check authorize JSL for each arg.data and each args.currentData.
+        - update|create: if command.multiple, check model.authorize for each arg.data and each args.currentData.
           If any fails, 403.
      - in authorization middleware, just before dataValidation middleware
      - find|delete commands use partial evaluation:
@@ -110,7 +105,7 @@ Authorization:
         - must try partial evaluation during IDL validation to make sure it works runtime
         - do not pass $/$$ to non-inline functions, because cannot be partially evaluated
      - find commands of replace|upsert action should not be affected (using args.authorization false)
-  - attr.authorize JSL[_ARR]:
+  - attr.authorize FUNC[_ARR]:
      - same as model.authorize, except:
         - can use $ (same as $$.ATTR)
         - action when not authorized differs. Depending on command:
@@ -132,7 +127,7 @@ Authorization:
      - replaces idl.commands and model.commands (which must be removed):
         - forbidden goals:
            - are goals whose authorize always return false for a
-             given set of protocol/operation JSL params + COMMAND param (e.g. without $/$$)
+             given set of protocol/operation IDL functions variables + COMMAND param (e.g. without $/$$)
               - how to know? partial evaluation?
            - 403 becomes 405 on forbidden goals
            - forbidden goals not shown in GraphQL schema
@@ -342,7 +337,8 @@ Async actions/tasks:
   - task management (restarting, retrieval, etc.)
   - Async actions must be well thought as they slow down requests:
      - there should be jobs reported to users and users should be able to control max wait time.
-     - when this is figured out, think of how async JSL would work within that
+     - when this is figured out, think of how async IDL functions would work within that
+        - consider that paramsRef is directly mutated, i.e. might not be thread-safe
      - try to think if need generic async actions output (e.g. HTTP 202, Prefer: respond-async [C], Prefer: wait=NUM [C])
   - see REST doc for more info
 
@@ -368,7 +364,7 @@ API base types:
      - allow custom types
 
 Model.id:
-  - must ensure cannot change model.id, even through args.data JSL
+  - must ensure cannot change model.id
   - allow configuring name and type of `id` attribute, including with findOne(), etc. actions that use that argument.
      - should probably whitelist possible types, e.g. probably only string or number make sense
   - allow alternate ids, e.g. a query can either use machine-friendly `id` attribute, or human-friendly `name` attribute
@@ -444,7 +440,7 @@ Database transformation layer:
   - e.g. one model in two tables, two models in one table, database-specific info, for both input|output
   - should allow single server to use multiple databases with different technologies (e.g. MongoDB + Redis) too
   - possibility: using variants.ATTR.ATTR2 (instead of variants.ATTR) with ATTR being a nested model
-     - in that case, need to think about consequences on $$ JSL variable
+     - in that case, need to think about consequences on $$ IDL function variable
 
 Rate limiting:
   - should be shared between server instances
@@ -470,8 +466,8 @@ Custom actions:
         - get input from operation layer
      - information to build its GraphQL schema, and do input|output validation
 
-JSL:
-  - think if should use JSL in other parts of IDL
+IDL functions:
+  - think if should use them in other parts of IDL
   - Add variables related to device|browser detection
      - add them to logging requestInfo too
   - think of we can simplify idl.helpers IDL syntax
@@ -484,13 +480,10 @@ Compile-time validation:
      - should validate that attr.validate only contain keywords for that type
      - attr.default is of that type
      - careful because attr.type is only decided after normalization
-  - JSL:
-     - validate that only attributes that can have JSL|function have JSL|function
-     - values that use JSL like transform or helpers|variables are not currently validated:
-        - if JSL, they should be string and be valid JSL
-        - otherwise (for ones like transform), they should be same type as current attribute
-     - make sure JSL does not use unknown params, which is challenging because:
-        - params are determined runtime
+  - IDL functions:
+     - validates when can that take either IDL function or a constant of the same type as the attribute,
+       e.g. in attribute.default|transform
+     - make sure IDL functions does not use unknown params, which is challenging because:
         - function body might not be readable, e.g. if function is bound
      - perform static analysis, e.g. linting
      - maybe validate complexity, e.g. max length
@@ -543,16 +536,16 @@ Optimization:
            - the middleware that trigger single action could communicate the promise of that action to the others.
              The others would not trigger anything, just wait for that promise to end, then pick the result they need.
   - size of array returned by *Many actions should not impact too much response time:
-     - e.g. at the moment many things (e.g. transform JSL) is run once per model, where it could instead be run once for
+     - e.g. at the moment many things (e.g. attr.transform) is run once per model, where it could instead be run once for
        all models
   - look for memory leaks
      - check for memory leaks in memoize(), i.e. new requests should not increase memoize() memory retention
   - do performance profiling to see which parts are slow
-  - concatenate JSL together:
+  - concatenate IDL functions together:
      - e.g. `test` in transform/compute can be { test TEST, value VALUE } ->{ value (TEST ? VALUE : $) }
-     - e.g. array of transform/compute can be concatenated into a single JSL
-     - apply JSL in batch, i.e. instead of applying same transform to several models of same collection, transform
-       JSL to $.map(JSL) and apply on collection instead
+     - e.g. array of transform/compute can be concatenated into a single IDL function
+     - apply IDL functions in batch, i.e. instead of applying same transform to several models of same collection, transform
+       IDL function to $.map(FUNC) and apply on collection instead
 
 Streaming:
   - input|output streaming:
@@ -646,7 +639,7 @@ GraphQL:
   - look at GraphQL spec validation chapter, to make sure my validation layer conforms
   - GraphQL schema:
      - add __metadata, including pagination
-     - arg.filter can be 'JSL', {ATTR: VAL} or {ATTR: 'JSL'}
+     - arg.filter
 
 GraphQL relay:
   - must add clientMutationId, see https://facebook.github.io/relay/graphql/mutations.htm
@@ -712,7 +705,7 @@ API documentation:
   - changelog generation
   - add error_uri URL in error messages, pointing to documentation
   - parse comments in IDL file to include them in documentation and changelog.
-    E.g. good to describe business-specific JSL.
+    E.g. good to describe business-specific IDL functions.
 
 Thorough dev documentation:
   - use jsdoc, esdoc or similar
@@ -756,8 +749,7 @@ Node.js version:
 
 Other programming languages:
   - specified by using top-level property "language" in IDL file
-  - allow other programming languages in JSL
-     - should convert JSL into non-JSL as soon as possible, e.g. for arg.filter, to make it language-agnostic
+  - allow other programming languages in IDL functions
   - allow other programming languages in functions imported by $ref
   - each new programming language must reimplement common functions like underscore.string
   - make sure JavaScript-specific logic does not apply to other languages
@@ -893,7 +885,7 @@ Positioning:
  1   Model naming
 ?3   Database transformation layer
 ?2   Custom actions
- 1   JSL
+ 1   IDL functions
  1   Compile-time validation
 ?3   Custom code
 ?1   Callbacks/events
