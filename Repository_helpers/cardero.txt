@@ -6,17 +6,30 @@ Upgrade dependencies: eslint-config-standard, nodemon
 Integration testing:
   - --spec should use link to unbuilt OpenAPI spec, not built one
   - rename --endpoint to --server
-  - TEST's schema values should be JSON schema v4, not OpenAPI schema
-     - i.e. OpenAPI schema conversion should happen earlier
+  - rename settings to "testOpts" and with following shape:
+     - request:
+        - "body"
+           - "body" for formData too
+        - "headers.VAR"
+        - "path.VAR"
+        - "query.VAR"
+        - "security.SEC_NAME"
+     - response:
+        - "status"
+        - "body"
+        - "headers.VAR"
+  - rename TEST.reqSpecParams, etc. to TEST.request.*, etc.
   - optionalsProbability should be 0, i.e. optionals are never generated
      - when a request.* parameter is specified to anything but null, it becomes required (i.e. generated)
      - if set to null, becomes non-required
   - remember that OpenAPI schema and JSON schema v4 "type" can be an array
      - check code to see if it takes it into account
      - including JSON schema faker
+  - TEST's schema values should be JSON schema v4, not OpenAPI schema
+     - i.e. OpenAPI schema conversion should happen earlier
   - generate any param if and only if both:
-     - either PARAM.required true or param is specified in settings
-        - "specified in settings": including empty object
+     - either PARAM.required true or param is specified in testOpts
+        - "specified in testOpts": including empty object
      - and PARAM.type is not "null"
         - type ['null', ...] means randomly either generated or not
   - null:
@@ -27,27 +40,20 @@ Integration testing:
            - type ["null", ...]: optional
            - key is defined but not "type": required
            - key is not defined: skipped / not validated
-              - i.e. including response headers|body present in actual response but not in expected (spec or settings)
+              - i.e. including response headers|body present in actual response but not in expected (spec or testOpts)
         - for top-level only, not for nested properties
      - "const" null: same as "type" null
-  - settings values (for params, responseBody and responseHeaders) can either be:
+  - testOpts values (for params, responseBody and responseHeaders) can either be:
      - object (not array): JSON schema v4 (not OpenAPI schema), deep merged
      - "invalid": anti-schema ({ not: PARAM_SCHEMA })
      - VAL (anything else): same as { const VAL }
+  - testOpt.response.status value should be same as other testOpts
+     - i.e. only specifiying a 'STATUS' is like { const: 'STATUS' }
   - test file:
      - instead of x-tests.*
      - format YAML or JSON file
-     - "OperationId.TEST_NAME" (single key):
-        - request:
-           - "body"
-              - "body" for formData too
-           - "headers.VAR"
-           - "path.VAR"
-           - "query.VAR"
-        - response:
-           - "status"
-           - "body"
-           - "headers.VAR"
+     - "OperationId.TestName" (single key):
+        - request|response: ...
   - test files input instead of x-tests.*:
      - test-openapi FILE...
      - FILE can include (escaped) globbing
@@ -65,29 +71,53 @@ Integration testing:
         - available as export function and as CLI command
         - use it by api-service on gulp build
      - validate:
-        - OperationId, TestName, parameter name and response headers names can contain dots:
-           - i.e. when dependent request uses dot notation, it must searched by startsWith() instead of split('.')
         - should verify that response.status is among possible status codes for that operation
         - corresponding PARAM_NAME|SEC_NAME exists
         - just after DepTest has been replaced, validates TEST's schemas values are valid JSON schema v4
+     - should validate input (options)
+     - should validate OpenAPI specification input
   - DepTest:
-     - DEPTEST is 'OperationId.TestName.[LOCATION_]PARAM_NAME|SEC_NAME|response|responseHeaders[.VARR]'
-     - DEPTEST can be a value anywhere in x-tests.*
-     - during test creation, crawl it and set TEST.depTests { DEPTEST: VARR_ARR, ... } where VARR is where it is in the test
+     - DEPTEST is 'OperationId.TestName.request|response.*[.VARR]"
+     - DEPTEST can be a value anywhere in testOpts
+     - during testOpt creation, crawl it and set TEST.depTests { DEPTEST: VARR_ARR, ... } where VARR is where it is in testOpt
      - just before each repeated test run:
-         - create depTestsInfo { resolved {}, ancestors [] } (only if top-level in recursion)
-         - find all unique dependent tests using TEST.depTests
-         - if some are already in depTestsInfo.ancestors, throw infinite recursion error (error message should print the cycle)
-            - otherwise add current to ancestors (by copy)
-         - for each dependent test:
-            - depTestsInfo.resolved['OperationId.TestName']:
-               - if undefined, call that test (should return parameters, response and response headers), and set its promise
-                  - do it by reference so concurrent requests can share information (if they belong to same top-level test)
-               - if defined, use it instead directly
-               - depTestsInfo should be different for each top-level test, i.e. no sharing of info between them
-         - await all dependent promises (using Promise.all())
-         - if any promise was rejected, skip current test (as opposed to making it fail)
-         - use those values to replace (by copy) current test.*, using TEST.depTests information (and Lodash set())
+        - create depTestsInfo { resolved {}, ancestors [] } (only if top-level in recursion)
+        - find all unique dependent tests using TEST.depTests
+           - remember OperationId, TestName, parameter name, response headers name can contain dots
+        - if some are already in depTestsInfo.ancestors, throw infinite recursion error (error message should print the cycle)
+           - otherwise add current to ancestors (by copy)
+        - for each dependent test:
+           - depTestsInfo.resolved['OperationId.TestName']:
+              - if undefined, call that test (should return parameters, response and response headers), and set its promise
+                 - do it by reference so concurrent requests can share information (if they belong to same top-level test)
+              - if defined, use it instead directly
+              - depTestsInfo should be different for each top-level test, i.e. no sharing of info between them
+        - await all dependent promises (using Promise.all())
+        - if any promise was rejected, skip current test (as opposed to making it fail)
+        - use those values to replace (by copy) current test.*, using TEST.depTests information (and Lodash set())
+           - remember OperationId, TestName, parameter name, response headers name can contain dots
+  - test running:
+     - should run NUM it() in parallel
+        - NUM = OPTS.maxParallel / OPTS.repeat
+        - in different microloops (for async parallelism)
+        - in different processes (for CPU parallelism) (not as important)
+        - maybe switch to ava to get that
+        - should stop on failure if OPTS.stopOnFail true (def)
+     - pass options to underlying test runner, e.g. reporters, reporting options, include|exclude, etc.
+        - all those concerns should be offloaded to the test runner
+        - maybe add OPTS.runner to choose between different runners (i.e. they would be adapters)
+        - maybe force a specific runner???
+        - maybe only allow specific runner options???
+        - maybe force output to TAP format to allow different reporters???
+     - probably:
+        - use library to maintain NUM workers, where NUM is number of CPU cores
+        - assign equal number of it() to each
+           - they each spawn the same test file, but with a modulo to filter which tests they define
+        - force a specific test runner:
+           - should allow concurrent tests to have a maxParallel limit
+           - should have lots of features, which should be directly accessible (and whitelisted) from user perspective
+           - should report in TAP format, and add --reporter=MODULE option that points to tap reporter
+  - connect to CI
   - response body parsing:
      - should still:
         - parse according to Content-Type [S]
@@ -109,37 +139,13 @@ Integration testing:
         - do not set multipart/form-data parameter Content-Type
      - [SMALL_]SCHEMA.type 'file':
         - before passing to OPENAPI-SCHEMA-TO-JSON-SCHEMA (which throws on them) should convert to:
-           - if RESP.schema: 'object'
+           - if RESP.schema.type 'object'
            - if PARAM: try to guess type from siblings. If cannot guess, use 'string'
   - OpenAPI conformance:
      - OPENAPI-SCHEMA-TO-JSON-SCHEMA should convert PARAM.allowEmptyValue false to { minLength: 1 } if type "string"
      - add OpenAPI "format"s
         - to ajv
         - to JSON-SCHEMA-FAKER
-  - connect to CI
-  - should run NUM it() in parallel
-     - NUM = OPTS.maxParallel / OPTS.repeat
-     - in different microloops (for async parallelism)
-     - in different processes (for CPU parallelism) (not as important)
-     - maybe switch to ava to get that
-     - should stop on failure if OPTS.stopOnFail true (def)
-  - pass options to underlying test runner, e.g. reporters, reporting options, include|exclude, etc.
-     - all those concerns should be offloaded to the test runner
-     - maybe add OPTS.runner to choose between different runners (i.e. they would be adapters)
-     - maybe force a specific runner???
-     - maybe only allow specific runner options???
-     - maybe force output to TAP format to allow different reporters???
-  - probably:
-     - use library to maintain NUM workers, where NUM is number of CPU cores
-     - assign equal number of it() to each
-        - they each spawn the same test file, but with a modulo to filter which tests they define
-     - force a specific test runner:
-        - should allow concurrent tests to have a maxParallel limit
-        - should have lots of features, which should be directly accessible (and whitelisted) from user perspective
-        - should report in TAP format, and add --reporter=MODULE option that points to tap reporter
-  - RESP.x-tests should be cleaned|removed from the OpenAPI specifications served either from the static
-    server or from the API documentation
-  - JSON-SCHEMA-FAKER's optionalsProbability seems not to work properly
   - add fuzzy testing values???
      - maybe propose as an option to JSON-SCHEMA-FAKER???
   - during stopServer(), should delete database
@@ -161,8 +167,6 @@ Integration testing:
   - better way to set configuration and options
   - produce code coverage report
   - exceptions due to bugs (not to test fails) should produce stack trace and error messages
-  - should validate input (options)
-  - should validate OpenAPI specification input
   - schemes:
      - support over protocols than HTTP
         - including WebSocket
