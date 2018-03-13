@@ -125,7 +125,7 @@ unset(VAR)                        #Removes a variable, i.e. make it undefined
 UNDERLYING MODEL ==>              #The spec defines following concepts:
                                   #  - VAR ("VSlot"): pointer to VAL
                                   #  - VAL ("VStore", "zval"): either scalar value or pointer to OBJ|ARR_VAL
-                                  #  - OBJ|ARR_VAL ("Hstore"): VARs container
+                                  #  - OBJ|ARR_VAL ("Hstore") ("zobj"): VARs container
 
 
                                              /=+===============================+=\ 
@@ -135,8 +135,9 @@ UNDERLYING MODEL ==>              #The spec defines following concepts:
                                              \=+===============================+=/
 
 
+TYPE ==>                          #Use reference-counting garbage collection, with periodic tracing gargage collection
 
-REFCOUNT ==>                      #Increments:
+REFERENCE COUNTING GC ==>         #Increments refcount:
                                   #  - alias-reference ("is_ref=1")
                                   #     - incremented by any VAL assignment by reference:
                                   #        - including $FUNC = function () use (&$VAR) {...}; ($FUNC will carry a reference to $VAR)
@@ -154,32 +155,27 @@ REFCOUNT ==>                      #Increments:
                                   #           OBJ2 = OBJ;         // OBJ[2] refcount=2, is_ref=0
                                   #           OBJ3 =& OBJ;        // OBJ2   refcount=2, is_ref=0; OBJ[3] refcount=2, is_ref=1
                                   #                               // Because OBJ[3] are 2 references to first pointer, and OBJ2 is second pointer
-                                  #Decrements:
+                                  #Decrements refcount:
                                   #  - on unset()
                                   #  - when out of scope, i.e. exit of function where it was declared
-                                  #When === 0:
+                                  #When refcount === 0:
                                   #  - cleans memory
                                   #  - OBJ|ARR unset() their members
-                                  #     - but not cycles:
-                                  #        - child refering to its parent, directly or not
-                                  #           - e.g. OBJ.VAR = OBJ; unset(OBJ);                  // OBJ.VAR is not cleaned because refers its parent directly
-                                  #        - including through mutual referencing
-                                  #           - e.g. OBJ.VAR = OBJ2; OBJ2.VAR = OBJ; unset(OBJ); // OBJ.VAR is not cleaned because refers its parent indirectly through OBJ.VAR.VAR2
-                                  #     - cycles cleaned by "garbage collector" though, either:
-                                  #        - at program exit
-                                  #        - when there are 10000 variables in scope
-                                  #  - __destruct() is called first
-                                  #     - cycles will prevent refcount === 0, preventing __destruct() as well
+
+REFERENCE CYCLES ==>              #Reference cycles are not cleared by reference-counting gc, but are by tracing gc
+                                  #E.g.: OBJ.self = OBJ; unset(OBJ); // OBJ.self not unset by reference-counting gc, i.e. refcount === 1
+
+TRACING GC ==>                    #Fired:
+                                  #  - at program exit
+                                  #  - when there are 10000 root objects
 enable_gc                         #CONFVAR 0|1 (def: 1)
 gc_enable|disable()               #Sets CONFVAR enable_gc
 gc_enabled()->BOOL                #
-gc_collect_cycles()->NUM          #Forces garbage collection now. Returns number of cycles found
+gc_collect_cycles()->NUM          #Forces tracing gc now. Returns number of cycles found
 
 
-debug_zval_dump(VAL,...)          #Similar to var_dump(), except also shows:
-                                  #  - refcounts, if STR|OBJ|ARR
-                                  #  - "&" if is an alias-reference
-                                  #See page again ???
+debug_zval_dump(VAL,...)          #Similar to var_dump(), except also shows refcounts and is_ref (with & symbol)
+                                  #Since it makes a copy of VAL, and counts the copy as reference, it gives strange results: prefer xdebug_debug_zval()
 
 
                                              /=+===============================+=\ 
@@ -724,11 +720,10 @@ CLASS.__clone()                   #Called after clone OBJ completion, if defined
 CLASS.__construct(...)            #Constructor, i.e. fired by new CLASS
                                   #When redefining inherited constructor, should call parent::__construct(...) first
 CLASS.__destruct()                #Destructor, i.e. fired when variable is destroyed, i.e. when refcount === 0
-                                  #If reference cycles are present, refcount will only be 0 after garbage collector is triggered.
+                                  #If reference cycles are present, refcount will only be 0 after tracing gc is triggered.
                                   #When redefining inherited destructor, should call parent::__destruct() first
                                   #Exits will wait for all __destruct() to end, unless exit was called from within a __destruct()
                                   #Cannot throw exception
-
 
 VAL instanceof CLASS              #True if VAL is OBJ whose type is CLASS (or a descendant)
 VAL instanceof STR                #Same with CLASS name
