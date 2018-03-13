@@ -9,8 +9,8 @@ VERSION ==>                       #1.12.3
 
 docker version                    #Prints current version
 
-OS ==>                            #Based on LXC, so only run on Linux
-                                  #However, on Mac or Windows, installation tools create virtual machine
+OS ==>                            #Built on top of LXC, so only run on Linux
+                                  #However, on Mac or Windows, installation tools create virtual machine (using Hyper-V)
 
 
                                              /=+===============================+=\ 
@@ -199,16 +199,13 @@ DOCKER_API_VERSION                #ENVVAR to specify which version to use (def: 
                                              \=+===============================+=/
 
 
-dockerd ...
--D
---debug=true                      #
-SIGUSR1                           #When sent to server, current stack traces will be logged
-
-docker ...
+dockerd|docker ...
 -D
 --debug                           #
 -l STR
 --log-level=STR                   #
+
+SIGUSR1                           #When sent to server, current stack traces will be logged
 
 
 docker info ???
@@ -251,7 +248,9 @@ BUILD LAYERS ==>                  #Works in layers:
                                   #     - uses "storage drivers" (see above)
                                   #  - layers are images or containers
                                   #Each Dockerfile instruction (docker build) or commit (docker commit) creates a new layer:
-                                  #  - intermediate IMAGE are removed at the end
+                                  #  - intermediate IMAGE are removed at the end:
+                                  #     - unless docker build --rm=false
+                                  #     - can force with docker build --force-rm
                                   #  - each layer creates a new shell, e.g. $PWD will be reset 
                                   #     - should limit number of layers, i.e. combine instructions as much as possible
                                   #  - max 127 layers
@@ -268,8 +267,18 @@ BUILD CACHE ==>                   #Each layer + next instruction is cached:
                                   #  - this can create problem, but can be disabled with docker build --no-cache
 
 
-docker build DIR|URL              #Creates an IMAGE from a DIR with a Dockerfile inside. Can use Git URL
--f DOCKERFILE                     #
+docker build DIR|URL|-            #Creates an IMAGE from a DIR with a Dockerfile inside.
+                                  #URL can be:
+                                  #  - Dockerfile
+                                  #  - DIR
+                                  #  - .tar[.xz|bz2|gz] archive
+                                  #  - Git repo URL[#TAG|BRANCH|HASH_ID][:SUBPATH]: using git clone --depth 1 --recursive
+                                  #- is stdin (must be a Dockerfile)
+                                  #Non-0 exit code if fails
+-f DOCKERFILE                     
+--file DOCKERFILE                 #
+-q
+--quiet                           #
 
 
                                              /=+===============================+=\ 
@@ -357,7 +366,8 @@ docker tag IMAGE IMAGE2           #Make IMAGE2 a link to IMAGE, i.e.:
                                   #  - IMAGE IMAGE:TAG: create tag
                                   #  - IMAGE REPO_USER/IMAGE_NAME: associate with a repository
 docker build ...
--t IMAGE2                         #Performs docker tag IMAGE_ID IMAGE2 after creating IMAGE
+-t IMAGE2                         
+--tag IMAGE2                      #Performs docker tag IMAGE_ID IMAGE2 after creating IMAGE
 
 
                                              /=+===============================+=\ 
@@ -430,9 +440,11 @@ docker create ...
 --env-file FILE                   #Same with newline-separated ENVVAR=VAL file
 
 
-ARG VAR[=VAL]                     #Dockerfile instruction. Like ENV, but as build argument, i.e. docker build --build-arg VAR=VAL
+ARG VAR[=VAL]                     #Dockerfile instruction. Like ENV, but as build argument, using docker build --build-arg VAR=VAL
                                   #VAL is default value
                                   #Information is not persisted in final built IMAGE. If needs to persist, can put ARG variable inside an ENV
+docker build ...
+--build-arg VAR=VAL               #Provides ARG
 
 
                                              /=+===============================+=\ 
@@ -443,7 +455,9 @@ ARG VAR[=VAL]                     #Dockerfile instruction. Like ENV, but as buil
 
 
 BUILD CONTEXT ==>                 #Directories:
-                                  #  - BUILD_DIR: specified by docker build
+                                  #  - BUILD_DIR: 
+                                  #     - specified by docker build
+                                  #     - if targetting a Dockerfile directly (e.g. using stdin), no BUILD_DIR
                                   #  - CONTEXT_DIR: temporary, copied from BUILD_DIR
                                   #  - IMAGE_DIR: when image is created
                                   #CONTEXT_DIR:
@@ -515,6 +529,13 @@ docker save IMAGE... ???
                                              \=+===============================+=/
 
 
+docker build ...
+--isolation STR                   #Underlying isolation technology among:
+                                  #  - process: OCI
+                                  #  - hyperv: Hyper-V (virtual machines)
+                                  #  - default (def): "process" on Linux, "hyperv" on Windows
+
+
 FILESYSTEM ==>                    #Container cannot read nor write parent filesystem
                                   #Can remove filesystem isolation for specific directory/files with volumes or --device
 
@@ -578,14 +599,16 @@ CONTROL GROUPS ==>                #Ensures for each process (i.e. container), at
                                   #  - NUM can be -1, i.e. infinity (usually def)
 
 dockerd ...                       #Assigns a specific control group to the container. 
-docker create ...                 #If /CGROUP, is under root cgroup. If CGROUP, is under daemon cgroup
+docker create|build ...           #If /CGROUP, is under root cgroup. If CGROUP, is under daemon cgroup
 --cgroup-parent CGROUP            #Def: /docker for fs cgroup, system.slice for systemd cgroup
 
+docker create|build ...
 -m NUM[b|k|m|g]
 --memory=NUM[b|k|m|g]             #Memory hard limit. Min: 4M.
 --memory-swap=NUM[b|k|m|g]        #Memory + Swap hard limit
                                   #Def: double of --memory
                                   #When set, --memory must be set
+docker create ...
 --memory-reservation=NUM[b|k|m|g] #Memory soft limit (i.e. only hint, but not enforce limit)
                                   #If 0 (def), same as --memory
 --kernel-memory=NUM[b|k|m|g]      #Memory hard limit, but only the one used by kernel (includes sockets buffer, process stack, slabs).
@@ -597,11 +620,13 @@ docker create ...                 #If /CGROUP, is under root cgroup. If CGROUP, 
                                   #  - disabling OOM killer for the container does not disable host's OOM killer
                                   #     - i.e. it might dangerously force killing host's system processes, unless --memory is set
 --oom-score-adj=-1000-1000        #Sets OOM preference, i.e. container with lower preference will be first to be OOM killed
+                                  #Can be set with dockerd as well
 --memory-swappiness=0-100         #How much memory pages should be swapped to cache (as opposed to not cached)
                                   #Def: from host, usually 60
                                   #0: no swap, i.e. bad latency (cannot read any cache), but better throughput (no writing caching)
                                   #100: always swap, i.e. inverse
 
+docker create|build ...
 -c NUM 
 --cpu-shares=NUM                  #CPU shares:
                                   #  - relative weight between containers
@@ -615,6 +640,7 @@ docker create ...                 #If /CGROUP, is under root cgroup. If CGROUP, 
 --cpuset-cpus=RANGE               #Only allow specific CPUs, as RANGE of index, e.g. 0-3 or 0,2
 --cpuset-mems=RANGE               #Same for memory nodes (MEMs), which is only used on NUMA systems
 
+docker create ...
 --blkio-weight=10-1000            #Block IO weight:
                                   #  - relative weight between containers, i.e. like --cpu-shares but for I/O
                                   #  - only for direct block IO (not buffered block IO)
@@ -626,6 +652,7 @@ docker create ...                 #If /CGROUP, is under root cgroup. If CGROUP, 
 --device-read|write-iops=
  DEVICE_PATH:NUM                  #Same but as operation/sec
 
+docker create|build ...
 --shm-size=NUM[b|k|m|g]           #Size of /dev/shm (device that can be mounted as tmpfs, i.e. like /tmp but for IPC)
                                   #Def: 64MB
 
@@ -684,11 +711,17 @@ docker create ...
 --security-opt="no-new-privileges"#Do not allow adding privileges, e.g. through sudo
 
 
+dockerd ...
+--selinux-enabled                 #Enable SELinux
 docker create ...
 --security-opt=
  "label=user|role|type|level:VAL"
 --security-opt="label=disable"    #SELinux options
+
+docker create ...
 --security-opt="apparmor=PROFILE" #Apparmor options
+
+docker create ...
 --security-opt=
  "seccomp=unconfined"             
 --security-opt="seccomp=PROFILE"  #Seccomp options
@@ -745,6 +778,7 @@ docker create ...
                                   #  - "unless-stopped": restarts unless explicitely stopped by admin
                                   #Restarts use exponential delay
                                   #Should not be used if a process manager is used, e.g. systemd, forever or pm2
+docker run ...
 --rm                              #When exiting, remove:
                                   #  - volumes, except if specific VOLUME_NAME was given
                                   #  - container filesystem
@@ -777,7 +811,6 @@ dockerd ...
 docker exec ...
 -d                                #Run in the background of current terminal
 --detach                          #Returns container ID
-                                  #To bring in foreground again, use docker attach CONTAINER
                                   #Container exits when COMMAND exits
 --detach-keys "KEY,..."           #Sequence of keys to put currently foreground container to background
                                   #Def: "ctrl-p,ctrl-q"
@@ -793,12 +826,15 @@ docker create ...
 -a stdin|stdout|stderr            #Redirects COMMAND's standard streams to|from current process|terminal
 --attach stdin|stdout|stderr      #Can be done several time. Def: all
 
-docker attach CONTAINER           #See docker exec --detach
+docker attach CONTAINER           #Bring container foreground, either:
+                                  #  - it is in background in current terminal|process
+                                  #  - it is running in another terminal|process, e.g. several terminals can attach to same container
+--no-stdin                        #Brings stdout|stderr in foreground, but not stdin
 --detach-keys                     #Like docker exec
 
 
 docker run|attach ...
---sig-proxy                       #Redirects all signals from current process|terminal to the container it runs
+--sig-proxy=false                 #Do not redirect all signals from current process|terminal to the container it runs
 
 STOPSIGNAL SIG_NAME|NUM           #Dockerfile instruction. Sets signal sent to container to terminate it (def: SIGKILL)
 
@@ -810,7 +846,7 @@ STOPSIGNAL SIG_NAME|NUM           #Dockerfile instruction. Sets signal sent to c
                                              \=+===============================+=/
 
 
-docker create ...
+docker create|build ...
 --ulimit NAME=NUM[:NUM2]          #Sets ulimit.
                                   #NUM is soft limit, NUM2 hard limit.
 dockerd ...
@@ -1009,6 +1045,7 @@ docker network create ...
  enable_ip_masquerade"  
 dockerd ...                       #Enable IP masquerading, i.e. containers do not have to have a public IP to communicate outside of NETWORK: 
 --ip-masq                         #they will use host's IP instead
+--ip-forward                      #Enable IP forwarning
 
 docker network create ...
 -o "com.docker.network.
@@ -1111,11 +1148,13 @@ dockerd ...
 
 PORT FORWARDING ==>               #Only works with default NETWORK
                                   #This works with Docker appending rules to iptables
+dockerd ...
 --iptables=false                  #Do not allow Docker to modify iptables, i.e. must manually modify it to get port forwarding working
+--userland-proxy=false            #Disable using hairpin NAT when modifying iptables
 
 
 docker create ...
--p [HOST_IP:][HOST_PORT:]  #Forward ports
+-p [HOST_IP:][HOST_PORT:]         #Forward ports
  CONTAINER_PORT[/PROTO]           #*_PORT can be a range of ports instead (def: ephemeral port range, i.e. 32768-61000)
                                   #HOST_IP (def: see all)
                                   #  - can change default with: docker network create ... -o "com.docker.network.bridge.host_binding_ipv4=HOST_IP" or dockerd ... --ip HOST_IP
@@ -1354,9 +1393,13 @@ LOGDRIVER                         #Logging driver. Can be:
                                   #  - others: see online doc
 
 docker create ...                 #
+dockerd ...                       #
 --log-driver LOGDRIVER            #Sets LOGDRIVER
 --log-opt VAR=VAL                 #LOGDRIVER options
                                   #Can be done several times
+
+dockerd ...
+--raw-logs                        #Do not use colors
 
 
 docker logs CONTAINER             #Prints logs of a container (i.e. stdout/stderr)
@@ -1393,11 +1436,8 @@ docker create ...
 --label-file FILE                 #Same from newline-delimited file, which can include # COMMENTS
 
 docker volume|network|service 
- create ...
+ create, dockerd, docker build ...
 --label VAR[=VAL]                 #Sets labels
-
-dockerd ...
---label="VAR[=VAL],..."           #Sets labels
 
 docker node|service update ...
 --label-add VAR[=VAL]             #Sets labels
@@ -1442,6 +1482,13 @@ FROM IMAGE                        #Dockerfile instruction. Pull another IMAGE, a
                                   #Can be done several times (will merge several IMAGEs) but should avoid
                                   #Prefer Docker official images
                                   #"scratch" is special IMAGE, most minimal possible
+docker build ...
+--pull                            #Never use cache
+
+
+dockerd ...
+--max-concurrent-downloads|uploads
+ NUM                              #Max parallel HTTP requests with docker pull|push
 
 
 docker search STR                 #Searches DockerHub, and prints results: name, description, stars, 
@@ -1449,8 +1496,10 @@ docker search STR                 #Searches DockerHub, and prints results: name,
 --no-trunc                        #Do not truncate description
 
 
-DOCKER HUB ==>                    #Default registry, maintained by Docker
-CUSTOM REGISTRY ==>               #Use HOSTNAME in docker login, etc.
+DEFAULT REGISTRY ==>              #Is Docker Hub, maintained by Docker
+                                  #Can customize with:
+                                  #  - dockerd --registry-mirror HOSTNAME
+                                  #  - using HOSTNAME in docker login, etc.
 
 
 dockerd ...
@@ -1475,7 +1524,7 @@ CONTENT TRUST ==>                 #Verifying Docker registry (like Docker Hub) i
                                   #     - passphrases can be provided in interactive shell or using ENVVAR DOCKER_CONTENT_TRUST_ROOT|REPOSITORY_PASSPHRASE
 DOCKER_CONTENT_TRUST=1            #ENVVAR that must be enabled
 docker push|pull|build|create
---disable-trust-content           #
+--disable-content-trust           #
 
 DOCKER_CONTENT_TRUST_SERVER       #ENVVAR to override URL
 
@@ -1537,7 +1586,9 @@ docker swarm init                 #Starts a new single-node swarm
 --advertise-addr IP               #Each manager has an advertised IP for:
                                   #  - external, load-balanced communication to the swarm
                                   #  - communicating to manager for orchestration purpose
-                                  #By def, main IP address and port 2377
+                                  #By def:
+                                  #  - dockerd --swarm-default-advertise-addr IP
+                                  #  - def: main IP address and port 2377
 
 --force-new-cluster               #Forces even if there is currently one
                                   #Useful when quorum was lost, and needs to reboot swarm without losing information like services, tasks, nodes
