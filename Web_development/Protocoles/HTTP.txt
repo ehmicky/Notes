@@ -3,89 +3,89 @@
    HTTP   
           
 
-Architecture:
-  - application layer
-  - en général au-dessous de TCP/IP
-     - SSDP est similaire à HTTP, mais au-dessus de UDP
-  - client-server:
-     - client ("user agents", e.g. web browser, web crawler, app, etc.) asks a specific resource to a server
-        - resource might have been modified (static pages) or not (dynamic: .php, .asp, etc.) by the server before being sent.
-  - uses sessions:
-    - set of HTTP requests bound to a single TCP session/socket.
-       - e.g. if multiple resources (e.g. images in a single web page):
-          - HTTP 1.1: let client guess and request additional resources
-          - SPDY:
-             - server can help client guess additional resources, with server hints: 
-                - like Link prefetching, but for subresources on a pages
-                - tells client list of resources to download in headers, instead of letting client guess it once response 
-                  body is received
-                - Header Link: <URL>; rel=prefetch [S]
-             - no need to requests additional resources, with server pushes:
-                - like server hints, but do no wait for client request
-                - less roundtrips than server hints, but careful not to push cached resources, and push only resources that 
-                  would have been requested
-                - use in case where would have used Data URI before
-          - WebSocket: only one request at a time
-       - how:
-          - HTTP 1.0: Connection: Keep-Alive [C|S] indicates to keep connection
-          - HTTP 1.1: Connection is opened until variable timeout is used. Can explicitely close with Connection: close [C|S]
-          - WebSocket: explicitely opened|closed
-          - SPDY 3: keep TCP connection opened as long as client still on one domain (i.e. one tab opened for browser clients)
-          - SPDY 4: one TCP connection by server, not by domain (for server with multiple domains)
-       - is detrimental when using mostly single requests (e.g. image hosting), because keep extra sessions up for longer
-       - HTTP pipeling: 
-          - HTTP 1.0:
-             - client need to wait for answer to request again
-          - HTTP 1.1:
-             - client can make all requests without waiting for answers
-             - but answers need to be delivered in same order
-          - SPDY or WebSocket:
-             - multiplexing: answers can be sent out of request order
-    - stateless: requests independant from each other
-       - URL/headers/payload must keep state to get sessions (e.g. cookies)
-  - version 1.1
-  - case insensitive
 
-SPDY/HTTP2:
-  - HTTP2: SPDY version 4
-  - SPDY:
-     - layer between TLS and HTTP:
-        - keep HTTP semantics (HTTP headers, status code, etc.)
-        - but transfer HTTP packets differently
-     - features:
-        - forces using TLS
-        - compress HTTP headers
-        - replace status line with headers:
-           - request status line with :host: URL [C], :method METHOD [C], :path PATH [C], :scheme: https [C], 
-             :version HTTP/1.1 [C]
-           - response line with version: HTTP/1.1 [C], status: UINT STR [S]
-        - TCP connection remain opened
-        - HTTP pipeling multiplexed
-        - server hints 
-        - server pushes
-     - uses NPN/ALPN for client to let server know it supports SPDY
+
+Architecture:
+  - version 2
+  - layers:
+     - application layer
+     - usually on top of TCP/IP
+        - SSDP is like HTTP, but above UDP
+  - client-server:
+     - client: "user agents", e.g. web browser, web crawler, app, etc.
+     - resource can be dynamic (server modifies content) or static
+  - stateless: 
+     - requests independant from each other
+     - but URL/headers/payload can keep state (e.g. cookies)
+  - session:
+     - single TCP socket sending several HTTP requests
+        - HTTP/2: one per server 
+        - HTTP/1.*: one per domain
+     - max number of requests per session:
+        - HTTP/2: unlim
+        - HTTP/1.*: depends on client. Can be set by Keep-Alive: max=NUM [S]
+     - how long:
+        - until Connection: close [C|S]
+           - HTTP/1.0: requires Connection: Keep-Alive [C|S] to remain open
+        - or timeout:
+           - HTTP/2: no timeout
+           - HTTP/1.*: depends on client. Can be set by Keep-Alive: timeout=NUM [S]
+  - subresources:
+     - pipeling (request/response order): 
+        - HTTP/2: multiplexing (no order)
+        - HTTP/1.1: answers in same order as requests
+        - HTTP/1.0: only one request at a time
+     - discovery:
+        - HTTP/2:
+           - client-initiated
+           - server hints ("resource hints"), to tell client to initiate
+           - server pushes, that initiate for the client:
+              - less roundtrips than resource hints, but careful to:
+                 - push only resources that would have been requested
+                 - not push cached resources 
+              - should replace where data URIs were previously used
+        - HTTP/1.*: client-initiated only
+
+
+HTTP/2:
+  - layer between TLS and HTTP:
+     - keep HTTP semantics (HTTP headers, status code, etc.)
+     - but transfer HTTP packets differently
+     - uses ALPN for client to let server know it supports HTTP/2
+  - features:
+     - forces using TLS
+     - compress HTTP headers
+     - replace status line with headers:
+        - request status line with :host: URL [C], :method METHOD [C], :path PATH [C], :scheme: https [C], 
+          :version HTTP/1.1 [C]
+        - response line with version: HTTP/1.1 [C], status: UINT STR [S]
+     - TCP connection remain opened
+     - HTTP pipeling multiplexed
+     - server hints 
+     - server pushes
   - hostname sharding:
      - some clients limit number of parallel requests per domain.
-     - sharding: intentionally using different domains on a page to overcome it. Useless with SDPY/HTTP2
+     - sharding: intentionally using different domains on a page to overcome it. Useless with HTTP/2
 
 Websockets:
   - built on top of TCP
   - protocol ws:// (TCP) or wss:// (TLS)
   - as opposed to HTTP:
-     - does not send additional requests for fetching resources
+     - does not send resource hints
         - because designed for smaller request body ('messages')
      - smaller headers:
         - lower throughput
         - loses HTTP semantics (method, headers, etc.)
-  - as opposed to HTTP 1.1:
+  - as opposed to HTTP/1.1:
      - keeps TCP socket opened:
         - lower latency
         - server push
-     - responses multiplexed
-  - as opposed to HTTP 2:
+     - pipeling: only one request at a time
+  - as opposed to HTTP/2:
      - does not force TLS
 
 Request from client (newline is \n\r) :
+  - case insensitive
   - METHODE URL HTTP/1.1
     VAR: VAL... (header fields, separated by newline. Host is mandatory)
 
@@ -350,7 +350,7 @@ Cache:
 				  Pragma: no-cache
 					Expires: 0
 				   - both values are same but for different browsers
-					 - Pragma if for HTTP 1.0
+					 - Pragma if for HTTP/1.0
         - can use no-cache="HEADER" for a specific header
 	 - can see all in chrome://cache on Chrome
 	 - security:
@@ -470,18 +470,8 @@ Lower latency (keep TCP connection):
   - Require smaller packets (not HTTP):
      - Websockets: for small messages
      - WebRTC: for video/audio/etc.
-  - SPDY
-  - Link prefetching:
-     - Headers (only with <link rel="..." href="URL">):
-        - Prefetch: URL, request URL
-        - DNS-Prefetch: URL, only request DNS records
-        - Prerender: URL, request URL and renders it in background:
-           - keeps it only if user doesn't navigate away
-           - aborts it if user interaction required, or media autoplay
-     - Careful:
-        - Will provide "fake views"
-        - If prefetching everything, will be very slow initial load time
-        - Happens serially (one URL at a time)
+  - HTTP/2
+  - Link prefetching / resource hints
 
 HTTP Tunneling:
   - client wraps a TCP packet in a HTTP packet request body
