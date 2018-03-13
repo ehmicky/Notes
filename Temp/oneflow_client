@@ -350,12 +350,24 @@ Setting up MODELs:
 Backbone.relational:
   - ID:
      - MODEL._id is client-side only, until real MODEL.id is set
-     - getIdObj()->ID
+        - create a second global store which stores by MODEL._id. findModel() looks in either.
+     - getIdObj()->MODEL._id|id
   - new MODEL_CTOR(...) -> MODEL_CTOR.findOrCreate(...)
   - relations.includeInJSON false|"id" for back references to parent (otherwise too big)
-  - clientRelations OBJ_ARR: client-side only relations, i.e. no global store but still use a MODEL_CTOR for a specific attribute
+  - clientRelations OBJ_ARR: client-side only relations, i.e. no global store but still use a MODEL_CTOR for a specific attribute:
      - key "VARR"
-     - relatedModel MODEL_CTOR
+     - relatedModel MODEL2_CTOR
+     - includeInJSON BOOL
+    new MODEL ->
+     - MODEL.VARR = new MODEL2({ _parent: MODEL })
+     - MODEL2 "change"(...) are forwarded to MODEL "change:VARR"(...)
+    MODEL.set("VARR", OBJ[, OBJ2]) ->
+     - MODEL2.set(OBJ[, OBJ2])
+     - MODEL2 "change[:*]" events are buffered until MODEL.set() events triggered
+    MODEL.toJSON()->OBJ ->
+     - MODEL.VARR = MODEL2.toJSON(), without _parent, if includeInJSON true
+     - otherwise removed completely
+    MODEL2 must inherit from ClientRelationalModel, not SimpleModel
 
 Server interaction:
   - URL:
@@ -695,7 +707,7 @@ AGREEMENT: /agreements/AGREEMENT
      + on change, fires "comments:enable|disable" (if isComments()) and "box:enable|disable"
      + save() can use OBJ.enableIfApplicable true, which sets state enabled (unless draft|template or isEmpty())
     || enabled(BOOL): subcollection on state enabled (or draft if true) and not type comments|history
-    || disabled|removedBoxes(BOOL): subcollection on state disabled [and not type comments|history]
+    || disabled|removedBoxes(): subcollection on state disabled [and not type comments|history]
     || hasAny(BOX_STATE)
     || hasDraft()
      - type comments|duration|document|attachments|history|text|form|products: used for subModelTypes
@@ -1428,75 +1440,6 @@ Agreement layoutmode:
   - When changed, rerenders.
   - LayoutMode: only for owner, and agreement.isOpen()
 
-Agreement Toolbar
-  - MDL_EVENT "toolbar-view"(AGREEMENT)->MVIEW
-  - according to isGuest() (unless isOwner()): 
-     - SmallToolbarView|FullToolbarView:
-        - Different templates and sets MVIEW.isUser|Guest true but same BaseToolbarView
-     - BaseToolbarView:
-        - MODEL AGREEMENT
-        - "Edit Layout"|"Create content" button: changes layout mode
-        - Oneflow icon -> "index:show"
-        - Back button -> "agreements:list-view:current:show"
-        - "help:popover:show"("activate-template|layout-mode", TEMPLATE, ...) with dismissForever
-          on switch button and arrow of main button
-        - Main buttons:
-           (not template)
-           - "Delete contract": "modal:confirm:show" -> AGREEMENT.hideOrDiscard() -> GuestMessage|flash_nofication -> "agreements:list-view:current:show"
-           - "Create template": new AGREEMENT(OBJ), with OBJ.template_id, then save() -> flash_nofication -> "agreements:template:show"
-           - "Copy contract": same but without OBJ.state template and "agreements:agreement:show"
-           - "Send contract":
-              - "modal:show" with PublishModalView (composite):
-                 - MODEL SIMPLEMODEL
-                 - COLL RecipientView:
-                    - MODEL PARTICIPANT from AGREEMENT.participants.getPublishEmailRecipients() (i.e. state enabled, not isMe())
-                       - use fullname and POSITION.email
-                 - subject|message taken from Flow.settings.position-agreement-invite-header|content 
-                   Both ways if checkbox "Save as message template" (does patch())
-                 - if ! hasEnabledDecisionMakers(), shows warning
-                 - calls AGREEMENT.publish(SUBJECT, MESSAGE) (sends email, draft->pending)
-              - tooltip when disabled because: no company_orgnr, draft boxes, no counterparts
-           - "Send reminder":
-              - "modal:show" with ReminderModalView (composite): similar but:
-                 - MODEL MESSAGE
-                 - COLL RecipientView: AGREEMENT.participants.getEnabledOthers() instead
-                 - Flow.settings.position-agreement-reminder-header|content
-                 - no warning
-                 - does MESSAGE.save() instead, then add to AGREEMENT.messages
-           (template)
-           - "Create contract": like "Copy contract"
-           - "Activate template": AGREEMENT visibility visible (with patch()) -> flash_nofication -> "agreements:manage-templates:show"
-           - "Delete template": like "Delete contract" but AGREEMENT.destroy() and "agreements:manage-templates:show" 
-           - "Copy template": like "Copy contract" but "agreements:template:show"
-        - "Updates":
-           - JQ.popover(OBJ) with content MVIEW.$el of UpdatesLayout:
-              - MODEL AGREEMENT
-              - EVENT_COLL.updates() (i.e. parent EVENT and new EVENT) (length shown on button)
-              - region eventList: "boxes:history:list:view"(AGREEMENT, EVENT_COLL.updates())
-        - "Insight": 
-           - JQ.popover(OBJ) with content MVIEW.$el of MetricsView (composite):
-              - MODEL AGREEMENT
-              - COLL ParticipantMetricView:
-                 - MODEL PARTICIPANT (from AGREEMENT.participants.enabledNoneOwners())
-                    - according to fullname, visits, first_visit|last_visit, email_status, status signed|declined
-                    - hides if PARTICIPANT.isMe()
-                    - also AGREEMENT.getInviteDate()
-        - Guest settings gear icon:
-           - JQ.popover(OBJ) with content MVIEW.$el of GuestSettingsView:
-              - MODEL: SETTINGS_POSITION:
-                 - checkbox linked to position-notification-email (does a patch())
-  - permissions/conditions:
-     - allow-post-message: "Send reminder"
-     - allow-discard (isOwner(), seller, template|draft|pending|expired) or allow-hide (not guest, signinprogress|signed|expired): "Delete contract"
-     - not guest, same ACCOUNT as Owner: "Create template" (canEditTemplates()) or "Copy template" (otherwise)
-     - pending|signinprogress: "Send reminder"
-     - unless isGuest: Oneflow icon, back button, help:popover, main button, "Updates", "Insight"
-     - isGuest: Guest settings icon
-     - viewMode: Main button
-     - draft|template: "Updates", "Insight"
-     - isOwner() and not draft|template: "Insight"
-     - allow-publish|visible-publish: "Publish"
-
 Agreement ParticipantBar:
   - "participants:view"(AGREEMENT):
      - if not template: 
@@ -1544,26 +1487,125 @@ Agreement ParticipantBar:
   - permissions:
      - Cancel contracts: allow-cancel, i.e. signinprogress|signed|expired, decisionmaker and not lifecycle ended, type recurring
 
+Agreement Toolbar
+  - MDL_EVENT "toolbar-view"(AGREEMENT)->MVIEW
+     - SmallToolbarView|FullToolbarView:
+        - according to isGuest() (unless isOwner()): different templates and sets MVIEW.isUser|Guest true
+        - both inherit BaseToolbarView:
+           - MODEL AGREEMENT
+           - "Edit Layout"|"Create content" button: changes layout mode
+           - Oneflow icon -> "index:show"
+           - Back button -> "agreements:list-view:current:show"
+           - "help:popover:show"("activate-template|layout-mode", TEMPLATE, ...) with dismissForever on switch button and arrow of main button
+           - Left main button:
+              (not template)
+              - "Copy contract": new AGREEMENT(OBJ), with OBJ.template_id -> save() -> flash_nofication -> "agreements:agreement:show"
+              - "Delete contract": "modal:confirm:show" -> AGREEMENT.hideOrDiscard() -> GuestMessage|flash_nofication -> "agreements:list-view:current:show"
+              - "Create template": same as "Copy contract" but with with OBJ.state template and "agreements:template:show"
+              (template)
+              - "Activate template": AGREEMENT visibility visible (with patch()) -> flash_nofication -> "agreements:manage-templates:show"
+              - "Delete template": like "Delete contract" but AGREEMENT.destroy() and "agreements:manage-templates:show" 
+              - "Copy template": like "Copy contract" but "agreements:template:show"
+           - Right main button:
+              (not template)
+              - "Send contract":
+                 - "modal:show" with PublishModalView MCOMPVIEW:
+                    - MODEL SIMPLEMODEL
+                    - RecipientView:
+                       - MODEL PARTICIPANT from AGREEMENT.participants.getPublishEmailRecipients() (i.e. state enabled, not isMe())
+                          - use fullname and POSITION.email
+                    - subject|message taken from Flow.settings.position-agreement-invite-header|content 
+                      Both ways if checkbox "Save as message template" (does patch())
+                    - if !hasEnabledDecisionMakers(), shows warning
+                    - calls AGREEMENT.publish(SUBJECT, MESSAGE), i.e calls /agreements/AGREEMENT/publish with data { subject STR, message STR2 }, which changes state draft->pending and sends emails
+                 - tooltip when disabled because: no company_orgnr, draft boxes, no counterparts
+              - "Send reminder":
+                 - "modal:show" with ReminderModalView MCOMPVIEW similar but:
+                    - MODEL MESSAGE
+                    - RecipientView: AGREEMENT.participants.getEnabledOthers() instead
+                    - Flow.settings.position-agreement-reminder-header|content
+                    - no warning
+                    - does MESSAGE.save() instead, then add to AGREEMENT.messages
+              (template)
+              - "Create contract": like "Copy contract"
+           - "Updates":
+              - JQ.popover(OBJ) with content MVIEW.$el of UpdatesLayout:
+                 - MODEL AGREEMENT
+                 - EVENT_COLL.updates() (i.e. parent EVENTs and new EVENTs) (length shown on button)
+                 - region eventList: "boxes:history:list:view"(AGREEMENT, EVENT_COLL.updates())
+           - "Insight": 
+              - JQ.popover(OBJ) with content MVIEW.$el of MetricsView MCOMPVIEW:
+                 - MODEL AGREEMENT
+                 - COLL ParticipantMetricView:
+                    - MODEL PARTICIPANT (from AGREEMENT.participants.enabledNoneOwners())
+                       - according to fullname, visits, first_visit|last_visit, email_status, status signed|declined
+                       - hides if PARTICIPANT.isMe()
+                       - also AGREEMENT.getInviteDate()
+           - Guest settings gear icon:
+              - JQ.popover(OBJ) with content MVIEW.$el of GuestSettingsView:
+                 - MODEL: SETTINGS_POSITION:
+                  - checkbox linked to position-notification-email (does a patch())
+  - permissions/conditions:
+     - allow-post-message (i.e. state not draft|template): "Send reminder"
+     - allow-discard (isOwner(), seller, template|draft|pending|expired) or allow-hide (not guest, signinprogress|signed|expired): "Delete contract"
+     - not guest, same ACCOUNT as Owner: "Create template" (canEditTemplates()) or "Copy template" (otherwise)
+     - pending|signinprogress: "Send reminder"
+     - unless isGuest: Oneflow icon, back button, help:popover, main buttons, "Updates", "Insight"
+     - isGuest: Guest settings icon
+     - viewMode: Main buttons
+     - draft|template: "Updates"
+     - isOwner() or draft|template: "Insight"
+     - allow-publish|visible-publish: "Publish"
+
 Agreement LayoutSidebar:
   - MDL_EVENT "layout-sidebar:view(AGREEMENT)->MVIEW
-     - according to AGREEMENT.boxes.type
+     - only LayoutMode
+     - SidebarView MCOMPVIEW:
+        - CategoryView MCOMPVIEW:
+           - MODEL OBJ:
+              - title STR: bound to view
+           - NewBoxView (when MODEL is OBJ, i.e. first part)
+              - MODEL OBJ:
+                 - type BOX_TYPE: bound to:
+                    - title|icon, according to box_constants.js
+                    - HTML ATTR 'data-type', used by BoxManager when drag&dropping to create new BOX with right type
+                Filled with text|products|form|duration|document|attachments
+                 - duration hidden when already added
+           - DisabledBoxView (when MODEL is OBJ, i.e. second part)
+              - MODEL BOX: type used like NewBoxView
+                Filled with AGREEMENT.boxes state disabled and type not comments|history
+              - text is according to BOX.toStringHandler (i.e.  "boxes:TYPE:tostring"), which uses toString(BOX)->"HTML"
+           - EmptyView:
+              - Only 'No removed sections'
 
 BoxMenu:
   - MBEHAVIOR added to boxes, as a REGION to ".js-box-menu-container", with OBJ:
      - renderTrigger(FUNC()): re-render menu when FUNC() called. Should this.listenTo(..., FUNC)
+       Also always re-render on change to BOX.config or (if BOX state draft) change to BOX
   - Must use MVIEW:
-     - _buildBoxMenu()->OBJ[()]:
-        - actions OBJ_ARR: <button> list
+     - _buildBoxMenu|menu OBJ[()]
+        - actions OBJ_ARR: <button> list (BoxMenuActionView with MODEL OBJ)
            - title "HTML", className STR
            - event "EVENT", eventData VAL: when clicking on button, MDL_EVENT "box:menu:EVENT"(VAL)
            - confirm OBJ: passed to "modal:confirm:show", filtering event trigger
            - doConfirm()->BOOL: false if must not do confirm OBJ
-        - dropdown OBJ_ARR: same but as dropdown. Can also OBJ:
+        - dropdown OBJ_ARR: same but as dropdown (BoxMenuItemView). Can also OBJ:
            - url URL, bypass BOOL
   - adds:
-     - OBJ.dropdown OBJ for removing box ("box-disable")
-     - boxActions, i.e. publish|disable buttons with MDL_EVENT "box:publish|disable"(BOX), which changes BOX.state (in viewMode)
-     - if allow-set-read-only (i.e. is_manager), button to change BOX.isManagerLocked()
+     - OBJ.dropdown OBJ:
+        - "Remove section": 
+           - "box-disable"(BOX), which sets BOX state disabled (using patch())
+           - confirm box unless AGREEMENT state draft|template or BOX state draft
+        - "Only editable by managers": toggle BOX.isManagerLocked() (using patch())
+     - boxActions:
+        - "box-disable"(BOX): like above, but as Trash icon
+        - "Add section to contract": 
+           - "box:publish"(BOX), which sets BOX state enabled (using patch())
+           - confirm box unless AGREEMENT state draft|template or BOX state draft
+  + permissions:
+     - allow-update and AGREEMENT not template: show default boxActions
+     - allow-update, AGREEMENT not template and allow-disable: "Remove section"
+     - allow-set-read-only (i.e. is_manager): "Only editable by managers"
 
 BoxManager (BaseBoxes container):
   - MDL_EVENT "box-manager:view"(AGREEMENT)->MCOLLVIEW:
