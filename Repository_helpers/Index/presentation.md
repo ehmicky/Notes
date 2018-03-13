@@ -22,7 +22,9 @@ This includes notably:
 # Size
 
 Number of files: NUMBER_OF_FILES
+
 Number of lines: NUMBER_OF_LINES
+
 Number of pages (if it were a printed book): NUMBER_OF_PAGES
 
 # List of files
