@@ -6,8 +6,7 @@
 
 
 Versions:
-  - spec from october 2016
-  - read doc in march 2017
+  - spec from 7 Feb 2017
 
 
 ## RESOLVER ###################################################################################################################
@@ -25,11 +24,19 @@ Versions:
      - if scalar type: RATTR rendered as output
      - i.e. shape of return value and TYPE are the same
      - null is treated same as undefined, i.e. is nothing
+        - TYPE must be nullable
   - ARGS:
      - ARG passed by query
      - is OBJ
   - CONTEXT:
      - request-long object, i.e. holding request info
+
+Resolver error:
+  - can arise on:
+     - result coercion error
+     - any general exception|error during ATTR()
+  - effect:
+     - same as if resolver returned null
 
 
 ## GENERAL SYNTAX #############################################################################################################
@@ -46,6 +53,7 @@ VAL:
 
 Naming:
   - [[:alnum:]_]
+  - cannot start with __
   - case sensitive
   - for QUERY, $VAR|ARG, ALIAS|ATTR, TYPE, ENUM_VAL, FRAGMENT, DIRECTIVE
 
@@ -79,26 +87,43 @@ type TYPE {
           - ID: same as String, but with ID semantics
           - ENUM
        - or complex:
-          - i.e. custom and OBJ-like
+          - Object:
+             - used as server output, OBJ-like
+             - defined by type TYPE
+          - InputObject:
+             - used as client input, OBJ-like
+             - defined by input TYPE
           - METHOD:
              - top-level entrypoint
              - is not only resource, also has extra semantics (e.g. query does not have side effects)
     - modifiers:
-       - TYPE! means not optional
+       - TYPE! means not-nullable:
+          - for ATTR:
+             - cannot be null (but can be undefined, i.e. always optional)
+          - for ARG:
+             - cannot be undefined|null (i.e. required)
+          - raises query error otherwise
           - ARR:
              - [TYPE!]: TYPE not optional, TYPE_ARR optional
              - [TYPE]!: TYPE optional, TYPE_ARR non optional
              - TYPE_ARR non optional might still have length 0
-          - otherwise, resolver can return nothing:
-             - including if because of exception|error
-       - [TYPE] is array
+       - [TYPE] means array
+          - can be nested, e.g. [[TYPE]]
   ARG:
     - TYPE: including complex
     - "= VAL" is default value
+    - variadic argument:
+       - should be last ARR
+       - query needs to supply ARR, but VAL -> [VAL] typecasting possible (see below)
 
 scalar TYPE
   Defines new scalar type:
-    - each low-level implementation must have a (e.g.) JavaScript <-> graphQL layer ("scalar coercion")
+    - must be serializable as string
+
+input TYPE {
+  ATTR: TYPE [= VAL]
+}
+  Defines InputObject type (verify this???)
 
 enum ENUM { 
   ENUM_VAL
@@ -108,15 +133,38 @@ enum ENUM {
     - ENUM_VAL are not surrounded by quote
     - uppercase by convention
 
-interface INTERFACE { ... }
-type TYPE implements INTERFACE { ... }
+interface TYPE { ... }
+type TYPE2 implements TYPE { ... }
   Inheritance:
-    - interface is abstract, i.e. can only be implemented not directly used
-    - TYPE must reimplement INTERFACE
+    - TYPE is abstract, i.e. can only be implemented not directly used
+    - TYPE2 must reimplement TYPE, as a superset|covariant:
+       - can add ATTR, ARG, !-modifier
+    - TYPE2 can be used where any parent is expected:
+       - only TYPE's ATTR can be queried as is
+       - TYPE2's ATTR must use fragment with "on TYPE2"
+
 
 union TYPE = TYPE2 | ...
-  Generic polymorphism:
-    - TYPE is shared contracts between all TYPE2
+  Mixed type:
+    - same as empty interface TYPE
+    - TYPE2 must be complex, cannot include modifiers
+
+Type coercion:
+  - "result coercion":
+     - typecasting from server to graphQL
+     - resolver error if cannot typecast
+     - is loose:
+        - e.g.:
+           - DOUBLE <-> 'NUM' <-> INT
+           - any -> STR
+           - NUM -> BOOL
+        - but not:
+           - VAL -> [VAL] (array)
+  - "input coercion":
+     - typecasing from client to graphQL
+     - query error if cannot typecast
+     - is strict (no coercion (verify this???)), except for:
+        - VAL -> [VAL] (array)
 
 
 ## QUERY ######################################################################################################################
@@ -158,6 +206,10 @@ Comparison with REST:
 
 File:
   - contains 0-n operations|fragments
+     - providing they do not have same names
+
+Query error:
+  - returns { error ... }
 
 
 ## FRAGMENT ###################################################################################################################
@@ -175,6 +227,7 @@ fragment FRAGMENT on TYPE { ... }
      - cannot include modifiers
      - must be complex (including INTERFACE)
   - can be nested
+  - must be used in a query
 
 ... [on TYPE] { ... }
   - inline fragment
@@ -205,16 +258,51 @@ Introspection:
   - special attributes that request metadata
   - list:
      - __typename 'TYPE'
-     - __schema OBJ:
-        - types OBJ_ARR (type information, including scalar and __TYPE):
-           - name 'TYPE'
-        - queryType OBJ
-           - name METHOD
-     - __type(name: 'TYPE'):
+        - for SCHEMA|TYPEINFO|DIRECTIVEINFO|FIELD|INPUTVAL|ENUMVALINFO|TYPEKIND|DIRECTIVE|DIRECTIVELOCATION,
+          it is __Schema|__Type|__Directive|__Field|__InputValue|__EnumValue|__TypeKind|__Directive|__DirectiveLocation
+     - __schema SCHEMA:
+        - types TYPEINFO_ARR:
+           - all supported types, including scalar and __TYPE
+        - queryType|mutationType TYPEINFO (top-level types METHOD)
+        - directives DIRECTIVEINFO_ARR:
+           - name 'DIRECTIVE'
+           - description STR
+           - args INPUTVALUE_ARR
+           - locations DIRECTIVELOCATION_ARR:
+              - enum among QUERY|MUTATION|FIELD|FRAGMENT_DEFINITION|FRAGMENT_SPREAD|INLINE_FRAGMENT
+     - __type(name: 'TYPE') TYPEINFO:
         - name 'TYPE'
         - description STR
-        - kind|ofType 'OBJECT|INTERFACE|NON_NULL|LIST|SCALAR'
-           - NON_NULL|LIST are wrapper types, use "ofType" to get subtype
+        - kind TYPEKIND:
+           - enum among SCALAR|[INPUT_]OBJECT|INTERFACE|UNION|ENUM|NON_NULL|LIST
+        (only NonNull|List modifiers)
+        - ofType TYPEINFO
+           - when kind is a modifier (NON_NULL|LIST), use "ofType" to get subtype
+        (only Objects|Interface)
+        - fields[(includeDeprecated: true)] FIELD_ARR
+           - name 'ATTR'
+           - description STR
+           - type TYPE_INFO
+           - args INPUTVALUE_ARR:
+              - name 'VAR'
+              - description STR
+              - type TYPE_INFO
+              - defaultValue STR
+           - isDeprecated BOOL, deprecationReason STR
+        (only InputObjects)
+        - inputFields INPUTVALUE_ARR
+        (only Objects)
+        - interfaces TYPEINFO_ARR
+        (only Interface|Union)
+        - possibleTypes TYPEINFO_ARR
+        (only Enums)
+        - enumValues[(includeDeprecated: true)] ENUMVALINFO_ARR:
+           - name 'ENUMVAL'
+           - description STR
+           - isDeprecated BOOL, deprecationReason STR
+  - best practices:
+     - specify description
+     - specify isDeprecated, deprecationReason
 
 
 ## RETURN VALUE ###############################################################################################################
@@ -236,6 +324,9 @@ Introspection:
 
 
 Since query has explicit typing, can validate against server definition compile-time
+  - can be done by client and|or by server
+
+List of possible errors is available in spec
 
 
 ## NON MANDATORY ##############################################################################################################
