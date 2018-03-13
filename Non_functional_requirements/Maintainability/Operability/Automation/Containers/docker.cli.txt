@@ -82,9 +82,14 @@ DOCKERDIR                         #Runtime directory for docker with notably:
                                   #  - images/
                                   #  - volumes/: data volumes
                                   #  - swarm/: swarm state
+                                  #  - tmp/: can choose different dir with ENVVAR DOCKER_TMPDIR
                                   #Def: /var/lib/docker/                  
                                   
 DOCKERHOME                        #~/.docker/
+docker ...  
+--config=DOCKERHOME [COMMAND]     #Overrides
+                                  #If COMMAND, only overrides for docker COMMAND
+DOCKER_CONFIG                     #ENVVAR to override DOCKERHOME
 
 DOCKERCONF                        #Either:
                                   #  - docker --config=FILE
@@ -93,15 +98,48 @@ DOCKERCONF                        #Either:
 
                                              /=+===============================+=\ 
                                             /  :                               :  \  
-                                            )==:            DAEMON             :==(   
+                                            )==:              OCI              :==(   
+                                            \  :_______________________________:  /    
+                                             \=+===============================+=/
+
+
+OCI ==>                           #Docker is built on top of "Open containers", using containerd
+--containerd FILE                 #Path to containerd socket
+--add-runtime NAME=PATH           #Adds OCI-compatible runtime (like runC)
+                                  #Can also use DOCKERCONF:
+                                  #  - default-runtime NAME
+                                  #  - runtimes.NAME:
+                                  #     - path PATH
+                                  #     - runtimeArgs STR_ARR
+--exec-opt VAR=VAL                #Options passed to OCI runtime, e.g.
+                                  #  - native.cgroupdriver systemd or cgroupfs (def)
+
+
+                                             /=+===============================+=\ 
+                                            /  :                               :  \  
+                                            )==:            SERVER             :==(   
                                             \  :_______________________________:  /    
                                              \=+===============================+=/
 
 
 CLIENT-SERVICE ARCHITECTURE ==>   #Client is connected to server (daemon)
-                                  #Server binds to Unix socket:
-                                  #  - owned by "docker" group if it exists, "root" (avoid) otherwise
+                                  #Server can bind to (according to -H):
+                                  #  - unix:///PATH: Unix socket (def):
+                                  #     - owned by "docker" group if it exists, "root" (avoid) otherwise
+                                  #        - i.e. "docker" group user will have full dockerd access
+                                  #  - tcp://HOST[:PORT][/PATH]: TCP:
+                                  #     - usually port 2375 if no TLS, 2376 if TLS
+                                  #     - PATH will be prepended to all requests
+                                  #  - fd://[NUM]: systemd socker
+                                  #Def: unix:///var/run/docker.sock
                                   #Server must be run as root (see below)
+dockerd|docker ...
+-H ...                            #Address server listens to, or client connects to
+--host ...                        #Can be used multiple times
+DOCKER_HOST                       #ENVVAR to override host
+
+
+DOCKERCONF.HttpHeaders.VAR        #HTTP header named VAR, value VAL, to add, i.e. always sent by client to server
 
 
 dockerd                           #Starts server
@@ -112,23 +150,45 @@ dockerd                           #Starts server
                                   #  - upstart
 DOCKER_OPTS                       #Extra flags passed to dockerd
 
--H PROTO://HOST[:PORT]
---host PROTO://HOST[:PORT]        #Address server listens to (def: /var/run/docker.sock, or ENVVAR DOCKER_HOST)
-
--D
---debug=true                      #
-SIGUSR1                           #When sent to server, current stack traces will be logged
-
---live-restore                    #Do not shut down containers if server goes down
-                                  #Server must be restarted with same options
-                                  #While down, clients will buffer communication to server until limit (def: 64K)
-                                  #Not compatible with swarm mode
-
 
 /etc/default/docker               #File read when using SysVInit or upstart, usually setting ENVVAR
 
 
+                                             /=+===============================+=\ 
+                                            /  :                               :  \  
+                                            )==:           REST API            :==(   
+                                            \  :_______________________________:  /    
+                                             \=+===============================+=/
+
+
+
+DOCKER_API_VERSION                #ENVVAR to specify which version to use (def: latest)
+
+
+                                             /=+===============================+=\ 
+                                            /  :                               :  \  
+                                            )==:           DEBUGGING           :==(   
+                                            \  :_______________________________:  /    
+                                             \=+===============================+=/
+
+
+dockerd ...
+-D
+--debug=true                      #
+SIGUSR1                           #When sent to server, current stack traces will be logged
+
+docker ...
+-D
+--debug                           #
+-l STR
+--log-level=STR                   #
+
+
 docker info ???
+
+
+DOCKER_NOWARN_KERNEL_VERSION      #ENVVAR to remove warning when Linux kernel version is not compatible
+
 
 
                                              /=+===============================+=\ 
@@ -232,7 +292,6 @@ docker history IMAGE ???
 
 
 docker rmi IMAGE                  #Deletes an IMAGE
-
 -f
 --force                           #Deletes even if there are related containers
 --no-prune                        #Do not delete parents without tags
@@ -256,6 +315,7 @@ docker images                     #Prints images with information (one line per 
                                   #  - ID IMAGE_ID
                                   #  - CreatedSince|At
                                   #  - Size
+                                  #Def is DOCKERCONF.imagesFormat "GOTMP"
 
 
                                              /=+===============================+=\ 
@@ -655,6 +715,13 @@ docker exec EXIT CODE ==>         #Is:
                                   #  - otherwise: COMMAND exit code
 
 
+dockerd ...
+--live-restore                    #Do not shut down containers if server goes down
+                                  #Server must be restarted with same options
+                                  #While down, clients will buffer communication to server until limit (def: 64K)
+                                  #Not compatible with swarm mode
+
+
                                              /=+===============================+=\ 
                                             /  :                               :  \  
                                             )==:        STREAMS/SIGNALS        :==(   
@@ -667,7 +734,9 @@ docker exec ...
 --detach                          #Returns container ID
                                   #To bring in foreground again, use docker attach CONTAINER
                                   #Container exits when COMMAND exits
---detach-keys                     #???
+--detach-keys "KEY,..."           #Sequence of keys to put currently foreground container to background
+                                  #Def: "ctrl-p,ctrl-q"
+                                  #Can also use DOCKERCONF.detachKeys STR
 
 docker create|exec ...
 -t
@@ -680,12 +749,25 @@ docker create ...
 --attach stdin|stdout|stderr      #Can be done several time. Def: all
 
 docker attach CONTAINER           #See docker exec --detach
+--detach-keys                     #Like docker exec
 
 
-docker run ...
+docker run|attach ...
 --sig-proxy                       #Redirects all signals from current process|terminal to the container it runs
 
 STOPSIGNAL SIG_NAME|NUM           #Dockerfile instruction. Sets signal sent to container to terminate it (def: SIGKILL)
+
+
+                                             /=+===============================+=\ 
+                                            /  :                               :  \  
+                                            )==:            LIMITS             :==(   
+                                            \  :_______________________________:  /    
+                                             \=+===============================+=/
+
+
+docker create ...
+--ulimit NAME=NUM[:NUM2]          #Sets ulimit.
+                                  #NUM is soft limit, NUM2 hard limit.
 
 
                                              /=+===============================+=\ 
@@ -777,6 +859,7 @@ docker ps                         #Prints containers with information:
 --latest                          #Only prints INT (def: 1) latest ran
 -q
 --quiet                           #Only show container ID
+--format GOTMP                    #Def is DOCKERCONF.psFormat "GOTMP"
 
 
 docker top CONTAINER              #Prints running processes of a container: UID, PID, parent PID, time, command, TTY, etc.
@@ -787,6 +870,7 @@ docker stats CONTAINER...         #Prints runtime metrics of containers: CPU, Me
 
 docker inspect 
  CONTAINER|IMAGE|TASK             #Prints verbose debug information, as JSON
+
 
 
                                              /=+===============================+=\ 
@@ -952,10 +1036,11 @@ docker create ...                 #Appends STR to /etc/hosts
 DNS SERVER ==>                    #By default, same as host's, but can alternative specify DNS server:
                                   #  - with the following options, which update /etc/resolve.conf
                                   #  - incompatible with --network CONTAINER
-docker create
---dns=[IP,...]                    #
---dns-search=DOMAIN,...           #
---dns-opt=OPT,...                 #
+docker create ...
+dockerd ...
+--dns IP                          #
+--dns-search DOMAIN               #
+--dns-opt OPT                     #
 
 
                                              /=+===============================+=\ 
@@ -988,15 +1073,16 @@ docker create ...
                                              \=+===============================+=/
 
 
-TLS ==>                           #
 dockerd|docker ...                #dockerd is for client to authenticate server, docker is inverse
                                   #Should run on port 2376 (instead of default 2375)
 --tls                             #Uses TLS for self
 --tlsverify                       #Uses TLS for self and other endpoint
-                                  #Can use ENVVAR DOCKER_TLS_VERIFY=1
+                                  #Can also use ENVVAR DOCKER_TLS_VERIFY=1
 --tlscacert=FILE                  #Def: public CA list
 --tlscert=FILE                    #
 --tlskey=FILE                     #
+
+DOCKER_CERT_PATH                  #ENVVAR to override certificates|keys directory
 
 
                                              /=+===============================+=\ 
@@ -1102,11 +1188,13 @@ STORAGE DRIVER ==>                #Filesystem, handling image/container layers
                                   #Is mounted on an existing filesystem, "backing" (i.e. DOCKERDIR's)
 dockerd                           #Store driver are per daemon. Can be inspected with docker info
 --storage-driver=DRIVER           #Among: overlay2, aufs, btrfs, devicemapper, vfs, zfs
+DOCKER_DRIVER                     #ENVVAR to override storage DRIVER
+--storage-opt VAR=VAL             #DRIVER-specific options
 
 CHOICE ==>                        #In summary:
                                   #  - AUFS: def, good for general purpose or many containers, bad if big files or lots of write
                                   #  - OverlayFS: similar to AUFS but faster and less stable
-                                  #  - ZFS: good for many containers, less stable
+                                  #  - ZFS: good if many containers, less stable
                                   #  - BTRFS: good for pools of images, bad if many containers or many small/sequential writes
                                   #  - DeviceMapper: good for big files, bad if many containers
                                   #  - VFS: debugging only
@@ -1132,6 +1220,7 @@ ZFS ==>                           #Only with backing filesystem ZFS
                                   #  - good memory use, i.e.:
                                   #     - good if many containers, e.g. PaaS
                                   #  - bad RAM usage
+                                  #Storage options: see online doc
 BTRFS ==>                         #Only with backing filesystem BTRFS
                                   #Features:
                                   #  - good overall performance
@@ -1143,13 +1232,20 @@ BTRFS ==>                         #Only with backing filesystem BTRFS
                                   #     - bad if many small writes (including changing containers running states)
                                   #  - use journaling, i.e.
                                   #     - bad performance if writes are sequential
+                                  #Storage options:
+                                  #  - min_space NUM[K|M|G]: minimum subvolume size
 DEVICEMAPPER ==>                  #Only with backing filesystem direct-lvm
                                   #Features:
                                   #  - works with 64KB blocks not files
                                   #     - i.e. good for big files, bad for small files
                                   #  - not memory efficient
                                   #     - bad for many containers, e.g. PaaS
+                                  #Storage options: see online doc
 VFS ==>                           #Only for debugging
+
+
+RAMDISK ==>                       #Not a STORAGE driver, but a filesystem type similar to tmpfs
+                                  #When used, need to set ENVVAR DOCKER_RAMDISK
 
 
                                              /=+===============================+=\ 
@@ -1234,7 +1330,7 @@ docker volume|network|service
 --label VAR[=VAL]                 #Sets labels
 
 dockerd ...
---label=[VAR[=VAL],...]           #Sets labels
+--label="VAR[=VAL],..."           #Sets labels
 
 docker node|service update ...
 --label-add VAR[=VAL]             #Sets labels
@@ -1246,9 +1342,10 @@ MAINTAINER NAME <EMAIL>           #Dockerfile instruction. Metadata about author
 
                                              /=+===============================+=\ 
                                             /  :                               :  \  
-                                            )==:          DOCKER HUB           :==(   
+                                            )==:           REGISTRY            :==(   
                                             \  :_______________________________:  /    
                                              \=+===============================+=/
+
 
 
 GOAL ==>                          #Repository (similar to GitHub) of Docker images
@@ -1285,6 +1382,15 @@ docker search STR                 #Searches DockerHub, and prints results: name,
 --no-trunc                        #Do not truncate description
 
 
+DOCKER HUB ==>                    #Default registry, maintained by Docker
+CUSTOM REGISTRY ==>               #Use HOSTNAME in docker login, etc.
+
+
+dockerd ...
+--insecure-registry HOST[:PORT]   #Must be used when custom registry does not use TLS, or HOSTNAME/ca.crt not available
+--disable-legacy-registry         #Do not allow custom registries with old versions of registry protocol
+
+
                                              /=+===============================+=\ 
                                             /  :                               :  \  
                                             )==:         CONTENT TRUST         :==(   
@@ -1303,6 +1409,8 @@ CONTENT TRUST ==>                 #Verifying Docker registry (like Docker Hub) i
 DOCKER_CONTENT_TRUST=1            #ENVVAR that must be enabled
 docker push|pull|build|create
 --disable-trust-content           #
+
+DOCKER_CONTENT_TRUST_SERVER       #ENVVAR to override URL
 
 
                                              /=+===============================+=\ 
@@ -1499,3 +1607,40 @@ docker service ls                 #Prints all SERVICE
 
 
 docker service inspect SERVICE... #Gives debug information about SERVICE
+
+
+                                             /=+===============================+=\ 
+                                            /  :                               :  \  
+                                            )==:            PLUGINS            :==(   
+                                            \  :_______________________________:  /    
+                                             \=+===============================+=/
+
+
+docker plugin ...                 #New system replacing DRIVERs (e.g. for volumes, networks, storage, logging), but still experimental
+
+
+                                             /=+===============================+=\ 
+                                            /  :                               :  \  
+                                            )==:        DOCKER COMPOSE         :==(   
+                                            \  :_______________________________:  /    
+                                             \=+===============================+=/
+
+
+
+docker deploy
+
+
+                                             /=+===============================+=\ 
+                                            /  :                               :  \  
+                                            )==:         DOCKER CLOUD          :==(   
+                                            \  :_______________________________:  /    
+                                             \=+===============================+=/
+
+
+DOCKER CLOUD ???
+
+docker stack config
+docker stack deploy
+docker stack rm
+docker stack services
+docker stack tasks
