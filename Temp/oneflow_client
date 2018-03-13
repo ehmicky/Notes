@@ -134,8 +134,9 @@ MODEL:
      - [attributes]events[Once]."[ATTR] EVENT ..." "FUNC" (for COLL too)
   - server:
      - fetch|patch|etc.(): proxied through Flow.ajax.ajax(), so can OBJ.messageContainer|ignoredStatusCodes
-     - doRequest(XHR, FUNC(RESP, STATUS, XHR_RESP)->VAL, FUNC2(RESP, STATUS, ERROR)->VAL2)->PROMISE, wrap PROMISe so it resolves
+     - doRequest(XHR, FUNC(RESP, STATUS, XHR_RESP)->VAL, FUNC2(RESP, STATUS, ERROR)->VAL2)->PROMISE, wrap PROMISE so it resolves
        with VAL, XHR_RESP, and rejected with XHR_RESP, VAL2
+       Used in the handlers.js
      - EntityHandlers.getModel(MODEL, OBJ): like fetch(OBJ), but returns as PROMISE resolved with MODEL, RESP or rejected with RESP
      - debounceFetch(NUM[, OBJ])->PROMISe: like fetch(OBJ) but with debounce
      - patch(LFUNC[, OBJ]): like save(OBJ) with OBJ.patch true, but sends with HTTP header X-Method-Overrides instead of HTTP method
@@ -566,14 +567,16 @@ USER:
 COMPANY:
   - agreement AGREEMENT
   - owner POSITION
-  | isOwner(POSITION[, BOOL]): if true, 
+  | isOwner(POSITION[, BOOL]): if true, also if same COMPANY as owner
   - state enabled|disabled
   | isEnabled|Disabled()
   - company_name [V]
   - company_orgnr [V]
   - company_country [V]
+  - consumer 0|1
+  | isConsumer()
 
-ACCOUNT:
+ACCOUNT: /accounts
   - structure ACCOUNT_STRUCTURE_ARR:
      - parent ACCOUNT_STRUCTURE
      | isRoot()
@@ -610,22 +613,57 @@ ACCOUNT:
 PARTICIPANT: /agreements/AGREEMENT/participants/
   - agreement AGREEMENT
   - state enabled|signed|declined|disabled[_by_company]
-  - type influencer|decisionmaker(def) [V]
-  | delegate BOOL: if true, type decisionmaker
-  - email_status success|failure|bounce|suppressed|ooto|complaint
+  | isPending|Signed|Declined|hasDecided|Disabled|Enabled()
+  | enable|disable([OBJ]): does a patch([OBJ])
+  | sign|decline([OBJ]): does with /agreements/AGREEMENT/participants/PARTICIPANT/sign|decline with data { checksum AGREEMENT.checksum }
+  | Then updates prev_visit[_ts]
+  + When state becomes enabled, triggers "sign:reset" on PARTICIPANT and AGREEMENT, providing PARTICIPANT isMe()
+    and there has been an EVENT with reset true and created_ts < PARTICIPANT.last_visit_ts
   - visibility hidden[_with_notifications]|visible
+  | hasVisibility(VAL): true if state disabled*
+  | setVisibility(VAL): does a patch()
+  + "change:visibility" forwarded to AGREEMENT
+  - type influencer|decisionmaker(def) [V]
+  | isDecisionMaker|Influencer()
+  | delegate BOOL: if true, type decisionmaker
+  + triggers "participant:change:type" on AGREEMENT and "agreement:participant:change:type" on Flow
+  - email_status failure|bounce|suppressed|success|ooto|complaint(spam)
+  | hasEmailFail|Bounce|Success(): failure, bounce|suppressed, success|ooto|complaint
   - position POSITION
   | isMe()
+  | sharesAccountWith(POSITION): same ACCOUNT
   - owner POSITION
+  | isOwner([POSITION[, BOOL]]): same POSITION or (if true) same COMPANY
   - agreement_company COMPANY
+  | sharesCompanyWith(POSITION)
+  | isConsumer(): COMPANY.isConsumer()
   - prev_visit DATETIME
   - fullname [V]
+  + Updates Flow.user.fullname when save|patch(), unless isGuest() or !.isMe()
   - email [V]
+  - phone_number STR
+  - title STR
+  | hasInfoMatching(USER|POSITION): same fullname and title
+  + Sets POSITION.phone_number|title when save|patch(), unless isGuest() or !.isMe()
+  - prev_visit[_ts] DATETIME|TIMESTAMP
+  - last_visit_ts TIMESTAMP
+  - created DATETIME
+  | getInviteDate(): returns min of created or AGREEMENT.publish_timestamp
+  | contactMeOneflow(): calls /agreements/AGREEMENT/participants/PARTICIPANT/contact_me
+  | getSignupToken(): calls /agreements/AGREEMENT/participants/PARTICIPANT/contact_me
+  + permissions:
+     + reset on change:state|type, sign|decline, AGREEMENT.permissions:reset, AGREEMENT.participant:sign
+     + only for AGREEMENT|COMPANY|POSITION.owner and for AGREEMENT PARTICIPANT (or same COMPANY)
+     + allow-edit true
+     (not AGREEMENT.owner, or same COMPANY)
+     + allow-remove|restore: state [not] disabled*
 
 AGREEMENT:
   - state: draft|pending|signinprogress|signed|declined|expired|template
   - owner|requester POSITION
   - companies COMPANY_ARR
+  - publish_timestamp
+  - checksum STR
   - participants PARTICIPANT_ARR
   | getParticipant([POSITION])->PARTICIPANT: with same position (def: Flow.position)
   - boxes BOX_ARR:
