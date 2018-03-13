@@ -2,7 +2,7 @@ This repository contains notes I took when using diverse tools and reading IT-re
 
 It should give a good idea of what I can work with, although it is primarly intended for my own usage.
 This includes notably:
-  - _[Languages](Languages)_: [JavaScript](Languages/JavaScript) (including [Node](Languages/JavaScript/Node), [DOM](Platforms/Browser/DOM), [Web APIs](Platforms/Browser/DOM)), [HTML](Data/Markup/HTML), [CSS](Design/CSS), [PHP](Languages/PHP), [Bash](To_sort/Bash_Unix/Bash/bash.txt) and [Unix commands](Platforms/Terminal/Unix_commands), [SQL](Data/Data_types/Relations), [C](Languages/C), [C++](Languages/C++), [ASM x86](Languages/x86), [R](Languages/R), [VBA](Languages/VBA)
+  - _[Languages](Languages)_: [JavaScript](Languages/JavaScript) (including [ES2019](Languages/JavaScript), [Node](Languages/JavaScript/Node), [DOM](Platforms/Browser/DOM), [Web APIs](Platforms/Browser/DOM)), [HTML](Data/Markup/HTML), [CSS](Design/CSS), [PHP](Languages/PHP), [Bash](To_sort/Bash_Unix/Bash/bash.txt) and [Unix commands](Platforms/Terminal/Unix_commands), [SQL](Data/Data_types/Relations), [C](Languages/C), [C++](Languages/C++), [ASM x86](Languages/x86), [R](Languages/R), [VBA](Languages/VBA)
      - _Transcompiled languages_: [Flow](Languages/Static_analysis/Type_checking/flow.language.txt), [CoffeeScript](Languages/CoffeeScript/coffeescript.language.txt), [Jade/Pug](Data/Markup/HTML/Transpiler/jade.language.txt), [Sass](Languages/Language_processing/Post_processing/CSS/sass.language.txt), [Less](Languages/Language_processing/Post_processing/CSS/less.language.txt), [PostCSS](Languages/Language_processing/Post_processing/CSS/postcss.language.txt), [Markdown](Data/Markup/Markdown)
   - _[Architecture](Architecture)_: [design patterns](Architecture/Code_design), [algorithms](Architecture/Code_design/Algorithms), [type theory](Architecture/Code_design/Types), [requirements analysis](Architecture/Code_design/Requirements), [dependencies](Architecture/Dependencies), [compatibility/versioning](Architecture/Dependencies/Compatibility), [async programming](Architecture/Performance/Async), [functional programming](Architecture/Functional), [metaprogramming](Languages/Metaprogramming), [parsing theory](Languages/Metaprogramming/Parsing)
    - _[Networking](Networking)_: [HTTP](RPC/Inter_process/HTTP) (including [REST](RPC/Inter_process/Interface_definition/IDL/REST), [GraphQL](RPC/Inter_process/Interface_definition/IDL/GraphQL)), [realtime](RPC/Realtime) (including [WebSocket](RPC/Realtime/WebSocket)), [TLS](Networking/Networking_protocols/SSL_TLS), [TCP](Networking/Networking_protocols/TCP), [IP](Networking/Networking_protocols/IP), [DNS](Networking/Networking_protocols/DNS), [load balancing](Networking/Networking_protocols/Load_balancing), [proxies](Networking/Networking_protocols/Proxy), [identifiers](Data/State/Identifiers), [crawling](RPC/Client/Scraping_crawling), [tasks and messages](RPC/Messages_tasks)
@@ -72,12 +72,12 @@ Number of pages (if it were a printed book): 8106
     - [character (Theory)](Architecture/Code_design/Types/Simple/character.theory.txt)
     - [emptiness (Theory)](Architecture/Code_design/Types/Simple/emptiness.theory.txt)
     - [enum (Theory)](Architecture/Code_design/Types/Simple/enum.theory.txt)
+    - [float fixed point (Theory)](Architecture/Code_design/Types/Simple/float_fixed_point.theory.txt)
     - [functions (Theory)](Architecture/Code_design/Types/Simple/functions.theory.txt)
     - [integers (Theory)](Architecture/Code_design/Types/Simple/integers.theory.txt)
-    - [float fixed point (Theory)](Architecture/Code_design/Types/Simple/float_fixed_point.theory.txt)
     - [pointer references (Theory)](Architecture/Code_design/Types/Simple/pointer_references.theory.txt)
-  - [aggregate (Theory)](Architecture/Code_design/Types/aggregate.theory.txt)
   - [object oriented (Theory)](Architecture/Code_design/Types/object_oriented.theory.txt)
+  - [aggregate (Theory)](Architecture/Code_design/Types/aggregate.theory.txt)
   - [polymorphism (Theory)](Architecture/Code_design/Types/polymorphism.theory.txt)
   - [types (Theory)](Architecture/Code_design/Types/types.theory.txt)
 
@@ -105,8 +105,8 @@ Number of pages (if it were a printed book): 8106
     - [browserify (Node CLI)](Architecture/Dependencies/Dependency_loading/Loaders/browserify.node_cli.txt)
     - [requirejs (JavaScript)](Architecture/Dependencies/Dependency_loading/Loaders/requirejs.javascript.txt)
     - [loader comparison (Summary)](Architecture/Dependencies/Dependency_loading/Loaders/loader_comparison.summary.txt)
-    - [systemjs (Node CLI)](Architecture/Dependencies/Dependency_loading/Loaders/systemjs.node_cli.txt)
     - [webpack (Node CLI)](Architecture/Dependencies/Dependency_loading/Loaders/webpack.node_cli.txt)
+    - [systemjs (Node CLI)](Architecture/Dependencies/Dependency_loading/Loaders/systemjs.node_cli.txt)
 - __Dependency manager__
   - __Client__
     - [bower (Node CLI)](Architecture/Dependencies/Dependency_manager/Client/bower.node_cli.txt)
@@ -147,9 +147,9 @@ Number of pages (if it were a printed book): 8106
   - __Abstraction__
     - [async-done (Node)](Architecture/Performance/Async/Abstraction/async-done.node.txt)
   - __Control flow__
+    - [bach (Node)](Architecture/Performance/Async/Control_flow/bach.node.txt)
     - [async (JavaScript)](Architecture/Performance/Async/Control_flow/async.javascript.txt)
     - [now-and-later (Node)](Architecture/Performance/Async/Control_flow/now-and-later.node.txt)
-    - [bach (Node)](Architecture/Performance/Async/Control_flow/bach.node.txt)
   - __Debugging__
     - [why-is-node-running (Node)](Architecture/Performance/Async/Debugging/why-is-node-running.node.txt)
   - __Events__
@@ -157,8 +157,8 @@ Number of pages (if it were a printed book): 8106
     - [propagate (Node)](Architecture/Performance/Async/Events/propagate.node.txt)
   - __Promises__
     - [bluebird (JavaScript)](Architecture/Performance/Async/Promises/bluebird.javascript.txt)
-    - [redux-promise-middleware (Redux)](Architecture/Performance/Async/Promises/redux-promise-middleware.redux.txt)
     - [q (JavaScript)](Architecture/Performance/Async/Promises/q.javascript.txt)
+    - [redux-promise-middleware (Redux)](Architecture/Performance/Async/Promises/redux-promise-middleware.redux.txt)
   - __Signals__
     - [signal-exit (Node)](Architecture/Performance/Async/Signals/signal-exit.node.txt)
     - [signal handler (C)](Architecture/Performance/Async/Signals/signal_handler.c.txt)
@@ -166,14 +166,14 @@ Number of pages (if it were a printed book): 8106
     - __JSON__
       - [json sequence (Format)](Architecture/Performance/Async/Streams/JSON/json_sequence.format.txt)
       - [json text sequence (Format)](Architecture/Performance/Async/Streams/JSON/json_text_sequence.format.txt)
+      - [jsonlines (Format)](Architecture/Performance/Async/Streams/JSON/jsonlines.format.txt)
       - [ndjson (Format)](Architecture/Performance/Async/Streams/JSON/ndjson.format.txt)
       - [ndjson (Node CLI)](Architecture/Performance/Async/Streams/JSON/ndjson.node_cli.txt)
-      - [jsonlines (Format)](Architecture/Performance/Async/Streams/JSON/jsonlines.format.txt)
     - [event-stream (Node)](Architecture/Performance/Async/Streams/event-stream.node.txt)
     - [from (Node)](Architecture/Performance/Async/Streams/from.node.txt)
     - [raw-body (Node)](Architecture/Performance/Async/Streams/raw-body.node.txt)
-    - [through2 (Node)](Architecture/Performance/Async/Streams/through2.node.txt)
     - [through (Node)](Architecture/Performance/Async/Streams/through.node.txt)
+    - [through2 (Node)](Architecture/Performance/Async/Streams/through2.node.txt)
 - __Caching__
   - __Fingerprints__
     - [versionator (Express)](Architecture/Performance/Caching/Fingerprints/versionator.express.txt)
@@ -185,8 +185,8 @@ Number of pages (if it were a printed book): 8106
     - [lru-cache (Node)](Architecture/Performance/Caching/LRU/lru-cache.node.txt)
   - __Memoization__
     - [fast-memoize (JavaScript)](Architecture/Performance/Caching/Memoization/fast-memoize.javascript.txt)
-    - [memoize-one (Node)](Architecture/Performance/Caching/Memoization/memoize-one.node.txt)
     - [micro-memoize (JavaScript)](Architecture/Performance/Caching/Memoization/micro-memoize.javascript.txt)
+    - [memoize-one (Node)](Architecture/Performance/Caching/Memoization/memoize-one.node.txt)
     - [moize (JavaScript)](Architecture/Performance/Caching/Memoization/moize.javascript.txt)
   - [caching (Theory)](Architecture/Performance/Caching/caching.theory.txt)
 - __Compression__
@@ -208,10 +208,10 @@ Number of pages (if it were a printed book): 8106
   - [concurrency (Theory)](Architecture/Performance/Concurrency/concurrency.theory.txt)
 - __Lazy calculation__
   - __Lazy loading__
-    - __Infinite scrolling__
-      - [nginfinitescroll (Angular)](Architecture/Performance/Lazy_calculation/Lazy_loading/Infinite_scrolling/nginfinitescroll.angular.txt)
     - __HTML images__
       - [jquery.lazyload (jQuery)](Architecture/Performance/Lazy_calculation/Lazy_loading/HTML_images/jquery.lazyload.jquery.txt)
+    - __Infinite scrolling__
+      - [nginfinitescroll (Angular)](Architecture/Performance/Lazy_calculation/Lazy_loading/Infinite_scrolling/nginfinitescroll.angular.txt)
     - __Pagination__
       - [express-paginate (Express)](Architecture/Performance/Lazy_calculation/Lazy_loading/Pagination/express-paginate.express.txt)
       - [jquery-bootstrap-pagination (Bootstrap)](Architecture/Performance/Lazy_calculation/Lazy_loading/Pagination/jquery-bootstrap-pagination.bootstrap.txt)
@@ -223,8 +223,8 @@ Number of pages (if it were a printed book): 8106
   - [parallellism (Theory)](Architecture/Performance/Parallelism/parallellism.theory.txt)
 - __Performance analytics__
   - __Client side__
-    - [phantomas (Node CLI)](Architecture/Performance/Performance_analytics/Client_side/phantomas.node_cli.txt)
     - [response-time (Express)](Architecture/Performance/Performance_analytics/Client_side/response-time.express.txt)
+    - [phantomas (Node CLI)](Architecture/Performance/Performance_analytics/Client_side/phantomas.node_cli.txt)
 - __Performance debugging__
   - __Flame graphs__
     - [davidmarkclements 0x (Node)](Architecture/Performance/Performance_debugging/Flame_graphs/davidmarkclements_0x.node.txt)
@@ -248,6 +248,18 @@ Number of pages (if it were a printed book): 8106
 
 ### Security
 
+- __Authorization__
+  - __Framework__
+    - [IAM STS (AWS)](Architecture/Security/Authorization/Framework/IAM_STS.aws.txt)
+    - [connect-roles (Express)](Architecture/Security/Authorization/Framework/connect-roles.express.txt)
+  - __OAuth__
+    - __Client__
+      - [oauth (JavaScript)](Architecture/Security/Authorization/OAuth/Client/oauth.javascript.txt)
+    - __Server__
+      - [oauth2orize (Node)](Architecture/Security/Authorization/OAuth/Server/oauth2orize.node.txt)
+      - [passport-oauth2 (Express)](Architecture/Security/Authorization/OAuth/Server/passport-oauth2.express.txt)
+    - [oauth (Protocol)](Architecture/Security/Authorization/OAuth/oauth.protocol.txt)
+  - [authorization (Theory)](Architecture/Security/Authorization/authorization.theory.txt)
 - __Authentication__
   - __Common websites__
     - [cognito (AWS)](Architecture/Security/Authentication/Common_websites/cognito.aws.txt)
@@ -259,41 +271,29 @@ Number of pages (if it were a printed book): 8106
   - __JWT__
     - [jws (Node)](Architecture/Security/Authentication/JWT/jws.node.txt)
     - [jwt (Format)](Architecture/Security/Authentication/JWT/jwt.format.txt)
-- __Authorization__
-  - __Framework__
-    - [IAM STS (AWS)](Architecture/Security/Authorization/Framework/IAM_STS.aws.txt)
-    - [connect-roles (Express)](Architecture/Security/Authorization/Framework/connect-roles.express.txt)
-  - __OAuth__
-    - __Client__
-      - [oauth (JavaScript)](Architecture/Security/Authorization/OAuth/Client/oauth.javascript.txt)
-    - [oauth (Protocol)](Architecture/Security/Authorization/OAuth/oauth.protocol.txt)
-    - __Server__
-      - [oauth2orize (Node)](Architecture/Security/Authorization/OAuth/Server/oauth2orize.node.txt)
-      - [passport-oauth2 (Express)](Architecture/Security/Authorization/OAuth/Server/passport-oauth2.express.txt)
-  - [authorization (Theory)](Architecture/Security/Authorization/authorization.theory.txt)
 - __Cryptography__
-  - __Certifications__
-    - [certifications (Theory)](Architecture/Security/Cryptography/Certifications/certifications.theory.txt)
   - __Algorithm__
     - __General__
       - __Hash__
-        - [hash function (Theory)](Architecture/Security/Cryptography/Algorithm/General/Hash/hash_function.theory.txt)
         - [pwd (Node)](Architecture/Security/Cryptography/Algorithm/General/Hash/pwd.node.txt)
+        - [hash function (Theory)](Architecture/Security/Cryptography/Algorithm/General/Hash/hash_function.theory.txt)
       - [block ciphers (Theory)](Architecture/Security/Cryptography/Algorithm/General/block_ciphers.theory.txt)
-      - [crypto padding (Theory)](Architecture/Security/Cryptography/Algorithm/General/crypto_padding.theory.txt)
       - [mac digital signature (Theory)](Architecture/Security/Cryptography/Algorithm/General/mac_digital_signature.theory.txt)
+      - [crypto padding (Theory)](Architecture/Security/Cryptography/Algorithm/General/crypto_padding.theory.txt)
       - [stream ciphers (Theory)](Architecture/Security/Cryptography/Algorithm/General/stream_ciphers.theory.txt)
     - __Specific__
       - [algo mac (Theory)](Architecture/Security/Cryptography/Algorithm/Specific/algo_mac.theory.txt)
       - [algos classiques (Theory)](Architecture/Security/Cryptography/Algorithm/Specific/algos_classiques.theory.txt)
+  - __Certifications__
+    - [certifications (Theory)](Architecture/Security/Cryptography/Certifications/certifications.theory.txt)
   - __Checksum__
     - [luhn (Format)](Architecture/Security/Cryptography/Checksum/luhn.format.txt)
   - __Cryptanalyse__
-    - [crypta attacks (Theory)](Architecture/Security/Cryptography/Cryptanalyse/crypta_attacks.theory.txt)
     - __Brute force__
       - [express-brute (Express)](Architecture/Security/Cryptography/Cryptanalyse/Brute_force/express-brute.express.txt)
-    - [crypta classique attacks (Theory)](Architecture/Security/Cryptography/Cryptanalyse/crypta_classique_attacks.theory.txt)
     - [cryptanalyse (Theory)](Architecture/Security/Cryptography/Cryptanalyse/cryptanalyse.theory.txt)
+    - [crypta attacks (Theory)](Architecture/Security/Cryptography/Cryptanalyse/crypta_attacks.theory.txt)
+    - [crypta classique attacks (Theory)](Architecture/Security/Cryptography/Cryptanalyse/crypta_classique_attacks.theory.txt)
   - __Email__
     - [openPGP (GUI)](Architecture/Security/Cryptography/Email/openPGP.gui.txt)
   - __History__
@@ -308,9 +308,9 @@ Number of pages (if it were a printed book): 8106
     - [authentication (Theory)](Architecture/Security/Cryptography/Theory/authentication.theory.txt)
     - [crypto general (Theory)](Architecture/Security/Cryptography/Theory/crypto_general.theory.txt)
     - [crypto goals (Theory)](Architecture/Security/Cryptography/Theory/crypto_goals.theory.txt)
+    - [information security (Theory)](Architecture/Security/Cryptography/Theory/information_security.theory.txt)
     - [crypto hardware (Theory)](Architecture/Security/Cryptography/Theory/crypto_hardware.theory.txt)
     - [crypto systems (Theory)](Architecture/Security/Cryptography/Theory/crypto_systems.theory.txt)
-    - [information security (Theory)](Architecture/Security/Cryptography/Theory/information_security.theory.txt)
     - [random (Theory)](Architecture/Security/Cryptography/Theory/random.theory.txt)
 - __Security general__
   - __Sanitization__
@@ -372,8 +372,8 @@ Number of pages (if it were a printed book): 8106
   - __Composite__
     - [json-schema-faker (Node)](Data/Data_management/Fake_data/Composite/json-schema-faker.node.txt)
   - __Generic__
-    - [casual (Node)](Data/Data_management/Fake_data/Generic/casual.node.txt)
     - [chance (JavaScript)](Data/Data_management/Fake_data/Generic/chance.javascript.txt)
+    - [casual (Node)](Data/Data_management/Fake_data/Generic/casual.node.txt)
     - [faker.js (JavaScript)](Data/Data_management/Fake_data/Generic/faker.js.javascript.txt)
   - __RegExp__
     - [randexp (JavaScript)](Data/Data_management/Fake_data/RegExp/randexp.javascript.txt)
@@ -409,8 +409,8 @@ Number of pages (if it were a printed book): 8106
     - [jest-validate (Node)](Data/Data_management/Validation/General/jest-validate.node.txt)
     - [joi (Node)](Data/Data_management/Validation/General/joi.node.txt)
     - [obey (JavaScript)](Data/Data_management/Validation/General/obey.javascript.txt)
-    - [schm (JavaScript)](Data/Data_management/Validation/General/schm.javascript.txt)
     - [skema (JavaScript)](Data/Data_management/Validation/General/skema.javascript.txt)
+    - [schm (JavaScript)](Data/Data_management/Validation/General/schm.javascript.txt)
     - [spected (JavaScript)](Data/Data_management/Validation/General/spected.javascript.txt)
     - [structure (JavaScript)](Data/Data_management/Validation/General/structure.javascript.txt)
     - [superstruct (JavaScript)](Data/Data_management/Validation/General/superstruct.javascript.txt)
@@ -451,54 +451,31 @@ Number of pages (if it were a printed book): 8106
     - [FTP (Protocol)](Data/Files/Distributed_filesystem/Protocols/FTP.protocol.txt)
 - __Files general__
   - __Commands__
+    - __Error handling__
+      - [graceful-fs (Node)](Data/Files/Files_general/Commands/Error_handling/graceful-fs.node.txt)
     - __Deleting__
       - [del (Node)](Data/Files/Files_general/Commands/Deleting/del.node.txt)
       - [rimraf (Node)](Data/Files/Files_general/Commands/Deleting/rimraf.node.txt)
-    - __Error handling__
-      - [graceful-fs (Node)](Data/Files/Files_general/Commands/Error_handling/graceful-fs.node.txt)
-    - __Finding__
-      - __Globbing__
-        - [glob-stream (Node)](Data/Files/Files_general/Commands/Finding/Globbing/glob-stream.node.txt)
-        - [glob (Node)](Data/Files/Files_general/Commands/Finding/Globbing/glob.node.txt)
-      - __Root__
-        - [find-cache-dir (Node)](Data/Files/Files_general/Commands/Finding/Root/find-cache-dir.node.txt)
-        - [find-up (Node)](Data/Files/Files_general/Commands/Finding/Root/find-up.node.txt)
-        - [pkg-dir (Node)](Data/Files/Files_general/Commands/Finding/Root/pkg-dir.node.txt)
-      - __List__
-        - [fs-readdir-recursive (Node)](Data/Files/Files_general/Commands/Finding/List/fs-readdir-recursive.node.txt)
-        - [readdir-enhanced (Node)](Data/Files/Files_general/Commands/Finding/List/readdir-enhanced.node.txt)
-        - [readdirp (Node)](Data/Files/Files_general/Commands/Finding/List/readdirp.node.txt)
-        - [recursive-readdir (Node)](Data/Files/Files_general/Commands/Finding/List/recursive-readdir.node.txt)
     - __Watchers__
       - [chokidar (Node)](Data/Files/Files_general/Commands/Watchers/chokidar.node.txt)
       - [gaze (Node)](Data/Files/Files_general/Commands/Watchers/gaze.node.txt)
       - [glob-watcher (Node)](Data/Files/Files_general/Commands/Watchers/glob-watcher.node.txt)
+    - __Finding__
+      - __Globbing__
+        - [glob-stream (Node)](Data/Files/Files_general/Commands/Finding/Globbing/glob-stream.node.txt)
+        - [glob (Node)](Data/Files/Files_general/Commands/Finding/Globbing/glob.node.txt)
+      - __List__
+        - [fs-readdir-recursive (Node)](Data/Files/Files_general/Commands/Finding/List/fs-readdir-recursive.node.txt)
+        - [readdir-enhanced (Node)](Data/Files/Files_general/Commands/Finding/List/readdir-enhanced.node.txt)
+        - [recursive-readdir (Node)](Data/Files/Files_general/Commands/Finding/List/recursive-readdir.node.txt)
+        - [readdirp (Node)](Data/Files/Files_general/Commands/Finding/List/readdirp.node.txt)
+      - __Root__
+        - [find-cache-dir (Node)](Data/Files/Files_general/Commands/Finding/Root/find-cache-dir.node.txt)
+        - [find-up (Node)](Data/Files/Files_general/Commands/Finding/Root/find-up.node.txt)
+        - [pkg-dir (Node)](Data/Files/Files_general/Commands/Finding/Root/pkg-dir.node.txt)
   - __Filesystem abstraction__
     - [vinyl (Node)](Data/Files/Files_general/Filesystem_abstraction/vinyl.node.txt)
   - [file uri scheme (Identifier)](Data/Files/Files_general/file_uri_scheme.identifier.txt)
-
-### Markup
-
-- __HTML__
-  - [HTML (Language)](Data/Markup/HTML/HTML.language.txt)
-  - __Transpiler__
-    - [jade (Language)](Data/Markup/HTML/Transpiler/jade.language.txt)
-- __Markdown__
-  - __Parsing__
-    - [markdown-link-extractor (Node)](Data/Markup/Markdown/Parsing/markdown-link-extractor.node.txt)
-  - __Rendering__
-    - [marked (Node CLI)](Data/Markup/Markdown/Rendering/marked.node_cli.txt)
-  - __Syntax__
-    - [markdown (Language)](Data/Markup/Markdown/Syntax/markdown.language.txt)
-- __Templates__
-  - __HTML__
-    - [classnames (JavaScript)](Data/Markup/Templates/HTML/classnames.javascript.txt)
-  - __Strings__
-    - [mustache hogan handlebars (Node CLI)](Data/Markup/Templates/Strings/mustache_hogan_handlebars.node_cli.txt)
-    - [consolidate (Node)](Data/Markup/Templates/Strings/consolidate.node.txt)
-  - __URI__
-    - [uri-templates (JavaScript)](Data/Markup/Templates/URI/uri-templates.javascript.txt)
-    - [uri templates (Format)](Data/Markup/Templates/URI/uri_templates.format.txt)
 
 ### Serialization
 
@@ -534,12 +511,12 @@ Number of pages (if it were a printed book): 8106
       - [safe-json-stringify (Node)](Data/Serialization/JSON_like/JSON/Circular/safe-json-stringify.node.txt)
     - __Parser serializer__
       - [json-js (JavaScript)](Data/Serialization/JSON_like/JSON/Parser_serializer/json-js.javascript.txt)
+    - __Viewer editor__
+      - [json formatter (Chrome-extension)](Data/Serialization/JSON_like/JSON/Viewer_editor/json_formatter.chrome-extension.txt)
+      - [json view for chrome (Chrome-extension)](Data/Serialization/JSON_like/JSON/Viewer_editor/json_view_for_chrome.chrome-extension.txt)
+      - [json viewer (Chrome-extension)](Data/Serialization/JSON_like/JSON/Viewer_editor/json_viewer.chrome-extension.txt)
     - __Syntax__
       - [json (Format)](Data/Serialization/JSON_like/JSON/Syntax/json.format.txt)
-    - __Viewer editor__
-      - [json view for chrome (Chrome-extension)](Data/Serialization/JSON_like/JSON/Viewer_editor/json_view_for_chrome.chrome-extension.txt)
-      - [json formatter (Chrome-extension)](Data/Serialization/JSON_like/JSON/Viewer_editor/json_formatter.chrome-extension.txt)
-      - [json viewer (Chrome-extension)](Data/Serialization/JSON_like/JSON/Viewer_editor/json_viewer.chrome-extension.txt)
   - __JSON5__
     - [JSON5 (Format)](Data/Serialization/JSON_like/JSON5/JSON5.format.txt)
     - [json5 (JavaScript)](Data/Serialization/JSON_like/JSON5/json5.javascript.txt)
@@ -550,12 +527,12 @@ Number of pages (if it were a printed book): 8106
       - [f5io jsonpath (Node)](Data/Serialization/Query/JSON/JSON_path/f5io_jsonpath.node.txt)
       - [fastpath (Node)](Data/Serialization/Query/JSON/JSON_path/fastpath.node.txt)
       - [jsonpath (Format)](Data/Serialization/Query/JSON/JSON_path/jsonpath.format.txt)
-      - [jquery jsonpath (JavaScript)](Data/Serialization/Query/JSON/JSON_path/jquery_jsonpath.javascript.txt)
       - [s3u jsonpath (Node)](Data/Serialization/Query/JSON/JSON_path/s3u_jsonpath.node.txt)
+      - [jquery jsonpath (JavaScript)](Data/Serialization/Query/JSON/JSON_path/jquery_jsonpath.javascript.txt)
     - __JSON pointer__
       - [json-pointer (Node)](Data/Serialization/Query/JSON/JSON_pointer/json-pointer.node.txt)
-      - [json pointer (Format)](Data/Serialization/Query/JSON/JSON_pointer/json_pointer.format.txt)
       - [json-ptr (JavaScript)](Data/Serialization/Query/JSON/JSON_pointer/json-ptr.javascript.txt)
+      - [json pointer (Format)](Data/Serialization/Query/JSON/JSON_pointer/json_pointer.format.txt)
       - [jsonpointer.js (JavaScript)](Data/Serialization/Query/JSON/JSON_pointer/jsonpointer.js.javascript.txt)
       - [node-jsonpointer (Node)](Data/Serialization/Query/JSON/JSON_pointer/node-jsonpointer.node.txt)
 - __Schemaful__
@@ -581,15 +558,38 @@ Number of pages (if it were a printed book): 8106
       - [xlsx (JavaScript)](Data/Serialization/Table/Excel/Parsing_serializing/xlsx.javascript.txt)
 - __Type rich__
   - __YAML__
-    - __Beautifier__
-      - [prettier yaml (Node CLI)](Data/Serialization/Type_rich/YAML/Beautifier/prettier_yaml.node_cli.txt)
     - __Linting__
       - [yamllint (CLI)](Data/Serialization/Type_rich/YAML/Linting/yamllint.cli.txt)
+    - __Beautifier__
+      - [prettier yaml (Node CLI)](Data/Serialization/Type_rich/YAML/Beautifier/prettier_yaml.node_cli.txt)
     - __Parser serializer__
       - [js-yaml (JavaScript)](Data/Serialization/Type_rich/YAML/Parser_serializer/js-yaml.javascript.txt)
       - [yaml.js (JavaScript)](Data/Serialization/Type_rich/YAML/Parser_serializer/yaml.js.javascript.txt)
     - [yaml (Format)](Data/Serialization/Type_rich/YAML/yaml.format.txt)
 - [serialization formats (Summary)](Data/Serialization/serialization_formats.summary.txt)
+
+### Markup
+
+- __HTML__
+  - [HTML (Language)](Data/Markup/HTML/HTML.language.txt)
+  - __Transpiler__
+    - [jade (Language)](Data/Markup/HTML/Transpiler/jade.language.txt)
+- __Templates__
+  - __HTML__
+    - [classnames (JavaScript)](Data/Markup/Templates/HTML/classnames.javascript.txt)
+  - __Strings__
+    - [consolidate (Node)](Data/Markup/Templates/Strings/consolidate.node.txt)
+    - [mustache hogan handlebars (Node CLI)](Data/Markup/Templates/Strings/mustache_hogan_handlebars.node_cli.txt)
+  - __URI__
+    - [uri-templates (JavaScript)](Data/Markup/Templates/URI/uri-templates.javascript.txt)
+    - [uri templates (Format)](Data/Markup/Templates/URI/uri_templates.format.txt)
+- __Markdown__
+  - __Parsing__
+    - [markdown-link-extractor (Node)](Data/Markup/Markdown/Parsing/markdown-link-extractor.node.txt)
+  - __Rendering__
+    - [marked (Node CLI)](Data/Markup/Markdown/Rendering/marked.node_cli.txt)
+  - __Syntax__
+    - [markdown (Language)](Data/Markup/Markdown/Syntax/markdown.language.txt)
 
 ### State
 
@@ -612,28 +612,28 @@ Number of pages (if it were a printed book): 8106
 - __Identifiers__
   - __Decentralized__
     - __UUID__
-      - [uuid (Identifier)](Data/State/Identifiers/Decentralized/UUID/uuid.identifier.txt)
       - [node-uuid (Node)](Data/State/Identifiers/Decentralized/UUID/node-uuid.node.txt)
+      - [uuid (Identifier)](Data/State/Identifiers/Decentralized/UUID/uuid.identifier.txt)
   - __Full-content__
     - [data uri (Identifier)](Data/State/Identifiers/Full-content/data_uri.identifier.txt)
-  - __Human-friendly__
-    - [nih (Identifier)](Data/State/Identifiers/Human-friendly/nih.identifier.txt)
-    - [tag (Identifier)](Data/State/Identifiers/Human-friendly/tag.identifier.txt)
   - __Hash__
     - [ni (Identifier)](Data/State/Identifiers/Hash/ni.identifier.txt)
     - [sigmund (Node)](Data/State/Identifiers/Hash/sigmund.node.txt)
+  - __Others__
+    - [oid (Identifier)](Data/State/Identifiers/Others/oid.identifier.txt)
+    - [doi (Identifier)](Data/State/Identifiers/Others/doi.identifier.txt)
+    - [urn (Identifier)](Data/State/Identifiers/Others/urn.identifier.txt)
+    - [publicid fpi (Identifier)](Data/State/Identifiers/Others/publicid_fpi.identifier.txt)
+  - __Human-friendly__
+    - [nih (Identifier)](Data/State/Identifiers/Human-friendly/nih.identifier.txt)
+    - [tag (Identifier)](Data/State/Identifiers/Human-friendly/tag.identifier.txt)
   - __URI__
     - __Manipulation__
-      - [uri.js (JavaScript)](Data/State/Identifiers/URI/Manipulation/uri.js.javascript.txt)
       - __Query string__
         - [qs (Node)](Data/State/Identifiers/URI/Manipulation/Query_string/qs.node.txt)
+      - [uri.js (JavaScript)](Data/State/Identifiers/URI/Manipulation/uri.js.javascript.txt)
     - [URI (Identifier)](Data/State/Identifiers/URI/URI.identifier.txt)
   - [identifiers (Summary)](Data/State/Identifiers/identifiers.summary.txt)
-  - __Others__
-    - [doi (Identifier)](Data/State/Identifiers/Others/doi.identifier.txt)
-    - [oid (Identifier)](Data/State/Identifiers/Others/oid.identifier.txt)
-    - [publicid fpi (Identifier)](Data/State/Identifiers/Others/publicid_fpi.identifier.txt)
-    - [urn (Identifier)](Data/State/Identifiers/Others/urn.identifier.txt)
   - [web architecture (Theory)](Data/State/Identifiers/web_architecture.theory.txt)
 - [state (Theory)](Data/State/state.theory.txt)
 
@@ -651,9 +651,9 @@ Number of pages (if it were a printed book): 8106
   - [game theory (Theory)](Data_science/Computation/Math/game_theory.theory.txt)
   - [graph theory (Theory)](Data_science/Computation/Math/graph_theory.theory.txt)
   - [matrices (Theory)](Data_science/Computation/Math/matrices.theory.txt)
-  - [theorie des nombres (Theory)](Data_science/Computation/Math/theorie_des_nombres.theory.txt)
-  - [theorie des ensembles (Theory)](Data_science/Computation/Math/theorie_des_ensembles.theory.txt)
   - [principal math (Theory)](Data_science/Computation/Math/principal_math.theory.txt)
+  - [theorie des ensembles (Theory)](Data_science/Computation/Math/theorie_des_ensembles.theory.txt)
+  - [theorie des nombres (Theory)](Data_science/Computation/Math/theorie_des_nombres.theory.txt)
 - __Statistics__
   - [big data (Theory)](Data_science/Computation/Statistics/big_data.theory.txt)
   - [statistics theory (Theory)](Data_science/Computation/Statistics/statistics_theory.theory.txt)
@@ -695,22 +695,6 @@ Number of pages (if it were a printed book): 8106
 - __Configuration management__
   - [opswork (AWS)](DevOps/Configuration/Configuration_management/opswork.aws.txt)
 
-### Deployment
-
-- __Continuous integration__
-  - __Helpers__
-    - [ci-info (JavaScript)](DevOps/Deployment/Continuous_integration/Helpers/ci-info.javascript.txt)
-    - [is-ci (JavaScript)](DevOps/Deployment/Continuous_integration/Helpers/is-ci.javascript.txt)
-  - __Services__
-    - [docker cloud (Docker)](DevOps/Deployment/Continuous_integration/Services/docker_cloud.docker.txt)
-    - [travis (SaaS)](DevOps/Deployment/Continuous_integration/Services/travis.saas.txt)
-- __Deployment general__
-  - __Deploying__
-    - [installating files (Theory)](DevOps/Deployment/Deployment_general/Deploying/installating_files.theory.txt)
-    - [12 factor (Theory)](DevOps/Deployment/Deployment_general/Deploying/12_factor.theory.txt)
-  - __On premise__
-    - [directconnect (AWS)](DevOps/Deployment/Deployment_general/On_premise/directconnect.aws.txt)
-
 ### Infrastructure
 
 - __CDN__
@@ -724,6 +708,22 @@ Number of pages (if it were a printed book): 8106
   - [heroku (SaaS)](DevOps/Infrastructure/PaaS/heroku.saas.txt)
 - __SaaS__
   - [Google APIs (SaaS)](DevOps/Infrastructure/SaaS/Google_APIs.saas.txt)
+
+### Deployment
+
+- __Continuous integration__
+  - __Helpers__
+    - [ci-info (JavaScript)](DevOps/Deployment/Continuous_integration/Helpers/ci-info.javascript.txt)
+    - [is-ci (JavaScript)](DevOps/Deployment/Continuous_integration/Helpers/is-ci.javascript.txt)
+  - __Services__
+    - [docker cloud (Docker)](DevOps/Deployment/Continuous_integration/Services/docker_cloud.docker.txt)
+    - [travis (SaaS)](DevOps/Deployment/Continuous_integration/Services/travis.saas.txt)
+- __Deployment general__
+  - __Deploying__
+    - [12 factor (Theory)](DevOps/Deployment/Deployment_general/Deploying/12_factor.theory.txt)
+    - [installating files (Theory)](DevOps/Deployment/Deployment_general/Deploying/installating_files.theory.txt)
+  - __On premise__
+    - [directconnect (AWS)](DevOps/Deployment/Deployment_general/On_premise/directconnect.aws.txt)
 
 ### Supervision
 
@@ -766,8 +766,8 @@ Number of pages (if it were a printed book): 8106
   - __API stubs__
     - [autorest (CLI)](Dev_helpers/Automation/Scaffolding/API_stubs/autorest.cli.txt)
     - [openapi-codegen (Node)](Dev_helpers/Automation/Scaffolding/API_stubs/openapi-codegen.node.txt)
-    - [swagger-codegen (Java)](Dev_helpers/Automation/Scaffolding/API_stubs/swagger-codegen.java.txt)
     - [swagger-node-codegen (Node)](Dev_helpers/Automation/Scaffolding/API_stubs/swagger-node-codegen.node.txt)
+    - [swagger-codegen (Java)](Dev_helpers/Automation/Scaffolding/API_stubs/swagger-codegen.java.txt)
     - [swagger-node (Node)](Dev_helpers/Automation/Scaffolding/API_stubs/swagger-node.node.txt)
   - __Generic__
     - [yeoman (CLI)](Dev_helpers/Automation/Scaffolding/Generic/yeoman.cli.txt)
@@ -779,8 +779,8 @@ Number of pages (if it were a printed book): 8106
     - __OpenAPI__
       - [dapperbox (Node)](Dev_helpers/Coding/Documentation/API/OpenAPI/dapperbox.node.txt)
       - [open-api-renderer (Node)](Dev_helpers/Coding/Documentation/API/OpenAPI/open-api-renderer.node.txt)
-      - [redoc (Node)](Dev_helpers/Coding/Documentation/API/OpenAPI/redoc.node.txt)
       - [pretty-swag (Node)](Dev_helpers/Coding/Documentation/API/OpenAPI/pretty-swag.node.txt)
+      - [redoc (Node)](Dev_helpers/Coding/Documentation/API/OpenAPI/redoc.node.txt)
       - [spectacle (Node)](Dev_helpers/Coding/Documentation/API/OpenAPI/spectacle.node.txt)
       - [swagger-markdown (Node)](Dev_helpers/Coding/Documentation/API/OpenAPI/swagger-markdown.node.txt)
       - [swagger-ui (Node)](Dev_helpers/Coding/Documentation/API/OpenAPI/swagger-ui.node.txt)
@@ -799,10 +799,10 @@ Number of pages (if it were a printed book): 8106
   - [organisation sources (Theory)](Dev_helpers/Coding/Source_code/organisation_sources.theory.txt)
 - __Version control__
   - __Git__
-    - __git__
-      - [husky (Node)](Dev_helpers/Coding/Version_control/Git/git/husky.node.txt)
-      - [git (CLI)](Dev_helpers/Coding/Version_control/Git/git/git.cli.txt)
     - [VCS (Theory)](Dev_helpers/Coding/Version_control/Git/VCS.theory.txt)
+    - __git__
+      - [git (CLI)](Dev_helpers/Coding/Version_control/Git/git/git.cli.txt)
+      - [husky (Node)](Dev_helpers/Coding/Version_control/Git/git/husky.node.txt)
     - [lint-staged (CLI)](Dev_helpers/Coding/Version_control/Git/lint-staged.cli.txt)
   - __GitHub__
     - [github (SaaS)](Dev_helpers/Coding/Version_control/GitHub/github.saas.txt)
@@ -810,20 +810,20 @@ Number of pages (if it were a printed book): 8106
 ### Insights
 
 - __Logging__
+  - __Aggregator__
+    - [cloudwatch logs (AWS)](Dev_helpers/Insights/Logging/Aggregator/cloudwatch_logs.aws.txt)
   - __Automatic logging__
     - __Errors__
       - [errorhandler (Express)](Dev_helpers/Insights/Logging/Automatic_logging/Errors/errorhandler.express.txt)
     - __Network interaction__
       - [cloudtrail (AWS)](Dev_helpers/Insights/Logging/Automatic_logging/Network_interaction/cloudtrail.aws.txt)
-  - __Aggregator__
-    - [cloudwatch logs (AWS)](Dev_helpers/Insights/Logging/Aggregator/cloudwatch_logs.aws.txt)
   - __Beautifying__
     - [http errors (Node)](Dev_helpers/Insights/Logging/Beautifying/http_errors.node.txt)
   - __Logger__
     - __Server side__
       - [consola (Node)](Dev_helpers/Insights/Logging/Logger/Server_side/consola.node.txt)
-      - [log4js (Node)](Dev_helpers/Insights/Logging/Logger/Server_side/log4js.node.txt)
       - [debug (Node)](Dev_helpers/Insights/Logging/Logger/Server_side/debug.node.txt)
+      - [log4js (Node)](Dev_helpers/Insights/Logging/Logger/Server_side/log4js.node.txt)
       - [pino (Node)](Dev_helpers/Insights/Logging/Logger/Server_side/pino.node.txt)
       - [signale (Node)](Dev_helpers/Insights/Logging/Logger/Server_side/signale.node.txt)
       - [tracer (Node)](Dev_helpers/Insights/Logging/Logger/Server_side/tracer.node.txt)
@@ -845,51 +845,51 @@ Number of pages (if it were a printed book): 8106
   - __General debugger__
     - __Browser__
       - [about (Identifier)](Dev_helpers/Quality_assurance/Debugging/General_debugger/Browser/about.identifier.txt)
-      - [react-render-visualizer (React)](Dev_helpers/Quality_assurance/Debugging/General_debugger/Browser/react-render-visualizer.react.txt)
-      - [view-source (Identifier)](Dev_helpers/Quality_assurance/Debugging/General_debugger/Browser/view-source.identifier.txt)
       - [react-devtools (React)](Dev_helpers/Quality_assurance/Debugging/General_debugger/Browser/react-devtools.react.txt)
+      - [react-render-visualizer (React)](Dev_helpers/Quality_assurance/Debugging/General_debugger/Browser/react-render-visualizer.react.txt)
       - [redux-devtools (Redux)](Dev_helpers/Quality_assurance/Debugging/General_debugger/Browser/redux-devtools.redux.txt)
+      - [view-source (Identifier)](Dev_helpers/Quality_assurance/Debugging/General_debugger/Browser/view-source.identifier.txt)
     - __Server side__
-      - [bashdb (C C++ x86)](Dev_helpers/Quality_assurance/Debugging/General_debugger/Server_side/bashdb.c_c++_x86.txt)
       - [express-debug (Express)](Dev_helpers/Quality_assurance/Debugging/General_debugger/Server_side/express-debug.express.txt)
+      - [bashdb (C C++ x86)](Dev_helpers/Quality_assurance/Debugging/General_debugger/Server_side/bashdb.c_c++_x86.txt)
       - [gdb (C C++ x86)](Dev_helpers/Quality_assurance/Debugging/General_debugger/Server_side/gdb.c_c++_x86.txt)
       - [nm (x86)](Dev_helpers/Quality_assurance/Debugging/General_debugger/Server_side/nm.x86.txt)
       - [xdebug (PHP)](Dev_helpers/Quality_assurance/Debugging/General_debugger/Server_side/xdebug.php.txt)
   - __Stack traces__
     - __Async__
       - [asynctrace (Node)](Dev_helpers/Quality_assurance/Debugging/Stack_traces/Async/asynctrace.node.txt)
-      - [longjohn (Node)](Dev_helpers/Quality_assurance/Debugging/Stack_traces/Async/longjohn.node.txt)
       - [long-promises (Node)](Dev_helpers/Quality_assurance/Debugging/Stack_traces/Async/long-promises.node.txt)
+      - [longjohn (Node)](Dev_helpers/Quality_assurance/Debugging/Stack_traces/Async/longjohn.node.txt)
       - [trace (Node)](Dev_helpers/Quality_assurance/Debugging/Stack_traces/Async/trace.node.txt)
-      - [node-stackup (Node)](Dev_helpers/Quality_assurance/Debugging/Stack_traces/Async/node-stackup.node.txt)
       - [trycatch (Node)](Dev_helpers/Quality_assurance/Debugging/Stack_traces/Async/trycatch.node.txt)
+      - [node-stackup (Node)](Dev_helpers/Quality_assurance/Debugging/Stack_traces/Async/node-stackup.node.txt)
     - __Beautify__
-      - [clarify (JavaScript)](Dev_helpers/Quality_assurance/Debugging/Stack_traces/Beautify/clarify.javascript.txt)
       - [clean-stack (Node)](Dev_helpers/Quality_assurance/Debugging/Stack_traces/Beautify/clean-stack.node.txt)
+      - [clarify (JavaScript)](Dev_helpers/Quality_assurance/Debugging/Stack_traces/Beautify/clarify.javascript.txt)
       - [pretty-error (Node)](Dev_helpers/Quality_assurance/Debugging/Stack_traces/Beautify/pretty-error.node.txt)
       - [cute-stack (Node)](Dev_helpers/Quality_assurance/Debugging/Stack_traces/Beautify/cute-stack.node.txt)
-    - __Context__
-      - [better-stack-traces (JavaScript)](Dev_helpers/Quality_assurance/Debugging/Stack_traces/Context/better-stack-traces.javascript.txt)
     - __Generation__
       - [njstrace (Node)](Dev_helpers/Quality_assurance/Debugging/Stack_traces/Generation/njstrace.node.txt)
       - [tracekit (JavaScript)](Dev_helpers/Quality_assurance/Debugging/Stack_traces/Generation/tracekit.javascript.txt)
-    - __Nesting__
-      - [nested-error-stacks (Node)](Dev_helpers/Quality_assurance/Debugging/Stack_traces/Nesting/nested-error-stacks.node.txt)
     - __Parsing__
-      - [error-callsites (Node)](Dev_helpers/Quality_assurance/Debugging/Stack_traces/Parsing/error-callsites.node.txt)
       - [callsites (Node)](Dev_helpers/Quality_assurance/Debugging/Stack_traces/Parsing/callsites.node.txt)
-      - [stack-chain (Node)](Dev_helpers/Quality_assurance/Debugging/Stack_traces/Parsing/stack-chain.node.txt)
+      - [error-callsites (Node)](Dev_helpers/Quality_assurance/Debugging/Stack_traces/Parsing/error-callsites.node.txt)
       - [node-stack-trace (Node)](Dev_helpers/Quality_assurance/Debugging/Stack_traces/Parsing/node-stack-trace.node.txt)
+      - [stack-chain (Node)](Dev_helpers/Quality_assurance/Debugging/Stack_traces/Parsing/stack-chain.node.txt)
       - [stack-utils (Node)](Dev_helpers/Quality_assurance/Debugging/Stack_traces/Parsing/stack-utils.node.txt)
-      - [stackback (Node)](Dev_helpers/Quality_assurance/Debugging/Stack_traces/Parsing/stackback.node.txt)
       - [stackman (Node)](Dev_helpers/Quality_assurance/Debugging/Stack_traces/Parsing/stackman.node.txt)
       - [stacktrace.js (JavaScript)](Dev_helpers/Quality_assurance/Debugging/Stack_traces/Parsing/stacktrace.js.javascript.txt)
+      - [stackback (Node)](Dev_helpers/Quality_assurance/Debugging/Stack_traces/Parsing/stackback.node.txt)
+    - __Nesting__
+      - [nested-error-stacks (Node)](Dev_helpers/Quality_assurance/Debugging/Stack_traces/Nesting/nested-error-stacks.node.txt)
+    - __Context__
+      - [better-stack-traces (JavaScript)](Dev_helpers/Quality_assurance/Debugging/Stack_traces/Context/better-stack-traces.javascript.txt)
 - __Testing__
   - __Assertions__
     - __HTTP__
-      - [chai-http (Node)](Dev_helpers/Quality_assurance/Testing/Assertions/HTTP/chai-http.node.txt)
       - [frisby (Node)](Dev_helpers/Quality_assurance/Testing/Assertions/HTTP/frisby.node.txt)
       - [supertest (Node)](Dev_helpers/Quality_assurance/Testing/Assertions/HTTP/supertest.node.txt)
+      - [chai-http (Node)](Dev_helpers/Quality_assurance/Testing/Assertions/HTTP/chai-http.node.txt)
     - [ava assertions (Node CLI)](Dev_helpers/Quality_assurance/Testing/Assertions/ava_assertions.node_cli.txt)
     - [chai (JavaScript)](Dev_helpers/Quality_assurance/Testing/Assertions/chai.javascript.txt)
     - [expect more (JavaScript)](Dev_helpers/Quality_assurance/Testing/Assertions/expect_more.javascript.txt)
@@ -911,17 +911,17 @@ Number of pages (if it were a printed book): 8106
         - [selenium-webdriver (Node)](Dev_helpers/Quality_assurance/Testing/Browser_testing/Selenium/Client/selenium-webdriver.node.txt)
         - [wd.js (Node)](Dev_helpers/Quality_assurance/Testing/Browser_testing/Selenium/Client/wd.js.node.txt)
       - __Test runner__
-        - [browserstack (SaaS)](Dev_helpers/Quality_assurance/Testing/Browser_testing/Selenium/Test_runner/browserstack.saas.txt)
         - [saucelabs (SaaS)](Dev_helpers/Quality_assurance/Testing/Browser_testing/Selenium/Test_runner/saucelabs.saas.txt)
+        - [browserstack (SaaS)](Dev_helpers/Quality_assurance/Testing/Browser_testing/Selenium/Test_runner/browserstack.saas.txt)
         - [selenium webdriver (CLI)](Dev_helpers/Quality_assurance/Testing/Browser_testing/Selenium/Test_runner/selenium_webdriver.cli.txt)
   - __Coverage__
     - __LCOV__
-      - __Core__
-        - [blanket (JavaScript)](Dev_helpers/Quality_assurance/Testing/Coverage/LCOV/Core/blanket.javascript.txt)
-        - [istanbul (Node CLI)](Dev_helpers/Quality_assurance/Testing/Coverage/LCOV/Core/istanbul.node_cli.txt)
       - __Badges__
         - [lcov-badge (CLI)](Dev_helpers/Quality_assurance/Testing/Coverage/LCOV/Badges/lcov-badge.cli.txt)
         - [lcov2badge (Node)](Dev_helpers/Quality_assurance/Testing/Coverage/LCOV/Badges/lcov2badge.node.txt)
+      - __Core__
+        - [blanket (JavaScript)](Dev_helpers/Quality_assurance/Testing/Coverage/LCOV/Core/blanket.javascript.txt)
+        - [istanbul (Node CLI)](Dev_helpers/Quality_assurance/Testing/Coverage/LCOV/Core/istanbul.node_cli.txt)
       - __Merging__
         - [lcov-result-merger (CLI Node)](Dev_helpers/Quality_assurance/Testing/Coverage/LCOV/Merging/lcov-result-merger.cli_node.txt)
       - __Parsing__
@@ -929,10 +929,10 @@ Number of pages (if it were a printed book): 8106
         - [lcov.js (JavaScript)](Dev_helpers/Quality_assurance/Testing/Coverage/LCOV/Parsing/lcov.js.javascript.txt)
       - __Source maps__
         - [lcov-sourcemap (Node)](Dev_helpers/Quality_assurance/Testing/Coverage/LCOV/Source_maps/lcov-sourcemap.node.txt)
-      - [lcov (Format)](Dev_helpers/Quality_assurance/Testing/Coverage/LCOV/lcov.format.txt)
       - __Reporting__
         - [codecov (SaaS)](Dev_helpers/Quality_assurance/Testing/Coverage/LCOV/Reporting/codecov.saas.txt)
         - [coveralls (SaaS)](Dev_helpers/Quality_assurance/Testing/Coverage/LCOV/Reporting/coveralls.saas.txt)
+      - [lcov (Format)](Dev_helpers/Quality_assurance/Testing/Coverage/LCOV/lcov.format.txt)
     - __V8__
       - __Core__
         - [c8 (Node)](Dev_helpers/Quality_assurance/Testing/Coverage/V8/Core/c8.node.txt)
@@ -960,8 +960,8 @@ Number of pages (if it were a printed book): 8106
       - [chai-spies (JavaScript)](Dev_helpers/Quality_assurance/Testing/Mocking/Generic/chai-spies.javascript.txt)
       - [jasmine spies (JavaScript)](Dev_helpers/Quality_assurance/Testing/Mocking/Generic/jasmine_spies.javascript.txt)
       - [jest mocks (JavaScript)](Dev_helpers/Quality_assurance/Testing/Mocking/Generic/jest_mocks.javascript.txt)
-      - [testdouble (JavaScript)](Dev_helpers/Quality_assurance/Testing/Mocking/Generic/testdouble.javascript.txt)
       - [sinon (Node)](Dev_helpers/Quality_assurance/Testing/Mocking/Generic/sinon.node.txt)
+      - [testdouble (JavaScript)](Dev_helpers/Quality_assurance/Testing/Mocking/Generic/testdouble.javascript.txt)
     - __HTTP__
       - __Request mocking__
         - __Client side__
@@ -971,54 +971,54 @@ Number of pages (if it were a printed book): 8106
           - [nock (Node)](Dev_helpers/Quality_assurance/Testing/Mocking/HTTP/Request_mocking/Server_side/nock.node.txt)
       - __Request stubs__
         - [node-mocks-http (Node)](Dev_helpers/Quality_assurance/Testing/Mocking/HTTP/Request_stubs/node-mocks-http.node.txt)
-    - __Specific framework__
-      - [enzyme (React)](Dev_helpers/Quality_assurance/Testing/Mocking/Specific_framework/enzyme.react.txt)
     - __Timers__
       - [jasmine timers (JavaScript)](Dev_helpers/Quality_assurance/Testing/Mocking/Timers/jasmine_timers.javascript.txt)
       - [jest timers (JavaScript)](Dev_helpers/Quality_assurance/Testing/Mocking/Timers/jest_timers.javascript.txt)
       - [lolex (JavaScript)](Dev_helpers/Quality_assurance/Testing/Mocking/Timers/lolex.javascript.txt)
+    - __Specific framework__
+      - [enzyme (React)](Dev_helpers/Quality_assurance/Testing/Mocking/Specific_framework/enzyme.react.txt)
+  - __Platforms__
+    - __Browsers__
+      - [karma (CLI)](Dev_helpers/Quality_assurance/Testing/Platforms/Browsers/karma.cli.txt)
+    - __Node__
+      - [testen (Node)](Dev_helpers/Quality_assurance/Testing/Platforms/Node/testen.node.txt)
+      - [trevor (Node)](Dev_helpers/Quality_assurance/Testing/Platforms/Node/trevor.node.txt)
+      - [autochecker (Node)](Dev_helpers/Quality_assurance/Testing/Platforms/Node/autochecker.node.txt)
+  - __Reporting__
+    - __TAP__
+      - __Parsing__
+        - [tap-out (JavaScript)](Dev_helpers/Quality_assurance/Testing/Reporting/TAP/Parsing/tap-out.javascript.txt)
+        - [tap-parser (Node)](Dev_helpers/Quality_assurance/Testing/Reporting/TAP/Parsing/tap-parser.node.txt)
+      - __Merging__
+        - [tap-merge (JavaScript)](Dev_helpers/Quality_assurance/Testing/Reporting/TAP/Merging/tap-merge.javascript.txt)
+      - __Serialiazing__
+        - [supertap (Node)](Dev_helpers/Quality_assurance/Testing/Reporting/TAP/Serialiazing/supertap.node.txt)
+        - [tape-modern (JavaScript)](Dev_helpers/Quality_assurance/Testing/Reporting/TAP/Serialiazing/tape-modern.javascript.txt)
+        - [tape (Node CLI)](Dev_helpers/Quality_assurance/Testing/Reporting/TAP/Serialiazing/tape.node_cli.txt)
+      - [tap (Format)](Dev_helpers/Quality_assurance/Testing/Reporting/TAP/tap.format.txt)
+      - __Reporting__
+        - [tap reporters (JavaScript)](Dev_helpers/Quality_assurance/Testing/Reporting/TAP/Reporting/tap_reporters.javascript.txt)
+    - [ava reporters (Node CLI)](Dev_helpers/Quality_assurance/Testing/Reporting/ava_reporters.node_cli.txt)
+    - [jasmine reporters (Node CLI)](Dev_helpers/Quality_assurance/Testing/Reporting/jasmine_reporters.node_cli.txt)
+    - [jest reporters (Node CLI)](Dev_helpers/Quality_assurance/Testing/Reporting/jest_reporters.node_cli.txt)
+    - [mocha reporters (Node CLI)](Dev_helpers/Quality_assurance/Testing/Reporting/mocha_reporters.node_cli.txt)
+    - [node-tap reporters (JavaScript CLI)](Dev_helpers/Quality_assurance/Testing/Reporting/node-tap_reporters.javascript_cli.txt)
   - __Smoke testing__
     - [cigar (CLI)](Dev_helpers/Quality_assurance/Testing/Smoke_testing/cigar.cli.txt)
     - [dredd (JavaScript)](Dev_helpers/Quality_assurance/Testing/Smoke_testing/dredd.javascript.txt)
     - [swagger-test-templates (Node)](Dev_helpers/Quality_assurance/Testing/Smoke_testing/swagger-test-templates.node.txt)
   - __Stress testing__
     - [gremlins.js (JavaScript)](Dev_helpers/Quality_assurance/Testing/Stress_testing/gremlins.js.javascript.txt)
-  - __Platforms__
-    - __Browsers__
-      - [karma (CLI)](Dev_helpers/Quality_assurance/Testing/Platforms/Browsers/karma.cli.txt)
-    - __Node__
-      - [autochecker (Node)](Dev_helpers/Quality_assurance/Testing/Platforms/Node/autochecker.node.txt)
-      - [testen (Node)](Dev_helpers/Quality_assurance/Testing/Platforms/Node/testen.node.txt)
-      - [trevor (Node)](Dev_helpers/Quality_assurance/Testing/Platforms/Node/trevor.node.txt)
-  - __Reporting__
-    - __TAP__
-      - __Merging__
-        - [tap-merge (JavaScript)](Dev_helpers/Quality_assurance/Testing/Reporting/TAP/Merging/tap-merge.javascript.txt)
-      - __Parsing__
-        - [tap-out (JavaScript)](Dev_helpers/Quality_assurance/Testing/Reporting/TAP/Parsing/tap-out.javascript.txt)
-        - [tap-parser (Node)](Dev_helpers/Quality_assurance/Testing/Reporting/TAP/Parsing/tap-parser.node.txt)
-      - __Serialiazing__
-        - [supertap (Node)](Dev_helpers/Quality_assurance/Testing/Reporting/TAP/Serialiazing/supertap.node.txt)
-        - [tape-modern (JavaScript)](Dev_helpers/Quality_assurance/Testing/Reporting/TAP/Serialiazing/tape-modern.javascript.txt)
-        - [tape (Node CLI)](Dev_helpers/Quality_assurance/Testing/Reporting/TAP/Serialiazing/tape.node_cli.txt)
-      - __Reporting__
-        - [tap reporters (JavaScript)](Dev_helpers/Quality_assurance/Testing/Reporting/TAP/Reporting/tap_reporters.javascript.txt)
-      - [tap (Format)](Dev_helpers/Quality_assurance/Testing/Reporting/TAP/tap.format.txt)
-    - [ava reporters (Node CLI)](Dev_helpers/Quality_assurance/Testing/Reporting/ava_reporters.node_cli.txt)
-    - [jasmine reporters (Node CLI)](Dev_helpers/Quality_assurance/Testing/Reporting/jasmine_reporters.node_cli.txt)
-    - [jest reporters (Node CLI)](Dev_helpers/Quality_assurance/Testing/Reporting/jest_reporters.node_cli.txt)
-    - [mocha reporters (Node CLI)](Dev_helpers/Quality_assurance/Testing/Reporting/mocha_reporters.node_cli.txt)
-    - [node-tap reporters (JavaScript CLI)](Dev_helpers/Quality_assurance/Testing/Reporting/node-tap_reporters.javascript_cli.txt)
   - __Test runner__
-    - [ava (Node CLI)](Dev_helpers/Quality_assurance/Testing/Test_runner/ava.node_cli.txt)
     - [jasmine (Node CLI)](Dev_helpers/Quality_assurance/Testing/Test_runner/jasmine.node_cli.txt)
+    - [ava (Node CLI)](Dev_helpers/Quality_assurance/Testing/Test_runner/ava.node_cli.txt)
+    - [jest (Node CLI)](Dev_helpers/Quality_assurance/Testing/Test_runner/jest.node_cli.txt)
     - [mocha (Node CLI)](Dev_helpers/Quality_assurance/Testing/Test_runner/mocha.node_cli.txt)
     - [node tap (JavaScript CLI)](Dev_helpers/Quality_assurance/Testing/Test_runner/node_tap.javascript_cli.txt)
-    - [jest (Node CLI)](Dev_helpers/Quality_assurance/Testing/Test_runner/jest.node_cli.txt)
     - [qunit (CLI)](Dev_helpers/Quality_assurance/Testing/Test_runner/qunit.cli.txt)
   - __Visual testing__
-    - [phantomcss (Node)](Dev_helpers/Quality_assurance/Testing/Visual_testing/phantomcss.node.txt)
     - [argus-eyes (CLI)](Dev_helpers/Quality_assurance/Testing/Visual_testing/argus-eyes.cli.txt)
+    - [phantomcss (Node)](Dev_helpers/Quality_assurance/Testing/Visual_testing/phantomcss.node.txt)
     - [wraith (Node)](Dev_helpers/Quality_assurance/Testing/Visual_testing/wraith.node.txt)
   - [testing (Theory)](Dev_helpers/Quality_assurance/Testing/testing.theory.txt)
 
@@ -1031,8 +1031,8 @@ Number of pages (if it were a printed book): 8106
   - __gcc__
     - [cpp (CLI)](Languages/C/Compiling/gcc/cpp.cli.txt)
     - [feature test macro (CLI)](Languages/C/Compiling/gcc/feature_test_macro.cli.txt)
-    - [gcc (CLI)](Languages/C/Compiling/gcc/gcc.cli.txt)
     - [gcc optimization (CLI)](Languages/C/Compiling/gcc/gcc_optimization.cli.txt)
+    - [gcc (CLI)](Languages/C/Compiling/gcc/gcc.cli.txt)
 - [shared libraries (Theory)](Languages/C/shared_libraries.theory.txt)
 
 ### C++
@@ -1043,8 +1043,8 @@ Number of pages (if it were a printed book): 8106
 
 - __Linting__
   - __CSS__
-    - [immutable-css (Node CLI)](Languages/Coding_style/Linting/CSS/immutable-css.node_cli.txt)
     - [csslint (Node CLI)](Languages/Coding_style/Linting/CSS/csslint.node_cli.txt)
+    - [immutable-css (Node CLI)](Languages/Coding_style/Linting/CSS/immutable-css.node_cli.txt)
     - [postcss-bem-linter (PostCSS)](Languages/Coding_style/Linting/CSS/postcss-bem-linter.postcss.txt)
     - [scss-lint (CLI)](Languages/Coding_style/Linting/CSS/scss-lint.cli.txt)
     - [stylelint (Node CLI)](Languages/Coding_style/Linting/CSS/stylelint.node_cli.txt)
@@ -1054,20 +1054,20 @@ Number of pages (if it were a printed book): 8106
     - [htmlhint (Node CLI)](Languages/Coding_style/Linting/HTML/htmlhint.node_cli.txt)
     - [nu html checker (CLI)](Languages/Coding_style/Linting/HTML/nu_html_checker.cli.txt)
     - [w3cjs (Node)](Languages/Coding_style/Linting/HTML/w3cjs.node.txt)
-  - __JavaScript CSS__
-    - [hound (SaaS)](Languages/Coding_style/Linting/JavaScript_CSS/hound.saas.txt)
   - __JavaScript__
     - [eslint (Node CLI)](Languages/Coding_style/Linting/JavaScript/eslint.node_cli.txt)
     - [jshint (Node CLI)](Languages/Coding_style/Linting/JavaScript/jshint.node_cli.txt)
+  - __JavaScript CSS__
+    - [hound (SaaS)](Languages/Coding_style/Linting/JavaScript_CSS/hound.saas.txt)
   - [remark-lint (Node CLI)](Languages/Coding_style/Linting/remark-lint.node_cli.txt)
-
-### CoffeeScript
-
-- [coffeescript (Language)](Languages/CoffeeScript/coffeescript.language.txt)
 
 ### Go
 
 - [go (Language)](Languages/Go/go.language.txt)
+
+### CoffeeScript
+
+- [coffeescript (Language)](Languages/CoffeeScript/coffeescript.language.txt)
 
 ### Inter language
 
@@ -1082,18 +1082,18 @@ Number of pages (if it were a printed book): 8106
   - __MVC__
     - __Minimalistic__
       - __Backbone__
-        - [backbone marionette (JavaScript)](Languages/JavaScript/JavaScript_frameworks/MVC/Minimalistic/Backbone/backbone_marionette.javascript.txt)
         - [backbone.collectionsubset (Backbone)](Languages/JavaScript/JavaScript_frameworks/MVC/Minimalistic/Backbone/backbone.collectionsubset.backbone.txt)
+        - [backbone marionette (JavaScript)](Languages/JavaScript/JavaScript_frameworks/MVC/Minimalistic/Backbone/backbone_marionette.javascript.txt)
     - __Opiniated__
       - [angular (JavaScript)](Languages/JavaScript/JavaScript_frameworks/MVC/Opiniated/angular.javascript.txt)
   - __View__
     - __One way data binding__
       - __Virtual DOM__
         - __React__
-          - [react-engine (React)](Languages/JavaScript/JavaScript_frameworks/View/One_way_data_binding/Virtual_DOM/React/react-engine.react.txt)
           - [backbone-react-component (React)](Languages/JavaScript/JavaScript_frameworks/View/One_way_data_binding/Virtual_DOM/React/backbone-react-component.react.txt)
-          - [react (JavaScript)](Languages/JavaScript/JavaScript_frameworks/View/One_way_data_binding/Virtual_DOM/React/react.javascript.txt)
+          - [react-engine (React)](Languages/JavaScript/JavaScript_frameworks/View/One_way_data_binding/Virtual_DOM/React/react-engine.react.txt)
           - [react-helmet (React)](Languages/JavaScript/JavaScript_frameworks/View/One_way_data_binding/Virtual_DOM/React/react-helmet.react.txt)
+          - [react (JavaScript)](Languages/JavaScript/JavaScript_frameworks/View/One_way_data_binding/Virtual_DOM/React/react.javascript.txt)
 - __Node__
   - [nodejs (JavaScript)](Languages/JavaScript/Node/nodejs.javascript.txt)
   - [require-from-string (Node)](Languages/JavaScript/Node/require-from-string.node.txt)
@@ -1126,9 +1126,9 @@ Number of pages (if it were a printed book): 8106
     - [prettier html (CLI Node)](Languages/Language_processing/Beautifiers/HTML/prettier_html.cli_node.txt)
   - __JavaScript__
     - [es-beautifier (Node)](Languages/Language_processing/Beautifiers/JavaScript/es-beautifier.node.txt)
+    - [esformatter (Node)](Languages/Language_processing/Beautifiers/JavaScript/esformatter.node.txt)
     - [js-beautify (Node)](Languages/Language_processing/Beautifiers/JavaScript/js-beautify.node.txt)
     - [jsfmt (Node)](Languages/Language_processing/Beautifiers/JavaScript/jsfmt.node.txt)
-    - [esformatter (Node)](Languages/Language_processing/Beautifiers/JavaScript/esformatter.node.txt)
     - [uglify beautify (Node CLI)](Languages/Language_processing/Beautifiers/JavaScript/uglify_beautify.node_cli.txt)
   - __Multi language__
     - [prettier (Node CLI)](Languages/Language_processing/Beautifiers/Multi_language/prettier.node_cli.txt)
@@ -1144,10 +1144,10 @@ Number of pages (if it were a printed book): 8106
 - __Post processing__
   - __CSS__
     - [compass (Sass)](Languages/Language_processing/Post_processing/CSS/compass.sass.txt)
-    - [postcss (Language)](Languages/Language_processing/Post_processing/CSS/postcss.language.txt)
-    - [sass (Language)](Languages/Language_processing/Post_processing/CSS/sass.language.txt)
     - [less (Language)](Languages/Language_processing/Post_processing/CSS/less.language.txt)
+    - [postcss (Language)](Languages/Language_processing/Post_processing/CSS/postcss.language.txt)
     - [stylus (Language)](Languages/Language_processing/Post_processing/CSS/stylus.language.txt)
+    - [sass (Language)](Languages/Language_processing/Post_processing/CSS/sass.language.txt)
   - __JavaScript__
     - [babel (Node CLI)](Languages/Language_processing/Post_processing/JavaScript/babel.node_cli.txt)
     - [core-js (JavaScript)](Languages/Language_processing/Post_processing/JavaScript/core-js.javascript.txt)
@@ -1156,10 +1156,6 @@ Number of pages (if it were a printed book): 8106
 
 - __Parsing__
   - __Specific language__
-    - __CSS__
-      - [gonzales-pe (Node)](Languages/Metaprogramming/Parsing/Specific_language/CSS/gonzales-pe.node.txt)
-      - [parser-lib (Node)](Languages/Metaprogramming/Parsing/Specific_language/CSS/parser-lib.node.txt)
-      - [reworkcss (Node)](Languages/Metaprogramming/Parsing/Specific_language/CSS/reworkcss.node.txt)
     - __JavaScript__
       - [acorn (JavaScript CLI)](Languages/Metaprogramming/Parsing/Specific_language/JavaScript/acorn.javascript_cli.txt)
       - [babel parser (JavaScript CLI)](Languages/Metaprogramming/Parsing/Specific_language/JavaScript/babel_parser.javascript_cli.txt)
@@ -1168,11 +1164,15 @@ Number of pages (if it were a printed book): 8106
       - [esprima (JavaScript CLI)](Languages/Metaprogramming/Parsing/Specific_language/JavaScript/esprima.javascript_cli.txt)
       - [estree (Format)](Languages/Metaprogramming/Parsing/Specific_language/JavaScript/estree.format.txt)
       - [recast (Node)](Languages/Metaprogramming/Parsing/Specific_language/JavaScript/recast.node.txt)
+    - __CSS__
+      - [gonzales-pe (Node)](Languages/Metaprogramming/Parsing/Specific_language/CSS/gonzales-pe.node.txt)
+      - [parser-lib (Node)](Languages/Metaprogramming/Parsing/Specific_language/CSS/parser-lib.node.txt)
+      - [reworkcss (Node)](Languages/Metaprogramming/Parsing/Specific_language/CSS/reworkcss.node.txt)
   - [parsing (Theory)](Languages/Metaprogramming/Parsing/parsing.theory.txt)
 - __Source maps__
   - __Concatenation__
-    - [concat-with-sourcemaps (Node)](Languages/Metaprogramming/Source_maps/Concatenation/concat-with-sourcemaps.node.txt)
     - [combine-source-map (Node)](Languages/Metaprogramming/Source_maps/Concatenation/combine-source-map.node.txt)
+    - [concat-with-sourcemaps (Node)](Languages/Metaprogramming/Source_maps/Concatenation/concat-with-sourcemaps.node.txt)
     - [mapcat (Node)](Languages/Metaprogramming/Source_maps/Concatenation/mapcat.node.txt)
     - [source-map-concat (Node)](Languages/Metaprogramming/Source_maps/Concatenation/source-map-concat.node.txt)
   - __Core__
@@ -1183,16 +1183,16 @@ Number of pages (if it were a printed book): 8106
     - [source map (Format)](Languages/Metaprogramming/Source_maps/Format/source_map.format.txt)
   - __Location__
     - [convert-source-map (Node)](Languages/Metaprogramming/Source_maps/Location/convert-source-map.node.txt)
-    - [source-map-resolve (JavaScript)](Languages/Metaprogramming/Source_maps/Location/source-map-resolve.javascript.txt)
     - [inline-source-map (Node)](Languages/Metaprogramming/Source_maps/Location/inline-source-map.node.txt)
+    - [source-map-resolve (JavaScript)](Languages/Metaprogramming/Source_maps/Location/source-map-resolve.javascript.txt)
     - [source-map-url (JavaScript)](Languages/Metaprogramming/Source_maps/Location/source-map-url.javascript.txt)
   - __Mappings__
     - [sourcemap-codec (JavaScript)](Languages/Metaprogramming/Source_maps/Mappings/sourcemap-codec.javascript.txt)
   - __Reverse compilation__
     - [shuji (Node)](Languages/Metaprogramming/Source_maps/Reverse_compilation/shuji.node.txt)
   - __Stack traces__
-    - [sourcemapped-stacktrace (JavaScript)](Languages/Metaprogramming/Source_maps/Stack_traces/sourcemapped-stacktrace.javascript.txt)
     - [node-source-map-support (Node)](Languages/Metaprogramming/Source_maps/Stack_traces/node-source-map-support.node.txt)
+    - [sourcemapped-stacktrace (JavaScript)](Languages/Metaprogramming/Source_maps/Stack_traces/sourcemapped-stacktrace.javascript.txt)
     - [stack-source-map (JavaScript)](Languages/Metaprogramming/Source_maps/Stack_traces/stack-source-map.javascript.txt)
   - __Validation__
     - [sourcemap-validator (Node)](Languages/Metaprogramming/Source_maps/Validation/sourcemap-validator.node.txt)
@@ -1261,43 +1261,6 @@ Number of pages (if it were a printed book): 8106
 - [x86 extensions (Language)](Languages/x86/x86_extensions.language.txt)
 - [x87 (Language)](Languages/x86/x87.language.txt)
 
-## Networking
-
-### Networking protocols
-
-- __DNS__
-  - [DNS (Protocol)](Networking/Networking_protocols/DNS/DNS.protocol.txt)
-  - __Registration__
-    - [route53 (AWS)](Networking/Networking_protocols/DNS/Registration/route53.aws.txt)
-- __IP__
-  - [IP (Protocol)](Networking/Networking_protocols/IP/IP.protocol.txt)
-- __Load balancing__
-  - __Load balancer__
-    - [elb (AWS)](Networking/Networking_protocols/Load_balancing/Load_balancer/elb.aws.txt)
-- __Networking general__
-  - [network (Theory)](Networking/Networking_protocols/Networking_general/network.theory.txt)
-  - [protocols (Theory)](Networking/Networking_protocols/Networking_general/protocols.theory.txt)
-- __Phones__
-  - [tel uri scheme (Identifier)](Networking/Networking_protocols/Phones/tel_uri_scheme.identifier.txt)
-- __Proxy__
-  - __HTTP__
-    - [forwarded (Node)](Networking/Networking_protocols/Proxy/HTTP/forwarded.node.txt)
-    - [http-proxy (Node)](Networking/Networking_protocols/Proxy/HTTP/http-proxy.node.txt)
-    - [request-ip (Node)](Networking/Networking_protocols/Proxy/HTTP/request-ip.node.txt)
-    - [proxy-addr (Node)](Networking/Networking_protocols/Proxy/HTTP/proxy-addr.node.txt)
-- __SSL TLS__
-  - __HTTPS__
-    - [HTTPS (Protocol)](Networking/Networking_protocols/SSL_TLS/HTTPS/HTTPS.protocol.txt)
-  - __Library__
-    - [express-enforces-ssl (Express)](Networking/Networking_protocols/SSL_TLS/Library/express-enforces-ssl.express.txt)
-  - [SSL (Protocol)](Networking/Networking_protocols/SSL_TLS/SSL.protocol.txt)
-- __Service discovery__
-  - [DHCP (Protocol)](Networking/Networking_protocols/Service_discovery/DHCP.protocol.txt)
-- __TCP__
-  - [TCP (Protocol)](Networking/Networking_protocols/TCP/TCP.protocol.txt)
-- __UDP__
-  - [UDP (Protocol)](Networking/Networking_protocols/UDP/UDP.protocol.txt)
-
 ## Multimedia
 
 ### Advanced graphics
@@ -1310,8 +1273,8 @@ Number of pages (if it were a printed book): 8106
       - __SDL__
         - [sdl (C)](Multimedia/Advanced_graphics/Game/Engines/2D/SDL/sdl.c.txt)
       - __SFML__
-        - [sfml audio (C++)](Multimedia/Advanced_graphics/Game/Engines/2D/SFML/sfml_audio.c++.txt)
         - [sfml (C++)](Multimedia/Advanced_graphics/Game/Engines/2D/SFML/sfml.c++.txt)
+        - [sfml audio (C++)](Multimedia/Advanced_graphics/Game/Engines/2D/SFML/sfml_audio.c++.txt)
         - [sfml graphics (C++)](Multimedia/Advanced_graphics/Game/Engines/2D/SFML/sfml_graphics.c++.txt)
         - [sfml network (C++)](Multimedia/Advanced_graphics/Game/Engines/2D/SFML/sfml_network.c++.txt)
         - [sfml system (C++)](Multimedia/Advanced_graphics/Game/Engines/2D/SFML/sfml_system.c++.txt)
@@ -1357,6 +1320,43 @@ Number of pages (if it were a printed book): 8106
 - __Audio__
   - [audio rates (Theory)](Multimedia/Media/Audio/audio_rates.theory.txt)
 
+## Networking
+
+### Networking protocols
+
+- __DNS__
+  - [DNS (Protocol)](Networking/Networking_protocols/DNS/DNS.protocol.txt)
+  - __Registration__
+    - [route53 (AWS)](Networking/Networking_protocols/DNS/Registration/route53.aws.txt)
+- __IP__
+  - [IP (Protocol)](Networking/Networking_protocols/IP/IP.protocol.txt)
+- __Load balancing__
+  - __Load balancer__
+    - [elb (AWS)](Networking/Networking_protocols/Load_balancing/Load_balancer/elb.aws.txt)
+- __Networking general__
+  - [network (Theory)](Networking/Networking_protocols/Networking_general/network.theory.txt)
+  - [protocols (Theory)](Networking/Networking_protocols/Networking_general/protocols.theory.txt)
+- __Phones__
+  - [tel uri scheme (Identifier)](Networking/Networking_protocols/Phones/tel_uri_scheme.identifier.txt)
+- __Proxy__
+  - __HTTP__
+    - [forwarded (Node)](Networking/Networking_protocols/Proxy/HTTP/forwarded.node.txt)
+    - [http-proxy (Node)](Networking/Networking_protocols/Proxy/HTTP/http-proxy.node.txt)
+    - [proxy-addr (Node)](Networking/Networking_protocols/Proxy/HTTP/proxy-addr.node.txt)
+    - [request-ip (Node)](Networking/Networking_protocols/Proxy/HTTP/request-ip.node.txt)
+- __SSL TLS__
+  - __HTTPS__
+    - [HTTPS (Protocol)](Networking/Networking_protocols/SSL_TLS/HTTPS/HTTPS.protocol.txt)
+  - __Library__
+    - [express-enforces-ssl (Express)](Networking/Networking_protocols/SSL_TLS/Library/express-enforces-ssl.express.txt)
+  - [SSL (Protocol)](Networking/Networking_protocols/SSL_TLS/SSL.protocol.txt)
+- __Service discovery__
+  - [DHCP (Protocol)](Networking/Networking_protocols/Service_discovery/DHCP.protocol.txt)
+- __TCP__
+  - [TCP (Protocol)](Networking/Networking_protocols/TCP/TCP.protocol.txt)
+- __UDP__
+  - [UDP (Protocol)](Networking/Networking_protocols/UDP/UDP.protocol.txt)
+
 ## Platforms
 
 ### Browser
@@ -1388,9 +1388,9 @@ Number of pages (if it were a printed book): 8106
     - [elf (Format)](Platforms/Desktop/OS/Executable/elf.format.txt)
     - [object formats (Format)](Platforms/Desktop/OS/Executable/object_formats.format.txt)
   - __OS Kernel__
-    - [OS Boot kernel (Theory)](Platforms/Desktop/OS/OS_Kernel/OS_Boot_kernel.theory.txt)
     - [OS Gestion memoire (Theory)](Platforms/Desktop/OS/OS_Kernel/OS_Gestion_memoire.theory.txt)
     - [OS filesystem (Theory)](Platforms/Desktop/OS/OS_Kernel/OS_filesystem.theory.txt)
+    - [OS Boot kernel (Theory)](Platforms/Desktop/OS/OS_Kernel/OS_Boot_kernel.theory.txt)
     - __Process__
       - [loading time (Format)](Platforms/Desktop/OS/OS_Kernel/Process/loading_time.format.txt)
       - [process (Theory)](Platforms/Desktop/OS/OS_Kernel/Process/process.theory.txt)
@@ -1398,12 +1398,12 @@ Number of pages (if it were a printed book): 8106
     - [CHS LBA (Theory)](Platforms/Desktop/OS/Partitions/CHS_LBA.theory.txt)
     - [MBR (Format)](Platforms/Desktop/OS/Partitions/MBR.format.txt)
     - [type partitions (Format)](Platforms/Desktop/OS/Partitions/type_partitions.format.txt)
-  - [architectures (Theory)](Platforms/Desktop/OS/architectures.theory.txt)
   - __System__
     - [CPU (Theory)](Platforms/Desktop/OS/System/CPU.theory.txt)
+  - [architectures (Theory)](Platforms/Desktop/OS/architectures.theory.txt)
   - [calcul binaire (Algorithm)](Platforms/Desktop/OS/calcul_binaire.algorithm.txt)
-  - [taille octet bits bytes (Theory)](Platforms/Desktop/OS/taille_octet_bits_bytes.theory.txt)
   - [little big endian (Format)](Platforms/Desktop/OS/little_big_endian.format.txt)
+  - [taille octet bits bytes (Theory)](Platforms/Desktop/OS/taille_octet_bits_bytes.theory.txt)
 
 ### Interoperability
 
@@ -1413,11 +1413,11 @@ Number of pages (if it were a printed book): 8106
   - __CSS__
     - __Linting__
       - [doiuse (Node CLI)](Platforms/Interoperability/Browser/CSS/Linting/doiuse.node_cli.txt)
-    - __Normalizer__
-      - [normalize.css (CSS)](Platforms/Interoperability/Browser/CSS/Normalizer/normalize.css.css.txt)
     - __Transpiler__
       - [autoprefixer (Node CLI)](Platforms/Interoperability/Browser/CSS/Transpiler/autoprefixer.node_cli.txt)
       - [cssnext (PostCSS)](Platforms/Interoperability/Browser/CSS/Transpiler/cssnext.postcss.txt)
+    - __Normalizer__
+      - [normalize.css (CSS)](Platforms/Interoperability/Browser/CSS/Normalizer/normalize.css.css.txt)
   - __Device identification__
     - [express-device (Express)](Platforms/Interoperability/Browser/Device_identification/express-device.express.txt)
     - [session.js (JavaScript)](Platforms/Interoperability/Browser/Device_identification/session.js.javascript.txt)
@@ -1433,23 +1433,23 @@ Number of pages (if it were a printed book): 8106
   - __Environment variables__
     - [cross-env (Node)](Platforms/Interoperability/OS/Environment_variables/cross-env.node.txt)
     - [fullname (Node)](Platforms/Interoperability/OS/Environment_variables/fullname.node.txt)
-    - [osenv (Node)](Platforms/Interoperability/OS/Environment_variables/osenv.node.txt)
     - [passwd-user (Node)](Platforms/Interoperability/OS/Environment_variables/passwd-user.node.txt)
+    - [osenv (Node)](Platforms/Interoperability/OS/Environment_variables/osenv.node.txt)
     - [username (Node)](Platforms/Interoperability/OS/Environment_variables/username.node.txt)
   - __Identification__
     - [getos (Node)](Platforms/Interoperability/OS/Identification/getos.node.txt)
     - [is-windows (Node)](Platforms/Interoperability/OS/Identification/is-windows.node.txt)
+    - [is-wsl (Node)](Platforms/Interoperability/OS/Identification/is-wsl.node.txt)
     - [macos-release (Node)](Platforms/Interoperability/OS/Identification/macos-release.node.txt)
     - [os-name (Node)](Platforms/Interoperability/OS/Identification/os-name.node.txt)
-    - [is-wsl (Node)](Platforms/Interoperability/OS/Identification/is-wsl.node.txt)
     - [systeminformation (Node)](Platforms/Interoperability/OS/Identification/systeminformation.node.txt)
     - [windows-release (Node)](Platforms/Interoperability/OS/Identification/windows-release.node.txt)
   - __Path__
     - [unc-path-regex (Node)](Platforms/Interoperability/OS/Path/unc-path-regex.node.txt)
   - __Permissions__
     - [is-admin (Node)](Platforms/Interoperability/OS/Permissions/is-admin.node.txt)
-    - [is-root (Node)](Platforms/Interoperability/OS/Permissions/is-root.node.txt)
     - [is-elevated (Node)](Platforms/Interoperability/OS/Permissions/is-elevated.node.txt)
+    - [is-root (Node)](Platforms/Interoperability/OS/Permissions/is-root.node.txt)
     - [isexe (Node)](Platforms/Interoperability/OS/Permissions/isexe.node.txt)
   - __Processes__
     - __List__
@@ -1464,10 +1464,10 @@ Number of pages (if it were a printed book): 8106
   - __Spawn__
     - [execa (Node)](Platforms/Interoperability/OS/Spawn/execa.node.txt)
     - [node-cross-spawn (Node)](Platforms/Interoperability/OS/Spawn/node-cross-spawn.node.txt)
-    - [npm-run-path (Node)](Platforms/Interoperability/OS/Spawn/npm-run-path.node.txt)
-    - [npm-run (Node)](Platforms/Interoperability/OS/Spawn/npm-run.node.txt)
     - [npm-path (Node)](Platforms/Interoperability/OS/Spawn/npm-path.node.txt)
+    - [npm-run-path (Node)](Platforms/Interoperability/OS/Spawn/npm-run-path.node.txt)
     - [path-key (Node)](Platforms/Interoperability/OS/Spawn/path-key.node.txt)
+    - [npm-run (Node)](Platforms/Interoperability/OS/Spawn/npm-run.node.txt)
   - [cross-os (Summary)](Platforms/Interoperability/OS/cross-os.summary.txt)
 
 ### Mobile
@@ -1483,8 +1483,8 @@ Number of pages (if it were a printed book): 8106
 - __CLI__
   - __Input__
     - [bytes (Node)](Platforms/Terminal/CLI/Input/bytes.node.txt)
-    - [commander (Node)](Platforms/Terminal/CLI/Input/commander.node.txt)
     - [caporal (Node)](Platforms/Terminal/CLI/Input/caporal.node.txt)
+    - [commander (Node)](Platforms/Terminal/CLI/Input/commander.node.txt)
     - [meow (Node)](Platforms/Terminal/CLI/Input/meow.node.txt)
     - [minimist (Node)](Platforms/Terminal/CLI/Input/minimist.node.txt)
     - [yargs (Node)](Platforms/Terminal/CLI/Input/yargs.node.txt)
@@ -1504,12 +1504,12 @@ Number of pages (if it were a printed book): 8106
 - __Terminal general__
   - __Emulator__
     - [terminal emulator (Summary)](Platforms/Terminal/Terminal_general/Emulator/terminal_emulator.summary.txt)
-  - __Remote__
-    - __SSH__
-      - [SSH (Protocol)](Platforms/Terminal/Terminal_general/Remote/SSH/SSH.protocol.txt)
   - __Prompt__
     - __PS1__
       - [powerline-shell (CLI)](Platforms/Terminal/Terminal_general/Prompt/PS1/powerline-shell.cli.txt)
+  - __Remote__
+    - __SSH__
+      - [SSH (Protocol)](Platforms/Terminal/Terminal_general/Remote/SSH/SSH.protocol.txt)
 - __Unix commands__
   - __coreutils__
     - [node-which (Node)](Platforms/Terminal/Unix_commands/coreutils/node-which.node.txt)
@@ -1531,10 +1531,10 @@ Number of pages (if it were a printed book): 8106
   - __HTTP__
     - [axios (JavaScript)](RPC/Client/Simple_client/HTTP/axios.javascript.txt)
     - [bent (Node)](RPC/Client/Simple_client/HTTP/bent.node.txt)
+    - [cross-fetch (JavaScript)](RPC/Client/Simple_client/HTTP/cross-fetch.javascript.txt)
+    - [fetch (JavaScript)](RPC/Client/Simple_client/HTTP/fetch.javascript.txt)
     - [http-console (CLI)](RPC/Client/Simple_client/HTTP/http-console.cli.txt)
     - [http-prompt (Tui)](RPC/Client/Simple_client/HTTP/http-prompt.tui.txt)
-    - [fetch (JavaScript)](RPC/Client/Simple_client/HTTP/fetch.javascript.txt)
-    - [cross-fetch (JavaScript)](RPC/Client/Simple_client/HTTP/cross-fetch.javascript.txt)
     - [http client (Summary)](RPC/Client/Simple_client/HTTP/http_client.summary.txt)
     - [httpie (CLI)](RPC/Client/Simple_client/HTTP/httpie.cli.txt)
     - [isomorphic-fetch (JavaScript)](RPC/Client/Simple_client/HTTP/isomorphic-fetch.javascript.txt)
@@ -1576,9 +1576,9 @@ Number of pages (if it were a printed book): 8106
     - __OpenAPI__
       - [apicurio-studio (GUI)](RPC/Inter_process/API_specification/Generation/OpenAPI/apicurio-studio.gui.txt)
       - [fastify-swagger (Node)](RPC/Inter_process/API_specification/Generation/OpenAPI/fastify-swagger.node.txt)
+      - [hapi-swagger (Node)](RPC/Inter_process/API_specification/Generation/OpenAPI/hapi-swagger.node.txt)
       - [hapi-swaggered (Node)](RPC/Inter_process/API_specification/Generation/OpenAPI/hapi-swaggered.node.txt)
       - [koa-joi-router-docs (Node)](RPC/Inter_process/API_specification/Generation/OpenAPI/koa-joi-router-docs.node.txt)
-      - [hapi-swagger (Node)](RPC/Inter_process/API_specification/Generation/OpenAPI/hapi-swagger.node.txt)
       - [koa-swagger-decorator (Node)](RPC/Inter_process/API_specification/Generation/OpenAPI/koa-swagger-decorator.node.txt)
       - [loopback-swagger (Node)](RPC/Inter_process/API_specification/Generation/OpenAPI/loopback-swagger.node.txt)
       - [nestjs swagger (Node)](RPC/Inter_process/API_specification/Generation/OpenAPI/nestjs_swagger.node.txt)
@@ -1601,18 +1601,18 @@ Number of pages (if it were a printed book): 8106
   - __Specifications list__
     - [openapi-directory (Node GUI)](RPC/Inter_process/API_specification/Specifications_list/openapi-directory.node_gui.txt)
 - __HTTP__
-  - __Body__
-    - [body-parser (Express)](RPC/Inter_process/HTTP/Body/body-parser.express.txt)
-    - [multer (Express)](RPC/Inter_process/HTTP/Body/multer.express.txt)
-    - [multiparty (Express)](RPC/Inter_process/HTTP/Body/multiparty.express.txt)
   - __Content negotiation__
     - [content-type (Node)](RPC/Inter_process/HTTP/Content_negotiation/content-type.node.txt)
     - [negotiator accepts (Node)](RPC/Inter_process/HTTP/Content_negotiation/negotiator_accepts.node.txt)
     - [type-is (Node)](RPC/Inter_process/HTTP/Content_negotiation/type-is.node.txt)
     - [vary (Node)](RPC/Inter_process/HTTP/Content_negotiation/vary.node.txt)
+  - __Body__
+    - [body-parser (Express)](RPC/Inter_process/HTTP/Body/body-parser.express.txt)
+    - [multer (Express)](RPC/Inter_process/HTTP/Body/multer.express.txt)
+    - [multiparty (Express)](RPC/Inter_process/HTTP/Body/multiparty.express.txt)
+  - [HTTP (Protocol)](RPC/Inter_process/HTTP/HTTP.protocol.txt)
   - __General__
     - [send (Node)](RPC/Inter_process/HTTP/General/send.node.txt)
-  - [HTTP (Protocol)](RPC/Inter_process/HTTP/HTTP.protocol.txt)
   - __Headers__
     - [li (Node)](RPC/Inter_process/HTTP/Headers/li.node.txt)
     - [content-disposition (Node)](RPC/Inter_process/HTTP/Headers/content-disposition.node.txt)
@@ -1635,20 +1635,20 @@ Number of pages (if it were a printed book): 8106
           - [graphql-voyager (React)](RPC/Inter_process/Interface_definition/IDL/GraphQL/Debugging/Schema/graphql-voyager.react.txt)
       - __Format__
         - [graphql (Format)](RPC/Inter_process/Interface_definition/IDL/GraphQL/Format/graphql.format.txt)
+      - __Realtime__
+        - [graphql-subscriptions (Graphqljs)](RPC/Inter_process/Interface_definition/IDL/GraphQL/Realtime/graphql-subscriptions.graphqljs.txt)
       - __Schema generation__
         - __From specification__
           - [swagger-to-graphql (Node)](RPC/Inter_process/Interface_definition/IDL/GraphQL/Schema_generation/From_specification/swagger-to-graphql.node.txt)
-      - __Realtime__
-        - [graphql-subscriptions (Graphqljs)](RPC/Inter_process/Interface_definition/IDL/GraphQL/Realtime/graphql-subscriptions.graphqljs.txt)
+      - __Server execution__
+        - __Schemaless__
+          - [graphql-anywhere (Node)](RPC/Inter_process/Interface_definition/IDL/GraphQL/Server_execution/Schemaless/graphql-anywhere.node.txt)
+        - [graphql tools (Graphqljs)](RPC/Inter_process/Interface_definition/IDL/GraphQL/Server_execution/graphql_tools.graphqljs.txt)
+        - [graphqljs (Node)](RPC/Inter_process/Interface_definition/IDL/GraphQL/Server_execution/graphqljs.node.txt)
       - __Web server__
         - [express-graphql (Express)](RPC/Inter_process/Interface_definition/IDL/GraphQL/Web_server/express-graphql.express.txt)
         - [graphql-server (Node)](RPC/Inter_process/Interface_definition/IDL/GraphQL/Web_server/graphql-server.node.txt)
         - [koa-graphql (Koa)](RPC/Inter_process/Interface_definition/IDL/GraphQL/Web_server/koa-graphql.koa.txt)
-      - __Server execution__
-        - [graphql tools (Graphqljs)](RPC/Inter_process/Interface_definition/IDL/GraphQL/Server_execution/graphql_tools.graphqljs.txt)
-        - __Schemaless__
-          - [graphql-anywhere (Node)](RPC/Inter_process/Interface_definition/IDL/GraphQL/Server_execution/Schemaless/graphql-anywhere.node.txt)
-        - [graphqljs (Node)](RPC/Inter_process/Interface_definition/IDL/GraphQL/Server_execution/graphqljs.node.txt)
     - __REST__
       - [REST (Theory)](RPC/Inter_process/Interface_definition/IDL/REST/REST.theory.txt)
     - [json-rpc (Format)](RPC/Inter_process/Interface_definition/IDL/json-rpc.format.txt)
@@ -1662,10 +1662,10 @@ Number of pages (if it were a printed book): 8106
   - __Client side__
     - [react-router (React)](RPC/Inter_process/URI_routing/Client_side/react-router.react.txt)
     - [redux-simple-router (Redux)](RPC/Inter_process/URI_routing/Client_side/redux-simple-router.redux.txt)
-  - __Matching__
-    - [path-to-regexp (Node)](RPC/Inter_process/URI_routing/Matching/path-to-regexp.node.txt)
   - __Server side__
     - [vhost (Express)](RPC/Inter_process/URI_routing/Server_side/vhost.express.txt)
+  - __Matching__
+    - [path-to-regexp (Node)](RPC/Inter_process/URI_routing/Matching/path-to-regexp.node.txt)
 
 ### Messages tasks
 
@@ -1690,8 +1690,8 @@ Number of pages (if it were a printed book): 8106
   - __Server__
     - [WebSocket (Protocol)](RPC/Realtime/WebSocket/Server/WebSocket.protocol.txt)
     - [engine.io (Node)](RPC/Realtime/WebSocket/Server/engine.io.node.txt)
-    - [ws (Node CLI)](RPC/Realtime/WebSocket/Server/ws.node_cli.txt)
     - [socket.io (Node)](RPC/Realtime/WebSocket/Server/socket.io.node.txt)
+    - [ws (Node CLI)](RPC/Realtime/WebSocket/Server/ws.node_cli.txt)
 
 ### Server
 
@@ -1715,11 +1715,11 @@ Number of pages (if it were a printed book): 8106
     - [http-server (CLI)](RPC/Server/Static_server/For_development/http-server.cli.txt)
   - __For production__
     - __S3__
-      - [s3 (AWS)](RPC/Server/Static_server/For_production/S3/s3.aws.txt)
       - [scottyjs (CLI)](RPC/Server/Static_server/For_production/S3/scottyjs.cli.txt)
-    - [glacier (AWS)](RPC/Server/Static_server/For_production/glacier.aws.txt)
+      - [s3 (AWS)](RPC/Server/Static_server/For_production/S3/s3.aws.txt)
     - [serve-static (Express)](RPC/Server/Static_server/For_production/serve-static.express.txt)
     - [st (Express)](RPC/Server/Static_server/For_production/st.express.txt)
+    - [glacier (AWS)](RPC/Server/Static_server/For_production/glacier.aws.txt)
 
 ## To sort
 
@@ -1880,20 +1880,20 @@ Number of pages (if it were a printed book): 8106
 - __Gnome__
   - __Atkmm__
     - [atkmm](To_sort/C++/Gnome/Atkmm/atkmm.txt)
-  - __Cairomm__
-    - [cairomm](To_sort/C++/Gnome/Cairomm/cairomm.txt)
   - __GObject__
     - [GObject](To_sort/C++/Gnome/GObject/GObject.txt)
+  - __Cairomm__
+    - [cairomm](To_sort/C++/Gnome/Cairomm/cairomm.txt)
   - __Gdkmm__
     - [gdkmm](To_sort/C++/Gnome/Gdkmm/gdkmm.txt)
   - __Giomm__
     - [giomm](To_sort/C++/Gnome/Giomm/giomm.txt)
   - __Glibmm__
     - [Glibmm](To_sort/C++/Gnome/Glibmm/Glibmm.txt)
-  - __Gtkmm__
-    - [gtkmm](To_sort/C++/Gnome/Gtkmm/gtkmm.txt)
   - __Pangomm__
     - [pangomm](To_sort/C++/Gnome/Pangomm/pangomm.txt)
+  - __Gtkmm__
+    - [gtkmm](To_sort/C++/Gnome/Gtkmm/gtkmm.txt)
   - [glade](To_sort/C++/Gnome/glade.txt)
   - __libsigc++__
     - [libsigc++](To_sort/C++/Gnome/libsigc++/libsigc++.txt)
@@ -1909,48 +1909,48 @@ Number of pages (if it were a printed book): 8106
 - __C__
   - __Glibc__
     - [IO filedescriptors](To_sort/Utilities_to_sort/C/Glibc/IO_filedescriptors.txt)
-    - [IO memoire](To_sort/Utilities_to_sort/C/Glibc/IO_memoire.txt)
     - [IO normale](To_sort/Utilities_to_sort/C/Glibc/IO_normale.txt)
+    - [IO memoire](To_sort/Utilities_to_sort/C/Glibc/IO_memoire.txt)
     - [TODO](To_sort/Utilities_to_sort/C/Glibc/TODO.txt)
     - [attributs fichiers](To_sort/Utilities_to_sort/C/Glibc/attributs_fichiers.txt)
     - [caracteres](To_sort/Utilities_to_sort/C/Glibc/caracteres.txt)
-    - [communication interprocess](To_sort/Utilities_to_sort/C/Glibc/communication_interprocess.txt)
     - [dynamic allocation](To_sort/Utilities_to_sort/C/Glibc/dynamic_allocation.txt)
     - [encodage crypto](To_sort/Utilities_to_sort/C/Glibc/encodage_crypto.txt)
-    - [erreurs](To_sort/Utilities_to_sort/C/Glibc/erreurs.txt)
+    - [communication interprocess](To_sort/Utilities_to_sort/C/Glibc/communication_interprocess.txt)
     - [extension 64 bits](To_sort/Utilities_to_sort/C/Glibc/extension_64_bits.txt)
+    - [erreurs](To_sort/Utilities_to_sort/C/Glibc/erreurs.txt)
     - [fichiers temporaires](To_sort/Utilities_to_sort/C/Glibc/fichiers_temporaires.txt)
     - [goto](To_sort/Utilities_to_sort/C/Glibc/goto.txt)
     - [limites](To_sort/Utilities_to_sort/C/Glibc/limites.txt)
     - [options programme](To_sort/Utilities_to_sort/C/Glibc/options_programme.txt)
     - [program execution](To_sort/Utilities_to_sort/C/Glibc/program_execution.txt)
+    - [repertoires](To_sort/Utilities_to_sort/C/Glibc/repertoires.txt)
     - [signaux](To_sort/Utilities_to_sort/C/Glibc/signaux.txt)
     - [strings](To_sort/Utilities_to_sort/C/Glibc/strings.txt)
-    - [repertoires](To_sort/Utilities_to_sort/C/Glibc/repertoires.txt)
     - [systeme de fichier](To_sort/Utilities_to_sort/C/Glibc/systeme_de_fichier.txt)
     - [time](To_sort/Utilities_to_sort/C/Glibc/time.txt)
     - [wchar wstr](To_sort/Utilities_to_sort/C/Glibc/wchar_wstr.txt)
   - __Standard library__
-    - __C89__
-      - [assert](To_sort/Utilities_to_sort/C/Standard_library/C89/assert.txt)
-      - [ctype](To_sort/Utilities_to_sort/C/Standard_library/C89/ctype.txt)
-      - [errno](To_sort/Utilities_to_sort/C/Standard_library/C89/errno.txt)
-      - [float](To_sort/Utilities_to_sort/C/Standard_library/C89/float.txt)
-      - [limits](To_sort/Utilities_to_sort/C/Standard_library/C89/limits.txt)
-      - [math](To_sort/Utilities_to_sort/C/Standard_library/C89/math.txt)
-      - [setjmp](To_sort/Utilities_to_sort/C/Standard_library/C89/setjmp.txt)
-      - [signal](To_sort/Utilities_to_sort/C/Standard_library/C89/signal.txt)
-      - [stdarg](To_sort/Utilities_to_sort/C/Standard_library/C89/stdarg.txt)
-      - [locale](To_sort/Utilities_to_sort/C/Standard_library/C89/locale.txt)
-      - [stddef](To_sort/Utilities_to_sort/C/Standard_library/C89/stddef.txt)
-      - [stdio](To_sort/Utilities_to_sort/C/Standard_library/C89/stdio.txt)
-      - [stdlib](To_sort/Utilities_to_sort/C/Standard_library/C89/stdlib.txt)
-      - [string](To_sort/Utilities_to_sort/C/Standard_library/C89/string.txt)
-      - [time](To_sort/Utilities_to_sort/C/Standard_library/C89/time.txt)
     - __C95__
       - [iso646](To_sort/Utilities_to_sort/C/Standard_library/C95/iso646.txt)
       - [wchar](To_sort/Utilities_to_sort/C/Standard_library/C95/wchar.txt)
       - [wctype](To_sort/Utilities_to_sort/C/Standard_library/C95/wctype.txt)
+    - __C89__
+      - [assert](To_sort/Utilities_to_sort/C/Standard_library/C89/assert.txt)
+      - [errno](To_sort/Utilities_to_sort/C/Standard_library/C89/errno.txt)
+      - [ctype](To_sort/Utilities_to_sort/C/Standard_library/C89/ctype.txt)
+      - [float](To_sort/Utilities_to_sort/C/Standard_library/C89/float.txt)
+      - [limits](To_sort/Utilities_to_sort/C/Standard_library/C89/limits.txt)
+      - [locale](To_sort/Utilities_to_sort/C/Standard_library/C89/locale.txt)
+      - [math](To_sort/Utilities_to_sort/C/Standard_library/C89/math.txt)
+      - [setjmp](To_sort/Utilities_to_sort/C/Standard_library/C89/setjmp.txt)
+      - [signal](To_sort/Utilities_to_sort/C/Standard_library/C89/signal.txt)
+      - [stdarg](To_sort/Utilities_to_sort/C/Standard_library/C89/stdarg.txt)
+      - [stddef](To_sort/Utilities_to_sort/C/Standard_library/C89/stddef.txt)
+      - [stdio](To_sort/Utilities_to_sort/C/Standard_library/C89/stdio.txt)
+      - [string](To_sort/Utilities_to_sort/C/Standard_library/C89/string.txt)
+      - [stdlib](To_sort/Utilities_to_sort/C/Standard_library/C89/stdlib.txt)
+      - [time](To_sort/Utilities_to_sort/C/Standard_library/C89/time.txt)
     - __C99__
       - [inttypes](To_sort/Utilities_to_sort/C/Standard_library/C99/inttypes.txt)
       - [stdbool](To_sort/Utilities_to_sort/C/Standard_library/C99/stdbool.txt)
@@ -1961,13 +1961,13 @@ Number of pages (if it were a printed book): 8106
       - [random (JPG)](To_sort/Utilities_to_sort/C++/Boost/Images/random.jpg)
     - [any](To_sort/Utilities_to_sort/C++/Boost/any.txt)
     - [array](To_sort/Utilities_to_sort/C++/Boost/array.txt)
-    - [boost](To_sort/Utilities_to_sort/C++/Boost/boost.txt)
-    - [compressed pair](To_sort/Utilities_to_sort/C++/Boost/compressed_pair.txt)
-    - [crc](To_sort/Utilities_to_sort/C++/Boost/crc.txt)
-    - [boost uuid](To_sort/Utilities_to_sort/C++/Boost/boost_uuid.txt)
-    - [date time](To_sort/Utilities_to_sort/C++/Boost/date_time.txt)
     - [call traits](To_sort/Utilities_to_sort/C++/Boost/call_traits.txt)
+    - [compressed pair](To_sort/Utilities_to_sort/C++/Boost/compressed_pair.txt)
     - [concept check assert](To_sort/Utilities_to_sort/C++/Boost/concept_check_assert.txt)
+    - [boost](To_sort/Utilities_to_sort/C++/Boost/boost.txt)
+    - [boost uuid](To_sort/Utilities_to_sort/C++/Boost/boost_uuid.txt)
+    - [crc](To_sort/Utilities_to_sort/C++/Boost/crc.txt)
+    - [date time](To_sort/Utilities_to_sort/C++/Boost/date_time.txt)
     - [dynamic bitset](To_sort/Utilities_to_sort/C++/Boost/dynamic_bitset.txt)
     - [filesystem](To_sort/Utilities_to_sort/C++/Boost/filesystem.txt)
     - [function bind mem fn](To_sort/Utilities_to_sort/C++/Boost/function_bind_mem_fn.txt)
@@ -1988,8 +1988,8 @@ Number of pages (if it were a printed book): 8106
     - [variant](To_sort/Utilities_to_sort/C++/Boost/variant.txt)
   - __Standard library__
     - [algorithm](To_sort/Utilities_to_sort/C++/Standard_library/algorithm.txt)
-    - [bitset](To_sort/Utilities_to_sort/C++/Standard_library/bitset.txt)
     - [containers](To_sort/Utilities_to_sort/C++/Standard_library/containers.txt)
+    - [bitset](To_sort/Utilities_to_sort/C++/Standard_library/bitset.txt)
     - [exception](To_sort/Utilities_to_sort/C++/Standard_library/exception.txt)
     - [functional](To_sort/Utilities_to_sort/C++/Standard_library/functional.txt)
     - [iterator](To_sort/Utilities_to_sort/C++/Standard_library/iterator.txt)
@@ -1997,11 +1997,11 @@ Number of pages (if it were a printed book): 8106
     - [locale](To_sort/Utilities_to_sort/C++/Standard_library/locale.txt)
     - [memory](To_sort/Utilities_to_sort/C++/Standard_library/memory.txt)
     - [new](To_sort/Utilities_to_sort/C++/Standard_library/new.txt)
+    - [streams](To_sort/Utilities_to_sort/C++/Standard_library/streams.txt)
     - [string](To_sort/Utilities_to_sort/C++/Standard_library/string.txt)
     - [typeinfo](To_sort/Utilities_to_sort/C++/Standard_library/typeinfo.txt)
-    - [utility](To_sort/Utilities_to_sort/C++/Standard_library/utility.txt)
     - [valarray](To_sort/Utilities_to_sort/C++/Standard_library/valarray.txt)
-    - [streams](To_sort/Utilities_to_sort/C++/Standard_library/streams.txt)
+    - [utility](To_sort/Utilities_to_sort/C++/Standard_library/utility.txt)
 
 ## Types
 
@@ -2010,10 +2010,10 @@ Number of pages (if it were a printed book): 8106
 - __Date time general__
   - __Date picker__
     - [bootstrap-datepicker (Bootstrap)](Types/Date_time/Date_time_general/Date_picker/bootstrap-datepicker.bootstrap.txt)
-  - __Utilities__
-    - [moment (JavaScript)](Types/Date_time/Date_time_general/Utilities/moment.javascript.txt)
   - __Date popovers__
     - [jquery-timeago (jQuery)](Types/Date_time/Date_time_general/Date_popovers/jquery-timeago.jquery.txt)
+  - __Utilities__
+    - [moment (JavaScript)](Types/Date_time/Date_time_general/Utilities/moment.javascript.txt)
 
 ### Numbers
 
@@ -2034,12 +2034,12 @@ Number of pages (if it were a printed book): 8106
       - [json patch (Format)](Types/Strings/Strings_general/Diff/Patch/json_patch.format.txt)
       - [patch (CLI)](Types/Strings/Strings_general/Diff/Patch/patch.cli.txt)
     - __VCDiff__
-      - [vcdiff (Format)](Types/Strings/Strings_general/Diff/VCDiff/vcdiff.format.txt)
       - [xdelta (CLI)](Types/Strings/Strings_general/Diff/VCDiff/xdelta.cli.txt)
+      - [vcdiff (Format)](Types/Strings/Strings_general/Diff/VCDiff/vcdiff.format.txt)
     - [cmp (CLI)](Types/Strings/Strings_general/Diff/cmp.cli.txt)
     - [comm (CLI)](Types/Strings/Strings_general/Diff/comm.cli.txt)
-    - [diff sdiff (CLI)](Types/Strings/Strings_general/Diff/diff_sdiff.cli.txt)
     - [diff3 (CLI)](Types/Strings/Strings_general/Diff/diff3.cli.txt)
+    - [diff sdiff (CLI)](Types/Strings/Strings_general/Diff/diff_sdiff.cli.txt)
   - __Encoding__
     - __base64 base32 hex octal__
       - [base64-js (JavaScript)](Types/Strings/Strings_general/Encoding/base64_base32_hex_octal/base64-js.javascript.txt)
@@ -2048,12 +2048,12 @@ Number of pages (if it were a printed book): 8106
       - [mathiasbynens base64 (JavaScript)](Types/Strings/Strings_general/Encoding/base64_base32_hex_octal/mathiasbynens_base64.javascript.txt)
     - [base64 base32 hex octal (Format)](Types/Strings/Strings_general/Encoding/base64_base32_hex_octal.format.txt)
   - __Manipulation__
-    - __Concatenation__
-      - [gulp-concat (Gulp)](Types/Strings/Strings_general/Manipulation/Concatenation/gulp-concat.gulp.txt)
-      - [gulp-header-footer (Gulp)](Types/Strings/Strings_general/Manipulation/Concatenation/gulp-header-footer.gulp.txt)
     - __Slugify__
       - [simov slugify (JavaScript)](Types/Strings/Strings_general/Manipulation/Slugify/simov_slugify.javascript.txt)
       - [sindresorhus slugify (Node)](Types/Strings/Strings_general/Manipulation/Slugify/sindresorhus_slugify.node.txt)
+    - __Concatenation__
+      - [gulp-concat (Gulp)](Types/Strings/Strings_general/Manipulation/Concatenation/gulp-concat.gulp.txt)
+      - [gulp-header-footer (Gulp)](Types/Strings/Strings_general/Manipulation/Concatenation/gulp-header-footer.gulp.txt)
     - __Utilities__
       - [pluralize (JavaScript)](Types/Strings/Strings_general/Manipulation/Utilities/pluralize.javascript.txt)
       - [strip-final-newline (Node)](Types/Strings/Strings_general/Manipulation/Utilities/strip-final-newline.node.txt)
@@ -2106,11 +2106,11 @@ Number of pages (if it were a printed book): 8106
 - __Form input__
   - __Autosize__
     - [autosize (JavaScript)](UX/Forms/Form_input/Autosize/autosize.javascript.txt)
-- __Form sliders__
-  - [knob (jQuery)](UX/Forms/Form_sliders/knob.jquery.txt)
 - __Form select__
   - [chosen (jQuery)](UX/Forms/Form_select/chosen.jquery.txt)
   - [select2 (jQuery)](UX/Forms/Form_select/select2.jquery.txt)
+- __Form sliders__
+  - [knob (jQuery)](UX/Forms/Form_sliders/knob.jquery.txt)
 - __Progress bars__
   - [nprogress (JavaScript)](UX/Forms/Progress_bars/nprogress.javascript.txt)
 - __Rich editor__
@@ -2145,10 +2145,10 @@ Number of pages (if it were a printed book): 8106
     - [meny (JavaScript)](UX/Information_structure/Hamburger_menu/Whole_menu/meny.javascript.txt)
     - [snap.js (JavaScript)](UX/Information_structure/Hamburger_menu/Whole_menu/snap.js.javascript.txt)
 - __Layout__
-  - __Bricks__
-    - [masonry (JavaScript)](UX/Information_structure/Layout/Bricks/masonry.javascript.txt)
   - __Sticky header__
     - [headroom.js (jQuery)](UX/Information_structure/Layout/Sticky_header/headroom.js.jquery.txt)
+  - __Bricks__
+    - [masonry (JavaScript)](UX/Information_structure/Layout/Bricks/masonry.javascript.txt)
 - __Presentations__
   - __Web__
     - [fullpage.js (jQuery)](UX/Information_structure/Presentations/Web/fullpage.js.jquery.txt)
@@ -2166,8 +2166,8 @@ Number of pages (if it were a printed book): 8106
   - [parallax.js (JavaScript)](UX/Interaction/Orientation/parallax.js.javascript.txt)
 - __Scrolling__
   - __Animate on scroll__
-    - [scrollreveal (JavaScript)](UX/Interaction/Scrolling/Animate_on_scroll/scrollreveal.javascript.txt)
     - [skrollr (JavaScript)](UX/Interaction/Scrolling/Animate_on_scroll/skrollr.javascript.txt)
+    - [scrollreveal (JavaScript)](UX/Interaction/Scrolling/Animate_on_scroll/scrollreveal.javascript.txt)
     - [stroll (JavaScript)](UX/Interaction/Scrolling/Animate_on_scroll/stroll.javascript.txt)
     - [waypoints (JavaScript)](UX/Interaction/Scrolling/Animate_on_scroll/waypoints.javascript.txt)
   - __Enhanced scrolling__
@@ -2191,15 +2191,15 @@ Number of pages (if it were a printed book): 8106
       - [summary encoding (Format)](UX/Text/i18n/Encoding/Non-Unicode/summary_encoding.format.txt)
     - __Unicode__
       - [unicode (Format)](UX/Text/i18n/Encoding/Unicode/unicode.format.txt)
-      - [utf16 ucs2 (Format)](UX/Text/i18n/Encoding/Unicode/utf16_ucs2.format.txt)
       - [unicode language tags (Format)](UX/Text/i18n/Encoding/Unicode/unicode_language_tags.format.txt)
+      - [utf16 ucs2 (Format)](UX/Text/i18n/Encoding/Unicode/utf16_ucs2.format.txt)
       - [utf32 ucs4 (Format)](UX/Text/i18n/Encoding/Unicode/utf32_ucs4.format.txt)
       - [utf8 (Format)](UX/Text/i18n/Encoding/Unicode/utf8.format.txt)
-  - __Recognition__
-    - [os-locale (Node)](UX/Text/i18n/Recognition/os-locale.node.txt)
   - __General__
     - [c++ internationalization (C++)](UX/Text/i18n/General/c++_internationalization.c++.txt)
     - [gtk internationalization (GTK)](UX/Text/i18n/General/gtk_internationalization.gtk.txt)
+  - __Recognition__
+    - [os-locale (Node)](UX/Text/i18n/Recognition/os-locale.node.txt)
   - __Translation__
     - __Library__
       - __Extraction__
