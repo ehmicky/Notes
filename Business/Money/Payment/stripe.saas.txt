@@ -487,6 +487,9 @@ RESOURCE.currency                 #STR (ISO 4217) (e.g. 'usd')
 ACCOUNT.default_currency        CU#STR
                                   #Defaults to COUNTRY_SPEC.default_currency
 COUNTRY_SPEC.default_currency     #STR
+CUSTOMER.currency                 #STR. Default for SUBSCRIPTIONs
+                                  #Set by Stripe on first SUBSCRIPTION|INVOICE|COUPON|CREDIT_NOTE
+                                  #Set only once. To change it, create new CUSTOMER
 CURRENCY CONVERSION ==>           #Conversion is automatic and has three stages:
                                   #  - customer's currency (specified by SOURCE, i.e. customer input)
                                   #     - used during CHARGE
@@ -2356,7 +2359,7 @@ STRIPE.subscriptions.del()        #Set status to 'canceled'
                                   #Payload: invoice_now, prorate
 PAYLOAD.invoice_now               #BOOL (def: false). Create a final INVOICE for pending metered usage or proration.
 PAYLOAD.prorate                   #BOOL (def: false). Create a INVOICE_ITEM that give credits for remaining unused time.
-SUBSCRIPTION                      #Recurring CHARGE, either as a single PLAN, or several (using SUBSCRIPTION_ITEMs)
+SUBSCRIPTION                      #Recurring CHARGE, either as a single PLAN, or several (using SUBSCRIPTION_ITEMs) for a specific CUSTOMER
 SUBSCRIPTION.customer           *C#CUSTOMER.id
 ?customer=CUSTOMER.id             #
 CUSTOMER.subscriptions            #SUBSCRIPTION_LIST
@@ -2365,19 +2368,24 @@ SUBSCRIPTION.default_source     CU#SOURCE|BANK_ACCOUNT|CARD.id
 SUBSCRIPTION.                   CU#PAYMENT_METHOD.id
  default_payment_method           #Def: CUSTOMER.default_payment_method
 SUBSCRIPTION.items              CU#SUBSCRIPTION_ITEM_LIST
+                                  #Max length 20
 SUBSCRIPTION.plan                ?#PLAN. Only defined if SUBSCRIPTION.items.length === 1
 ?plan=PLAN.id                     #
-SUBSCRIPTION.quantity             #NUM of PLANs (to multiply).
-                                  #Only if SUBSCRIPTION.plan defined.
-                                  #E.g. if PLAN is per user and there are several users.
+SUBSCRIPTION.quantity             #NUM to multiply PLAN.amount with.
+                                  #Only if PLAN.usage_type 'licensed'.
+                                  #Only if SUBSCRIPTION.plan defined. Otherwise, should check SUBSCRIPTION_ITEM.quantity.
 SUBSCRIPTION.status               #STR among:
-                                  #  - 'trialing'
+                                  #  - 'trialing': no CHARGEs|PAYMENT_METHOD|SOURCE needed for a specific amount of time
                                   #  - 'active': last CHARGE succeeded
                                   #  (fixable errors)
                                   #  - 'incomplete':
-                                  #     - first CHARGE not paid or failed
+                                  #     - either:
+                                  #        - initial state
+                                  #        - PINTENT.status 'requires_action'
+                                  #        - first CHARGE failed (other PINTENT.status)
+                                  #           - should retry with POST /invoices/ID/pay
                                   #     - SUBSCRIPTION read-only except for default_source
-                                  #  - 'past_due': non-first CHARGE not paid or failed
+                                  #  - 'past_due': non-first CHARGE not paid
                                   #  (terminal errors)
                                   #  - 'incomplete_expired': first CHARGE not paid within 23 hours
                                   #  - 'unpaid':
@@ -2397,8 +2405,11 @@ SUBSCRIPTION.billing            CU#Either:
 ?billing=STR                      #
 SUBSCRIPTION.latest_invoice       #Last INVOICE.id
 SUBSCRIPTION.days_until_due     CU#NUM of days to pay INVOICEs. Only if SUBSCRIPTION.billing 'send_invoice'
-SUBSCRIPTION.                   CU#DATE_NUM (or 'now') of the first INVOICE.
- billing_cycle_anchor             #Used to define on which day of the week|month|year to INVOICE next periods.
+SUBSCRIPTION.                   CU#DATE_NUM (def: 'now') used to define on which day of the week|month|year to INVOICE each period.
+ billing_cycle_anchor             #Reset when:
+                                  #  - changing PLAN or period settings
+                                  #  - status goes from 'trial' to 'active'
+                                  #When reset to 'now', new INVOICE will be created right away.
 SUBSCRIPTION.billing_thresholds CU#BILLING_THRESHOLDS. When to send emails with INVOICEs.
                                   #Only with SUBSCRIPTION.billing 'send_invoice'
                                   #Def: when INVOICE is created
@@ -2418,16 +2429,23 @@ SUBSCRIPTION.trial_end          CU#DATE_NUM or 'now'. Either:
                                   #  - automatically set using SUBSCRIPTION.trial_period_days if SUBSCRIPTION.trial_from_plan
                                   #  - manually set. At most two years from billing_cycle_anchor
                                   #EVENT 'customer.subscription.trial_will_end' three days before trial end, or when using 'now'
-SUBSCRIPTION.prorate           RCU#BOOL. When changing PLAN or period settings:
-                                  #  - true (def): give credits for unused time
-                                  #  - false: give remaining period for free
-SUBSCRIPTION.proration_date     RU#DATE_NUM. Def: when PLAN or period settings changed.
+SUBSCRIPTION.prorate           RCU#BOOL. Whether partial period are charged|credited proportionally (true, def) or free (false).
+                                  #Partial periods happen when changing:
+                                  #  - quantity or unit price
+                                  #  - period settings
+                                  #  - SUBSCRIPTION.billing_cycle_anchor
+                                  #This includes changing PLANs as a whole.
+                                  #Applied on next INVOICE.
+                                  #Only if PLAN.usage_type 'licensed'
+SUBSCRIPTION.proration_date     RU#DATE_NUM. When change happened.
 
 GET /subscription_items[/ID]
 POST /subscription_items[/ID]
-DELETE /subscription_items/ID     #Abstraction of one or several PLANs, used by a complex SUBSCRIPTION.
+DELETE /subscription_items/ID     #
 STRIPE.subscriptionItems.
  list|retrieve|create|update|del()#
+SUBSCRIPTION_ITEM                 #Abstraction of one or several PLANs, used by a complex SUBSCRIPTION.
+                                  #If same SUBSCRIPTION, must have PLAN.interval|currency
 SUBSCRIPTION_ITEM.subscription  *C#SUBSCRIPTION.id
 ?subscription=SUBSCRIPTION.id     #
 SUBSCRIPTION_ITEM.plan|quantity|
@@ -2451,33 +2469,45 @@ PLAN.product                   *CU#PRODUCT.id
 ?product=PRODUCT.id               #
 PLAN.active                     CU#BOOL. Available for new SUBSCRIPTIONs
 ?active=BOOL                      #
-PLAN.amount                      C#PMONEY to charge on each interval.
 PLAN.interval                   *C#Frequency among 'day', 'week', 'month', 'year'.
 PLAN.interval_count              C#NUM of PLAN.interval (def: 1)
 PLAN.trial_period_days          CU#NUM of free|trial days
 PLAN.billing_scheme              C#Either:
-                                  #  - 'per_unit' (def)
-                                  #  - 'tiered': use PLAN.tiers[_mode]
-                                  #     - cannot use PLAN.transform_usage
-                                  #Both can use PLAN.usage_type
+                                  #  - 'per_unit' (def): unit price is fixed (PLAN.amount)
+                                  #  - 'tiered': unit price is variable, based on quantity (PLAN.tiers[_mode])
+                                  #Both can use any PLAN.usage_type
+PLAN.amount                      C#PMONEY. Unit price, to multiply with quantity.
+PLAN.tiers                       C#TIER_ARR. Different unit price depending on quantity.
+TIER.up_to                        #'NUM' or 'inf'. Quantity max threshold to be using this TIER.
+TIER.flat_amount                  #PMONEY. Absolute price (for whole TIER)
+TIER.unit_amount                  #PMONEY. Relative price (per unit)
+PLAN.tiers_mode                  C#Either:
+                                  #  - 'volume': use unit price of the matching TIER for the whole quantiy
+                                  #  - 'graduated': use unit price of each matching TIER for each part of the quantity
+                                  #E.g. if 2$/unit for 1-100 and 1$ for >100, 150 units will cost:
+                                  #  - 'volume': $1x150
+                                  #  - 'graduated': $2x100 + $1x50
 PLAN.usage_type                  C#Either:
-                                  #  - 'licensed' (def): not quantity-wise
-                                  #  - 'metered': quantity-wise, using PLAN.aggregate_usage and USAGE_RECORD[_SUMMARY]
+                                  #  - 'licensed' (def):
+                                  #     - quantity is fixed: SUBSCRIPTION[_ITEM]|LINE_ITEM.quantity
+                                  #     - e.g. price per number of users
+                                  #     - INVOICE at period start
+                                  #  - 'metered':
+                                  #     - quantity is variable: USAGE_RECORD[_SUMMARY] + PLAN.aggregate_usage
+                                  #     - e.g. price per ms
+                                  #     - INVOICE at period end
 PLAN.aggregate_usage             C#Can be:
                                   #  - 'sum' (def): adds all USAGE_RECORDs of the period
                                   #  - 'max': only use highest USAGE_RECORD of that period
                                   #  - 'last_during_period': use last USAGE_RECORD of that period
-                                  #  - 'last_ever': use last USAGE_RECORD (even outside period)
+                                  #  - 'last_ever': use last USAGE_RECORD of that period + previous unpaid periods
+                                  #     - goal: to charge trials
 PLAN.transform_usage             C#TRANSFORM_USAGE. Divide the price.
+                                  #Useful to apply a modulo on the quantity:
+                                  #  - e.g. track consumption per millisecond, but charge per 100ms
+                                  #Only if PLAN.billing_scheme 'per_unit'
 TRANSFORM_USAGE.divide_by         #INT
-TRANSFORM_USAGE.round             #'up' or 'down'
-PLAN.tiers                       C#TIER_ARR. Different pricing depending on quantity (USAGE_RECORD[_SUMMARY])
-TIER.up_to                        #NUM or 'inf'. Unit threshold to be using this TIER.
-TIER.flat_amount                  #PMONEY. Absolute price (for whole TIER)
-TIER.unit_amount                  #PMONEY. Relative price (per unit)
-PLAN.tiers_mode                  C#Either:
-                                  #  - 'graduated': pricing can successively change as the quantity grows
-                                  #  - 'volume': maximum quantity within a period determines the per unit price
+TRANSFORM_USAGE.round             #'up' (def) or 'down'
 
 POST /subscription_items/ID/
  usage_records                    #
@@ -2511,7 +2541,7 @@ COUPON                            #DISCOUNTs given to many CUSTOMERs
 COUPON.name                     CU#STR shown in INVOICEs and receipts
 COUPON.amount_off                C#PMONEY to substract to all INVOICEs
 COUPON.percent_off               C#0-100. Percentage to substract to all INVOICEs
-COUPON.duration                 *C#How long this works among 'once', 'repeating' or 'forever'
+COUPON.duration                 *C#How long DISCOUNT will work among 'once' (one period), 'repeating' or 'forever'
 COUPON.duration_in_months        C#NUM. If duration 'repeating'.
 COUPON.times_redeemed             #NUM of DISCOUNTs created
 COUPON.max_redemptions           C#NUM. Max COUPON.times_redeemed
@@ -2519,14 +2549,13 @@ COUPON.redeem_by                 C#DATE_NUM after which can no longer create DIS
 COUPON.valid                      #BOOL.
                                   #Can be invalid if beyond COUPON.duration|max_redemptions|redeem_by
                                   #If false, cannot apply to CUSTOMER, but already created DISCOUNTs still work.
-CUSTOMER.coupon                RCU#Creates a DISCOUNT
-                                  #Only on recurring CHARGEs
-CUSTOMER.discount                 #DISCOUNT
 SUBSCRIPTION.coupon            RCU#Creates a DISCOUNT
 SUBSCRIPTION|INVOICE.discount     #DISCOUNT
+CUSTOMER.coupon                RCU#Creates a DISCOUNT on future SUBSCRIPTION|INVOICE
+CUSTOMER.discount                 #DISCOUNT
 ORDER.coupon                   RCU#Creates a DISCOUNT
-                                  #  - must be COUPON.duration 'once' and same currency as ORDER.
-                                  #  - create a 'discount' ORDER_ITEM
+                                  #Must be COUPON.duration 'once' and same currency as ORDER.
+                                  #Create a 'discount' ORDER_ITEM
 ORDER.external_coupon_code        #Same
 
 DELETE /customers|subscriptions/
@@ -2581,8 +2610,10 @@ POST /invoices/ID/
  mark_uncollectible               #Set INVOICE.status from 'open' to 'uncollectible'
 POST /invoices/ID/void            #Set INVOICE.status to 'void'
 POST /invoices/ID/send            #Manually send INVOICE by email. Noop in test mode.
-POST /invoices/ID/pay             #Manually set INVOICE.paid true
-                                  #Payload: invoice, source, forgive, paid_out_of_band
+POST /invoices/ID/pay             #Set INVOICE.paid true
+                                  #Payload: payment_method|source, paid_out_of_band, forgive
+PAYLOAD.payment_method|source     #Will attempt PINTENT|CHARGE again.
+                                  #If not set, manually set INVOICE.paid true.
 PAYLOAD.paid_out_of_band          #BOOL. Not paid within Stripe. No CHARGE will be automatically created.
 PAYLOAD.forgive                   #BOOL. Allow CHARGE.amount to be less than INVOICE.amount_due.
 STRIPE.invoices.retrieve|list|
@@ -2619,7 +2650,6 @@ INVOICE.status                    #STR among:
                                   #  - 'draft'
                                   #  - 'open'
                                   #     - EVENT 'invoice.finalized'
-                                  #     - payment will happen in about an hour
                                   #  - 'paid'
                                   #     - EVENTs 'invoice.payment_succeeded|failed'
                                   #  - 'uncollectible'
@@ -2629,7 +2659,8 @@ INVOICE.status                    #STR among:
                                   #Depending on SUBCRIPTION.billing:
                                   #  - 'charge_automatically': EVENT 'invoice.upcoming' few days before
                                   #  - 'send_invoice': EVENT 'invoice.sent'
-INVOICE.auto_advance            CU#BOOL. Automatically go from state 'draft' to 'open'.
+INVOICE.auto_advance            CU#BOOL (def: true). Automatically go from state 'draft' to 'open' after one hour.
+                                  #Set to false when SUBSCRIPTION state is 'canceled'
 INVOICE.status_transitions.
  finalized_at|paid_at|
  marked_uncollectible_at|voided_at#DATE_NUM
@@ -2652,6 +2683,7 @@ INVOICE.charge                    #CHARGE.id
 INVOICE.payment_intent            #PINTENT.id
 INVOICE.next_payment_attempt      #DATE_NUM for next CHARGE. Only if SUBSCRIPTION.billing 'charge_automatically'
 INVOICE.attempt_count             #NUM. How many times CHARGE was tried (including successfully).
+                                  #Stripe tries 4 times
 INVOICE.attempted                 #BOOL. Whether attemp_count !== 0
 INVOICE.invoice_pdf              ?#'URL' to PDF. Can view.
                                   #Not if state 'draft'
@@ -2680,8 +2712,8 @@ LINE_ITEM.subscription          ?C#SUBSCRIPTION.id
 LINE_ITEM.subscription_item      ?#SUBSCRIPTION_ITEM.id
 LINE_ITEM.plan                   ?#PLAN.id
 LINE_ITEM.invoice_item           ?#INVOICE_ITEM.id
-LINE_ITEM.amount                CU#MONEY
-LINE_ITEM.quantity              CU#NUM
+LINE_ITEM.amount                CU#MONEY. Unit price. Can be negative to give money to CUSTOMER
+LINE_ITEM.quantity              CU#NUM. Quantity
 LINE_ITEM.discountable          CU#BOOL. Whether DISCOUNT should be used.
 LINE_ITEM.proration               #BOOL
 LINE_ITEM.period.start|end      CU#DATE_NUM
@@ -2781,9 +2813,9 @@ TAX_RATE.active                 CU#BOOL (def: true). Whether can be applied to n
 TAX_RATE.display_name          *CU#STR shown to receipts and INVOICEs
 TAX_RATE.description            CU#STR not shown to CUSTOMER
 SUBSCRIPTION|INVOICE.
- default_tax_rates              CU#TAX_RATE_LIST
+ default_tax_rates              CU#TAX_RATE_LIST. Max length 5.
 SUBSCRIPTION_ITEM|LINE_ITEM.
- tax_rates                      CU#TAX_RATE_ARR
+ tax_rates                      CU#TAX_RATE_ARR. Max length 5.
 INVOICE.tax                       #PMONEY. Amount of tax.
 INVOICE|LINE_ITEM.
  total_tax_amounts                #TAX_AMOUNT_ARR. Breakdown of taxes
