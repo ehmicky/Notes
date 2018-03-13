@@ -548,6 +548,12 @@ _.trim
 																						 \=+===============================+=/
 
 
+  - attribute
+  | method
+ || collection method
+  x handler
+  + comment
+
 PERMISSIONSET:
   - initializing OBJ:
      - parent: current MODEL
@@ -558,42 +564,56 @@ PERMISSIONSET:
   - onlyVisible("ACTION")->OBJ.visible-ACTION
   - visible("ACTION")->OBJ.visible|allow-ACTION
 
-USER:
+USER: /users
   + Flow.user
   - positions POSITION_ARR
   - settings SETTINGS_POSITION
   - fullname STR [V]
+  - email STR [V]: also serverValidation /users/validate_invite_email
+  - state new|invited|guest|registered
 
-COMPANY:
+COMPANY: /directory/companies/
+  - name [V]
+  - orgnr [V]
+  - country [V]
+
+AGREEMENT_COMPANY: /agreements/AGREEMENT/companies/
   - agreement AGREEMENT
+  | getEnabledDecisionMakers|Influencers(): AGREEMENT.participants subcollection with state enabled and type decisionmaker|influencer
   - owner POSITION
-  | isOwner(POSITION[, BOOL]): if true, also if same COMPANY as owner
+  | isOwner(POSITION[, BOOL]): if true, also if same AGREEMENT_COMPANY as owner
+  | isUs(): current PARTICIPANT belongs to AGREEMENT_COMPANY
   - state enabled|disabled
   | isEnabled|Disabled()
+  | enable|disable(): does patch()
   - company_name [V]
   - company_orgnr [V]
   - company_country [V]
+  + updates Flow.company.company_* on save|patch()
   - consumer 0|1
   | isConsumer()
+  | hasInfoMatching(COMPANY|ACCOUNT): same company_*
 
 ACCOUNT: /accounts
-  - structure ACCOUNT_STRUCTURE_ARR:
+  - Flow.account
+  - structure ACCOUNT_STRUCTURE_ARR: /accounts/ACCOUNT/structure/
      - parent ACCOUNT_STRUCTURE
      | isRoot()
      - positions POSITION_ARR
+     x "account:structure:get"(ACCOUNT): /accounts/ACCOUNT/structure/, then sets ACCOUNT
   | getManager|EmployeeGroup()->ACCOUNT_STRUCTURE_ARR: according to isRoot()
   - owner POSITION: see promote|demote()
-  - positions POSITION_ARR /api/positions/
+  - positions POSITION_ARR /positions/
      + Flow.position
      | isMe()
      - account ACCOUNT
      - group ACCOUNT_STRUCTURE
      - shareAccountWith(POSITION)->BOOL
      - fullname STR [V]: used as comparator
+     + When save|fetch(), updates Flow.user.fullname
      - email STR [V]
      - phone_number STR
      - title STR
-     | updateFromAgreementParticipant(PARTICIPANT): sets phone_number|title
      - is_manager BOOL
      | isAccountManager()
      | canViewColleagueContracts(): isAccountManager() or Flow.settings "account-permissions-employee-colleague-contracts"
@@ -602,21 +622,34 @@ ACCOUNT: /accounts
      | isClaimed()
      - active BOOL
      | isActive()
-     - promote|demote(): if isAccountManager(), change owner with /accounts/ACCOUNT/positions/POSITION/promote|demote
-  - agreement_templates TEMPLATE_ARR
+     - promote|demote()->POSITION (as PROMISE): if isAccountManager(), change owner with /accounts/ACCOUNT/positions/POSITION/promote|demote
+  - agreement_templates TEMPLATE_ARR:
+     - agreement AGREEMENT
+     - owner POSITION
+     - account ACCOUNT
   - company_name [V]
   - company_orgnr [V]
   - company_country [V]
-  | updateFromAgreementCompany(COMPANY): updates company_*
-  | getLogoURL()->/ID/logo.png
+  | getLogoURL([true])->/ID/logo.png (if true, adds cache busting query variable)
+  x "account:get:one"(ID)->ACCOUNT (as PROMISE): fetch() if not available yet
+  x "account:position:create"(ACCOUNT, USER): 
+     - creates and returns a POSITION after inviting a USER
+     - adds to ACCOUNT_STRUCTURE.positions
+     - /accounts/ACCOUNT/invites/ with USER as data
+  x "account:invitation:resend"(ACCOUNT, POSITION): /accounts/ACCOUNT/invites/POSITION/resend, then returns POSITION
+  x "account:invitation:revoke"(ACCOUNT, POSITION): DESTROY /accounts/ACCOUNT/invites/
 
 PARTICIPANT: /agreements/AGREEMENT/participants/
+  - id: sort subcollections
   - agreement AGREEMENT
+ || enabledNoneOwners(): subcollection on AGREEMENT.owner === PARTICIPANT.position
   - state enabled|signed|declined|disabled[_by_company]
   | isPending|Signed|Declined|hasDecided|Disabled|Enabled()
   | enable|disable([OBJ]): does a patch([OBJ])
   | sign|decline([OBJ]): does with /agreements/AGREEMENT/participants/PARTICIPANT/sign|decline with data { checksum AGREEMENT.checksum }
   | Then updates prev_visit[_ts]
+ || enabled|getEnabled|disabled(): subcollection
+ || enabledArray(): same as non-subcollection COLL
   + When state becomes enabled, triggers "sign:reset" on PARTICIPANT and AGREEMENT, providing PARTICIPANT isMe()
     and there has been an EVENT with reset true and created_ts < PARTICIPANT.last_visit_ts
   - visibility hidden[_with_notifications]|visible
@@ -627,16 +660,22 @@ PARTICIPANT: /agreements/AGREEMENT/participants/
   | isDecisionMaker|Influencer()
   | delegate BOOL: if true, type decisionmaker
   + triggers "participant:change:type" on AGREEMENT and "agreement:participant:change:type" on Flow
+ || [get]enabledDecisionMakers|Influencers(AGREEMENT_COMPANY): subcollection on same AGREEMENT_COMPANY, state enabled and given type
   - email_status failure|bounce|suppressed|success|ooto|complaint(spam)
   | hasEmailFail|Bounce|Success(): failure, bounce|suppressed, success|ooto|complaint
   - position POSITION
   | isMe()
   | sharesAccountWith(POSITION): same ACCOUNT
+ || [get]enabledOthers(): subcollection on state enabled, and isMe()
+ || getPublishEmailRecipients(): same but also excludes PARTICIPANT from hardcoded CONFIG.agreements.delegate_accounts
   - owner POSITION
-  | isOwner([POSITION[, BOOL]]): same POSITION or (if true) same COMPANY
-  - agreement_company COMPANY
+  | isOwner([POSITION[, BOOL]]): same POSITION or (if true) same AGREEMENT_COMPANY
+  - agreement_company AGREEMENT_COMPANY
   | sharesCompanyWith(POSITION)
-  | isConsumer(): COMPANY.isConsumer()
+ || getByCompany(AGREEMENT_COMPANY): subcollection on same AGREEMENT_COMPANY
+ || enabledByCompanyArray(AGREEMENT_COMPANY): non-subcollection COLL on same AGREEMENT_COMPANY, and state enabled
+  | isConsumer(): AGREEMENT_COMPANY.isConsumer()
+ || disabledConsumers(): subcollection on state disabled and isConsumer()
   - prev_visit DATETIME
   - fullname [V]
   + Updates Flow.user.fullname when save|patch(), unless isGuest() or !.isMe()
@@ -653,19 +692,19 @@ PARTICIPANT: /agreements/AGREEMENT/participants/
   | getSignupToken(): calls /agreements/AGREEMENT/participants/PARTICIPANT/contact_me
   + permissions:
      + reset on change:state|type, sign|decline, AGREEMENT.permissions:reset, AGREEMENT.participant:sign
-     + only for AGREEMENT|COMPANY|POSITION.owner and for AGREEMENT PARTICIPANT (or same COMPANY)
+     + only for AGREEMENT|AGREEMENT_COMPANY|POSITION.owner and for AGREEMENT PARTICIPANT (or same COMPANY)
      + allow-edit true
-     (not AGREEMENT.owner, or same COMPANY)
+     (not AGREEMENT.owner, or same AGREEMENT_COMPANY)
      + allow-remove|restore: state [not] disabled*
 
 AGREEMENT:
   - state: draft|pending|signinprogress|signed|declined|expired|template
   - owner|requester POSITION
-  - companies COMPANY_ARR
+  - companies AGREEMENT_COMPANY_ARR
   - publish_timestamp
   - checksum STR
   - participants PARTICIPANT_ARR
-  | getParticipant([POSITION])->PARTICIPANT: with same position (def: Flow.position)
+  | get[My]Participant([POSITION])->PARTICIPANT: with same position (def: Flow.position)
   - boxes BOX_ARR:
      - agreement AGREEMENT
      - overriden by each child class, with OBJ
@@ -723,11 +762,6 @@ AGREEMENT_FILTER
 CHART
 
 NAV_ITEM
-
-AGREEMENT_TEMPLATE:
-  - agreement AGREEMENT
-  - owner POSITION
-  - account ACCOUNT
 
 CELL:
   - item
