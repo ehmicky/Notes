@@ -15,7 +15,7 @@
 PURPOSE ==>                                     #Execute JavaScript code server-side
                                                 #Based on Chrome JavaScript engine V8
 
-VERSION ==>                                     #12.2.0 (current), 10.15.3 (active LTS), 8.16.0 (active LTS)
+VERSION ==>                                     #12.3.0 (current), 10.15.3 (active LTS), 8.16.0 (active LTS)
                                                 #Branches:
                                                 #  - "current": latest major version. New one every 0.5 years
                                                 #  - LTS: every even-numbered version
@@ -313,6 +313,9 @@ MODULE ==>                                      #Can be:
                                                 #     - must use libraries: V8, libuv, others
                                                 #     - use node-gyp for packaging/compilation
                                                 #     - on Windows, must first npm install -g windows-build-tools as admin
+                                             12*#  - WebAssembly (*.wasm)
+                                             12*#     - only with ESM
+                                             12*#     - must use --experimental-wasm-modules
                                                 #Decides type with file extension
                                                 #Done runtime. See JavaScript modules doc for more info
 module                                          #Current MODULE, i.e. file being loaded.
@@ -470,7 +473,7 @@ node --loader FILE                              #Customize the behavior of "impo
                                                 #        - is a URL, e.g. file: protocol with filesystem
                                                 #        - can be undefined, e.g. REPL
                                                 #     - url is resolved absolute URL
-                                                #     - format can be 'module' (ESM), 'commonjs', 'json', 'addon', 'builtin' (core module) or 'dynamic'
+                                                #     - format can be 'module' (ESM), 'commonjs', 'json', 'addon', 'builtin' (core module), 'wasm' or 'dynamic'
                                                 #  - dynamicInstantiate(URL)->PROMISE_{ exports, execute(EXPORTS) }:
                                                 #     - customize loading, for custom formats beyong ESM/CommonJS/JSON
                                                 #     - when returning format 'dynamic'
@@ -633,6 +636,7 @@ ISTREAM.pause|resume()                          #Makes it stop|resume emit "data
 ISTREAM.isPaused()                              #
 ISTREAM.setEncoding('ENCODING')                 #
 ISTREAM.readable                             11*#BOOL
+ISTREAM.readableObjectMode                   12*#BOOL
 ISTREAM.readableHighWaterMark                 9*#NUM
 ISTREAM.readableLength                        9*#NUM. Number of bytes not read yet
 ISTREAM.readableFlowing                         #Can be:
@@ -644,6 +648,10 @@ ISTREAM.pipe(OSTREAM[, { end: BOOL }])->OSTREAM #Same as ISTREAM.on("data", sval
 ISTREAM.unpipe([OSTREAM])                       #Stops pipe() (def: all)
 ISTREAM.unshift(SVAL)                           #Put last SVAL read back in ISTREAM
 ISTREAM.destroy([ERROR])                        #
+
+Readable.from(SVAL_ITERABLE[, OBJ])->ISTREAM 12*#OBJ:
+                                                #  - same as new Readable(OBJ)
+                                                #  - def objectMode is true
 
 OSTREAM ==>                                     #Output stream. Actually called Writable
 STREAM.Writable([OBJ])                          #Constructor for OSTREAM. OBJ members are:
@@ -661,6 +669,7 @@ OSTREAM.end(SVAL[, 'ENCODING'[, FUNC()]])
 OSTREAM.destroy([ERROR])                        #
 OSTREAM.setDefaultEncoding('ENCODING')->OSTREAM #Def: 'utf-8'. Used by write() and end()
 OSTREAM.writable                             11*#BOOL
+OSTREAM.writableObjectMode                   12*#BOOL
 OSTREAM.writableHighWaterMark                 9*#NUM
 OSTREAM.writableLength                        9*#NUM. Number of bytes not flushed yet
 OSTREAM.[un]cork()                              #cork() forces buffering to disk, uncork() flushes
@@ -1098,16 +1107,9 @@ TLS.createSecureContext(OBJ)->SECURECONTEXT     #OBJ:
                                                 #     - key+cert+ca in PFX or PKCS12 format
                                                 #     - OBJ is { buf STR|BUFFER[, passphrase STR] }
                                                 #  - ca STR[_ARR]|BUFFER[_ARR]:
-                                                #        - list of root certificates, in PEM format
-                                                #        - by def., well-known root CAs
-                                                #           - are known builtin, either:
-                                                #              - node --use-bundled-ca (def): Mozilla CA store
-                                                #              - node --use-openssl-ca:
-                                                #                 - OpensSSL CA store, modified by distributions,
-                                                #                   can be modified by ENVVARs
-                                                #                 - can use ENVVAR SSL_CERT_DIR=DIR and SSL_CERT_FILE=FILE
-                                                #           - can also be augmented with ENVVAR NODE_EXTRA_CA_CERTS=FILE
-                                                #        - otherwise, can be used to authorize self-signed certificates
+                                                #     - list of root certificates, in PEM format
+                                                #     - def: TLS.rootCertificates
+                                                #     - otherwise, can be used to authorize self-signed certificates
                                                 #  - passphrase STR: passphrase used to decrypt the server private key (when a private key is encrypted)
                                                 #  - crl STR[_ARR]: CRLs, in PEM format
                                                 #  - secureProtocol STR:
@@ -1132,6 +1134,13 @@ TLS.createSecureContext(OBJ)->SECURECONTEXT     #OBJ:
                                              11*#     - def: TLS.DEFAULT_MIN|MAX_VERSION (def: 'TLSv1.2|3')
                                              12*#     - can be set with --tls-min|max-v1.0|1|2|3
                                              12*#  - enableTrace BOOL (def: false): print TLS packets to stderr, for debuggin
+TLS.rootCertificates                         12*#STR_ARR. Default well-known root CAs
+                                             12*#Are known builtin, either:
+                                             12*#  - node --use-bundled-ca (def): Mozilla CA store
+                                             12*#  - node --use-openssl-ca:
+                                             12*#     - OpensSSL CA store, modified by distributions, can be modified by ENVVARs
+                                             12*#     - can use ENVVAR SSL_CERT_DIR=DIR and SSL_CERT_FILE=FILE
+                                             12*#Can also be augmented with ENVVAR NODE_EXTRA_CA_CERTS=FILE
 
 TLSSERVER                                       #Child of TCPSERVER:
                                                 #  - since it inherits from TCPSERVER, can accept TCP connections, not only SSL ones.
@@ -1144,6 +1153,7 @@ TLSSERVER                                       #Child of TCPSERVER:
                                                 #  - authorization also checks the domain in certificate === host being connected
 createServer(OBJ[, FUNC(TLSSOCKET)])->TLSSERVER #OBJ:
                                                 #  - any SECURECONTEXT.* property
+                                             12*#  - any NET.createServer() options
                                                 #  - requestCert BOOL (def: false): request authentication (with certificate) of other end (i.e. client)
                                                 #  - rejectUnauthorized BOOL (def: true): throw error to other end if cannot authentify it
                                                 #  - handshakeTimeout (def: 120000, in ms): when timing out, emits tlsClientError
@@ -1225,6 +1235,10 @@ TLSSOCKET.get[Peer]Finished()->BUFFER         9*#Returns the "Finished" message,
 
 --trace-tls                                  12*#
 TLSSOCKET.enableTrace()                      12*#Same as SECURECONTEXT.enableTrace
+
+TLSSERVER.on
+ ('keylog', FUNC(BUFFER, TLSSOCKET))         12*#TLS key in NSS SSLKEYLOGFILE format. Usually used with Wireshark to decrypt SSL traffic.
+TLSSOCKER.on('keylog', FUNC(BUFFER))         12*#Can be emitted multiple times: concatenation of BUFFER is the whole file.
 
 
                                              /=+===============================+=\
@@ -2469,6 +2483,8 @@ WORKER|MESSAGEPORT.postMessage               10*#Like DOM except:
 WORKER|MESSAGEPORT.on('message', FUNC(VAL))  10*#Like DOM except:
                                              10*#  - receive VAL directly, not MESSAGEEVENT
                                              10*#  - MESSAGEPORT will keep process open until MESSAGEPORT.close|unref()
+WORKER.receiveMessageOnPort(MESSAGPORT)->VAL 12*#If there is a message VAL in the queue, return it and remove it from queue.
+                                             12*#Otherwise return undefined
 WORKER.moveMessagePortToContext              11*#Transfer MESSAGEPORT to another global object COBJ (created by VM.createContext())
  (MESSAGEPORT, COBJ)->MESSAGEPORT2           11*#MESSAGEPORT will become unusable
                                              11*#'message' event listeners are kept
