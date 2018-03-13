@@ -1,7 +1,7 @@
 #!/bin/bash
 #Creates a list of files at index.md
 
-dir="repositoryHelpers"
+dir="Repository_helpers"
 if [[ ! -f "$dir/index.md" ]]; then
   echo "Error: current directory must be the project root" >&2
   exit 1
