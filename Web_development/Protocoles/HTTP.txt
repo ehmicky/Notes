@@ -37,20 +37,6 @@ Architecture:
            - timeout 10-15 secs (depends on server). Can be set by Keep-Alive: timeout=NUM [S]
            - NUM requests using Keep-Alive: max=NUM [S]
         - HTTP/1.0: requires Connection: Keep-Alive [C|S] to remain open
-  - subresources discovery:
-     - HTTP/*: client-initiated
-     - HTTP/2:
-        - server hints ("resource hints"):
-           - tell client to initiate request
-        - server pushes:
-           - send additional resources in a single response:
-              - first send pseudo-client request to client
-              - then response header then response body
-           - performance:
-              - less roundtrips than resource hints
-              - but should push only resources that would have been requested
-           - client caching works the same as normal request
-           - need to be initiated by a request (so not realtime)
 
 Request from client (newline is \n\r) :
   - case insensitive
@@ -332,6 +318,70 @@ Cache:
 			  vulnaribility or someone else having physical access to computer)
 			- POST replay attack: use same URL to authenticate (thanks to cached entry) even if logged out
 			- countermeasure: no caching for sensitive body or headers
+
+Prefetching (resource hints, server push):
+  - types, from most performant to least:
++--------------+----------------------------------------------+---------------------------------------------------------------------+------------------------------------+
+| Type/REL     | Use case                                     | Effects                                                             | Browser support                    |
+|              +--------------------+------------+------------+-----------+-------------------------+-------+---------+-------------+                                    |
+|              | Resource for which | Known path | Likelihood | Initiated | When is resource        | Loads | Parse + | Protocols   |                                    |
+|              | navigation action  |            |            | by        | fetched                 |       | render  |             |                                    |
++--------------+--------------------+------------+------------+-----------+-------------------------+-------+---------+-------------+------------------------------------+
+| server push  | Current            | Yes        | Certain    | server    | right away (no request) | Yes   | Yes     | HTTP        | All                                |
++--------------+--------------------+------------+------------+-----------+-------------------------+-------+---------+-------------+------------------------------------+
+| preload      | Current            | Yes        | Certain    | client    | async right away        | No    | No      | HTTP        | Chrome/Opera                       |
++--------------+--------------------+------------+------------+-----------+-------------------------+-------+---------+-------------+------------------------------------+
+| preconnect   | Current            | No         | Certain    | client    | async right away        | No    | No      | DNS         | Chrome/Opera/Firefox               |
++--------------+--------------------+------------+------------+-----------+-------------------------+-------+---------+-------------+------------------------------------+
+| prerender    | Next               | Yes        | High       | client    | after document.onload   | No    | Yes     | HTTP        | Chrome/Opera/IE                    |
++--------------+--------------------+------------+------------+-----------+-------------------------+-------+---------+-------------+------------------------------------+
+| prefetch     | Next               | Yes        | Middle/low | client    | after document.onload   | No    | No      | HTTP        | not [mobile] Safari nor Opera mini |
++--------------+--------------------+------------+------------+-----------+-------------------------+-------+---------+-------------+------------------------------------+
+| dns-prefetch | Next               | No         | Middle/low | client    | after document.onload   | No    | No      | DNS+TCP/TLS | not Opera mini                     |
++--------------+--------------------+------------+------------+-----------+-------------------------+-------+---------+-------------+------------------------------------+
+  - server push:
+     - send additional resources in a single response:
+        - first send pseudo-client request to client
+        - then response header then response body
+     - performance:
+        - less roundtrips than resource hints
+        - but should push only resources that would have been requested
+     - not actual prefetching (it loads resource)
+     - client caching works the same as normal request
+     - need to be initiated by a request (so not realtime)
+     - as opposed to resource hints, initiated by server so cannot be used if:
+        - client needs knowledge about fetching: resource path, load|error event
+        - fetching needs knowledge about client: state (cookies, localStorage), user agent info (Accept [C], etc.)
+  - resource hints:
+     - use either:
+         Link: <URL>; rel=REL[; ATTR=VAL]... [, <URL>...] [S]
+         <link href="URL" rel="REL" ATTR="VAL" ...>...
+     - ATTR:
+        - pr 'FLOAT' (0-1) (all)
+           - probability the link will be followed 
+           - used for prioritization or reducing optimization/fetching
+        - as TYPE (preload|prefetch): 
+           - WINDOW.fetch() destination type, 
+             i.e. script|style|image|font|media|object|embed|document|xslt|manifest|report|service|shared]worker
+           - used for CSP and Accept [C]
+        - nopush (preload): if a HTTP2 server push has been received for that resource, do not use it
+     - prerender parsing/execution:
+        - in the background, i.e. not visible but will provide very fast cache
+        - only kept for short while, so should be next navigation
+        - resource intensive: should only be used when confident about next navigation action
+        - only HTML resources
+     - does not delay document.onload
+     - could previously use noop XHR to achieve something similar
+     - cannot see in devtools network tab, but can see "prerender" using chrome://net-internals/#prerender
+     - can be:
+        - speculative: before user interaction that might trigger HTTP request
+        - reactive: after user interaction that will certainly trigger HTTP request, after some delay
+     - possible problems:
+        - when HTTP GET request has side effects (which is improper)
+        - increase bandwith usage
+        - overestimate tracking (ads, analytics):
+           - can use document.visibilityState 'prerender' to handle it
+        - security: website make decision (not user) to trust content by browsing it
 
 Long request:
   - sends only header with Expect: "100-continue" [C]
