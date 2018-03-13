@@ -53,29 +53,6 @@ Config:
      - make sure the word "conf" is not used anywhere in the codebase
      - rename schema to "config"
   - go through user documentation
-  - JSON references:
-     - "" is current document 
-     - instead of throwing on recursive references:
-        - handle them 
-        - reason:
-           - is validated later anyway
-           - better for local references that use current document ""
-           - more efficient is a file is loaded several times 
-     - local JSON references
-        - "URI|MODULE#JSON_POINTER"
-           - remember URI can be "" for current document 
-           - JSON_POINTER can be "" as well 
-        - done as an extra step after loading URI|MODULE
-        - use json-ptr library 
-        - should assign reference to avoid recursion creating infinite loop. Test recursion on:
-           - reference to parent 
-           - reference to self 
-           - mutual references to parents 
-           - mutual references to selves 
-        - what if there is another (not loaded yet) JSON reference in the middle of JSON_POINTER path???
-     - relative references:
-        - "NUM/JSON_POINTER"
-        - converted to local JSON reference "#JSON_POINTER" the handled likewise 
   - start event payload's exit:
      - do not pass it to start event payload
      - instead, add a apiengine stop PID instruction, which sends custom signal, via kill()
@@ -86,6 +63,80 @@ Config:
      - add a reference part for: config, queries
      - divide between client, server and dev
      - add a tutorial
+
+JSON references:
+  - syntax:
+     - $ref [URI][#[PATH]]
+     - default values (including "")
+        - URI: current document 
+        - #PATH and PATH: #/ 
+     - URI can be "MODULE.node"
+     - can have siblings, in which case it is deeply merged 
+     - PATH can be:
+        - /PATH relative to current document's (not root document's) root
+        - NUM/PATH relative to current position:
+           - 0 is $ref/../ i.e. siblings (if merged)
+        - should unescape / ~ but not percent encoding 
+        - absolute|relative PATH should allow containing another JSON reference, which is then followed 
+        - when ending with trailing slash, strip it
+     - recursive references:
+        - should be handled, not an error 
+        - should work for:
+           - recursion with URI, or with PATH
+           - reference to parent 
+           - reference to self 
+           - mutual references to parents 
+           - mutual references to selves 
+  - errors:
+     - when using relative path, and going above document's root 
+     - when using relative path, and URI is not ""
+     - when using absolute|relative path, and some path part (excluding last one) is not OBJ|ARR 
+        - if part was undefined, error message should be different
+     - when URI does not exist or is wrong format (including URI.node)
+  - implementation:
+     0) input is REF "[URI][#[/PATH]], cache, parent URI, pathBase
+       Default is: new cache object, pwd for parent URI
+     - divide REF into URI and [NUM]/PATH
+       Default is: URI "", [NUM]/PATH "/"
+        - throw if URI !== "" but NUM is defined 
+     - resolve URI to absolute URI
+       Use parent URI's dirname as base
+       If "", use parent URI (throw if none)
+       For URI.node, use node module's path (throw if does not exist)
+     - if cache[absolute URI] exists, use it and jump to 1)
+     - load and parse local file using URI (throw if does not exist)
+     - set absolute URI as a symbol property, using direct mutation
+     - add object to cache[absolute URI].
+       Directly mutate so that parallel promises can share.
+     - for each child $ref:
+        - including child $ref not included by current [NUM]/PATH
+        - in parallel, i.e. using Promise.all()
+        - resolve to a VAL using 0)
+          Pass arguments: $ref as URI + [NUM]/PATH, cache, absolute URI as parent URI, normalized absolute path (within document) of $ref/../ as pathBase
+        - merge back to parent.
+          Directly mutate so that cached object is mutated too. Do not create any shallow|deep copy.
+          Also merge symbol properties, including when merging to siblings
+     1) apply [NUM]/PATH:
+        - if NUM/PATH, resolve to /PATH using pathBase as base for NUM 0, pathBase/../ for NUM 1, etc.
+           - throw if goes above root 
+        - when /PATH ends with trailing slash, strip it 
+        - if /PATH is "", keep same reference
+        - otherwise pick the subfield (relative to current object):
+           - without creating any shallow|deep copy
+           - since it is only a pick, this should not mutate cached value
+           - throw error if some path part (excluding last one) is not OBJ|ARR 
+           - use json-ptr, which should take care of unescaping / ~
+        - set /PATH as a symbol property, using direct mutation
+  - other:
+     - at the moment, if databases.memory.save true and databases.memory.data did not use JSON reference, throws. We should also throw if a JSON reference was used but with a [NUM]/PATH (except if it resolved to "")
+     - pass option to throw on circular references, and use it 
+        - be careful as the fact that cache[absolute URI] does not necessarily mean it is circular (two siblings could require the same reference for example)
+        - maybe cache[absolute URI] could be { value, paths [absolute URIs,...] } and if current absolute URI is among absolute URIs, throw
+  - possible features:
+     - using actual URI, i.e. not only local files
+        - including for top-level config file 
+        - can be disabled with an option 
+  - format loading for conf: requiring text files as STR???
 
 Patch operators:
   - 'number' type should include 'integer'
