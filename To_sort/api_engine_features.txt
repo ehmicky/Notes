@@ -6,10 +6,41 @@ Short-term:
   - on next yargs release, remove "undefined" from opt.choices
   - upgrade ESlint to 4.5.0
   - upgrade ESLint-plugin-html to 3.2.0
-  - the pSetTimeout(0) at beginning of request handling: necessary? Shouldn'it fired only on exceptions?
-  - setupInput middleware could be calculated once for all requests instead?
+  - upgrade Node.js to 8.4.0: no more need for --harmony flag
+     - once object spread is natively supported by Node.js, remove all --harmony related code, including the CLI shabang hack
+
+Conf:
+  - for any command, conf by priority:
+     - for all availableOptions[COMMAND], whether it has configFiles or not
+     - inline:
+        - envvar API_ENGINE__OPT or special like NODE_ENV
+        - CLI flag --OPT
+        - apiEngine.COMMAND({ OPT })
+     - config file:
+        - envvar APIENGINE__CONFIG
+        - CLI flag --config
+        - apiEngine.COMMAND({ config })
+        - api_engine.COMMAND.yml|yaml|json
+  - then, after conf is fully loaded, including envvar and defaults:
+     - for all availableOptions[COMMAND] with AVAILABLEOPT.configFiles OBJ_ARR defined
+        - this should be run options: idl, events.*
+     - resolve relative path according to:
+        - if there was a config file earlier, that file's dirname
+        - otherwise, process.cwd()
+     - load option as a config file itself, but:
+        - no envvar APIENGINE__CONFIG, --config nor apiEngine.COMMAND({ config })
+        - extensions are specified in AVAILABLEOPT.configFiles.*.extensions:
+           - idl: .compiled.json and .json|yml|yaml
+           - events.*: .js
+        - loading depends on AVAILABLEOPT.configFiles.*.loader STR:
+           - compiled IDL: "json_parse", i.e. JSON.parse()
+           - idl: "json_ref", i.e. resolveRefs()
+           - events: "require": i.e. require()
+  - update doc accordingly, with a configuration.md for any command
+  - maybe /src/conf should be inside /src/options after that
 
 CLI:
+  - cli.js should be command-agnostic, i.e. run apiEngine[COMMAND](...) not apiEngine.run(...)
   - add CLI option --idl 'PATH'
   - add CLI option --runtime 'PATH'
   - completion does not seem to work
@@ -17,7 +48,56 @@ CLI:
   - performance monitoring of CLI itself
   - rename runtimeOpts to runOpts and runtime options to run options, including in docs
 
+Stack architecture:
+  - setup_input:
+     - the pSetTimeout(0) at beginning of request handling: necessary? Shouldn'it fired only on exceptions?
+     - setupInput middleware could be calculated once for all requests instead?
+  - chain(OBJ) with OBJ:
+     - TYPE FUNC_ARR_ARR:
+        - each FUNC_ARR is a layer:
+           - transformed to FUNC2(INPUT) which fires each FUNC as a reducer
+           - each FUNC return value is shallow merged to INPUT (instead of returning whole input to next FUNC)
+           - if return value is PROMISE, it is followed:
+              - but async/await is not used, to make async optional
+              - use recursion, not iteration, to avoid next middleware using PROMISE.then() too.
+                E.g. current reduceAsync() utility is not good because it makes each iteration async, even if function is sync.
+                Maybe try to rework reduceAsync() to fix that.
+        - each layer INPUT.nextLayer([OBJ]) is defined, which will fire next layer's reducer
+           - throws if no next layer.
+           - returns most likely PROMISE, but no need to await it if can simply return it.
+             E.g. no need for await in protocol or command layer, but need in operation or action layer.
+           - next layer's INPUT is current one, with OBJ shallow merged.
+           - make middleware calling next layer as small as possible, because it will be async
+     - types:
+        - main:
+           - called at beginning
+        - final:
+           - called after "main", whether success or error
+           - e.g. emitting perf event, call event, sending response, emitting failure event, add request status
+        - error:
+           - called when any middleware in "main" or "final" returns rejected PROMISE, or throw ERROR
+           - failed middleware's INPUT is passed as INPUT, with also INPUT.error
+           - most try|chain currently in several middleware should be gathered here
+           - make sure exceptions thrown deep contain event information about current action, etc.
+        - failure:
+           - if "error" itself failed
+           - e.g. closing socket
+  - simulate async in database middleware (until we add ORM) by adding a pSetTimeout(0)
+  - separate input processing from response processing:
+     - response is assigned to INPUT.response
+  - perf monitoring:
+     - prefix layer name to perf labels
+     - async middleware includes event loop waiting, i.e. is variable. But most middleware will now be sync
+  - Request timeout???
+     - Maybe do not force a new microtask, and accept that timeout might be bigger than specified.
+  - goals:
+     - avoid async/await
+     - better perf monitoring
+     - smaller, more functional middleware, easier to test
+
 Performance:
+  - maybe mutate a variable passed during functor creation, instead of returning perf, to make it less verbose.
+    Can maybe also do both, e.g. in requests it returns, in other it mutates global variable.
   - perf middleware:
      - it is broken
      - remove setTimeout() but keep comment
@@ -589,7 +669,6 @@ Dependencies:
 
 Refactoring:
   - performance monitoring is very verbose in the code on startup and exit
-  - once object spread is natively supported by Node.js, remove all --harmony related code, including the CLI shabang hack
   - use ES6 import/export, when supported natively by Node.js
      - fix ESLint rules for that
      - no need for 'use strict' anymore nor ESLint impliedStrict true
