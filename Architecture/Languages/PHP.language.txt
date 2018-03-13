@@ -100,7 +100,7 @@ define("VAR", VAL)                #"Constants". Same as global variables except:
                                   #  - can only resolve to STR|BOOL|NUM|ARR|RES
                                   #  - referenced as VAR, not $VAR
                                   #     - i.e. ${EXPR} or $$VAR cannot be used
-                                  #     - if undefined, defaults to "VAR" itself, with a warning message
+                                  #     - if undefined, defaults to "VAR" itself, with a notice
                                   #  - uppercase by convention
                                   #  - cannot use instanceof
 const VAR = VAL,...               #Same but evaluated compile-time not runtime.
@@ -112,7 +112,7 @@ const VAR = VAL,...               #Same but evaluated compile-time not runtime.
 
 UNDEFINED VALUES ==>              #I.e. not assigned, or after unset()
                                   #Dereferencement:
-                                  #  - prints warning
+                                  #  - prints notice
                                   #  - use falsy value, i.e.:
                                   #     - STR: ""
                                   #     - BOOL: false
@@ -122,11 +122,21 @@ UNDEFINED VALUES ==>              #I.e. not assigned, or after unset()
 unset(VAR)                        #Removes a variable, i.e. make it undefined
 
 
+UNDERLYING MODEL ==>              #The spec defines following concepts:
+                                  #  - VAR ("VSlot"): pointer to VAL
+                                  #  - VAL ("VStore", "zval"): either scalar value or pointer to OBJ|ARR_VAL
+                                  #  - OBJ|ARR_VAL ("Hstore"): VARs container
+
+
                                              /=+===============================+=\ 
                                             /  :                               :  \  
                                             )==:      GARBAGE COLLECTION       :==(   
                                             \  :_______________________________:  /    
                                              \=+===============================+=/
+
+
+
+GARBAGE COLLECTION ==>            #When refcount === 0, cleans memory
 
 
 debug_zval_dump(VAL,...)          #Similar to var_dump(), except also shows:
@@ -227,6 +237,8 @@ function &[FUNC](...) {...}       #Return value by alias-reference
 
 foreach 
 (ARR|OBJ as [$KEY =>] &$VAL) {...}#Assignment by alias-reference. It is recommended to unset($VAL) after the loop.
+
+[&$VAR, ...]                      #By alias-reference.
 
 
 (&$VAR)                           #Since (...) returns by value, this is same as $VAR (i.e. loses alias-reference)
@@ -581,7 +593,7 @@ array([KEY => ]VAL,...)           #Is an associative array. As opposed to OBJ, i
                                   #  - or 0
                                   #  - i.e. increments
 ARR[KEY]                          #Can be assigned
-ARR{KEY}                          #If overflow, NULL + warning message
+ARR{KEY}                          #If overflow, NULL + notice
 ARR[KEY][KEY2]...                 #
 
 ARR[KEY] = VAL                    #If ARR does not exist, creates it (avoid)
@@ -599,11 +611,14 @@ ARR + ARR2
 ARR += ARR2                       #Union, i.e. merge according to keys, with ARR having priority
 
 
-ArrayAccess                       #Interface to implement to allow a CLASS to use array operators
-                                  #As opposed to ARR, KEY can be any type
+ArrayAccess                       #Interface to implement to allow a CLASS to use array operators:
+                                  #  - including OBJ[KEY], deconstruction, appending
+                                  #  - excluding union
+                                  #As opposed to ARR, KEY can also be BOOL|FLOAT|null
 ARRAYACCESS.offsetGet(VAL)->VAL2  #OBJ[KEY]
 ARRAYACCESS.offsetSet(VAL, VAL2)  #OBJ[KEY] = VAL
-ARRAYACCESS.offsetExists(VAL)->BOOL#isset(OBJ[KEY]) or empty(OBJ[KEY]). Can also be called internally, e.g. before doing OBJ[KEY] access
+                                  #Assignment will properly return VAL
+ARRAYACCSS.offsetExists(VAL)->BOOL#isset(OBJ[KEY]) or empty(OBJ[KEY])
 ARRAYACCESS.offsetUnset(VAL)      #unset(OBJ[KEY])
 
 
@@ -848,7 +863,7 @@ serialize(VAL)->STR               #PHP serialization format:
                                   #  - faster
                                   #  - more portable
                                   #  - more secure, because unserialize() can execute code (through autoloading)
-unserialize(STR[, ARR])->VAL      #If error, prints warning and returns false
+unserialize(STR[, ARR])->VAL      #If error, prints notice and returns false
                                   #ARR.allowed_classes VAL:
                                   #  - "CLASS"_ARR of allowed classes in deserialization
                                   #    If not allowed, will still instantiate but use __PHP_Incomplete_Class CLASS
@@ -965,8 +980,8 @@ yield from TRAVERSABLE|ARR|OBJ    #Does a series of yield, by iterating over arg
 
 TYPE CASTING ==>                  #Not allowed
 
-
-RES                               #Resource, i.e. file or network connection
+RES                               #Resource, i.e. handle with an unspecified binary format, extension-specific
+                                  #E.g. file or network connection
 
 
                                              /=+===============================+=\ 
@@ -976,7 +991,7 @@ RES                               #Resource, i.e. file or network connection
                                              \=+===============================+=/
 
 
-WARNING MESSAGE ==>               #PHP errors, printing to stderr
+NOTICES ==>                       #PHP errors, printing to stderr
                                   #Are not THROWABLE, i.e. cannot be caught
 
 
@@ -1116,17 +1131,17 @@ CONF.include_path                 #Same format as Unix $PATH
                                              \=+===============================+=/
 
 
-include|require[_once] "PATH"     #PATH is relative to (in order):
+include|require[_once] "PATH"     #Include files behave like if they were inserted inline (same scope), except:
+                                  #  - new parsing context, i.e. each module must use its own <?php ... ?>
+                                  #  - __*__ variables
+                                  #Returns VAL|false on success|error
+                                  #PATH is relative to (in order):
                                   #  - CONF.include_path
                                   #  - __DIR__
                                   #  - $PWD
                                   #Only difference between include|require is:
-                                  #  - if file cannot be found, emits warning|error
+                                  #  - if file cannot be found, emits notice|error
                                   #If "_once" and module was already included, does not include it and returns true
-                                  #Scope-wise, included files behave like if they were inserted inline, except:
-                                  #  - for __*__ variables
-                                  #  - stops parsing, i.e. like ?> include "PATH"; <?php
-                                  #Returns VAL|false on success|error
 return [VAL];                     #Stops execution of current script, and pass return value
                                   #Def: 1
 
@@ -1171,6 +1186,21 @@ unregister_tick_function(FUNK)    #
 
                                              /=+===============================+=\ 
                                             /  :                               :  \  
+                                            )==:            ENVVAR             :==(   
+                                            \  :_______________________________:  /    
+                                             \=+===============================+=/
+
+
+$argv                             #ARR of arguments
+$_SERVER["argv"]                  #Is global variable
+$argc                             #Same as count($argv)
+$_SERVER["argc"]                  #Is global variable
+
+$_ENV                             #Global variable???
+
+
+                                             /=+===============================+=\ 
+                                            /  :                               :  \  
                                             )==:             HTTP              :==(   
                                             \  :_______________________________:  /    
                                              \=+===============================+=/
@@ -1180,15 +1210,10 @@ All this chapter: ???
 
 CGI??? Including RFC 3875
 
-$argv                             
-$_SERVER["argv"]                  #Global
-$argc                             
-$_SERVER["argc"]                  #Global
-$_ENV                             #Global
-
 $php_errormsg                     #Global
 
 $_SERVER                          #Global ARR. Contains all ENVVAR, plus additional documented here
+                                  #Plus others???
 $_SERVER["DOCUMENT_ROOT "]        #STR
 $_SERVER["PATH_TRANSLATED"]       #STR
 $_SERVER["PHP_SELF"]              #STR
