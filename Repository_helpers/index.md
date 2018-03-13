@@ -54,14 +54,14 @@ _Bash_Unix__
   - [shell_options](Bash_Unix/Bash/shell_options.txt)
 - _Commandes__
   - [7z](Bash_Unix/Commandes/7z.txt)
-  - [alias_unalias](Bash_Unix/Commandes/alias_unalias.txt)
-  - [agrep](Bash_Unix/Commandes/agrep.txt)
   - [abs_makepkg](Bash_Unix/Commandes/abs_makepkg.txt)
+  - [agrep](Bash_Unix/Commandes/agrep.txt)
+  - [alias_unalias](Bash_Unix/Commandes/alias_unalias.txt)
   - [anacron](Bash_Unix/Commandes/anacron.txt)
-  - [basename_dirname](Bash_Unix/Commandes/basename_dirname.txt)
-  - [base64](Bash_Unix/Commandes/base64.txt)
-  - [awk](Bash_Unix/Commandes/awk.txt)
   - [at_atq_atrm_batch](Bash_Unix/Commandes/at_atq_atrm_batch.txt)
+  - [awk](Bash_Unix/Commandes/awk.txt)
+  - [base64](Bash_Unix/Commandes/base64.txt)
+  - [basename_dirname](Bash_Unix/Commandes/basename_dirname.txt)
   - [cal_ncal](Bash_Unix/Commandes/cal_ncal.txt)
   - [cat_tac](Bash_Unix/Commandes/cat_tac.txt)
   - [cd](Bash_Unix/Commandes/cd.txt)
@@ -234,35 +234,35 @@ _Non-dev__
   - _Compression__
     - [compression](Non-dev/Crypto_Stego_Compression/Compression/compression.txt)
   - _Crypto__
-    - _Algos__
-      - [algos_classiques](Non-dev/Crypto_Stego_Compression/Crypto/Algos/algos_classiques.txt)
-      - [algo_mac](Non-dev/Crypto_Stego_Compression/Crypto/Algos/algo_mac.txt)
     - _Autres__
       - [histoire_crypto](Non-dev/Crypto_Stego_Compression/Crypto/Autres/histoire_crypto.txt)
-    - _Pratique__
-      - [applications](Non-dev/Crypto_Stego_Compression/Crypto/Pratique/applications.txt)
-      - [logiciels_crypto](Non-dev/Crypto_Stego_Compression/Crypto/Pratique/logiciels_crypto.txt)
-    - _Lois_Societe__
-      - [crypto_lois](Non-dev/Crypto_Stego_Compression/Crypto/Lois_Societe/crypto_lois.txt)
-      - [certifications](Non-dev/Crypto_Stego_Compression/Crypto/Lois_Societe/certifications.txt)
     - _Cryptanalyse__
       - [crypta_attacks](Non-dev/Crypto_Stego_Compression/Crypto/Cryptanalyse/crypta_attacks.txt)
-      - [cryptanalyse](Non-dev/Crypto_Stego_Compression/Crypto/Cryptanalyse/cryptanalyse.txt)
       - [crypta_classique_attacks](Non-dev/Crypto_Stego_Compression/Crypto/Cryptanalyse/crypta_classique_attacks.txt)
+      - [cryptanalyse](Non-dev/Crypto_Stego_Compression/Crypto/Cryptanalyse/cryptanalyse.txt)
+    - _Lois_Societe__
+      - [certifications](Non-dev/Crypto_Stego_Compression/Crypto/Lois_Societe/certifications.txt)
+      - [crypto_lois](Non-dev/Crypto_Stego_Compression/Crypto/Lois_Societe/crypto_lois.txt)
     - _Theorie__
-      - [crypto_general](Non-dev/Crypto_Stego_Compression/Crypto/Theorie/crypto_general.txt)
       - [asymetric_crypto](Non-dev/Crypto_Stego_Compression/Crypto/Theorie/asymetric_crypto.txt)
       - [authentication](Non-dev/Crypto_Stego_Compression/Crypto/Theorie/authentication.txt)
       - [block_ciphers](Non-dev/Crypto_Stego_Compression/Crypto/Theorie/block_ciphers.txt)
       - [crypto_hardware](Non-dev/Crypto_Stego_Compression/Crypto/Theorie/crypto_hardware.txt)
+      - [crypto_general](Non-dev/Crypto_Stego_Compression/Crypto/Theorie/crypto_general.txt)
+      - [crypto_systems](Non-dev/Crypto_Stego_Compression/Crypto/Theorie/crypto_systems.txt)
+      - [information_security](Non-dev/Crypto_Stego_Compression/Crypto/Theorie/information_security.txt)
       - [crypto_padding](Non-dev/Crypto_Stego_Compression/Crypto/Theorie/crypto_padding.txt)
       - [crypto_key](Non-dev/Crypto_Stego_Compression/Crypto/Theorie/crypto_key.txt)
       - [hash_function](Non-dev/Crypto_Stego_Compression/Crypto/Theorie/hash_function.txt)
-      - [information_security](Non-dev/Crypto_Stego_Compression/Crypto/Theorie/information_security.txt)
       - [mac_digital_signature](Non-dev/Crypto_Stego_Compression/Crypto/Theorie/mac_digital_signature.txt)
       - [random](Non-dev/Crypto_Stego_Compression/Crypto/Theorie/random.txt)
-      - [crypto_systems](Non-dev/Crypto_Stego_Compression/Crypto/Theorie/crypto_systems.txt)
       - [stream_ciphers](Non-dev/Crypto_Stego_Compression/Crypto/Theorie/stream_ciphers.txt)
+    - _Pratique__
+      - [applications](Non-dev/Crypto_Stego_Compression/Crypto/Pratique/applications.txt)
+      - [logiciels_crypto](Non-dev/Crypto_Stego_Compression/Crypto/Pratique/logiciels_crypto.txt)
+    - _Algos__
+      - [algo_mac](Non-dev/Crypto_Stego_Compression/Crypto/Algos/algo_mac.txt)
+      - [algos_classiques](Non-dev/Crypto_Stego_Compression/Crypto/Algos/algos_classiques.txt)
   - _Information_Theory__
     - [information_theory_general](Non-dev/Crypto_Stego_Compression/Information_Theory/information_theory_general.txt)
   - _Stego__
@@ -271,8 +271,8 @@ _Non-dev__
 - _Maths__
   - [algebre](Non-dev/Maths/algebre.txt)
   - [calculus](Non-dev/Maths/calculus.txt)
-  - [combinatoire](Non-dev/Maths/combinatoire.txt)
   - [equations_polynomes](Non-dev/Maths/equations_polynomes.txt)
+  - [combinatoire](Non-dev/Maths/combinatoire.txt)
   - [financial_math](Non-dev/Maths/financial_math.txt)
   - [fonctions](Non-dev/Maths/fonctions.txt)
   - [game_theory](Non-dev/Maths/game_theory.txt)
@@ -298,14 +298,31 @@ _Repository_helpers__
 - [to_learn](Repository_helpers/to_learn.txt)
 
 _To_sort__
-- [organisation_sources](To_sort/organisation_sources.txt)
-- [gitter.im](To_sort/gitter.im.txt)
-- [general_programming](To_sort/general_programming.txt)
 - [audio_rates](To_sort/audio_rates.txt)
+- [general_programming](To_sort/general_programming.txt)
+- [gitter.im](To_sort/gitter.im.txt)
+- [organisation_sources](To_sort/organisation_sources.txt)
 - [shields.io](To_sort/shields.io.txt)
 - [standards](To_sort/standards.txt)
 
 _Web_development__
+- _Async__
+  - _Events__
+    - [eventemitter2](Web_development/Async/Events/eventemitter2.txt)
+    - [propagate](Web_development/Async/Events/propagate.txt)
+  - _Control_flow__
+    - [async](Web_development/Async/Control_flow/async.txt)
+    - _AWS__
+      - [swf](Web_development/Async/Control_flow/AWS/swf.txt)
+    - [orchestrator](Web_development/Async/Control_flow/orchestrator.txt)
+  - _Streams__
+    - [event-stream](Web_development/Async/Streams/event-stream.txt)
+    - [through](Web_development/Async/Streams/through.txt)
+  - _Promises__
+    - _Redux__
+      - [redux-promise-middleware](Web_development/Async/Promises/Redux/redux-promise-middleware.txt)
+    - [bluebird](Web_development/Async/Promises/bluebird.txt)
+    - [_q](Web_development/Async/Promises/_q.txt)
 - _3D__
   - _C__
     - _OpenGL__
@@ -318,112 +335,95 @@ _Web_development__
   - [angulartics](Web_development/Analytics/angulartics.txt)
   - [google_analytics](Web_development/Analytics/google_analytics.txt)
 - _Authentication__
+  - [jwt](Web_development/Authentication/jwt.txt)
   - _AWS__
     - [cognito](Web_development/Authentication/AWS/cognito.txt)
-  - [jwt](Web_development/Authentication/jwt.txt)
   - [passport](Web_development/Authentication/passport.txt)
   - [web_authentication](Web_development/Authentication/web_authentication.txt)
-- _Async__
-  - _Control_flow__
-    - _AWS__
-      - [swf](Web_development/Async/Control_flow/AWS/swf.txt)
-    - [async](Web_development/Async/Control_flow/async.txt)
-    - [orchestrator](Web_development/Async/Control_flow/orchestrator.txt)
-  - _Events__
-    - [eventemitter2](Web_development/Async/Events/eventemitter2.txt)
-    - [propagate](Web_development/Async/Events/propagate.txt)
-  - _Promises__
-    - _Redux__
-      - [redux-promise-middleware](Web_development/Async/Promises/Redux/redux-promise-middleware.txt)
-    - [_q](Web_development/Async/Promises/_q.txt)
-    - [bluebird](Web_development/Async/Promises/bluebird.txt)
-  - _Streams__
-    - [event-stream](Web_development/Async/Streams/event-stream.txt)
-    - [through](Web_development/Async/Streams/through.txt)
 - _Authorization__
   - _AWS__
     - [IAM_STS](Web_development/Authorization/AWS/IAM_STS.txt)
-  - [oauth](Web_development/Authorization/oauth.txt)
   - [connect-roles](Web_development/Authorization/connect-roles.txt)
+  - [oauth](Web_development/Authorization/oauth.txt)
 - _Beautify__
-  - [_stylefmt](Web_development/Beautify/_stylefmt.txt)
   - [_perfectionist](Web_development/Beautify/_perfectionist.txt)
+  - [_stylefmt](Web_development/Beautify/_stylefmt.txt)
   - [css-declaration-sorter](Web_development/Beautify/css-declaration-sorter.txt)
   - [csscomb](Web_development/Beautify/csscomb.txt)
-  - [postcss-sorting](Web_development/Beautify/postcss-sorting.txt)
   - [uglify_beautify](Web_development/Beautify/uglify_beautify.txt)
+  - [postcss-sorting](Web_development/Beautify/postcss-sorting.txt)
 - _Boilerplate__
   - [yeoman](Web_development/Boilerplate/yeoman.txt)
 - _Browser_extensions__
   - [Chrome_extensions_apps](Web_development/Browser_extensions/Chrome_extensions_apps.txt)
 - _Browser_routing__
-  - _React__
-    - [react-router](Web_development/Browser_routing/React/react-router.txt)
   - _Redux__
     - [redux-simple-router](Web_development/Browser_routing/Redux/redux-simple-router.txt)
+  - _React__
+    - [react-router](Web_development/Browser_routing/React/react-router.txt)
 - _Build_automation__
+  - [cmake](Web_development/Build_automation/cmake.txt)
   - [_grunt](Web_development/Build_automation/_grunt.txt)
   - [autotools](Web_development/Build_automation/autotools.txt)
-  - [gulp](Web_development/Build_automation/gulp.txt)
-  - [cmake](Web_development/Build_automation/cmake.txt)
   - [make](Web_development/Build_automation/make.txt)
+  - [gulp](Web_development/Build_automation/gulp.txt)
 - _Caching__
-  - [etag](Web_development/Caching/etag.txt)
-  - [lru-cache](Web_development/Caching/lru-cache.txt)
   - [fresh](Web_development/Caching/fresh.txt)
+  - [etag](Web_development/Caching/etag.txt)
   - [versionator](Web_development/Caching/versionator.txt)
+  - [lru-cache](Web_development/Caching/lru-cache.txt)
 - _Checksum__
   - [luhn](Web_development/Checksum/luhn.txt)
 - _Cloud__
-  - _PaaS__
-    - _AWS__
-      - [cloudformation](Web_development/Cloud/PaaS/AWS/cloudformation.txt)
-      - [beanstalk](Web_development/Cloud/PaaS/AWS/beanstalk.txt)
   - _IaaS__
     - _AWS__
-      - [AWS](Web_development/Cloud/IaaS/AWS/AWS.txt)
       - [ec2](Web_development/Cloud/IaaS/AWS/ec2.txt)
+      - [AWS](Web_development/Cloud/IaaS/AWS/AWS.txt)
   - _SaaS__
     - [Google_APIs](Web_development/Cloud/SaaS/Google_APIs.txt)
+  - _PaaS__
+    - _AWS__
+      - [beanstalk](Web_development/Cloud/PaaS/AWS/beanstalk.txt)
+      - [cloudformation](Web_development/Cloud/PaaS/AWS/cloudformation.txt)
 - _Command_line__
   - [bytes](Web_development/Command_line/bytes.txt)
   - [chalk](Web_development/Command_line/chalk.txt)
-  - [minimist](Web_development/Command_line/minimist.txt)
   - [inquirer](Web_development/Command_line/inquirer.txt)
+  - [minimist](Web_development/Command_line/minimist.txt)
   - [ms](Web_development/Command_line/ms.txt)
 - _Compatibility__
-  - [debug](Web_development/Compatibility/debug.txt)
   - _Crossbrowser__
     - [babel](Web_development/Compatibility/Crossbrowser/babel.txt)
+  - [debug](Web_development/Compatibility/debug.txt)
 - _Compiling__
   - _C_C++__
     - [cpp](Web_development/Compiling/C_C++/cpp.txt)
-    - [feature_test_macro](Web_development/Compiling/C_C++/feature_test_macro.txt)
     - [gcc](Web_development/Compiling/C_C++/gcc.txt)
+    - [feature_test_macro](Web_development/Compiling/C_C++/feature_test_macro.txt)
     - [gcc_optimization](Web_development/Compiling/C_C++/gcc_optimization.txt)
 - _Compression__
   - _C++__
     - _Libzpaq__
       - [libzpaq](Web_development/Compression/C++/libzpaq/libzpaq.txt)
   - _JavaScript__
-    - _Gulp__
-      - [gulp-gzip-gunzip-tar](Web_development/Compression/JavaScript/Gulp/gulp-gzip-gunzip-tar.txt)
     - _Express__
       - [compression](Web_development/Compression/JavaScript/Express/compression.txt)
+    - _Gulp__
+      - [gulp-gzip-gunzip-tar](Web_development/Compression/JavaScript/Gulp/gulp-gzip-gunzip-tar.txt)
     - _Node__
       - [vary](Web_development/Compression/JavaScript/Node/vary.txt)
   - _Theory__
     - [compression_algos](Web_development/Compression/Theory/compression_algos.txt)
 - _Concurrency__
-  - [_forever](Web_development/Concurrency/_forever.txt)
   - [signal_handler](Web_development/Concurrency/signal_handler.txt)
   - [pm2](Web_development/Concurrency/pm2.txt)
+  - [_forever](Web_development/Concurrency/_forever.txt)
 - _Configuration__
-  - _Declaration__
-    - [rc](Web_development/Configuration/Declaration/rc.txt)
   - _Management__
     - _AWS__
       - [opswork](Web_development/Configuration/Management/AWS/opswork.txt)
+  - _Declaration__
+    - [rc](Web_development/Configuration/Declaration/rc.txt)
 - _Continuous_integration__
   - [travis](Web_development/Continuous_integration/travis.txt)
 - _Cryptography__
@@ -435,18 +435,18 @@ _Web_development__
   - _Backbone__
     - [stickit](Web_development/Data_binding/Backbone/stickit.txt)
 - _Date_time__
-  - [jquery-timeago](Web_development/Date_time/jquery-timeago.txt)
   - _Date_picker__
     - [bootstrap-datepicker](Web_development/Date_time/Date_picker/bootstrap-datepicker.txt)
+  - [jquery-timeago](Web_development/Date_time/jquery-timeago.txt)
   - [moment](Web_development/Date_time/moment.txt)
 - _Debugging__
   - _Express__
     - [errorhandler](Web_development/Debugging/Express/errorhandler.txt)
   - _React__
     - [react-devtools](Web_development/Debugging/React/react-devtools.txt)
-  - [about](Web_development/Debugging/about.txt)
   - _Redux__
     - [redux-devtools](Web_development/Debugging/Redux/redux-devtools.txt)
+  - [about](Web_development/Debugging/about.txt)
   - [createerror](Web_development/Debugging/createerror.txt)
   - [express-debug](Web_development/Debugging/express-debug.txt)
   - [view-source](Web_development/Debugging/view-source.txt)
@@ -457,18 +457,18 @@ _Web_development__
   - [installating_files](Web_development/Deploying/installating_files.txt)
 - _Desktop_automation__
   - [copy-paste](Web_development/Desktop_automation/copy-paste.txt)
-  - [open](Web_development/Desktop_automation/open.txt)
   - [webshot](Web_development/Desktop_automation/webshot.txt)
+  - [open](Web_development/Desktop_automation/open.txt)
 - _Desktop_notifications__
   - [growl](Web_development/Desktop_notifications/growl.txt)
 - _Device_identification__
   - [express-device](Web_development/Device_identification/express-device.txt)
   - [session.js](Web_development/Device_identification/session.js.txt)
 - _Diff__
-  - [cmp](Web_development/Diff/cmp.txt)
-  - [comm](Web_development/Diff/comm.txt)
-  - [diff_sdiff](Web_development/Diff/diff_sdiff.txt)
   - [diff3](Web_development/Diff/diff3.txt)
+  - [comm](Web_development/Diff/comm.txt)
+  - [cmp](Web_development/Diff/cmp.txt)
+  - [diff_sdiff](Web_development/Diff/diff_sdiff.txt)
   - [patch](Web_development/Diff/patch.txt)
   - [vcdiff](Web_development/Diff/vcdiff.txt)
   - [xdelta](Web_development/Diff/xdelta.txt)
@@ -485,83 +485,83 @@ _Web_development__
 - _Encoding__
   - [base64_base32_hex_octal](Web_development/Encoding/base64_base32_hex_octal.txt)
 - _Filesystem__
+  - [file_uri_scheme](Web_development/Filesystem/file_uri_scheme.txt)
   - _Network__
     - [FTP](Web_development/Filesystem/Network/FTP.txt)
-  - [file_uri_scheme](Web_development/Filesystem/file_uri_scheme.txt)
-  - [vinyl](Web_development/Filesystem/vinyl.txt)
   - [glob-stream](Web_development/Filesystem/glob-stream.txt)
   - [glob](Web_development/Filesystem/glob.txt)
+  - [vinyl](Web_development/Filesystem/vinyl.txt)
 - _Format_negotiation__
   - [mime](Web_development/Format_negotiation/mime.txt)
   - [negotiator_accepts](Web_development/Format_negotiation/negotiator_accepts.txt)
   - [vary](Web_development/Format_negotiation/vary.txt)
 - _Functional__
+  - [reselect](Web_development/Functional/reselect.txt)
+  - [clone_deep_equal_deep_merge](Web_development/Functional/clone_deep_equal_deep_merge.txt)
+  - [underscore_lodash_immutable](Web_development/Functional/underscore_lodash_immutable.txt)
   - _React__
     - [recompose](Web_development/Functional/React/recompose.txt)
-  - [clone_deep_equal_deep_merge](Web_development/Functional/clone_deep_equal_deep_merge.txt)
-  - [reselect](Web_development/Functional/reselect.txt)
-  - [underscore_lodash_immutable](Web_development/Functional/underscore_lodash_immutable.txt)
 - _Games__
   - _2D__
+    - _C++__
+      - _SFML__
+        - [sfml_audio](Web_development/Games/2D/C++/SFML/sfml_audio.txt)
+        - [sfml_graphics](Web_development/Games/2D/C++/SFML/sfml_graphics.txt)
+        - [sfml](Web_development/Games/2D/C++/SFML/sfml.txt)
+        - [sfml_network](Web_development/Games/2D/C++/SFML/sfml_network.txt)
+        - [sfml_window](Web_development/Games/2D/C++/SFML/sfml_window.txt)
+        - [sfml_system](Web_development/Games/2D/C++/SFML/sfml_system.txt)
     - _C__
       - _SDL__
         - [sdl](Web_development/Games/2D/C/SDL/sdl.txt)
-    - _C++__
-      - _SFML__
-        - [sfml_graphics](Web_development/Games/2D/C++/SFML/sfml_graphics.txt)
-        - [sfml_network](Web_development/Games/2D/C++/SFML/sfml_network.txt)
-        - [sfml_audio](Web_development/Games/2D/C++/SFML/sfml_audio.txt)
-        - [sfml](Web_development/Games/2D/C++/SFML/sfml.txt)
-        - [sfml_system](Web_development/Games/2D/C++/SFML/sfml_system.txt)
-        - [sfml_window](Web_development/Games/2D/C++/SFML/sfml_window.txt)
   - [game_design](Web_development/Games/game_design.txt)
 - _Geolocation__
   - [geoip-lite](Web_development/Geolocation/geoip-lite.txt)
 - _Headless_browser__
-  - [jsdom](Web_development/Headless_browser/jsdom.txt)
   - [casperjs](Web_development/Headless_browser/casperjs.txt)
   - [phantomjs](Web_development/Headless_browser/phantomjs.txt)
   - [rackt_history](Web_development/Headless_browser/rackt_history.txt)
+  - [jsdom](Web_development/Headless_browser/jsdom.txt)
 - _Identifiers__
-  - _Full-content__
-    - [data_uri](Web_development/Identifiers/Full-content/data_uri.txt)
   - _Decentralized__
     - [node-uuid](Web_development/Identifiers/Decentralized/node-uuid.txt)
     - [uuid](Web_development/Identifiers/Decentralized/uuid.txt)
-  - _Human-friendly__
-    - [nih](Web_development/Identifiers/Human-friendly/nih.txt)
-    - [tag](Web_development/Identifiers/Human-friendly/tag.txt)
   - _Hash__
     - [ni](Web_development/Identifiers/Hash/ni.txt)
     - [sigmund](Web_development/Identifiers/Hash/sigmund.txt)
-  - _Theory__
-    - [web_architecture](Web_development/Identifiers/Theory/web_architecture.txt)
+  - _Human-friendly__
+    - [nih](Web_development/Identifiers/Human-friendly/nih.txt)
+    - [tag](Web_development/Identifiers/Human-friendly/tag.txt)
   - _Others__
     - [doi](Web_development/Identifiers/Others/doi.txt)
+    - [oid](Web_development/Identifiers/Others/oid.txt)
     - [publicid_fpi](Web_development/Identifiers/Others/publicid_fpi.txt)
     - [urn](Web_development/Identifiers/Others/urn.txt)
-    - [oid](Web_development/Identifiers/Others/oid.txt)
-  - [identifiers_summary](Web_development/Identifiers/identifiers_summary.txt)
+  - _Theory__
+    - [web_architecture](Web_development/Identifiers/Theory/web_architecture.txt)
   - _URI__
-    - [URI](Web_development/Identifiers/URI/URI.txt)
     - _DNS__
       - [DNS](Web_development/Identifiers/URI/DNS/DNS.txt)
       - [route53](Web_development/Identifiers/URI/DNS/route53.txt)
+    - [URI](Web_development/Identifiers/URI/URI.txt)
+    - [uri.js](Web_development/Identifiers/URI/uri.js.txt)
     - [uri-templates](Web_development/Identifiers/URI/uri-templates.txt)
     - [qs](Web_development/Identifiers/URI/qs.txt)
-    - [uri.js](Web_development/Identifiers/URI/uri.js.txt)
+  - [identifiers_summary](Web_development/Identifiers/identifiers_summary.txt)
+  - _Full-content__
+    - [data_uri](Web_development/Identifiers/Full-content/data_uri.txt)
 - _Image_manipulation__
   - [image-size](Web_development/Image_manipulation/image-size.txt)
   - [resemble.js](Web_development/Image_manipulation/resemble.js.txt)
 - _Internationalization__
-  - [angular_translate](Web_development/Internationalization/angular_translate.txt)
-  - [c++_internationalization](Web_development/Internationalization/c++_internationalization.txt)
   - [gtk_internationalization](Web_development/Internationalization/gtk_internationalization.txt)
+  - [c++_internationalization](Web_development/Internationalization/c++_internationalization.txt)
+  - [angular_translate](Web_development/Internationalization/angular_translate.txt)
   - [gettext](Web_development/Internationalization/gettext.txt)
   - [i18n](Web_development/Internationalization/i18n.txt)
-  - [jed](Web_development/Internationalization/jed.txt)
   - [locales](Web_development/Internationalization/locales.txt)
   - [po2json](Web_development/Internationalization/po2json.txt)
+  - [jed](Web_development/Internationalization/jed.txt)
 - _Lazy_loading__
   - [jquery.lazyload](Web_development/Lazy_loading/jquery.lazyload.txt)
 - _Legal__
@@ -574,19 +574,19 @@ _Web_development__
   - [toobusy](Web_development/Load_handling/toobusy.txt)
 - _Logging__
   - _AWS__
-    - [cloudtrail](Web_development/Logging/AWS/cloudtrail.txt)
     - [cloudwatch](Web_development/Logging/AWS/cloudwatch.txt)
+    - [cloudtrail](Web_development/Logging/AWS/cloudtrail.txt)
     - [sns](Web_development/Logging/AWS/sns.txt)
   - [_log4js](Web_development/Logging/_log4js.txt)
-  - [winston](Web_development/Logging/winston.txt)
   - [_morgan](Web_development/Logging/_morgan.txt)
+  - [winston](Web_development/Logging/winston.txt)
 - _Minify__
-  - [_cleancss](Web_development/Minify/_cleancss.txt)
   - [Uglify](Web_development/Minify/Uglify.txt)
-  - [_mincss](Web_development/Minify/_mincss.txt)
+  - [_cleancss](Web_development/Minify/_cleancss.txt)
   - [_csso](Web_development/Minify/_csso.txt)
-  - [imagemin](Web_development/Minify/imagemin.txt)
+  - [_mincss](Web_development/Minify/_mincss.txt)
   - [cssnano](Web_development/Minify/cssnano.txt)
+  - [imagemin](Web_development/Minify/imagemin.txt)
   - [tidy-html5](Web_development/Minify/tidy-html5.txt)
   - [uncss](Web_development/Minify/uncss.txt)
 - _Mobile__
@@ -610,20 +610,20 @@ _Web_development__
 - _Offline__
   - [offline](Web_development/Offline/offline.txt)
 - _Packaging__
+  - [bower](Web_development/Packaging/bower.txt)
   - _Package_manager__
     - [npm](Web_development/Packaging/Package_manager/npm.txt)
-  - [bower](Web_development/Packaging/bower.txt)
   - [deb_packaging](Web_development/Packaging/deb_packaging.txt)
 - _Pagination__
-  - _Infinite_scrolling__
-    - [nginfinitescroll](Web_development/Pagination/Infinite_scrolling/nginfinitescroll.txt)
   - _Express__
     - [express-paginate](Web_development/Pagination/Express/express-paginate.txt)
+  - _Infinite_scrolling__
+    - [nginfinitescroll](Web_development/Pagination/Infinite_scrolling/nginfinitescroll.txt)
   - [jquery-bootstrap-pagination](Web_development/Pagination/jquery-bootstrap-pagination.txt)
 - _Parsing__
-  - [parsing](Web_development/Parsing/parsing.txt)
   - [gonzales-pe](Web_development/Parsing/gonzales-pe.txt)
   - [parser-lib](Web_development/Parsing/parser-lib.txt)
+  - [parsing](Web_development/Parsing/parsing.txt)
   - [reworkcss](Web_development/Parsing/reworkcss.txt)
 - _Phones__
   - [tel_uri_scheme](Web_development/Phones/tel_uri_scheme.txt)
@@ -631,12 +631,12 @@ _Web_development__
   - [generic-pool](Web_development/Pooling/generic-pool.txt)
 - _Portability__
   - _Cross-browser__
-    - [autoprefixer](Web_development/Portability/Cross-browser/autoprefixer.txt)
     - [_feature.js](Web_development/Portability/Cross-browser/_feature.js.txt)
     - [browserslist](Web_development/Portability/Cross-browser/browserslist.txt)
-    - [caniuse](Web_development/Portability/Cross-browser/caniuse.txt)
     - [cssnext](Web_development/Portability/Cross-browser/cssnext.txt)
     - [doiuse](Web_development/Portability/Cross-browser/doiuse.txt)
+    - [autoprefixer](Web_development/Portability/Cross-browser/autoprefixer.txt)
+    - [caniuse](Web_development/Portability/Cross-browser/caniuse.txt)
     - [modernizr](Web_development/Portability/Cross-browser/modernizr.txt)
     - [normalize.css](Web_development/Portability/Cross-browser/normalize.css.txt)
   - _ORM__
@@ -651,7 +651,6 @@ _Web_development__
     - [sqs](Web_development/Queue/AWS/sqs.txt)
 - _RPC__
   - _HTTP__
-    - [HTTP](Web_development/RPC/HTTP/HTTP.txt)
     - _Client__
       - _Crawler__
         - [simplecrawler](Web_development/RPC/HTTP/Client/Crawler/simplecrawler.txt)
@@ -659,37 +658,32 @@ _Web_development__
       - [download](Web_development/RPC/HTTP/Client/download.txt)
       - [request](Web_development/RPC/HTTP/Client/request.txt)
       - [superagent](Web_development/RPC/HTTP/Client/superagent.txt)
+    - [HTTP](Web_development/RPC/HTTP/HTTP.txt)
     - _Proxy__
       - [http-proxy](Web_development/RPC/HTTP/Proxy/http-proxy.txt)
       - [proxy-addr](Web_development/RPC/HTTP/Proxy/proxy-addr.txt)
-    - _REST__
-      - [swagger](Web_development/RPC/HTTP/REST/swagger.txt)
     - _Server__
+      - [send](Web_development/RPC/HTTP/Server/send.txt)
       - _Framework__
         - _Express__
           - [express](Web_development/RPC/HTTP/Server/Framework/Express/express.txt)
-        - _Sails__
-          - [sails](Web_development/RPC/HTTP/Server/Framework/Sails/sails.txt)
         - _Node__
           - [nodejs](Web_development/RPC/HTTP/Server/Framework/Node/nodejs.txt)
+        - _Sails__
+          - [sails](Web_development/RPC/HTTP/Server/Framework/Sails/sails.txt)
       - _Static__
+        - [serve-favicon](Web_development/RPC/HTTP/Server/Static/serve-favicon.txt)
+        - [_st](Web_development/RPC/HTTP/Server/Static/_st.txt)
+        - [http-server](Web_development/RPC/HTTP/Server/Static/http-server.txt)
         - _AWS__
           - [cloudfront](Web_development/RPC/HTTP/Server/Static/AWS/cloudfront.txt)
           - [glacier](Web_development/RPC/HTTP/Server/Static/AWS/glacier.txt)
           - [s3](Web_development/RPC/HTTP/Server/Static/AWS/s3.txt)
-        - [_st](Web_development/RPC/HTTP/Server/Static/_st.txt)
-        - [http-server](Web_development/RPC/HTTP/Server/Static/http-server.txt)
-        - [serve-favicon](Web_development/RPC/HTTP/Server/Static/serve-favicon.txt)
-        - [serve-static](Web_development/RPC/HTTP/Server/Static/serve-static.txt)
         - [serve-index](Web_development/RPC/HTTP/Server/Static/serve-index.txt)
-      - [send](Web_development/RPC/HTTP/Server/send.txt)
+        - [serve-static](Web_development/RPC/HTTP/Server/Static/serve-static.txt)
+    - _REST__
+      - [swagger](Web_development/RPC/HTTP/REST/swagger.txt)
     - _Syntax__
-      - _Methods__
-        - _Express__
-          - [method-override](Web_development/RPC/HTTP/Syntax/Methods/Express/method-override.txt)
-      - _Body__
-        - _Express__
-          - [body-parser_multiparty_multer](Web_development/RPC/HTTP/Syntax/Body/Express/body-parser_multiparty_multer.txt)
       - _Headers__
         - [content-disposition](Web_development/RPC/HTTP/Syntax/Headers/content-disposition.txt)
       - _Statuses__
@@ -697,93 +691,99 @@ _Web_development__
       - _URI__
         - _Express__
           - [vhost](Web_development/RPC/HTTP/Syntax/URI/Express/vhost.txt)
+      - _Methods__
+        - _Express__
+          - [method-override](Web_development/RPC/HTTP/Syntax/Methods/Express/method-override.txt)
+      - _Body__
+        - _Express__
+          - [body-parser_multiparty_multer](Web_development/RPC/HTTP/Syntax/Body/Express/body-parser_multiparty_multer.txt)
 - _Realtime__
   - _WebSocket__
-    - [WebSocket](Web_development/Realtime/WebSocket/WebSocket.txt)
-    - [engine.io](Web_development/Realtime/WebSocket/engine.io.txt)
-    - [ws](Web_development/Realtime/WebSocket/ws.txt)
     - [express.io](Web_development/Realtime/WebSocket/express.io.txt)
+    - [engine.io](Web_development/Realtime/WebSocket/engine.io.txt)
+    - [WebSocket](Web_development/Realtime/WebSocket/WebSocket.txt)
     - [socket.io](Web_development/Realtime/WebSocket/socket.io.txt)
+    - [ws](Web_development/Realtime/WebSocket/ws.txt)
 - _Relations__
   - _Backbone__
     - [backbone-relational](Web_development/Relations/Backbone/backbone-relational.txt)
   - [normalizr](Web_development/Relations/normalizr.txt)
 - _Routing__
+  - [UDP](Web_development/Routing/UDP.txt)
   - [TCP](Web_development/Routing/TCP.txt)
   - [IP](Web_development/Routing/IP.txt)
-  - [UDP](Web_development/Routing/UDP.txt)
 - _Security__
   - _Brute_force__
     - [express-brute](Web_development/Security/Brute_force/express-brute.txt)
+  - _Protocols__
+    - [HTTPS](Web_development/Security/Protocols/HTTPS.txt)
+    - _SSL__
+      - _Express__
+        - [express-enforces-ssl](Web_development/Security/Protocols/SSL/Express/express-enforces-ssl.txt)
+      - [SSL](Web_development/Security/Protocols/SSL/SSL.txt)
+    - [SSH](Web_development/Security/Protocols/SSH.txt)
   - _On_premise__
     - _AWS__
       - [directconnect](Web_development/Security/On_premise/AWS/directconnect.txt)
-  - _Protocols__
-    - [HTTPS](Web_development/Security/Protocols/HTTPS.txt)
-    - [SSH](Web_development/Security/Protocols/SSH.txt)
-    - _SSL__
-      - [SSL](Web_development/Security/Protocols/SSL/SSL.txt)
-      - _Express__
-        - [express-enforces-ssl](Web_development/Security/Protocols/SSL/Express/express-enforces-ssl.txt)
   - [Web_security](Web_development/Security/Web_security.txt)
-  - [csurf](Web_development/Security/csurf.txt)
   - [cors](Web_development/Security/cors.txt)
+  - [csurf](Web_development/Security/csurf.txt)
   - [helmet](Web_development/Security/helmet.txt)
 - _Serialization__
   - _CSV__
     - [csv](Web_development/Serialization/CSV/csv.txt)
-    - [xlsx](Web_development/Serialization/CSV/xlsx.txt)
     - [dsv_tsv_csv](Web_development/Serialization/CSV/dsv_tsv_csv.txt)
-  - _JSON__
-    - [eson](Web_development/Serialization/JSON/eson.txt)
-    - [cson](Web_development/Serialization/JSON/cson.txt)
-    - [json](Web_development/Serialization/JSON/json.txt)
-  - _XML__
-    - [XML](Web_development/Serialization/XML/XML.txt)
+    - [xlsx](Web_development/Serialization/CSV/xlsx.txt)
   - _Redux__
     - [redux-storage](Web_development/Serialization/Redux/redux-storage.txt)
+  - _XML__
+    - [XML](Web_development/Serialization/XML/XML.txt)
+  - _JSON__
+    - [cson](Web_development/Serialization/JSON/cson.txt)
+    - [json](Web_development/Serialization/JSON/json.txt)
+    - [eson](Web_development/Serialization/JSON/eson.txt)
 - _State__
   - _Client_server__
+    - _Express__
+      - [connect-flash](Web_development/State/Client_server/Express/connect-flash.txt)
+      - [express-state](Web_development/State/Client_server/Express/express-state.txt)
     - _Cookies__
-      - [_jquery-cookie](Web_development/State/Client_server/Cookies/_jquery-cookie.txt)
       - [_cookie](Web_development/State/Client_server/Cookies/_cookie.txt)
+      - [_jquery-cookie](Web_development/State/Client_server/Cookies/_jquery-cookie.txt)
       - [cookie-parser](Web_development/State/Client_server/Cookies/cookie-parser.txt)
       - [express-session](Web_development/State/Client_server/Cookies/express-session.txt)
       - [cookie-signature](Web_development/State/Client_server/Cookies/cookie-signature.txt)
       - [js-cookie](Web_development/State/Client_server/Cookies/js-cookie.txt)
-    - _Express__
-      - [connect-flash](Web_development/State/Client_server/Express/connect-flash.txt)
-      - [express-state](Web_development/State/Client_server/Express/express-state.txt)
-  - _Client_side__
-    - [localforage](Web_development/State/Client_side/localforage.txt)
   - _Database__
+    - _Key_value__
+      - [elasticache](Web_development/State/Database/Key_value/elasticache.txt)
+      - [redis](Web_development/State/Database/Key_value/redis.txt)
     - _Document_oriented__
       - [mongodb](Web_development/State/Database/Document_oriented/mongodb.txt)
-    - _Key_value__
-      - [redis](Web_development/State/Database/Key_value/redis.txt)
-      - [elasticache](Web_development/State/Database/Key_value/elasticache.txt)
+    - _Relational__
+      - [rds](Web_development/State/Database/Relational/rds.txt)
+      - [SQL](Web_development/State/Database/Relational/SQL.txt)
     - _Theory__
       - [database_theory](Web_development/State/Database/Theory/database_theory.txt)
-    - _Relational__
-      - [SQL](Web_development/State/Database/Relational/SQL.txt)
-      - [rds](Web_development/State/Database/Relational/rds.txt)
+  - _Client_side__
+    - [localforage](Web_development/State/Client_side/localforage.txt)
 - _Static_analysis__
   - _General__
     - [codeclimate](Web_development/Static_analysis/General/codeclimate.txt)
     - [_cssstats](Web_development/Static_analysis/General/_cssstats.txt)
-    - [stylestats_analyze-css](Web_development/Static_analysis/General/stylestats_analyze-css.txt)
     - [plato](Web_development/Static_analysis/General/plato.txt)
+    - [stylestats_analyze-css](Web_development/Static_analysis/General/stylestats_analyze-css.txt)
   - _Linting__
     - [bootlint](Web_development/Static_analysis/Linting/bootlint.txt)
     - [csslint](Web_development/Static_analysis/Linting/csslint.txt)
-    - [immutable-css](Web_development/Static_analysis/Linting/immutable-css.txt)
     - [hound](Web_development/Static_analysis/Linting/hound.txt)
     - [htmlhint](Web_development/Static_analysis/Linting/htmlhint.txt)
+    - [immutable-css](Web_development/Static_analysis/Linting/immutable-css.txt)
+    - [postcss-bem-linter](Web_development/Static_analysis/Linting/postcss-bem-linter.txt)
     - [nu_html_checker](Web_development/Static_analysis/Linting/nu_html_checker.txt)
     - [jshint](Web_development/Static_analysis/Linting/jshint.txt)
-    - [stylelint](Web_development/Static_analysis/Linting/stylelint.txt)
-    - [postcss-bem-linter](Web_development/Static_analysis/Linting/postcss-bem-linter.txt)
     - [scss-lint](Web_development/Static_analysis/Linting/scss-lint.txt)
+    - [stylelint](Web_development/Static_analysis/Linting/stylelint.txt)
     - [w3cjs](Web_development/Static_analysis/Linting/w3cjs.txt)
 - _Streaming__
   - [range-parser](Web_development/Streaming/range-parser.txt)
@@ -791,30 +791,24 @@ _Web_development__
   - _Virtual_DOM__
     - _React__
       - [react-templates](Web_development/Templates/Virtual_DOM/React/react-templates.txt)
-  - [classnames](Web_development/Templates/classnames.txt)
   - [consolidate](Web_development/Templates/consolidate.txt)
   - [mustache_hogan_handlebars](Web_development/Templates/mustache_hogan_handlebars.txt)
+  - [classnames](Web_development/Templates/classnames.txt)
 - _Testing__
+  - _Performance__
+    - [phantomas](Web_development/Testing/Performance/phantomas.txt)
+    - [tsung](Web_development/Testing/Performance/tsung.txt)
   - _Browser_testing__
-    - [saucelabs](Web_development/Testing/Browser_testing/saucelabs.txt)
-    - [selenium_webdriver](Web_development/Testing/Browser_testing/selenium_webdriver.txt)
     - [browserstack](Web_development/Testing/Browser_testing/browserstack.txt)
+    - [selenium_webdriver](Web_development/Testing/Browser_testing/selenium_webdriver.txt)
+    - [saucelabs](Web_development/Testing/Browser_testing/saucelabs.txt)
   - _CSS__
     - [_phantomcss](Web_development/Testing/CSS/_phantomcss.txt)
     - [_wraith](Web_development/Testing/CSS/_wraith.txt)
     - [argus-eyes](Web_development/Testing/CSS/argus-eyes.txt)
-  - _Test_runners__
-    - [karma](Web_development/Testing/Test_runners/karma.txt)
-    - [_jasmine](Web_development/Testing/Test_runners/_jasmine.txt)
-    - [mocha](Web_development/Testing/Test_runners/mocha.txt)
-    - [_qunit](Web_development/Testing/Test_runners/_qunit.txt)
-  - _Performance__
-    - [tsung](Web_development/Testing/Performance/tsung.txt)
-    - [phantomas](Web_development/Testing/Performance/phantomas.txt)
   - _Stress__
-    - [big-list-of-naughty-strings](Web_development/Testing/Stress/big-list-of-naughty-strings.txt)
     - [gremlins.js](Web_development/Testing/Stress/gremlins.js.txt)
-  - [testing_summary](Web_development/Testing/testing_summary.txt)
+    - [big-list-of-naughty-strings](Web_development/Testing/Stress/big-list-of-naughty-strings.txt)
   - _Unit_tests__
     - _Coverage__
       - [istanbul](Web_development/Testing/Unit_tests/Coverage/istanbul.txt)
@@ -822,25 +816,31 @@ _Web_development__
     - _Data-driven__
       - [faker.js](Web_development/Testing/Unit_tests/Data-driven/faker.js.txt)
     - _Mocking__
-      - [nock](Web_development/Testing/Unit_tests/Mocking/nock.txt)
-      - [jest](Web_development/Testing/Unit_tests/Mocking/jest.txt)
       - _React__
         - [enzyme](Web_development/Testing/Unit_tests/Mocking/React/enzyme.txt)
+      - [jest](Web_development/Testing/Unit_tests/Mocking/jest.txt)
       - [node-mocks-http](Web_development/Testing/Unit_tests/Mocking/node-mocks-http.txt)
+      - [nock](Web_development/Testing/Unit_tests/Mocking/nock.txt)
       - [sinon](Web_development/Testing/Unit_tests/Mocking/sinon.txt)
     - _Expectations__
-      - [supertest](Web_development/Testing/Unit_tests/Expectations/supertest.txt)
       - [chai](Web_development/Testing/Unit_tests/Expectations/chai.txt)
+      - [supertest](Web_development/Testing/Unit_tests/Expectations/supertest.txt)
+  - _Test_runners__
+    - [_jasmine](Web_development/Testing/Test_runners/_jasmine.txt)
+    - [_qunit](Web_development/Testing/Test_runners/_qunit.txt)
+    - [karma](Web_development/Testing/Test_runners/karma.txt)
+    - [mocha](Web_development/Testing/Test_runners/mocha.txt)
+  - [testing_summary](Web_development/Testing/testing_summary.txt)
 - _Text__
-  - _Sanitation__
-    - [sprintf.js](Web_development/Text/Sanitation/sprintf.js.txt)
   - _Manipulation__
-    - [gulp-concat](Web_development/Text/Manipulation/gulp-concat.txt)
     - [gulp-header-footer](Web_development/Text/Manipulation/gulp-header-footer.txt)
+    - [gulp-concat](Web_development/Text/Manipulation/gulp-concat.txt)
     - [underscore.string](Web_development/Text/Manipulation/underscore.string.txt)
   - _Pattern_matching__
     - [minimatch](Web_development/Text/Pattern_matching/minimatch.txt)
     - [gulp-replace](Web_development/Text/Pattern_matching/gulp-replace.txt)
+  - _Sanitation__
+    - [sprintf.js](Web_development/Text/Sanitation/sprintf.js.txt)
 - _Typography__
   - [typography_theory](Web_development/Typography/typography_theory.txt)
 - _UI__
@@ -849,208 +849,124 @@ _Web_development__
       - [animate.css](Web_development/UI/Animations/CSS_libraries/animate.css.txt)
     - _Scrolling__
       - [scrollreveal](Web_development/UI/Animations/Scrolling/scrollreveal.txt)
-      - [skrollr](Web_development/UI/Animations/Scrolling/skrollr.txt)
       - [stroll](Web_development/UI/Animations/Scrolling/stroll.txt)
+      - [skrollr](Web_development/UI/Animations/Scrolling/skrollr.txt)
       - [waypoints](Web_development/UI/Animations/Scrolling/waypoints.txt)
   - _Components_framework__
     - [bootstrap](Web_development/UI/Components_framework/bootstrap.txt)
+  - _Input__
+    - _Dropdown__
+      - [select2](Web_development/UI/Input/Dropdown/select2.txt)
+      - [_chosen](Web_development/UI/Input/Dropdown/_chosen.txt)
+    - _Input_number__
+      - [knob](Web_development/UI/Input/Input_number/knob.txt)
+    - _Search__
+      - [typeahead.js](Web_development/UI/Input/Search/typeahead.js.txt)
+    - _RTF__
+      - [ckeditor](Web_development/UI/Input/RTF/ckeditor.txt)
+      - [_redactor](Web_development/UI/Input/RTF/_redactor.txt)
+    - _Textarea__
+      - [autosize](Web_development/UI/Input/Textarea/autosize.txt)
+  - _Layout__
+    - _Grid__
+      - [masonry](Web_development/UI/Layout/Grid/masonry.txt)
+    - _Slides__
+      - [fullpage.js](Web_development/UI/Layout/Slides/fullpage.js.txt)
   - _Components__
     - _Carousel__
-      - [_cycle2](Web_development/UI/Components/Carousel/_cycle2.txt)
       - [slick](Web_development/UI/Components/Carousel/slick.txt)
-    - _Menu__
-      - [headroom.js](Web_development/UI/Components/Menu/headroom.js.txt)
-      - [meny](Web_development/UI/Components/Menu/meny.txt)
-      - [snap.js](Web_development/UI/Components/Menu/snap.js.txt)
-    - _Modal__
-      - [magnificpopup](Web_development/UI/Components/Modal/magnificpopup.txt)
-      - [_avgrund](Web_development/UI/Components/Modal/_avgrund.txt)
+      - [_cycle2](Web_development/UI/Components/Carousel/_cycle2.txt)
     - _Notifications__
       - _Favicon__
         - [favico.js](Web_development/UI/Components/Notifications/Favicon/favico.js.txt)
       - [angular_growl_2](Web_development/UI/Components/Notifications/angular_growl_2.txt)
-    - _Table__
-      - [ng-grid](Web_development/UI/Components/Table/ng-grid.txt)
-      - [_ngtable](Web_development/UI/Components/Table/_ngtable.txt)
-    - _Scrollbar__
-      - [nicescroll](Web_development/UI/Components/Scrollbar/nicescroll.txt)
-      - [_slimscroll](Web_development/UI/Components/Scrollbar/_slimscroll.txt)
+    - _Menu__
+      - [meny](Web_development/UI/Components/Menu/meny.txt)
+      - [headroom.js](Web_development/UI/Components/Menu/headroom.js.txt)
+      - [snap.js](Web_development/UI/Components/Menu/snap.js.txt)
+    - _Modal__
+      - [_avgrund](Web_development/UI/Components/Modal/_avgrund.txt)
+      - [magnificpopup](Web_development/UI/Components/Modal/magnificpopup.txt)
     - _Progress__
       - _Spinner__
         - [ladda](Web_development/UI/Components/Progress/Spinner/ladda.txt)
         - [spinkit](Web_development/UI/Components/Progress/Spinner/spinkit.txt)
       - _Progress_bar__
         - [nprogress](Web_development/UI/Components/Progress/Progress_bar/nprogress.txt)
+    - _Scrollbar__
+      - [nicescroll](Web_development/UI/Components/Scrollbar/nicescroll.txt)
+      - [_slimscroll](Web_development/UI/Components/Scrollbar/_slimscroll.txt)
+    - _Table__
+      - [ng-grid](Web_development/UI/Components/Table/ng-grid.txt)
+      - [_ngtable](Web_development/UI/Components/Table/_ngtable.txt)
   - _Icons__
     - [zocial](Web_development/UI/Icons/zocial.txt)
-  - _Input__
-    - _Dropdown__
-      - [select2](Web_development/UI/Input/Dropdown/select2.txt)
-      - [_chosen](Web_development/UI/Input/Dropdown/_chosen.txt)
-    - _RTF__
-      - [_redactor](Web_development/UI/Input/RTF/_redactor.txt)
-      - [ckeditor](Web_development/UI/Input/RTF/ckeditor.txt)
-    - _Input_number__
-      - [knob](Web_development/UI/Input/Input_number/knob.txt)
-    - _Textarea__
-      - [autosize](Web_development/UI/Input/Textarea/autosize.txt)
-    - _Search__
-      - [typeahead.js](Web_development/UI/Input/Search/typeahead.js.txt)
-  - _Layout__
-    - _Slides__
-      - [fullpage.js](Web_development/UI/Layout/Slides/fullpage.js.txt)
-    - _Grid__
-      - [masonry](Web_development/UI/Layout/Grid/masonry.txt)
 - _UX__
-  - [UX_animations](Web_development/UX/UX_animations.txt)
-  - [UX_forms](Web_development/UX/UX_forms.txt)
   - [UX_consent](Web_development/UX/UX_consent.txt)
-  - [UX_interactions](Web_development/UX/UX_interactions.txt)
+  - [UX_animations](Web_development/UX/UX_animations.txt)
   - [UX_general](Web_development/UX/UX_general.txt)
-  - [content_strategy](Web_development/UX/content_strategy.txt)
+  - [UX_interactions](Web_development/UX/UX_interactions.txt)
   - [UX_mobile](Web_development/UX/UX_mobile.txt)
   - [UX_performance](Web_development/UX/UX_performance.txt)
+  - [content_strategy](Web_development/UX/content_strategy.txt)
+  - [UX_forms](Web_development/UX/UX_forms.txt)
 - _Validation__
   - _Redux__
     - [redux-form](Web_development/Validation/Redux/redux-form.txt)
   - [backbone-validation](Web_development/Validation/backbone-validation.txt)
-  - [validator.js](Web_development/Validation/validator.js.txt)
   - [joi](Web_development/Validation/joi.txt)
+  - [validator.js](Web_development/Validation/validator.js.txt)
 - _Versioning__
   - [VCS](Web_development/Versioning/VCS.txt)
   - [git_github](Web_development/Versioning/git_github.txt)
-  - [changelog](Web_development/Versioning/changelog.txt)
   - [versioning](Web_development/Versioning/versioning.txt)
+  - [changelog](Web_development/Versioning/changelog.txt)
 - _Watchers__
+  - [gaze](Web_development/Watchers/gaze.txt)
   - _Reloading__
     - [livereload](Web_development/Watchers/Reloading/livereload.txt)
     - [nodemon](Web_development/Watchers/Reloading/nodemon.txt)
-  - [gaze](Web_development/Watchers/gaze.txt)
 - __architecture__
-  - _Algorithms__
-    - [time_complexity](Web_development/_architecture/Algorithms/time_complexity.txt)
+  - _Modelling__
+    - [design_patterns](Web_development/_architecture/Modelling/design_patterns.txt)
   - _Types__
     - [types](Web_development/_architecture/Types/types.txt)
   - _Paradigms__
     - [compatibility](Web_development/_architecture/Paradigms/compatibility.txt)
     - [abstraction](Web_development/_architecture/Paradigms/abstraction.txt)
-    - [functional_programming](Web_development/_architecture/Paradigms/functional_programming.txt)
     - [concurring_programming](Web_development/_architecture/Paradigms/concurring_programming.txt)
     - [extensibility](Web_development/_architecture/Paradigms/extensibility.txt)
     - [maintainability](Web_development/_architecture/Paradigms/maintainability.txt)
-    - [interactivity](Web_development/_architecture/Paradigms/interactivity.txt)
-    - [parallellism](Web_development/_architecture/Paradigms/parallellism.txt)
     - [modularity](Web_development/_architecture/Paradigms/modularity.txt)
+    - [interactivity](Web_development/_architecture/Paradigms/interactivity.txt)
+    - [functional_programming](Web_development/_architecture/Paradigms/functional_programming.txt)
     - [object_oriented](Web_development/_architecture/Paradigms/object_oriented.txt)
+    - [parallellism](Web_development/_architecture/Paradigms/parallellism.txt)
+    - [requirements](Web_development/_architecture/Paradigms/requirements.txt)
     - [polymorphism](Web_development/_architecture/Paradigms/polymorphism.txt)
     - [performance](Web_development/_architecture/Paradigms/performance.txt)
-    - [requirements](Web_development/_architecture/Paradigms/requirements.txt)
     - [reusability](Web_development/_architecture/Paradigms/reusability.txt)
     - [software_rot](Web_development/_architecture/Paradigms/software_rot.txt)
     - [stability](Web_development/_architecture/Paradigms/stability.txt)
     - [usability](Web_development/_architecture/Paradigms/usability.txt)
-  - _Modelling__
-    - [design_patterns](Web_development/_architecture/Modelling/design_patterns.txt)
-- __language__
-  - _CSS__
-    - [CSS](Web_development/_language/CSS/CSS.txt)
-    - _Transcompilation__
-      - [_stylus](Web_development/_language/CSS/Transcompilation/_stylus.txt)
-      - [_less](Web_development/_language/CSS/Transcompilation/_less.txt)
-      - _JavaScript__
-        - _React__
-          - [react-css](Web_development/_language/CSS/Transcompilation/JavaScript/React/react-css.txt)
-        - [cssx](Web_development/_language/CSS/Transcompilation/JavaScript/cssx.txt)
-        - [_aphrodite](Web_development/_language/CSS/Transcompilation/JavaScript/_aphrodite.txt)
-        - [jss](Web_development/_language/CSS/Transcompilation/JavaScript/jss.txt)
-      - __Sass__
-        - [_compass](Web_development/_language/CSS/Transcompilation/_Sass/_compass.txt)
-        - [_sass](Web_development/_language/CSS/Transcompilation/_Sass/_sass.txt)
-      - [postcss](Web_development/_language/CSS/Transcompilation/postcss.txt)
-  - _HTML__
-    - [HTML](Web_development/_language/HTML/HTML.txt)
-    - _Transcompilation__
-      - [jade](Web_development/_language/HTML/Transcompilation/jade.txt)
-      - [markdown](Web_development/_language/HTML/Transcompilation/markdown.txt)
-  - [C_language](Web_development/_language/C_language.txt)
-  - [PHP](Web_development/_language/PHP.txt)
-  - _JavaScript__
-    - _DOM__
-      - [DOM](Web_development/_language/JavaScript/DOM/DOM.txt)
-      - [jQuery_cheerio](Web_development/_language/JavaScript/DOM/jQuery_cheerio.txt)
-    - _Transcompilation__
-      - [flow](Web_development/_language/JavaScript/Transcompilation/flow.txt)
-      - [coffeescript](Web_development/_language/JavaScript/Transcompilation/coffeescript.txt)
-    - [JavaScript](Web_development/_language/JavaScript/JavaScript.txt)
-  - [Python](Web_development/_language/Python.txt)
-  - _VBA__
-    - [PowerPoint_object_model](Web_development/_language/VBA/PowerPoint_object_model.txt)
-    - [Excel_Formulas](Web_development/_language/VBA/Excel_Formulas.txt)
-    - [Excel_objet_model](Web_development/_language/VBA/Excel_objet_model.txt)
-    - [VBA](Web_development/_language/VBA/VBA.txt)
-  - [R_language](Web_development/_language/R_language.txt)
-  - [c++](Web_development/_language/c++.txt)
+  - _Algorithms__
+    - [time_complexity](Web_development/_architecture/Algorithms/time_complexity.txt)
 - __framework__
-  - _Web_client__
-    - _MVC__
-      - _Angular__
-        - [angular](Web_development/_framework/Web_client/MVC/Angular/angular.txt)
-      - _Backbone__
-        - [backbone_marionette](Web_development/_framework/Web_client/MVC/Backbone/backbone_marionette.txt)
-        - [backbone.collectionsubset](Web_development/_framework/Web_client/MVC/Backbone/backbone.collectionsubset.txt)
-    - _State__
-      - _Redux__
-        - [redux-actions](Web_development/_framework/Web_client/State/Redux/redux-actions.txt)
-        - [redux-thunk](Web_development/_framework/Web_client/State/Redux/redux-thunk.txt)
-        - [redux](Web_development/_framework/Web_client/State/Redux/redux.txt)
-        - [redux-undo](Web_development/_framework/Web_client/State/Redux/redux-undo.txt)
-      - _Flux__
-        - [react-refetch](Web_development/_framework/Web_client/State/Flux/react-refetch.txt)
-        - [flux](Web_development/_framework/Web_client/State/Flux/flux.txt)
-    - _View__
-      - _React__
-        - [backbone-react-component](Web_development/_framework/Web_client/View/React/backbone-react-component.txt)
-        - [react-helmet](Web_development/_framework/Web_client/View/React/react-helmet.txt)
-        - [react-engine](Web_development/_framework/Web_client/View/React/react-engine.txt)
-        - [react](Web_development/_framework/Web_client/View/React/react.txt)
   - _Utilities_to_sort__
     - _C__
-      - _Glibc__
-        - [IO_memoire](Web_development/_framework/Utilities_to_sort/C/Glibc/IO_memoire.txt)
-        - [IO_filedescriptors](Web_development/_framework/Utilities_to_sort/C/Glibc/IO_filedescriptors.txt)
-        - [IO_normale](Web_development/_framework/Utilities_to_sort/C/Glibc/IO_normale.txt)
-        - [attributs_fichiers](Web_development/_framework/Utilities_to_sort/C/Glibc/attributs_fichiers.txt)
-        - [caracteres](Web_development/_framework/Utilities_to_sort/C/Glibc/caracteres.txt)
-        - [communication_interprocess](Web_development/_framework/Utilities_to_sort/C/Glibc/communication_interprocess.txt)
-        - [TODO](Web_development/_framework/Utilities_to_sort/C/Glibc/TODO.txt)
-        - [dynamic_allocation](Web_development/_framework/Utilities_to_sort/C/Glibc/dynamic_allocation.txt)
-        - [encodage_crypto](Web_development/_framework/Utilities_to_sort/C/Glibc/encodage_crypto.txt)
-        - [erreurs](Web_development/_framework/Utilities_to_sort/C/Glibc/erreurs.txt)
-        - [fichiers_temporaires](Web_development/_framework/Utilities_to_sort/C/Glibc/fichiers_temporaires.txt)
-        - [goto](Web_development/_framework/Utilities_to_sort/C/Glibc/goto.txt)
-        - [limites](Web_development/_framework/Utilities_to_sort/C/Glibc/limites.txt)
-        - [extension_64_bits](Web_development/_framework/Utilities_to_sort/C/Glibc/extension_64_bits.txt)
-        - [options_programme](Web_development/_framework/Utilities_to_sort/C/Glibc/options_programme.txt)
-        - [program_execution](Web_development/_framework/Utilities_to_sort/C/Glibc/program_execution.txt)
-        - [repertoires](Web_development/_framework/Utilities_to_sort/C/Glibc/repertoires.txt)
-        - [strings](Web_development/_framework/Utilities_to_sort/C/Glibc/strings.txt)
-        - [systeme_de_fichier](Web_development/_framework/Utilities_to_sort/C/Glibc/systeme_de_fichier.txt)
-        - [time](Web_development/_framework/Utilities_to_sort/C/Glibc/time.txt)
-        - [signaux](Web_development/_framework/Utilities_to_sort/C/Glibc/signaux.txt)
-        - [wchar_wstr](Web_development/_framework/Utilities_to_sort/C/Glibc/wchar_wstr.txt)
       - _Standard_library__
         - _C89__
-          - [errno](Web_development/_framework/Utilities_to_sort/C/Standard_library/C89/errno.txt)
-          - [ctype](Web_development/_framework/Utilities_to_sort/C/Standard_library/C89/ctype.txt)
-          - [float](Web_development/_framework/Utilities_to_sort/C/Standard_library/C89/float.txt)
           - [assert](Web_development/_framework/Utilities_to_sort/C/Standard_library/C89/assert.txt)
+          - [float](Web_development/_framework/Utilities_to_sort/C/Standard_library/C89/float.txt)
+          - [errno](Web_development/_framework/Utilities_to_sort/C/Standard_library/C89/errno.txt)
           - [limits](Web_development/_framework/Utilities_to_sort/C/Standard_library/C89/limits.txt)
-          - [math](Web_development/_framework/Utilities_to_sort/C/Standard_library/C89/math.txt)
+          - [ctype](Web_development/_framework/Utilities_to_sort/C/Standard_library/C89/ctype.txt)
           - [locale](Web_development/_framework/Utilities_to_sort/C/Standard_library/C89/locale.txt)
+          - [math](Web_development/_framework/Utilities_to_sort/C/Standard_library/C89/math.txt)
           - [setjmp](Web_development/_framework/Utilities_to_sort/C/Standard_library/C89/setjmp.txt)
           - [signal](Web_development/_framework/Utilities_to_sort/C/Standard_library/C89/signal.txt)
-          - [stddef](Web_development/_framework/Utilities_to_sort/C/Standard_library/C89/stddef.txt)
           - [stdarg](Web_development/_framework/Utilities_to_sort/C/Standard_library/C89/stdarg.txt)
+          - [stddef](Web_development/_framework/Utilities_to_sort/C/Standard_library/C89/stddef.txt)
           - [stdio](Web_development/_framework/Utilities_to_sort/C/Standard_library/C89/stdio.txt)
           - [stdlib](Web_development/_framework/Utilities_to_sort/C/Standard_library/C89/stdlib.txt)
           - [string](Web_development/_framework/Utilities_to_sort/C/Standard_library/C89/string.txt)
@@ -1061,23 +977,46 @@ _Web_development__
           - [wctype](Web_development/_framework/Utilities_to_sort/C/Standard_library/C95/wctype.txt)
         - _C99__
           - [inttypes](Web_development/_framework/Utilities_to_sort/C/Standard_library/C99/inttypes.txt)
-          - [stdbool](Web_development/_framework/Utilities_to_sort/C/Standard_library/C99/stdbool.txt)
           - [stdint](Web_development/_framework/Utilities_to_sort/C/Standard_library/C99/stdint.txt)
+          - [stdbool](Web_development/_framework/Utilities_to_sort/C/Standard_library/C99/stdbool.txt)
+      - _Glibc__
+        - [TODO](Web_development/_framework/Utilities_to_sort/C/Glibc/TODO.txt)
+        - [IO_memoire](Web_development/_framework/Utilities_to_sort/C/Glibc/IO_memoire.txt)
+        - [IO_filedescriptors](Web_development/_framework/Utilities_to_sort/C/Glibc/IO_filedescriptors.txt)
+        - [IO_normale](Web_development/_framework/Utilities_to_sort/C/Glibc/IO_normale.txt)
+        - [attributs_fichiers](Web_development/_framework/Utilities_to_sort/C/Glibc/attributs_fichiers.txt)
+        - [encodage_crypto](Web_development/_framework/Utilities_to_sort/C/Glibc/encodage_crypto.txt)
+        - [dynamic_allocation](Web_development/_framework/Utilities_to_sort/C/Glibc/dynamic_allocation.txt)
+        - [communication_interprocess](Web_development/_framework/Utilities_to_sort/C/Glibc/communication_interprocess.txt)
+        - [caracteres](Web_development/_framework/Utilities_to_sort/C/Glibc/caracteres.txt)
+        - [erreurs](Web_development/_framework/Utilities_to_sort/C/Glibc/erreurs.txt)
+        - [goto](Web_development/_framework/Utilities_to_sort/C/Glibc/goto.txt)
+        - [fichiers_temporaires](Web_development/_framework/Utilities_to_sort/C/Glibc/fichiers_temporaires.txt)
+        - [limites](Web_development/_framework/Utilities_to_sort/C/Glibc/limites.txt)
+        - [extension_64_bits](Web_development/_framework/Utilities_to_sort/C/Glibc/extension_64_bits.txt)
+        - [options_programme](Web_development/_framework/Utilities_to_sort/C/Glibc/options_programme.txt)
+        - [program_execution](Web_development/_framework/Utilities_to_sort/C/Glibc/program_execution.txt)
+        - [repertoires](Web_development/_framework/Utilities_to_sort/C/Glibc/repertoires.txt)
+        - [strings](Web_development/_framework/Utilities_to_sort/C/Glibc/strings.txt)
+        - [signaux](Web_development/_framework/Utilities_to_sort/C/Glibc/signaux.txt)
+        - [systeme_de_fichier](Web_development/_framework/Utilities_to_sort/C/Glibc/systeme_de_fichier.txt)
+        - [time](Web_development/_framework/Utilities_to_sort/C/Glibc/time.txt)
+        - [wchar_wstr](Web_development/_framework/Utilities_to_sort/C/Glibc/wchar_wstr.txt)
     - _C++__
       - _Boost__
         - _Images__
           - [random.jpg](Web_development/_framework/Utilities_to_sort/C++/Boost/Images/random.jpg)
-        - [any](Web_development/_framework/Utilities_to_sort/C++/Boost/any.txt)
         - [array](Web_development/_framework/Utilities_to_sort/C++/Boost/array.txt)
-        - [boost](Web_development/_framework/Utilities_to_sort/C++/Boost/boost.txt)
+        - [any](Web_development/_framework/Utilities_to_sort/C++/Boost/any.txt)
         - [boost_uuid](Web_development/_framework/Utilities_to_sort/C++/Boost/boost_uuid.txt)
-        - [call_traits](Web_development/_framework/Utilities_to_sort/C++/Boost/call_traits.txt)
-        - [compressed_pair](Web_development/_framework/Utilities_to_sort/C++/Boost/compressed_pair.txt)
-        - [crc](Web_development/_framework/Utilities_to_sort/C++/Boost/crc.txt)
+        - [boost](Web_development/_framework/Utilities_to_sort/C++/Boost/boost.txt)
         - [concept_check_assert](Web_development/_framework/Utilities_to_sort/C++/Boost/concept_check_assert.txt)
+        - [compressed_pair](Web_development/_framework/Utilities_to_sort/C++/Boost/compressed_pair.txt)
+        - [call_traits](Web_development/_framework/Utilities_to_sort/C++/Boost/call_traits.txt)
         - [date_time](Web_development/_framework/Utilities_to_sort/C++/Boost/date_time.txt)
-        - [dynamic_bitset](Web_development/_framework/Utilities_to_sort/C++/Boost/dynamic_bitset.txt)
+        - [crc](Web_development/_framework/Utilities_to_sort/C++/Boost/crc.txt)
         - [filesystem](Web_development/_framework/Utilities_to_sort/C++/Boost/filesystem.txt)
+        - [dynamic_bitset](Web_development/_framework/Utilities_to_sort/C++/Boost/dynamic_bitset.txt)
         - [function_bind_mem_fn](Web_development/_framework/Utilities_to_sort/C++/Boost/function_bind_mem_fn.txt)
         - [hash](Web_development/_framework/Utilities_to_sort/C++/Boost/hash.txt)
         - [iterator](Web_development/_framework/Utilities_to_sort/C++/Boost/iterator.txt)
@@ -1096,18 +1035,79 @@ _Web_development__
         - [variant](Web_development/_framework/Utilities_to_sort/C++/Boost/variant.txt)
       - _Standard_library__
         - [algorithm](Web_development/_framework/Utilities_to_sort/C++/Standard_library/algorithm.txt)
-        - [bitset](Web_development/_framework/Utilities_to_sort/C++/Standard_library/bitset.txt)
-        - [functional](Web_development/_framework/Utilities_to_sort/C++/Standard_library/functional.txt)
         - [exception](Web_development/_framework/Utilities_to_sort/C++/Standard_library/exception.txt)
         - [containers](Web_development/_framework/Utilities_to_sort/C++/Standard_library/containers.txt)
-        - [limits](Web_development/_framework/Utilities_to_sort/C++/Standard_library/limits.txt)
+        - [functional](Web_development/_framework/Utilities_to_sort/C++/Standard_library/functional.txt)
+        - [bitset](Web_development/_framework/Utilities_to_sort/C++/Standard_library/bitset.txt)
         - [iterator](Web_development/_framework/Utilities_to_sort/C++/Standard_library/iterator.txt)
-        - [new](Web_development/_framework/Utilities_to_sort/C++/Standard_library/new.txt)
-        - [memory](Web_development/_framework/Utilities_to_sort/C++/Standard_library/memory.txt)
+        - [limits](Web_development/_framework/Utilities_to_sort/C++/Standard_library/limits.txt)
         - [locale](Web_development/_framework/Utilities_to_sort/C++/Standard_library/locale.txt)
-        - [string](Web_development/_framework/Utilities_to_sort/C++/Standard_library/string.txt)
+        - [new](Web_development/_framework/Utilities_to_sort/C++/Standard_library/new.txt)
         - [streams](Web_development/_framework/Utilities_to_sort/C++/Standard_library/streams.txt)
-        - [valarray](Web_development/_framework/Utilities_to_sort/C++/Standard_library/valarray.txt)
-        - [utility](Web_development/_framework/Utilities_to_sort/C++/Standard_library/utility.txt)
+        - [memory](Web_development/_framework/Utilities_to_sort/C++/Standard_library/memory.txt)
+        - [string](Web_development/_framework/Utilities_to_sort/C++/Standard_library/string.txt)
         - [typeinfo](Web_development/_framework/Utilities_to_sort/C++/Standard_library/typeinfo.txt)
+        - [utility](Web_development/_framework/Utilities_to_sort/C++/Standard_library/utility.txt)
+        - [valarray](Web_development/_framework/Utilities_to_sort/C++/Standard_library/valarray.txt)
+  - _Web_client__
+    - _View__
+      - _React__
+        - [react-engine](Web_development/_framework/Web_client/View/React/react-engine.txt)
+        - [backbone-react-component](Web_development/_framework/Web_client/View/React/backbone-react-component.txt)
+        - [react-helmet](Web_development/_framework/Web_client/View/React/react-helmet.txt)
+        - [react](Web_development/_framework/Web_client/View/React/react.txt)
+    - _State__
+      - _Flux__
+        - [react-refetch](Web_development/_framework/Web_client/State/Flux/react-refetch.txt)
+        - [flux](Web_development/_framework/Web_client/State/Flux/flux.txt)
+      - _Redux__
+        - [redux-undo](Web_development/_framework/Web_client/State/Redux/redux-undo.txt)
+        - [redux-thunk](Web_development/_framework/Web_client/State/Redux/redux-thunk.txt)
+        - [redux](Web_development/_framework/Web_client/State/Redux/redux.txt)
+        - [redux-actions](Web_development/_framework/Web_client/State/Redux/redux-actions.txt)
+    - _MVC__
+      - _Angular__
+        - [angular](Web_development/_framework/Web_client/MVC/Angular/angular.txt)
+      - _Backbone__
+        - [backbone.collectionsubset](Web_development/_framework/Web_client/MVC/Backbone/backbone.collectionsubset.txt)
+        - [backbone_marionette](Web_development/_framework/Web_client/MVC/Backbone/backbone_marionette.txt)
+- __language__
+  - _CSS__
+    - [CSS](Web_development/_language/CSS/CSS.txt)
+    - _Transcompilation__
+      - __Sass__
+        - [_sass](Web_development/_language/CSS/Transcompilation/_Sass/_sass.txt)
+        - [_compass](Web_development/_language/CSS/Transcompilation/_Sass/_compass.txt)
+      - [_stylus](Web_development/_language/CSS/Transcompilation/_stylus.txt)
+      - [_less](Web_development/_language/CSS/Transcompilation/_less.txt)
+      - _JavaScript__
+        - [jss](Web_development/_language/CSS/Transcompilation/JavaScript/jss.txt)
+        - [cssx](Web_development/_language/CSS/Transcompilation/JavaScript/cssx.txt)
+        - [_aphrodite](Web_development/_language/CSS/Transcompilation/JavaScript/_aphrodite.txt)
+        - _React__
+          - [react-css](Web_development/_language/CSS/Transcompilation/JavaScript/React/react-css.txt)
+      - [postcss](Web_development/_language/CSS/Transcompilation/postcss.txt)
+  - [C_language](Web_development/_language/C_language.txt)
+  - _HTML__
+    - _Transcompilation__
+      - [jade](Web_development/_language/HTML/Transcompilation/jade.txt)
+      - [markdown](Web_development/_language/HTML/Transcompilation/markdown.txt)
+    - [HTML](Web_development/_language/HTML/HTML.txt)
+  - _JavaScript__
+    - _DOM__
+      - [DOM](Web_development/_language/JavaScript/DOM/DOM.txt)
+      - [jQuery_cheerio](Web_development/_language/JavaScript/DOM/jQuery_cheerio.txt)
+    - [JavaScript](Web_development/_language/JavaScript/JavaScript.txt)
+    - _Transcompilation__
+      - [coffeescript](Web_development/_language/JavaScript/Transcompilation/coffeescript.txt)
+      - [flow](Web_development/_language/JavaScript/Transcompilation/flow.txt)
+  - [PHP](Web_development/_language/PHP.txt)
+  - [Python](Web_development/_language/Python.txt)
+  - [R_language](Web_development/_language/R_language.txt)
+  - _VBA__
+    - [Excel_objet_model](Web_development/_language/VBA/Excel_objet_model.txt)
+    - [Excel_Formulas](Web_development/_language/VBA/Excel_Formulas.txt)
+    - [VBA](Web_development/_language/VBA/VBA.txt)
+    - [PowerPoint_object_model](Web_development/_language/VBA/PowerPoint_object_model.txt)
+  - [c++](Web_development/_language/c++.txt)
 
