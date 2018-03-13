@@ -119,7 +119,8 @@ SOURCE TYPES ==>                  #Differences: customer UX, sync|async, flow, r
                                   #     - credit: more effort for customer
                                   #     - debit: must first verify bank account (extra steps)
                                   #  - SEPA debit: like ACH debit but for EU
-                                  #  - country-specific: Sofort (Germany), Giropay (Germany), EPS (Austria), iDEAL (Netherlands), Bancontact (Belgium), p24 (Poland), multibanco (Portugal)
+                                  #  - country-specific: Sofort (Germany), Giropay (Germany), EPS (Austria), iDEAL (Netherlands), Bancontact (Belgium),
+                                  #    p24 (Poland), multibanco (Portugal), Klarna (mostly Scandinavia)
                                   #  - Stripe account
                                   #  - Alipay, WeChat: China, restrictive terms of service
                                   #  - Apple Pay, Google Pay, Microsoft Pay, Samsung Paya
@@ -605,6 +606,7 @@ CHARGE.failure_message            #STR. Can be shown to users for card errors.
 ERROR.param                       #'PROP' that failed input validation.
 ERROR.charge                      #CHARGE.id
 ERROR.payment_intent              #PINTENT
+ERROR.setup_intent                #SETUP_INTENT
 ERROR.payment_method              #PAYMENT_METHOD
 ERROR.source                      #SOURCE.id
 
@@ -874,6 +876,7 @@ FAKE DATA ==>                     #Can use test|fake SOURCE|TOKEN with following
                                   #      - access code: 123456
                                   #  - 'masterpass': https://developer.mastercard.com/page/masterpass-sandbox-testing-guidelines#new-web-experience
                                   #  - 'visa checkout': https://developer.visa.com/capabilities/visa_checkout/docs#adding_visa_checkout_to_your_web_page
+                                  #  - 'klarna': https://stripe.com/docs/sources/klarna#testing-klarna-payments
                                   #TOKEN|PAYMENT_METHOD:
                                   #  - use TOKEN|PAYMENT_METHOD.id
                                   #  - same differences as 'card' SOURCE
@@ -952,6 +955,7 @@ EVENT                             #Either:
                                   #  - file
                                   #  - order_return
                                   #  - payment_intent
+                                  #  - setup_intent
                                   #  - sigma.scheduled_query_run
                                   #  - topup
                                   #  (updated)
@@ -1159,7 +1163,7 @@ AVAILABLE CURRENCIES ==>          #Customer's currency:
                                   #CHARGE.currency is payment method-specific:
                                   #  - 'card*': any.
                                   #  - 'usd' only for card with JCB, Discover, Diners Club, and for 'ach*'
-                                  #  - 'eur' for 'bancontact', 'eps', 'giropay', 'ideal', 'multibanco', 'sepa_debit', 'sofort'
+                                  #  - 'eur' for 'bancontact', 'eps', 'giropay', 'ideal', 'multibanco', 'sepa_debit', 'sofort', 'klarna'
                                   #  - 'pln' for 'p24'
                                   #  - 'usd', 'eur', 'gbp', 'cad', 'aud', 'sgd', 'hkd', 'jpy', 'nzd' for 'alipay'
                                   #     - and must be same as destination currency
@@ -1238,9 +1242,8 @@ GET /payment_intents[/ID]
 POST /payment_intents[/ID]        #
 POST /payment_intents/ID/confirm  #Like PINTENT.confirm true
                                   #Payload attributes: client_secret, payment_method, receipt_email, return_url, shipping, source, save_payment_method, off_session
-PAYLOAD.off_session               #Indicates that payment will be done while user is not on the website.
-                                  #This changes what SCA regulation requires, e.g. 3D secure confirmation.
-                                  #Either 'recurring'|false (def for SUBSCRIPTIONs) or 'one_off'|true.
+PAYLOAD.off_session               #Like PINTENT.setup_future_usage
+                                  #Either 'recurring'|false or 'one_off'|true.
 POST /payment_intents/ID/cancel   #Set PINTENT.status 'canceled'.
                                   #Payload attributes: cancellation_reason
 STRIPE.paymentIntents.
@@ -1265,6 +1268,14 @@ PINTENT.charges                   #CHARGE_LIST
 PINTENT.payment_method_types    CU#STR_ARR of allowed SOURCE.type
 PINTENT.save_payment_method    RCU#BOOL (def: false). Save PINTENT.payment_method|source to CUSTOMER.sources.
                                   #Must be specified again if PINTENT.payment_method|source changes.
+PINTENT.payment_method_options  CU#OBJ:
+                                  #  - card:
+                                  #     - request_three_d_secure 'automatic' (def), 'challenge_only' or 'any'
+PINTENT.setup_future_usage      CU#'off_session' or 'off_session' (def)
+                                  #Indicates that either:
+                                  #  - payment will be done while user is not on the website.
+                                  #  - payment method will be re-used by attaching to a CUSTOMER
+                                  #This changes what SCA regulation requires, e.g. 3D secure confirmation.
 
 PINTENT.status                    #STR among:
                                   #  - 'requires_payment_method':
@@ -1342,6 +1353,9 @@ STRIPE.setupIntents.retrieve|list|
  create|update|confirm|cancel()
 
 SETUP_INTENT.payment_method     CU#
+?payment_method=PAYMENT_METHOD.id #
+SETUP_INTENT.
+ payment_method_options         CU#
 SETUP_INTENT.customer           CU#
 ?customer=CUSTOMER.id
 SETUP_INTENT.application          #
@@ -1349,11 +1363,13 @@ SETUP_INTENT.on_behalf_of        C#
 SETUP_INTENT.description        CU#
 SETUP_INTENT.
  payment_method_types           CU#
-SETUP_INTENT.status               #
+SETUP_INTENT.status               #EVENT 'setup_intent.setup_failed|succeeded'
+SETUP_INTENT.confirm            RC#
 SETUP_INTENT.next_action          #
-SETUP_INTENT.client_secret        #Like PINTENT
+SETUP_INTENT.client_secret
+SETUP_INTENT.cancellation_reason  #Like PINTENT
 SETUP_INTENT.last_setup_error     #Like PINTENT.last_payment_error
-SETUP_INTENT.usage                #'on_session|off_session', like PINTENT PAYLOAD.off_session
+SETUP_INTENT.usage              CU#'on_session|off_session', like PINTENT PAYLOAD.off_session
 
 
                                              /=+===============================+=\
@@ -1385,7 +1401,7 @@ CHARGE.status                     #First 'pending' then either 'succeeded' or 'f
                                   #     - no need to use webhooks
                                   #  - some SOURCEs are async
                                   #     - must use webhooks
-                                  #     - only SOURCE.type 'ach_*' (2-5 days), 'sepa_debit' (6 days) and 'sofort' (2-14 days)
+                                  #     - only SOURCE.type 'klarna' (1 day), 'ach_*' (2-5 days), 'sepa_debit' (6 days) and 'sofort' (2-14 days)
 CHARGE.paid                       #BOOL for success
 
 CHARGE.refunds                    #REFUND_LIST
@@ -1432,13 +1448,13 @@ CAPTURING ==>                     #Delayed payment:
                                   #  - EVENT 'charge.expired'
                                   #To cancel it, should create a REFUND
 
-GOALS ==>                         #  - lightweight refund by holding money (cannot be spent by customer) without withdrawing it
-                                  #     - e.g. when merchant must do some work before customer pays, and wants to avoid wasting
-                                  #       this is customer cancels, while still allowing easy refunds
-                                  #  - delaying payment when it might look fraudulent
-                                  #     - e.g. first check if it creates a REVIEW
+GOALS ==>                         #Lightweight refund by holding money (cannot be spent by customer) without withdrawing it
+                                  #  - e.g. when merchant must do some work before customer pays, and wants to avoid wasting
+                                  #    this is customer cancels, while still allowing easy refunds
+                                  #Delaying payment when it might look fraudulent
+                                  #  - e.g. first check if it creates a REVIEW
 
-LIMITS ==>                        #Only works with card* SOURCEs
+LIMITS ==>                        #Only works with card* and klarna SOURCEs
                                   #Some banks show not-processed yet (but authorized) payments as if it was processed, which
                                   #can confuse some customers.
 
@@ -1645,6 +1661,7 @@ AVAILABLE SOURCE TYPES ==>        #Credit card companies controlled (banks are c
                                   #  - 'p24': Poland
                                   #  - 'multibanco': Portugal
                                   #     - requires action by customer (entering amount and details on their bank website), i.e. might take up to 7 days
+                                  #  - 'klarna': mostly Scandinavia (10% market share)
                                   #Payment provider companies controlled:
                                   #  - 'stripe_account': Connect
                                   #  - 'alipay' (called 'alipay_account' on create|update): Alibab, China (>50% market share)
@@ -1677,13 +1694,14 @@ AVAILABILITY ==>                  #Right away: 'card', 'stripe_account', 'apple_
                                   #Behind feature toggles in dashboard settings, and agree to additional terms of service:
                                   #  - 'ach*'
                                   #  - 'visa_checkout', 'masterpass', 'amex_express_checkout'
-                                  #  - 'sofort', 'giropay', 'eps', 'ideal', 'bancontact', 'multibanco', 'p24'
+                                  #  - 'sofort', 'giropay', 'eps', 'ideal', 'bancontact', 'multibanco', 'p24', 'klarna'
                                   #  - 'alipay', 'wechat'
 
 COUNTRIES ==>                     #Countries availability:
                                   #  - US (destination): 'ach*'
                                   #  - Germany|Austria|Netherlands|Belgium|Italy|Spain (customer), US/EU (destination): 'sofort'
                                   #  - France|Germany|Austria|Netherlands|Belgium|Italy|Spain|Portugal|Luxembourg|Ireland (customer), US/EU (destination): 'sepa_debit'
+                                  #  - Sweden|Norway|Denmark|Finland|Austria|Germany|Netherlands|UK (customer), US/EU (destination): 'klarna'
                                   #  - Germany (customer), US/EU (destination): 'giropay'
                                   #  - Netherlands (customer), US/EU (destination): 'ideal'
                                   #  - Austria (customer), US/EU (destination): 'eps'
@@ -1841,6 +1859,37 @@ SOURC.masterpass.transaction_id *C#Passed after redirect as query variable ?oaut
 
 SOURC.card.visa_checkout.callid *C#Passed by Visa Checkout library as FUNC callback
 
+SOURCE.source_order             *C#For Klarna
+                                *C#Like ORDER but only with amount|email|shipping|items
+SOURCE.klarna.product           *C#'payment'
+SOURCE.klarna.purchase_country  *C#COUNTRY
+SOURCE.klarna.
+ first_name|last_name           CU#STR
+SOURCE.klarna.
+ shipping_first_name|last_name  CU#STR
+SOURCE.klarna.
+ [pay_later|now|over_time_]
+ redirect_url                     #'URL'. Must redirect to it with the client token.
+SOURCE.klarna.client_token        #STR
+SOURCE.klarna.locale              #'LANG'. For payment page
+SOURCE.klarna.page_title          #STR. For payment page
+SOURCE.klarna.logo_url            #'URL'. For payment page
+SOURCE.klarna.background_image_url#'URL'. For payment page
+SOURCE.klarna.purchase_type       #STR. For payment page's buy button. Among: buy, rent, book, subscribe, download, order, continue.
+SOURCE.klarna.
+ pay_later|now|over_time_*        #Different options of payment
+SOURCE.klarna.
+ payment_method_categories        #'PAYMENT_OPTION,...'
+SOURCE.klarna.
+ pay_later|now|over_time_
+ name                             #'PAYMENT_OPTION'
+SOURCE.klarna.
+ pay_later|now|over_time_
+ asset_urls_standard              #'URI'. Short icon of option of payment
+SOURCE.klarna.
+ pay_later|now|over_time_
+ asset_urls_descriptive           #'URI'. Long icon of option of payment
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -1889,9 +1938,11 @@ SOURCE.flow                      C#How the SOURCE is authenticated among:
                                   #         - 'card' with 'masterpass', 'visa_checkout': redirect
                                   #         - 'card' with 'apple_pay', 'google_pay', 'microsoft_pay', 'samsung_pay':
                                   #           either through mobile SDK or using W3C Payment Request API on web
+                                  #         - 'klarna': in addition to 'redirect', can also use Klarna SDK (https://stripe.com/docs/sources/klarna#customer-action)
                                   #  - 'redirect':
                                   #      - redirected to payment provider's URL, then payment provider redirects back
-                                  #      - for SOURCE.type 'card*' (3D secure), 'ach_debit', 'alipay', 'bancontact', 'eps', 'giropay', 'ideal', 'p24', 'wechat', 'sofort', 'multibanco'
+                                  #      - for SOURCE.type 'card*' (3D secure), 'ach_debit', 'alipay', 'bancontact', 'eps',
+                                  #        'giropay', 'ideal', 'p24', 'wechat', 'sofort', 'multibanco', 'klarna'
                                   #  - 'code_verification': a code is sent (e.g. by SMS)
                                   #      - for SOURCE.type 'ach_debit'
                                   #  - 'receiver': requires other separate action from customer, such as logging in to their account and initiate the payment
@@ -2229,6 +2280,7 @@ SUBSCRIPTION.default_source     CU#SOURCE|BANK_ACCOUNT|CARD.id
                                   #Def: CUSTOMER.default_source
 SUBSCRIPTION.                   CU#PAYMENT_METHOD.id
  default_payment_method           #Def: CUSTOMER.default_payment_method
+SUBSCRIPTION.pending_setup_intent #SETUP_INTENT
 
 SUBSCRIPTION.items              CU#SUBSCRIPTION_ITEM_LIST
                                   #Max length 20
@@ -2268,6 +2320,9 @@ SUBSCRIPTION.
  cancel_at_period_end           CU#BOOL (def: false). Set status to 'canceled' at end of period.
 SUBSCRIPTION.canceled_at         ?#DATE_NUM
                                   #If SUBSCRIPTION.cancel_at_period_end was used, date where this was set. Otherwise, date status set to 'canceled'.
+SUBSCRIPTION.payment_behavior   CU#What to do when first CHARGE failed:
+                                  #  - 'allow_incomplete' (def, better): status 'incomplete'
+                                  #  - 'error_if_incomplete': ERROR
 
 SUBSCRIPTION.collection_method  CU#Either:
                                   #  - 'charge_automatically' (def): automatically create CHARGEs
@@ -2344,7 +2399,8 @@ SUBSCRIPTION_ITEM.subscription  *C#SUBSCRIPTION.id
 SUBSCRIPTION_ITEM.plan|quantity|
  billing_thresholds             CU#Like SUBSCRIPTION.*
 SUBSCRIPTION_ITEM.
- prorate|proration_date        RCU#Like SUBSCRIPTION.*
+ payment_behavior|prorate|
+ proration_date                RCU#Like SUBSCRIPTION.*
 SUBSCRIPTION_ITEM.deleted        U#BOOL. Delete the SUBSCRIPTION_ITEM.
                                   #Only when updated through SUBSCRIPTION.items
 SUBSCRIPTION_ITEM.clear_usage    U#BOOL. Delete the SUBSCRIPTION_ITEM's USAGE_RECORDs
@@ -2591,6 +2647,7 @@ STRIPE.creditNodes.retrieve|list|
 CREDIT_NOTE.invoice             *C#INVOICE.id
 ?invoice=INVOICE.id               #
 CREDIT_NOTE.customer              #CUSTOMER.id
+?customer=CUSTOMER.id             #
 CREDIT_NOTE.
  customer_balance_transaction     #CBALANCE_TRANSACTION.id
 
@@ -2601,6 +2658,7 @@ CREDIT_NOTE.type                  #One of:
 CREDIT_NOTE.status                #STR among:
                                   #  - 'issued'
                                   #  - 'void': reverted (EVENT 'credit_note.voided')
+CREDIT_NOTE.voided_at            ?#DATE_NUM
 
 CREDIT_NOTE.amount              *C#PMONEY in total
 CREDIT_NOTE.credit_amount       RC#PMONEY
@@ -2654,7 +2712,7 @@ STRIPE.invoices.retrieve|list|
 INVOICE.subscription             C#SUBSCRIPTION.id
 ?subscription=SUBSCRIPTION.id     #
 
-INVOICE.collection_method        C#Def: SUBSCRIPTION.collection_method
+INVOICE.collection_method       CU#Def: SUBSCRIPTION.collection_method
 ?collection_method=STR            #
 INVOICE.
  subscription_proration_date     ?#SUBSCRIPTION.proration_date
@@ -2816,7 +2874,7 @@ LINE_ITEM.amount                CU#MONEY. Unit price. Can be negative to give mo
 LINE_ITEM.quantity              CU#NUM. Quantity
 LINE_ITEM.discountable          CU#BOOL. Whether DISCOUNT should be used.
 LINE_ITEM.proration               #BOOL
-LINE_ITEM.unified_proration       #BOOL
+LINE_ITEM.unified_proration       #BOOL. Whether LINE_ITEMs with same TAX_RATE are grouped together
 LINE_ITEM.period.start|end      CU#DATE_NUM
 LINE_ITEM.description           CU#STR shown to CUSTOMER
 
@@ -2874,6 +2932,7 @@ STRIPE.invoices.
 ?subscription_prorate=BOOL        #
 ?subscription_proration_date=
  DATE_NUM                         #
+?subscription_stard_date=DATE_NUM #
 ?subscription_trial_end=BOOL      #
 ?subscription_trial_from_plan=BOOL#
 ?subscription_items=OBJ_ARR       #
@@ -3664,7 +3723,8 @@ CHARGES ROUTING ==>               #There are three way to route Connect charges:
 CHARGE.application                #ACCOUNT.id that created the charge. When using DIRC|DESC|SEPC charges
 CARD|BANK_ACCOUNT.account         #ACCOUNT.id
 
-CHARGE|PINTENT.transfer_data     C#TRANSFER_DATA. When using DESC charges
+CHARGE|PINTENT.transfer_data    CU#TRANSFER_DATA. When using DESC charges
+TRANSFER_DATA.amount            CU#PMONEY
 TRANSFER_DATA.destination        C#ACCOUNT.id
 
 CHARGE.on_behalf_of              C#ACCOUNT.id
@@ -3982,7 +4042,7 @@ DISPUTE AND REFUNDS ==>           #  - cannot create a REFUND on a disputed CHAR
 PAYMENT METHOD-SPECIFIC ==>       #  - card*:
                                   #     - provider-specific and reason-specific, but usually 120 days
                                   #     - if 3D secure, cannot be dispute for "not authorized" reasons (but other reasons still possible)
-                                  #  - alipay, wechat: only for problem with quality of goods
+                                  #  - alipay, wechat, klarna: only for problem with quality of goods
                                   #  - 'ach_credit_transfer', 'bancontact', 'eps', 'giropay', 'ideal', 'multibanco', 'p24', 'sofort': no DISPUTE possible
                                   #  - 'sepa_debit':
                                   #     - within 13 weeks
