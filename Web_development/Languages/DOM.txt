@@ -2406,11 +2406,164 @@ EXTERNAL DEVICES ==>                        IE11#Network Service Discovery (W) (
 
 IndexedDB: 
   - like localStorage but for structured data and query
+     - including space quota???, private browsing and removing using user settings
   - async
   - key-value store
   - value: any JSON val, but also REGEXP, ARRAYBUFFER[VIEW], MAP|SET, BLOB, IMAGEDATA, and circular references
-  - use transactions: auto-commit
+  - ACID:
+     - atomicity: 
+        - use transactions: auto-commit
+        - object store-wide write lock
+     - durability: notifies when buffered (but not flushed to disk)
+
+Connection:
+  - to a database
+  - browser can time it out
+  - can be: readwrite, readonly or versionchange
+
+Request:
+  - single operation to an object store
 
 Database:
   - 1+ object stores
-  - name
+  - name STR
+  - version NUM (def: 1):
+     - incremented when schemas change
+
+Object stores:
+  - OBJ|table
+  - stored by key in asc order
+  - name STR
+  - keys:
+     - must be unique
+     - STR|DATE|NUM|ARR
+     - can use:
+        - key generators, i.e. FUNC()->KEY
+        - key paths VARR, i.e. VAL[VARR] (in-line key)
+        - 'KEY'
+
+Indexes:
+  - are object stores themselves
+  - values are the "referenced" object store keys
+
+Cursors:
+
+WINDOW|WORKERGLOBAL.indexedDB                   #IFACTORY
+
+IDBDatabase                                     #Connection to a database
+IFACTORY.open('DB'[, VERSION_NUM])->IOREQ(IDB)  #
+IFACTORY.deleteDatabase('DB')->IOREQ()          #
+IDB.name                                        #'DB'
+IDB.close()                                     #Let pending ITRANSACTION finish first, but do not start new ones
+IDB.onabort = FUNC(EVENT)                       #
+IDB.onerror = FUNC(EVENT)                       #
+
+IDB.version                                     #VERSION_NUM (ULONGLONG). Changed everytime schemas change.
+                                                #When IFACTORY.open() use VERSION_NUM (def: current one):
+                                                #  - < IDB.version: IREQ will be 'VersionError'
+                                                #  - > IDB.version: 
+                                                #     - request IDB-wide lock:
+                                                #        - new connections are queued
+                                                #        - existing connections get IDB.onversionchange event, to allow them to close
+                                                #     - if any could not close, IOREQ.onblocked is fired
+                                                #     - otherwise, IOREQ.onupgradeneeded is fired, with IOREQ.mode 'versionchange' (i.e. can change schema)
+                                                #When IFACTORY.deleteDatabase():
+                                                #  - new VERSION_NUM is null, upgradeneeded is not fired 
+                                                #  - but otherwise is like upgradeneeded mechanism
+IDB.onversionchange = FUNC(VCHANGEEVENT)
+VCHANGEEVENT.old|newVersion                     #VERSION_NUM
+IOREQ.onupgradeneeded = FUNC(VCHANGEEVENT)      #
+IOREQ.onblocked = FUNC(VCHANGEEVENT)            #
+
+IDBObjectStore                                  #Store (table-like)
+                                                #If trying to store VAL with unsupported type, will use IREQ with 'DataCloneError'
+IDB.objectStoreNames                          #???
+IDB.createObjectStore('STORE'[, OBJ])->ISTORE  #OBJ: keyPath, autoIncrement
+IDB.deleteObjectStore('STORE')
+ISTORE.name                                   #'STORE'
+ISTORE.keyPath                                #'VARR'[_ARR]
+                                              #If specified wrong, will use IREQ with 'SyntaxError'
+ISTORE.autoIncrement                          #BOOL (def: false)
+ISTORE.put(VAL[, 'KEY'])->IREQ
+ISTORE.add(VAL[, 'KEY'])->IREQ
+ISTORE.delete(['KEY'])->IREQ
+ISTORE.get(['KEY'])->IREQ
+ISTORE.clear()->IREQ
+ISTORE.count([VAL])->IREQ
+
+IDBIndex
+ISTORE.indexNames                             #???
+ISTORE.createIndex('INDEX', VARR[, OBJ])->IINDEX       #OBJ: unique BOOL, multiEntry BOOL
+ISTORE.index('INDEX')->IINDEX                          #
+ISTORE.deleteIndex('INDEX')
+IINDEX.name                                     #'INDEX'
+IINDEX.objectStore                              #ISTORE
+IINDEX.keyPath                                  #'VARR'
+IINDEX.multiEntry                               #BOOL (def: false)
+IINDEX.unique                                   #BOOL (def: false)
+IINDEX.get[Key]('KEY')->IREQ
+IINDEX.count(['KEY'])->IREQ
+
+IDBCursor
+ISTORE.openCursor([RANGE???[, DIRECTION]])->IREQ
+IINDEX.open[Key]Cursor([RANGE???[, DIRECTION]])->IREQ
+ICUR.source                                     #ISTORE|IINDEX
+ICUR.direction                                  #'next|prev[unique]' (def: 'next')
+ICUR.key|primaryKey                             #VAL
+ICUR.update(VAL)->IREQ
+ICUR.delete()->IREQ
+ICUR.advance(ULONG)
+ICUR.continue(['KEY'])
+
+IDBCursorWithValue                              #Child of IDBCursor
+ICURWITHVALUE.value                             #
+
+IDBKeyRange
+IKeyRange.only(VAL)->IRANGE                 #
+IKeyRange.lower|upperBound(VAL[, BOOL])->IRANGE                 #
+IKeyRange.bound(VAL, VAL2[, BOOL][, BOOL2])->IRANGE                 #
+IRANGE.lower|upper                            #VAL
+IRANGE.lower|upperOpen                        #BOOL
+
+IDBTransaction                                  #Database transaction
+                                                #Can timeout, in which case IREQ will be 'TimeoutError'
+                                                #Once closed, any IREQ will be 'TransactionInactiveError'
+IDB.transaction('STORE'[_ARR][,MODE])->ITRNSACTN#
+ITRANSACTION.db                                 #IDB
+ITRANSACTION.objectStore('STORE')->ISTORE       #
+ISTORE.transaction                              #ITRANSACTION
+ITRANSACTION.mode                               #MODE: 
+                                                #  - 'readonly' (def): cannot modify anything, otherwise IREQ will be 'ReadOnlyError'. No lock
+                                                #  - 'readwrite': cannot modify schema (*.create|deleteObjectStore|Index()). ISTORE-wide lock.
+                                                #  - 'versionchange': can do anything. Only available inside upgradeneeded event handler. IDB-wide lock.
+ITRANSACTION.oncomplete = FUNC(EVENT)           #Fired on success, i.e. when transaction result is buffered (not flushed to disk)
+ITRANSACTION.onerror = FUNC(EVENT)              #Fired on failure
+ITRANSACTION.error                              #ERROR|null
+ITRANSACTION.abort()                            #Rollbacks changes
+                                                #Future IREQ with fail with 'AbortError'
+ITRANSACTION.onabort = FUNC(EVENT)              #On ITRANSACTION.abort()
+
+IDBRequest                                      #Async operation (PROMISE-like)
+IREQ.source                                     #Object having returned it, i.e. ISTORE|IINDEX|IICURSOR|null
+IREQ.transaction                                #ITRANSACTION|null
+IREQ.readyState                                 #Can be:
+                                                #  - 'pending'
+                                                #  - 'done':
+                                                #     - success: sets IREQ.result, fires success
+                                                #     - error: sets IREQ.error, fires error
+IREQ.onsuccess = FUNC(EVENT)                    #
+IREQ.result                                     #VAL
+IREQ.onerror = FUNC(EVENT)                      #Default browser action (cancelable): calls IREQ.transaction.abort()
+IREQ.error                                      #ERROR:
+                                                #  - 'NoError': if success
+                                                #  - 'NotFoundError': did not find name
+                                                #  - 'ConstraintError': e.g. name already exist, unique constraints
+                                                #  - 'DataError': wrong argument type
+                                                #  - 'InvalidAccessError': wrong argument value
+                                                #  - 'InvalidStateError': function cannot be called yet|anymore
+                                                #  - 'QuotaExceededError': no more spaces
+                                                #  - 'UnknownError': e.g. IO error
+                                                #  - '*Error': see above
+IDBOpenDBRequest                                #Child of IRequest
+
+IFACTORY.cmp(KEY, KEY2)->-1|0|1                 #Using default IndexedDB key sorting
