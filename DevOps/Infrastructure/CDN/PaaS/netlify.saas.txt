@@ -305,7 +305,7 @@ REDIRECT.conditions.TYPE          #STR. Redirects depending on the request prope
                                   #  - Country 'COUNTRY'_ARR (def: 'US'):
                                   #     - use cookie `nf_country` (can be set)
                                   #     - based on IP
-                                  #  - Role STR_ARR (e.g. 'admin')
+                                  #  - Role STR_ARR (e.g. 'admin'): USER roles (Netlify Identity)
 
 PACKAGE_ROOT/_redirects           #Alternative to CONF.redirects
                                   #File with:
@@ -494,11 +494,239 @@ netlify-lambda install [DIR]      #Run `npm install` inside each PACKAGE_ROOT fo
                                              \=+===============================+=/
 
 
-METHODS ==>                       #  - email|password
-                                  #  - Google
-                                  #  - GitHub|GitLab|BitBucket
+FEATURES ==>                      #Signup, login, password reset, user data (including group, role)
 
-nf_jwt                            #HTTP cookie storing JWT
+IDENTITY_URL                      #Base API URL for Netlify Identity
+                                  #Defaults to SITE_URL/.netlify/identity
+                                  #All URLs below are relative to it
+
+JWS                               #USER connection token is a JWS
+                                  #  - should be sent with Authorization: Bearer JWS [C]
+                                  #  - must be done for IDENTITY_URL/user|admins calls
+                                  #JWS:
+                                  #  - alg 'HS256'
+                                  #  - payload:
+                                  #     - sub USER_ID (UUID)
+                                  #     - exp: in 1 hour
+                                  #     - user_metadata USER_DATA
+                                  #     - app_metadata APP_DATA
+                                  #     - email 'EMAIL'
+
+PERSISTENCE ==>                   #Current JWS is stored in cookie nf_jwt:
+                                  #  - if OPTS.setCookie true (def: false) ("remember me" checkbox)
+                                  #  - communicates to API using X-Use-Cookie: session|1 [C]
+                                  #Current USER is stored in localStorage (if browser):
+                                  #  - key 'gotrue.user'
+                                  #  - if BOOL true (def: false), which is last argument of several methods
+                                  #Expires in 1 hour
+
+USER                              #  - id 'USER_ID'
+                                  #  - email 'EMAIL'
+                                  #  - aud 'GROUP' (def: '')
+                                  #     - group of users
+                                  #     - set as X-JWT-AUD: STR [C]
+                                  #  - role STR (def: '')
+                                  #  - user_metadata USER_DATA
+                                  #     - full_name STR (username if 'email')
+                                  #  - app_metadata APP_DATA
+                                  #     - provider 'PROVIDER'
+                                  #     - authorization:
+                                  #        - roles 'ROLE'_ARR
+                                  #  - created_at 'DATE'
+                                  #  - confirmation_sent_at 'DATE'
+                                  #  - confirmed_at 'DATE'
+                                  #  - updated_at 'DATE'
+                                  #  - any custom property
+
+IDENTITY_SETTINGS                 #Netlify Identity account settings, for all users
+
+METHODS ==>                       #  - email (password)
+                                  #  - Google|Facebook
+                                  #  - GitHub|GitLab|BitBucket
+PROVIDER                          #One of: email, google|facebook, github|gitlab|bitbucket
+IDENTITY_SETTINGS.                #BOOL (def: false). Allowed PROVIDERs for this account
+ external.PROVIDER                #Def: only email
+                                  #Done from Web UI of JS client.
+                                  #OAuth server information is Netlify's, i.e. use their brand name|color|description
+                                  #  - can modify in Web UI
+
+IDENTITY_SETTINGS.disable_signup  #BOOL (def: false): whether users can signup
+IDENTITY_SETTINGS.autoconfirm     #BOOL. If false (def: true), do not send confirmation emails on email signups
+                                  #  - i.e. must manually send invite on signup requests ("invite-only")
+                                  #Done from Web UI or JS client.
+INVITATION ==>                    #Can manually send signup invites from Web UI
+
+EMAIL TEMPLATES ==>               #For invitation, signup confirmation, password reset request, email address update
+                                  #Can be updated with Web UI, pointing to a HTML file in the repository.
+                                  #Can use {{.VAR}}: SiteURL, ConfirmationURL, Email, NewEmail, Token
+CUSTOM EMAIL SENDER ADDRESS ==>   #By default, email sent by no-reply@netlify.com, but can customize in Web UI
+
+WEBHOOK ==>                       #Can create event webhook (with Web UI). Does POST /URL
+
+ADMIN ==>                         #Can browse|update|delete users and see activity logs in Web UI
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:         IDENTITY API          :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+POST /signup                      #Email signup first step
+                                  #Request body OBJ:
+                                  #  - email 'EMAIL'
+                                  #  - password 'PASSWORD'
+                                  #  - data USER_DATA
+                                  #Response body USER
+POST /token                       #Email login
+                                  #Request body (urlencoded) OBJ:
+                                  #  - grant_type 'password|refresh_token'
+                                  #  (is 'password')
+                                  #  - username 'EMAIL'
+                                  #  - password 'PASSWORD'
+                                  #  (is 'refresh_token')
+                                  #  - refresh_token 'JWS'
+                                  #Response OBJ:
+                                  #  - access_token 'JWS'
+                                  #  - refresh_token 'JWS'
+                                  #  - token_type 'bearer'
+                                  #  - expires_in NUM (def: 3600, in secs)
+                                  #  - any USER.*
+GET /authorize                    #OAuth login|signup first step
+                                  #Query parameters OBJ:
+                                  #  - provider 'PROVIDER'
+                                  #  [- invite_token 'JWS']
+POST /recover                     #Password reset request first step.
+                                  #Request body OBJ:
+                                  #  - email 'EMAIL'
+POST /verify                      #Email|oauth login|signup second step, or password reset second step.
+                                  #Request body OBJ:
+                                  #  - type 'signup|recovery'
+                                  #  - token 'JWS'
+                                  #  (only with 'signup')
+                                  #  [- password 'PASSWORD']
+                                  #Response body: like POST /token
+
+POST /logout                      #No request|response body
+
+GET /settings                     #Response body IDENTITY_SETTINGS
+
+GET /user                         #Response body current USER
+PUT /user                         #Request body USER
+
+GET /admins/users                 #Query parameters OBJ:
+                                  #  - audience GROUP
+                                  #Response body USER_ARR
+GET /admins/users/USER_ID         #Response body USER
+POST /admins/users                #Request body USER
+PUT /admins/users/USER_ID         #Request body USER
+DELETE /admins/users/USER_ID      #
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:          IDENTITY JS          :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+gotrue-js                         #Netlify Identity JavaScript client
+
+netlify-identity-widget           #Browser signup|login widget built on top of gotrue-js
+
+new GoTrue([OPTS])                #OPTS:
+                                  #  - APIUrl 'IDENTITY_URL'
+                                  #  - audience 'GROUP' (def: ''):
+                                  #  - setCookie BOOL (def: false)
+
+GOTRUE.signup
+ ('EMAIL', 'PASSWORD', DATA)
+ ->PROMISE_OBJ                    #POST /signup
+GOTRUE.login
+ ('EMAIL', 'PASSWORD'[, BOOL])
+ ->PROMISE_OBJ                    #POST /token with grant_type 'password', then createUser()
+
+GOTRUE.loginExternalUrl
+ ('PROVIDER')->'URL'              #Return '/authorize?provider=PROVIDER'
+GOTRUE.acceptInviteExternalUrl
+ ('PROVIDER', 'JWS')->'URL'       #Return '/authorize?provider=PROVIDER&invite_token=JWS'
+
+GOTRUE.requestPasswordRecovery
+ ('EMAIL')->PROMISE_OBJ           #POST /recover
+
+GOTRUE.verify
+ ('TYPE', 'JWS'[, BOOL])
+ ->PROMISE_OBJ                    #POST /verify then createUser()
+GOTRUE.confirm('JWS'[, BOOL])
+ ->PROMISE_OBJ                    #POST /verify with type 'signup' then createUser()
+GOTRUE.acceptInvite
+ ('JWS', 'PASSWORD'[, BOOL])
+ ->PROMISE_OBJ                    #POST /verify with type 'signup' and password 'PASSWORD' then createUser()
+GOTRUE.recover('JWS'[, BOOL])
+ ->PROMISE_OBJ                    #POST /verify with type 'recovery' then createUser()
+
+GOTRUE.settings()->PROMISE_OBJ    #GET /settings
+
+GOTRUE.createUser(OBJ[, BOOL])    #GET /user
+ ->PROMISE_OBJ2                   #OBJ is: access_token 'JWS', refresh_token 'JWS'
+
+GOTRUE.currentUser()->USER        #If out of date, refresh with POST /token and grant_type 'refresh_token'
+USER.*                            #Anything from GET /user response
+USER.update(OBJ)->PROMISE_OBJ     #PUT /user with request body OBJ
+USER.logout()->PROMISE_OBJ        #POST /logout then USER.clearSession()
+USER.clearSession()               #Remove cache
+
+User.admin()->ADMIN               #
+ADMIN.user                        #USER
+ADMIN.listUsers(['GROUP'])
+ ->PROMISE_OBJ_ARR                #GET /admins/users?audience=GROUP
+ADMIN.getUser({ id: USER.id })
+ ->PROMISE_OBJ                    #GET /admins/users/USER_ID
+ADMIN.createUser
+ ('EMAIL', 'PASSWORD', OBJ)
+ ->PROMISE_OBJ                    #POST /admins/users
+ADMIN.updateUser
+ ({ id: USER.id }, OBJ)
+ ->PROMISE_OBJ                    #PUT /admins/users/USER_ID
+ADMIN.deleteUser({ id: USER.id })
+ ->PROMISE_OBJ                    #DELETE /admins/users/USER_ID
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:        ACCESS CONTROL         :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+ACCESS CONTROL ==>                #Single user authentication with password for whole website (as opposed to multiple users)
+                                  #Done from Web UI
+
+OAUTH-AS-A-SERVICE ==>            #Netlify can provide endpoint for server-side step of OAuth
+                                  #Authorization callback is https://api.netlify.com/auth/done
+                                  #Add client ID and secret key must be added to Site settings (Web UI)
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:          GIT GATEWAY          :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+GIT GATEWAY ==>                   #Create API endpoints at SITE_URL/.netlify/git/* to read|write underlying git repository:
+                                  #  - GitHub -> https://api.github.com/repos/USER/REPO/*
+                                  #     - only for endpoints: git|contents|pulls|branches
+                                  #  - GitLab -> https://gitlab.com/api/v4/projects/USER%2FREPO/*
+                                  #     - only for endpoints: files|commits|tree
+                                  #  - Gitbucket: not available
+                                  #Used by NetlifyCMS
+                                  #Must supply a GitHub|GitLab access token
+                                  #Enabled from Web UI
+
+ACCESS CONTROL ==>                #Can limit to specific USER roles
+                                  #Done from Web UI
 
 
                                              /=+===============================+=\
