@@ -2710,8 +2710,20 @@ runInContext(STR, COBJ[, RUN_OPTS])             #Like eval() but use context COB
                                                 #  - displayErrors BOOL (def: true): prints to current stderr any stderr
                                                 #    from code
                                                 #  - timeout NUM: throw error if timeout
-runInNewContext(STR[, CONT_OBJ]                 #Same but automatically use createContext(CONT_OBJ, CONT_OPTS)
- [, RUN_OPTS|CONT_OPTS])                        #CONT_OPTS must be prefixed with "context"
+                                                #  - breakOnSigint BOOL (def: false): terminate on SIGINT
+                                                #  - cachedData BUFFER:
+                                             10*#     - can also be TYPED_ARR|DATAVIEW
+                                                #     - copy of script, to improve load performance
+                                             10*#     - created by SCRIPT.createCachedData()->BUFFER
+                                                #     - V8.cachedDataVersionTag()->NUM:
+                                                #        - returns a hash of v8 version, CLI flags and CPU features
+                                                #        - to use as cache key
+                                                #  - importModuleDynamically('SPECIFIER', PARENT_VMMODULE)->[PROMISE_]VMMODULE:
+                                                #     - called on import()
+                                                #     - def: throw error
+runInNewContext(STR[, CONT_OBJ][, RUN_OPTS])    #Same but automatically use createContext(CONT_OBJ, CONT_OPTS)
+                                                #Additional RUN_OPTS:
+                                                #  - context*: like CONT_OPTS.*
 runInThisContext(STR[, RUN_OPTS])               #Same as runInNewContext(STR, global)
 
 compileFunction('CODE'[, 'PARAM_NAME'_ARR]   10*#Like new Function() but use OPTS.parsingContext COBJ (def: global)
@@ -2719,46 +2731,59 @@ compileFunction('CODE'[, 'PARAM_NAME'_ARR]   10*#Like new Function() but use OPT
                                              10*#  - filename, line|columnOffset, cachedData
                                              10*#  - contextExtensions OBJ_ARR (def: []): objects wrapping COBJ
 
-new Script(STR[, RUN_OPTS|SCRIPT_OPTS])         #Returns a SCRIPT, i.e. a compiled version of STR:
+new Script(STR[, RUN_OPTS])                     #Returns a SCRIPT, i.e. a compiled version of STR:
                                                 #  - separates compiling from running STR
                                                 #  - every run can be bound to different COBJ
-                                                #SCRIPT_OPTS:
-                                                #  - cachedData BUFFER:
-                                             10*#     - can also be TYPED_ARR|DATAVIEW
-                                                #     - copy of script, to improve load performance
-                                             10*#     - created by SCRIPT.createCachedData()->BUFFER
-                                                #     - V8.cachedDataVersionTag()->NUM returns a hash of v8
-                                                #       version, CLI flags and CPU features
+                                                #RUN_OPTS:
+                                                #  - displayErrors|timeout|breakOnSigint are specified during run*(...)
+                                                #  - others are specified during new Script()
 SCRIPT.runIn[New|This]Context(...)              #Same as run*(STR, ...)
-                                                #RUN_OPTS also has:
-                                                #  - breakOnSigint BOOL
 
-new SourceTextModule(STR[, MODULE_OPTS])      9*#Same as Script but for ES module
+VMMODULE                                      9*#Same as SCRIPT but for ES module
                                               9*#Must use --experimental-vm-modules
-                                              9*#MODULE_OPTS:
-                                              9*#  - context COBJ: reused by every MODULE.run*(...), i.e. cannot be changed
-                                              9*#  - url STR (def: 'vm:module(NUM)'): for debugging
-                                              9*#  - filename STR, line|columnOffset NUM: for stack trace error message
-VMMODULE.link(FUNC('SPECIFIER',PARENT_MODULE))9*#Specifies the function to resolve SPECIFIERs,
- ->[PROMISE_]VMMODULE                         9*#I.e. same as using import { SPECIFIER } from VMMODULE
-                                              9*#Must be called only once.
-                                              9*#MODULE and PARENT_MODULE must have same COBJ
+                                              9*#Creates by new SourceTextModule() and new SyntheticModule()
+VMMODULE.link                                 9*#Specifies the function to resolve SPECIFIERs,
+ (FUNC('SPECIFIER', PARENT_VMMODULE))         9*#I.e. when using import { SPECIFIER } from VMMODULE
+ ->[PROMISE_]VMMODULE                         9*#Must be called only once.
+                                              9*#VMMODULE and PARENT_VMMODULE must have same COBJ
 VMMODULE.linkingStatus                        9*#Can be:
                                               9*#  - 'unlinked': before VMMODULE.link()
                                               9*#  - 'linking': during VMMODULE.link()
                                               9*#  - 'linked': after VMMODULE.link() success
+                                              9*#  - 'evaluating': before VMMODULE.evaluate()
+                                              9*#  - 'evaluated': after VMMODULE.evaluate() success
                                               9*#  - 'errored': after VMMODULE.link() error
 VMMODULE.error                                9*#If linkingStatus 'errored', contains link() rejected promise value.
                                               9*#Otherwise, accessing it throws an exception.
-VMMODULE.instantiate()                        9*#Might throw if problem importing|exporting
+VMMODULE.instantiate()                        9*#Must be called after VMMODULE.link()
+                                              9*#Might throw if problem importing|exporting
                                               9*#The function is memoized.
-                                              9*#Must be called after VMMODULE.link()
 VMMODULE.evaluate([RUN_OPTS])->PROMISE(VAL)   9*#Runs the code.
                                               9*#Must be called after VMMODULE.instantiate()
                                               9*#RUN_OPTS: timeout, breakOnSigint
 VMMODULE.url                                  9*#
 VMMODULE.namespace                            9*#
 VMMODULE.dependencySpecifiers                 9*#All 'MODULE'_ARR imported by that module
+
+new SourceTextModule(STR[, OPTS])             9*#SOURCE_TEXT_MODULE, child of VMMODULE.
+                                              9*#For regular JavaScript text files.
+                                              9*#OPTS:
+                                              9*#  - context COBJ: reused by every MODULE.run*(...), i.e. cannot be changed
+                                              9*#  - identifier STR (def: 'vm:module(NUM)'): for debugging
+                                              9*#  - line|columnOffset NUM: for stack trace error message
+                                              9*#  - importModuleDynamically(...): see above
+                                              9*#  - initalizeImportMeta(import.meta, VMMODULE):
+                                              9*#     - called during VMMODULE.evaluate()
+                                              9*#     - used to initialize import.meta by modifying it
+new SyntheticModule('VAR'_ARR, FUNC()[,OPTS])13*#SYNTHETIC_MODULE, child of VMMODULE.
+                                             13*#Define modules programmatically instead of through source text files.
+                                             13*#Used for non-JavaScript modules.
+                                             13*#'VAR'_ARR are exported variables.
+                                             13*#FUNC() is called on evaluate()
+                                             13*#  - with SYNTHETIC_MODULE as `this`
+                                             13*#OPTS:
+                                             13*#  - context, identifier: like SOURCE_TEXT_MODULE
+SYNTHETIC_MODULE.setExport('VAR', VAL)       13*#Define exported variable. Should be done inside constructor FUNC()
 
 
                                              /=+===============================+=\
@@ -3091,7 +3116,7 @@ ICU DATA                                        #I18n dataset used by:
                                                 #How many languages are included depends on:
                                                 #  - compile-time flag --with-intl=STR:
                                                 #     - 'full'
-                                                #     - 'small-icu' (def on all OS):
+                                                #     - 'small-icu':
                                                 #        - supports: STR.normalize|toLowerCase|toUpperCase(), STR.toLocale*(),
                                                 #          STR.localeCompare(), URL, BUFFER.transcode()
                                                 #        - not supported: Intl, NUM|DATE.toLocale*(), TEXTENCODER|TEXTDECODER
@@ -3100,6 +3125,8 @@ ICU DATA                                        #I18n dataset used by:
                                                 #          of statically
                                                 #        - i.e. depends whether OS includes ICU databaset, which most Linux do
                                                 #     - 'none': no i18n, and STR.normalize(), Intl and BUFFER.transcode() fail
+                                            <13*#  - def: 'small-icu'
+                                             13*#  - def: 'full
                                                 #  - ENVVAR NODE_ICU_DATA=FILE
                                                 #  - node --icu-data-dir=FILE
                                                 #Can use package full-icu to down ICU dataset manually.
