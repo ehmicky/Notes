@@ -328,6 +328,7 @@ MODULE ==>                                      #Can be:
                                              12*#     - must use --experimental-wasm-modules
                                                 #Decides type with file extension
                                                 #Done runtime. See JavaScript modules doc for more info
+
 module                                          #Current MODULE, i.e. file being loaded.
                                                 #There are builtin modules, which are the chapters of this doc.
 
@@ -349,14 +350,11 @@ require.resolve(STR[, OPTS])->'ID'              #How [MODULE.]require(STR) would
                                                 #  - paths 'DIR'_ARR: alternative directories to look into
                                                 #    Their [.../[..]]./node_modules will always be searched
 require.resolve.paths(STR)->'DIR'_ARR           #Directories that would be looked into when [MODULE.]require(STR) would resolve
-createRequire('PATH'|URL)->require(STR)      12*#require(STR) will load 'PATH/STR' (PATH is relative to __dirname)
-                                             12*#require() is CommonJS, i.e. can be used to use CommonJS in ESM with createRequire(import.meta.url)
 
 require.cache[ID]                               #[MODULE.]require(STR) cache (i.e. modules are only loaded once).
                                                 #ID is require.resolve(STR) result
                                                 #Builtins are not cached.
                                                 #Can delete it to remove cache, or restart current code.
-syncBuiltinESMExports()                      12*#Must be done after monkey-patching core modules so that dynamic import(...) can use it
 
 MODULE.require                                  #Reference to require
 
@@ -388,45 +386,64 @@ __dirname                                       #Current file absolute dirname
 
 require('module').builtinModules                #List of system 'MODULE'_ARR (e.g. 'http') including internal ones
 
---experimental-resolve-self                  13*#Allow import|require() on current module's PACKAGE.name
-
 CLI ==>                                         #require.main, process.mainModule: undefined
                                                 #MODULE.loaded: false
                                                 #__filename, __dirname: undefined (but MODULE.filename is '$PWD/repl')
                                                 #MODULE.id: 'repl'
                                                 #exports is undefined (but not MODULE.exports)
 
-PACKAGE.exports                              13*#OBJ of { "PATH": "PATH2"|OBJ2, ... } translating import ... from '...'
-                                             13*#Can also be 'PATH2'|OBJ2 directly, as an alias for { '.': 'PATH2'|OBJ2 }
-                                             13*#Only used:
-                                             13*#  - with import ... from 'MODULE[/...]', not '.[.]/MODULE' nor 'file:///...'
-                                             13*#  - if PACKAGE.type 'module'
-                                             13*#PACKAGE.main won't be used unless one of the conditions above not met
-                                             13*#  - i.e. can be used for CommonJS imports only
-                                             13*#PATH:
-                                             13*#  - must start with '.', which is matched against 'MODULE' in imported path
-                                             13*#     - i.e. single '.' can be used like PACKAGE.main
-                                             13*#  - if end with '/', is a prefix
-                                             13*#     - otherwise must be exact match
-                                             13*#     - if several matches, longer prefixes prevail
-                                             13*#PATH2:
-                                             13*#  - must start with '.'
-                                             13*#  - must end with '/' if PATH ends with '/'
-                                             13*#PATH2 can be { 'CONDITION': 'PATH2', ... } instead:
-                                             13*#  - must use --experimental-conditional-exports
-                                             13*#  - loads first 'PATH2' whose CONDITION matches
-                                             13*#  - available CONDITION:
-                                             13*#     - require: CommonJS
-                                             13*#     - node: Node.js environment (CommonJS|ESM)
-                                             13*#     - browser: browser environment
-                                             13*#     - default: always match, but least priority
-                                             13*#     - custom ones, e.g. 'electron', 'deno', etc.
-                                             13*#If no matches, errors:
-                                             13*#  - i.e. empty OBJ can be used to forbid 'MODULE/...'
-                                             13*#     - can be false (same as empty OBJ)
+--experimental-resolve-self                  13*#Allow require|import() on current module's PACKAGE.name
+
+--force-context-aware                        12*#Forbids native modules that do side effects during initialization
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:          ES MODULES           :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+STEPS ==>                                    13*#  - resolution (all): relative PATH to absolute PATH
+                                             13*#  - fetch|read file (all)
+                                             13*#  - global context:
+                                             13*#     - require(): set global context to add exports, require, module, __filename, __dirname
+                                             13*#        - before Node 11, was wrapping in anonymous function, with global variables as
+                                             13*#          arguments, i.e. (function(GLOBALS...){...})(...)
+                                             13*#     - import[()]: does not add those global variables
+                                             13*#  - parsing:
+                                             13*#     - require(), import(): normal
+                                             13*#     - import: also find symbols from named imports (import { VAR }) and link them
+                                             13*#  - running|evaluating (all)
+                                             13*#  - cache return value (all)
+
+PARSE-TIME VS RUNTIME ==>                    13*#  - require(), import(): everything done runtime
+                                             13*#  - import: everything done parse-time:
+                                             13*#     - cannot do e.g. export { VAL as [DYNAMIC_VAR] }
+                                             13*#     - cannot catch errors in try/catch (e.g. optional dependency)
+                                             13*#     - better static analysis
+                                             13*#     - VAR are implicitely const
+
+SYNC VS ASYNC ==>                            13*#  - require(): sync
+                                             13*#  - import:
+                                             13*#     - async parsing (parse-time)
+                                             13*#     - sync loading (runtime)
+                                             13*#  - import(): async with PROMISE
+
+TOP-LEVEL ==>                                13*#  - require(), import(): does not have to be top-level
+                                             13*#  - import: must be top-level
+
+CIRCULAR DEPENDENCIES ==>                    13*#  - import(), dynamic require(): no issues
+                                             13*#  - top-level require(): retrieve `module.exports` (not individual properties) by reference (not value)
+                                             13*#     - if accessed during file load, empty object (parent not done loading)
+                                             13*#        - including destructuring during `require()`
+                                             13*#     - but works after file load:
+                                             13*#        - unless parent does `module.exports = VAL` (as opposed to `module.exports.VAR = VAL`), as it removes the reference
+                                             13*#  - import: retrieve individual properties by reference (not value)
+                                             13*#     - if accessed synchronously, throws error (parent not done loading)
+                                             13*#     - otherwise works
 
 import|export ...                            13*#ES modules
-                                             13*#Must use --experimental-vm-modules for use in VM
                                              13*#Declaring file as ESM|CommonJS:
                                              13*#  - FILE.mjs|cjs
                                              13*#  - FILE.js use PACKAGE.type 'module|commonjs' (def: 'commonjs')
@@ -456,49 +473,6 @@ import|export ...                            13*#ES modules
                                              13*#Supports import(), import.meta.url
                                              13*#Can monkey-patch core modules by modifying their default import.
                                              13*#Top-level `this` is `undefined` (instead of `module.exports`)
-
-DIFFERENCES ==>                              13*#Difference from require(), import and import()
-                                             13*#Steps:
-                                             13*#  - resolution (all): resolve PATH to absolute PATH
-                                             13*#  - read file (all)
-                                             13*#  - global context:
-                                             13*#     - require(): set global context to add exports, require, module, __filename, __dirname
-                                             13*#        - before Node 11, was wrapping in anonymous function, with global variables as
-                                             13*#          arguments, i.e. (function(GLOBALS...){...})(...)
-                                             13*#     - import[()]: does not add those global variables
-                                             13*#  - parsing:
-                                             13*#     - require(), import(): normal
-                                             13*#     - import: also find symbols from named imports (import { VAR }) and link them
-                                             13*#  - running|evaluating (all)
-                                             13*#  - cache return value (all)
-                                             13*#Parse-time vs runtime:
-                                             13*#  - require(), import(): everything done runtime
-                                             13*#  - import:
-                                             13*#     - everything done parse-time (except running), running then done runtime
-                                             13*#     - i.e.:
-                                             13*#        - cannot do e.g. export { VAL as [DYNAMIC_VAR] }
-                                             13*#        - cannot catch errors in try/catch (e.g. optional dependency)
-                                             13*#        - also better static analysis
-                                             13*#        - VAR are implicitely const
-                                             13*#Sync vs async:
-                                             13*#  - require(): sync
-                                             13*#  - import:
-                                             13*#     - async parsing (just cannot be experienced)
-                                             13*#     - sync runtime loading
-                                             13*#  - import(): async with PROMISE
-                                             13*#Top-level:
-                                             13*#  - require(), import(): does not have to be top-level
-                                             13*#  - import: must be top-level
-                                             13*#Circular dependencies:
-                                             13*#  - import(), dynamic require(): no issues
-                                             13*#  - top-level require(): retrieve `module.exports` (not individual properties) by reference (not value)
-                                             13*#     - if accessed during file load, empty object (parent not done loading)
-                                             13*#        - including destructuring during `require()`
-                                             13*#     - but works after file load:
-                                             13*#        - unless parent does `module.exports = VAL` (as opposed to `module.exports.VAR = VAL`), as it removes the reference
-                                             13*#  - import: retrieve individual properties by reference (not value)
-                                             13*#     - if accessed synchronously, throws error (parent not done loading)
-                                             13*#     - otherwise works
 
 DEFAULT EXPORT ==>                           13*#CommonJS: it is the whole export (module.exports)
                                              13*#ESM: it is a property named 'default'
@@ -531,7 +505,39 @@ NODE-ONLY RESOLVER LOGIC ==>                 13*#Browsers cannot:
                                              13*#     - execute() must call EXPORTS.VAR.get()|set(VAL) to set the value of the
                                              13*#       exported variables
 
---force-context-aware                        12*#Forbids native modules that do side effects during initialization
+PACKAGE.exports                              13*#OBJ of { "PATH": "PATH2"|OBJ2, ... } translating import ... from '...'
+                                             13*#Can also be 'PATH2'|OBJ2 directly, as an alias for { '.': 'PATH2'|OBJ2 }
+                                             13*#Only used:
+                                             13*#  - with import ... from 'MODULE[/...]', not '.[.]/MODULE' nor 'file:///...'
+                                             13*#  - if PACKAGE.type 'module'
+                                             13*#PACKAGE.main won't be used unless one of the conditions above not met
+                                             13*#  - i.e. can be used for CommonJS imports only
+                                             13*#PATH:
+                                             13*#  - must start with '.', which is matched against 'MODULE' in imported path
+                                             13*#     - i.e. single '.' can be used like PACKAGE.main
+                                             13*#  - if end with '/', is a prefix
+                                             13*#     - otherwise must be exact match
+                                             13*#     - if several matches, longer prefixes prevail
+                                             13*#PATH2:
+                                             13*#  - must start with '.'
+                                             13*#  - must end with '/' if PATH ends with '/'
+                                             13*#PATH2 can be { 'CONDITION': 'PATH2', ... } instead:
+                                             13*#  - must use --experimental-conditional-exports
+                                             13*#  - loads first 'PATH2' whose CONDITION matches
+                                             13*#  - available CONDITION:
+                                             13*#     - require: CommonJS
+                                             13*#     - node: Node.js environment (CommonJS|ESM)
+                                             13*#     - browser: browser environment
+                                             13*#     - default: always match, but least priority
+                                             13*#     - custom ones, e.g. 'electron', 'deno', etc.
+                                             13*#If no matches, errors:
+                                             13*#  - i.e. empty OBJ can be used to forbid 'MODULE/...'
+                                             13*#     - can be false (same as empty OBJ)
+
+createRequire('PATH'|URL)->require(STR)      12*#require(STR) will load 'PATH/STR' (PATH is relative to __dirname)
+                                             12*#require() is CommonJS, i.e. can be used to use CommonJS in ESM with createRequire(import.meta.url)
+
+syncBuiltinESMExports()                      12*#Must be done after monkey-patching core modules so that dynamic import(...) can use it
 
 
                                              /=+===============================+=\
