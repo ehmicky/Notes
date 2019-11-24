@@ -293,11 +293,12 @@ EVENTEMITTER.on                                 #Event when a new event handler 
                                              \=+===============================+=/
 
 
-GLOBAL VARIABLES ==>                            #  - global|GLOBAL|root: global scope reference
-                                                #  - clear|setImmediate|Interval|Timeout, Object, URL, console, encodeURI, etc.: JavaScript globals
-                                                #  - module, require, exports, __filename, __dirname: module-related globals
+GLOBAL VARIABLES ==>                            #  - global|globalThis|GLOBAL|root: global scope reference
+                                                #  - clear|setImmediate|Interval|Timeout, Object, URL, console, encodeURI, WebAssembly, etc.: JavaScript globals
+                                                #  - module, require, exports, __filename, __dirname: CommonJS globals
                                                 #  - process, url: core modules
                                                 #  - Buffer: core modules property
+                                                #  - _, _error: REPL only
                                                 #  - all core modules (e.g. http): in CLI only
 
 --frozen-intrisics                              #Call Object.freeze():deeply on all global objects.
@@ -308,12 +309,36 @@ require('timers')                               #Module for clear|setImmediate|I
 
                                              /=+===============================+=\
                                             /  :                               :  \
+                                            )==:             SCOPE             :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+SCOPE ==>                                       #Variables are local to each file, except for MODULE.exports|require() or export|import
+
+TOP-LEVEL ==>                                   #CommonJS, import(): any level
+                                             13*#import: must be top-level
+
+TOP-LEVEL CONTEXT ==>                           #CommonJS:
+                                                #  - has exports, require, module, __filename, __dirname
+                                                #  - before Node 11, was wrapping in anonymous function, with global variables as
+                                                #    arguments, i.e. (function(GLOBALS...){...})(...)
+                                             13*#ESM: only import, export, import.meta
+
+TOP-LEVEL THIS ==>                              #CommonJS: according to ENVVAR NODE_MODULE_CONTEXTS:
+                                                #  - 0 (def): module.exports
+                                                #  - 1: global
+                                             13*#ESM: undefined
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
                                             )==:            MODULES            :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
-STEPS ==>                                       #  - resolution: relative PATH to absolute PATH
+STEPS ==>                                       #  - resolve relative PATH to absolute PATH
                                                 #  - fetch|read file
                                                 #  - sets top-level context
                                                 #  - parsing
@@ -334,23 +359,6 @@ SYNC VS ASYNC ==>                               #CommonJS: sync
                                              13*#  - sync loading (runtime)
                                              13*#import(): async with PROMISE
 
-TOP-LEVEL ==>                                   #CommonJS, import(): any level
-                                             13*#import: must be top-level
-
-TOP-LEVEL CONTEXT ==>                           #CommonJS:
-                                                #  - has exports, require, module, __filename, __dirname
-                                                #  - before Node 11, was wrapping in anonymous function, with global variables as
-                                                #    arguments, i.e. (function(GLOBALS...){...})(...)
-                                             13*#ESM: only import, export, import.meta
-
-TOP-LEVEL THIS ==>                              #CommonJS: according to ENVVAR NODE_MODULE_CONTEXTS:
-                                                #  - 0 (def): module.exports
-                                                #  - 1: global
-                                             13*#ESM: undefined
-
-DEFAULT EXPORT ==>                              #CommonJS: it is the whole export (module.exports)
-                                             13*#ESM: it is a property named 'default'
-
 CIRCULAR DEPENDENCIES ==>                       #import(), dynamic require(): no issues
                                                 #top-level require():
                                                 #  - retrieve `module.exports` (not individual properties) by reference (not value)
@@ -362,6 +370,9 @@ CIRCULAR DEPENDENCIES ==>                       #import(), dynamic require(): no
                                              13*#  - retrieve individual properties by reference (not value)
                                              13*#  - if accessed synchronously, throws error (parent not done loading)
                                              13*#  - otherwise works
+
+DEFAULT EXPORT ==>                              #CommonJS: it is the whole export (module.exports)
+                                             13*#ESM: it is a property named 'default'
 
 FORMAT ==>                                   13*#Decided by:
                                              13*#  - FILE.mjs|cjs -> ESM|CommonJS
@@ -390,7 +401,7 @@ createRequire('PATH'|URL)->require(STR)      12*#require(STR) will load 'PATH|UR
                                              \=+===============================+=/
 
 
-require|import ... 'PATH.js'                    #
+require|import ... 'PATH[.js]'                  #
 
 require|import ... 'PATH.json'                  #
 --experimental-json-modules                  13*#Required with ESM (experimental in browsers too)
@@ -418,13 +429,13 @@ import 'data:MIME,...'                       13*#For MIMEs text/javascript, appl
                                              \=+===============================+=/
 
 
--r STR                                          #Load file STR:
---require STR                                   #  - 'ID': core module
-require(STR)                                    #  - 'FILE' (absolute or relative)
+require(STR)                                    #Load file STR:
+-r STR                                          #  - 'ID': core module
+--require STR                                   #  - 'FILE' (absolute or relative)
                                                 #  - 'DIR' (absolute or relative):
                                                 #     - DIR/package.json, using main 'PATH' (relative to DIR)
                                                 #     - DIR/index.EXT
-                                                #  - 'MODULE':
+                                                #  - 'MODULE[/PATH]':
                                                 #     - i.e. anything that does not start with / or .
                                                 #     - tries require('DIR2/MODULE'), with DIR2 [.../[..]]./node_modules/
                                                 #Paths can omit extensions: .js, .mjs, .cjs, .json, .node
@@ -435,13 +446,13 @@ MODULE.require(...)                             #Reference to require(...)
 
 require.resolve(STR[, OPTS])->'/PATH'           #How require(STR) would resolve, based on __filename.
                                                 #OPTS:
-                                                #  - paths 'DIR'_ARR: alternative directories to look into
-                                                #    Their [.../[..]]./node_modules will always be searched
+                                                #  - paths 'DIR'_ARR: alternative directories to look into.
+                                                #    Their [.../[..]]./node_modules will always be searched.
 require.resolve.paths(STR)->'DIR'_ARR           #Directories that would be looked into when require(STR) would resolve
 
-require.cache['/PATH']                          #require(STR) cache (i.e. modules are only loaded once).
-                                                #'/PATH' is require.resolve(STR) result
-                                                #Builtins are not cached.
+require.cache['/PATH']                          #require() cache (i.e. modules are only loaded once).
+                                                #'/PATH' is require.resolve() result
+                                                #Does not include builtins.
                                                 #Can delete it to remove cache, or restart current code.
 
 --preserve-symlinks                             #When require()|import a symlink, use symlink path instead of symlinked file's path for:
@@ -450,7 +461,6 @@ require.cache['/PATH']                          #require(STR) cache (i.e. module
                                                 #Does not apply to main file
 --preserve-symlinks-main                     10*#Same but only for main file
 
-SCOPE ==>                                       #Variables are local to each file, except for MODULE.exports
 exports                                         #Return value (by reference if OBJ) when required. Must be assigned sync.
                                                 #Can be any type.
 MODULE.exports                                  #Reference to exports.
@@ -458,9 +468,10 @@ MODULE.exports                                  #Reference to exports.
 
 module                                          #Current MODULE, i.e. file being loaded.
                                                 #There are builtin modules, which are the chapters of this doc.
+MODULE.parent|children                          #MODULE[_ARR]|null
 require.main                                    #Root file (first to have been loaded) MODULE
 process.mainModule                              #Same but updated if root file changed at runtime
-MODULE.parent|children                          #MODULE[_ARR]|null
+
 MODULE.loaded                                   #False for the first time the file is loaded (i.e. sync)
                                                 #True for async functions
 require('module').builtinModules                #List of system 'MODULE'_ARR (e.g. 'http') including internal ones
