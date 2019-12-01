@@ -7,6 +7,7 @@
 
 TODO:
 https://github.com/actions/toolkit
+  - including docs/*.md
 https://help.github.com/en/articles/persisting-workflow-data-using-artifacts
 Solve all the ??? in this doc
 https://github.com/actions/checkout
@@ -377,7 +378,7 @@ toJson(VAL)->STR                  #Like VAL.toJson()
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:          ACTION CORE          :==(
+                                            )==:          ACTION MAIN          :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
@@ -409,9 +410,24 @@ RUNS.using                        #Either:
                                   #     - only on Linux hosts
                                   #     - slower than 'node12'
 NODE_RUNS.main                    #'PATH' to file to execute
+NODE_RUNS.post                    #'PATH' to file to execute after NODE_RUNS.main, whether it was successful or not
 DOCKER_RUNS.image                 #'PATH', 'docker://[HOST/]IMAGE[:TAG]' or 'USER/REPO' to Dockerfile
 
+@actions/toolkit                  #Monorepo with @actions/core|io|exec|github|tool-cache
+CORE                              #Package '@actions/core' (1.2.0)
+IO                                #Package '@actions/io' (1.0.1):
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:         ACTION STATUS         :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
 STATUS ==>                        #'success' if exit code 0, 'failure' otherwise
+
+CORE.setFailed(STR)               #Sets process.exitCode = 1 + CORE.error(STR)
 
 
                                              /=+===============================+=\
@@ -422,7 +438,10 @@ STATUS ==>                        #'success' if exit code 0, 'failure' otherwise
 
 
 ACTION_COMMAND                    #IPC mechanism between ACTION and GitHub actions runner.
- ({ATTR: VAL,...}, ARG...)        #Printed to stdout as ::ACTION_COMMAND [ATTR=VAL]...::ARG...
+ ({ATTR: STR,...}[, STR2])        #Printed to stdout as ::ACTION_COMMAND [ATTR=STR],...::[STR2]
+                                  #Must percent-encode:
+                                  #  - STR|STR2: \r \n
+                                  #  - STR: ] ;
                                   #ACTION_COMMAND|ATTR are case-insensitive
                                   #Must use OS-specific newline.
 ACTION_COMMAND stop-commands      #Pauses IPC mechanism.
@@ -432,7 +451,7 @@ ACTION_COMMAND stop-commands      #Pauses IPC mechanism.
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:      ACTION INPUT/OUTPUT      :==(
+                                            )==:       ACTION I/O DOCKER       :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
@@ -440,27 +459,55 @@ ACTION_COMMAND stop-commands      #Pauses IPC mechanism.
 DOCKER_RUNS.entrypoint            #'SHELL_COMMAND'. Sets|overrides ACTION's Dockerfile ENTRYPOINT, i.e. main command to run.
 DOCKER_RUNS.args                  #STR. Sets|overrides Dockerfile CMD, i.e. arguments to ENTRYPOINT.
 
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:    ACTION I/O DECLARATIVE     :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
 ACTION.inputs.INPUT_ID            #INPUT. ENVVAR used as arguments
                                   #INPUT_ID is case-sensitive when matching STEP.with
-                                  #It is passed as ENVVAR INPUT_VAR=STR with VAR converted to uppercase
+                                  #It is passed as ENVVAR INPUT_{INPUT_ID.toUpperCase()}=STR
                                   #INPUT_ID must be [:alnum:]-_
 INPUT.required                    #BOOL (def: false)
 INPUT.default                     #STR
 INPUT.description                 #STR
+CORE.getInput('INPUT_ID'[, OPTS]) #Retrieve ENVVAR INPUT_{INPUT_ID.toUpperCase()}
+ ->STR                            #Trims value
+                                  #If OPTS.required true (def: false), throw if STR empty string (before trimming)
 
 ACTION.outputs.OUTPUT_ID          #OUTPUT.
                                   #OUTPUT_ID must be [:alnum:]-_ (lowercase-only)
 OUTPUT.description                #STR
 ACTION_COMMAND set-output
- ({name: 'OUTPUT_ID'}, STR)       #Set OUTPUT
+ ({name: 'OUTPUT_ID'}, STR)
+CORE.setOutput('OUTPUT_ID', STR)  #Set OUTPUT
 CONTEXT.steps.STEP_ID.outputs.VAR #Get OUTPUT of previous STEPs' ACTIONs
                                   #Can only be used in the following STEPs
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:      ACTION I/O ENVVARS       :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
 
 RUNS.env                          #OBJ of ENVVARs
 
 ACTION_COMMAND set-env
  ({name: 'VAR'}, 'VAL')           #Set ENVVAR VAR=VAL in parent process and following STEPs (not current one)
-ACTION_COMMAND add-path('DIR')    #Appends to PATH ENVVAR in parent process and following STEPs (not current one)
+CORE.exportVariable('VAR', 'VAL') #Do ACTION_COMMAND set-env + set process.env.VAR
+
+ACTION_COMMAND add-path('DIR')    #Prepend to PATH ENVVAR in parent process and following STEPs (not current one)
+CORE.addPath('DIR')               #Do ACTION_COMMAND add-path + set process.env.PATH (not process.env.Path)
+
+ACTION_COMMAND save-state
+ ('VAR', 'VAL')                   #Set ENVVAR STATE_VAR=VAL. Only within current action
+CORE.saveState('VAR', 'VAL')      #Meant for communication between NODE_RUNS.main and NODE_RUNS.post
+CORE.getState('VAR')->'VAL'       #Retrieve ENVVAR STATE_VAR ('' if not set)
 
 
                                              /=+===============================+=\
@@ -472,6 +519,15 @@ ACTION_COMMAND add-path('DIR')    #Appends to PATH ENVVAR in parent process and 
 
 ACTION_COMMAND debug|warning|error#Print message
  (OBJ, STR)                       #OBJ (all optional): file 'FILENAME', line NUM, col NUM
-                                  #If debug, only printed if SECRET_ENVVAR ACTIONS_STEP_DEBUG is 'true'
+CORE.debug|warning|error(STR)     #If debug, only printed if SECRET_ENVVAR ACTIONS_STEP_DEBUG is 'true'
+
+ACTION_COMMAND group('GROUP')
+CORE.startGroup('GROUP')          #Start foldable group
+ACTION_COMMAND endgroup()
+CORE.endGroup()                   #Stop last foldable group
+CORE.group
+ ('GROUP', FUNC()[->PROMISE])
+ ->PROMISE                        #Call ACTION_COMMAND group|endgroup before|after FUNC()
+
 ACTION_COMMAND add-mask(STR)      #Replace any STR in logs by *
-                                  #Meant for confidential values
+CORE.setSecret(STR)               #Meant for confidential values
