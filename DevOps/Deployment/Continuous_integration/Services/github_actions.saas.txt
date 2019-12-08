@@ -6,13 +6,11 @@
 
 
 TODO:
-https://github.com/actions/toolkit
-  - including docs/*.md
 https://help.github.com/en/articles/persisting-workflow-data-using-artifacts
-Solve all the ??? in this doc
 https://github.com/actions/checkout
 https://github.com/actions/cache and https://help.github.com/en/github/automating-your-workflow-with-github-actions/caching-dependencies-to-speed-up-workflows
 https://github.com/actions
+Solve all the ??? in this doc
 https://github.com/marketplace?type=actions
 https://github.com/sdras/awesome-actions
 Look in GitHub for GitHub actions tools
@@ -328,8 +326,8 @@ GITHUB.context.action             #ACTION_ID
 
 LOGS ==>                          #Can be seen through web UI
 
-ACTIONS_RUNNER_DEBUG=true         #SECRET_ENVVAR. Add debug information about environment and execution order
-ACTIONS_STEP_DEBUG=true           #SECRET_ENVVAR. Add debug information about jobs (see ACTION_COMMAND debug below)
+ACTIONS_RUNNER_DEBUG=true         #SECRET_ENVVAR. Add debug information about environment and orchestration
+ACTIONS_STEP_DEBUG=true           #SECRET_ENVVAR. Add debug information about each job itself (see ACTION_COMMAND debug below)
 
 DOWNLOAD ARTIFACTS ==>            #Done through web UI
 
@@ -473,6 +471,9 @@ DOCKER_RUNS.image                 #'PATH', 'docker://[HOST/]IMAGE[:TAG]' or 'USE
 @actions/exec                     #Like EXECA but not as good
                                   #Version 1.0.2
 
+MARKETPLACE ==>                   #Where users search for Actions
+                                  #Must publish to Marketplace each GitHub release explicitly through GitHub release UI
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -587,37 +588,53 @@ CORE.group
 
 ACTION_COMMAND add-mask(STR)      #Replace any STR in logs by *
 CORE.setSecret(STR)               #Meant for confidential values
+                                  #If STR is multiline, should be called on each line.
+
+ACTION_COMMAND add-matcher        #Creates GitHub annotations in Action logs, by looking for specific RegExps
+ ({}, 'PATH.json')                #For example use the highlight warning|errors (such as linting|validation)
+                                  #PATH.json is OBJ: problemMatcher OBJ_ARR:
+                                  #  - owner 'NAME': project name
+                                  #  - pattern OBJ_ARR:
+                                  #     - how to detect and parse log lines to GitHub annotations
+                                  #     - when several OBJ, read|parse logs with each of them in order:
+                                  #        - create a single GitHub annotation for all of them
+                                  #        - if OBJ.loop true, create several annotations, by repeating REGEXP until it fails
+                                  #     - OBJ:
+                                  #        - regexp 'REGEXP': each NUM below represents a parens group inside REGEXP
+                                  #        - message NUM
+                                  #        - code NUM: code sample
+                                  #        - severity NUM: 'warning'|'error'
+                                  #        - file|line|column NUM: error location
+                                  #        - loop BOOL (def: false)
+ACTION_COMMAND remove-matcher
+ ({owner STR})                    #
 
 
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:     ACTION CACHE HELPERS      :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
 
 
+@actions/tool-cache               #Contains:
+                                  #  - helpers to do HTTP download and tar|zip|7z extraction using a standardized temporary directory
+                                  #  - helpers to cache files using a standardized cache directory
+                                  #Version 1.1.2
 
-@actions/tool-cache               #Version 1.1.2
-
-CACHEDIR                          #CACHEBASEDIR/NAME/VERSION/ARCH
-                                  #  - NAME is any namespace (e.g. project name)
-                                  #  - VERSION is normalized with SEMVER.clean() (see its doc)
-                                  #  - ARCH def is OS.arch()
-CACHEBASEDIR                      #Either:
-                                  #  - ENVVAR RUNNER_TOOL_CACHE
-                                  #  - USERS_DIR/actions/cache
-TMPDIR                            #Either:
-                                  #  - ENVVAR RUNNER_TEMP
-                                  #  - USERS_DIR/actions/temp
 USERSDIR                          #Is:
                                   #  - Linux: /home
                                   #  - Mac: /Users
                                   #  - Windows: ENVVAR USERPROFILE (or C:\)
 
-extractTar                        #Extract tar archive to temporary directory, using 'tar' binary
- ('PATH'[, 'PATH2'][, STR])       #STR def is tar flags (def: 'xz')
- ->PROMISE_PATH2                  #PATH2 def is TMPDIR/UUIDV4, and is created if does not exists
-extractZip('PATH'[, 'PATH2'])
- ->PROMISE_PATH2                  #Same with zip using 'unzip' binary (on Unix) or Powershell Power.IO.Compression.FileSystem (on Windows)
-extract7z('PATH'[, 'PATH2']
- [, '7Z_BIN_PATH'])               #Same with 7z using '7z' binary, which is shipped as *.exe with the code but can be '7Z_BIN_PATH' too
- ->PROMISE_PATH2                  #Windows only
-
+CACHEBASEDIR                      #Either:
+                                  #  - ENVVAR RUNNER_TOOL_CACHE
+                                  #  - USERS_DIR/actions/cache
+CACHEDIR                          #CACHEBASEDIR/NAME/VERSION/ARCH
+                                  #  - NAME is any project name
+                                  #  - VERSION is normalized with SEMVER.clean() (see its doc)
+                                  #  - ARCH def is OS.arch()
+                                  #Created by cacheFile|cacheDir() if does not exist
 cacheFile('PATH', 'PATH2',        #Copy 'PATH' to CACHEDIR/PATH2
  'NAME', 'VERSION'[, 'ARCH'])     #Create CACHEDIR if does not exist
  ->PROMISE_'CACHEDIR'             #Once done, write an empty file at CACHEDIR.complete
@@ -625,8 +642,23 @@ cacheFile('PATH', 'PATH2',        #Copy 'PATH' to CACHEDIR/PATH2
 cacheDir('DIR',
  'NAME', 'VERSION'[, 'ARCH'])
  ->PROMISE_'CACHEDIR'             #Same with a 'DIR' recursively
-
 findAllVersions('NAME'[, 'ARCH'])
  ->'VERSION'_ARR                  #Find all 'VERSION' from CACHEBASEDIR/NAME/*. Uses sync I/O
-find('NAME', 'VERSION'[', ARCH'])
- ->'CACHEDIR'                     #Find the 'CACHEDIR' of a specific NAME+VERSION+ARCH. Uses sync I/O
+find('NAME', 'VERSION_RANGE'
+ [', ARCH'])->'CACHEDIR'          #Find the 'CACHEDIR' of a specific NAME+VERSION_RANGE+ARCH. Uses sync I/O
+
+TMPBASEDIR                        #Either:
+                                  #  - ENVVAR RUNNER_TEMP
+                                  #  - USERS_DIR/actions/temp
+TMPDIR                            #TMPDIR/UUIDv4
+                                  #Created by downloadTool|extract*() if does not exist
+downloadTool('URL')               #Download URL and stream it to TMPDIR
+ ->PROMISE_TMPDIR                 #Throw HTTPError if status not 200. Throw other ERROR if other issues.
+extractTar
+ ('PATH'[, 'TMPDIR'][, STR])      #Extract tar archive to temporary directory, using 'tar' binary
+ ->PROMISE_TMPDIR                 #STR def is tar flags (def: 'xz')
+extractZip('PATH'[, 'PATH2'])
+ ->PROMISE_PATH2                  #Same with zip using 'unzip' binary (on Unix) or Powershell Power.IO.Compression.FileSystem (on Windows)
+extract7z('PATH'[, 'PATH2']
+ [, '7Z_BIN_PATH'])               #Same with 7z using '7z' binary, which is shipped as *.exe with the code but can be '7Z_BIN_PATH' too
+ ->PROMISE_PATH2                  #Windows only
