@@ -6,10 +6,10 @@
 
 
 TODO:
-https://github.com/actions/cache and https://help.github.com/en/github/automating-your-workflow-with-github-actions/caching-dependencies-to-speed-up-workflows
+re-read this file's cache documentation to see if it makes sense
+https://github.com/actions
 https://help.github.com/en/actions/automating-your-workflow-with-github-actions/hosting-your-own-runners
   - including CONTEXT.runner
-https://github.com/actions
 Check pricing for private repos (e.g. artifacts cost, etc.)
 https://github.com/marketplace?type=actions
 https://github.com/sdras/awesome-actions
@@ -425,6 +425,150 @@ endsWith(STR, STR2)->BOOL         #Like STR.endsWith(), case-insensitive
 format(STR, VAL...)->STR          #Replace {NUM} placeholders in STR. {{}} for escaping {}
 join(STR[_ARR], STR2)->STR        #Like [...STR_ARR, STR2].join(' ')
 toJson(VAL)->STR                  #Like VAL.toJson()
+hashFiles('GLOB')->'HASH'         #
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:             CACHE             :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+CACHING ==>                       #Uses internal GitHub actions API to cache files as a key-value store
+                                  #Scoped to each repository
+                                  #  - scoped to branch too, but `master` and parent branch (including in PRs) caches are available too
+                                  #  - not scoped to each matrix dimension, so need to namespace KEY with it
+                                  #Max 400MB per file
+                                  #Cache eviction:
+                                  #  - rotated on max 2GB per repository, based on atime
+                                  #  - also removed after 7 days if not accessed
+                                  #Can be accessed by anyone who can create PRs, i.e. should not contain confidential information
+                                  #Only on event 'push|pull_request'
+
+CACHE_URL                         #API endpoint
+                                  #Is BASE/actions/cache/_apis/artifactcache/cache
+                                  #  - BASE is ENVVAR ACTIONS_CACHE_URL|ACTIONS_RUNTIME_URL
+                                  #  - Authorization: Bearer BASE64_TOKEN [C] using ENVVAR ACTIONS_RUNTIME_TOKEN
+                                  #  - Accept: application/json;api-version=5.2-preview.1 [C]
+GET CACHE_URL?keys=KEY,...        #Get cached file information
+                                  #Response is OBJ:
+                                  #  - cacheKey 'KEY'
+                                  #  - archiveLocation: 'FILE_PATH': file is located at BASE/actions/cache/FILE_PATH
+                                  #  - scope 'USER/REPO'
+                                  #  - creationTime 'DATE'
+POST CACHE_URL/KEY                #Save cached file
+                                  #Can stream with Content-Type: application/content-stream [C]
+KEY                               #File's ID.
+                                  #It can be just the prefix
+                                  #  - if several, use the last created one
+                                  #Cache miss:
+                                  #  - when trying to restore a file that is not cached yet, with GET
+                                  #  - can use additional KEYs to retrieve a fallback instead
+                                  #So usually use:
+                                  #  - a main save|restore KEY: using namespace prefix + file hash|timestamp
+                                  #  - additional restore KEY: using namespace prefix only
+                                  #Cannot contain comma
+
+@actions/cache                    #Cache a directory to GitHub actions API:
+                                  #  - on action start, restore remote cached directory to local path
+                                  #  - on job end, if cache was missed, save local directory to remove cache
+                                  #Restoring cache steps:
+                                  #  - GET CACHE_URL?keys=INPUTS.key[,INPUTS.restore-keys...]
+                                  #  - GET BASE/actions/cache/FILE_PATH
+                                  #  - write to TMPCOREDIR/cache.tgz
+                                  #  - extract cache.tgz to INPUTS.path
+                                  #Saving cache steps:
+                                  #  - create TMPCOREDIR/cache.tgz from INPUTS.path
+                                  #  - POST CACHE_URL/KEY (stream the body)
+                                  #Uses 'tar' binary
+                                  #Version 1.0.3
+INPUTS.path                       #'PATH' of the DIR to save|restore. Can start with ~
+                                  #Example: ~/.cache/pip
+INPUTS.key                        #Main 'KEY' on save|restore
+                                  #Example: '${{matrix.os}}-NAMESPACE-${{hashFiles('GLOB')}}'
+INPUTS.restore-keys               #Fallback 'KEY\n...' on restore
+                                  #Example: '${{matrix.os}}-NAMESPACE-'
+OUTPUTS.cache-hit                 #'true|false' whether cache miss
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:         CACHE HELPERS         :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+@actions/tool-cache               #Contains:
+                                  #  - helpers to do HTTP download and tar|zip|7z extraction using a standardized temporary directory
+                                  #  - helpers to cache files using a standardized cache directory
+                                  #Version 1.1.2
+
+USERSDIR                          #Is:
+                                  #  - Linux: /home
+                                  #  - Mac: /Users
+                                  #  - Windows: ENVVAR USERPROFILE (or C:\)
+
+CACHEBASEDIR                      #Either:
+                                  #  - ENVVAR RUNNER_TOOL_CACHE
+                                  #  - USERS_DIR/actions/cache
+CACHEDIR                          #CACHEBASEDIR/NAME/VERSION/ARCH
+                                  #  - NAME is any project name
+                                  #  - VERSION is normalized with SEMVER.clean() (see its doc)
+                                  #  - ARCH def is OS.arch()
+                                  #Created by cacheFile|cacheDir() if does not exist
+cacheFile('PATH', 'PATH2',        #Copy 'PATH' to CACHEDIR/PATH2
+ 'NAME', 'VERSION'[, 'ARCH'])     #Create CACHEDIR if does not exist
+ ->PROMISE_'CACHEDIR'             #Once done, write an empty file at CACHEDIR.complete
+                                  #  - this is checked by find[AllVersions]() to exclude still ongoing copies
+cacheDir('DIR',
+ 'NAME', 'VERSION'[, 'ARCH'])
+ ->PROMISE_'CACHEDIR'             #Same with a 'DIR' recursively
+findAllVersions('NAME'[, 'ARCH'])
+ ->'VERSION'_ARR                  #Find all 'VERSION' from CACHEBASEDIR/NAME/*. Uses sync I/O
+find('NAME', 'VERSION_RANGE'
+ [', ARCH'])->'CACHEDIR'          #Find the 'CACHEDIR' of a specific NAME+VERSION_RANGE+ARCH. Uses sync I/O
+
+TMPBASEDIR                        #Either:
+                                  #  - ENVVAR RUNNER_TEMP
+                                  #  - USERS_DIR/actions/temp
+TMPCOREDIR                        #TMPBASEDIR/UUIDv4
+                                  #Created by downloadTool|extract*() if does not exist
+downloadTool('URL')               #Download URL and stream it to TMPCOREDIR
+ ->PROMISE_TMPCOREDIR             #Throw HTTPError if status not 200. Throw other ERROR if other issues.
+extractTar
+ ('PATH'[, 'TMPCOREDIR'][, STR])  #Extract tar archive to temporary directory, using 'tar' binary
+ ->PROMISE_TMPCOREDIR             #STR def is tar flags (def: 'xz')
+extractZip('PATH'[, 'PATH2'])
+ ->PROMISE_PATH2                  #Same with zip using 'unzip' binary (on Unix) or Powershell Power.IO.Compression.FileSystem (on Windows)
+extract7z('PATH'[, 'PATH2']
+ [, '7Z_BIN_PATH'])               #Same with 7z using '7z' binary, which is shipped as *.exe with the code but can be '7Z_BIN_PATH' too
+ ->PROMISE_PATH2                  #Windows only
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:           ARTIFACTS           :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+ARTIFACT ==>                      #*.zip archive that can downloaded either:
+                                  #  - in-between jobs of a build
+                                  #  - in the UI of the build that uploaded it
+                                  #Cannot be downloaded in future builds though.
+                                  #Done by the underlying RUNNER.
+                                  #Retention of 3 months (restarted on each new commit for PRs)
+
+actions/upload-artifact           #Action that uploads files as an artifact
+INPUTS.name                       #STR: artifact name
+INPUTS.path                       #'PATH'
+                                  #Version 1.0.0
+
+actions/download-artifact         #Action that download an artifact files
+INPUTS.name                       #STR: artifact name
+INPUTS.path                       #'PATH' (def: STR)
+                                  #Version 1.0.0
 
 
                                              /=+===============================+=\
@@ -461,7 +605,9 @@ RUNS.using                        #Either:
                                   #     - only on Linux hosts
                                   #     - slower than 'node12'
 NODE_RUNS.main                    #'PATH' to file to execute
-NODE_RUNS.post                    #'PATH' to file to execute after NODE_RUNS.main, whether it was successful or not
+NODE_RUNS.post                    #'PATH' to file to execute at the end of the JOB
+                                  #Whether it was successful or not, but can use NODE_RUNS.post-if 'success|failure()' to restrict
+NODE_RUNS.post-if                 #Like JOB|STEP.if but for NODE_RUNS.post
 DOCKER_RUNS.image                 #'PATH', 'docker://[HOST/]IMAGE[:TAG]' or 'USER/REPO' to Dockerfile
 
 RUNS.plugin                       #'PLUGIN'. Action that is done at the RUNNER-level
@@ -619,108 +765,6 @@ ACTION_COMMAND add-matcher        #Creates GitHub annotations in Action logs, by
                                   #        - loop BOOL (def: false)
 ACTION_COMMAND remove-matcher
  ({owner STR})                    #
-
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:       ACTION ARTIFACTS        :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-ARTIFACT ==>                      #*.zip archive that can downloaded either:
-                                  #  - in-between jobs of a build
-                                  #  - in the UI of the build that uploaded it
-                                  #Cannot be downloaded in future builds though.
-                                  #Done by the underlying RUNNER.
-                                  #Retention of 3 months (restarted on each new commit for PRs)
-
-actions/upload-artifact           #Action that uploads files as an artifact
-INPUTS.name                       #STR: artifact name
-INPUTS.path                       #'PATH'
-                                  #Version 1.0.0
-
-actions/download-artifact         #Action that download an artifact files
-INPUTS.name                       #STR: artifact name
-INPUTS.path                       #'PATH' (def: STR)
-                                  #Version 1.0.0
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:         ACTION CACHE          :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-
-@actions/cache                    #
-                                  #Only on event 'push|pull_request'
-                                  #Do GET BASE/actions/cache/_apis/artifactcache/cache?keys=KEY,...
-                                  #  - BASE is ENVVAR ACTIONS_CACHE_URL|ACTIONS_RUNTIME_URL
-                                  #  - Authorization: Bearer BASE64_TOKEN [C] using ENVVAR ACTIONS_RUNTIME_TOKEN
-                                  #  - Accept: application/json;api-version=5.2-preview.1 [C]
-                                  #HTTP RESPONSE is { archiveLocation: STR }
-                                  #Set ENVVAR STATE_CACHE_RESULT=JSON.stringify(RESPONSE)
-                                  #Version 1.0.3
-INPUTS.path                       #'PATH'. Can start with ~
-INPUTS.key                        #'KEY'. Cannot contain comma
-INPUTS.restore-keys               #'KEY\n...'
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:     ACTION CACHE HELPERS      :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-@actions/tool-cache               #Contains:
-                                  #  - helpers to do HTTP download and tar|zip|7z extraction using a standardized temporary directory
-                                  #  - helpers to cache files using a standardized cache directory
-                                  #Version 1.1.2
-
-USERSDIR                          #Is:
-                                  #  - Linux: /home
-                                  #  - Mac: /Users
-                                  #  - Windows: ENVVAR USERPROFILE (or C:\)
-
-CACHEBASEDIR                      #Either:
-                                  #  - ENVVAR RUNNER_TOOL_CACHE
-                                  #  - USERS_DIR/actions/cache
-CACHEDIR                          #CACHEBASEDIR/NAME/VERSION/ARCH
-                                  #  - NAME is any project name
-                                  #  - VERSION is normalized with SEMVER.clean() (see its doc)
-                                  #  - ARCH def is OS.arch()
-                                  #Created by cacheFile|cacheDir() if does not exist
-cacheFile('PATH', 'PATH2',        #Copy 'PATH' to CACHEDIR/PATH2
- 'NAME', 'VERSION'[, 'ARCH'])     #Create CACHEDIR if does not exist
- ->PROMISE_'CACHEDIR'             #Once done, write an empty file at CACHEDIR.complete
-                                  #  - this is checked by find[AllVersions]() to exclude still ongoing copies
-cacheDir('DIR',
- 'NAME', 'VERSION'[, 'ARCH'])
- ->PROMISE_'CACHEDIR'             #Same with a 'DIR' recursively
-findAllVersions('NAME'[, 'ARCH'])
- ->'VERSION'_ARR                  #Find all 'VERSION' from CACHEBASEDIR/NAME/*. Uses sync I/O
-find('NAME', 'VERSION_RANGE'
- [', ARCH'])->'CACHEDIR'          #Find the 'CACHEDIR' of a specific NAME+VERSION_RANGE+ARCH. Uses sync I/O
-
-TMPBASEDIR                        #Either:
-                                  #  - ENVVAR RUNNER_TEMP
-                                  #  - USERS_DIR/actions/temp
-TMPDIR                            #TMPDIR/UUIDv4
-                                  #Created by downloadTool|extract*() if does not exist
-downloadTool('URL')               #Download URL and stream it to TMPDIR
- ->PROMISE_TMPDIR                 #Throw HTTPError if status not 200. Throw other ERROR if other issues.
-extractTar
- ('PATH'[, 'TMPDIR'][, STR])      #Extract tar archive to temporary directory, using 'tar' binary
- ->PROMISE_TMPDIR                 #STR def is tar flags (def: 'xz')
-extractZip('PATH'[, 'PATH2'])
- ->PROMISE_PATH2                  #Same with zip using 'unzip' binary (on Unix) or Powershell Power.IO.Compression.FileSystem (on Windows)
-extract7z('PATH'[, 'PATH2']
- [, '7Z_BIN_PATH'])               #Same with 7z using '7z' binary, which is shipped as *.exe with the code but can be '7Z_BIN_PATH' too
- ->PROMISE_PATH2                  #Windows only
 
 
                                              /=+===============================+=\
