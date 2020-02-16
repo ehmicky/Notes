@@ -148,6 +148,7 @@ PRODUCT ==>                       #Generic info about service|product sold.
 COUPON ==>                        #DISCOUNTs to many CUSTOMERs (SUBSCRIPTION only). Absolute or relative. Can be count|time limited. Can be repeated.
 DISCOUNT ==>                      #Discount to one CUSTOMER
 CREDIT NOTE ==>                   #Adjustment on open|paid INVOICE. Reduce INVOICE amount, REFUND, reduce CUSTOMER balance or settle outside Stripe. Can PDF.
+CREDIT NOTE ITEM ==>              #CREDIT_NOTE's item
 
 INVOICE ==>                       #Incoming SUBSCRIPTION CHARGE. Automatic (send emails, change state, payment retry) or manual. Can set due date.
                                   #Can PDF. Hosted URL to pay. Can customize look and content.
@@ -354,6 +355,7 @@ NOTATION ==>                    CU#Updatable on create|update
 MONEY                             #INT. In the currency's smallest unit (e.g. cents for USD).
                                   #Can be negative.
 PMONEY                            #Like MONEY but >= 0
+                                  #When *_decimal, is 'BIGINT' string (12 decimals precision) instead
 
 DATE_NUM                          #Unix timestamp in seconds.
 
@@ -1089,6 +1091,7 @@ FILE.purpose                    *C#STR among:
                                   #  - 'finance_report_run': REPORT_RUN.result
                                   #  - 'pci_document': PCI compliance file uploaded through Dashboard
                                   #  - 'tax_document_user_upload': uploaded through Dashboard
+                                  #  - 'additional_verification'
 ?purpose=STR                      #
 
 FILE_LINK                         #Link sharing a FILE publicly.
@@ -1241,12 +1244,13 @@ PINTENT                           #SOURCE authentication + CHARGE creation
                                   #Can re-use SOURCE|PAYMENT_METHOD (CUSTOMER.sources|payment_method), but must re-authenticate for each CHARGE.
                                   #Meant to be used with PAYMENT_METHOD and replace SOURCE over time:
                                   #  - PINTENT.status|next_action is similar to SOURCE.flow
-                                  #  - only support types supported by PAYMENT_METHOD (i.e. 'card*|sepa_debit')
+                                  #  - only support types supported by PAYMENT_METHOD (i.e. 'card*|sepa_debit|fpx')
 
 GET /payment_intents[/ID]
 POST /payment_intents[/ID]        #
 POST /payment_intents/ID/confirm  #Like PINTENT.confirm true
-                                  #Payload attributes: client_secret, payment_method, receipt_email, return_url, shipping, source, save_payment_method, off_session
+                                  #Payload attributes: client_secret, payment_method, receipt_email, return_url, shipping,
+                                  #source, save_payment_method, off_session, error_on_requires_action
 POST /payment_intents/ID/cancel   #Set PINTENT.status 'canceled'.
                                   #Payload attributes: cancellation_reason
 STRIPE.paymentIntents.
@@ -1311,6 +1315,8 @@ PINTENT.status                    #STR among:
                                   #  - re-used if CUSTOMER does not finish, then comes back later
 PINTENT.confirm                 RC#BOOL (def: false).
                                   #Set status to 'requires_action'
+PINTENT.                        RC#BOOL (def: false). Does not allow status status 'requires_action'
+ error_on_requires_action         #To use when user confirmation is not possible.
 PINTENT.confirmation_method      C#Either:
                                   #  - 'manual':
                                   #     - manually set PINTENT.payment_method|confirm in the server
@@ -1679,6 +1685,7 @@ AVAILABLE SOURCE TYPES ==>        #Credit card companies controlled (banks are c
                                   #  - 'multibanco': Portugal
                                   #     - requires action by customer (entering amount and details on their bank website), i.e. might take up to 7 days
                                   #  - 'klarna': mostly Scandinavia (10% market share)
+                                  #  - 'fpx': Malaysia
                                   #Payment provider companies controlled:
                                   #  - 'stripe_account': Connect
                                   #  - 'alipay' (called 'alipay_account' on create|update): Alibab, China (>50% market share)
@@ -1863,11 +1870,19 @@ SOURCE.sepa_debit.
 SOURCE.gbp_credit_transfer.
  sender_name                     C#STR.
 SOURCE.gbp_credit_transfer.
- sort_code                       C#STR. Bank code.
+ sender_account_number           C#STR.
+SOURCE.gbp_credit_transfer.
+ sender_sort_code                C#STR. Bank code.
 SOURCE.gbp_credit_transfer.
  reference                       C#STR. Arbitrary identifier.
 SOURCE.gbp_credit_transfer.
  funding_method                  C#STR. Among 'Faster Payments', 'BACS', 'CHAPS'
+
+SOURCE.fpx.bank                  C#STR. One of 'affin_bank', 'alliance_bank', 'ambank', 'bank_islam', 'bank_muamalat',
+                                  #'bank_rakyat', 'bsn', 'cimb', 'deutsche_bank', 'hong_leong_bank', 'hsbc', 'kfh',
+                                  #'maybank2e', 'maybank2u', 'ocbc', 'pb_enterprise', 'public_bank', 'rhb',
+                                  #'standard_chartered', 'uob', 'uob_regional',
+SOURCE.fpx.transaction_id         #STR
 
 SOURCE.alipay_account           RC#STR. A token returned by Stripe representing the user’s Alipay account details.
 SOURCE.alipay.username            #STR.
@@ -2100,6 +2115,7 @@ PAYMENT_METHOD                    #Similar to SOURCE.
                                   #  - 'card_present' and 'card' with 3D secure: only PINTENT + PAYMENT_METHOD
                                   #  - 'ideal'
                                   #  - 'sepa_debit'
+                                  #  - 'fpx'
                                   #  - all others: SOURCE
                                   #More SOURCE.TYPEs will be added in future.
 
@@ -2112,7 +2128,7 @@ STRIPE.paymentMethods.
 
 PAYMENT_METHOD.type             *C#Like SOURCE.*
 PAYMENT_METHOD.card[_present]|
- ideal|sepa_debit               CU#Like SOURCE.*
+ ideal|sepa_debit|fpx           CU#Like SOURCE.*
 PAYMENT_METHOD.TYPE.generated_from#GENERATED
 GENERATED.charge                  #CHARGE.id
 GENERATED.payment_method_details  #Like SOURCE.*
@@ -2328,9 +2344,9 @@ STRIPE.subscriptions.
  list|retrieve|create|update()    #
 DELETE /subscriptions/ID
 STRIPE.subscriptions.del()        #Set status to 'canceled'
-                                  #Payload: invoice_now, prorate
+                                  #Payload: invoice_now, proration_behavior
 PAYLOAD.invoice_now               #BOOL (def: false). Create a final INVOICE for pending metered usage or proration.
-PAYLOAD.prorate                   #BOOL (def: false). Create a INVOICE_ITEM that give credits for remaining unused time.
+PAYLOAD.proration_behavior        #STR. Create a INVOICE_ITEM that give credits for remaining unused time.
 
 SUBSCRIPTION.customer           *C#CUSTOMER.id
 ?customer=CUSTOMER.id             #
@@ -2416,9 +2432,10 @@ SUBSCRIPTION.trial_end          CU#DATE_NUM or 'now'. Either:
                                   #  - manually set. At most two years from billing_cycle_anchor
                                   #EVENT 'customer.subscription.trial_will_end' three days before trial end, or when using 'now'
 
-SUBSCRIPTION.prorate           RCU#BOOL. Whether partial period are charged|credited:
-                                  #  - true (def): proportionally
-                                  #  - false: not at all
+SUBSCRIPTION                   RCU#BOOL. Whether partial period are charged|credited:
+ .proration_behavior              #  - 'create_prorations' (def): proportionally, invoice as late as possible
+                                  #  - 'always_invoice': proportionally, invoice as soon as possible
+                                  #  - 'none': not at all
                                   #Partial periods happen when changing:
                                   #  - quantity or unit price
                                   #  - period settings
@@ -2427,6 +2444,11 @@ SUBSCRIPTION.prorate           RCU#BOOL. Whether partial period are charged|cred
                                   #Applied on next INVOICE.
                                   #Only if PLAN.usage_type 'licensed'
 SUBSCRIPTION.proration_date     RU#DATE_NUM. When change happened.
+SUBSCRIPTION.pending_update       #PENDING_UPDATE. Pending SUBCRIPTION update due to trial|proration
+PENDING_UPDATE.subscription_items|
+ billing_cycle_anchor|
+ trial_from_plan|trial_end|       #New SUBSCRIPTION.*
+PENDING_UPDATE.expires_at         #DATE_NUM of end of update
 
 SUBSCRIPTION.billing_thresholds CU#BILLING_THRESHOLDS|''.
                                   #Create INVOICE each time quantity (modulo'd) passes some threshold for a given period.
@@ -2461,7 +2483,8 @@ SUBSCRIPTION_ITEM.subscription  *C#SUBSCRIPTION.id
 SUBSCRIPTION_ITEM.plan|quantity|
  billing_thresholds             CU#Like SUBSCRIPTION.*
 SUBSCRIPTION_ITEM.
- payment_behavior|prorate|
+ payment_behavior|
+ proration_behavior|
  proration_date                RCU#Like SUBSCRIPTION.*
 SUBSCRIPTION_ITEM.deleted        U#BOOL. Delete the SUBSCRIPTION_ITEM.
                                   #Only when updated through SUBSCRIPTION.items
@@ -2499,12 +2522,11 @@ PLAN.billing_scheme              C#Either:
                                   #  - 'per_unit' (def): unit price is fixed (PLAN.amount)
                                   #  - 'tiered': unit price is variable, based on quantity (PLAN.tiers[_mode])
                                   #Both can use any PLAN.usage_type
-PLAN.amount[_decimal]            C#PMONEY. Unit price, to multiply with quantity.
-                                  #*_decimal is 'BIGINT' string (12 decimals precision)
+PLAN.amount[_decimal]            C#PMONEY|'BIGINT'. Unit price, to multiply with quantity.
 PLAN.tiers                       C#TIER_ARR. Different unit price depending on quantity.
 TIER.up_to                        #'NUM' or 'inf'. Quantity max threshold to be using this TIER.
-TIER.flat_amount[_decimal]        #PMONEY. Absolute price (for whole TIER)
-TIER.unit_amount[_decimal]        #PMONEY. Relative price (per unit)
+TIER.flat_amount[_decimal]        #PMONEY|'BIGINT'. Absolute price (for whole TIER)
+TIER.unit_amount[_decimal]        #PMONEY|'BIGINT'. Relative price (per unit)
 PLAN.tiers_mode                  C#Either:
                                   #  - 'volume': use unit price of the matching TIER for the whole quantiy
                                   #  - 'graduated': use unit price of each matching TIER for each part of the quantity
@@ -2547,7 +2569,8 @@ USAGE_RECORD                      #CUSTOMER's single consumption for PLAN.usage_
 
 POST /subscription_items/ID/
  usage_records                    #
-STRIPE.usageRecords.create()      #
+STRIPE.subcriptionItems.
+ createUsageRecord()              #
 
 USAGE_RECORD.subscription_item  *C#SUBSCRIPTION_ITEM.id
 USAGE_RECORD.quantity           *C#INT (>=0)
@@ -2569,7 +2592,8 @@ USAGE_RECORD_SUMMARY              #Aggregate of USAGE_RECORD for a specific SUBS
 
 GET /subscription_items/ID/
  usage_records_summaries          #
-STRIPE.usageRecordSummaries.list()#
+STRIPE.subcriptionItems.
+ listUsageRecordSummaries()       #
 
 USAGE_RECORD_SUMMARY.
  subscription_item                #SUBSCRIPTION_ITEM.id
@@ -2709,7 +2733,7 @@ POST /credit_notes[/ID]           #
 POST /credit_notes/ID/void        #Set status to 'void'
 GET /credit_notes/preview         #Like POST /credit_notes except dry run
                                   #Same request payload.
-STRIPE.creditNodes.retrieve|list|
+STRIPE.creditNotes.retrieve|list|
  create|update|voidCreditNote|
  preview()                        #
 
@@ -2729,8 +2753,11 @@ CREDIT_NOTE.status                #STR among:
                                   #  - 'void': reverted (EVENT 'credit_note.voided')
 CREDIT_NOTE.voided_at            ?#DATE_NUM
 
-CREDIT_NOTE.amount               C#PMONEY in total
+CREDIT_NOTE.total                 #PMONEY in total. Including tax and discount.
+CREDIT_NOTE.amount               C#PMONEY in total. Including tax.
+CREDIT_NOTE.subtotal              #PMONEY. Excluding tax and discount.
 CREDIT_NOTE.credit_amount       RC#PMONEY
+CREDIT_NOTE.discount_amount       #PMONEY
 INVOICE.pre|post_payment_
  credit_notes_amount              #PMONEY received through CREDIT_NOTEs
 
@@ -2744,6 +2771,40 @@ CREDIT_NOTE.memo                CU#STR shows to CUSTOMER
 
 CREDIT_NOTE.number                #Unique STR shown on receipts and INVOICE
 CREDIT_NOTE.pdf                   #'URL' to PDF
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:      CREDIT NOTES LINES       :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+CREDIT_NOTE_LINE                  #CREDIT_NOTE's item
+
+GET /credit_notes/ID/lines        #
+GET /credit_notes/preview/lines   #Like GET /credit_notes/preview (including request payload) but return CREDIT_NOTE.lines instead.
+STRIPE.creditNotes.
+ list[Preview]LineItems()         #
+
+CREDIT_NOTE.lines                C#CREDIT_NOTE_LINE_ARR
+?credit_note=ID                   #
+
+CREDIT_NOTE_LINE.amount          C#
+CREDIT_NOTE_LINE.discount_amount  #Like CREDIT_NOTE.*
+
+CREDIT_NOTE_LINE.quantity        C#NUM
+CREDIT_NOTE_LINE.
+ unit_amount[_decimal]           C#PMONEY|'BIGINT'. Cost of each unit
+
+CREDIT_NOTE_LINE.type            C#Can be:
+                                  #  - 'invoice_line_item': has invoice_line_item
+                                  #  - 'custom_line_item': has no invoice_line_item
+
+CREDIT_NOTE_LINE.
+ invoice_line_item               C#LINE_ITEM
+
+CREDIT_NOTE_LINE.description     C#STR
 
 
                                              /=+===============================+=\
@@ -2804,7 +2865,7 @@ INVOICE.amount_due                #  - DISCOUNT
                                   #  INVOICE.total
                                   #  - exclusive TAX_RATE
                                   #  - starting_balance
-                                  #  - prorate
+                                  #  - proration_behavior
                                   #  - CREDIT_NOTE
                                   #  INVOICE.amount_due: final amount, used as CHARGE.amount
 INVOICE.amount_paid|remaining     #PMONEY. Their sum === INVOICE.amount_due
@@ -2975,7 +3036,7 @@ STRIPE.invoiceItems.
  retrieve|list|create|update|del()#
 
 INVOICE_ITEM.
- unit_amount[_decimal]          CU#PMONEY
+ unit_amount[_decimal]          CU#PMONEY|'BIGINT'
 INVOICE_ITEM.invoice            ?C#INVOICE.id
 ?invoice=INVOICE.id               #
 ?pending=BOOL                     #Filter by INVOICE undefined
@@ -3008,7 +3069,8 @@ STRIPE.invoices.
 ?subscription_cancel_now=BOOL     #
 ?subscription_default_tax_rates=
  OBJ_ARR                          #
-?subscription_prorate=BOOL        #
+?subscription_proration_behavior=
+ STR                              #
 ?subscription_proration_date=
  DATE_NUM                         #
 ?subscription_stard_date=DATE_NUM #
@@ -3028,7 +3090,7 @@ STRIPE.invoices.
  OBJ_ARR                          #
 ?invoice_items=OBJ_ARR            #
 ?invoice_items.*.
- amount[_decimal]=NUM             #
+ amount[_decimal]=NUM|'BIGINT'    #
 ?invoice_items.*.currency=STR     #
 ?invoice_items.*.description=STR  #
 ?invoice_items.*.discountable=BOOL#
@@ -3039,7 +3101,7 @@ STRIPE.invoices.
 ?invoice_items.*.quantity=NUM     #
 ?invoice_items.*.tax_rates=OBJ_ARR#
 ?invoice_items.*.
- unit_amount[_decimal]=NUM        #
+ unit_amount[_decimal]=NUM|'BIGNT'#
 
 
                                              /=+===============================+=\
@@ -3089,8 +3151,11 @@ TAX_IDS.customer                *C#CUSTOMER.id
 ?customer=CUSTOMER.id             #
 TAX_IDS.country                   #COUNTRY
 
-TAX_IDS.type                    *C#One of 'eu_vat' (EU), 'nz_gst' (New Zealand), 'au_abn' (Australia), 'in_gst' (India),
-                                *C#'ch_vat' (Switzerland), 'mx_rfc' (Mexico), 'sg_uen' (Singapore), 'za_var' (South Africa), 'no_vat', 'unknown'.
+TAX_IDS.type                    *C#One of 'us_ein' (US), 'eu_vat' (EU), 'nz_gst' (New Zealand), 'au_abn' (Australia), 'ca_bn|ca_qst' (Canada), 'in_gst' (India),
+                                *C#'ch_vat' (Switzerland), 'mx_rfc' (Mexico), 'sg_uen' (Singapore), 'za_var' (South Africa),
+                                *C#'no_vat' (Norway), 'hk_br' (Hong Kong), 'ru_inn' (Russia), 'es_cif' (Spain), 'jp_cn' (Japan),
+                                *C#'th_vat' (Thailand), 'tw_vat' (Taiwan), 'kr_brn' (Korea), 'li_uid' (Liechtenstein),
+                                *C#'my_itn' (Malaysia), 'unknown'
 TAX_IDS.value                   *C#STR
 
 TAX_IDS.verification              #TAX_VERIF
@@ -3138,12 +3203,13 @@ TAX_RATE.description            CU#STR not shown to CUSTOMER
 
 SUBSCRIPTION|INVOICE.
  default_tax_rates              CU#TAX_RATE_LIST|''. Max length 5.
-SUBSCRIPTION_ITEM|LINE_ITEM.
- tax_rates                      CU#TAX_RATE_ARR|''. Max length 5.
+SUBSCRIPTION_ITEM|LINE_ITEM|
+ CREDIT_NOTE_LINE.tax_rates     CU#TAX_RATE_ARR|''. Max length 5.
 
 INVOICE.tax                       #PMONEY. Amount of tax.
 INVOICE|LINE_ITEM.
- total_tax_amounts                #TAX_AMOUNT_ARR. Breakdown of taxes
+ total_tax_amounts
+CREDIT_NOTE[_LINE].tax_amounts    #TAX_AMOUNT_ARR. Breakdown of taxes
 TAX_AMOUNT.amount                 #PMONEY
 TAX_AMOUNT.inclusive              #BOOL
 TAX_AMOUNT.tax_rate               #TAX_RATE
@@ -3169,7 +3235,17 @@ STRIPE.accounts.retrieve|list|
 JAPAN KANJI/KANA ==>              #The following fields are suffixed with _kanji|_kana in Japan: address, *name, statement_descriptor
 
 ACCOUNT.email                   CU#STR.
-ACCOUNT.business_type           CU#Either 'individual' or 'company'.
+ACCOUNT.business_type           CU#Can be 'individual', 'company', 'government_entity' or 'non_profit'
+                                  #Required field
+ACCOUNT.structure               CU#STR.
+                                  #Can be:
+                                  #  - government_instrumentality
+                                  #  - governmental_unit
+                                  #  - multi_member_llc
+                                  #  - private|public_corporation|partnership
+                                  #  - tax_exempt_government_instrumentality
+                                  #  - [un]incorporated_non_profit
+                                  #  - unincorporated_association
                                   #Required field
 ACCOUNT.individual              CU#PERSON. Only if business_type 'individual'.
                                   #Required field
@@ -3491,7 +3567,7 @@ BALANCE.connect_reserved          #BALANCE_SUB_ARR.
                                   #  - if for too long, should use POST /accounts/ID/reject
 BALANCE_SUB                       #Subdivision of BALANCE for each currency and SOURCE
 BALANCE_SUB.amount                #MONEY
-BALANCE_SUB.source_types.TYPE     #INT. How amount is divided between account TYPE 'bank_account' or 'card'.
+BALANCE_SUB.source_types.TYPE     #INT. How amount is divided between account TYPE 'bank_account|card|fpx'.
 
 
                                              /=+===============================+=\
@@ -4812,6 +4888,7 @@ ISSUING_CARD_SHIPPING.status      #STR among:
                                   #  - 'delivered'
                                   #  - 'returned', 'failure', 'canceled'
 ISSUING_CARD_SHIPPING.tracking_url#'URL'
+ISSUING_CARD_SHIPPING.speed      C#Can be 'overnight', 'express' or 'standard' (def)
 ISSUING_CARD_SHIPPING.eta         #DATE_NUM
 
 ISSUING_CARD.cardholder          C#Default CARD_HOLDER
@@ -5298,12 +5375,12 @@ REPORT_RUN_PARAMS.payout          #PAYOUT.id
                                              \=+===============================+=/
 
 
-VERSION ==>                       #7.15.0
+VERSION ==>                       #8.19.0
 
 new STRIPE-NODE
  (['API_KEY'][, OPTS])->STRIPE    #
 
-STRIPE.setApiKey('API_KEY')       #Def: none
+OPTS.apiKey                       #'API_KEY'. Def: none
 OPTS.apiVersion                   #'VERSION'. Stripe-Version [C]. Def: none
 
 STRIPE.RESOURCE                   #SRES
@@ -5317,8 +5394,7 @@ SRES.*([PATH_VAL,...]             #Call REST API endpoint.
                                   #  - request payload (including ?PARAM)
                                   #  - DATE are serialized to DATE_NUM
                                   #OPTS:
-                                  #  - apiKey 'API_KEY'
-                                  #  - stripeVersion 'VERSION'
+                                  #  - apiKey|apiVersion
                                   #  - idempotencyKey Idempotency-Key [C]
                                   #  - stripeAccount Stripe-Account [C]
                                   #  - maxNetworkRetries|timeout: see below
@@ -5338,8 +5414,8 @@ STRIPE.on('request', FUNC(OBJ))   #OBJ:
                                   #  - method 'METHOD'
                                   #  - path '/PATH'
                                   #  - account ACCOUNT.id
-                                  #  - idempotency_key STR
-                                  #  - api_version 'VERSION'
+                                  #  - idempotencyKey STR
+                                  #  - apiVersion 'VERSION'
                                   #  - request|response_start_time DATE_NUM
 STRIPE.on('response', FUNC(OBJ))  #Like 'request' but also:
                                   #  - status NUM
@@ -5349,14 +5425,13 @@ STRIPE.on('response', FUNC(OBJ))  #Like 'request' but also:
 
 OPTS.host                         #'HOST'. Def: 'api.stripe.com'
 OPTS.port                         #'PORT'. Def: 443
-STRIPE.setProtocol('SCHEME')      #Def: 'https'
+OPTS.protocol                     #'SCHEME'. Def: 'https'
 
 OPTS.maxNetworkRetries            #NUM (def: 0)
                                   #Retry on 409 (any method) or 5** (not POST)
                                   #If not 0, defaults Idempotency-Key [C] to a UUIDv4
                                   #Uses exponential backoff
-OPTS.timeout
-STRIPE.setTimeout(NUM)            #Def: 2 mins (like Node.js core)
+OPTS.timeout                      #Def: 80 secs
 OPTS.httpAgent                    #Def: AGENT with keepAlive true
 
 User-Agent: Stripe/v1
@@ -5369,16 +5444,17 @@ X-Stripe-Client-User-Agent:       #Set with analytics. JSON of OBJ:
                                   #  - publisher 'stripe'
                                   #  - uname `uname -a`
                                   #  - application APPINFO
-STRIPE.setAppInfo(APPINFO)        #Analytics info used in:
+OPTS.appInfo                      #APPINFO: name, version, url, partner_id
+                                  #Analytics info used in:
                                   #  - User-Agent [C] as 'NAME[/VERSION] [(URL)]' at end
                                   #  - X-Stripe-Client-User-Agent [C]
-                                  #APPINFO: name, version, url, partner_id
                                   #Meant for Stripe plugins.
-STRIPE.setTelemetryEnabled(BOOL)  #Send X-Stripe-Client-Telemetry: JSON [C] of OBJ:
+OPTS.typescript                   #BOOL (def: false). Indicates in User-Agent [C] that typescript is used.
+OPTS.telemetry                    #BOOL (def: true).
+                                  #Send X-Stripe-Client-Telemetry: JSON [C] of OBJ:
                                   #  - last_request_metrics OBJ_ARR:
                                   #     - request_id STR: Request-Id [S]
                                   #     - request_duration_ms NUM
-                                  #Def: enabled
 
 
                                              /=+===============================+=\
