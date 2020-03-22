@@ -627,6 +627,7 @@ NODE_ERROR.detail                 #NODE_ERROR2. When there is a sub-error
 NODE_ERROR.headers                #HEADERS_OBJ
                                   #Only set when a 4**|5** response was received
 NODE_ERROR.statusCode NUM         #Only set when a 4**|5** response was received
+NODE_ERROR.doc_url                #'URL'
 
 ERROR.type                        #Can be:
                                   #  - 'invalid_request_error' (400|404): input validation server-side
@@ -1524,7 +1525,7 @@ REFUND                            #Reverting a CHARGE.
                                   #  - e.g. if customer's SOURCE is not valid anymore.
                                   #  - refund is reversed under 30 days.
                                   #Payment-method specifics:
-                                  #  - alipay: within 90 days
+                                  #  - alipay, au_becs_debit: within 90 days
                                   #  - all others: within 180 days
 
 GET /refunds[/ID]
@@ -1675,6 +1676,8 @@ AVAILABLE SOURCE TYPES ==>        #Credit card companies controlled (banks are c
                                   #        - can be collected from a previous purchase with a different method (e.g. 'bancontact')
                                   #     - user must fill and electronically sign a form with their information (MANDATE)
                                   #     - can take up to 14 days
+                                  #  - 'au_becs_debit':
+                                  #     - similar to 'ach_debit' but for Australia
                                   #  - 'gbp_credit_transfer': similar to 'ach_debit' but for UK
                                   #  - 'sofort': Germany
                                   #     - can take up to 14 days
@@ -1784,8 +1787,10 @@ DECLINE_ON.cvc_failure          CU#BOOL. For SOURCE.card.cvc_check
 SOURCE.card.three_d_secure       ?#If not attempted, undefined.
                                   #OBJ: succeeded BOOL, authenticated BOOL, version STR
 SOURCE.card*|ach_debit|sepa_debit|
+ au_becs_debit|
  gbp_credit_transfer.last4        #STR. Last four digits of the bank account or card number.
 SOURCE.card*|ach*|sepa_debit|
+ au_becs_debit|
  gbp_credit_transfer|alipay.
  fingerprint                      #STR. Checksum|fingerprint of the bank account or card number.
 SOURCE.bank_account|card*|
@@ -1869,6 +1874,8 @@ SOURCE.sepa_debit.mandate         #MANDATE.id
 SOURCE.sepa_debit.
  mandate_reference                #STR. MANDATE reference to communicate to customer.
 
+SOURCE.au_becs_debit.bsb_number  C#STR. Bank number
+
 SOURCE.gbp_credit_transfer.
  sender_name                     C#STR.
 SOURCE.gbp_credit_transfer.
@@ -1946,7 +1953,7 @@ STRIPE.sources.
  retrieve|create|update()         #
 
 SOURCE.usage                     C#Either:
-                                  #  - must be 'reusable': for SOURCE.type 'card*', 'ach*'
+                                  #  - must be 'reusable': for SOURCE.type 'card*', 'ach*', 'au_becs_debit'
                                   #  - must be 'single_use': for all others SOURCE.type
                                   #  - can be either: 'alipay', 'google_pay', 'apply_pay', 'samsung_pay', 'microsoft_pay', 'sepa_debit'
                                   #For 'reusable', must attach SOURCE to CUSTOMER before first usage, to be able to re-use it.
@@ -1973,7 +1980,7 @@ SOURCE.flow                      C#How the SOURCE is authenticated among:
                                   #  - 'none':
                                   #      - for SOURCE.type:
                                   #         - 'card*' (no 3D secure): nothing required
-                                  #         - 'sepa_debit': through a MANDATE
+                                  #         - 'sepa_debit', 'au_becs_debit': through a MANDATE
                                   #         - 'card' with 'amex_express_checkout': SMS code
                                   #         - 'card' with 'masterpass', 'visa_checkout': redirect
                                   #         - 'card' with 'apple_pay', 'google_pay', 'microsoft_pay', 'samsung_pay':
@@ -2050,7 +2057,7 @@ SOURCE RENEWAL ==>                #For some countries, Stripe automatically upda
                                              \=+===============================+=/
 
 
-MANDATE                           #Form filled and signed by CUSTOMER with their information and consent. For 'sepa_debit'
+MANDATE                           #Form filled and signed by CUSTOMER with their information and consent. For 'sepa_debit' and 'au_bets_debit'
                                   #Also a standard text must be shown to CUSTOMER (seen here: https://stripe.com/docs/sources/sepa-debit#prerequisite)
 
 GET /mandates/ID                  #
@@ -2087,7 +2094,7 @@ SMANDATE.notification_method    CU#How to notify CUSTOMER of payment (including 
                                   #When doing 'manual'|'none':
                                   #  - should be sent within 14 days.
                                   #  - must include:
-                                  #     - SOURCE.sepa_debit.last4|mandate_reference
+                                  #     - SOURCE.TYPE.last4|mandate_reference
                                   #     - SMANDATE.amount
                                   #     - SEPA creditor identifier (must ask our own bank online for it)
                                   #     - contact information
@@ -2117,6 +2124,7 @@ PAYMENT_METHOD                    #Similar to SOURCE.
                                   #  - 'card_present' and 'card' with 3D secure: only PINTENT + PAYMENT_METHOD
                                   #  - 'ideal'
                                   #  - 'sepa_debit'
+                                  #  - 'au_becs_debit'
                                   #  - 'fpx'
                                   #  - all others: SOURCE
                                   #More SOURCE.TYPEs will be added in future.
@@ -2130,7 +2138,8 @@ STRIPE.paymentMethods.
 
 PAYMENT_METHOD.type             *C#Like SOURCE.*
 PAYMENT_METHOD.card[_present]|
- ideal|sepa_debit|fpx           CU#Like SOURCE.*
+ ideal|sepa_debit|au_becs_debit|
+ fpx                            CU#Like SOURCE.*
 PAYMENT_METHOD.TYPE.generated_from#GENERATED
 GENERATED.charge                  #CHARGE.id
 GENERATED.payment_method_details  #Like SOURCE.*
@@ -2462,6 +2471,12 @@ SUBSCRIPTION.billing_thresholds CU#BILLING_THRESHOLDS|''.
 BILLING_THRESHOLDS.amount_gte   CU#PMONEY, excluding taxes
 BILLING_THRESHOLDS.             CU#BOOL (def: false). Reset SUBSCRIPTION.billing_cycle_anchor.
  reset_billing_cycle_anchor       #Not allowed if PLAN.aggregate_usage 'last_ever'.
+
+SUBCRIPTION.pause_collection    CU#PAUSE_COLLECTION
+                                  #Temporarily disables SUBSCRIPTION
+                                  #Event 'pause_collection'
+PAUSE_COLLECTION.resumes_at     CU#DATE_NUM
+PAUSE_COLLECTION.behavior       CU#One of 'keep_as_draft', 'mark_uncollectible', 'void'
 
 
                                              /=+===============================+=\
@@ -3584,6 +3599,8 @@ CAPABILITIES.TYPE                 #TYPE can be:
                                   #  - 'card_payments': direct charges (see above)
                                   #  - 'transfers': destination|separate charges (see above)
                                   #  - 'card_issuing'
+                                  #  - 'au_becs_debit_payments': can use 'au_becs_debit' payment type
+                                  #  - 'tax_reporting_us_1099_k', 'tax_reporting_us_1099_misc': US tax reporting
                                   #Value is CAPABILITY.status
 
 
@@ -4295,6 +4312,9 @@ PAYMENT METHOD-SPECIFIC ==>       #  - card*:
                                   #     - cannot provide EVIDENCE
                                   #     - within 60 days
                                   #  - 'google_pay', 'apply_pay', 'microsoft_pay', 'samsung_pay', 'alipay': yes
+                                  #  - 'au_becs_debit':
+                                  #     - within 7 years
+                                  #     - cannot dispute
 
 GET /disputes[/ID]
 POST /disputes/ID                 #
@@ -4933,7 +4953,7 @@ ISSUING_CARD_SHIPPING.status      #STR among:
                                   #  - 'delivered'
                                   #  - 'returned', 'failure', 'canceled'
 ISSUING_CARD_SHIPPING.tracking_url#'URL'
-ISSUING_CARD_SHIPPING.service    C#Can be 'overnight', 'express' or 'standard' (def)
+ISSUING_CARD_SHIPPING.service    C#Can be 'priority', 'express' or 'standard' (def)
 ISSUING_CARD_SHIPPING.eta         #DATE_NUM
 
 ISSUING_CARD.cardholder          C#Default CARD_HOLDER
@@ -4947,9 +4967,9 @@ ISSUING_CARD.status             CU#STR among:
                                   #  - 'stolen': permanent
 ?status=STR                       #
 
-ISSUING_CARD.
- authorization_controls         CU#AUTH_CONTROLS. Rules to automatically decline AUTHORIZATIONs
-AUTH_CONTROLS.spending_limits  RCU#SPENDING_LIMIT_ARR. Max PMONEY per time interval.
+ISSUING_CARD.spending_controls  CU#SPENDING_CONTROLS. Rules to automatically decline AUTHORIZATIONs
+SPENDING_CONTROLS.
+ spending_limits               RCU#SPENDING_LIMIT_ARR. Max PMONEY per time interval.
 SPENDING_LIMIT.amount          RCU#PMONEY
 SPENDING_LIMIT.interval        RCU#Frequency among 'per_authorization', 'daily', 'weekly', 'monthly', 'yearly', 'all_time'
 SPENDING_LIMIT.categories      RCU#STR_ARR. Whitelist categories.
@@ -4998,10 +5018,9 @@ POST /issuing/cardholders[/ID]    #
 STRIPE.cardholders.
  retrieve|list|create|update()    #
 
-CARD_HOLDER.type                *C#Either 'individual' or 'business_entity'
+CARD_HOLDER.type                *C#Either 'individual' or 'company'
 ?type=STR                         #
 
-CARD_HOLDER.name                *C#STR. Printed on physical card.
 CARD_HOLDER.email               CU#STR
 CARD_HOLDER.phone_number        CU#STR
 ?phone_number=STR                 #
@@ -5023,8 +5042,7 @@ ISSUING_REQUIREMENTS.            ?#STR among:
                                   #  - 'listed': matches a blacklist
                                   #  - 'under_review': Stripe triggered it internally
 
-CARD_HOLDER.
- authorization_controls         CU#AUTH_CONTROLS, but without max_*
+CARD_HOLDER.spending_controls   CU#SPENDING_CONTROLS, but without max_*
 
 
                                              /=+===============================+=\
@@ -5043,14 +5061,11 @@ AUTHORIZATION                     #Pending ISSUING_TRANSACTIONs waiting for appr
                                   #Additional 'issuing_authorization.request' EVENTs can then be made to add more money:
                                   #  - only possible for some 'CATEGORY'
                                   #     - e.g. hotels to extend someone's stay
-                                  #  - will not go through ISSUING_CARD.authorization_controls
+                                  #  - will not go through ISSUING_CARD.spending_controls
 
 GET /authorizations[/ID]
 POST /authorizations/ID           #
 POST /authorizations/ID/approve   #Set approved to true.
-                                  #PAYLOAD: held_amount
-PAYLOAD.held_amount              ?#PMONEY. How much to authorize.
-                                  #Only if AUTHORIZATION.is_held_amount_controllable true
 POST /authorizations/ID/decline   #Set approved to false.
 STRIPE.issuing.authorizations.
  retrieve|list|update|approve|
@@ -5072,33 +5087,20 @@ AUTHORIZATION.request_history     #REQUEST_HISTORY_ARR. Previous values of AUTHO
 REQUEST_HISTORY.reason            #STR among:
                                   #  - 'card_active': worked
                                   #  - 'webhook_approved|declined|timeout': handled by webhook
-                                  #  - 'authorization_controls': declined by ISSUING_CARD.authorization_controls
+                                  #  - 'spending_controls': declined by ISSUING_CARD.spending_controls
                                   #  - 'card_inactive': declined because ISSUING_CARD.status 'inactive'
                                   #  - 'insufficient_funds': declined because not enough money
                                   #  - 'account_compliance_disabled': declined because ACCOUNT blocked
                                   #  - 'account_inactive': declined because ACCOUNT inactive
                                   #  - 'suspected_fraud': declined because fraud
-                                  #  - 'authentication_failed'
+                                  #  - 'verification_failed'
                                   #  - 'cardholder_inactive'
                                   #  - 'cardholder_verification_required'
-                                  #  - 'incorrect_cvc|expired': cvc|expiry_check
                                   #  - 'not_allowed'
-REQUEST_HISTORY.                  #VAC_ARR. When reason 'authorization_controls', info about the
- violated_authorization_controls  #ISSUING_CARD.authorization_controls that triggered it
 VAC.entity                        #'account|card|cardholder'
 VAC.name                          #'allowed_categories|blocked_categories|max_amount|max_approval|spending_limits'
 REQUEST_HISTORY.
  approved|authorized|held*        #Same as AUTHORIZATION.*
-
-AUTHORIZATION.                    #PMONEY requested. Set to 0 after approval.
- pending_authorized|held_amount   #For last 'issuing_transaction.request' EVENT.
-AUTHORIZATION.authorized_amount   #PMONEY approved. Initially 0.
-                                  #For all 'issuing_transaction.request' EVENTs
-AUTHORIZATION.authorized_currency #CURRENCY of the CHARGE
-AUTHORIZATION.held_amount         #Like authorized_amount but using held_currency
-AUTHORIZATION.held_currency       #CURRENCY of the ISSUING_CARD
-AUTHORIZATION.
- is_held_amount_controllable      #BOOL. Whether this AUTHORIZATION allows controlling how much can be authorized (with PAYLOAD.held_amount)
 
 AUTHORIZATION.pendingRequest      #PENDING_REQUEST
 PENDING_REQUEST.
@@ -5185,18 +5187,6 @@ POST /issuing/disputes[/ID]       #
 STRIPE.issuing.disputes.
  retrieve|list|create|update()    #
 
-ISSUING_DISPUTE.
- disputed_transaction           *C#ISSUING_TRANSACTION.id
-?disputed_transaction=ID          #
-
-ISSUING_DISPUTE.reason          *C#Can be 'fraudulent', 'product_not_received', 'duplicate', 'other'
-
-ISSUING_DISPUTE.amount           C#MONEY
-
-ISSUING_DISPUTE.status            #One of: 'unsubmitted', 'under_review', 'won', 'lost'.
-
-ISSUING_DISPUTE.evidence.REASON  C#ISSUING_EVIDENCE. Similar to EVIDENCE.
-                                  #REASON is ISSUING_DISPUTE.reason
 ISSUING_EVIDENCE.
  dispute_explanation             C#STR
 ISSUING_EVIDENCE.
@@ -5432,7 +5422,7 @@ REPORT_RUN_PARAMS.timezone       C#STR
                                              \=+===============================+=/
 
 
-VERSION ==>                       #8.33.0
+VERSION ==>                       #8.38.0
 
 new STRIPE-NODE
  (['API_KEY'][, OPTS])->STRIPE    #
