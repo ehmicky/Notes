@@ -5,6 +5,11 @@
 
 
 
+Todo:
+  - dashboard / UI
+  - pricing
+  - get updated on new features
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -207,6 +212,7 @@ PROJECT.updated_at                #TIMESTAMP
 
 
 RELEASE                           #App|website release
+                                  #Automatically created from looking at all EVENT.app.version
 
 GET /projects/ID/releases         #
 ?release_stage=STAGE_ENV          #
@@ -318,15 +324,15 @@ EVENT.request                   RC#HTTP request related to the error. OBJ:
 EVENT.severity                   C#'info|warning|error' (def: 'error')
 EVENT.severityReason            RC#OBJ:
                                   #  - type STR among:
-                                  #     - 'unhandledException'
-                                  #     - 'handledException'
-                                  #     - 'log'
-                                  #     - 'userCallbackSetSeverity'
+                                  #     - 'handledException': normal reporting
+                                  #     - 'unhandledException': uncaught exception
+                                  #     - 'userCallbackSetSeverity': when we override EVENT.severity ourselves
                                   #     - 'userSpecifiedSeverity'
+                                  #     - 'log'
                                   #     (JavaScript only)
-                                  #     - 'unhandledPromiseRejection'
+                                  #     - 'unhandledPromiseRejection': unhandled promise
                                   #     (Node.js only)
-                                  #     - 'callbackErrorIntercept'
+                                  #     - 'callbackErrorIntercept': error inside onError()
                                   #     (PHP only)
                                   #     - 'unhandledError'
                                   #     - 'handledError'
@@ -354,7 +360,7 @@ EVENT.severityReason            RC#OBJ:
                                   #     - signal STR
                                   #     (Android only, type 'strictMode')
                                   #     - violationType STR
-EVENT.unhandled                  C#BOOL. Whether this was an uncaught exception
+EVENT.unhandled                  C#BOOL. Whether this was an uncaught exception or unhandled promise
 EVENT.context                    C#'CONTEXT'. Arbitrary namespace to group EVENTs
 EVENT.groupingHash              RC#STR. Group EVENTs with same groupingHash into same ERROR
 EVENT.user                      RC#OBJ:
@@ -746,8 +752,8 @@ SESSION.device                    #Like EVENT.device, but only hostname|manufact
                                              \=+===============================+=/
 
 
-
 @bugsnag/js                       #BUGSNAG_JS
+VERSION ==>                       #7.0.0
 
 BUGSNAG_JS.start(OPTS)->CLIENT    #
 
@@ -770,26 +776,29 @@ OPTS.logger                       #OBJ with debug|info|warn|error(STR) (def: con
 
 OPTS.enabledBreadcrumbTypes       #STR_ARR. Allowed BREADCRUMB.type (def: all)
 OPTS.maxBreadcrumbs               #NUM (def: 25)
+CLIENT.leaveBreadcrumb
+ (BREADCRUMB.name
+ BREADCRUMB.metadata,
+ BREADCRUMB.type)                 #Add a BREADCRUMB
 
 OPTS.onError                      #FUNC(EVENT)[_ARR]->PROMISE[_BOOL]. Called on CLIENT.notify()
                                   #Can modify EVENT
                                   #Return falsy to skip EVENT
+OPTS.onSession                    #Same for SESSION and CLIENT.startSession()
+OPTS.onBreadcrumb                 #Same for BREADCRUMB and CLIENT.leaveBreadcrumb()
 OPTS.onUncaughtException          #FUNC(ERROR, EVENT)
                                   #Def: process.exit(1) + console.error()
 OPTS.onUnhandledRejection         #FUNC(ERROR, EVENT)
                                   #Def: console.error()
-OPTS.onSession                    #FUNC()[_ARR][->PROMISE]
-OPTS.onBreadcrumb                 #FUNC()[_ARR][->PROMISE]
 
-OPTS.autoDetectErrors             #BOOL (def: true). Call CLIENT.notify() on uncaught exceptions or unhandled rejections
 OPTS.enabledErrorTypes            #OBJ with values BOOL and key unhandledExceptions|unhandledRejections
+                                  #Call CLIENT.notify() on either of them
                                   #Def: both true
+OPTS.autoDetectErrors             #BOOL (def: true). Like both OPTS.enabledErrorTypes
 
 OPTS.sendCode                     #BOOL (def: true). Whether to set STACKFRAME.code
 
-OPTS.redactedKeys                 #'VARR'_ARR (def: ['password']) to remove from EVENT.*
-
-OPTS.autoTrackSessions            #BOOL (def: true)
+OPTS.redactedKeys                 #'VAR'|REGEXP_ARR (def: ['password']) to remove from EVENT.*
 
 OPTS.projectRoot                  #SOURCE_MAP.projectRoot (def: process.cwd()). Also used for STACKFRAME.inProject
                                   #Node.js only
@@ -813,25 +822,15 @@ CLIENT.notify                     #Call POST / (ENDPOINT https://notify.bugsnag.
  (ERROR|'MESSAGE'|EVENT[, FUNC])  #Automatically called on uncaught exception, or manually called
                                   #If EVENT instead of ERROR, it must have name|message|stack
                                   #FUNC is OPTS.onError
-                                  #Guesses EVENT:
-                                  #  - exceptions
-                                  #  - app:
-                                  #     - releaseStage OPTS.releaseStage
-                                  #     - version OPTS.appVersion
-                                  #     - type OPTS.appType
-                                  #  - context OPTS.context
-                                  #  - metadata OPTS.metadata
-                                  #  - user OPTS.user
-                                  #  - breadcrumbs:
-                                  #     - browser only
-                                  #     - automatically create a BREADCRUMB:
-                                  #        - 'navigation' on WINDOW 'load|DOMContentLoaded|hashchange|pagehide|pageshow' event
-                                  #          or HISTORY replaceState|pushState
-                                  #        - 'user' on WINDOW 'click' event
-                                  #        - 'request' on HTTP requests
-                                  #        - 'log' on console.*
-                                  #        - 'error' on previous CLIENT.notify()
-                                  #  - severity 'error' if uncaught, 'warning' otherwise
+                                  #Guesses almost EVENT fields:
+                                  #  - exceptions (all fields)
+                                  #  - threads: not set at all
+                                  #  - request:
+                                  #     (browser only)
+                                  #     - url LOCATION.href
+                                  #     (Express only)
+                                  #     - all fields
+                                  #  - severity 'error' if unhandled true, 'warning' otherwise
                                   #  - severityReason:
                                   #     - type:
                                   #        - 'unhandledException' if uncaught exception
@@ -840,7 +839,13 @@ CLIENT.notify                     #Call POST / (ENDPOINT https://notify.bugsnag.
                                   #        - 'callbackErrorIntercept' if error inside onError()
                                   #        - 'handledException' otherwise
                                   #  - unhandled BOOL
-                                  #  - session
+                                  #  - context OPTS.context
+                                  #  - groupingHash: not set
+                                  #  - user OPTS.user
+                                  #  - app:
+                                  #     - releaseStage OPTS.releaseStage
+                                  #     - version OPTS.appVersion
+                                  #     - type OPTS.appType
                                   #  - device:
                                   #     - time
                                   #     (Node.js only)
@@ -849,19 +854,27 @@ CLIENT.notify                     #Call POST / (ENDPOINT https://notify.bugsnag.
                                   #     (browser only)
                                   #     - locale NAVIGATOR.browserLanguage|systemLanguage|userLanguage|language
                                   #     - userAgent NAVIGATOR.userAgent
-                                  #  (browser only)
-                                  #  - request:
-                                  #     - url LOCATION.href
-                                  #  - groupingHash???
+                                  #  - metadata OPTS.metadata
+                                  #  - breadcrumbs:
+                                  #     (browser only)
+                                  #     - automatically create a BREADCRUMB on:
+                                  #        - 'user' on WINDOW 'click' event
+                                  #        - 'navigation' on WINDOW 'load|DOMContentLoaded|hashchange|pagehide|pageshow' event
+                                  #          or HISTORY replaceState|pushState
+                                  #        - 'request' on HTTP requests
+                                  #        - 'log' on console.*
+                                  #        - 'error' on previous CLIENT.notify()
+                                  #  - session
                                   #Parse|get ERROR.stack using ERROR-STACK-PARSER or STACK-GENERATOR (from Stacktrace.js)
                                   #Guesses PAYLOAD.notifier
 
+OPTS.autoTrackSessions            #BOOL (def: true). Automatically call startSession() (browser|Express only)
 OPTS.sessionSummaryInterval       #NUM of ms for SESSION.sessionCounts (def: 10000)
 CLIENT.startSession()             #Start a new SESSION.sessions
                                   #Call POST / (on https://sessions.bugsnag.com)
                                   #Guesses all fields
 CLIENT.
- pauseSession|resumeSession()     #
+ pauseSession|resumeSession()     #Stop EVENTs being attributed to current SESSION
 
 @bugsnag/plugin-express           #Automatically do startSession() on 'request'
 Bugsnag.getPlugin('express')      #Automatically do notify() on uncaught exception inside 'request'
@@ -882,6 +895,8 @@ VUE ==>                           #There is a Vue client
 ANGULAR ==>                       #There is an Angular client
 KOA ==>                           #There is a Koa client
 RESTIFY ==>                       #There is a Restify client
+
+BUGSNAG-BUILD-REPORTER-NODE       #Node.js/CLI library for POST / https://build.bugsnag.com
 
 
                                              /=+===============================+=\
