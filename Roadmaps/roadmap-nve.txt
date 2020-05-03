@@ -30,13 +30,55 @@ moize-fs:
      - update timestamp file after process-moized call (not inside fsMoized)
         - reason: process-moized call should still keep timestamp in sync with in-process maxAge
      - do not write timestamp in `writeFsCache()`, since it will be done again later
+  - cacheInfo should also return cacheHit "none|process|file"
+  - instead of getCacheDir():
+     - positional argument -> in options object
+     - OPTS.dir STR:
+        - either absolute path
+        - or "NAMESPACE[/PATH]" or "NAMESPACE[\PATH]", using path.resolve(getcachedir("NAMESPACE"), "PATH")
+        - required
+     - OPTS.filename(...args)->STR:
+        - required
+        - cannot contain / or \
+        - document that hash can be used, and show example with well-known library
+  - timestamp file:
+     - filename is FILE.expire_at.DATENUM.txt
+     - empty content
+     - use single `readdir` on OPTS.dir instead of reading timestamp files
+  - automatic cleanup:
+     - at the beginning of writing a new cache file, but before serializing the value
+     - use the list of filenames from previous `readdir` call on OPTS.dir
+     - remove any of the following:
+        - FILE:
+           - without FILE.expire_at.\d+.txt
+        - FILE.expire_at.\d+.txt:
+           - without FILE
+           - with another one with a higher DATENUM
+        - FILE + FILE.expire_at.\d+.txt:
+           - with DATENUM < Date.now()
+     - filter out duplicates filepaths from list to remove
+     - call all fs.unlink() in parallel
+        - silently ignore failures (might be due to parallel calls)
+  - OPTS.maxSize NUM:
+     - min 1
+     - def Infinity
+        - Infinity should prevent even checking for any cleanup
+     - during automatic cleanup
+     - if more than NUM files (timestamps excluded), remove the ones with the oldest timestamps
+     - pass to process moize OPTS.maxSize NUM too
+  - OPTS.maxSizeGroup(filename)->STR:
+     - noop if OPTS.maxSize is Infinity
+     - make OPTS.maxSize keep the same number of items between groups:
+        - if division not perfectly roundable, keep the most recent items
+     - OPTS.maxSizeGroupsCount NUM:
+        - noop if OPTS.maxSizeGroup undefined
+        - def: same as OPTS.maxSize
+        - max: OPTS.maxSize
+        - min: 1
+        - number of groups OPTS.maxSize should keep
   - stream atomic write: find library
      - if none, create own
   - see TODO comments in code after cache invalidation
-  - add OPTS.maxSize NUM (LRU caching)???
-     - can also pass to moize OPTS.maxSize NUM
-     - requires OPTS.cacheDir 'DIR' too???
-     - make it work with Node.js executable version pruning (see below)
   - better offline check
      - maybe generalize and separate from moize-fs, e.g. a function wrapper that accepts a custom callback on offline failure
   - own repositories:
@@ -79,6 +121,19 @@ OPTS.fetch BOOL -> OPTS.cache !BOOL
 nve VERSION COMMAND -> nve exec VERSION COMMAND
 nve VERSION -> nve version VERSION
 nve VERSIONS --FLAGS [COMMAND [ARGS]] instead of nve --FLAGS VERSIONS [COMMAND [ARGS]]
+
+Pruning cache:
+  - in get-node (and above libraries)
+  - OPTS.maxCache NUM
+     - def: 10
+     - min: 1
+     - max number of cached versions at once
+     - 1: no caching
+     - high number like 1000: no pruning
+  - using moize-fs OPTS:
+     - maxSize NUM: user-provided OPTS.maxSize
+     - maxSizeGroup: remove only patch and minor version from filename
+     - maxSizeGroupsCount: Math.ceil(Math.sqrt(OPTS.maxSize))
 
 `nve exec` signals propagation:
   - propagate signals as soon as childProcess started
@@ -198,20 +253,6 @@ Print changelog:
         - on stderr
         - CHANGELOG_URL: use `node-changelog`
            - if error, silently do not show it
-
-Pruning cache:
-  - in get-node (and above libraries)
-  - OPTS.maxCache NUM
-     - def: 8
-     - min: 1
-     - max number of cached versions at once
-     - 1: no caching
-     - high number like 1000: no pruning
-  - prune at end of each get-node call:
-     - keep track of atime in .cache/nve/all/lastRun.json OBJ.runs OBJ_ARR: timestamp "ATIME", version, arch, mirror, major
-        - written at end of each get-node call
-     - use LRU, but first half must be in different major+CPU combinations
-        - "half": Math.floor(), with max number of combinations
 
 .nve.yml:
   - in current dir, any parent dirs or in home dir
