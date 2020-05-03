@@ -27,6 +27,22 @@ Execa:
 
 moize-fs:
   - OPTS.FUNC(...args) -> OPTS.FUNC(args) instead
+  - instead of OPTS.streams STR:
+     - check return value type to know if stream
+     - ignore OPTS.serialization (no error if json|v8)
+     - set cacheInfo.stream true
+     - never consume data
+     - on non-file|process-cached calls, pipe to temporary file write, but returned stream must be readable, and wait for consumption. It is returned instead
+        - still atomically move temp file to final file once done, but do it after the stream was returned to user
+           - put silent try/catch so it never throws since of main execution context
+     - on file|process-cached calls, return createReadStream() of cache file
+     - internally, stream is passed through state assignment, not return value, so it does not get moized. However the user gets stream as returnValue
+     - document as the main way to avoid consuming too much RAM with in-memory cache
+  - OPTS.ignoreReturn BOOL:
+     - make returnValue undefined
+        - including streams, i.e. not created on cache hit
+        - with|without cacheInfo true
+     - goal: faster and lower memory when only cache path is needed
   - All ERROR should have different ERROR.reason STR
   - Error handling types:
      - very likely user errors
@@ -47,6 +63,10 @@ moize-fs:
            - for reading cache file or expireAt file, parsing cache file, parsing expireAt
            - behavior: silently ignore, like if there was no cache. Remove the file.
      - go through code to find other places that might fail
+  - OPTS.maxFileSize NUM:
+    - do not cache if serialized returnValue length > NUM
+    - for both stream and non-stream
+       - i.e. stream logic will probably require through2()
   - positional argument getCacheDir() -> "PATH" instead:
      - if "PATH" relative:
         - if OPTS.namespace STR: getcachedir(OPTS.namespace)
@@ -85,7 +105,8 @@ moize-fs:
      - filter out duplicates filepaths from list to remove
      - call all fs.unlink() in parallel
         - silently ignore failures (might be due to parallel calls)
-  - OPTS.maxSize NUM:
+     - invalidate process cache too
+  - OPTS.maxCount NUM:
      - min 1
      - def 1000
         - reason: not taking too much space
@@ -93,18 +114,19 @@ moize-fs:
         - other reason: `fs.readdir()` does I/O read of 32000 file entries at a time
      - if Infinity, prevents even checking for any cleanup
      - during automatic cleanup
+        - invalidate process cache too
      - if more than NUM files (timestamps excluded), remove the ones with the oldest timestamps
-     - pass to process moize OPTS.maxSize NUM too
-  - OPTS.maxSizeGroup(filename)->STR:
-     - noop if OPTS.maxSize is Infinity
-     - make OPTS.maxSize keep the same number of items between groups:
+     - pass option to process moize OPTS.maxCount NUM too
+  - OPTS.group(filename)->STR:
+     - noop if OPTS.maxCount is Infinity
+     - make OPTS.maxCount keep the same number of items between groups:
         - if division not perfectly roundable, keep the most recent items
-     - OPTS.maxSizeGroupsCount NUM:
-        - noop if OPTS.maxSizeGroup undefined
-        - def: same as OPTS.maxSize
-        - max: OPTS.maxSize
+     - OPTS.groupsCount NUM:
+        - noop if OPTS.group undefined
+        - def: same as OPTS.maxCount
+        - max: OPTS.maxCount
         - min: 1
-        - number of groups OPTS.maxSize should keep
+        - number of groups OPTS.maxCount should keep
   - see TODO comments in code after cache invalidation
   - OPTS.compress STR:
      - "none" (def), "gzip", "brotli"
@@ -157,16 +179,16 @@ nve VERSIONS --FLAGS [COMMAND [ARGS]] instead of nve --FLAGS VERSIONS [COMMAND [
 
 Pruning cache:
   - in get-node (and above libraries)
-  - OPTS.maxSize NUM
+  - OPTS.maxCount NUM
      - def: 10
      - min: 1
      - max number of cached versions at once
      - 1: no caching
      - high number like 1000: no pruning
   - using moize-fs OPTS:
-     - maxSize NUM: user-provided OPTS.maxSize
-     - maxSizeGroup: remove only patch and minor version from filename
-     - maxSizeGroupsCount: Math.ceil(Math.sqrt(OPTS.maxSize))
+     - maxCount NUM: user-provided OPTS.maxCache
+     - group: remove only patch and minor version from filename
+     - groupsCount: Math.ceil(Math.sqrt(OPTS.maxCount))
 
 `nve exec` signals propagation:
   - propagate signals as soon as childProcess started
