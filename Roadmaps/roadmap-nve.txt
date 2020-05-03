@@ -23,26 +23,57 @@ Upgrade jscpd:
 
 Execa:
   - check why 2 CI tests are failing on Windows
-  - Check question about stdin: https://github.com/sindresorhus/execa/issues/418
+  - check question about stdin: https://github.com/sindresorhus/execa/issues/418
 
 moize-fs:
-  - instead of getCacheDir():
-     - positional argument -> in options object
-     - OPTS.dir STR:
-        - either absolute path
-        - or "NAMESPACE[/PATH]" or "NAMESPACE[\PATH]", using path.resolve(getcachedir("NAMESPACE"), "PATH")
-        - required
-     - OPTS.filename(...args)->STR:
-        - required
-        - cannot contain / or \
-        - document that hash can be used, and show example with well-known library
+  - OPTS.FUNC(...args) -> OPTS.FUNC(args) instead
+  - All ERROR should have different ERROR.reason STR
+  - Error handling types:
+     - very likely user errors
+        - for: OPTS.shouldInvalidate() exception
+        - behavior: propagate error
+     - either user errors, or user's users
+        - for: serializing return value, serializing args ({hash} template, OPTS.pickInput() exception)
+        - behavior:
+           - if OPTS.strict true, propagate
+           - if OPTS.strict false:
+              - return as { type "error", error ERROR }
+              - try to cache what is possible
+     - system errors:
+        - that prevent writing cache:
+           - for: writing cache file or expireAt file
+           - behavior: silently return as { type: "error", error ERROR }, do not cache in-file, still cache in-process
+        - otherwise:
+           - for reading cache file or expireAt file, parsing cache file, parsing expireAt
+           - behavior: silently ignore, like if there was no cache. Remove the file.
+     - go through code to find other places that might fail
+  - positional argument getCacheDir() -> "PATH" instead:
+     - if "PATH" relative:
+        - if OPTS.namespace STR: getcachedir(OPTS.namespace)
+        - otherwise relative to cwd
+     - optional template {VAR}:
+        - {hash}: of ARGS_ARR, using sha1 + v8.serialize()
+           - only allowed in filename
+     - do not allow repeating any template {VAR}
+     - OPTS.pickInput(ARGS_ARR)->VAL
+        - VAL used by {hash} template VAR instead of ARGS_ARR
+        - VAL passed as {input} template VAR
+           - providing it is STR
+           - only allowed in filename
+              - / and \ are stripped
+     - exception in {hash} or OPTS.pickInput():
+        - same behavior as return value serialization error:
+           - if OPTS.strict true, propagate. Otherwise, return as { type 'error', error ERROR }
+        - skip logic for readFsCache|writeFsCache|offline, but still call FUNC(...ARGS) and memoizes it in-process:
+           - pass args array as first argument to moized function instead of cachePath
   - timestamp file:
      - filename is FILE.expire_at.DATENUM.txt
      - empty content
-     - use single `readdir` on OPTS.dir instead of reading timestamp files
+     - use single `readdir` on cache directory instead of reading timestamp files
+        - when <= 1000, use `fs.readdir()`. But > 1000, use `fs.opendir()` with batch size of 1000
   - automatic cleanup:
      - at the beginning of writing a new cache file, but before serializing the value
-     - use the list of filenames from previous `readdir` call on OPTS.dir
+     - use the list of filenames from previous `readdir` call on cache dir
      - remove any of the following:
         - FILE:
            - without FILE.expire_at.\d+.txt
@@ -56,8 +87,11 @@ moize-fs:
         - silently ignore failures (might be due to parallel calls)
   - OPTS.maxSize NUM:
      - min 1
-     - def Infinity
-        - Infinity should prevent even checking for any cleanup
+     - def 1000
+        - reason: not taking too much space
+        - other reason: some filesystems have limits in number of files per directory
+        - other reason: `fs.readdir()` does I/O read of 32000 file entries at a time
+     - if Infinity, prevents even checking for any cleanup
      - during automatic cleanup
      - if more than NUM files (timestamps excluded), remove the ones with the oldest timestamps
      - pass to process moize OPTS.maxSize NUM too
@@ -72,6 +106,10 @@ moize-fs:
         - min: 1
         - number of groups OPTS.maxSize should keep
   - see TODO comments in code after cache invalidation
+  - OPTS.compress STR:
+     - "none" (def), "gzip", "brotli"
+     - add file extension ".gz|br" to cache path
+     - if OPTS.streams, done in streaming mode in write. Always in streaming mode in read.
   - stream atomic write: find library
      - if none, create own
   - better offline check
@@ -119,7 +157,7 @@ nve VERSIONS --FLAGS [COMMAND [ARGS]] instead of nve --FLAGS VERSIONS [COMMAND [
 
 Pruning cache:
   - in get-node (and above libraries)
-  - OPTS.maxCache NUM
+  - OPTS.maxSize NUM
      - def: 10
      - min: 1
      - max number of cached versions at once
