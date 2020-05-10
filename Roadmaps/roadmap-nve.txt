@@ -33,11 +33,26 @@ moize-fs:
     - do not cache if serialized returnValue length > NUM
     - for both stream and non-stream
   - do not use OPTS.stream true with `all-node-versions` (lower memory, but slower on already-cached calls)
+  - remove offline feature: not useful with automatic cleanup
   - OPTS.ignoreReturn BOOL:
      - make returnValue undefined
         - including streams, i.e. not created on cache hit
         - with|without cacheInfo true
      - goal: faster and lower memory when only cache path is needed
+  - if type "error", still memoize in-process
+     - unless OPTS.stream true: invalidate it then
+  - ensuring returnInfo.path exists:
+     - after getting it from process cache
+     - possible reasons: user removed cache dir, automatic cleanup in another process, type "error", etc.
+     - only if returnInfo.path needed: OPTS.cacheInfo|stream
+     - if:
+        - type "process"
+        - (OPTS.cacheInfo && path !== undefined) || OPTS.stream
+           - note: path is undefined if previously type "error". It is ok unless OPTS.stream true
+        - !pathExists(path)
+     - then:
+        - invalidate process cache
+        - call moized function again
   - All ERROR should have different ERROR.reason STR
   - Error handling types:
      - very likely user errors
@@ -58,6 +73,10 @@ moize-fs:
            - for reading cache file or expireAt file, parsing cache file, parsing expireAt
            - behavior: silently ignore, like if there was no cache. Remove the file.
      - go through code to find other places that might fail
+  - OPTS.updateExpire -> OPTS.lastCallTime
+     - use OPTS.lastCallTime false with all-node-versions, but true with get-node
+     - expireAt -> (created|updated) timestamp (depending on OPTS.lastCallTime)
+  - allow OPTS.maxAge to be or `Infinity`
   - positional argument getCacheDir() -> "PATH" instead:
      - if "PATH" relative:
         - if OPTS.namespace STR: getcachedir(OPTS.namespace)
@@ -75,13 +94,19 @@ moize-fs:
      - exception in {hash} or OPTS.pickInput():
         - same behavior as return value serialization error:
            - if OPTS.strict true, propagate. Otherwise, return as { type 'error', error ERROR }
-        - skip logic for readFsCache|writeFsCache|offline, but still call FUNC(...ARGS) and memoizes it in-process:
+        - skip logic for readFsCache|writeFsCache, but still call FUNC(...ARGS) and memoizes it in-process:
            - pass args array as first argument to moized function instead of cachePath
-  - timestamp file:
-     - filename is FILE.expire_at.DATENUM.txt
+  - timestamp in filename:
+     - filename is FILE.timeDATENUM.txt
      - empty content
-     - use single `readdir` on cache directory instead of reading timestamp files
-        - when <= 1000, use `fs.readdir()`. But > 1000, use `fs.opendir()` with batch size of 1000
+     - when OPTS.lastCallTime true and updating timestamp, try fs.rename()
+        - it might fail due to parallel run. Give up then: the other run won.
+     - use single `fs.readdir()` (not `fs.opendir()`) on cache directory instead of reading timestamp files
+  - ensure each timestamp file has an associated file:
+     - timestamp file should be created first and removed second (not in parallel)
+     - do not cleanup timestamps without an associated file
+        - unless it is old (through maxAge or maxCount)
+     - always cleanup files with an associated timestamps
   - automatic cleanup:
      - at the beginning of writing a new cache file, but before serializing the value
      - use the list of filenames from previous `readdir` call on cache dir
@@ -118,23 +143,33 @@ moize-fs:
         - max: OPTS.maxCount
         - min: 1
         - number of groups OPTS.maxCount should keep
+  - OPTS.version NUM:
+     - def 0
+     - min 1 (outside def)
+     - must be finite integer
+     - added to timestamp filename: .vNUM.timeTIME.txt
+        - i.e. changing it invalidates other versions (either < or >)
+     - during automatic cleanup, remove any timestamp with different version (either < or >) and their associated file (if any)
+     - document that this is version of return value, not library version. Bump when previous version value cannot be used for current one
   - see TODO comments in code after cache invalidation
   - OPTS.compress STR:
      - "none" (def), "gzip", "brotli"
      - add file extension ".gz|br" to cache path
      - if OPTS.streams, done in streaming mode in write. Always in streaming mode in read.
   - stream atomic write: find library
-     - if none, create own
-  - better offline check
-     - maybe generalize and separate from moize-fs, e.g. a function wrapper that accepts a custom callback on offline failure
-  - own repositories:
-     - moize-fs: without offline
-     - moize-offline: moize-fs + offline
+     - if none, create own???
+  - own repository
   - use in repositories:
      - CACHE_DIR/bin/MIRROR/ARCH/VERSION/node.exe
      - CACHE_DIR/versions/MIRROR/ARCH/versions.json
      - CACHE_DIR/releases/releases.json (does not include `latest`, this is retrieved and merged separately)
-  - add OPTS.maxBuffer NUM, which stops streams if current length > maxBuffer, if OPTS.streams 'content'
+  - cache-cli-command:
+     - own repository
+     - use moize-fs on the CLI
+     - executable is ccc
+     - ccc [OPTS] COMMAND ARGS...
+     - does not use `child_process` OPTS.shell: shell was already interpreted
+     - OPTS.shouldInvalidate() -> --invalidate CLI flag
   - key-value store abstraction (for future):
      - done as a separate library on top of it
      - core only provides with OPTS callbacks to modify fs.* calls
