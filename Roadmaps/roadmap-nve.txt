@@ -27,7 +27,7 @@ Execa:
   - check why 2 CI tests are failing on Windows
   - check question about stdin: https://github.com/sindresorhus/execa/issues/418
 
-moize-fs:
+fs-memoize:
   - remove offline feature: not useful with automatic cleanup
   - OPTS.ignoreReturn BOOL:
      - make returnValue undefined
@@ -91,27 +91,26 @@ moize-fs:
            - if OPTS.strict true, propagate. Otherwise, return as { type 'error', error ERROR }
         - skip logic for readFsCache|writeFsCache, but still call FUNC(...ARGS) and memoizes it in-process:
            - pass args array as first argument to moized function instead of cachePath
-  - timestamp in filename:
-     - filename is FILE.timeDATENUM.txt
-     - empty content
-     - when OPTS.lastCallTime true and updating timestamp, try fs.rename()
-        - it might fail due to parallel run. Give up then: the other run won.
-     - use single `fs.readdir()` (not `fs.opendir()`) on cache directory instead of reading timestamp files
-  - ensure each timestamp file has an associated file:
+  - timestamp:
+     - filename is FILE.metadata.txt
+     - content:
+        - timestamp + version, space-separated
+        - parse it as if other fields might be added in future
      - timestamp file should be created first and removed second (not in parallel)
-     - do not cleanup timestamps without an associated file
-        - unless it is old (through maxAge or maxCount)
-     - always cleanup files with an associated timestamps
   - automatic cleanup:
      - at the beginning of writing a new cache file, but before serializing the value
-     - use the list of filenames from previous `readdir` call on cache dir
+     - do not await it, i.e. happens in background
+     - add top try/catch than make errors silent
+     - started right before writeFsCache() is about to be performed
+     - use opendir():
+        - default buffer size (32)
+        - throttle parallel file read to 32 at once using p-map
+           - also anything that can be done without knowing the other files
      - remove any of the following:
         - FILE:
-           - without FILE.expire_at.\d+.txt
-        - FILE.expire_at.\d+.txt:
-           - without FILE
-           - with another one with a higher DATENUM
-        - FILE + FILE.expire_at.\d+.txt:
+           - without FILE.metadata.txt
+        - FILE.metadata.txt without FILE, only if > 1 hour old
+        - FILE + FILE.metadata.txt:
            - with DATENUM < Date.now()
      - filter out duplicates filepaths from list to remove
      - call all fs.unlink() in parallel
@@ -122,7 +121,7 @@ moize-fs:
      - def 1000
         - reason: not taking too much space
         - other reason: some filesystems have limits in number of files per directory
-        - other reason: `fs.readdir()` does I/O read of 32000 file entries at a time
+        - other reason: makes `fs.readdir()` of automatic cleanup faster
      - if Infinity, prevents even checking for any cleanup
      - during automatic cleanup
         - invalidate process cache too
@@ -142,8 +141,8 @@ moize-fs:
      - def 0
      - min 1 (outside def)
      - must be finite integer
-     - added to timestamp filename: .vNUM.timeTIME.txt
-        - i.e. changing it invalidates other versions (either < or >)
+     - added to timestamp content, space-separated
+     - only read fsCache if same version, i.e. changing it invalidates other versions (either < or >)
      - during automatic cleanup, remove any timestamp with different version (either < or >) and their associated file (if any)
      - document that this is version of return value, not library version. Bump when previous version value cannot be used for current one
   - see TODO comments in code after cache invalidation
@@ -155,8 +154,8 @@ moize-fs:
      - errors during temporary file write create uncaught promise rejections
      - it should not start writing the temporary file until the stream is being read
   - OPTS.maxFileSize NUM:
-    - do not cache if serialized returnValue length > NUM
-    - for both stream and non-stream
+     - do not cache if serialized returnValue length > NUM
+     - for both stream and non-stream
   - stream atomic write: find library
      - if none, create own???
   - own repository
@@ -166,7 +165,7 @@ moize-fs:
      - CACHE_DIR/releases/releases.json (does not include `latest`, this is retrieved and merged separately)
   - cache-cli-command:
      - own repository
-     - use moize-fs on the CLI
+     - use fs-memoize on the CLI
      - executable is ccc
      - ccc [OPTS] COMMAND ARGS...
      - does not use `child_process` OPTS.shell: shell was already interpreted
@@ -212,7 +211,7 @@ Pruning cache:
      - max number of cached versions at once
      - 1: no caching
      - high number like 1000: no pruning
-  - using moize-fs OPTS:
+  - using fs-memoize OPTS:
      - maxCount NUM: user-provided OPTS.maxCache
      - group: remove only patch and minor version from filename
      - groupsCount: Math.ceil(Math.sqrt(OPTS.maxCount))
