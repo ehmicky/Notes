@@ -525,6 +525,7 @@ process.mainModule                              #Same but updated if root file c
 MODULE.loaded                                   #False for the first time the file is loaded (i.e. sync)
                                                 #True for async functions
 require('module').builtinModules                #List of system 'MODULE'_ARR (e.g. 'http') including internal ones
+require('repl').builtinModules               14*#Same
 
 __filename                                      #Current file absolute path.
 MODULE.filename                                 #Reference to __filename
@@ -733,10 +734,11 @@ Buffer.isEncoding('ENCODING')->BOOL             #
 transcode(UBUFFER, "ENCODING", "ENCODING2")
  ->BUFFER2                                      #Returns BUFFER2 with ENCODING2, based on UBUFFER with ENCODING
 
+kMaxLength                                      #Max BUFFER size (2 ** 32 on my machine)
+
 new TYPED_ARR(BUFFER)                           #Copy, not reference
                                                 #Each single BUFFER BVAL -> a single TYPED_ARR VAL
 Buffer.allocUnsafe[Slow](NUM)->BUFFER           #Similar to new TYPED_ARR(NUM)
-                                                #Max size is require("buffer").kMaxLength (64 bits on 64 bits architecture)
                                                 #Unless "Slow", will reuse preallocated buffer from a pool (i.e. faster)
                                                 #if NUM <= Buffer.poolSize (def: 8192) / 2
 Buffer.alloc(NUM[, NUM2|SBUFFER[, 'ENCODING']]) #Like Buffer.allocUnsafeSlow(NUM).fill(NUM2|SBUFFER, 'ENCODING') (def: \0),
@@ -1193,6 +1195,7 @@ PORT_NUM, 'ADDR'[, FUNC(ERROR, UINT3)])         #If bind() has not been called, 
                                                 #When done, fires FUNC: UINT3 is the number of bytes sent.
                                                 #Max. SUBUFFER size is the MTU, which must be found with PMTUD.
                                                 #'ADDR' is optional
+                                             14*#SUBUFFER can also be STDUBUFFER
 
 UDPSOCKET.setRecv|SendBufferSize(NUM)           #
 UDPSOCKET.getRecv|SendBufferSize()->NUM         #
@@ -1590,6 +1593,8 @@ REQ                                             #ISTREAM, reading the body
 REQ.httpVersion[Major|Minor]                    #
 REQ.method                                      #"GET|DELETE|..." (not for CLIENTREQ's REQ)
 REQ.url                                         #STR (not for CLIENTREQ's REQ). Does not include origin
+REQ.host                                     14*#STR
+REQ.protocol                                 14*#STR
 REQ.headers                                     #As { VAR: 'VAL'[_ARR] ... }. Normalized:
                                                 #  - 'VAR' lowercase
                                                 #  - duplicates:
@@ -1702,8 +1707,13 @@ new AGENT(OBJ)                                  #OBJ is:
                                                 #  - keepAlive BOOL (def: true): keep free sockets opened for use
                                                 #  - keepAliveMsecs NUM (def: 1000)
                                                 #  - timeout NUM
+                                             14*#  - scheduling 'fifo' (def) or 'filo':
+                                             14*#     - FIFO keep number of open sockets as high as possible, i.e. good for speed
+                                             14*#     - FILO keep it as low as possible, i.e. good for memory
+                                             14*#     - FILO lowers risk of re-using sockets closed by server due to inactivity
 AGENT.max[Free]Sockets                          #
 AGENT.[free]sockets                             #Current TCPSOCKET_ARR
+AGENT.maxTotalSockets                        14*#Like AGENT.maxSockets but for all origins
 AGENT.requests                                  #Current REQ_ARR, not assigned to sockets yet.
 AGENT.destroy()                                 #To do to destroy free sockets if keepAliveMsecs high, to avoid hanging.
 AGENT.keepSocketAlive = FUNC(TCPSOCKET)         #Override function fired on new free socket.
@@ -2045,7 +2055,8 @@ WRENCH.chownSyncRecursive(DIR, UID, GID)       ##
                                                 #lchmod() is only on Mac
 WRENCH.chmodSyncRecursive(DIR, UINT)           ##
 
-[f|l]utimes(PATH|FD_INT, ATIME, MTIME, FUNC(ERR)) #Change atime|mtime
+[f]utimes(PATH|FD_INT, ATIME, MTIME, FUNC(ERR)) #Change atime|mtime
+lutimes(...)                                 14*#
 access(PATH[, NUM], FUNC(ERROR))                #Checks if has permission, according to NUM or'd flags:
                                                 #  - FS.constants.F_OK (def, always implied):
                                                 #     - files exists and its directory list it
@@ -2316,6 +2327,7 @@ createGzip|Deflate[Raw]([OBJ])->COMPRESS        #COMPRESS is a IOSTREAM, so shou
                                                 #     - constants.Z_HUFFMAN_ONLY: less random, and large repeating chunk
                                                 #     - constants.Z_RLE: same, but specially for PNG data
                                                 #     - constants.Z_FIXED: only specific application
+                                             14*#  - maxOutputLength NUM (def: Buffer.kMaxLength): not used in streaming mode
                                                 #Memory required (in bytes) is:
                                                 #  - for compression:
                                                 #     - 2^(windowBits+2) + 2^(memLevel+9) + chunkSize, i.e. 272K by def
@@ -2356,6 +2368,7 @@ createBrotliCompress([OBJ])->COMPRESS           #Same with Brotli. OBJ:
                                                 #        - def 0
                                                 #        - hint for number of direct distance codes and postfix bits.
                                                 #        - those are two internal parameters of the algorithms, to use only when knowing it.
+                                             14*#  - maxOutputLength: like createGzip|Deflate()
 createGunzip|Inflate[Raw]|Unzip([OBJ])->UNCOMPRS#UNCOMPRESS is a IOSTREAM.
                                                 #Unzip: autodetect whether Gunzip or Deflate (but not DeflateRaw).
 createBrotliDecompress([OBJ])->UNCOMPRESS       #Same with Brotli. OBJ:
@@ -2509,8 +2522,10 @@ on('unhandledRejection, FUNC(VAL, PROMISE))     #When PROMISE:
                                                 #  - is rejected
                                                 #  - and has no handler (PROMISE.catch())
 --unhandled-rejections=STR                      #What to do on 'unhandledRejection':
-                                                #  - 'strict': (unless 'unhandledRejection' event handler) warning + uncaughtException
+                                                #  - 'strict': 'unhandledRejection' event + warning + uncaughtException
                                                 #  - default: (unless 'unhandledRejection' event handler) warning + (once) deprecation warning
+                                                #  - throw: (unless 'unhandledRejection' event handler) warning + uncaughtException
+                                                #  - warn-with-error-code: (unless 'unhandledRejection' event handler) warning + (once) deprecation warning
                                                 #  - 'warn': warning
                                                 #  - 'none': nothing
 on('rejectionHandled, FUNC(PROMISE))            #When adding PROMISE.catch() on a PROMISE that:
@@ -2876,16 +2891,19 @@ WORKER|MESSAGEPORT.postMessage                  #Like DOM except:
  (VAL[, VAL2_ARR])                              #  - child can only use MESSAGEPORT, not global "postMessage()"
                                                 #  - VAL2:
                                                 #     - can be SHARED_ARRBUFFER
-                                             14*#     - can be crypto KEY
+                                             14*#     - can be FILE_HANDLE or crypto KEY
                                                 #     - when MESSAGEPORT, VAL must be MESSAGEPORT
 WORKER|MESSAGEPORT.on('message', FUNC(VAL))     #Like DOM except:
                                                 #  - receive VAL directly, not MESSAGEEVENT
                                                 #  - MESSAGEPORT will keep process open until MESSAGEPORT.close|unref()
+WORKER|MESSAGEPORT.on
+ ('messageerror', FUNC(ERROR))               14*#Like DOM
 WORKER.receiveMessageOnPort(MESSAGPORT)->VAL 12*#If there is a message VAL in the queue, return it and remove it from queue.
                                              12*#Otherwise return undefined
 WORKER.moveMessagePortToContext              11*#Transfer MESSAGEPORT to another global object COBJ (created by VM.createContext())
  (MESSAGEPORT, COBJ)->MESSAGEPORT2           11*#MESSAGEPORT will become unusable
                                              11*#'message' event listeners are kept
+WORKER.markAsUntransferable(VAL2)            14*#If VAL2 is passed to postMessage(), ignore it from the VAL2_ARR
 
 new MessageChannel()
 MESSAGECHANNEL.port1|2
