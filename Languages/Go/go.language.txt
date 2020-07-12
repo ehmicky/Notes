@@ -6,8 +6,7 @@
 
 
 TODO:
-  - https://golang.org/ref/spec#Package_unsafe
-  - go back to https://golang.org/doc/effective_go.html#control-structures
+  - https://golang.org/doc/effective_go.html#control-structures
   - https://golang.org/ref/mem
   - https://golang.org/doc/faq
   - https://golang.org/doc/diagnostics.html
@@ -16,6 +15,7 @@ TODO:
   - https://golang.org/doc/cmd
      - all go CMD
      - all go* executable
+     - after go doc, read again https://golang.org/doc/effective_go.html#commentary
   - https://golang.org/pkg/
   - https://github.com/golang?type=source
   - go through to_learn.txt
@@ -32,19 +32,19 @@ VERSION ==>                       #1.14.4
 
 SOURCE CODE ENCODING ==>          #UTF-8, non-canonicalized
 
-TOKEN TYPES ==>                   #  - identifier: VAR|TYPE, pre-defined FUNC, true|false|iota|nil
+TOKEN TYPES ==>                   #  - identifier: VAR|TYPE, FUNC (including pre-defined), true|false|iota|nil
                                   #  - keyword: return|if|package|const|...
                                   #  - operator|punctuation: + & ; . <<= () [] {} ...
                                   #  - literals: [U]INT|FLOAT|COMPLEX '...' "..."
 
-WHITESPACES ==>                   #\t \r \n or space. Separate tokens. Ignored otherwise
+WHITESPACES ==>                   #\t \r \n space. Separate tokens. Ignored otherwise
 
 EXPR[;]                           #; can be a newline instead (recommended) when line ends with:
                                   #  - VAR
                                   #  - NUM|STR|RUNE
                                   #  - ) ] } ++ --
                                   #  - return|break|continue|fallthrough
-                                  #I.e. most of the time
+                                  #I.e. most of the time.
 [;]                               #Empty statement
 (VAL)                             #Parenthesis can be used to override operator precedence
 
@@ -88,8 +88,7 @@ for [BOOL_EXPR] { ... }           #Same as for ; [BOOL_EXPR]; { ... }
 
 for KEY_VAR[, VAL_VAR2]           #Iterates
   := range STR|MAP|[*]ARR|SLICE   #KEY is INT for STR|ARR|SLICE
-  { ... }                         #VAL is copy|reference depending on TYPE (like in any FUNC() return value)
-                                  #For STR, VAL is RUNE
+  { ... }                         #For STR, VAL is RUNE
                                   #For MAP, iteration is unordered
 for ... = range ...               #Same but with already declared KEY_VAR, VAL_VAR
 
@@ -148,7 +147,7 @@ type (TYPE TYPE2;...)             #Type definition
 UNDERLYING TYPE ==>               #TYPE after type resolution. Used on:
                                   #  - untyped constant type inference
                                   #  - operators (like + .VAR (...) ...)
-                                  #Transtype rule is used for assignments (= and function calls)
+                                  #For assignments (= and function calls), transtype rules are used instead.
 
 TYPE IDENTITY ==>                 #Identical TYPEs do not require transtyping.
                                   #Identical if:
@@ -185,7 +184,6 @@ TYPE(VAL)                         #Explicit transtype.
 (TYPE)(VAL)                       #Needs () when TYPE starts with * <- func
 TYPE -> TYPE2                     #When either:
                                   #  - used type definition (using type names)
-                                  #     - exception: TYPE cannot be builtin composite types
                                   #  - same STRUCT except tags
 NUM -> other NUM                  #Not if:
                                   #  - COMPLEX with imaginary part -> [U]INT|FLOAT
@@ -225,6 +223,7 @@ VAL == != VAL2                    #Allowed:
                                   #Not allowed:
                                   #  - FUNC|MAP|SLICE (except against nil)
                                   #If cannot transtype VAL <-> VAL2, panic.
+                                  #  - including STRUCT number|name|types|tags|order of properties
 VAL < <= > >= VAL2                #Only for:
                                   #  - NUM (except COMPLEX)
                                   #  - STR: lexically byte-wise
@@ -370,7 +369,7 @@ len(STR)->UINT                    #Size, in byte (not character)
 
 
 *TYPE                             #TYPE2. Pointer of a TYPE.
-                                  #Used to pass a STRUCT|ARR by reference instead of value
+                                  #Used to pass a VAR by reference instead of value
                                   #Lower operator priority than [UINT] or .VAR
 
 nil                               #Zero-value of any *TYPE
@@ -390,14 +389,48 @@ new(TYPE)                         #Same as:
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:            UINTPTR            :==(
+                                            )==:      POINTER ARITHMETIC       :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
-uintptr                           #TYPE
-                                  #Behaves like uint, including size and zero-value.
-                                  #Unlike *TYPE, represents a pointer towards unknown type.
+unsafe.*                          #Not recommended, as memory layout assumption might not be portable
+
+unsafe.Pointer                    #*TYPE with unknown value TYPE
+                                  #  - cannot be deferenced
+                                  #Goal is to transtype *TYPE <-> UNSAFE_POINTER <-> UINTPTR
+                                  #  - only explicit transtype
+                                  #  - direct *TYPE <-> UINTPTR not allowed
+
+uintptr                           #TYPE of a pointer's address.
+                                  #Like UNSAFE_POINTER, unknown underlying value type.
+                                  #Unlike *TYPE|UNSAFE_POINTER, represents the address itself, not the value referenced by that address.
+                                  #*TYPE|UNSAFE_POINTER|UINPTR do not error if address points at non-accessible|allocated|aligned value
+                                  #  - however deferencing *TYPE will panic with SIGSEGV
+                                  #Does not keep reference of that value, i.e. might be garbage collected
+                                  #  - need to transtype with unsafe.Pointer() in the same statement to ensure reference is kept
+                                  #Behaves like UINT:
+                                  #  - including size and zero-value
+                                  #Goals:
+                                  #  - pointer arithmetic with unsafe.Sizeof|Offsetof|Alignof()
+                                  #  - TYPE -> TYPE2 transtype, using same underlying memory layout
+                                  #  - printing address
+                                  #Some standard library use UINTPTR, e.g. syscall.Syscall() or reflect.ValueOf().Pointer|UnsafeAddr()
+
+unsafe.Sizeof(VAL)->UINTPTR       #Memory byte size:
+                                  #  - BOOL: 1
+                                  #  - [U]INT|UINTPTR|*TYPE: OS word size (8 on mine)
+                                  #  - [U]INT8|16|32|64, FLOAT32|64, COMPLEX64|128, BYTE, RUNE: 1|2|4|8|16
+                                  #  - STRUCT|ARR: sum of each element's TYPE
+                                  #  - STR|INTERFACE|MAP|SLICE|CHAN: 2|2|1|3|1 pointers
+unsafe.Offsetof(STRUCT.VAR)       #Memory byte difference between &STRUCT and &STRUCT.VAR
+ ->UINTPTR                        #Equals the sum of unsafe.Sizeof() of all STRUCT properties before STRUCT.VAR
+unsafe.Alignof(VAL)->UINTPTR      #Memory alignment byte size:
+                                  #  - NUM|BOOL: same as unsafe.SizeOf()
+                                  #  - COMPLEX64|128: 4|8
+                                  #  - STRUCT|ARR: max of any element TYPE
+                                  #  - STR|INTERFACE|MAP|SLICE|CHAN: 1 pointer
+                                  #Means this value's address % ALIGNMENT must be 0
 
 
                                              /=+===============================+=\
@@ -409,7 +442,7 @@ uintptr                           #TYPE
 
 SCOPE ==>                         #Block-scoped:
                                   #  - "universe":
-                                  #     - pre-defined language VAR|TYPE: builtin TYPE|FUNC, true|false|iota|nil
+                                  #     - pre-defined language: builtin TYPE|FUNC, true|false|iota|nil
                                   #  - package:
                                   #     - any top-level declaration, except import
                                   #     - shared by all files of same package
@@ -461,7 +494,7 @@ CONST_VAL                         #Value evaluated at compile-time
                                   #     - not Math.Inf|NaN()
                                   #  - only literals or const VAR.
                                   #    Not var VAR.
-                                  #  - operators, builtin FUNC imag|real|complex|len|cap(), TYPE(), unsafe.*().
+                                  #  - operators, TYPE(), builtin FUNC imag|real|complex|len|cap(), unsafe.Sizeof|Offsetof|Alignof().
                                   #    Not other FUNC()
                                   #If not typed at declaration-time, "untyped constant". Becomes typed when:
                                   #  - needs type through type inference
@@ -474,7 +507,7 @@ const ...                         #Like var ... but CONST_VAL
                                   #  - if:
                                   #     - inside const (...), and not first declaration
                                   #     - TYPE omitted as well
-                                  #  - defaults to previous statement's VAL (including iota)
+                                  #  - then defaults to previous statement's VAL (including iota)
 iota                              #Current const-declaration index (start at 0) inside const (...)
                                   #Used for enums
 
@@ -500,7 +533,7 @@ func FUNC([VAR] [TYPE],...)       #Function declaration
                                   #  - TYPE,... is when returning MVAL
                                   #  - if named (VAR2): declare the variable on top of function
                                   #TYPE can be variadic ...TYPE, i.e. 0-n arguments:
-                                  #  - must be last.
+                                  #  - must be last
                                   #  - is a []TYPE
                                   #  - called with FUNC([MVAL]) or FUNC(SLICE...)
                                   #  - if no arguments:
@@ -513,6 +546,7 @@ nil                               #Zero-value
 func(...) [...] {...}             #Anonymous function (no FUNC name)
                                   #Same as function declaration except:
                                   #  - can be used as value
+                                  #  - can be declared inside another FUNC
                                   #  - cannot be a method
                                   #Higher operator priority than FUNC(), i.e. can do func(...) {...}(...)
 
@@ -545,9 +579,9 @@ struct                            #STRUCT_TYPE
                                   #  - TYPE must be type name, not type literal
                                   #     - can be *TYPE
                                   #  - if TYPE is STRUCT_TYPE|INTERFACE_TYPE, can access TYPE.* directly from STRUCT_TYPE.* ("promoted field")
-                                  #     - including added to "method set"
                                   #     - exluding in literal STRUCT_TYPE{...}
                                   #     - if parent TYPE can have same property, parent property shadows it
+                                  #     - also add its "method set"
                                   #STR is "tag":
                                   #  - no semantics but:
                                   #     - can be retrieved with reflect PACKAGE
@@ -558,7 +592,7 @@ struct                            #STRUCT_TYPE
 EMPTY STRUCT ==>                  #Zero-value, i.e. each element uses its own zero-value
                                   #No nil
 
-STRUCT_TYPE{ [VAR:][VAL],... }    #Creates a new STRUCT, instance of STRUCT_TYPE
+STRUCT_TYPE{ [[VAR:] VAL],... }   #Creates a new STRUCT, instance of STRUCT_TYPE
                                   #If VAR, named, otherwise positional. Cannot mix.
                                   #VAL defaults to zero-value
                                   #  - if positional, only if all VAL omitted
@@ -574,7 +608,7 @@ STRUCT.VAR [= VAL]                #Get|set property
 
 
 func ([VAR3] RECEIVER_TYPE)       #Method declaration.
- FUNC(...) ... {...}              #Function with special argument VAR3 ("receiver") similar to "this" in other languages
+ FUNC(...) ... {...}              #Function with special argument VAR3 ("receiver") similar to "this" in other languages.
                                   #RECEIVER_TYPE:
                                   #  - must be a defined type (type TYPE TYPE2)
                                   #  - type name must be defined in same package
@@ -599,7 +633,6 @@ interface {                       #INTERFACE_TYPE
   [INTERFACE_TYPE2];...           #If INTERFACE_TYPE2, include its methods ("embedded")
 }                                 #  - if some methods already exists, must exactly match
                                   #  - cannot embed itself (including recursively)
-                                  #Can only use methods
                                   #Recommended names
                                   #  - if INTERFACE single FUNC (e.g. Write()) -> "FUNCer" (e.g. Writer)
                                   #  - if FUNC is meant for transtyping to TYPE -> "Type()" (not ToType())
@@ -646,10 +679,10 @@ nil                               #Zero-value.
                                   #Unlike empty MAP:
                                   #  - cannot set
 
-map[KTYPE]VTYPE{ [VAL: VAL2],... }#Creates a MAP with some elements
 make(map[KTYPE]VTYPE[, UINT])->MAP#Creates an empty MAP.
                                   #Pre-allocates space for UINT elements
                                   #  - only for performance optimization. Size grows dynamically.
+map[KTYPE]VTYPE{ [VAL: VAL2],... }#Creates a MAP with some elements
 
 MAP[KVAL]                         #Get an element.
                                   #Return VAL, BOOL:
@@ -674,10 +707,10 @@ len(MAP)->UINT                    #Number of keys
 EMPTY ARR ==>                     #Zero-value, i.e. each element uses its own zero-value
                                   #No nil
 
-[UINT]TYPE{[[INDEX: ]VAL],...}    #Creates a new ARR
+[UINT]TYPE{[[INDEX:] VAL],...}    #Creates a new ARR
                                   #VAL defaults to zero-value
                                   #INDEX defaults to last INDEX+1, or 0
-[...]TYPE{[[INDEX: ]VAL],...}     #Same but guesses UINT
+[...]TYPE{[[INDEX:] VAL],...}     #Same but guesses UINT
 
 ARR[UINT] [= VAL]                 #Get|set element
                                   #Error if out-of-bound
@@ -696,13 +729,13 @@ cap(ARR)->UINT                    #Same
 []TYPE                            #SLICE_TYPE
                                   #Reference to part of an ARR
                                   #No static size
-                                  #Different type than ARR, e.g. cannot transtype from|to ARR
+                                  #Cannot transtype from|to ARR
 
 nil                               #Zero-value.
                                   #Like empty SLICE:
                                   #  - has 0 length|capacity
-                                  #  - can be read|listed
-                                  #  - can be manipulated by append(), behaving like an empty SLICE
+                                  #  - can be read|sliced
+                                  #  - can be manipulated by copy|append(), behaving like an empty SLICE
                                   #Unlike empty SLICE:
                                   #  - has no underlying ARR
                                   #  - SLICE[...:...[:...]] returns another nil
@@ -715,7 +748,7 @@ MEMORY EFFICIENCY ==>             #Since it keeps whole ARR in memory but only u
 
 make([]TYPE, UINT[, UINT2])->SLICE#Creates a new SLICE, including the underlying ARR, with zero-value elements.
                                   #UINT is length, UINT2 is capacity (def: UINT)
-[]TYPE{[[INDEX: ]VAL],...}        #Creates a new SLICE, including the underlying ARR, with specific elements
+[]TYPE{[[INDEX:] VAL],...}        #Creates a new SLICE, including the underlying ARR, with specific elements
                                   #Same INDEX|VAL default values as [UINT]TYPE{...}
 
 ARR[[UINT]:[UINT2][:UINT3]]       #Creates a new SLICE from ARR[UINT] to ARR[UINT2 - 1]
@@ -780,7 +813,7 @@ recover()->VAL|nil                #Stop current panic, and return the VAL passed
 
 error                             #INTERFACE_TYPE
                                   #By convention:
-                                  #  - Error TYPEs should be STRUCT implementing this INTERFACE
+                                  #  - ERROR_TYPEs should be STRUCT implementing this INTERFACE
                                   #  - either:
                                   #     - returned as MVAL: VAL, ERROR|nil, to be tested by caller
                                   #     - passed to panic(ERROR)
@@ -823,7 +856,8 @@ go FUNC(...)                      #Call a function but inside a new thread.
                                              \=+===============================+=/
 
 
-chan TYPE                         #Pipe|FIFO with TYPE elements, meant for cross-thread communication
+chan TYPE                         #CHAN_TYPE.
+                                  #Pipe|FIFO with TYPE elements, meant for cross-thread communication
 chan <- TYPE
 <- chan TYPE                      #Same but only allows sending or receiving
 
@@ -882,50 +916,13 @@ print[ln](VAL,...)                #Prints on stderr, space|newline-separated
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:            MODULE             :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-MODULE ==>                        #Group of PACKAGEs
-
-"[NAMESPACE/]MODULE"              #"MODULE_PATH", identifier of the MODULE
-                                  #NAMESPACE is location among:
-                                  #  - standard library: none
-                                  #  - PATH, relative to:
-                                  #     - $PWD[/...]
-                                  #     - $GOROOT/src
-                                  #     - $GOPATH/src
-                                  #  - URI
-
-go.mod                            #File containing line-wise directives (below)
-                                  #Location determines the module's root directory:
-                                  #  - any subdirectory's PACKAGE is included
-                                  #  - subdirectory with another go.mod are excluded
-//COMMENT                         #
-module MODULE_PATH                #Declares MODULE_PATH
-go VERSION                        #Declares Go version
-
-go mod init "MODULE_PATH"         #Creates ./go.mod
-
-go install ["MODULE_PATH"|DIR]    #Downloads MODULE and installs as binary in GOBIN
-                                  #If DIR (def: '.'), searches in DIR
-GOBIN                             #By priority:
-                                  #  - ENVVAR GOBIN
-                                  #  - FIRST_GO_PATH/bin, where FIRST_GO_PATH is ENVVAR GOPATH's first path
-                                  #  - HOME/go/bin/MODULE
-                                  #     - HOME is $HOME on Unix, %USERPROFILE% on Windows
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
                                             )==:            PACKAGE            :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
 package PACKAGE                   #Declare:
-                                  #  - which PACKAGE file belongs
+                                  #  - which PACKAGE file belongs to
                                   #  - package's default import VAR
                                   #Must be first statement
                                   #All *.go within same DIR must have same PACKAGE
@@ -963,6 +960,43 @@ INITIALIZATION ORDER ==>          #If a top-level declaration depends on another
                                   #     - FILE...: arguments order
                                   #     - DIR: filename alphabetical order
                                   #  - linewise
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:            MODULE             :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+MODULE ==>                        #Group of PACKAGEs
+
+"[NAMESPACE/]MODULE"              #"MODULE_PATH", identifier of the MODULE
+                                  #NAMESPACE is location among:
+                                  #  - standard library: none
+                                  #  - PATH, relative to:
+                                  #     - $PWD[/...]
+                                  #     - $GOROOT/src
+                                  #     - $GOPATH/src
+                                  #  - URI
+
+go.mod                            #File containing line-wise directives (below)
+                                  #Location determines the module's root directory:
+                                  #  - any subdirectory's PACKAGE is included
+                                  #  - subdirectory with another go.mod are excluded
+//COMMENT                         #
+module MODULE_PATH                #Declares MODULE_PATH
+go VERSION                        #Declares Go version
+
+go mod init "MODULE_PATH"         #Creates ./go.mod
+
+go install ["MODULE_PATH"|DIR]    #Downloads MODULE and installs as binary in GOBIN
+                                  #If DIR (def: '.'), searches in DIR
+GOBIN                             #By priority:
+                                  #  - ENVVAR GOBIN
+                                  #  - FIRST_GO_PATH/bin, where FIRST_GO_PATH is ENVVAR GOPATH's first path
+                                  #  - HOME/go/bin/MODULE
+                                  #     - HOME is $HOME on Unix, %USERPROFILE% on Windows
 
 
                                              /=+===============================+=\
