@@ -6,7 +6,7 @@
 
 
 TODO:
-  - https://golang.org/ref/spec
+  - https://golang.org/ref/spec#Declarations_and_scope
   - go back to https://golang.org/doc/effective_go.html#control-structures
   - https://golang.org/ref/mem
   - https://golang.org/doc/faq
@@ -212,14 +212,63 @@ VALUE-LIKE VS POINTER-LIKE ==>    #Types are either:
 SIMPLE VS COMPOSITE ==>           #Simple types: BOOL, INT|FLOAT|COMPLEX, RUNE|STR
                                   #Composite types: *TYPE, FUNC, INTERFACE|STRUCT|MAP|ARRAY|SLICE, CHAN
 
-type TYPE = TYPE2                 #Type alias
-type (TYPE = TYPE2;...)           #TYPE allowed characters: like var VAR
+type TYPE = TYPE2
+type (TYPE = TYPE2;...)           #Type alias
+type TYPE TYPE2
+type (TYPE TYPE2;...)             #Type definition
 
-type TYPE TYPE2                   #Type creation
-type (TYPE TYPE2;...)             #As opposed to type alias, TYPE <-> TYPE2 transtype must be explicit, not implicit
-                                  #Often used with struct|interface to name them
+UNDERLYING TYPE ==>               #TYPE after type resolution.
 
-UNDERLYING TYPE ==>               #TYPE after resolving type aliases (type TYPE = TYPE2) and naming (type TYPE TYPE2)
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:           TRANSTYPE           :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+TYPE IDENTITY ==>                 #Identical TYPEs do not require transtyping.
+                                  #Identical if:
+                                  #  - deeply equal TYPE, either simple|composite
+                                  #  - type alias
+                                  #Not identical if:
+                                  #  - type definition
+                                  #Must be exact same:
+                                  #  - including:
+                                  #     - FUNC number|type of arguments|return values
+                                  #     - STRUCT number|name|types|tags of properties
+                                  #     - STRUCT order of properties
+                                  #     - ARR size
+                                  #  - excluding:
+                                  #     - FUNC parameter|return VAR names
+                                  #     - FUNC receiver
+                                  #     - INTERFACE order of properties
+
+IMPLICIT TRANSTYPE ==>            #Always allowed for identical TYPEs.
+                                  #For type definition (type TYPE TYPE2):
+                                  #  - TYPE inherits transtypes from TYPE2
+                                  #  - If TYPE2:
+                                  #     - type name: cannot transtype TYPE <-> TYPE2
+                                  #        - but if builtin simple type name: can transtype to untyped constant, with underlying TYPE2
+                                  #     - literal|composite: can transtype TYPE <-> TYPE2
+                                  #Example:
+                                  #  type A int   // A </>     int   A <=>     5
+                                  #  type B   A   // B </>   A|int   B <=>   int
+                                  #  type C []A   // C </>   []int   C <=>   []A
+                                  #  type D   C   // D </> C|[]int   D <=>   []A
+
+TYPE(VAL)                         #Explicit transtype.
+                                  #The only ones allowed are the following.
+TYPE -> TYPE2                     #When used type definition (using type names)
+                                  #  - exception: TYPE cannot be builtin composite types
+NUM -> other NUM                  #Only if can perfectly convert, i.e. not if:
+                                  #  - negative NUM -> UINT
+                                  #  - too high NUM -> smaller NUM
+                                  #  - FLOAT with decimal -> [U]INT
+                                  #  - COMPLEX with imaginary part -> [U]INT|FLOAT
+UINT32 -> STR                     #Using Unicode codepoint
+CHAN -> other CHAN                #Only if does not lose receiver|sender direction.
+                                  #E.g. CHAN to CHAN<-, CHAN to <-CHAN, but not inverse.
 
 
                                              /=+===============================+=\
@@ -409,6 +458,7 @@ VARIABLE NAME ==>                 #Must not be a language keyword or a "universe
                                   #Must contain only letters, _ or (except first char) digit
                                   #  - can use non-ASCII letter|digit
                                   #Recommended camelCase over snake_case
+                                  #Same rules for type TYPE
 
 _                                 #Special VAR name ("blank identifier").
                                   #Can only be declared. Value cannot be used.
@@ -449,30 +499,6 @@ CONST_VAL                         #Value evaluated at compile-time
                                   #  - needs type (e.g. passed as argument|operand or assigned to VAR), through type inference
                                   #  - explicitely transtyped (TYPE())
 const ...                         #Like var ... but CONST_VAL
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:           TRANSTYPE           :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-TYPE(VAL)                         #Explicit transtype.
-                                  #Transtype cannot be implicit.
-                                  #The only ones allowed are the following.
-
-UINT32 -> STR                     #Using Unicode codepoint
-NUM -> other NUM                  #Only if can perfectly convert, i.e. not if:
-                                  #  - negative NUM -> UINT
-                                  #  - too high NUM -> smaller NUM
-                                  #  - FLOAT with decimal -> [U]INT
-                                  #  - COMPLEX with imaginary part -> [U]INT|FLOAT
-FUNC -> other FUNC2               #Only if exact same number and type of arguments and return values
-                                  #Names VAR|VAR2 insignificant
-                                  #Receiver insignificant
-STRUCT|MAP|ARR|SLICE ->
- other STRUCT|MAP|ARR|SLICE       #Only if exact same, including number, names and types
 
 
                                              /=+===============================+=\
@@ -558,19 +584,18 @@ func (VAR3 TYPE3) FUNC(...)       #Method declaration.
  ... {...}                        #Function with special argument VAR3 ("receiver") similar to "this" in other languages:
                                   #  - called using VAR3.FUNC(...) ("method")
                                   #  - TYPE3:
-                                  #     - must be a named type
+                                  #     - must be a defined type (type TYPE TYPE2)
                                   #     - type name must be defined in same package
                                   #  - can overload|re-declare functions, providing they have a different receiver (including none)
                                   #"Method set" is all methods of a specific receiver.
+                                  #  - inherited by identical types only
+                                  #     - i.e. not by "type TYPE TYPE2"
 
 interface {                       #INTERFACE_TYPE
   [FUNC(...) [...]];...           #FUNC(...) [...] is like FUNC_TYPE but with a function name
   [INTERFACE_TYPE2];...           #If INTERFACE_TYPE2, include its methods ("embedded")
 }                                 #  - if some methods already exists, must exactly match
                                   #  - cannot embed itself (including recursively)
-                                  #Any TYPE can transtype to INTERFACE_TYPE providing it includes at least the same methods ("method set")
-                                  #  - it wraps the underlying TYPE ("dynamic type"), i.e. acting as an abstraction type ("static type")
-                                  #  - only INTERFACE.METHOD(...) can be used, unless transtyped to underlying TYPE
                                   #Recommended names
                                   #  - if INTERFACE single FUNC (e.g. Write()) -> "FUNCer" (e.g. Writer)
                                   #  - if FUNC is meant for transtyping to TYPE -> "Type()" (not ToType())
@@ -580,6 +605,11 @@ interface {}                      #Empty INTERFACE can be used to describe "any 
 nil                               #Zero-value
                                   #Unlike empty INTERFACE:
                                   #  - cannot call any method
+
+TRANSTYPE ==>                     #Any TYPE can transtype to INTERFACE_TYPE providing it includes at least the same methods ("method set")
+                                  #  - methods order is not significant
+                                  #  - it wraps the underlying TYPE ("dynamic type"), i.e. acting as an abstraction type ("static type")
+                                  #  - only INTERFACE.METHOD(...) can be used, unless transtyped to underlying TYPE
 
 INTERFACE.(TYPE)                  #Transtype back to underlying TYPE ("type assertion")
                                   #Must be used instead of TYPE(INTERFACE)
@@ -634,7 +664,6 @@ len(MAP)->UINT                    #Number of keys
 [UINT]TYPE                        #ARR_TYPE
                                   #UINT is static size.
                                   #  - can be an EXPR
-                                  #  - part of the type, e.g. cannot transtype
 
 EMPTY ARR ==>                     #Zero-value, i.e. each element uses its own zero-value
                                   #No nil
@@ -736,6 +765,7 @@ go FUNC(...)                      #Call a function but inside a new thread.
                                   #  - share same memory|scope
                                   #  - run concurrently
                                   #Process does not wait for thread exit
+                                  #  - but process exit terminates threads
                                   #  - can used CHAN to wait
 
 
@@ -772,7 +802,7 @@ close(CHAN)                       #Make receive|send noop:
                                   #Panic if CHAN is either receive-only, or nil
                                   #Automatically done at end of process. Only necessary when either:
                                   #  - using for VAL := range CHAN
-                                  #  - want receive|send to fail
+                                  #  - want receive|send to become noop
 
 for VAL := range CHAN { ... }     #Iterates unless CHAN closed
 
