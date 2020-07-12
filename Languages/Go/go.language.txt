@@ -21,6 +21,9 @@ TODO:
   - go through to_learn.txt
 
 VERSION ==>                       #1.14.4
+                                  #For both language and standard library
+                                  #  - not the "sub-repositories" libraries
+                                  #  - not the go CLI
 
 
                                              /=+===============================+=\
@@ -125,7 +128,7 @@ VALUE-LIKE VS POINTER-LIKE ==>    #Types are either:
                                   #     - zero-value: type-specific actual value
                                   #        - for composite types (STRUCT|ARR): empty, and recursive zero-value
                                   #     - passed|returned to|from FUNC by deep copy
-                                  #        - including range return value
+                                  #        - including range return value, and INTERFACE <-> TYPE transtyping
                                   #  - pointer-like: *TYPE|FUNC|INTERFACE|MAP|SLICE|CHAN
                                   #     - zero-value: nil
                                   #     - passed|returned to|from FUNC by reference
@@ -596,6 +599,8 @@ EMPTY STRUCT ==>                  #Zero-value, i.e. each element uses its own ze
 
 STRUCT_TYPE{ [[VAR:] VAL],... }   #Creates a new STRUCT, instance of STRUCT_TYPE
                                   #If VAR, named, otherwise positional. Cannot mix.
+                                  #  - positional not recommended when using another package, as that package might change
+                                  #    fields order without considering it a breaking change
                                   #VAL defaults to zero-value
                                   #  - if positional, only if all VAL omitted
 
@@ -643,11 +648,17 @@ interface {}                      #Empty INTERFACE can be used to describe "any 
 nil                               #Zero-value
                                   #Unlike empty INTERFACE:
                                   #  - cannot call any method
+                                  #Means there is no underlying value, i.e.:
+                                  #  - if underlying value is nil itself, INTERFACE is not
+                                  #  - when a FUNC returns INTERFACE|nil, it should not return TYPE(nil) (where TYPE is transtypable to INTERFACE)
+                                  #     - otherwise caller would received transtyped INTERFACE, not nil
 
 TRANSTYPE ==>                     #Any TYPE can transtype to INTERFACE_TYPE providing it includes at least the same methods ("method set")
                                   #  - methods order is not significant
                                   #  - it wraps the underlying TYPE ("dynamic type"), i.e. acting as an abstraction type ("static type")
                                   #  - only INTERFACE.METHOD(...) can be used, unless transtyped to underlying TYPE
+                                  #Even if TYPE <-> INTERFACE_TYPE, cannot []TYPE <-> []INTERFACE_TYPE
+                                  #  - must transtype each element individually instead
 
 INTERFACE.(TYPE)                  #Transtype back to underlying TYPE ("type assertion")
                                   #Must be used instead of TYPE(INTERFACE)
@@ -658,6 +669,14 @@ INTERFACE.(TYPE)                  #Transtype back to underlying TYPE ("type asse
 switch                            #"Type switch": like normal switch except:
  [EXPR;] [VAR :=] INTERFACE.(type)#  - value is TYPE|nil
  { ... }                          #  - no fallthrough
+
+INTERFACE.NOOP()                  #INTERFACE transtype is by structure (same interface methods), not by name (same interface TYPE).
+                                  #To make it by name, can use a noop function with a unique function name.
+                                  #Try to avoid.
+
+RETURN INTERFACE VS TYPE ==>      #It is better for a FUNC return type to be INTERFACE_TYPE than the underlying TYPE2, because
+                                  #it restricts what's exposed to the caller
+                                  #  - e.g. FUNC()->error instead of FUNC()->os.PathError
 
 
                                              /=+===============================+=\
@@ -814,15 +833,18 @@ recover()->VAL|nil                #Stop current panic, and return the VAL passed
                                   #  - not inside defer FUNC
 
 error                             #INTERFACE_TYPE
-                                  #By convention:
-                                  #  - ERROR_TYPEs should be STRUCT implementing this INTERFACE
-                                  #  - either:
-                                  #     - returned as MVAL: VAL, ERROR|nil, to be tested by caller
-                                  #        - preferred if libraries, or recoverable
-                                  #     - passed to panic(ERROR)
-                                  #        - preferred if not recoverable
+                                  #By convention, ERROR_TYPEs should be STRUCT implementing this INTERFACE
 ERROR.Error()->STR                #Serialize an ERROR
-ERROR.*Error()                    #By convention, a noop function with the error name is used to differentiate INTERFACE_TYPE
+ERROR.*Error()                    #Often used to differentiate INTERFACE_TYPE by error name
+
+ERROR RETURN ==>                  #Returned as MVAL: VAL, ERROR|nil, to be tested by caller
+                                  #Preferred if libraries, or recoverable
+                                  #Better for return type to be error, not specific ERROR_TYPE, because it restricts what's exposed
+                                  #  - can still document ERROR_TYPE, and user can test type or transtype
+                                  #Should return nil (i.e. error(nil)), not specific ERROR_TYPE(nil), because it would be
+                                  #transtyped to INTERFACE error, which would then not be nil
+ERROR PANIC ==>                   #panic(ERROR)
+                                  #Preferred if not recoverable
 
 runtime.Error                     #ERROR_INTERFACE_TYPE
                                   #Panicked by language runtime errors, such as:
@@ -871,10 +893,12 @@ INSTRUCTIONS RE-ORDERING ==>      #Compiler might also re-order instructions whe
                                   #  - second statement might be run before first since that does not change the current goroutine
                                   #  - so if another goroutine should not assume that if b == 2, then a == 1
 
-SYNCHRONIZATION ==>               #See concurrency doc. Common synchronization patterns in Go:
-                                  #  - nothing is ever re-ordered before|after a go FUNC() statement
+SYNCHRONIZATION ==>               #See concurrency doc.
+                                  #Common synchronization patterns in Go (in preference order):
+                                  #  - avoiding shared resources
                                   #  - CHAN send|receive is guaranteed to be in order
                                   #  - "sync" and "sync/atomic" packages
+                                  #Note: nothing is ever re-ordered before|after a go FUNC() statement
 
 MAPS ==>                          #MAP[KVAL] = VAL is not atomic.
                                   #I.e. one goroutine might read it while it is being half-written by another one
@@ -974,7 +998,7 @@ import                            #Available as top-level variable PACKAGE:
  ([PACKAGE] "IMPORT_PATH";...)    #  - def: package PACKAGE
                                   #  - if _, meant only for side-effects
                                   #  - if ., make all exported variables available without any namespace
-                                  #     - recommended only in automated tests
+                                  #     - not recommended outside automated tests
                                   #Waits for package to initialize
                                   #Package cycles not allowed
                                   #Idempotent: import is cached and side-effects are not redone
