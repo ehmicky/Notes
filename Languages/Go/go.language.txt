@@ -6,7 +6,7 @@
 
 
 TODO:
-  - https://golang.org/ref/spec#Operators
+  - https://golang.org/ref/spec#Handling_panics
   - go back to https://golang.org/doc/effective_go.html#control-structures
   - https://golang.org/ref/mem
   - https://golang.org/doc/faq
@@ -136,7 +136,7 @@ SOURCE CODE ENCODING ==>          #UTF-8, non-canonicalized
 TOKEN TYPES ==>                   #  - identifier: VAR|TYPE, pre-defined FUNC, true|false|iota|nil
                                   #  - keyword: return|if|package|const|...
                                   #  - operator|punctuation: + & ; . <<= () [] {} ...
-                                  #  - literals: INT|FLOAT|COMPLEX '...' "..."
+                                  #  - literals: [U]INT|FLOAT|COMPLEX '...' "..."
 
 WHITESPACES ==>                   #\t \r \n or space. Separate tokens. Ignored otherwise
 
@@ -146,7 +146,7 @@ EXPR[;]                           #; can be a newline instead (recommended) when
                                   #  - ) ] } ++ --
                                   #  - return|break|continue|fallthrough
                                   #I.e. most of the time
-
+[;]                               #Empty statement
 (VAL)                             #Parenthesis can be used to override operator precedence
 
 // COMMENT
@@ -173,10 +173,13 @@ if [EXPR;] BOOL_EXPR { ... }
 
 switch [EXPR;] [EXPR2] {
   [case EXPR3:
-    ...]...                       #Execute first case where EXPR2 == EXPR3
-  [default:                       #EXPR2 defaults to true
-    ...]                          #Cases are indentation-based
-}                                 #No break needed, each case does not follow through next one
+    ...]...
+  [default:                       #Execute first case where EXPR2 == EXPR3
+    ...]                          #EXPR2 defaults to true
+}                                 #Cases are indentation-based
+  fallthrough                     #Cases "break" by default.
+                                  #Using fallthrough as last statement in a case continues to next case
+                                  #Cannot be done in last case.
 
 for [EXPR]; [BOOL_EXPR]; [EXPR2]  #For loop
  { ... }                          #BOOL_EXPR defaults to true
@@ -185,7 +188,10 @@ for [BOOL_EXPR] { ... }           #Same as for ; [BOOL_EXPR]; { ... }
                                   #I.e. while loop
 
 for KEY_VAR[, VAL_VAR2]           #Iterates
-  := range ARR|SLICE { ... }      #VAL is copy|reference depending on TYPE (like in any FUNC() return value)
+  := range STR|MAP|[*]ARR|SLICE   #KEY is INT for STR|ARR|SLICE
+  { ... }                         #VAL is copy|reference depending on TYPE (like in any FUNC() return value)
+                                  #For STR, VAL is RUNE
+                                  #For MAP, iteration is unordered
 for ... = range ...               #Same but with already declared KEY_VAR, VAL_VAR
 
 LABEL: EXPR                       #
@@ -213,11 +219,11 @@ INLINE INFERING ==>               #When instantiating MAP|ARR|SLICE (not STRUCT)
                                   #  - including nested []TYPE or *TYPE
                                   #For example []TYPE{*TYPE2{...}} -> []TYPE{{...}}
 
-SIMPLE VS COMPOSITE ==>           #Simple types: BOOL, INT|FLOAT|COMPLEX, RUNE|STR
+SIMPLE VS COMPOSITE ==>           #Simple types: BOOL, [U]INT|FLOAT|COMPLEX, RUNE|STR
                                   #Composite types: *TYPE, FUNC, INTERFACE|STRUCT|MAP|ARR|SLICE, CHAN
 
 VALUE-LIKE VS POINTER-LIKE ==>    #Types are either:
-                                  #  - value-like: simple (BOOL|INT|FLOAT|COMPLEX|RUNE|STR) or STRUCT|ARR
+                                  #  - value-like: simple (BOOL|[U]INT|FLOAT|COMPLEX|RUNE|STR) or STRUCT|ARR
                                   #     - zero-value: type-specific actual value
                                   #        - for composite types (STRUCT|ARR): empty, and recursive zero-value
                                   #     - passed|returned to|from FUNC by deep copy
@@ -254,12 +260,12 @@ TYPE IDENTITY ==>                 #Identical TYPEs do not require transtyping.
                                   #Must be exactly same:
                                   #  - including:
                                   #     - FUNC number|type of arguments|return values
+                                  #     - FUNC receiver
                                   #     - STRUCT number|name|types|tags of properties
                                   #     - STRUCT order of properties
                                   #     - ARR size
                                   #  - excluding:
                                   #     - FUNC parameter|return VAR names
-                                  #     - FUNC receiver
                                   #     - INTERFACE order of properties
 
 IMPLICIT TRANSTYPE ==>            #Not needed for identical TYPEs.
@@ -277,14 +283,20 @@ IMPLICIT TRANSTYPE ==>            #Not needed for identical TYPEs.
 
 TYPE(VAL)                         #Explicit transtype.
                                   #The only ones allowed are the following.
-TYPE -> TYPE2                     #When used type definition (using type names)
-                                  #  - exception: TYPE cannot be builtin composite types
-NUM -> other NUM                  #Only if can perfectly convert, i.e. not if:
-                                  #  - negative NUM -> UINT
-                                  #  - too high NUM -> smaller NUM
-                                  #  - FLOAT with decimal -> [U]INT
+(TYPE)(VAL)                       #Needs () when TYPE starts with * <- func
+TYPE -> TYPE2                     #When either:
+                                  #  - used type definition (using type names)
+                                  #     - exception: TYPE cannot be builtin composite types
+                                  #  - same STRUCT except tags
+NUM -> other NUM                  #Not if:
                                   #  - COMPLEX with imaginary part -> [U]INT|FLOAT
-UINT32 -> STR                     #Using Unicode codepoint
+                                  #Precision loss allowed, but only if var VAR (not CONST_VAL):
+                                  #  - FLOAT with decimal -> [U]INT (truncated towards 0)
+                                  #  - NUM -> less precise NUM (rounded)
+                                  #  - too high NUM -> smaller NUM (overflows)
+                                  #  - negative NUM -> UINT (overflows)
+UINT32|RUNE -> STR
+UINT32|RUN_SLICE <-> STR          #Using Unicode codepoint
 CHAN -> other CHAN                #Only if does not lose receiver|sender direction.
                                   #E.g. CHAN to CHAN<-, CHAN to <-CHAN, but not inverse.
 
@@ -304,6 +316,20 @@ true|false                        #BOOL
 !BOOL
 BOOL && BOOL2
 BOOL || BOOL2                     #
+
+VAL == != VAL2                    #Allowed:
+                                  #  - BOOL, NUM, STR
+                                  #  - *TYPE: same reference
+                                  #  - INTERFACE: use dynamic type
+                                  #  - STRUCT|ARR: deep equal
+                                  #  - CHAN: same instance
+                                  #Not allowed:
+                                  #  - FUNC|MAP|SLICE (except against nil)
+                                  #If cannot transtype VAL <-> VAL2, panic.
+VAL < <= > >= VAL2                #Only for:
+                                  #  - NUM (except COMPLEX)
+                                  #  - STR: lexically byte-wise
+                                  #If cannot transtype VAL <-> VAL2, panic.
 
 
                                              /=+===============================+=\
@@ -326,6 +352,12 @@ N...                              #[U]INT
 0xN...
 0XN...                            #2|8|16 bases
 
+[U]INT / [U]INT2                  #Integer division
+[U]INT % [U]INT2                  #Integer remainder
+
+^[U]INT                           #Invert bits
+[U]INT & | ^ &^ [U]INT2           #Bitwise operations. &^ is same as NUM & ^NUM2
+[U]INT << >> UINT2                #
 
 
                                              /=+===============================+=\
@@ -356,6 +388,11 @@ complex64|128                     #TYPE for complex numbers, with 64|128 bits
 INT|FLOATi
 INT|FLOAT2 [+|- INT|FLOATi]       #COMPLEX
 
+real(COMPLEX)->INT|FLOAT2
+imag(COMPLEX)->INT|FLOATi
+complex(INT|FLOAT2, +|-INT|FLOATi)
+ ->COMPLEX                        #
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -366,15 +403,11 @@ INT|FLOAT2 [+|- INT|FLOATi]       #COMPLEX
 
 NUM                               #[U]INT|FLOAT|COMPLEX|RUNE|UINTPTR
 
+UNDERSCORES ==>                   #Can appear to separate digits. Non-significant.
+
 +NUM
 -NUM                              #
-
-NUM + - * / % NUM2                #
-
-NUM & | ^ &^ NUM2                 #Bitwise operations. &^ is
-^NUM                              #Invert bits
-
-UNDERSCORES ==>                   #Can appear to separate digits. Non-significant.
+NUM + - * / NUM2                  #
 
 
                                              /=+===============================+=\
@@ -421,6 +454,8 @@ string                            #TYPE
                                   #  - raw \r are discarded
                                   #Cannot contain escape sequences (\ has no special meaning)
 
+STR + STR2                        #Concatenation
+
 STR[UINT]                         #Get RUNE
                                   #Cannot set
 STR[[UINT]:[UINT2]]               #Same behavior as SLICE[...:...], but creates a new STR2.
@@ -442,7 +477,7 @@ len(STR)->UINT                    #Size, in byte (not character)
 nil                               #Zero-value of any *TYPE
 
 &VAR                              #Generate a pointer (TYPE -> *TYPE)
-*VAR                              #Dereference a pointer (*TYPE -> TYPE)
+*POINTER                          #Dereference a pointer (*TYPE -> TYPE)
 
 STRUCT.VAR                        #Same as (*STRUCT).VAR
 POINTER.FUNC(...)                 #Same as (*POINTER).FUNC(...) when using a non-POINTER_TYPE receiver
@@ -535,6 +570,7 @@ CONST_VAL                         #Value evaluated at compile-time
                                   #     - but not when passed to another const VAR
                                   #  - explicitely transtyped (TYPE())
 const ...                         #Like var ... but CONST_VAL
+                                  #Cannot be re-assigned.
                                   #VAL must be specified. Exception:
                                   #  - if:
                                   #     - inside const (...), and not first declaration
@@ -542,6 +578,11 @@ const ...                         #Like var ... but CONST_VAL
                                   #  - defaults to previous statement's VAL (including iota)
 iota                              #Current const-declaration index (start at 0) inside const (...)
                                   #Used for enums
+
+VAR += -= *= /= %= VAL
+VAR |= ^= &= &^= <<= >>= VAL      #Like VAR = VAR OP VAL2
+VAR++
+VAR--                             #Like VAR = VAR +|- 1. Statement, not EXPR
 
 
                                              /=+===============================+=\
@@ -586,6 +627,8 @@ return [MVAL]                     #Required when there is a return TYPE2. Option
 
 FUNC([MVAL])                      #Call a function
 FUNC(FUNC2(...)->MVAL)            #If FUNC2 returns MVAL, can pass as arguments directly
+
+PRE-DEFINED FUNC ==>              #Like len(), cap(), etc. can only be used in FUNC calls, not as value
 
 
                                              /=+===============================+=\
@@ -679,9 +722,9 @@ INTERFACE.(TYPE)                  #Transtype back to underlying TYPE ("type asse
                                   #BOOL is whether VAL has exact same underlying TYPE
                                   #  - if not, panic unless BOOL was retrieved (i.e. can be used for asserting)
                                   #     - in which case VAL will be zero-value
-switch
- [EXPR;] VAR := INTERFACE.(type)
- { ... }                          #"Type switch": like normal switch except value is TYPE
+switch                            #"Type switch": like normal switch except:
+ [EXPR;] [VAR :=] INTERFACE.(type)#  - value is TYPE|nil
+ { ... }                          #  - no fallthrough
 
 
                                              /=+===============================+=\
@@ -793,10 +836,12 @@ cap(SLICE)->UINT2                 #Number of elements of max-resized SLICE[:UINT
                                   #from same start UINT
 
 copy(SLICE, SLICE2)->UINT         #Copy UINT first elements of SLICE2 to SLICE's underlying ARR
-                                  #UINT is min(len(SLICE), len(SLICE2))
+copy([]BYTE, STR)->UINT           #UINT is min(len(SLICE), len(SLICE2))
+
 append(SLICE, VAL...)->SLICE2     #Write VAL,... to SLICE's underlying ARR, after SLICE end
-                                  #If underlying ARR too small, creates a new one, and write to it instead
+append([]BYTE, STR...)->[]BYTE2   #If underlying ARR too small, creates a new one, and write to it instead
                                   #Return new SLICE2 contains all original+new elements
+                                  #STR... uses spread "..."
 
 
                                              /=+===============================+=\
@@ -808,8 +853,13 @@ append(SLICE, VAL...)->SLICE2     #Write VAL,... to SLICE's underlying ARR, afte
 
 PANIC ==>                         #Like an exception.
 
-defer FUNC(...)                   #Call a function, right after return statement evaluated, but before function returns.
-                                  #Arguments are evaluated right away though. If anonymous FUNC, closure kept.
+defer FUNC(...)                   #Call a function:
+                                  #  - right after return statement evaluated
+                                  #     - can access named return variables, set to their return value
+                                  #  - or after function panicked
+                                  #  - but before function returns
+                                  #Arguments are evaluated right away though.
+                                  #If anonymous FUNC, closure kept.
                                   #Last defer is executed first.
                                   #Purpose: like a try/catch/finally block.
 
@@ -864,24 +914,26 @@ CHAN <- VAL                       #Send VAL to CHAN (push).
                                   #  - BOOL is whether CHAN was closed
                                   #  - if CHAN closed, panic unless BOOL was retrieved
 
-close(CHAN)                       #Make receive|send noop:
-                                  #  - any buffered VAL is still received
-                                  #  - then receive returns VAL, true, where VAL is CHAN's TYPE zero-value
+close(CHAN)                       #Cannot send anymore, but can still receive:
+                                  #  - send panics
+                                  #  - receive:
+                                  #     - works for any buffered VAL
+                                  #     - then receive returns VAL, true, where VAL is CHAN's TYPE zero-value
                                   #Panic if CHAN is either receive-only, or nil
                                   #Automatically done at end of process. Only necessary when either:
                                   #  - using for VAL := range CHAN
-                                  #  - want receive|send to become noop
+                                  #  - want to forbid send
 
 for VAL := range CHAN { ... }     #Iterates unless CHAN closed
 
-for {
-  select {                        #All EXPR must contain CHAN <- VAL or <-CHAN
-    [case EXPR:                   #Repeat the loop at regular interval (polling)
-      ...]...                     #For each loop:
-    [default:                     #  - execute block of any EXPR unblocked
-      ...]                        #  - if none, runs default block
-  }                               #To prevent infinite loop, use return
-}                                 #Similar syntax than switch
+select {
+  [case EXPR:
+    ...]...                       #All EXPR must be CHAN <- VAL or [VAR[, BOOL] =|:=] <-CHAN:
+  [default:                       #A random case is executed
+    ...]                          #  - only among CHAN <- VAL ready to send, or <-CHAN ready to receive
+                                  #  - default block is only run if none ready
+}                                 #Similar syntax than switch, except no fallthrough
+for { select { ... } }            #Usually put in an infinite loop, and using return to exit
 
 len(CHAN)->UINT                   #Number of buffered elements
 cap(CHAN)->UINT                   #Buffere size
