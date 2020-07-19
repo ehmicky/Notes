@@ -59,6 +59,15 @@ BINARY INSTALLATION ==>           #During go install:
                                   #  - (preferred) REPO_ROOT/cmd/BINARY/
                                   #  - REPO_ROOT
 
+IMPORT_PATHS                      #Is space-separated list of:
+                                  #  - "IMPORT_PATH[@MODULE_VERSION]"
+                                  #  - "IMPORT_PATH@none": remove dependency
+                                  #  - "all": all downloaded PACKAGEs
+                                  #  - "std": all standard library PACKAGEs
+                                  #  - "cmd": all go CLI PACKAGEs
+                                  #  - DIR: packages in DIR *.go or go.mod
+                                  #  - def: "."
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -79,12 +88,20 @@ MODULE_PATH                       #Beginning of IMPORT_PATH.
 REPO_PATH                         #End of IMPORT_PATH.
                                   #PACKAGE path within MODULE.
                                   #If single PACKAGE: often "", i.e. top-level inside repository.
+
 internal/...                      #Any PACKAGE within an "internal" DIR can only be imported by:
                                   #  - same MODULE
                                   #  - and only internal/../**.go, not internal internal/../../**.go
 vendor/...                        #Same except:
                                   #  - only "..." must be specified, "MODULE_PATH[/...]/vendor/" can|must be omitted
                                   #  - meant for bundling dependencies
+                                  #To avoid
+vendor/requirements.txt           #Similar to go.mod but for vendor/...
+go mod vendor                     #Creates|updates vendor/..., including requirements.txt
+-v                                #Verbose
+go ... -mod=mod                   #Ignore vendor/...
+go ... -mod=vendor                #Use vendor/...
+                                  #Not needed with Go >=1.14
 
 REPOSITORY STRUCTURE ==>          #Due to how go CLI works, from repository root:
                                   #  - [REPO_PATH/]*.go: non-main PACKAGE
@@ -104,22 +121,26 @@ ENVVAR GIT_ALLOW_PROTOCOL         #"SCHEME:...". Allow additional protocols, e.g
 
 [v]MODULE_VERSION                 #MODULE version.
                                   #If specified as argument:
-                                  #  - "module query", i.e. query against git tag vA.B.C[-D][+E]:
-                                  #     - "vA[.B][.C][-D][+E]"
-                                  #     - "latest": vA.*.*
-                                  #     - "upgrade": vA.*.*, never downgrades
-                                  #     - "patch": vA.B.*, never downgrades
+                                  #  - MODULE_QUERY
                                   #  - git tag|LBRANCH|COMMIT
                                   #Otherwise, by priority order:
                                   #  (if module-aware)
-                                  #  - latest git tag without prerelease: vA.B.C
-                                  #  - latest git tag with prerelease: vA.B.C[-D][+E]
+                                  #  - latest git tag: vA.B.C[-D][+E]
                                   #  - latest commit: v0.0.0-YYYYMMDDHHMMSS-XXXXXXXXXXXX
                                   #     - last part is git commit hash
                                   #  (if non-module-aware)
                                   #  - "go1" git branch
                                   #  - default git branch
+                                  #No prerelease is always preferred over prereleases
                                   #If v, prefixed with v
+                                  #"+incompatible":
+                                  #  - suffix when no MODULE has no go.mod and version is >=2
+                                  #  - is just an indicator that MODULE upgrades might need additional review
+MODULE_QUERY                      #Query against git tag vA.B.C[-D][+E]:
+                                  #  - "[<|<=|>=|>]vA[.B][.C][-D][+E]"
+                                  #  - "latest": vA.*.*
+                                  #  - "upgrade": vA.*.*, never downgrades
+                                  #  - "patch": vA.B.*, never downgrades
 
 VERSIONING ==>                    #go get:
                                   #  - if in go.mod or as argument, use it as is (including minor|patch)
@@ -127,10 +148,13 @@ VERSIONING ==>                    #go get:
                                   #     - if competing with other dependencies requiring same dependency,
                                   #       use the latest one, even if different major
                                   #  - otherwise, use latest major
-                                  #Breaking change requires new IMPORT_PATH
-                                  #By convention: append "/vMAJOR" to MODULE_PATH
-                                  #  - i.e. add a "/vMAJOR" source directory, and keep previous version
-                                  #I.e. encourages avoiding any breaking changes
+                                  #Breaking change requires not only new major, but also new IMPORT_PATH
+                                  #  - reason:
+                                  #     - only for non-module-aware importers
+                                  #     - if only module-aware importers, not a problem
+                                  #  - by convention: append "/vMAJOR" to MODULE_PATH
+                                  #     - i.e. add a "/vMAJOR" source directory, and keep previous version
+                                  #Encourages avoiding any breaking changes
                                   #  - except for v0.*.*
 
 
@@ -151,11 +175,23 @@ go.mod                            #File containing line-wise directives (below)
                                   #  - any subdirectory's PACKAGE is included
                                   #  - subdirectory with another go.mod are excluded
                                   #Normalized and beautified by any go command that uses it.
+                                  #Automatically updated by go get
+                                  #  - including adding "require ..."
+                                  #Can be manually edited, then go get will work accordingly.
+go ... -mod=readonly              #Do not update go.mod. If update needed, fails.
+                                  #Not with go get ...
+
 //COMMENT                         #
+
 module MODULE_PATH                #Enforces MODULE_PATH is referred to like this.
-                                  #This is in case code is hosted in several places.
+                                  #This is in case code is hosted in several places:
+                                  #  - since MODULE_PATH is used as identifier, having possible duplicates is not good
                                   #This does not declare the MODULE_PATH, since that is defined based by where code is hosted.
+package PACKAGE // import
+ "IMPORT_PATH"                    #Same but inside source files, using code comment, for non-module-aware
+
 go VERSION                        #Declares Go version. Used to know which Go features are available at build-time (not runtime)
+
 require MODULE_PATH vMODULE_VRSION
  [// indirect]                    #Declares dependency
 require (                         #//indirect: dependency's dependency
@@ -172,10 +208,10 @@ replace (
 )                                 #Not used in deep dependencies
 
 go mod init "MODULE_PATH"         #Creates ./go.mod
-
-go.sum                            #File containing checksum of each package (both go.mod and rest of files), for each vMODULE_VERSION, one per line.
-                                  #Sibling to go.mod, created|updated together.
-                                  #Goal: integrity when installing again on same|other machine.
+                                  #If another Go dependency manager used, migrate it
+go mod tidy                       #Removes unused dependencies from go.mod|sum
+                                  #Not done automatically
+-v                                #Verbose
 
 
                                              /=+===============================+=\
@@ -185,11 +221,8 @@ go.sum                            #File containing checksum of each package (bot
                                              \=+===============================+=/
 
 
-go get IMPORT_PATHS               #IMPORT_PATHS is:
-                                  #  - "IMPORT_PATH[@MODULE_VERSION]"
-                                  #  - "IMPORT_PATH@none": remove dependency
-                                  #  - DIR: packages in DIR *.go or go.mod
-                                  #  - def: "."
+go get IMPORT_PATHS               #Automatically run by go build|test|list
+                                  #  - including on unknown import "IMPORT_PATH"
                                   #If module-aware:
                                   #  - Fetch module over the network
                                   #  - Retrieve vMODULE_VERSION
@@ -198,8 +231,6 @@ go get IMPORT_PATHS               #IMPORT_PATHS is:
                                   #  - Take local source from GOPATH/src/IMPORT_PATH
                                   #  - Build binaries to GOPATH/pkg/GOOS_GOARCH/IMPORT_PATH/*.a
                                   #Build main PACKAGE to GOBIN/BINARY
-                                  #Add `require MODULE_PATH vMODULE_VERSION ...` to go.mod
-                                  #  - Modify go.sum too
                                   #If module-aware:
                                   #  - Does all of this recursively for dependencies
 -d                                #Does not build main PACKAGE
@@ -223,17 +254,62 @@ go install IMPORT_PATHS           #Very similar to go get, but with fewer flags|
                                              \=+===============================+=/
 
 
-ENVVAR GOPROXY                    #If defined, proxies MODULEs downloads ("module proxy").
-                                  #Either:
+ENVVAR GOPROXY                    #Proxies MODULEs downloads ("module proxy").
+                                  #Can be:
                                   #  - http[s] URL (GET only)
                                   #  - filesystem PATH
+                                  #  - "direct": no proxy
+                                  #  - "off": disallow any download
+                                  #Can be ,-separated list
+                                  #Default: "https://proxy.golang.org,direct"
                                   #GOPROXY/MODULE_PATH/:
                                   #  - @v:
-                                  #     - list: line-separated list of all MODULE_VERSION
-                                  #     - MODULE_VERSION.info: JSON with OBJ: Version "MODULE_VERSION", Time DATE_NUM
-                                  #     - MODULE_VERSION.mod: go.mod content
-                                  #     - MODULE_VERSION.zip: MODULE's files. Root dir must be MODULE_PATH@MODULE_VERSION
-                                  #  - @latest: same as @v/LATEST_MODULE_VERSION.info
+                                  #     - list: line-separated list of all vMODULE_VERSION
+                                  #     - vMODULE_VERSION.info: JSON with OBJ: Version "vMODULE_VERSION", Time "YYYY-MM-DDTHH:MM:SSZ"
+                                  #     - vMODULE_VERSION.mod: go.mod content
+                                  #     - vMODULE_VERSION.zip: MODULE's files. Root dir must be MODULE_PATH@vMODULE_VERSION
+                                  #  - @latest: same as @v/LATEST_vMODULE_VERSION.info
+
+proxy.golang.org                  #Goals:
+                                  #  - better performance
+                                  #  - using sum.golang.org
+                                  #  - for Go team to monitor|debug
+                                  #Run by Google
+                                  #Cached for 1 minute, i.e. takes up to 1 minute for new versions to appear
+                                  #Can opt-out with GOPROXY=direct
+index.golang.org/index            #Show latest PACKAGEs added to proxy.golang.org, as JSON feed
+                                  #Each OBJ: Version|Time (see above), Path: "MODULE_PATH"
+?since=DATE                       #Def: none
+?limit=NUM                        #Max|def: 2000
+
+ENVVAR GONOPROXY                  #,-separated list of MODULE_PATH (can include globbing) that should not use GOPROXY
+                                  #Can be "none"
+ENVVAR GOPRIVATE                  #Combines GONOPROXY + GONOSUMDB
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:           INTEGRITY           :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+go.sum                            #File containing checksum of each package (both go.mod and rest of files), for each vMODULE_VERSION, one per line.
+                                  #Sibling to go.mod, created|updated together.
+                                  #Goal: integrity when installing again on same|other machine.
+
+go mod verify                     #Checks that installed packages match their go.sum
+
+READONLY INSTALL ==>              #GOROOT|GOPATH/**/*.go are written with read-only file permissions
+
+ENVVAR GOSUMDB                    #URL[+PUBLICKEY] to a server that caches PACKAGEs go.sum hashes.
+                                  #Only used for PACKAGEs not in local go.sum yet.
+                                  #Can be space-separated list
+                                  #Can be "off"
+                                  #Def: "sum.golang.org"
+sum.golang.org                    #Run by Google
+ENVVAR GONOSUMDB                  #,-separated list of MODULE_PATH (can include globbing) that should not use GOSUMDB
+                                  #Can be "none"
 
 
                                              /=+===============================+=\
@@ -247,7 +323,6 @@ go build FILE.go                  #Compile FILE.go to executable FILE
 go build [DIR]                    #Compile DIR/*.go to executable DIRNAME
                                   #Must all be from same PACKAGE
                                   #Def DIR: .
-                                  #Does "go get"???
 
 ENVVAR GOCACHE                    #Cache directory for go build
                                   #Def: CACHE_DIR/go-build (CACHE_DIR is ~/.cache on Linux)
@@ -325,7 +400,6 @@ gofmt [FILE|DIR...]               #Beautify *.go files
 go fmt IMPORT_PATHS               #Runs gofmt -wl
 -n                                #Dry-run
 -x                                #Prints underlying gofmt command
--mod readonly|vendor              #See 'go help modules' for more???
 
 
                                              /=+===============================+=\
