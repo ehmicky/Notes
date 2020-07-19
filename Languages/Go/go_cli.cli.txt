@@ -20,14 +20,14 @@ import "IMPORT_PATH"              #"IMPORT_PATH" locates the PACKAGE on the file
                                   #By convention, DIR name should be same as PACKAGE
                                   #Relative to:
                                   #  - GOROOT/src: for standard library
-                                  #  (if start with . or .., unless module-aware mode)
+                                  #  (if start with . or .., unless module-aware)
                                   #  - $PWD
-                                  #     - what about non-module-aware mode???
+                                  #     - what about non-module-aware???
                                   #        - including absolute PATH???
                                   #        - not if go build|run DIR???
-                                  #  (if URI and module-aware mode)
+                                  #  (if URI and module-aware)
                                   #  - GOPATH/pkg/mod: for user libraries
-                                  #  (if not module-aware mode)
+                                  #  (if not module-aware)
                                   #  - GOPATH/src: for user libraries
 GOROOT                            #Global go directory.
                                   #Contains:
@@ -46,12 +46,13 @@ GOPATH                            #By priority:
                                   #     - usually, having several elements is not needed
                                   #  - ~/go/
                                   #Directory structure:
-                                  #  - src/IMPORT_PATH/*.go: source code
-                                  #  - pkg/mod/IMPORT_PATH@vVERSION/*.go: source code
                                   #  - bin/BINARY: binaries, i.e. compiled main PACKAGEs
-                                  #  (only if not module-aware mode???)
+                                  #  (module-aware)
+                                  #  - pkg/mod/IMPORT_PATH@vMODULE_VERSION/*.go: source code
+                                  #  (non-module-aware, or standard library)
+                                  #  - src/IMPORT_PATH/*.go: source code
+                                  #  (non module-aware)
                                   #  - pkg/GOOS_GOARCH/IMPORT_PATH/*.a: compiled non-main PACKAGEs
-                                  #     - not used???
 GOBIN                             #Userland binaries directory
                                   #Should add both GOBIN and GOROOT/bin to $PATH
                                   #By priority:
@@ -69,9 +70,16 @@ MODULE_PATH                       #Beginning of IMPORT_PATH, to locate MODULE.
 REPO_PATH                         #End of IMPORT_PATH, to locate PACKAGE within MODULE.
                                   #If single PACKAGE: often "", i.e. top-level inside repository.
 
+MODULE_VERSION                    #MODULE version, by priority order:
+                                  #  - git tag [v]A.B.C[-D][+E]
+                                  #  - 0.0.0-YYYYMMDDHHMMSS-XXXXXXXXXXXX
+                                  #     - last part is git commit hash
+
 VERSIONING ==>                    #Breaking change requires new IMPORT_PATH
                                   #By convention: append "/vMAJOR" to MODULE_PATH
                                   #  - i.e. add a "/vMAJOR" source directory, and keep previous version
+                                  #I.e. encourages avoiding any breaking changes
+                                  #  - except for v0.*.*
 
 REPOSITORY STRUCTURE ==>          #Due to how go CLI works, from repository root:
                                   #  - [REPO_PATH/]*.go: non-main PACKAGE
@@ -96,33 +104,38 @@ go.mod                            #File containing line-wise directives (below)
                                   #  - any subdirectory's PACKAGE is included
                                   #  - subdirectory with another go.mod are excluded
 //COMMENT                         #
-module MODULE_PATH                #Declares MODULE_PATH. How this is used???
+module MODULE_PATH                #Enforces MODULE_PATH is referred to like this.
+                                  #This is in case code is hosted in several places.
+                                  #This does not declare the MODULE_PATH, since that is defined based by where code is hosted.
 go VERSION                        #Declares Go version
-require MODULE_PATH vX.Y.Z
-require (
-  ...                             #Declares dependency
-)                                 #Automatically added on go build
+require MODULE_PATH MODULE_VERSION
+ [// indirect]
+require (                         #Declares dependency
+  ...                             #//indirect: dependency's dependency
+)                                 #  - e.g. when want to control its version
 
 go mod init "MODULE_PATH"         #Creates ./go.mod
 
-VERSION                           #Module version, by priority order:
-                                  #  - git tag [v]X-Y-Z[-...]
-                                  #  - 0.0.0-YYYYMMDDHHMMSS-XXXXXXXXXXXX
-                                  #     - last part is git commit hash
+go.sum                            #File containing checksum of each package (both go.mod and rest of files), for each MODULE_VERSION, one per line.
+                                  #Sibling to go.mod, created|updated together.
+                                  #Goal: integrity when installing again on same|other machine.
 
-go install "MODULE_PATH"          #Fetch module over the network
-                                  #Retrieve VERSION
-                                  #Copy it locally to:
-                                  #  - GOPATH/pkg/mod/MODULE_PATH@vVERSION
-                                  #Also copy dependencies, recursively
+go install "IMPORT_PATH"          #If module-aware:
+                                  #  - Fetch module over the network
+                                  #  - Retrieve MODULE_VERSION
+                                  #  - Copy source locally to GOPATH/pkg/mod/IMPORT_PATH@vMODULE_VERSION
+                                  #If not module-aware:
+                                  #  - Take local source from GOPATH/src/IMPORT_PATH
+                                  #  - Build binaries to GOPATH/pkg/GOOS_GOARCH/IMPORT_PATH/*.a
                                   #Compile main PACKAGE to GOPATH/bin/BINARY
--i                                #Compiles main PACKAGE of dependencies too
+                                  #Add `require MODULE_PATH MODULE_VERSION ...` to go.mod
+                                  #  - Modify go.sum too
+                                  #If module-aware:
+                                  #  - Does all of this recursively for dependencies
+-i                                #???
+-ANY_GO_BUILD_FLAG                #
 
-go get MODULE_PATH                #Fetch module over the network
-                                  #Copy it locally to:
-                                  #  - GOPATH/src/MODULE_PATH
-                                  #  - GOPATH/pkg/mod/MODULE_PATH@vVERSION
-                                  #Compile main PACKAGE to GOPATH/bin/BINARY???
+go get "IMPORT_PATH"              #Difference with go install???
                                   #Performed automatically during go build on any import statement???
 
 
@@ -137,6 +150,15 @@ go build FILE.go                  #Compile FILE.go to executable FILE
 go build [DIR]                    #Compile DIR/*.go to executable DIRNAME
                                   #Must all be from same PACKAGE
                                   #Def DIR: .
+                                  #Does "go get"???
+
+ENVVAR GOCACHE                    #Cache directory for go build
+                                  #Def: CACHE_DIR/go-build (CACHE_DIR is ~/.cache on Linux)
+-a                                #Bypass GOCACHE
+                                  #Useful when changing C library used through cgo, since that does not update cache
+ENVVAR GODEBUG=gocacheverify=1    #Bypass GOCACHE and verify it
+ENVVAR GODEBUG=gocachehash=1      #Verbose mode showing what is used in GOCACHE
+ENVVAR GODEBUG=gocachetest=1      #Same but only for tests
 
 runtime.GOOS                      #OS name
                                   #Among "linux", "darwin", "windows", "freebsd|netbsd|openbsd|dragonfly", "solaris|illumos", "plan9",
@@ -145,6 +167,18 @@ runtime.GOOS                      #OS name
 runtime.GOARCH                    #CPU architecture
                                   #Among "386|amd64[p32]", "arm[64]", "ppc64[le]", "mips[64][le]", "s390x", "riscv64"
                                   #Can be set manually with ENVVAR GOARCH
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:             CLEAN             :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+go clean                          #Remove temporary files
+-cache                            #Remove GOCACHE directory
+-testcache                        #Same but only tests
 
 
                                              /=+===============================+=\
@@ -178,7 +212,7 @@ gofmt [FILE|DIR...]               #Beautify *.go files
                                   #Def: stdin
                                   #Prints to stdout
 -w                                #Modify files instead of writing to stdout
--d	                              #Show diff instead of beautify
+-d                                #Show diff instead of beautify
 -l                                #List files to diff instead of beautify
 -e                                #Report all errors, instead of only first 10
 -s                                #Also refactor|simplify code, removing:
