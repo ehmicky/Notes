@@ -144,8 +144,8 @@ vendor/...                        #Same except:
 vendor/requirements.txt           #Similar to go.mod but for vendor/...
 go mod vendor                     #Creates|updates vendor/..., including requirements.txt
 -v                                #Verbose
-go ... -mod=mod                   #Ignore vendor/...
-go ... -mod=vendor                #Use vendor/...
+go build -mod=mod                 #Ignore vendor/...
+go build -mod=vendor              #Use vendor/...
                                   #Not needed with Go >=1.14
 
 REPOSITORY STRUCTURE ==>          #Due to how go CLI works, from repository root:
@@ -225,8 +225,14 @@ go.mod                            #File containing line-wise directives (below)
                                   #Automatically updated by go get
                                   #  - including adding "require ..."
                                   #Can be manually edited, then go get will work accordingly.
-go ... -mod=readonly              #Do not update go.mod. If update needed, fails.
+go build -mod=readonly            #Do not update go.mod. If update needed, fails.
                                   #Not with go get ...
+go build -modfile=PATH            #Specify a different go.mod, used for go.mod content.
+                                  #Module's normal go.mod is still used to locate module's root.
+ENVVAR GOMOD                      #Absolute "PATH" to current go.mod.
+                                  #"" if non-module-aware
+                                  #"/dev/null" if none but module-aware
+                                  #Read-only
 
 //COMMENT                         #
 
@@ -283,11 +289,6 @@ go mod graph                      #Prints all deep dependencies
 go mod why IMPORT_PATHS           #Prints parent dependencies or deep dependencies
 -m                                #Arguments are MODULE_PATH instead
 -vendor                           #Exclude tests
-
-ENVVAR GOMOD                      #Absolute "PATH" to current go.mod.
-                                  #"" if non-module-aware
-                                  #"/dev/null" if none but module-aware
-                                  #Read-only
 
 
                                              /=+===============================+=\
@@ -487,7 +488,7 @@ go.sum                            #File containing checksum of each package (bot
 
 go mod verify                     #Checks that installed packages match their go.sum
 
-READONLY INSTALL ==>              #GOROOT|GOPATH/**/*.go are written with read-only file permissions
+go build -modcacherw              #Unless this is set, GOROOT|GOPATH/**/go.mod|go.sum|*.go are written with read-only file permissions
 
 ENVVAR GOSUMDB                    #URL[+PUBLICKEY] to a server that caches PACKAGEs go.sum hashes.
                                   #Only used for PACKAGEs not in local go.sum yet.
@@ -506,13 +507,59 @@ ENVVAR GONOSUMDB                  #MODULE_PATHS that should not use GOSUMDB
                                              \=+===============================+=/
 
 
-go build IMPORT_PATHS             #Compile *.go main PACKAGE to BINARY
+go build IMPORT_PATHS             #Compile *.go:
+                                  #  - single main PACKAGE: to BINARY
+                                  #  - multiple PACKAGEs, or non-main PACKAGE: build but discard result, i.e. just checks it can be built
                                   #Executable name is:
                                   #  - if argument is FILE.go..., first FILE name
                                   #  - if module-aware, MODULE_PATH last part
                                   #  - otherwise, DIR name
                                   #Ignore *_test.go
                                   #Always ignored: .*.go, _*.go, testdata/**.go
+-o FILE|DIR                       #Output BINARY path
+
+-i                                #Install dependencies' BINARYs
+
+-n                                #Dry run
+-v                                #Verbose: print PACKAGE names
+-x                                #Print the commands.
+
+-p NUM                            #Max number of processes in parallel. Def: number of CPUs
+
+-msan                             #Use LLVM Memory Sanitizer, which lints against reading uninititalized VARs.
+                                  #Done runtime, i.e. should only be done during development.
+                                  #Only supported on linux/adm64|arm64.
+
+-trimpath                         #Binaries contain source files absolute paths, for debugging.
+                                  #This replaces the beginning of those absolute paths with the relevant IMPORT_PATH
+                                  #  - including for standard library
+                                  #Goal: make the executable binary identical even on different machines
+                                  #Does not modify "PATH" in source files themselves.
+
+go build -asmflags 'VAR[=VAL]...' #Pass arguments to underlying go tool asm ...
+go build -gcflags 'VAR[=VAL]...'  #Pass arguments to underlying go tool compile ...
+go build -ldflags 'VAR[=VAL]...'  #Pass arguments to underlying go tool link ...
+go build -toolexec 'PATH [ARG...]'#Use a different program than go tool asm under the hood
+
+-buildmode=STR                    #Among:
+                                  #  - "default": main PACKAGEs into BINARY, non-main PACKAGEs into *.a
+                                  #  - "archive": only non-main PACKAGEs into *.a (static library)
+                                  #  - "shared": only non-main PACKAGEs into a shared library
+                                  #  - "exe": only main PACKAGEs into BINARY
+                                  #  - "pie": only main PACKAGEs into BINARY, using position idependent executables (PIE)
+                                  #  - "plugin": only main PACKAGEs into a Go plugin
+-linkshared                       #Links to dependencies dynamically instead of statically
+                                  #Much smaller executable size.
+                                  #Requires using -buildmode=shared first
+
+-tags tag,...                     #A comma-separated list of build tags to consider satisfied during the build.
+                                  #For more information about build tags, see the description of build constraints in the documentation for the go/build package.
+                                  #(Earlier versions of Go used a space-separated list, and that form is deprecated but still recognized.)
+-installsuffix STR                #A suffix to use in the name of the package installation directory, in order to keep output separate from default builds.
+                                  #If using the -race flag, the install suffix is automatically set to race or, if set explicitly, has _race appended to it.
+                                  #Likewise for the -msan flag. Using a -buildmode option that requires non-default compile flags has a similar effect.
+-pkgdir DIR                       #Install and load all packages from dir instead of the usual locations.
+                                  #For example, when building with a non-standard configuration, use -pkgdir to keep generated packages in a separate location.
 
 ENVVAR GOCACHE                    #Cache directory for go build
                                   #Def: CACHE_DIR/go-build (CACHE_DIR is ~/.cache on Linux)
@@ -524,6 +571,7 @@ ENVVAR GODEBUG=gocachetest=1      #Same but only for tests
 
 ENVVAR GOTMPDIR                   #Temporary directory used by build, e.g. in GOTMPDIR/go-build
                                   #Def: os.TempDir(), i.e. /tmp on Unix
+-work                             #Print GOTMPDIR and do not delete it on exit
 
 runtime.GOOS                      #OS name
                                   #Among "linux", "darwin", "windows", "freebsd|netbsd|openbsd|dragonfly", "solaris|illumos", "plan9",
@@ -552,11 +600,13 @@ ENVVAR GOGCCFLAGS                 #CLI flags passed to cc under the hood
                                              \=+===============================+=/
 
 
-GCO ==>                           #Default compiler.
-GCC GO ==>                        #Alternative compiler. Prefer default one.
-                                  #Not documented until needed
-ENVVAR GCCGO                      #
+go build -compiler gc|gcco        #gc is default compiler
+                                  #GCC go is alternative compiler
+                                  #  - prefer default one.
+                                  #  - not documented until needed
+runtime.Compiler                  #"gc|gcco"
 
+ENVVAR GCCGO                      #
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -576,6 +626,10 @@ ENVVAR CGO_CFLAGS|CPPFLAGS|
 ENVVAR PKG_CONFIG                 #
 ENVVAR GCCGOTOOLDIR               #
 ENVVAR GO_EXTLINK_ENABLED         #
+
+go build
+ -buildmode=c-archive|c-shared    #
+go build -gccgoflags STR          #
 
 
                                              /=+===============================+=\
