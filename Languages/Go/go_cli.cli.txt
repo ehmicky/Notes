@@ -93,6 +93,7 @@ BINARY INSTALLATION ==>           #During go install:
                                   #By convention, main package DIR should be:
                                   #  - (preferred) REPO_ROOT/cmd/BINARY/
                                   #  - REPO_ROOT
+go build -pkgdir DIR              #Different location for GOPATH/pkg/
 
 IMPORT_PATHS                      #Is space-separated list of:
                                   #  - "IMPORT_PATH[@MODULE_VERSION]"
@@ -517,6 +518,11 @@ go build IMPORT_PATHS             #Compile *.go:
                                   #Ignore *_test.go
                                   #Always ignored: .*.go, _*.go, testdata/**.go
 -o FILE|DIR                       #Output BINARY path
+-installsuffix STR                #Prepend STR to installation DIR name
+                                  #Automatically done by:
+                                  #  - "-race": -race flag
+                                  #  - "-msan": -msan flag
+                                  #  - -buildmode flag
 
 -i                                #Install dependencies' BINARYs
 
@@ -525,6 +531,17 @@ go build IMPORT_PATHS             #Compile *.go:
 -x                                #Print the commands.
 
 -p NUM                            #Max number of processes in parallel. Def: number of CPUs
+
+-buildmode=STR                    #Among:
+                                  #  - "default": main PACKAGEs into BINARY, non-main PACKAGEs into *.a
+                                  #  - "archive": only non-main PACKAGEs into *.a (static library)
+                                  #  - "shared": only non-main PACKAGEs into a shared library
+                                  #  - "exe": only main PACKAGEs into BINARY
+                                  #  - "pie": only main PACKAGEs into BINARY, using position idependent executables (PIE)
+                                  #  - "plugin": only main PACKAGEs into a Go plugin
+-linkshared                       #Links to dependencies dynamically instead of statically
+                                  #Much smaller executable size.
+                                  #Requires using -buildmode=shared first
 
 -msan                             #Use LLVM Memory Sanitizer, which lints against reading uninititalized VARs.
                                   #Done runtime, i.e. should only be done during development.
@@ -541,42 +558,19 @@ go build -gcflags 'VAR[=VAL]...'  #Pass arguments to underlying go tool compile 
 go build -ldflags 'VAR[=VAL]...'  #Pass arguments to underlying go tool link ...
 go build -toolexec 'PATH [ARG...]'#Use a different program than go tool asm under the hood
 
--buildmode=STR                    #Among:
-                                  #  - "default": main PACKAGEs into BINARY, non-main PACKAGEs into *.a
-                                  #  - "archive": only non-main PACKAGEs into *.a (static library)
-                                  #  - "shared": only non-main PACKAGEs into a shared library
-                                  #  - "exe": only main PACKAGEs into BINARY
-                                  #  - "pie": only main PACKAGEs into BINARY, using position idependent executables (PIE)
-                                  #  - "plugin": only main PACKAGEs into a Go plugin
--linkshared                       #Links to dependencies dynamically instead of statically
-                                  #Much smaller executable size.
-                                  #Requires using -buildmode=shared first
 
--tags tag,...                     #A comma-separated list of build tags to consider satisfied during the build.
-                                  #For more information about build tags, see the description of build constraints in the documentation for the go/build package.
-                                  #(Earlier versions of Go used a space-separated list, and that form is deprecated but still recognized.)
--installsuffix STR                #A suffix to use in the name of the package installation directory, in order to keep output separate from default builds.
-                                  #If using the -race flag, the install suffix is automatically set to race or, if set explicitly, has _race appended to it.
-                                  #Likewise for the -msan flag. Using a -buildmode option that requires non-default compile flags has a similar effect.
--pkgdir DIR                       #Install and load all packages from dir instead of the usual locations.
-                                  #For example, when building with a non-standard configuration, use -pkgdir to keep generated packages in a separate location.
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:       BUILD ENVIRONMENT       :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
 
-ENVVAR GOCACHE                    #Cache directory for go build
-                                  #Def: CACHE_DIR/go-build (CACHE_DIR is ~/.cache on Linux)
--a                                #Bypass GOCACHE
-                                  #Useful when changing C library used through cgo, since that does not update cache
-ENVVAR GODEBUG=gocacheverify=1    #Bypass GOCACHE and verify it
-ENVVAR GODEBUG=gocachehash=1      #Verbose mode showing what is used in GOCACHE
-ENVVAR GODEBUG=gocachetest=1      #Same but only for tests
-
-ENVVAR GOTMPDIR                   #Temporary directory used by build, e.g. in GOTMPDIR/go-build
-                                  #Def: os.TempDir(), i.e. /tmp on Unix
--work                             #Print GOTMPDIR and do not delete it on exit
 
 runtime.GOOS                      #OS name
                                   #Among "linux", "darwin", "windows", "freebsd|netbsd|openbsd|dragonfly", "solaris|illumos", "plan9",
                                   #"aix", "android", "nacl" (Chrome OS), "js" (with GOARCH "wasm")
                                   #Can be set manually with ENVVAR GOOS
+
 runtime.GOARCH                    #CPU architecture
                                   #Among "386|amd64[p32]", "arm[64]", "ppc64[le]", "mips[64][le]", "s390x", "riscv64", "wasm"
                                   #Can be set manually with ENVVAR GOARCH
@@ -589,8 +583,24 @@ ENVVAR GOHOSTOS|GOHOSTARCH        #Like ENVVAR GOOS|GOARCH except readonly
 
 ENVVAR GOEXE                      #Built file file extension. "" on Unix, ".exe" on Windows
                                   #Read-only
-ENVVAR GOGCCFLAGS                 #CLI flags passed to cc under the hood
-                                  #Read-only
+
+// +build ALL_CONSTRAINTS         #"Build constraint|tag".
+                                  #Comment in source code applying to whole file
+                                  #  - must be at top of file (except other comments or blank lines)
+                                  #  - must be followed by a blank line
+                                  #Skips building the file unless STR condition matches
+                                  #Syntax:
+                                  #  - ALL_CONSTRAINTS: CONSTRAINTS ... (or'd)
+                                  #  - CONSTRAINTS: [!]CONSTRAINT,... (and'd, not'd)
+                                  #If several comments, and'd
+                                  #Available CONSTRAINT:
+                                  #  - any value of runtime.GOOS|GOARCH|Compiler
+                                  #  - goVERSION (>=)
+                                  #  - cgo
+                                  #  - any BUILD_TAG passed to -tags BUILD_TAG,...
+                                  #     - by convention, "ignore" is kept to mean to never build a file
+*[_GOOS][_GOARCH][_test].go       #Alternative way to set build constraint, using filename
+-tags BUILD_TAG,...               #Specify a BUILD_TAG
 
 
                                              /=+===============================+=\
@@ -607,6 +617,10 @@ go build -compiler gc|gcco        #gc is default compiler
 runtime.Compiler                  #"gc|gcco"
 
 ENVVAR GCCGO                      #
+
+ENVVAR GOGCCFLAGS                 #CLI flags passed to cc under the hood
+                                  #Read-only
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -638,6 +652,18 @@ go build -gccgoflags STR          #
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
+
+ENVVAR GOCACHE                    #Cache directory for go build
+                                  #Def: CACHE_DIR/go-build (CACHE_DIR is ~/.cache on Linux)
+go build -a                       #Bypass GOCACHE
+                                  #Useful when changing C library used through cgo, since that does not update cache
+ENVVAR GODEBUG=gocacheverify=1    #Bypass GOCACHE and verify it
+ENVVAR GODEBUG=gocachehash=1      #Verbose mode showing what is used in GOCACHE
+ENVVAR GODEBUG=gocachetest=1      #Same but only for tests
+
+ENVVAR GOTMPDIR                   #Temporary directory used by build, e.g. in GOTMPDIR/go-build
+                                  #Def: os.TempDir(), i.e. /tmp on Unix
+go build -work                    #Print GOTMPDIR and do not delete it on exit
 
 go clean IMPORT_PATHS             #Remove temporary files
 -i                                #Remove BINARY built with go build|test
