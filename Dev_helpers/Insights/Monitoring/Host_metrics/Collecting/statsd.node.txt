@@ -5,42 +5,48 @@
 
 
 
+TODO:
+  - TCP server
+  - each backend
+  - proxy.js
+  - Dockerfiles
+  - Node.js clients
+
 VERSION ==>                       #0.8.6
 
-STATSD PROTOCOL ==>               #Each line is "MNAME:UINT|TYPE[|@FLOAT][|#TAG,...]"
-                                  #  - MNAME: metric name
-                                  #  - FLOAT (def: 1): sample rate, e.g. "0.1" if only 1/10 metrics are sent
-                                  #     - not on "g|s"
-                                  #Available TYPEs:
-                                  #  - c: cumulative count (adds to last value)
-                                  #     - reset to 0 at each flush
-                                  #  - m: meter. Like "c", but meant to compute occurence rate over time
-                                  #  - g: non-cumulative count (only keeps last value)
-                                  #     - if UINT is prefixed with +|-, relative to last value
-                                  #  - s: like "c", but counts unique values:
-                                  #     - UINT is any STR instead
-                                  #     - increases by 1 if STR never sent, by 0 instead
-                                  #  - ms: duration
-                                  #  - h: histogram. Like "ms"
-                                  #TAG,... are custom metadata
-                                  #Can send multiple lines at once in a single "packet":
-                                  #  - must be sure in fits in transport, e.g. within TCP|UDP MTU (512 bytes is reasonable)
-                                  #Transport protocol-agnostic, e.g. TCP or UDP
-                                  #Meant to be generic and simple for clients, letting server do aggregation and visualization
+STATSD PROTOCOL ==>               #See its doc
+                                  #Does not support TYPE "h", but supports histograms
 
-statsd CONFIG_FILE                #Starts server:
-                                  #  - a UDP|TCP|other server receives statsd protocol packets
-                                  #  - the result is printed to stdout|syslog|other
-                                  #  - a second TCP server listens for management intructions
+GOAL ==>                          #Multiple parts:
+                                  #  - a client is meant to send statsd protocol packets
+                                  #  - server receiving statsd protocol packets
+                                  #     - protocol-agnostic. Built-in: UDP, TCP
+                                  #  - second TCP server receiving administration instructions
+                                  #  - "backends" receive aggregated metrics at regular intervals (flushes)
+                                  #    for storing, aggregating, visualizing, etc.
+                                  #  - basic health monitoring
+                                  #  - debug|logs are printed to stdout (but can redirect to syslog)
+
+DATE_NUM                          #ms since Epoch
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:            SERVERS            :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+statsd CONFIG_FILE                #Starts servers
 
 CONFIG_FILE                       #Must be JavaScript OBJ (run with eval())
-
 CONF.automaticConfigReload        #BOOL (def: true). If CONFIG_FILE is updated, reload CONF
 
 CONF.servers                      #Servers receiving metrics packets. OBJ_ARR:
                                   #  - server 'PATH'
+                                  #  - other config properties passed to servers
                                   #Points to Node.js file exporting a start(OBJ, FUNC(BUFFER, OBJ2))->BOOL
-                                  #  - starts the client
+                                  #  - starts the server
                                   #  - if CONF.servers not specified, OBJ is CONF
                                   #  - FUNC(BUFFER, OBJ2) should be called on new packets
                                   #     - BUFFER is statsd protocol packet
@@ -51,17 +57,25 @@ CONF.servers                      #Servers receiving metrics packets. OBJ_ARR:
                                   #     - address STR (def: undefined)
                                   #     - port NUM (def: 8125)
                                   #     - address_ipv6 BOOL (def: true)
-                                  #  - './servers/tcp.js' ???
+                                  #  - './servers/tcp.js'
                                   #  - any absolute PATH
 
-CONF.mgmt_address                 #TCP management server address (def: undefined)
-CONF.mgmt_port                    #TCP management server port (def: 8126)
-MANAGEMENT SERVER ==>             #Is TCP with messages "MGT_CMD [ARG...]".
-MGT_CMD config                    #Prints CONF
-MGT_CMD help                      #Prints available MGT_CMD
-MGT_CMD quit                      #Stop management server
+CONF.title                        #STR|false. Sets process.title (def: "statsd ...")
 
-DATE_NUM                          #ms since Epoch
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:             FLUSH             :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+FLUSH ==>                         #At regular interval:
+                                  #  - retrieve METRICS since last flush
+                                  #  - emit EVENT_EMITTER 'flush' with METRICS, to communicate to backends
+                                  #  - resets all METRICS to 0
+CONF.flushInterval                #NUM (in ms, def: 10s)
+                                  #Also flushes on process exit
 
 CONF.deleteIdleStats              #BOOL (def: false). Do not send metrics when 0 since last flush
 CONF.deleteCounters
@@ -69,7 +83,9 @@ CONF.deleteGauges
 CONF.deleteTimers
 CONF.deleteSets                   #Same for TYPE "c|g|ms|s" only
 CONF.gaugesMaxTTL                 #UINT (def: 1).
-                                  #When CONF.deleteGauges true, do not delete new gauge metrics for UINT flushes
+                                  #When CONF.deleteGauges true, still keep sending new gauge metrics for UINT flushes
+MGT_CMD delcounters|deltimers|    #Deletes METRICS.counters|timers|gauges.MNAME
+ delgauges MNAME...               #MNAME can be .* or MNAME.*
 
 CONF.keyFlush.interval            #NUM (in ms, def: 0)
                                   #Every NUMms, print several lines where each line is "TIMESTAMP count=NUM key=MNAME"
@@ -78,26 +94,39 @@ CONF.keyFlush.interval            #NUM (in ms, def: 0)
 CONF.keyFlush.log                 #'PATH' to write to (def: stdout)
 CONF.keyFlush.percent             #NUM (def: 100): only print the NUM% most used metrics
 
-FLUSH ==>                         #At regular interval:
-                                  #  - retrieve METRICS since last flush
-                                  #  - emit EVENT_EMITTER 'flush' with METRICS, to communicate to backends
-                                  #  - resets METRICS to 0
-CONF.flushInterval                #NUM (in ms, def: 10s)
-                                  #Also flushes on process exit
 
-METRICS                           #OBJ
-METRICS.counters.MNAME            #NUM. For "c|m" metrics
-                                  #If @SAMPLE_RATE, multiplied by its inverse
-METRICS.counter_rates.MNAME       #Like counters.MNAME, but as rate per second (i.e. divided by CONF.flushInterval / 1000)
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:            METRICS            :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+METRICS                           #OBJ passed to backends, aggregating and normalizing client packets sent since last flush
+
 METRICS.counters
  ["statsd.packets_received"]      #NUM. Total number of packets sent
 METRICS.counters
  ["statsd.metrics_received"]      #NUM. Total number of metric messages sent
 METRICS.counters
  ["statsd.bad_lines_seen"]        #NUM. Total number of metric messages with invalid syntax
+METRICS.gauges
+ ["statsd.timestamp_lag"]         #NUMms since last flush, minus flushInterval. I.e. computes how accurately flush happens
+METRICS.statsd_metrics.
+ processing_time                  #NUM (in ms) that it took to compute TIMER_DATA.*
+
+METRICS.counters.MNAME            #NUM. For "c|m" metrics
+                                  #If @SAMPLE_RATE, multiplied by its inverse
+METRICS.counter_rates.MNAME       #Like counters.MNAME, but as rate per second (i.e. divided by CONF.flushInterval / 1000)
+
+METRICS.gauges.MNAME              #NUM. For "g" metrics
+
+METRICS.sets.MNAME                #SET of "s" metrics values
+
 METRICS.timers.MNAME              #NUM_ARR. For "ms" metrics
 METRICS.timer_counters.MNAME      #NUM. For "ms" metrics
                                   #If @SAMPLE_RATE, multiplied by its inverse
+
 METRICS.timer_data.MNAME          #TIMER_DATA. Aggregated information for "ms" metrics since last flush
 TIMER_DATA.count                  #Like METRICS.timer_counters.MNAME
 TIMER_DATA.count_ps               #Like METRICS.timer_counters.MNAME, but as rate per second (i.e. divided by CONF.flushInterval / 1000)
@@ -108,68 +137,76 @@ TIMER_DATA.sum_squares            #Sum of each (value ** 2)
 TIMER_DATA.mean                   #Mean
 TIMER_DATA.median                 #Median
 TIMER_DATA.std                    #Standard deviation
-METRICS.gauges.MNAME              #NUM. For "g" metrics
-METRICS.gauges
- ["statsd.timestamp_lag"]         #NUMms since last flush, minus flushInterval. I.e. computes how accurately flush happens
-METRICS.sets.MNAME                #SET of "s" metrics values
+
+TIMER_DATA.count|lower|upper|mean|
+ sum|sum_squares_NUM              #Like TIMER_DATA.* for only up to a specific percentile NUM
+CONF.percentThreshold             #0-100[_ARR] (def: 90). Percentiles used with TIMER_DATA.*_NUM
 METRICS.pctThreshold              #NUM_ARR from CONF.percentThreshold
-METRICS.histogram                 #OBJ_ARR from CONF.histogram
-METRICS.statsd_metrics.
- processing_time                  #NUM (in ms) that it took to compute TIMER_DATA.*
 
 TIMER_DATA.histogram.bin_NUM      #0-1. Histogram of "ms" metrics across flush periods.
                                   #NUM "." is replaced by "_"
-CONF.histogram                    #OBJ_ARR (def: []):
+CONF.histogram                    #Defines histogram's bins. OBJ_ARR (def: []):
                                   #  - metric 'MNAME': '' for all
                                   #  - bins NUM|'inf'_ARR:
                                   #     - increasing
                                   #     - first NUM is assumed to be 0
-
-TIMER_DATA.count|lower|upper|mean|#Like TIMER_DATA.* for only up to a specific percentile NUM
- sum|sum_squares_NUM
-CONF.percentThreshold             #0-100[_ARR] (def: 90). Percentiles used with TIMER_DATA.*_NUM
+METRICS.histogram                 #OBJ_ARR from CONF.histogram
 
 CONF.calculatedTimerMetrics       #'VAR'_ARR. Whitelist TIMER_DATA.VAR. Others will be undefined
                                   #'VAR' can end with '_percent' for TIMER_DATA.*_NUM
 
-CONF.prefixStats                  #STR prefixing keys in METRICS.counters|gauges (def: 'statsd').
 CONF.keyNameSanitize              #BOOL (def: true).
                                   #Slugify MNAME:
                                   #  - spaces -> _
                                   #  - / -> -
                                   #  - remove anything but \w-.
 
-CONF.backends                     #Backends, i.e. clients receiving metrics. 'PATH'_ARR to Node.js file:
-                                  #  - exports a init(DATE_NUM, CONF, EVENT_EMITTER, LOGGER)->BOOL
-                                  #     - LOGGER has single method log('MESSAGE', 'TYPE') (for logs|debugs)
-                                  #     - BOOL is success
-                                  #  - must handle events from EVENT_EMITTER:
-                                  #     - flush(DATE_NUM, METRICS): on each flush, i.e. should send metrics
-                                  #     - status(FUNC(ERROR, 'VAR', 'VAR2', VAL)): on MGT_CMD stats
-                                  #     - packet(BUFFER, OBJ2): on new raw statsd packet
+CONF.prefixStats                  #STR prefixing keys in METRICS.counters|gauges["statsd..."] (def: 'statsd').
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:           BACKENDS            :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+CONF.backends                     #Backends, i.e. processes receiving metrics.
+                                  #'PATH'_ARR to Node.js file exporting a init(DATE_NUM, CONF, EVENT_EMITTER, LOGGER)->BOOL
+                                  #  - LOGGER has single method log('MESSAGE', 'TYPE') (for logs|debugs)
+                                  #  - BOOL is success
                                   #Available built-in backends:
-                                  #  - './backends/graphite.js' (def) ???
-                                  #  - './backends/console.js' ???
-                                  #  - './backends/repeater.js' ???
+                                  #  - './backends/graphite.js' (def)
+                                  #  - './backends/console.js'
+                                  #  - './backends/repeater.js'
                                   #  - any absolute PATH
+EVENT_EMITTER.on
+ ('flush', FUNC(DATE_NUM,METRICS))#On each flush, i.e. should handle new metrics
+EVENT_EMITTER.on('status',
+ FUNC(ERROR, 'VAR', 'VAR2', VAL)) #On MGT_CMD stats, i.e. to return stats that should be printed then
+EVENT_EMITTER.on
+ ('packet', FUNC(BUFFER, OBJ2))   #On new raw statsd packet
 
-CONF.title                        #Sets process.title (def: "statsd ...")
 
-CONF.debug                        #BOOL (def: false). Verbose
-CONF.dumpMessages                 #BOOL (def: false). Print each metric message sent
-CONF.log.backend                  #Where to print debug|error messages, among:
-                                  #  - 'stdout' (def): prefixed with "DEBUG: "
-                                  #  - 'syslog':
-                                  #     - use modern-syslog
-                                  #     - also uses CONF.log:
-                                  #        - level STR (def: 'LOG_INFO')
-                                  #        - application STR (def: 'statsd')
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:          MANAGEMENT           :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
 
-MGT_CMD health                    #Prints whether monitored machine is "up|down"
-                                  #Value depends only on MGT_CMD health up|down and CONF.healthStatus,
-                                  #i.e. health checking must be implemented separately.
-MGT_CMD health up|down            #Modifies health status
-CONF.healthStatus                 #STR (def: 'up'). Initial health status
+
+MANAGEMENT SERVER ==>             #TCP server meant for administation.
+                                  #Messages "MGT_CMD [ARG...]"
+                                  #"Prints" means send back in TCP
+
+CONF.mgmt_address                 #Server address (def: undefined)
+CONF.mgmt_port                    #server port (def: 8126)
+
+MGT_CMD config                    #Prints CONF
+MGT_CMD help                      #Prints available MGT_CMD
+MGT_CMD quit                      #Stop management server
+
+MGT_CMD counters|timers|gauges    #Prints METRICS.counters|timers|gauges
 
 MGT_CMD stats                     #Prints some information since load time:
                                   #  - number of ms
@@ -179,7 +216,36 @@ MGT_CMD stats                     #Prints some information since load time:
                                   #  - prints 'VAR.VAR2: VAL'
                                   #  - if VAR2 starts with 'last_', VAL is a DATE_NUM, and the time interval is printed instead
 
-MGT_CMD counters|timers|gauges    #Prints METRICS.counters|timers|gauges
-MGT_CMD delcounters|deltimers|    #Deletes METRICS.counters|timers|gauges.MNAME
- delgauges MNAME...               #MNAME can be .* or MNAME.*
 
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:            LOGGING            :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+CONF.log.backend                  #Where to print debug|error messages
+                                  #Can be:
+                                  #  - 'stdout' (def): prefixed with "DEBUG: "
+                                  #  - 'syslog':
+                                  #     - use modern-syslog
+                                  #     - also uses CONF.log:
+                                  #        - level STR (def: 'LOG_INFO')
+                                  #        - application STR (def: 'statsd')
+
+CONF.dumpMessages                 #BOOL (def: false). Print each metric message sent
+CONF.debug                        #BOOL (def: false). Verbose
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:       HEALTH MONITORING       :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+MGT_CMD health                    #Prints whether monitored machine is "up|down"
+                                  #Value depends only on MGT_CMD health up|down and CONF.healthStatus,
+                                  #i.e. health checking must be implemented separately.
+MGT_CMD health up|down            #Modifies health status
+CONF.healthStatus                 #STR (def: 'up'). Initial health status
