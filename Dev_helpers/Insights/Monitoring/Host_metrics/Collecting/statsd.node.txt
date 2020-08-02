@@ -23,12 +23,12 @@ STATSD PROTOCOL ==>               #Each line is "METRIC:UINT|TYPE[|@FLOAT][|#TAG
                                   #     - automatically calculates count|percentiles|mean|deviation|sum|min|max of each flush period
                                   #  - h: histogram. Like "ms"
                                   #TAG,... are custom metadata
-                                  #Can send multiple lines at once:
+                                  #Can send multiple lines at once in a single "packet":
                                   #  - must be sure in fits in transport, e.g. within TCP|UDP MTU (512 bytes is reasonable)
                                   #Transport protocol-agnostic, e.g. TCP or UDP
 
 statsd CONFIG_FILE                #Starts server:
-                                  #  - a UDP|TCP|other server receives statsd protocol messages
+                                  #  - a UDP|TCP|other server receives statsd protocol packets
                                   #  - the result is printed to stdout|syslog|other
                                   #  - a second TCP server listens for management intructions
 
@@ -45,16 +45,19 @@ CONF.gaugesMaxTTL                 #UINT (def: 1). Like CONF.deleteGauges but don
 
 CONF.keyFlush.interval            #NUM (def: 0) ???
 
-CONF.flushInterval                #NUM (in ms, def: 10s) ???
+CONF.flushInterval                #NUM (in ms, def: 10s)
+                                  #Every NUMs, emit EVENT_EMITTER 'flush'
+                                  #Also flushes on process exit
 
-CONF.servers                      #Servers receiving metrics. OBJ_ARR:
+CONF.servers                      #Servers receiving metrics packets. OBJ_ARR:
                                   #  - server 'PATH':
-                                  #     - points to Node.js file exporting a start(CONF, FUNC(BUFFER, OBJ))->BOOL
+                                  #     - points to Node.js file exporting a start(OBJ, FUNC(BUFFER, OBJ2))->BOOL
                                   #        - starts the client
+                                  #        - if CONF.servers not specified, OBJ is CONF
+                                  #        - FUNC(BUFFER, OBJ2) should be called on new packets
+                                  #           - BUFFER is statsd protocol packet
+                                  #           - OBJ2 is arbitrary protocol-specific, only passed to 'packet' event
                                   #        - BOOL is success
-                                  #        - FUNC(BUFFER, OBJ) should be called on new messages
-                                  #           - BUFFER is statsd protocol message
-                                  #           - OBJ is arbitrary protocol-specific, only passed to 'packet' event
                                   #     - def is UDP with CONF:
                                   #        - address STR (def: undefined)
                                   #        - port NUM (def: 8125)
@@ -67,6 +70,34 @@ MANAGEMENT SERVER ==>             #Is TCP with messages "CMD [ARG...]".
 help                              #Prints available commands
 ???
 
+DATE_NUM                          #ms since Epoch
+
+CONF.backends                     #Backends, i.e. clients receiving metrics. 'PATH'_ARR to Node.js file:
+                                  #  - exports a init(DATE_NUM, CONF, EVENT_EMITTER, LOGGER)->BOOL
+                                  #     - LOGGER has single method log('MESSAGE', 'TYPE') (for logs|debugs)
+                                  #     - BOOL is success
+                                  #  - must handle events from EVENT_EMITTER:
+                                  #     - packet(BUFFER, OBJ2): on new raw statsd packet
+                                  #     - status(???)
+                                  #     - flush(DATE_NUM, METRICS):
+                                  #Available built-in backends:
+                                  #  - 'PATH/TO/backends/graphite.js' (def) ???
+                                  #  - 'PATH/TO/backends/console.js' ???
+                                  #  - 'PATH/TO/backends/repeater.js' ???
+METRICS                           #OBJ
+METRICS.counters                  #OBJ:
+                                  #  - stats.packets_received NUM: total number of packets sent
+                                  #  - stats.metrics_received NUM: total number of metric messages sent
+                                  #  -
+METRICS.gauges                    #
+METRICS.timers                    #
+METRICS.timer_counters            #
+METRICS.sets                      #
+METRICS.counter_rates             #
+METRICS.timer_data                #
+METRICS.pctThreshold              #
+METRICS.histogram                 #
+
 CONF.percentThreshold             #0-100[_ARR] (def: 90). With TYPE "c", also send mean|sum|max for the NUMth percentiles
 CONF.histogram                    #OBJ_ARR (def: [])
                                   #With TYPE "c", keep a histogram across flush periods
@@ -76,11 +107,16 @@ CONF.histogram                    #OBJ_ARR (def: [])
                                   #     - increasing
                                   #     - first NUM is assumed to be 0
 
-CONF.prefixStats                  #STR (def: 'statsd') ???
-CONF.keyNameSanitize              #BOOL (def: true) ???
+CONF.prefixStats                  #STR prefixing keys in METRICS.counters|gauges (def: 'statsd').
+CONF.keyNameSanitize              #BOOL (def: true).
+                                  #Slugify METRIC name:
+                                  #  - spaces -> _
+                                  #  - / -> -
+                                  #  - remove anything but \w-.
 CONF.title                        #Sets process.title (def: "statsd ...")
 
 CONF.debug                        #BOOL (def: false). Verbose
+CONF.dumpMessages                 #BOOL (def: false). Print each metric message sent
 CONF.log.backend                  #Where to print debug|error messages, among:
                                   #  - 'stdout' (def): prefixed with "DEBUG: "
                                   #  - 'syslog':
