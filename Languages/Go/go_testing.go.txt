@@ -32,6 +32,8 @@ go test [IMPORT_PATHS] [ARG...]   #Runs:
                                   #Executing TEST_BINARY is cached
                                   #  - if files or CLI flags changed, not cached
                                   #  - convention to disable caching: using -count=1
+-test.FLAG                        #Under the hood, CLI flags are passed to TEST_BINARY as --test.*
+                                  #They can be specified to go test either as -* or as -test.*
 -vet=RULE,...                     #Which go vet RULEs are run.
                                   #Can be "off"
                                   #Def: only bools|stringintconv|nilfunc|ifaceassert|atomic|printf|buildtag
@@ -262,10 +264,218 @@ go tool cover -mode=STR FILE.go   #Instruments source code
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:       MEMORY PROFILING        :==(
+                                            )==:           PROFILING           :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
+
+gofmt|go test                     #CLI usage. Preferred
+import "runtime[/pprof]"          #Programmatic usage.
+
+PROFFILE                          #CPUPROF|MEMPROF|BLOCKPROF|MUTEXPROF
+COUNT                             #Memory or duration, depending on profiling type
+
+-cpuprofile CPUPROF               #Does CPU profiling and outputs it in CPUPROF
+                                  #CPU profiling shows duration (CPU cycles) spent in each function, as a call tree
+                                  #Do it by using random samples, recording at regular interval (~10ms) which source line was hit
+                                  #  - including parents
+                                  #     - whole call stack is a "node", composed of several stack "frames"
+                                  #  - instrument each source line to know this
+-memprofile MEMPROF               #Same as CPU profiling, but profiling function's used heap memory instead of CPU duration
+                                  #Instead of recording at regular interval, records at regular amount of memory allocated, during GCs
+-blockprofile BLOCKPROF           #Same as CPU profiling, but measuring how long goroutines waited on CHAN or sync.*
+-mutexprofile MUTEXPROF           #Same as GoroutineBlock profiling, but for mutexes waiting instead
+ALLOCS PROFILING ==>              #Like -memprofile, but cumulative memory
+                                  #Must use pprof.*
+GOROUTINE PROFILING ==>           #Profiles stack trace of all goroutines
+                                  #Must use pprof.*
+THREAD PROFILING ==>              #Profiles which functions create OS threads
+                                  #Must use pprof.*
+-outputdir DIR                    #Where to write PROFFILE
+
+pprof.Profile                     #Abstract profiler.
+                                  #Under the hood, is just a collection of stack traces:
+                                  #  - created with runtime.*Profile()
+                                  #  - with shape runtime.*ProfileRecord
+                                  #Built-in TYPE:
+                                  #  - 'heap': like -memprofile
+                                  #  - 'block': like -blockprofile
+                                  #  - 'mutex': like -mutexprofile
+                                  #  - 'allocs'
+                                  #  - 'goroutine'
+                                  #  - 'threadcreate'
+                                  #CPU profiling uses pprof.*CPUProfile() instead
+pprof.Profiles()->[]*PROFILE
+pprof.Lookup('TYPE')->PROFILE     #Retrieve specific PROFILE
+PROFILE.name                      #'TYPE'
+PROFILE.Count()                   #Number of stack traces
+
+pprof.StartCPUProfile(WRITER)
+ ->ERROR|nil                      #Starts CPU profiling
+pprof.StopCPUProfile()            #Stops CPU profiling, and write output to WRITER
+pprof.WriteHeapProfile(WRITER)
+ ->ERROR|nil                      #Write memory profiling to WRITER
+
+runtime.MemProfile(...)
+runtime.MemProfileRecord
+runtime.BlockProfile(...)
+runtime.BlockProfileRecord
+runtime.MutexProfile(...)         #Low-level way to write profiling.
+
+runtime.SetCPUProfileRate(INT)    #Set number of samples per second (def: 100)
+                                  #If 0, disables CPU profiling
+-memprofilerate=INT               #INT (in bytes, def: 0.5MB)
+runtime.MemProfileRate            #If 0, disables memory profiling
+-blockprofilerate=INT             #Set to only detect 1/INT goroutines waits in average (def: 1, i.e. all)
+runtime.SetBlockProfileRate(INT)  #If 0, disables goroutinesBlock profiling
+runtime.SetMutexProfileRate(INT)  #Like BlockProfileRate but for mutex profiling
+
+go tool pprof [FORMAT] [BIN]      #Inspect a PROFFILE
+ PROFFILE                         #BIN is the binary that produced PROFFILE, to find out source code
+                                  #  - automatically guessed
+                                  #Def FORMAT: interactive mode
+
+-http=HOST:PORT                   #Visualize all graphs, in browser
+                                  #  - -web, -list, -tree
+                                  #  - -show|hide|focus|ignore|show_from|prune_from
+                                  #  - also flame graph
+                                  #But not:
+                                  #  - -traces, -raw
+                                  #  - other filtering|configuration options
+-no_browser                       #Do not automatically open browser
+
+-kcachegrind                      #Visualize all graphs, in kcachegrind program
+
+-web                              #Visualize graph through web browser
+-evince                           #Visualize graph through evince program
+-eog                              #Visualize graph through eog program
+-gv                               #Visualize graph through gv program
+
+-output=FILE                      #Where to output file
+-svg                              #Output graph as SVG
+-png                              #Output graph as PNG
+-pdf                              #Output graph as PDF
+-ps                               #Output graph as PostScript
+-gif                              #Output graph as GIF
+-dot                              #Output as DOT graph
+-callgrind                        #Output in callgrind format
+-proto                            #Output as protobuf
+
+-list=REGEXP                      #Prints source code of functions whose name match REGEXP, with duration of each line in left margin
+-weblist=REGEXP                   #Same but visualized in browser
+
+-tree                             #Print all functions with:
+                                  #  - both COUNT, and number of samples|calls
+                                  #  - both absolute and percentage
+                                  #  - both including|excluding children ("cum|flat")
+-peek=REGEXP                      #Same as -tree but only functions whose name match REGEXP
+-text|-top                        #Like -tree but for the top entries
+-topproto                         #Like -top but as protobuf
+-compact_labels                   #In -tree (and similar), do not show header
+-cum|flat                         #In -tree (and similar), sort by cum|flat duration (def: flat)
+
+-traces                           #Prints list of samples:
+                                  #  - time duration
+                                  #  - which line of code was hit
+-raw                              #Prints list of samples:
+                                  #  - number of same samples
+                                  #  - time interval
+                                  #  - which line of code was hit
+
+-addresses|filefunctions|files|   #How nodes are grouped:
+ functions|lines                  #  - files
+                                  #  - functions (def)
+                                  #  - line of code
+                                  #  - memory address
+
+-nodecount=NUM                    #Only show top NUM nodes
+-nodefraction=0-1                 #Only show nodes with >=NUM% of total duration
+-edgefraction=0-1                 #Same but still show those nodes, but outside the main graph
+-trim                             #Use some auto -nodecount|nodefraction|edgefraction
+
+-show|hide=REGEXP                 #Show|hide frames matching regexp
+                                  #Parent|children frames are still shown (unless those are all hidden)
+-focus|ignore=REGEXP              #Same but for nodes, i.e. also show|hide frames
+-show_from|prune_from=REGEXP      #Like -hide but for all frames above|below functions matching REGEXP
+-noinlines                        #Like -hide but for functions inlined by compiler
+
+-sample_index=VAL                 #Instead of COUNT, show:
+                                  #  (CPU profiling)
+                                  #  - 0: number of samples
+                                  #  (Memory profiling)
+                                  #  - alloc_space (def)
+                                  #  - alloc_objects: number of objects instead of bytes
+                                  #  - inuse_space|inuse_objects: include memory spans too
+                                  #  (GoroutinesBlock|MutexBlock profiling)
+                                  #  - delay (def): how long goroutine waited
+                                  #  - 0|contentions: how many times goroutine waited
+
+-unit=UNIT                        #CPU duration unit among:
+                                  #  (CPU|GoroutinesBlock|MutexProf profiling)
+                                  #  - year|month|day|second|millisecond|microsecond|nanosecond (def: millisecond)
+                                  #  (Memory profiling)
+                                  #  - "b|kb|mb|gb" (def: "mb")
+-divide_by=NUM                    #Divide all COUNT by NUM
+-relative_percentages             #Percentage COUNT relative only to shown nodes, not to total COUNT
+-mean                             #Divide each COUNT by number of samples, i.e. show average
+                                  #Only makes sense for memory profiling
+
+-diff_base=PROFFILE2              #Show difference between two PROFFILEs
+-base=PROFFILE2                   #Same as -diff_base, but the percentage is based on PROFFILE2, not PROFFILE
+-normalize                        #Same as -diff_base, but show full graph
+                                  #Together with -base=PROFFILE2
+-drop_negative                    #Remove nodes with negative durations
+
+-call_tree                        #Create a more precise call tree graph, including when functions are called through pointers
+-symbolize=STR                    #How variable names are retrieved, among:
+                                  #  - none
+                                  #  - local (def)
+                                  #  - fastlocal: only function names
+                                  #  - remote: only remote binaries
+                                  #  - force
+-tls_cert|tls_key|tls_ca          #TLS information when using remote PROFFILE
+
+-tags                             #Print profile tags
+                                  #Can be manually set programmatically
+                                  #With CPU profiling, none are set automatically
+                                  #With memory profiling, only tag is "bytes"
+-tagshow|hide|focus|ignore=REGEXP #Like -show|hide|focus|ignore but for profile tags
+
+-comments                         #Print profile comments
+-add_comment=STR                  #Add a profile comment, only temporarily
+
+-buildid=ID                       #Specify build ID, printed in some graphs
+
+-seconds|timeout=NUM              #Duration|timeout for time-based profile collection (I don't know what those are)
+
+-source_path=PATH                 #Source file path. Allows retrieving source lines.
+-trim_path=DIR                    #Do not show source lines of DIR from source lines
+
+ENVVAR PPROF_BINARY_PATH          #Def: ~/pprof/binaries
+ENVVAR PPROF_TMPDIR               #Def: ~/pprof
+ENVVAR PPROF_TOOLS
+-tools=DIR                        #DIR where go tool is located
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:   ADVANCED MEMORY PROFILING   :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+go test -benchmem                 #Prints B/op and allocs/op (like BENCHMARK_RESULT.MemString()) in benchmarks output
+
+BENCHMARK_RESULT.MemBytes         #INT64. Memory used, like MEM_STATS.TotalAlloc, but also includes stack, etc.
+BENCHMARK_RESULT.
+ AllocedBytesPerOp()->INT64       #MemBytes / N
+BENCHMARK_RESULT.MemAllocs        #UINT64. Total number of objects allocated on the heap, like MEM_STATS.Mallocs
+BENCHMARK_RESULT.AllocsPerOp()
+ ->UINT64                         #MemAllocs / N
+BENCHMARK_RESULT.MemString()->STR #"{AllocedBytesPerOp()} B/op {AllocsPerOp()} allocs/op"
+
+testing.AllocsPerRun(INT, FUNC()) #Runs FUNC() INT times, and returns + prints the average number of objects allocated on the heap per call.
+ ->FLOAT64                        #Do it by using runtime.ReadMemStats() MEM_STATS.Mallocs
 
 runtime.ReadMemStats(*MEM_STATS)  #Returns memory usage statistics since beginning of process
 
@@ -305,19 +515,6 @@ MEM_STATS.OtherSys UINT64         #Memory reserved for other things
 
 MEM_STATS.Lookups UINT64          #Number of time a POINTER was deferenced
 
-testing.AllocsPerRun(INT, FUNC()) #Runs FUNC() INT times, and returns + prints the average number of objects allocated on the heap per call.
- ->FLOAT64                        #Do it by using runtime.ReadMemStats() MEM_STATS.Mallocs
-
-go test -benchmem                 #Prints B/op and allocs/op (like BENCHMARK_RESULT.MemString()) in benchmarks output
-
-BENCHMARK_RESULT.MemBytes         #INT64. Memory used, like MEM_STATS.TotalAlloc, but also includes stack, etc.
-BENCHMARK_RESULT.
- AllocedBytesPerOp()->INT64       #MemBytes / N
-BENCHMARK_RESULT.MemAllocs        #UINT64. Total number of objects allocated on the heap, like MEM_STATS.Mallocs
-BENCHMARK_RESULT.AllocsPerOp()
- ->UINT64                         #MemAllocs / N
-BENCHMARK_RESULT.MemString()->STR #"{AllocedBytesPerOp()} B/op {AllocsPerOp()} allocs/op"
-
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -348,129 +545,10 @@ MEM_STATS.DebugGC BOOL            #Always false
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:         CPU PROFILING         :==(
+                                            )==:            TRACING            :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
-gofmt|go test -cpuprofile CPUPROF #Does CPU profiling and outputs it in CPUPROF
-                                  #CPU profiling shows duration spent in each function, as a call tree
-                                  #Do it by using random samples, recording at regular interval which source line was hit
-                                  #  - including parents
-                                  #     - whole call stack is a "node", composed of several stack "frames"
-                                  #  - instrument each source line to know this
-
-import "runtime/pprof"            #
-pprof.StartCPUProfile(WRITER)
- ->ERROR|nil                      #Starts CPU profiling
-pprof.StopCPUProfile()            #Stops CPU profiling, and write output to WRITER
-
-go tool pprof [FORMAT] [BIN]      #Inspect a CPUPROF
- CPUPROF                          #BIN is the binary that produced CPUPROF, to find out source code
-                                  #  - automatically guessed
-                                  #Def FORMAT: interactive mode
-
--http=HOST:PORT                   #Visualize all graphs, in browser
-                                  #  - -web, -list, -tree
-                                  #  - -show|hide|focus|ignore|show_from|prune_from
-                                  #  - also flame graph
-                                  #But not:
-                                  #  - -traces, -raw
-                                  #  - other filtering|configuration options
--no_browser                       #Do not automatically open browser
-
--kcachegrind                      #Visualize all graphs, in kcachegrind program
-
--web                              #Visualize graph through web browser
--evince                           #Visualize graph through evince program
--eog                              #Visualize graph through eog program
--gv                               #Visualize graph through gv program
-
--output=FILE                      #Where to output file
--svg                              #Output graph as SVG
--png                              #Output graph as PNG
--pdf                              #Output graph as PDF
--ps                               #Output graph as PostScript
--gif                              #Output graph as GIF
--dot                              #Output as DOT graph
--callgrind                        #Output in callgrind format
--proto                            #Output as protobuf
-
--list=REGEXP                      #Prints source code of functions whose name match REGEXP, with duration of each line in left margin
--weblist=REGEXP                   #Same but visualized in browser
-
--tree                             #Print all functions with:
-                                  #  - both CPU duration, and number of samples|calls
-                                  #  - both absolute and percentage
-                                  #  - both including|excluding children ("cum|flat")
--peek=REGEXP                      #Same as -tree but only functions whose name match REGEXP
--text|-top                        #Like -tree but for the top entries
--topproto                         #Like -top but as protobuf
--compact_labels                   #In -tree (and similar), do not show header
--cum|flat                         #In -tree (and similar), sort by cum|flat duration (def: flat)
-
--traces                           #Prints list of samples:
-                                  #  - time duration
-                                  #  - which line of code was hit
--raw                              #Prints list of samples:
-                                  #  - number of same samples
-                                  #  - time interval
-                                  #  - which line of code was hit
-
--addresses|filefunctions|files|   #How nodes are grouped:
- functions|lines                  #  - files
-                                  #  - functions (def)
-                                  #  - line of code
-                                  #  - memory address
-
--nodecount=NUM                    #Only show top NUM nodes
--nodefraction=0-1                 #Only show nodes with >=NUM% of total duration
--edgefraction=0-1                 #Same but still show those nodes, but outside the main graph
--trim                             #Use some auto -nodecount|nodefraction|edgefraction
-
--show|hide=REGEXP                 #Show|hide frames matching regexp
-                                  #Parent|children frames are still shown (unless those are all hidden)
--focus|ignore=REGEXP              #Same but for nodes, i.e. also show|hide frames
--show_from|prune_from=REGEXP      #Like -hide but for all frames above|below functions matching REGEXP
--noinlines                        #Like -hide but for functions inlined by compiler
-
--sample_index=0                   #Show number of samples instead of CPU duration
--unit=UNIT                        #CPU duration unit among: year|month|day|second|millisecond|microsecond|nanosecond
-                                  #Def: millisecond
--divide_by=NUM                    #Divide all CPU durations by NUM
--relative_percentages             #Percentage duration relative only to shown nodes, not to total duration
--mean                             #Show the same mean CPU duration on all nodes
-
--diff_base=CPUPROF2               #Show difference between two CPUPROFs
--base=CPUPROF2                    #Same as -diff_base, but the percentage is based on CPUPROF2, not CPUPROF
--normalize                        #Same as -diff_base, but show full graph
-                                  #Together with -base=CPUPROF2
--drop_negative                    #Remove nodes with negative durations
-
--call_tree                        #Create a more precise call tree graph, including when functions are called through pointers
--symbolize=STR                    #How variable names are retrieved, among:
-                                  #  - none
-                                  #  - local (def)
-                                  #  - fastlocal: only function names
-                                  #  - remote: only remote binaries
-                                  #  - force
--tls_cert|tls_key|tls_ca          #TLS information when using remote CPUPROF
-
--tags                             #Print profile tags
-                                  #I don't know how to set those
--tagshow|hide|focus|ignore=REGEXP #Like -show|hide|focus|ignore but for profile tags
-
--comments                         #Print profile comments
--add_comment=STR                  #Add a profile comment, only temporarily
-
--buildid=ID                       #Specify build ID, printed in some graphs
-
--seconds|timeout=NUM              #Duration|timeout for time-based profile collection (I don't know what those are)
-
--source_path=PATH                 #Source file path. Allows retrieving source lines.
--trim_path=DIR                    #Do not show source lines of DIR from source lines
-
-ENVVAR PPROF_BINARY_PATH          #Def: ~/pprof/binaries
-ENVVAR PPROF_TMPDIR               #Def: ~/pprof
-ENVVAR PPROF_TOOLS
--tools=DIR                        #DIR where go tool is located
+go test
+-trace=FILE                       #Write tracing file???
