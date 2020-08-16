@@ -9,14 +9,16 @@ VERSION ==>                       #See Go language
 
 DOCUMENTED ELSEWHERE ==>          #In go language (because part of language spec):
                                   #  - unsafe
-                                  #  - runtime.Error
+                                  #  - runtime.Error|TypeAssertionError
+                                  #  - runtime.Gosched|[Un]lockOSThread|Goexit|NumGoroutine
+                                  #  - runtime.NumCgoCall|SetCgoTraceback
                                   #In go CLI:
-                                  #  - runtime.GOOS|GOARCH|Compiler
+                                  #  - runtime.GOROOT|Compiler
                                   #In go testing:
                                   #  - testing
                                   #In go debugging:
                                   #  - runtime/pprof
-                                  #  - runtime.[Read]MemStats|GC|*Profile*
+                                  #  - runtime.Breakpoint|[Read]MemStats|*Profile*|StackRecord
 
 
                                              /=+===============================+=\
@@ -27,14 +29,50 @@ DOCUMENTED ELSEWHERE ==>          #In go language (because part of language spec
 
 
 import "runtime"                  #
+import "runtime/debug"            #
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:          RUNTIME OS           :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+go version                        #Prints "go version goX.Y GOOS/GOARCH"
+runtime.Version()->STR            #'goX.Y' or 'COMMIT-DATE'
+
+runtime.GOOS                      #OS name
+                                  #Among "linux", "darwin", "windows", "freebsd|netbsd|openbsd|dragonfly", "solaris|illumos", "plan9",
+                                  #"aix", "android", "nacl" (Chrome OS), "js" (with GOARCH "wasm")
+                                  #Can be set manually with ENVVAR GOOS
+
+runtime.GOARCH                    #CPU architecture
+                                  #Among "386|amd64[p32]", "arm[64]", "ppc64[le]", "mips[64][le]", "s390x", "riscv64", "wasm"
+                                  #Can be set manually with ENVVAR GOARCH
+ENVVAR GOARM                      #"5|6|7". ARM version, with GOARCH=arm
+ENVVAR GO386                      #"387|sse2". Floating point version, with GOARCH=386
+ENVVAR GOMIPS[64]                 #"hardfloat|softfloat". Floating point version, with GOARCH=mips[64][le]
+ENVVAR GOWASM                     #"FEAT,...". Experimental features, with GOARCH=wasm, among "satconv|signext"
+
+ENVVAR GOHOSTOS|GOHOSTARCH        #Like ENVVAR GOOS|GOARCH except readonly
+
+ENVVAR GOEXE                      #Built file file extension. "" on Unix, ".exe" on Windows
+                                  #Read-only
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:          RUNTIME CPU          :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
 
 runtime.NumCPU()->INT             #Number of CPU cores
 runtime.GOMAXPROCS(0)->INT2       #Max number of goroutines running in parallel
 runtime.GOMAXPROCS(INT)->INT2     #Sets it, and returns the previous one
 ENVVAR GOMAXPROCS                 #Default value for runtime.GOMAXPROCS.
                                   #Def: runtime.NumCPU()
-
-runtime.NumGoroutine()->INT       #Number of running goroutines
 
 
                                              /=+===============================+=\
@@ -43,9 +81,6 @@ runtime.NumGoroutine()->INT       #Number of running goroutines
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
-
-import "runtime"                  #
-import "runtime/debug"            #
 
 debug.Stack()->[]BYTE             #Retrieve current call stack formatted
                                   #Only for current goroutine
@@ -85,6 +120,44 @@ RUNTIME_FUNC.FileLine(UINTPTR)    #File|line of a specific line of code inside f
  ->'/PATH',LINE_INT               #Can be empty ''|0
 RUNTIME_FUNC.Entry()->UINTPTR     #Function's address
                                   #Can be 0 if inline func or not Go
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:          RUNTIME GC           :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+GC ==>                            #Mark-and-sweep.
+                                  #Sweeping happens both incrementally and during stop-the-world events (STW)
+                                  #STW are triggered when HeapInUse reaches a changing specific heap size threshold
+                                  #STW are broken down into several "pauses".
+
+runtime.GC()                      #Force running a GC stop-the-world
+
+MEM_STATS.NextGC UINT64           #Next GC threshold to trigger STW
+MEM_STATS.NumGC UINT32            #Number of GC STWs
+MEM_STATS.NumForcedGC UINT32      #Number of runtime.GC() calls
+MEM_STATS.PauseTotalNs UINT64     #Number of ns spent in all GC STWs
+MEM_STATS.PauseNs [256]UINT_64    #Time spent in each of the last 256 GC pauses. If none, 0.
+MEM_STATS.GCCPUFraction FLOAT64   #How much % of CPU time was spent in GC
+MEM_STATS.LastGC UINT64           #Last GC's Unix timestamp (in ns). If none, 0.
+MEM_STATS.PauseEnd [256]UINT_64   #Unix timestamp (in ns) of the last 256 GC pauses. If none, 0.
+
+MEM_STATS.EnableGC BOOL           #Whether GC is enabled (def: true)
+MEM_STATS.DebugGC BOOL            #Always false
+
+runtime.SetFinalizer              #Calls FUNC(VAL) when VAL is about to be GC'd
+ (VAL, FUNC(VAL)|nil)             #  - should not rely:
+                                  #     - on when|whether GC happens, since this is very variable
+                                  #     - on it to guess when|whether GC happens
+                                  #If nil, removes any finalizer FUNC instead.
+                                  #VAL must be *STRUCT
+                                  #If VAL contains members with finalizers, run those first
+runtime.KeepAlive(VAL)            #When calling SetFinalizer(VAL) and last statement using VAL is async,
+                                  #finalizer might be run before async completes.
+                                  #Doing KeepAlive() right after async statement prevents this.
 
 
                                              /=+===============================+=\
