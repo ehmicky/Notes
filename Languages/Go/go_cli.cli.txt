@@ -9,6 +9,7 @@ VERSION ==>                       #See Go language
 
 DOCUMENTED ELSEWHERE ==>          #In go testing:
                                   #  - go test
+                                  #  - go tool test2json
                                   #  - go tool cover
                                   #In go debugging:
                                   #  - go test profiling CLI flags
@@ -63,7 +64,16 @@ import "IMPORT_PATH"              #"IMPORT_PATH" locates the PACKAGE on the file
                                   #  (if non-module-aware)
                                   #  - GOPATH/src
                                   #  (if non-module-aware, and start with . or ..)
-                                  #  - $PWD
+                                  #  - $PWD ("relative IMPORT_PATH")
+
+go tool compile
+-D DIR                            #Relative IMPORT_PATHs base (instead of $PWD)
+-nolocalimports                   #Disallow relative IMPORT_PATHs
+-importmap=IMPORT_PATH=IMPORTPATH2#Rename any import "IMPORT_PATH" to import "IMPORT_PATH2"
+-importcfg=FILE                   #FILE contains lines with
+                                  #  - importmap IMPORT_PATH=IMPORT_PATH2: like -importmap
+                                  #  - packagefile IMPORT_PATH=PATH: like -importmap but using a PATH
+
 ENVVAR GOROOT                     #Global go directory.
                                   #Contains:
                                   #  - binaries (go|gofmt)
@@ -76,6 +86,8 @@ ENVVAR GOROOT                     #Global go directory.
                                   #Same directory structure as GOPATH
 runtime.GOROOT()->'/PATH'         #Returns ENVVAR GOROOT, or the default value for it
 ENVVAR GOROOT_FINAL               #Allows separating Global go directory sources from built files
+go tool compile -I DIR            #Add an alternattive DIR for GOROOT/pkg/GOOS_GOARCH
+
 ENVVAR GOPATH                     #Same syntax as PATH (:-separated on Unix, ;-separated on Windows)
                                   #  - on write, only first element is used
                                   #  - usually, having several elements is not needed
@@ -254,6 +266,8 @@ package PACKAGE // import         #"import comment"
  "IMPORT_PATH"                    #Same but inside source files, using code comment, for non-module-aware
 
 go VERSION                        #Declares Go version. Used to know which Go features are available at build-time (not runtime)
+go tool compile -lang=goX.Y       #Target Go version (def: current)
+go tool compile -goversion=goX.Y  #Exits if current Go version does not match
 
 require MODULE_PATH vMODULE_VRSION
  [// indirect]                    #Declares dependency
@@ -548,6 +562,9 @@ go build IMPORT_PATHS             #Compile *.go:
                                   #  - if module-aware, MODULE_PATH last part
                                   #  - otherwise, DIR name
                                   #Always ignored: *_test.go, .*.go, _*.go, testdata/**.go
+go tool compile                   #Can use -installsuffix|msan|trimpath|linkshared
+                                  #Can also use -p (named -c and defaulting to 1)
+
 -o FILE|DIR                       #Output BINARY path
 -installsuffix STR                #Prepend STR to installation DIR name
                                   #Automatically done by:
@@ -586,11 +603,17 @@ go build IMPORT_PATHS             #Compile *.go:
 
 go build -asmflags
  '[IMPORT_PATHS=]ARGS'            #Pass arguments to underlying go tool asm ARGS
-go build -gcflags
- '[IMPORT_PATHS=]ARGS'            #Pass arguments to underlying go tool compile ARGS
 go build -ldflags
  '[IMPORT_PATHS=]ARGS'            #Pass arguments to underlying go tool link ARGS
 go build -toolexec 'PATH [ARGS]'  #Use a different program than go tool asm under the hood
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:          BUILD TAGS           :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
 
 // +build ALL_CONSTRAINTS         #"Build constraint|tag".
                                   #Comment in source code applying to whole file
@@ -609,6 +632,194 @@ go build -toolexec 'PATH [ARGS]'  #Use a different program than go tool asm unde
                                   #     - by convention, "ignore" is kept to mean to never build a file
 *[_GOOS][_GOARCH][_test].go       #Alternative way to set build constraint, using filename
 -tags BUILD_TAG,...               #Specify a BUILD_TAG
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:      COMPILER DIRECTIVES      :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+//line [FILE]:LINE[:COL]          #Specifies that the next line was implemented in FILE:LINE:COL
+                                  #Meant for debugging information
+
+FUNCTION DIRECTIVES ==>           #All the following directives target the FUNC declaration on next line.
+//go:noescape                     #Function declaration must not have a body (meaning that the function has an implementation not written in Go). It specifies that the function does not allow any of the pointers passed as arguments to escape into the heap or into the values returned from the function. This information can be used during the compiler's escape analysis of Go code calling the function.
+//go:uintptrescapes               #Specifies that the function's uintptr arguments may be pointer values that have been converted to uintptr and must be treated as such by the garbage collector. The conversion from pointer to uintptr must appear in the argument list of any call to this function. This directive is necessary for some low-level system call implementations and should be avoided otherwise.
+//go:noinline                     #Specifies that calls to the function should not be inlined, overriding the compiler's usual optimization rules. This is typically only needed for special runtime functions or when debugging the compiler.
+//go:norace                       #Specifies that the function's memory accesses must be ignored by the race detector. This is most commonly used in low-level code invoked at times when it is unsafe to call into the race detector runtime.
+//go:nosplit                      #Specifies that the function must omit its usual stack overflow check. This is most commonly used by low-level runtime code invoked at times when it is unsafe for the calling goroutine to be preempted.
+
+//go:linkname localname [importpath.name]   #This special directive does not apply to the Go code that follows it. Instead, the //go:linkname directive instructs the compiler to use “importpath.name” as the object file symbol name for the variable or function declared as “localname” in the source code. If the “importpath.name” argument is omitted, the directive uses the symbol's default object file symbol name and only has the effect of making the symbol accessible to other packages. Because this directive can subvert the type system and package modularity, it is only enabled in files that have imported "unsafe".
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:            COMPILE            :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+go tool compile FILE.go...        #Low-level API, first step of go build
+                                  #Produces FILE.o, i.e. ar archive containing each file, compiled ("Go object")
+go build -gcflags
+ '[IMPORT_PATHS=]ARGS'            #Pass arguments to underlying go tool compile ARGS
+
+-o FILE                           #Output file (def: FILE.o or, if -pack, FILE.a)
+
+-pack                             #Create a FILE.a instead of FILE.o
+
+-h                                #Make build errors print a stack trace, and abort building
+-L                                #Show complete file paths in build errors
+-C                                #Do not show column number in build errors
+-e                                #Unless set, only show maximum of 10 build errors
+
+-s                                #Warn on STRUCT that can use inline infering
+-p IMPORT_PATH                    #Warn on circular dependencies
+                                  #IMPORT_PATH is the one of the code being compiled
+
+-m                                #Print which optimizations were applied
+-N                                #Disable optimizations
+-l                                #Disable inlining.
+-B                                #Disable bounds checking
+-smallframes                      #Forces big local variables to be allocated on the heap instead of on stack.
+-complete                         #Optimize when package uses no C|ASM packages
+-wb=false                         #Do not use the write barrier.
+                                  #I.e. do not ensure that I/O writes are not partially flushed in case of power outage.
+                                  #Is a speed optimization.
+
+-dwarf=false                      #Do not generate DWARF symbols (used by debuggers)
+-dwarflocationlists=false         #Do not add DWARF location lists in optimized mode
+-dwarfbasentries=false            #Do not use DWARF base address selection entries
+-gendwarfinl=INT                  #How many DWARF inline info records to generate (def: 2)
+
+-spectre=STR,...                  #Protect against Spectre CPU vulnerabilities. Slower.
+                                  #Can be:
+                                  #  - index: against Spectre variant 1 ("bound check bypass"). 5-10% slower code.
+                                  #  - ret: against Spectre variant 2 ("branch target injection"). 10-15% slower code.
+                                  #  - all: same as index,ret
+
+-bench=FILE                       #Write durations of each compilation stage
+
+-json=0,/PATH                     #JSON verbose mode
+-%
+-E
+-K
+-d
+-j
+-live
+-r
+-v
+-w
+-W                                #Various low-level debugging flags
+
+-+
+-std                              #Flags meant to compile Go itself
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:             LINK              :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+go tool link FILE.a               #Low-level API, second step of go build
+                                  #Produces executable BINARY from FILE.o|a
+
+go tool compile
+-dynlink Allow references to Go symbols in shared libraries (experimental).
+-linkobj file Write linker-specific object to file and compiler-specific object to usual output file (as specified by -o).  Without this flag, the -o output is a combination of both linker and compiler input.
+-shared generate code that can be linked into a shared library
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:             PACK              :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+go tool pack ACTION FILE.o        #Low-level API to manipulate FILE.o|a
+                                  #ACTION can be:
+                                  #  - t: list each file's name
+                                  #  - p: print each file
+                                  #  - x: extract files
+                                  #  - c FILE2.o: copy
+                                  #  - r FILE2.o: append
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:              ASM              :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+go tool asm  ???
+
+go tool compile
+-symabis file read symbol ABIs from file
+-asmhdr=FILE Write assembly header to file.
+
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:            OBJDUMP            :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+go tool objdump BINARY            #Disassembles BINARY:
+                                  #  - prints its ASM instructions, including file, line and address
+                                  #  - grouped by executable segment
+ [START END]                      #Only from START to END address
+-s REGEXP                         #Only symbols matching REGEXP
+-S                                #Show Go source code line too
+-gnu                              #Show gcc ASM (besides gc ASM)
+
+go tool compile
+-S                                #Prints same output as go tool objdump
+-S -S                             #Same but also include data segments
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:              NM               :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+go tool nm BINARY                 #Prints all exported variables with:
+                                  #  - address
+                                  #  - size (if -size)
+                                  #  - type 'CHAR' among:
+                                  #     - t|T: code, static|dynamic
+                                  #     - r|R: data, read-only, static|dynamic
+                                  #     - d|D: data, read-write, static|dynamic
+                                  #     - b|B: BSS data, static|dynamic
+                                  #     - C: constant address
+                                  #     - U: referenced but undefined
+                                  #  - name
+-sort=NAME                        #Can sort by: address, size, name (def), none
+-n                                #Same as -sort=address
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:           BUILD ID            :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+BUILD_ID ==>                      #BINARY checksum that does not include data that might change between machines.
+                                  #Stored within the BINARY itself
+go tool buildid BINARY            #Prints BUILD_ID
+-w                                #Re-create BUILD_ID
+
+go tool compile -buildid=ID       #Sets explicit BUILD_ID
 
 
                                              /=+===============================+=\
@@ -640,6 +851,11 @@ ENVVAR GOGCCFLAGS                 #CLI flags passed to cc under the hood
 CGO ==>                           #Used to use C from|to Go
                                   #Only with gc compiler
                                   #Not documented until needed
+
+go tool cgo                       #
+import "C"                        #
+// #cgo ...                       #
+
 ENVVAR CGO_ENABLED                #
 ENVVAR AR|CC|CCX|FC               #
 ENVVAR CGO_CFLAGS|CPPFLAGS|
@@ -648,7 +864,7 @@ ENVVAR CGO_CFLAGS|CPPFLAGS|
 ENVVAR PKG_CONFIG                 #
 ENVVAR GCCGOTOOLDIR               #
 ENVVAR GO_EXTLINK_ENABLED         #
-ENVVAR GODEBUG="cgocheck=0|1|2"		#
+ENVVAR GODEBUG="cgocheck=0|1|2"   #
 
 go build
  -buildmode=c-archive|c-shared    #
@@ -886,3 +1102,13 @@ go generate IMPORT_PATHS          #Execute any COMMAND from //go:generate commen
  COMMAND [ARGS...]                #Means if another //go:generate uses ALIAS as COMMAND, it will be expanded to COMMAND [ARGS...]
 
 // Code generated ... DO NOT EDIT.#By convention, this comment should be before any modifications done by go generate
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:            OTHERS             :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+go tool dist ...                  #Test, re-build and analyze the Go installation itself
