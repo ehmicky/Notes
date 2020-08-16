@@ -87,7 +87,8 @@ ENVVAR GOROOT                     #Global go directory.
                                   #Same directory structure as GOPATH
 runtime.GOROOT()->'/PATH'         #Returns ENVVAR GOROOT, or the default value for it
 ENVVAR GOROOT_FINAL               #Allows separating Global go directory sources from built files
-go tool compile -I DIR            #Add an alternattive DIR for GOROOT/pkg/GOOS_GOARCH
+go tool compile|asm -I DIR
+go tool link -L DIR               #Add an alternattive DIR for GOROOT/pkg/GOOS_GOARCH
 
 ENVVAR GOPATH                     #Same syntax as PATH (:-separated on Unix, ;-separated on Windows)
                                   #  - on write, only first element is used
@@ -564,7 +565,8 @@ go build IMPORT_PATHS             #Compile *.go:
                                   #  - otherwise, DIR name
                                   #Always ignored: *_test.go, .*.go, _*.go, testdata/**.go
 go tool compile|link              #Can use -installsuffix|msan|linkshared
-go tool compile                   #Can use -trimpath, -p (named -c and defaulting to 1)
+go tool compile|asm               #Can use -trimpath
+go tool compile                   #Can use -p (named -c and defaulting to 1)
 go tool link                      #Can use -buildmode (def: 'exe')
 
 -o FILE|DIR                       #Output BINARY path
@@ -592,6 +594,8 @@ go tool link                      #Can use -buildmode (def: 'exe')
 -linkshared                       #Links to dependencies dynamically instead of statically
                                   #Much smaller executable size.
                                   #Requires using -buildmode=shared first
+go tool compile|asm -shared       #Create shared library
+go tool compile|asm -dynlink      #Allow shared libraries to use Go variables
 
 -msan                             #Use LLVM Memory Sanitizer, which lints against reading uninititalized VARs.
                                   #Done runtime, i.e. should only be done during development.
@@ -667,13 +671,18 @@ FUNCTION DIRECTIVES ==>           #All the following directives target the FUNC 
 
 
 go tool compile FILE.go...        #Low-level API, first step of go build
-                                  #Produces FILE.o, i.e. ar archive containing each file, compiled ("Go object")
+                                  #Compile a single PACKAGE into a FILE.o ("Go object", ar achive)
 go build -gcflags
  '[IMPORT_PATHS=]ARGS'            #Pass arguments to underlying go tool compile ARGS
+
+go tool asm                       #Can use -spectre
 
 -o FILE                           #Output file (def: FILE.o or, if -pack, FILE.a)
 
 -pack                             #Create a FILE.a instead of FILE.o
+-linkobj=FILE.o                   #Split output into two files:
+                                  #  - -o=FILE.o: compiler-specific output
+                                  #  - -linkobj=FILE2.o: linker-specific output
 
 -h                                #Make build errors print a stack trace, and abort building
 -L                                #Show complete file paths in build errors
@@ -725,73 +734,84 @@ go build -gcflags
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:             LINK              :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-go tool link FILE.a               #Low-level API, second step of go build
-                                  #Produces executable BINARY from FILE.o|a
-go build -ldflags
- '[IMPORT_PATHS=]ARGS'            #Pass arguments to underlying go tool link ARGS
-
--o=FILE                           #Output path (def: FILE.out[.exe])
-
-go tool compile
--dynlink Allow references to Go symbols in shared libraries (experimental).
--linkobj file Write linker-specific object to file and compiler-specific object to usual output file (as specified by -o).  Without this flag, the -o output is a combination of both linker and compiler input.
--shared generate code that can be linked into a shared library
-
--B note Add an ELF_NT_GNU_BUILD_ID note when using ELF.  The value should start with 0x and be an even number of hex digits.
--E entry Set entry symbol name.
--H type Set executable format type.  The default format is inferred from GOOS and GOARCH.  On Windows, -H windowsgui writes a "GUI binary" instead of a "console binary."
--I interpreter Set the ELF dynamic linker to use.
--L dir1 -L dir2 Search for imported packages in dir1, dir2, etc, after consulting $GOROOT/pkg/$GOOS_$GOARCH.
--R quantum Set address rounding quantum.
--T address Set text segment address.
--V Print linker version and exit.
--X importpath.name=value Set the value of the string variable in importpath named name to value.  This is only effective if the variable is declared in the source code either uninitialized or initialized to a constant string expression. -X will not work if the initializer makes a function call or refers to other variables.
--benchmark string set to 'mem' or 'cpu' to enable phase benchmarking
--benchmarkprofile base emit phase profiles to base_phase.{cpu,mem}prof
--c Dump call graphs.
--compressdwarf=false Do not compress DWARF
--d Disable generation of dynamic executables.  The emitted code is the same in either case; the option controls only whether a dynamic header is included.  The dynamic header is on by default, even without any references to dynamic libraries, because many common system tools now assume the presence of the header.
--debugtramp int Debug trampolines.
--dumpdep Dump symbol dependency graph.
--extar ar Set the external archive program (default "ar").  Used only for -buildmode=c-archive.
--extld linker Set the external linker (default "clang" or "gcc").
--extldflags flags Set space-separated flags to pass to the external linker.
--f Ignore version mismatch in the linked archives.
--g Disable Go package data checks.
--h	halt on error
--k symbol Set field tracking symbol. Use this flag when GOEXPERIMENT=fieldtrack is set.
--libgcc file Set name of compiler support library.  This is only used in internal link mode.  If not set, default value comes from running the compiler, which may be set by the -extld option.  Set to "none" to use no support library.
--linkmode mode Set link mode (internal, external, auto).  This sets the linking mode as described in cmd/cgo/doc.go.
--n Dump symbol table.
--pluginpath path The path name used to prefix exported plugin symbols.
--r dir1:dir2:...  Set the ELF dynamic linker search path.
--s Omit the symbol table and debug information.
--strictdups int sanity check duplicate symbol contents during object file reading (1=warn 2=err).
--tmpdir dir Write temporary files to dir.  Temporary files are only used in external linking mode.
--u Reject unsafe packages.
--v Print trace of linker operations.
--w Omit the DWARF symbol table.
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
                                             )==:             PACK              :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
-go tool pack ACTION FILE.o        #Low-level API to manipulate FILE.o|a
+go tool pack ACTION FILE.o|a      #Low-level API to manipulate FILE.o|a
                                   #ACTION can be:
                                   #  - t: list each file's name
                                   #  - p: print each file
                                   #  - x: extract files
-                                  #  - c FILE2.o: copy
-                                  #  - r FILE2.o: append
+                                  #  - c FILE2.o|a: copy
+                                  #  - r FILE2.o|a: append
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:             LINK              :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+go tool link FILE.o|a             #Low-level API, second step of go build
+                                  #From a main PACKAGE's FILE.o|a, find all dependent PACKAGEs, and link them as a single executable BINARY
+go build -ldflags
+ '[IMPORT_PATHS=]ARGS'            #Pass arguments to underlying go tool link ARGS
+
+-o=FILE                           #Output path (def: FILE.out[.exe])
+-tmpdir=DIR                       #Only used with -linkmode=external
+
+-X IMPORT_PATH.VAR=VAL            #Sets the value of a VAR to VAL, at link-time (like a directive)
+                                  #VAR must:
+                                  #  - be STR
+                                  #  - be package scoped
+                                  #  - not be const
+                                  #  - be either unitialized, or initialized to a const STR
+                                  #Does not work when init() is used, under some conditions
+
+-u                                #Aborts if import "unsafe"
+-h                                #Aborts on error
+
+-strictdups=0|1|2                 #Warn on duplicate variables among 0|1|2 (none|warn|error) (def: 0)
+                                  #This can happen when inlining functions, which will then be removed from DWARF (which is the only impact)
+                                  #Not recommended since it creates too many false positives
+-f                                #Do not warn when PACKAGEs used different Go versions
+-g                                #Disable some data checks.
+
+-c                                #Prints list of function calls
+-dumpdep                          #Prints list of variable and which variables each of them refer to.
+
+-compressdwarf=false              #Do not compress DWARF
+-w                                #Do not include DWARF (used by debuggers)
+-s                                #Do not include DWARF and symbol table (variable names, used for debugging)
+-n                                #Print symbol table
+
+-benchmark=mem|cpu                #Print benchmark information about linking operations
+-benchmarkprofile=FILE            #Use a base profile
+
+-H=GOOS                           #Target OS (def: use GOOS|GOARCH)
+                                  #Can also be "windowsgui"
+
+-extar=PROG                       #Customize archive program (def: 'ar')
+                                  #Only with -buildmode=c-archive
+-extld=PROG                       #Customize linker program (def: 'clang|gcc')
+                                  #Meant for cross-compiling
+-extldflags=ARGS                  #Arguments to linker program
+-libgcc=STR|none                  #Customize compiler tools program (def: based on -extld)
+                                  #Only with -linkmode=internal
+-I=PROG                           #Customize dynamic linker (ELF only) (def: 'ld')
+-r=DIR:...                        #Customize dynamic linker search path (ELF only)
+
+-d                                #Do not include header in binary needed for dynamic linkers
+-E=VAR                            #Rename "main" to VAR
+-T=ADDRESS                        #Set executable text segment address
+-R=UINT                           #Customize address rounding
+
+-k=VAR
+-debugtramp
+-v                                #Low-level debug flags
 
 
                                              /=+===============================+=\
@@ -801,12 +821,20 @@ go tool pack ACTION FILE.o        #Low-level API to manipulate FILE.o|a
                                              \=+===============================+=/
 
 
-go tool asm  ???
+ASM ==>                           #Assembly language is Go-specific
+                                  #It is machine-agnostic
 
-go tool compile
--symabis file read symbol ABIs from file
--asmhdr=FILE Write assembly header to file.
+go tool asm FILE.s                #Like go tool compile, but from ASM files
 
+-o=FILE                           #Output file (def: FILE.o)
+
+-D=VAR[=VAL]                      #Declare VAR=VAL
+
+-debug                            #Verbose mode
+
+-gensymabis                       #Instead of compiling, only produces ABI file (ASM header files)
+go tool compile -symabis=FILE     #Use ABI file
+go tool compile -asmhdr=FILE      #Write ABI header file
 
 
                                              /=+===============================+=\
@@ -824,7 +852,7 @@ go tool objdump BINARY            #Disassembles BINARY:
 -S                                #Show Go source code line too
 -gnu                              #Show gcc ASM (besides gc ASM)
 
-go tool compile
+go tool compile|asm
 -S                                #Prints same output as go tool objdump
 -S -S                             #Same but also include data segments
 
@@ -864,6 +892,7 @@ go tool buildid BINARY            #Prints BUILD_ID
 -w                                #Re-create BUILD_ID
 
 go tool compile|link -buildid=ID  #Sets explicit BUILD_ID
+go tool link -B=STR               #Set a BUILD_ID note (ELF binary only)
 
 
                                              /=+===============================+=\
@@ -913,6 +942,7 @@ ENVVAR GODEBUG="cgocheck=0|1|2"   #
 go build
  -buildmode=c-archive|c-shared    #
 go build -gccgoflags STR          #
+go tool link -linkmode=STR        #
 
 runtime.NumCgoCall()->INT64       #
 runtime.SetCgoTraceback(...)      #
