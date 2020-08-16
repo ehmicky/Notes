@@ -10,10 +10,11 @@ VERSION ==>                       #See Go language
 DOCUMENTED ELSEWHERE ==>          #In go language (because part of language spec):
                                   #  - unsafe
                                   #  - runtime.Error|TypeAssertionError
-                                  #  - runtime.Gosched|[Un]lockOSThread|Goexit|NumGoroutine
+                                  #  - runtime.Gosched|[Un]lockOSThread|Goexit|NumGoroutine, ENVVAR GODEBUG=asyncpreemptoff|schedtrace|scheddetail
                                   #  - runtime.NumCgoCall|SetCgoTraceback
                                   #In go CLI:
                                   #  - runtime.GOROOT|Compiler
+                                  #  - debug.[Read]BuildInfo, runtime.Module
                                   #In go testing:
                                   #  - testing
                                   #In go debugging:
@@ -82,6 +83,17 @@ ENVVAR GOMAXPROCS                 #Default value for runtime.GOMAXPROCS.
                                              \=+===============================+=/
 
 
+ENVVAR GODEBUG=
+ "tracebackancestors=UINT"	      #Make stack trace include the stack of the UINT ancestor goroutines. Def: 0
+
+ENVVAR GOTRACEBACK                #On panic, how stack traces should be printed, among:
+                                  #  - 'none|0'
+                                  #  - 'single' (def): only current goroutine
+                                  #  - 'all|1': all user-created goroutines
+                                  #  - 'system|2': all user|system-created goroutines
+                                  #  - 'crash': like 'system', but creates a core dump
+debug.SetTraceback(STR)           #Changes GOTRACEBACK. Can only increase level.
+
 debug.Stack()->[]BYTE             #Retrieve current call stack formatted
                                   #Only for current goroutine
 debug.PrintStack()                #Like os.Stderr.Write(debug.Stack())
@@ -121,6 +133,32 @@ RUNTIME_FUNC.FileLine(UINTPTR)    #File|line of a specific line of code inside f
 RUNTIME_FUNC.Entry()->UINTPTR     #Function's address
                                   #Can be 0 if inline func or not Go
 
+debug.WriteHeapDump(UINTPTR)      #Write heap core dump to file descriptor UINTPTR
+                                  #Includes current memory|state information: variables, goroutines, stack, threads, MemStats,
+                                  #There is no good viewer for those at the moment
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:        RUNTIME LIMITS         :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+debug.SetMaxStack(INT)->INT2      #Sets max stack memory per function before crashing, in byte
+                                  #Meant to make infinite recursions crash
+                                  #Def: 1GB in 64-bits OS, 250MB in 32-bits
+                                  #Returns previous value
+debug.SetMaxThread(INT)->INT2     #Sets max amount of OS threads before crashing
+                                  #This is not max amount of goroutines, since they re-use OS threads
+                                  #Def: 1e4
+                                  #Returns previous value
+
+debug.SetPanicOnFault(BOOL)->BOOL2#If true (def), crash when accessing wrong address
+                                  #Disabling is only useful when using low-level memory-mapped files or pointer arithmetic
+                                  #and want to tolerate errors
+                                  #Returns previous value
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -130,12 +168,32 @@ RUNTIME_FUNC.Entry()->UINTPTR     #Function's address
 
 
 GC ==>                            #Mark-and-sweep.
-                                  #Sweeping happens both incrementally and during stop-the-world events (STW)
-                                  #STW are triggered when HeapInUse reaches a changing specific heap size threshold
+                                  #Sweeping happens both:
+                                  #  - incrementally ("heap scavenger"), concurrently
+                                  #  - during stop-the-world events (STW), serially
+                                  #STW are triggered when MEM_STATS.HeapInuse reaches a specific threshold
+                                  #  - computed by adding|subtracting a specific percentage (GOGC) from previous threshold
                                   #STW are broken down into several "pauses".
 
-runtime.GC()                      #Force running a GC stop-the-world
+ENVVAR GOGC                       #GC target percentage, from 0-100, or more
+                                  #Def: 100
+                                  #If negative or 'off', disables GC
+debug.SetGCPercent(INT)->INT2     #Sets GOGC
+                                  #Returns previous value
 
+runtime.GC()                      #Force running a GC stop-the-world
+debug.FreeOSMemory()              #Like runtime.GC() but also returns that memory to the OS
+
+debug.ReadGCStats(*GC_STATS)      #Fill GC_STATS
+debug.GCStats                     #Based on runtime.MemStats, but simpler
+GC_STATS.NumGC                    #INT64. Number of GC STWs
+GC_STATS.PauseTotal               #DURATION spent in all GC STWs
+GC_STATS.Pause                    #[]DURATION spent in each of the last GC pauses. If none, 0
+GC_STATS.PauseQuantiles           #[]DURATION of the last GC pauses, as quantiles.
+GC_STATS.LastGC                   #TIME of last GC. If none, 0.
+GC_STATS.PauseEnd                 #[]TIME of the last GC pauses. If none, 0.
+
+runtime.MemStats                  #See runtime.ReadMemStats()
 MEM_STATS.NextGC UINT64           #Next GC threshold to trigger STW
 MEM_STATS.NumGC UINT32            #Number of GC STWs
 MEM_STATS.NumForcedGC UINT32      #Number of runtime.GC() calls
@@ -158,6 +216,25 @@ runtime.SetFinalizer              #Calls FUNC(VAL) when VAL is about to be GC'd
 runtime.KeepAlive(VAL)            #When calling SetFinalizer(VAL) and last statement using VAL is async,
                                   #finalizer might be run before async completes.
                                   #Doing KeepAlive() right after async statement prevents this.
+
+ENVVAR GODEBUG                    #'VAR=VAL,...'
+GODEBUG="gctrace=1"						    #Print debug information about GC during different phases
+GODEBUG="gcpacertrace=1"				  #Print debug information about GC sweeps
+GODEBUG="scavenge=1"              #Print debug information about GC heap scavenger
+GODEBUG="scavtrace=1"  						#Print verbose debug information about GC heap scavenger
+GODEBUG="gccheckmark=1"					  #After GC STW, do a second pass to find reachable object, and crash if find one. Meant to debug GC internals.
+GODEBUG="allocfreetrace=1"        #Print a stack trace each time an object is allocated|freed on the heap. Very verbose.
+GODEBUG="gcstoptheworld=0|1|2"		#Can be:
+                                  #  - 0 (def): STW and sweeping are sometimes concurrent
+                                  #  - 1: STW is serial, sweeping is sometimes concurrent
+                                  #  - 2: STW and sweeping and serial
+GODEBUG="clobberfree=1"           #When GC is freeing an object, replace it in memory with random data.
+GODEBUG="sbrk=1"						      #Do not return memory to OS nor run GC. Only meant for memory debugging.
+GODEBUG="efence=1"						    #Allocate all memory in same page, and never re-use same address (i.e. run out of memory quickly). Meant for memory debugging.
+GODEBUG="madvdontneed=1"				  #On Linux, use MADV_DONTNEED instead of MADV_FREE when returning memory to OS.
+                                  #Slower but makes RSS decrease faster.
+GODEBUG="gcshrinkstackoff=1"		  #Disables optimizing goroutine stack size. Meant for memory debugging.
+GODEBUG="invalidptr=1"            #Do not crash when storing non-address values in *TYPE. Only meant for debugging.
 
 
                                              /=+===============================+=\
