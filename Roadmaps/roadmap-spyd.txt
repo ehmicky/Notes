@@ -5,24 +5,41 @@
 
 
 
-Now:
-  - `repeat` reset comparison should be based on all previous `times` since `childTimes` might fluctuate too much???
-     - found out:
-        - use whole `times` is more precise
-        - using last NUM `times` might be just as fine
-        - sorting whole array is too slow (quickly >100ms)
-        - using mean is much less precise than median
-     - also: `repeat` might be slowly increasing|decreasing, leading to non-comparable results
-     - problem: requires sorting `times`, which is slow
-        - maybe based on last NUM `repeat` only???
-     - if OS slows down temporarily, a long benchmark might throw away all old results???
-        - maybe not, due to increasing `maxLoops`??? However, `maxLoops` is only used at beginning. Then, `maxDuration` takes over, and it's only 500ms
-     - do not discard previous benchmarks if `repeat` changes too much, thanks to outliers removal???
-     - if sorting is slow, use mean instead of median???
-     - maybe outliers should not remove (or not remove only) individual `times`, but whole process results if the process
-       median is very different from other processes???
-  - do not pass `nowBias`, `loopBias` and `minTime` to child. Do the computation in parent
-  - fix `loopBias`. It should use `repeat` like the normal `main` task instead of hardcoding `repeat: 600`
+Rework runner computation
+  - maxDuration should instead be maximum between:
+     - benchmarkCostMin
+        - why does it keep increasing???
+     - targetTimesDuration: processesMedian * targetTimes
+        - targetTimes: min(maxTargetTimes, ((measuringTaskDuration / processesMedian) ** timesToProcessRatio))
+           - maxTargetTimes: 100
+              - lower: cold starts have more impact on results, i.e. more variance
+              - higher: higher OPTS.duration threshold to each until targetTimes stabilizes, i.e. more variation between benchmarks of different OPTS.duration below that thredhold
+           - measuringTaskDuration: computingTaskDuration * (1-benchmarkCostRatio)
+              - computingTaskDuration: runEnd - now(), after bias calculation
+           - timesToProcessRatio: 0.7
+              - distribute time between loops and processes
+              - higher: favor loops over processes since they task less benchmark cost, and help with cold start
+              - lower: favor processes over loops, to spawn enough processes to reduce variance due to runtime optimization
+  - add comment that we try to reduce difference of median time between runs with different OPTS.duration:
+     - problem is that runtimes optimizes more and more as task is repeated, i.e. higher OPTS.duration have faster median time
+     - we fix it by breaking down benchmark into several processes of same duration
+        - fast tasks: based on how long it takes to spawn processes and load the runner
+        - slow tasks: specific amount of loops.
+          This can take a big OPTS.duration to reach.
+          However, lower would mean not enough loops to fix the variation introduced by runtime cold starts
+  - improve how long it takes to compute nowBias|loopBias
+     - problem: using percentage would take too much time if duration is very high
+     - other problem: makes live updating stop at beginning of a task
+     - solution: add some maxTimes???
+  - remove the fact that `maxDuration` defaults to hardcoded 500ms
+     - how??? based on bias calculation??? What would bias calculation be based on then??? Use maxCount???
+  - do not pass `nowBias`, `loopBias` and `minTime` to child
+     - do the computation in parent
+  - fix `loopBias`
+     - it should use `repeat` like the normal `main` task instead of hardcoding `repeat: 600`
+  - fix `nowBias`:
+     - after computing `loopBias`, `nowBias -= loopBias` since `nowBias` computation now includes running an empty function once
+  - remove initialMeasure() since outliers are removed???
   - tweak outliers removal:
      - find the best threshold value
      - see if adding a first stage helps???
@@ -30,12 +47,15 @@ Now:
   - make sure `before` does not skew statistics:
      - try adding an empty one to `Math.random()`
      - before, `loopBias` computation used to take into account whether `before` was defined
-  - compute biases once for a given runner + systemId
-  - rename runner `duration`/`processDuration` to `maxDuration`
+  - use `nowBias` results to compute `time-resolution`
+     - instead of `time-resolution` using `precise-now`
+     - how to ensure that there are enough timestamps??? (100)
+     - reason: uses runner timer resolution, not parent process (Node.js)
+  - the progress reporters freezes for few seconds between tasks or at beginning|end of tasks when OPTS.duration is high:
+     - figure out why and fix it
+  - re-use the same `nowBias`/`loopBias` for a given runner + systemId
   - fix `cli` runner
-
-`time-resolution` works for OS resolution, but not runner time resolution (since it is now run outside of runner)
-  - use `nowBias` times to compute `time-resolution`
+  - try to see if anything more can be removed from `node` runner, i.e. simplified for all runners
 
 Percentiles|histogram:
   - use difference from median in durations in histogram and percentiles
@@ -65,6 +85,7 @@ Parallel:
      - start|end group of processes together
         - i.e. run only the process execution logic in parallel, not the whole runBenchmark()
      - if one process fails, the other ones should be terminated
+     - nowBias|loopBias computation should use the same amount of parallel processes
   - add code comment that:
      - OPTS.parallel is meant to measure cost of parallelism
         - both CPU and I/O parallelism
