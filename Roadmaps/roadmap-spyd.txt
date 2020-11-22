@@ -6,45 +6,39 @@
 
 
 Rework runner computation
-  - runner should send `start` instead of `duration`
-     - Unix timestamp in nanoseconds
-     - "UINT" string
-     - find the best method among performance.* and Date.now(). Might need to round ms to ns. However other runners have better resolution (e.g. Bash)
-     - add comments:
-        - meant for benchmarkCost, but without any time that would change depending of the `times` size or the task speed.
-           - e.g. benchmark loop or the time to write to file
-           - otherwise, higher benchmarkCost create higher `maxDuration`, which creates higher benchmarkCost, and so on
-              - make sure this is not happening anymore
-  - loopBias should be 0 if only one process was spawned
-  - minTime:
-     - max nowBias * 100
-     - max duration / 10
-     - min nowBias * 1
-     - min resolution * 100
+  - rename:
+     - benchmarkCost -> loadCost
+     - nowBias -> measureCost
+     - loop -> only for runner repeat loop
+     - times -> measures
+        - childTimes -> measures
+     - count -> times
   - argv to child should be several positional arguments instead of JSON
-  - results should be sent as flat newline-separated integers, not JSON
+  - ipcReturn should be sent as flat newline-separated integers, not JSON
   - experiment with sending path to named pipe to child
      - check performance difference
      - should work on Windows
-  - add comment that runner should not stream results (sending only once at ens) not to interfere with benchmarking
+  - add comment that runner should not stream ipcReturn (sending only once at end) not to interfere with measuring
      - check max string length in JavaScript
-  - use `maxDuration: 0` on first process, to run a single loop
+  - use `maxDuration: 0` on first process, to execute a single loop
      - reasons:
-        - slow tasks need it to callibrate minTimes duration (although would be done automatically thanks to benchmarkCostMin)
+        - slow tasks need it to callibrate minLoopTime duration (although would be done automatically thanks to benchmarkCostMin)
         - fast tasks need it to callibrate `repeat`
-     - exception: not for nowBias
+     - not needed for:
+        - nowBias since no `repeat`
+        - repeatCost since `initialRepeat`
      - during `removeOutliers`, remove first process unless it is the only one
      - should never be live reported
   - the progress reporters freezes for few seconds between tasks or at beginning|end of tasks when OPTS.duration is high:
      - figure out why and fix it
   - find ways to improve precision even more???
   - find ways to improve precision if OPTS.duration is very low???
-  - show nowBias, loopBias and benchmarkCostPercentage in `debug` reporter
+  - show nowBias, repeatCost and benchmarkCostPercentage in `debug` reporter
   - tweak outliers removal:
      - find the best threshold value
      - see if adding a first stage helps???
         - would remove all medians of the processes with highest processMedian
-  - use `nowBias` results to compute `time-resolution`
+  - use `nowBias` measures to compute `time-resolution`
      - instead of `time-resolution` using `precise-now`
      - how to ensure that there are enough timestamps??? (100)
      - reason: uses runner timer resolution, not parent process (Node.js)
@@ -61,31 +55,20 @@ Quantiles|histogram:
   - show in `debug` reporter
   - first remove the bottom|top 5% quantiles?
 
-Rename:
-  - benchmark is the whole setup:
-     - task files: tasks + inputs
-        - benchmark file -> task file
-     - system
-     - config
-  - run: calling `spyd run` once
-  - iteration -> combination
-  - saved benchmark -> result
-  - rawBenchmark -> partialResult
-
 Parallel:
   - OPTS.parallel NUM
      - validate that OPTS.parallel NUM is integer >1
-  - runs NUM processes in parallel
+  - spawns NUM processes in parallel
      - in `run` command, but not in `debug` command
      - start|end group of processes together
-        - i.e. run only the process execution logic in parallel, not the whole runBenchmark()
+        - i.e. spawns only the process execution logic in parallel, not the whole performRun()
      - if one process fails, the other ones should be terminated
-     - nowBias|loopBias computation should use the same amount of parallel processes
+     - nowBias|repeatCost computation should use the same amount of parallel processes
   - add code comment that:
      - OPTS.parallel is meant to measure cost of parallelism
         - both CPU and I/O parallelism
-     - if task is I/O bound, it can also improve precision by running more iterations, at the cost of accuracy (due to cost of parallelism)
-     - move the current code comment from src/processes/run.js
+     - if task is I/O bound, it can also improve precision by performing more measures, at the cost of accuracy (due to cost of parallelism)
+     - move the current code comment from src/measure/combination.js
   - handle spawn errors due to too many processes at once
      - try to remove process limit with ulimit, and see if another error can happen with a high OPTS.parallel, e.g. too many open files
   - part of system
@@ -151,7 +134,7 @@ runner.commands(runOpts):
      - split main entry file to 3 (load/run/debug), so that requiring the file is faster
   - OPTS.run.node.versions -> OPTS.run.node.version (only one version)
   - return a single OBJ instead of OBJ_ARR:
-     - should use systems instead to run several runOpts
+     - should use systems instead to perform several runOpts
      - commands is not a input-like dimension anymore, including in:
         - combination.name|columnName
         - combination.commandRank
@@ -221,7 +204,7 @@ Persist result.tasks|inputs|systems|commands:
      - add those during load normalization instead
      - only persist result.combinations[*].*Id|stats
 
-Run `listResults()` earlier:
+Execute `listResults()` earlier:
   - after options retrieval
   - before:
      - `run` command: combination list computing
@@ -271,7 +254,7 @@ When merging combination and there is a duplicate of same mergeId and taskId+inp
      - reasons: using systems to compare machines, spyd|runner options, git branches
 
 OPTS.merge skipping previous combinations:
-  - if OPTS.merge in `run` command, do not run (but still report) combinations already saved
+  - if OPTS.merge in `run` command, do not measure (but still report) combinations already saved
   - reason: OPTS.merge is meant for incremental runs, including continuing interrupted run
 
 Long run interruption:
@@ -382,7 +365,7 @@ Reporting on `remove` command:
 
 Reporter live updating:
   - do all of this in a feature branch to ensure this does not skew measurements
-     - compare Math.random() benchmark with|without it
+     - compare Math.random() duration with|without it
   - screen refreshing:
      - refresh whole screen at the beginning|end
         - use `signal-exit`
@@ -408,7 +391,7 @@ Reporter live updating:
      - called with same arguments as the final reporter.report():
         - including result being normalized
         - including having information from initial listResults() (e.g. for previous combinations and diff)
-        - including all possible result.combinations, even ones not run yet
+        - including all possible result.combinations, even ones not measured yet
         - excluding OPTS.show, always empty
      - limit the amount of changes of the general shape of the output between the initial call and the final one, to make it look nicer
         - e.g. tables should be initially shown with all rows|columns and empty cells
@@ -447,7 +430,7 @@ Learn package 'simple-statistics' and use it in spyd
 Use a `config` library instead of using our own logic???
 
 When killing child process, should kill descendants too
-  - e.g. with spyd-runner-cli and command 'yes', 'yes' keeps running after timeout
+  - e.g. with spyd-runner-cli and command 'yes', 'yes' keeps executing after timeout
 
 Consider lowering the valid Node version for spyd-runner-node, so that `run.node.versions` can target lower versions
 
@@ -502,9 +485,9 @@ Separate into different repos:
 Clarify features in `README`:
   - most precise and accurate benchmarking
   - pretty reporting
-  - comparison with previous benchmarks
+  - comparison with previous results
   - performance testing
-  - automatically insert latest benchmarks into your documentation
+  - automatically insert latest results into your documentation
   - custom reporters
   - TypeScript support
   - CI-friendly
@@ -521,7 +504,7 @@ Utilities to help people creating reporters, runners, progress reporters, stores
 
 Competitors benchmark:
   - benchmark with other benchmarking tools
-  - each should benchmark Math.random() for the same duration
+  - each should measure Math.random() for the same duration
      - use different durations as inputs
   - report both medians (for accuracy) and standard deviation (for precision)
 
@@ -543,18 +526,18 @@ Commercial offer:
         - should not lose history when change only the `title` of the function|variant
      - nice data visualization
      - should show function bodies
-  - code editor for benchmark files:
-     - run benchmarks (inside browser not on our servers)
-     - send benchmark results to API (like what users would do on CI otherwise)
+  - code editor for tasks files:
+     - perform run (inside browser not on our servers)
+     - send results to API (like what users would do on CI otherwise)
      - show results from API
      - i.e. can be used like jsperf
   - Sharing like jsperf:
      - allow users to run in their own browsers
   - PR bot
   - notifications
-  - user should report benchmark results to our API
+  - user should report results to our API
      - like Codecov does
-     - i.e. we do not pay for infrastructure cost, except simple CRUD API to store benchmark results
+     - i.e. we do not pay for infrastructure cost, except simple CRUD API to store results
      - should be integrated with CI (i.e. use `ci-info`)
   - pricing:
      - free for open source
