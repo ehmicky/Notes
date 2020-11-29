@@ -5,7 +5,7 @@
 
 
 
-Rework runner computation
+IPC:
   - argv to child should be several positional arguments instead of JSON
   - ipcReturn should be sent as flat newline-separated integers, not JSON
   - experiment with sending path to named pipe to child
@@ -13,31 +13,53 @@ Rework runner computation
      - should work on Windows
   - add comment that runner should not stream ipcReturn (sending only once at end) not to interfere with measuring
      - check max string length in JavaScript
-  - use `maxDuration: 0` on first process, to execute a single loop
-     - reasons:
-        - slow tasks need it to callibrate minLoopTime duration (although would be done automatically thanks to loadCostMin)
-        - fast tasks need it to callibrate `repeat`
-     - not needed for:
-        - measureCost since no `repeat`
-        - repeatCost since `initialRepeat`
-     - during `removeOutliers`, remove first process unless it is the only one
-     - should never be live reported
-  - the progress reporters freezes for few seconds between tasks or at beginning|end of tasks when OPTS.duration is high:
-     - figure out why and fix it
-  - find ways to improve precision even more???
-  - find ways to improve precision if OPTS.duration is very low???
-  - show measureCost, repeatCost and loadCostPercentage in `debug` reporter
-  - tweak outliers removal:
-     - find the best threshold value
-     - see if adding a first stage helps???
-        - would remove all medians of the processes with highest processMedian
-  - use `measureCost` measures to compute `time-resolution`
-     - instead of `time-resolution` using `precise-now`
-     - how to ensure that there are enough timestamps??? (100)
-     - reason: uses runner timer resolution, not parent process (Node.js)
-  - try to see if anything more can be removed from `node` runner, i.e. simplified for all runners
-  - fix `cli` runner
-  - sort all the code comments in `measure/**` and the `node` runner. It's a bit messy right now, and some might be outdated
+
+Fix `cli` runner
+
+Keep measureCost, repeatCost and loadCost in results
+  - report in `debug` reporter
+
+Use `measureCost` measures to compute `time-resolution`
+  - instead of `time-resolution` using `precise-now`
+  - how to ensure that there are enough timestamps??? (100)
+  - reason: uses runner timer resolution, not parent process (Node.js)
+
+repeatInit:
+  - after each process completes:
+     - if repeatInit true && state is not already empty:
+        - resets processMeasures, loops, processMedians
+        - no need to reset median or repeat, since it will be set again
+        - no need to reset loadCosts
+     - compute new stats (median, then repeat,  etc.)
+        - if state was just reset, this will be based only on last process
+     - if repeatInit true && newRepeat is within +|- NUM% of oldRepeat, set repeatInit false
+        - for the first process, oldRepeat is initialRepeat
+  - removing outliers logic for processMeasures with `repeat` 1 (not needed anymore)
+
+Incremental accurate stats:
+  - do not ARR.slice() to remove outliers
+     - instead, modify stats to exclude 15% slowest
+        - median: quantile .425
+        - max: quantile .85
+        - sum, standard deviation, quantiles, histogram: stop at quantile .85
+        - times: same as current logic
+  - compute `times` incrementally
+     - i.e. processMeasures do not need `repeat` anymore
+  - concatenate `childMeasures` to `measures` incrementally
+  - sort measures incrementally, after each process
+     - childMeasures.sort()
+     - then merge sort with measures
+        - check if doing in-place is faster
+  - compute stats incrementally, after each process
+     - sum
+        - keep a single total sum float
+        - subtract current sum of last 15% to it
+     - only median for:
+        - repeatCost|measureCost processGroup
+        - main processGroup without live reporting
+     - reason: spreads slowdown through the combination instead of only at end, so user cannot perceive it during live reporting
+     - other reason: makes processGroup real duration closer to expected one
+  - no more need for processMedians array
 
 Quantiles|histogram:
   - use difference from median in durations in histogram and quantiles
@@ -47,6 +69,95 @@ Quantiles|histogram:
   - persist in stores
   - show in `debug` reporter
   - first remove the bottom|top 5% quantiles?
+
+Duration results that are 0:
+  - prettyPrint them as <REPEAT_COST (using pretty printed repeatCost)
+     - done by pretty printing logic
+
+New processGroups logic
+  - rename processGroups to samples
+  - split processGroup main function into:
+     - an inner function, receiving state, spawnin process, computing new state and returning it
+     - an outer function, passing state around and deciding which processGroup's inner function to call next, and computing how much time left
+
+reportCost|measureCost progressive computation:
+  - run all processGroups concurrently: main one, repeatCost, measureCost
+     - concurrent, but still one at a time
+     - the processGroup with lowest processGroupDuration spent always executes next
+        - exception: if last had repeatInit true, execute it again
+           - unless out of processGroupDuration
+           - i.e. do not switch to other progressGroup
+     - if same processGroupDuration spent (including 0), priority is: measureCost > repeatCost > main
+     - reason: not to block live reporting at the beginning of the run and between each combination
+  - repeatCost|measureCost gets 10% of combinationDuration, main gets 80%
+     - i.e. after 30% of combinationDuration, only main is left executing
+  - add comment that first 12.5% of main processGroup will have more imprecise repeatCost|measureCost when normalizing measures and computing repeat|maxDuration, but that's fine
+
+Delay repeatCost measuring:
+  - at beginning, repeatCost is not run and has 0 processGroupDuration
+     - main processGroup gets additional 10% processGroupDuration
+     - repeatCost is 0
+  - after first sample of main processGroup completes, if its repeatInit is still true:
+     - before executing main processGroup again, run repeatCost processGroup until either:
+        - its repeatInit becomes true
+        - it runs out of processGroupDuration
+     - then finish executing main processGroup until its repeatInit becomes true (or it runs out of processGroupDuration)
+
+Measure combinations concurrently
+  - concurrently, but still one at a time, using same sample orchestration logic as the one used to orchestrate repeatCost|measureCost|main samples
+  - reason: better live reporting
+  - other reason: provides with fast fail if one combination times out or throw exception
+  - if two combinations have same combinationDuration left, pick a random one
+     - reason: random tasks progressing is more visually interesting than sequential
+  - when completing initial measureCost sample, do the first main sample after it in order to provide with fast first reporting of each combination
+  - progress reporter should not show current combination nor counter anymore
+  - progress reporter durationLeft and percentage need to take into account that multiple combinations are run concurrently
+
+Improve precision:
+  - find ways to improve precision even more???
+  - find ways to improve precision if OPTS.duration is very low???
+  - tweak outliers removal:
+     - find the best threshold value
+     - remove outliers on both slow and fast ends???
+
+Reporter live updating:
+  - do all of this in a feature branch to ensure this does not skew measurements
+     - compare Math.random() duration with|without it
+  - screen refreshing:
+     - refresh whole screen at the beginning|end
+        - use `signal-exit`
+        - experiment if there is a way to refresh partial screen instead of whole screen
+           - it should still work if user types newline or characters
+     - each update should refresh the whole screen with the new content
+        - but by printing over it, not clearing it first, to avoid flickering
+        - i.e. need to padRight() the new content if the old content was larger
+  - new progress.*() shape:
+     - since core now handles refreshing the screen
+     - progress.update():
+        - must return a STR
+        - must be sync
+     - remove progress.start|stop()
+  - compute reporter.report()->STR after each sample completion
+     - if OPTS.parallel, after whole group of processes completed
+     - only if all of:
+        - reporter.progress true (def: false)
+        - reporterOpts.output "-"
+        - OPTS.quiet false
+     - if sample has repeatInit true, do not live report it yet
+     - called with same arguments as the final reporter.report():
+        - including result being normalized
+        - including having information from initial listResults() (e.g. for previous combinations and diff)
+        - including all possible result.combinations, even ones not measured yet
+        - excluding OPTS.show, always empty
+     - limit the amount of changes of the general shape of the output between the initial call and the final one, to make it look nicer
+        - e.g. tables should be initially shown with all rows|columns and empty cells
+  - on each progress update, prepend last reporter.report()->STR, from each such reporter
+  - if reporter.progress false, reporter.report() can be async. If true, cannot.
+  - live reporting + progress reporting should happen in a worker thread
+     - reason: not blocking the CPU so measuring can happen concurrently
+     - happens at regular interval
+     - each time a runner process completes, parent process computes new stats, orchestrator sends it to worker thread
+        - worker thread updates its state but still wait for next refresh frame to report it
 
 Parallel:
   - OPTS.parallel NUM
@@ -72,6 +183,8 @@ Parallel:
      - result.systems[*].opts.parallel
      - if result.sharedSystem.opts.parallel 1, removed instead so it does not show up
      - when merging partialResults, OPTS.parallel should behave like OPTS.durarion, i.e. not allow merging with different values
+
+Sort all the code comments in `measure/**` and the `node|cli` runners. It's a bit messy right now, and some might be outdated
 
 OPTS.report|run|store|progress:
   - OPTS.report|run|store|progress 'NAME'_ARR (enable|disable)
@@ -360,41 +473,6 @@ Reporting on `remove` command:
   - then print confirmation removal suceeded
      - unless OPTS.quiet true
 
-Reporter live updating:
-  - do all of this in a feature branch to ensure this does not skew measurements
-     - compare Math.random() duration with|without it
-  - screen refreshing:
-     - refresh whole screen at the beginning|end
-        - use `signal-exit`
-        - experiment if there is a way to refresh partial screen instead of whole screen
-           - it should still work if user types newline or characters
-     - each update should refresh the whole screen with the new content
-        - but by printing over it, not clearing it first, to avoid flickering
-        - i.e. need to padRight() the new content if the old content was larger
-  - new progress.*() shape:
-     - since core now handles refreshing the screen
-     - progress.update():
-        - must return a STR
-        - must be sync
-     - remove progress.start|stop()
-  - compute reporter.report()->STR after each child process completion
-     - if OPTS.parallel, after whole group of processes completed
-     - only if all of:
-        - reporter.progress true (def: false)
-        - reporterOpts.output "-"
-        - OPTS.quiet false
-     - set result.combinations[*].running BOOL
-        - `debug` reporter should highlight running combination
-     - called with same arguments as the final reporter.report():
-        - including result being normalized
-        - including having information from initial listResults() (e.g. for previous combinations and diff)
-        - including all possible result.combinations, even ones not measured yet
-        - excluding OPTS.show, always empty
-     - limit the amount of changes of the general shape of the output between the initial call and the final one, to make it look nicer
-        - e.g. tables should be initially shown with all rows|columns and empty cells
-  - on each progress update, prepend last reporter.report()->STR, from each such reporter
-  - if reporter.progress false, reporter.report() can be async. If true, cannot.
-
 Named exports in task files:
   - instead of exporting `tasks` array of objects, export each object individually
      - for `cli` runner, means top-level property of YAML whole file, which is a plain object
@@ -422,7 +500,7 @@ Error handling:
   - plugin|core errors should print message to report GitHub issues to the plugin|core
      - it should include system information
 
-Learn package 'simple-statistics' and use it in spyd
+Learn package 'simple-statistics' and use it in spyd???
 
 Use a `config` library instead of using our own logic???
 
