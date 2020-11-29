@@ -5,16 +5,36 @@
 
 
 
-Keep loadCost, measureCost, repeatCost in results
-  - titles in reporters: "loading", "measuring", "repeating"
-  - report in `debug` reporter
-
 Rename:
   - options -> config
+     - make sure to grep "opt" not only "option"
   - benchmark -> settings
   - run -> benchmark
      - run action -> bench action
   - debug action -> exec action
+
+runner.repeat BOOL:
+  - if false, opts out of repeat loops
+     - do not pass repeat to runner
+     - parent process assumes repeat is 1 (not undefined) and repeatCost is 0
+  - use runner.repeat false in cli
+     - remove all repeat-related code
+
+Remove runner.exec():
+  - only use runner.run() with stdio "inherit"
+     - and still print combination headers
+  - cli runner:
+     - do not print headers anymore
+     - child process stdio:
+        - variables: ["ignore", "pipe", "ignore"] and get buffered stdout
+        - main|after ["ignore", "inherit", "inherit"]
+        - before ["ignore", "pipe", "inherit"] and both get the buffered stdout + console.log() it
+        - ensure that this console.log() + those "inherit" have 0 performance impact when current process was spawned with stdio "ignore"
+           - otherwise consider passing inheritStdio BOOL to runner.run(), with BOOL false when in `exec` action
+
+Keep loadCost, measureCost, repeatCost in results
+  - titles in reporters: "loading", "measuring", "repeating"
+  - report in `debug` reporter
 
 Incremental accurate stats:
   - do not ARR.slice() to remove outliers
@@ -61,28 +81,28 @@ New processGroups logic
      - an outer function, passing state around and deciding which processGroup's inner function to call next, and computing how much time left
 
 reportCost|measureCost progressive computation:
-  - run all processGroups concurrently: main one, repeatCost, measureCost
+  - measure all processGroups concurrently: main one, repeatCost, measureCost
      - concurrent, but still one at a time
      - the processGroup with lowest processGroupDuration spent always executes next
         - exception: if last had repeatInit true, execute it again
            - unless out of processGroupDuration
            - i.e. do not switch to other progressGroup
      - if same processGroupDuration spent (including 0), priority is: measureCost > repeatCost > main
-     - reason: not to block live reporting at the beginning of the run and between each combination
+     - reason: not to block live reporting at the beginning of the benchmark and between each combination
   - repeatCost|measureCost gets 10% of combinationDuration, main gets 80%
      - i.e. after 30% of combinationDuration, only main is left executing
   - add comment that first 12.5% of main processGroup will have more imprecise repeatCost|measureCost when normalizing measures and computing repeat|maxDuration, but that's fine
   - the `timeResolution` should be recomputed after each measureCost sample, but the `Math.min()` of it should be used
 
 Delay repeatCost measuring:
-  - at beginning, repeatCost is not run and has 0 processGroupDuration
+  - at beginning, repeatCost is not measured and has 0 processGroupDuration
      - main processGroup gets additional 10% processGroupDuration
      - repeatCost is 0
   - after first sample of main processGroup completes, if its repeatInit is still true:
-     - before executing main processGroup again, run repeatCost processGroup until either:
+     - before executing main processGroup again, measure repeatCost processGroup until either:
         - its repeatInit becomes true
-        - it runs out of processGroupDuration
-     - then finish executing main processGroup until its repeatInit becomes true (or it runs out of processGroupDuration)
+        - it is out of processGroupDuration
+     - then finish executing main processGroup until its repeatInit becomes true (or it is out of processGroupDuration)
 
 Measure combinations concurrently
   - concurrently, but still one at a time, using same sample orchestration logic as the one used to orchestrate repeatCost|measureCost|main samples
@@ -92,11 +112,11 @@ Measure combinations concurrently
      - reason: random tasks progressing is more visually interesting than sequential
   - when completing initial measureCost sample, do the first main sample after it in order to provide with fast first reporting of each combination
   - progress reporter should not show current combination nor counter anymore
-  - progress reporter durationLeft and percentage need to take into account that multiple combinations are run concurrently
+  - progress reporter durationLeft and percentage need to take into account that multiple combinations are measured concurrently
 
 Improve precision:
   - find ways to improve precision even more???
-  - find ways to improve precision if OPTS.duration is very low???
+  - find ways to improve precision if CONF.duration is very low???
   - tweak outliers removal:
      - find the best threshold value
      - remove outliers on both slow and fast ends???
@@ -119,17 +139,17 @@ Reporter live updating:
         - must be sync
      - remove progress.start|stop()
   - compute reporter.report()->STR after each sample completion
-     - if OPTS.parallel, after whole group of processes completed
+     - if CONF.parallel, after whole group of processes completed
      - only if all of:
         - reporter.progress true (def: false)
-        - reporterOpts.output "-"
-        - OPTS.quiet false
+        - reporterConfig.output "-"
+        - CONF.quiet false
      - if sample has repeatInit true, do not live report it yet
      - called with same arguments as the final reporter.report():
         - including result being normalized
         - including having information from initial listResults() (e.g. for previous combinations and diff)
         - including all possible result.combinations, even ones not measured yet
-        - excluding OPTS.show, always empty
+        - excluding CONF.show, always empty
      - limit the amount of changes of the general shape of the output between the initial call and the final one, to make it look nicer
         - e.g. tables should be initially shown with all rows|columns and empty cells
   - on each progress update, prepend last reporter.report()->STR, from each such reporter
@@ -140,17 +160,41 @@ Reporter live updating:
      - each time a runner process completes, parent process computes new stats, orchestrator sends it to worker thread
         - worker thread updates its state but still wait for next refresh frame to report it
 
+Infinite duration:
+  - CONF.duration 0
+  - default value for CONF.duration if interactive TTY
+     - default value still 10 if not iteractive TTY
+  - measures forever
+  - stopping:
+     - on `SIGINT`, `SIGBREAK`, `SIGHUP` or SIGTERM
+        - either interactive TTY or not
+     - keep both progress reporter and live reporter printed
+     - report all other reporters too
+  - progress reporter:
+     - pass percentage undefined
+     - instead of durationLeft, pass just duration
+        - incrementing, not decrementing
+        - time units increase too: SSs, then MMmSSs, then HHhMMmSSs
+  - reportCost|measureCost:
+     - instead of spending first 10% duration concurrently with main processGroup, orchestrator gives their duration a weight 0.1 when comparing with other progressGroups
+     - i.e. measured 10 times less than main processGroups in average
+  - not allowed if CONF.save true
+  - no timing during measuring:
+     - no process timeout
+     - no `measureDurationLeft` in `maxDuration`
+     - orchestrator does not check for processGroupEnd
+
 Parallel:
-  - OPTS.parallel NUM
-     - validate that OPTS.parallel NUM is integer >1
+  - CONF.parallel NUM
+     - validate that CONF.parallel NUM is integer >1
   - spawns NUM processes in parallel
-     - in `run` command, but not in `debug` command
+     - in `bench` command, but not in `exec` command
      - start|end group of processes together
         - i.e. spawns only the process execution logic in parallel, not the whole performRun()
      - if one process fails, the other ones should be terminated
      - measureCost|repeatCost computation should use the same amount of parallel processes
   - add code comment that:
-     - OPTS.parallel is meant to measure cost of parallelism
+     - CONF.parallel is meant to measure cost of parallelism
         - both CPU and I/O parallelism
      - if task is I/O bound, it can also improve precision by performing more measures, at the cost of accuracy (due to cost of parallelism)
         - the number where parallel processes start competing for CPU depends on how much duration the task spend on CPU vs I/O
@@ -159,17 +203,17 @@ Parallel:
            - precision decreases much more
      - move the current code comment from src/measure/combination.js
   - handle spawn errors due to too many processes at once
-     - try to remove process limit with ulimit, and see if another error can happen with a high OPTS.parallel, e.g. too many open files
+     - try to remove process limit with ulimit, and see if another error can happen with a high CONF.parallel, e.g. too many open files
   - part of system
-     - result.systems[*].opts.parallel
-     - if result.sharedSystem.opts.parallel 1, removed instead so it does not show up
-     - when merging partialResults, OPTS.parallel should behave like OPTS.durarion, i.e. not allow merging with different values
+     - result.systems[*].config.parallel
+     - if result.sharedSystem.config.parallel 1, removed instead so it does not show up
+     - when merging partialResults, CONF.parallel should behave like CONF.duration, i.e. not allow merging with different values
 
 Sort all the code comments in `measure/**` and the `node|cli` runners. It's a bit messy right now, and some might be outdated
 
-OPTS.report|run|store|progress:
-  - OPTS.report|run|store|progress 'NAME'_ARR (enable|disable)
-  - OPTS.report|run|store|progress-NAME-VAR VAL (config)
+CONF.report|run|store|progress:
+  - CONF.report|run|store|progress 'NAME'_ARR (enable|disable)
+  - CONF.report|run|store|progress-NAME-VAR VAL (config)
      - can set config even if disabled. Does not enable
   - reasons:
      - flat simpler than nesting
@@ -178,8 +222,8 @@ OPTS.report|run|store|progress:
      - allow different users and programming languages to use preferes characters in ids
      - CLI flag friendly since starts with --
      - works unescaped with YAML and JSON
-     - easy to understand when both OPTS.OPT and OPTS.system-{systemId}-OPT are possible. The second is just like a selector/namespace
-  - remove the `addRunners()` function which split OPTS.run to OPTS.run|runners
+     - easy to understand when both CONF.VAR and CONF.system-{systemId}-VAR are possible. The second is just like a selector/namespace
+  - remove the `addRunners()` function which split CONF.run to CONF.run|runners
 
 ID validation:
   - for user-defined (task|input|system|mergeId):
@@ -201,33 +245,33 @@ result.systems shape
      - id STR
      - title STR
      - machine: os|memory|cpu
-     - opts: duration|parallel
+     - config: duration|parallel
      - run (runner system variables)
      - git (not result.git)
      - ci "URL" (not OBJ, and not result.ci)
 
-OPTS.info|context -> OPTS.show STR_ARR among 'system', 'metadata'
+CONF.info|context -> CONF.show STR_ARR among 'system', 'metadata'
   - if no:
-     - 'system': pass `undefined` to reporters for result.sharedSystem|systems[*].machine|opts|run
+     - 'system': pass `undefined` to reporters for result.sharedSystem|systems[*].machine|config|run
      - 'metadata': pass `undefined` to reporters for result.sharedSystem|systems[*].git|ci and result.id|timestamp
   - default value:
-     - has "system" if OPTS.system defined
+     - has "system" if CONF.system defined
      - has "metadata" if `show|remove` command
 
-runner.commands(runOpts):
+runner.commands(runConfig):
   - rename to runner.run(...)
-  - arguments (eventName, runOpts):
-     - split main entry file to 3 (load/run/debug), so that requiring the file is faster
-  - OPTS.run.node.versions -> OPTS.run.node.version (only one version)
+  - arguments (eventName, runConfig):
+     - split main entry file to 2 (load|run), so that requiring the file is faster
+  - CONF.run.node.versions -> CONF.run.node.version (only one version)
   - return a single OBJ instead of OBJ_ARR:
-     - should use systems instead to perform several runOpts
+     - should use systems instead to perform several runConfig
      - commands is not a input-like dimension anymore, including in:
         - combination.name|columnName
         - combination.commandRank
         - combination.previous
         - combinations sorting
         - duplication removal
-        - commandId in OPTS.limit
+        - commandId in CONF.limit
         - `show`/`remove` command filtering
         - result.commands[Pretty]
      - returned OBJ properties:
@@ -237,10 +281,10 @@ runner.commands(runOpts):
            - id -> not needed anymore since no more targetting
            - title|description -> runner.id|title + runner.system
   - remove any instances of the word "command", except for CLI commands, to avoid confusion
-     - commandOpts -> runOpts
+     - commandConfig -> runConfig
 
 Instead of runner.system:
-  - runner.run(eventName, runOpts)->OBJ with OBJ.system OBJ_ARR (def: []):
+  - runner.run(eventName, runConfig)->OBJ with OBJ.system OBJ_ARR (def: []):
      - id STR
      - title STR
      - value STR
@@ -252,29 +296,28 @@ Instead of runner.system:
            - id is suffixed with _major|minor|patch
            - value X[.Y[.Z]]
            - same title|description
-  - OPTS.system STR can use {{VAR}}
+  - CONF.system STR can use {{VAR}}
      - VAR is system.id
      - subtituted by system.value
   - result.system.run.VAR STR
      - VAR is system.title
      - STR is system.description
   - with `node` runner:
-     - if no OPTS.run-node.version: id "node", title "Node.js", value "X.Y.Z" (using process.version), description "X.Y.Z"
-     - if OPTS.run-node.version: same but using nvexeca()
+     - if no CONF.run-node.version: id "node", title "Node.js", value "X.Y.Z" (using process.version), description "X.Y.Z"
+     - if CONF.run-node.version: same but using nvexeca()
 
 Variables:
   - in `cli` runner:
      - remove user-defined `variables`. Can use either subshells, or command wrapper instead
-     - `ignore` command stdout unless a variable is being used, or in debug mode
      - add code comment that {{main}} is purposely not provided so users only put what they want to measure in main, not cleanup code for "after"
-  - use same logic for both OPTS.system and `cli` runner
+  - use same logic for both CONF.system and `cli` runner
   - variable case:
      - ENV_VAR: use process.env as is, i.e. case sensitive on Unix, case insensitive on Windows
      - others:
         - case sensitive
         - lowercase (unless user-defined)
   - available variables (in lowest priority order):
-     - OPTS.system:
+     - CONF.system:
         - {{ENV_VAR}}
         - {{os}} {{os_full}}
         - runner-specific variable, e.g. {{node_major_version}}
@@ -293,13 +336,13 @@ Persist result.tasks|inputs|systems|commands:
 Execute `listResults()` earlier:
   - after config retrieval
   - before:
-     - `run` command: combination list computing
+     - `bench` command: combination list computing
      - `show|remove` command: retrieving specific result (i.e. split `getFromStore` into two)
   - reasons:
-     - with OPTS.merge, allows skipping already saved combinations
-        - including when continuing previously interrupted run
+     - with CONF.merge, allows skipping already saved combinations
+        - including when continuing stopped benchmark
      - show previous|diff during progress|live reporting
-     - fail run fast if problem with store
+     - fail benchmark fast if problem with store
 
 After listResults(), core should normalize partialResults to results:
   - perform an array of reducing functions:
@@ -318,61 +361,65 @@ store.add(result) -> store.add(partialResult)
   - i.e. append only, not merged with previous ones
   - same for addResult()
 
-Add in comment and --help that OPTS.merge is meant only for doing a single run but incrementally:
-  - parallelize run across identical machines (including in CI): same mergeId, same systemId
-  - run across different machines|hardware|software (including in CI): same mergeId, different systemId
-  - continue previously interrupted long run
+Add in comment and --help that CONF.merge is meant only for doing a single benchmark but incrementally:
+  - parallelize benchmarks across identical machines (including in CI): same mergeId, same systemId
+  - benchmark across different machines|hardware|software (including in CI): same mergeId, different systemId
+  - continue stopped benchmark
 
 When merging combination and there is a duplicate of same mergeId and taskId+inputId+systemId:
-  - different os|cpu|memory|git|runnerOpts|duration|parallel:
-     - throw and suggest to either use a different systemId, or make a different run
-     - reason: merge is meant for incremental runs, i.e. combinations must be comparable
+  - different os|cpu|memory|git|runnerConfig|duration|parallel:
+     - throw and suggest to either use a different systemId, or make a different benchmark
+     - reason: merge is meant for incremental benchmarks, i.e. combinations must be comparable
   - different CI build|job:
      - merge:
         - if one has no CI build|job URL, use other
         - if same CI job URL, use it
         - if same CI build URL, use it
         - if several CI build URLs, use the new one
-     - reason: run parallelized on several machines
+     - reason: benchmark parallelized on several machines
   - different timestamp: keep earliest
   - no difference check if different systemId
      - only appends to result.systems
      - reasons: using systems to compare machines, spyd|runner config, git branches
 
-OPTS.merge skipping previous combinations:
-  - if OPTS.merge in `run` command, do not measure (but still report) combinations already saved
-  - reason: OPTS.merge is meant for incremental runs, including continuing interrupted run
+CONF.merge skipping previous combinations:
+  - if CONF.merge in `bench` command, do not measure (but still report) combinations already saved
+  - reason: CONF.merge is meant for incremental benchmarks, including continuing stopped benchmark
 
-Long run interruption:
-  - if all of:
-     - user interactive interruption: `SIGINT`, `SIGBREAK`, `SIGHUP`
-     - interactive TTY
-     - OPTS.save true
-     - at least one combination completed
-  - then prompts whether want to save partial result
-  - if so:
-     - save partial result
-     - print the CLI flag to continue partial result, i.e. --merge=MERGE_ID
-  - remove OPTS.merge "" to mean "same|last result"
+Stopping benchmark:
+  - on `SIGINT`, `SIGBREAK`, `SIGHUP` or `SIGTERM`
+     - either interactive TTY or not
+     - including if CONF.duration 0
+  - serialize current measuring state (including all `measures`) to file
+     - in GLOBAL_CACHE_DIR/HASH/stopped_benchmark.json
+        - HASH is SHA1 of normalized absolute file path of CONF.settings
+  - only last stopped benchmark (for a given CONF.settings) is saved
+  - CONF.continue BOOL:
+     - if true and there is a stopped_benchmark.json, use it to continue the last stopped benchmark
+     - must use similar settings
+        - e.g. main config values (like duration), combinations ids
+        - figure out the exact set of settings to compare.
+           - some are ok to change, e.g. reporting-related
+  - remove CONF.merge "" to mean "same|last result"
 
-Allow comparing different systems in a single run:
-  - OPTS.system "systemId"[_ARR]
+Allow comparing different systems in a single benchmark:
+  - CONF.system "systemId"[_ARR]
      - id not title, i.e. no slugification
-     - if several, creates several combinations in current run
+     - if several, creates several combinations in current benchmark
      - def: ['default'] (title "Default system")
      - used to target results in `show|remove` commands too
-  - OPTS.system-{systemId}-OPT:
+  - CONF.system-{systemId}-VAR:
      - title STR (def: "systemId")
-     - runner-{runnerId}-OPT
+     - runner-{runnerId}-VAR
      - duration|parallel
      - parsing needs to take into account that systemId might have a "-"
 
 Deltas:
-  - in `show|remove` commands, and OPTS.since|diff
+  - in `show|remove` commands, and CONF.since|diff
   - computed by core
   - based on listResults() output, after tasks|inputs|systems filtering
-     - reason: if a user is doing `run` always filtered for specific tasks|inputs|systems, without using OPTS.merge (e.g. each task is a library, and is only recomputed on a new version of the library), then `show` or default OPTS.diff 1 should compare each combination to the latest which was run with same taskId|inputId|systemId
-        - should document this, since it is an alternative to OPTS.merge, with similar goals for settings slow or with many dimensions
+     - reason: if a user is doing `bench` always filtered for specific tasks|inputs|systems, without using CONF.merge (e.g.  each task is a library, and is only recomputed on a new version of the library), then `show` or default CONF.diff 1 should compare each combination to the latest which had same taskId|inputId|systemId
+        - should document this, since it is an alternative to CONF.merge, with similar goals for settings slow or with many dimensions
   - can be:
      - absolute timestamp
      - relative duration like "3m"
@@ -382,31 +429,31 @@ Deltas:
   - when using timestamps|duration, should retrieve the full result
      - even if some partialResult are before, some after the timestamp, for this specific result
   - delta which cannot be resolved should:
-     - OPTS.since: empty array
-        - reason: allows not doing `sync` before `run` in CI
-    - OPTS.diff: same as no diff
-    - `show|remove`: error
+     - CONF.since: empty array
+        - reason: allows not doing `sync` before `bench` in CI
+     - CONF.diff: same as no diff
+     - `show|remove`: error
   - for relative duration and NUM, base:
-    - OPTS.since|diff in `show|remove` command: shown result
-    - otherwise, latest|now
+     - CONF.since|diff in `show|remove` command: shown result
+     - otherwise, latest|now
   - for absolute|relative date: target the closest earlier (not later) result
 
-OPTS.since VAL
+CONF.since VAL
   - filters result.previous
-     - does not impact other deltas resolution (`show|remove`, OPTS.diff)
+     - does not impact other deltas resolution (`show|remove`, CONF.diff)
   - VAL is delta, or "" (def, no filtering)
   - same delta as `show|remove` commands
   - result.previous maximum timestamp should be currently shown result's
-     - e.g. if `show|remove` command and OPTS.since delta starts after `show|remove` delta, result.previous should be empty
+     - e.g. if `show|remove` command and CONF.since delta starts after `show|remove` delta, result.previous should be empty
 
 Stores:
   - add comment that no support for multiple stores because not very useful and bring questions around data sync
   - add comment that no need to make addResults() concurrent safe. Reasons:
      - append will be concurrent safe on many situations since the number of bytes to write is fairly small
-     - unlikely two runs would end exactly at same time on same machine
-     - not good practice to run two runs at same time on same machine
+     - unlikely two benchmarks would end exactly at same time on same machine
+     - not good practice to execute two benchmarks at same time on same machine
      - can easily fix it by doing a `sync`
-  - store.start(OPTS) -> FUNC(OPTS)->store instead (closure)
+  - store.start(storeConfig) -> FUNC(storeConfig)->store instead (closure)
   - always saved at SETTINGS/results.ndjson
   - results use ndjson format. Reasons:
      - JSON parsing much faster than YAML
@@ -417,9 +464,9 @@ Stores:
         - not loaded like the stores
         - uses functions: addResult(), listResults(), removeResult(), syncResults()
            - result file location is passed as argument (no start())
-     - listResults() at the beginning of `run|show|remove`
+     - listResults() at the beginning of `bench|show|remove`
         - load full|unfiltered data
-     - if OPTS.save true:
+     - if CONF.save true:
         - await store.add()
         - if no error, then do addResult()
      - `remove` command:
@@ -431,21 +478,21 @@ Stores:
         - then syncResults(OBJ_ARR)
            - no more store.replace() method
 
-OPTS.quiet true:
+CONF.quiet true:
   - for all commands
   - effect:
      - no console.log()
         - no logs on `debug` command
         - exception: errors are still printed
-     - OPTS.progress|report forces to empty ARR
-  - remove OPTS.progress|report "silent"
+     - CONF.progress|report forces to empty ARR
+  - remove CONF.progress|report "silent"
 
 Reporting on `remove` command:
   - call reporters, like `show`
   - then prompt for removal confirmation
-     - unless OPTS.force true
+     - unless CONF.force true
   - then print confirmation removal suceeded
-     - unless OPTS.quiet true
+     - unless CONF.quiet true
 
 Named exports in task files:
   - instead of exporting `tasks` array of objects, export each object individually
@@ -459,7 +506,7 @@ Shortcut notation in task files:
      - `node` runner: function
      - `cli` runner: string
 
-OPTS.run-cli.shell:
+CONF.run-cli.shell:
   - instead of taskFile.shell
   - STR instead of BOOL: "none", "sh", "bash"
   - should default to "none" instead
@@ -474,9 +521,20 @@ Error handling:
   - plugin|core errors should print message to report GitHub issues to the plugin|core
      - it should include system information
 
-Learn package 'simple-statistics' and use it in spyd???
+CONF.debug BOOL
+  - add debug information, for bug reports
+  - add to issue template
+  - for all actions
+  - print:
+     - resolved config
+     - task files
+     - runner system variables
+     - combinations
+     - each sample's state (including maxDuration, repeat, etc.)
+     - last result, new partialResult, new result
+  - do not call reporters
 
-Use a `config` library instead of using our own logic???
+Learn package 'simple-statistics' and use it in spyd???
 
 When killing child process, should kill descendants too
   - e.g. with spyd-runner-cli and command 'yes', 'yes' keeps executing after timeout
@@ -516,7 +574,7 @@ Reporters:
   - default reporter:
      - CLI|Markdown table if more than half of cells would be filled, and some TASK.inputs are defined
         - CLI|Markdown list otherwise
-     - Markdown table|list if OPTS.insert '*.md|*.markdown|README|readme'
+     - Markdown table|list if CONF.insert '*.md|*.markdown|README|readme'
         - CLI table|list otherwise
 
 Make `precise-now` work on browser + node
@@ -576,12 +634,12 @@ Commercial offer:
      - nice data visualization
      - should show function bodies
   - code editor for tasks files:
-     - perform run (inside browser not on our servers)
+     - perform benchmark (inside browser not on our servers)
      - send results to API (like what users would do on CI otherwise)
      - show results from API
      - i.e. can be used like jsperf
   - Sharing like jsperf:
-     - allow users to run in their own browsers
+     - allow users to benchmark in their own browsers
   - PR bot
   - notifications
   - user should report results to our API
