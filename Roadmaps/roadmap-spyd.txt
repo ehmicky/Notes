@@ -185,9 +185,6 @@ CONF.concurrency NUM
      - move the current code comment from src/measure/combination.js (about spawning processes serially)
   - handle spawn errors due to too many processes at once
      - try to remove process limit with ulimit, and see if another error can happen with a high CONF.concurrency, e.g. too many open files
-  - set result.systems[*].config.concurrency
-     - if result.sharedSystem.config.concurrency 1, removed instead so it does not show up
-     - when merging partialResults, CONF.concurrency should behave like CONF.duration, i.e. not allow merging with different values
 
 Sort all the code comments in `measure/**` and the `node|cli` runners. It's a bit messy right now, and some might be outdated
 
@@ -233,6 +230,9 @@ Add comment that we enforce [a-z][a-z0-9_]* in configuration property names
      - consistent option name across spyd.yml, CLI flags, envvars, programmatic
      - no multiple delimiters
 
+Validate that there are no duplicate ids for tasks|inputs|systems|configProps|runners
+  - reason: allows using id only (without specifyig the type) in some contexts, e.g. CONF.include|exclude
+
 runner.config.PROP.example STR[_ARR]
   - for all plugins: reporter, progress, runner, store
   - meant for validation, using jest-validate (same validation as for CONF.*):
@@ -240,10 +240,50 @@ runner.config.PROP.example STR[_ARR]
      - if ARR, use multipleValidOptions()
   - required
 
-runner.commands(runConfig):
-  - rename to runner.launch(...)
+CONF.system:
+  - CONF.system "systemId [(systemTitle)]"
+     - id does not need any no slugification
+     - title is optional, and between parenthesis
+     - def: "default_system (Default system):
+        - note: default title not shown in core reporters (since sharedSystem is top-level)
+        - reason: unlikely to conflict with a taskId or inputId
+     - no variables
+        - including {{ENV_VAR}}, {{os}}, {{os_full}}
+        - instead can use:
+           - shell, e.g. subshell and environment variable expansion
+           - passing SPYD_SYSTEM environment variable from caller
+  - reporting|measuring:
+     - the current partialResult only uses one system: CONF.system
+        - only `bench` command
+     - CONF.include|exclude allows reporting several systems
+        - `bench|show|remove` commands
+        - either from current benchmark (with CONF.merge) or previous benchmarks
+        - does not apply to measuring
+        - current CONF.system always included
+  - add comment that system is only for out-of-spyd env: hardware, OS, git branch, env vars, etc.
+
+result.systems:
+  - still an OBJ_ARR, one per systemId
+  - result.systems[0] -> result.sharedSystem
+     - created on results load
+  - result.systems[*]:
+     - id STR
+     - title STR
+        - def: same as id
+     - machine: os|memory|cpu
+     - versions OBJ
+        - all runner.versions shallow merged
+        - not versions.RUNNER.VAR: all runners shallow merge their versions OBJ, using CONF.run ARR order as priority order
+     - git
+        - not result.git
+     - ci "URL"
+        - not OBJ, and not result.ci
+     - no more config nor runConfig
+        - should use configProps dimension instead
+
+Remove commands dimension:
   - CONF.run_node_versions -> CONF.run_node_version (only one version)
-  - return a single OBJ instead of OBJ_ARR:
+  - runner.commands() returns a single OBJ instead of OBJ_ARR:
      - should use configProps instead to perform several runConfig
      - commands is not a input-like dimension anymore, including in:
         - combination.name|columnName
@@ -259,9 +299,23 @@ runner.commands(runConfig):
         - spawnOptions OBJ (def: {})
         - not needed anymore:
            - id -> not needed anymore since no more targetting
-           - title|description -> runner.id|title + runner.system
+           - title|description -> runner.id|title
   - remove any instances of the word "command", except for CLI commands, to avoid confusion
      - commandConfig -> runConfig
+
+runner.commands(runConfig):
+  - rename to runner.launch(runConfig)
+  - instead of returning [PROMISE_]OBJ, return [PROMISE_]STR, i.e. ['FILE', 'ARGS',... [, OBJ2]]
+     - OBJ2 is optional spawnOptions
+  - can optionally be directly a STR instead of FUNC()->[PROMISE_]STR
+
+runner.versions
+  - instead of runner.system
+  - either OBJ or FUNC(runConfig, launchCommand)->[PROMISE_]OBJ
+     - launchCommand is STR_ARR returned by runner.launch()
+     - OBJ values can be either STR (direct value) or STR_ARR (command to retrieve stdout from, all called in parallel)
+  - required
+  - meant for software versions, mode (e.g. type of shell) and options
 
 Each task file should contain a single task
   - reason: lower loadCost
@@ -388,39 +442,33 @@ Remove runner.load():
 
 CONF.info|context -> CONF.show STR_ARR among 'system', 'metadata'
   - if no:
-     - 'system': pass `undefined` to reporters for result.sharedSystem|systems[*].machine|config|run
+     - 'system': pass `undefined` to reporters for result.sharedSystem|systems[*].machine|versions|spyd
      - 'metadata': pass `undefined` to reporters for result.sharedSystem|systems[*].git|ci and result.id|timestamp
   - default value:
      - has "system" if CONF.system defined
      - has "metadata" if `show|remove` command
 
-Instead of runner.system:
-  - some of it can be done with configProps dimension instead
-  - runner.launch(runConfig)->OBJ with OBJ.system OBJ_ARR (def: []):
-     - name STR
-        - no more STR_ARR to let core execute command. Runners must provide direct value themselves instead.
-     - description STR
-  - result.system.run.VAR STR
-     - VAR is system.name
-     - STR is system.description
-  - with `node` runner:
-     - if no CONF.run-node.version: name "Node.js", description "X.Y.Z"
-     - if CONF.run-node.version: same but using nvexeca()
+Spyd link in reporter
+  - should be presented as spyd version instead:
+     - "Benchmarked by [spyd vX.Y.Z](URL to GitHub release)
+  - persist result.spydVersion "X.Y.Z"
+     - when merging, only the lowest one is kept
+     - on load, normalized to results.spyd OBJ:
+        - version "X.Y.Z"
+        - release "URL" to GitHub release
+  - remove CONF.link BOOL
+     - instead, make it part of CONF.show "system"
+        - when not present, result.spyd should be undefined
+        - should also be undefined when printing to interactive terminal
 
-Variables:
-  - in `cli` runner:
-     - remove user-defined `variables`. Can use either subshells, or command wrapper instead
-     - add code comment that {{main}} is purposely not provided so users only put what they want to measure in main, not cleanup code for "after"
-  - use same logic for both CONF.system and `cli` runner
+Variables in `cli` runner:
+  - remove user-defined `variables`. Can use either subshells, or command wrapper instead
+  - add code comment that {{main}} is purposely not provided so users only put what they want to measure in main, not cleanup code for "after"
   - available variables (in lowest priority order):
-     - CONF.system:
-        - {{ENV_VAR}}
-           - use process.env as is, i.e. case sensitive on Unix, case insensitive on Windows
-        - {{os}} {{os_full}}
-     - `cli` runner:
-        - {{ENV_VAR}}
-        - {{before}}, {{main}}
-        - {{inputId}}
+     - {{ENV_VAR}}
+        - use process.env as is, i.e. case sensitive on Unix, case insensitive on Windows
+     - {{before}}, {{main}}
+     - {{inputId}}
 
 combination.name|columnName:
   - task dimension not present if all combinations have same value (like other dimensions)
@@ -474,7 +522,7 @@ Add in comment and --help that CONF.merge is meant only for doing a single bench
   - continue stopped benchmark
 
 When merging combination and there is a duplicate of same mergeId and taskId+inputId+systemId+configPropId:
-  - different os|cpu|memory|git|runnerConfig|duration|concurrency:
+  - different os|cpu|memory|git:
      - throw and suggest to either use a different systemId, or make a different benchmark
      - reason: merge is meant for incremental benchmarks, i.e. combinations must be comparable
   - different CI build|job:
@@ -485,9 +533,12 @@ When merging combination and there is a duplicate of same mergeId and taskId+inp
         - if several CI build URLs, use the new one
      - reason: benchmark parallelized on several machines
   - different timestamp: keep earliest
+  - different CONF.*:
+     - if configProps: different configProps dimensions
+     - otherwise: ignored
   - no difference check if different systemId
      - only appends to result.systems
-     - reasons: using systems to compare machines, spyd|runner config, git branches
+     - reasons: using systems to compare machines, git branches, etc.
 
 CONF.merge skipping previous combinations:
   - if CONF.merge in `bench` command, do not measure (but still report) combinations already saved
@@ -593,10 +644,9 @@ CONF.run-cli.shell:
   - instead of taskFile.shell
   - STR instead of BOOL: "none", "sh", "bash"
   - should default to "none" instead
-  - `cli` runner system variables:
+  - `cli` runner.versions:
      - if "none": none
-     - if "bash": id "shell", title "Shell", value "bash_X_Y_Z", description "Bash X.Y.Z"
-     - if "sh": id "shell", title "Shell", value "sh_X_Y_Z", description "sh X.Y.Z"
+     - if "bash|sh": { Bash|sh: 'X.Y.Z'}
 
 Plugin shape should be validated:
   - including that plugin properties values cannot be:
@@ -619,7 +669,7 @@ CONF.debug BOOL
   - print:
      - resolved config
      - task files
-     - runner system variables
+     - runner.versions
      - combinations
      - each sample's state (including maxDuration, repeat, etc.)
      - last result, new partialResult, new result
