@@ -5,17 +5,17 @@
 
 
 
-Make `process_group.js` faster:
-  - do at the end of each combination (until there is live reporting):
-     - concatenation to childMeasures
-        - reintroduce `loops` integer
-        - keep an array of all not-merged-yet nor sorted childMeasures
-           - not concatenated between each other
-     - `addMeasures()`, i.e. sorting of measures nor each childMeasure
-        - should reuse same processMedian logic as before
-           - compare how much repeat varies more both inside same benchmark and between benchmarks
-           - getUnsortedMedian() -> approximateMedian()
-     - check if loopDurationsToMedians() os fast enough to do on whole childMeasures directly, or if should do on items used by approximateMedian() only first
+Make `process_group.js` faster, doing at the end of each combination (until there is live reporting):
+  - concatenation to childMeasures
+     - reintroduce `loops` integer
+     - keep an array of all not-merged-yet nor sorted childMeasures
+        - not concatenated between each other
+  - `addMeasures()`, i.e. sorting of measures nor each childMeasure
+     - should reuse same processMedian logic as before
+        - compare how much repeat varies more both inside same benchmark and between benchmarks
+        - getUnsortedMedian() -> approximateMedian()
+  - check if loopDurationsToMedians() os fast enough to do on whole childMeasures directly, or if should do on items used by approximateMedian() only first
+  - check if `process_group.js` is now fast, or if there is anything that can still be made faster
 
 Quantiles|histogram:
   - persist in stores
@@ -37,39 +37,42 @@ reporter.debugStats BOOL
   - true for `debug` reporter
   - if false, do not pass:
      - mean
-         - add comment that we must ensure median is the main one used, so different reporters are consistent, and also because it is used in sorting combinations, and also it is less precise
-      - times
-         - add comment that it is a bad indicator of precision, and also might be confused as an indicator of speed due to other benchmark libraries showing it like that
+        - add comment that we must ensure median is the main one used, so different reporters are consistent, and also because it is used in sorting combinations, and also it is less precise
+     - times
+        - add comment that it is a bad indicator of precision, and also might be confused as an indicator of speed due to other benchmark libraries showing it like that
+     - loadCost, measureCost, reportCost, processes, repeat, loops
 
 New processGroups logic
-  - rename processGroups to samples
-  - split processGroup main function into:
-     - an inner function, receiving state, spawnin process, computing new state and returning it
-     - an outer function, passing state around and deciding which processGroup's inner function to call next, and computing how much time left
+  - rename processes|processGroups to samples|samplingGroup
+  - split samplingGroup main function into:
+     - an inner function, receiving state, spawning process, computing new state and returning it
+     - an outer function, passing state around and deciding which samplingGroup's inner function to call next, and computing how much time left
 
 reportCost|measureCost progressive computation:
-  - measure all processGroups concurrently: main one, repeatCost, measureCost
+  - measure all samplesGroups concurrently: main one, repeatCost, measureCost
      - concurrent, but still one at a time
-     - the processGroup with lowest processGroupDuration spent always executes next
+     - the samplingGroup with lowest samplingGroupDuration spent always executes next
         - exception: if last had repeatInit true, execute it again
-           - unless out of processGroupDuration
+           - unless out of samplingGroupDuration
            - i.e. do not switch to other progressGroup
-     - if same processGroupDuration spent (including 0), priority is: measureCost > repeatCost > main
+     - if same samplingGroupDuration spent (including 0), priority is: measureCost > repeatCost > main
      - reason: not to block live reporting at the beginning of the benchmark and between each combination
   - repeatCost|measureCost gets 10% of combinationDuration, main gets 80%
      - i.e. after 30% of combinationDuration, only main is left executing
-  - add comment that first 12.5% of main processGroup will have more imprecise repeatCost|measureCost when normalizing measures and computing repeat|maxDuration, but that's fine
-  - the `timeResolution` should be recomputed after each measureCost sample, but the `Math.min()` of it should be used
+  - add comment that first 12.5% of main samplingGroup will have more imprecise repeatCost|measureCost when normalizing measures and computing repeat|maxDuration, but that's fine
+  - the `timeResolution` should be recomputed after each measureCost sample, but `Math.min(newTimeResolution, oldTimeResolution)` should be used
+  - check if `loadCost` is still different between samplingGroups
+     - if not, share loadCost array|estimation between them
 
 Delay repeatCost measuring:
-  - at beginning, repeatCost is not measured and has 0 processGroupDuration
-     - main processGroup gets additional 10% processGroupDuration
+  - at beginning, repeatCost is not measured and has 0 samplingGroupDuration
+     - main samplingGroup gets additional 10% samplingGroupDuration
      - repeatCost is 0
-  - after first sample of main processGroup completes, if its repeatInit is still true:
-     - before executing main processGroup again, measure repeatCost processGroup until either:
+  - after first sample of main samplingGroup completes, if its repeatInit is still true:
+     - before executing main samplingGroup again, measure repeatCost samplingGroup until either:
         - its repeatInit becomes true
-        - it is out of processGroupDuration
-     - then finish executing main processGroup until its repeatInit becomes true (or it is out of processGroupDuration)
+        - it is out of samplingGroupDuration
+     - then finish executing main samplingGroup until its repeatInit becomes true (or it is out of samplingGroupDuration)
 
 Measure combinations concurrently
   - concurrently, but still one at a time, using same sample orchestration logic as the one used to orchestrate repeatCost|measureCost|main samples
@@ -77,13 +80,12 @@ Measure combinations concurrently
   - other reason: provides with fast fail if one combination times out or throw exception
   - if two combinations have same combinationDuration left, pick a random one
      - reason: random tasks progressing is more visually interesting than sequential
-  - when completing initial measureCost sample, do the first main sample after it in order to provide with fast first reporting of each combination
+  - when completing initial measureCost sample, do the first main sample right after it in order to provide with fast first reporting of each combination
   - progress reporter should not show current combination nor counter anymore
   - progress reporter durationLeft and percentage need to take into account that multiple combinations are measured concurrently
 
 Improve precision:
   - find ways to improve precision even more???
-  - find ways to improve precision if CONF.duration is very low???
   - tweak outliers removal:
      - find the best threshold value
      - remove outliers on both slow and fast ends???
@@ -95,15 +97,31 @@ Reporter live updating:
   - sync vs async:
      - first step: the output string is computed synchronously, during sample orchestration
      - second step: the last output string is output and I/O is done, during progress reporting interval function
-        - right before calling progress reporter, to not conflict with it
   - allocate 10% of total time to the output string computation:
      - all of: addMeasures(), computeStats(), reporter.report()
      - initially done right after combination titles are available
+        - showing no stats yet
      - then, done again after all other combined sampleGroups have spent 9 times reportDuration
         - reportDuration is the median of the last 3 durations of live reporting
            - reason: allow adapting to increase over time, while still ignoring big reportDuration if reporting happened to be much slower from time to time
+        - if sample has repeatInit true, do not live report it yet
      - if no new childMeasures, noop and do not change reportDuration
      - done by sample orchestrator
+  - call reporter.report()->STR with same arguments as the final reporter.report():
+     - including result being normalized
+     - including having information from initial listResults() (e.g. for previous combinations and diff)
+     - including all possible result.combinations, even ones not measured yet
+     - excluding CONF.show, always empty
+  - if reporter.progress false, reporter.report() can be async. If true, cannot.
+  - progress reporter is appended to it:
+     - performed right after each live reporting
+  - computeStats() and reporter.report() only done:
+     - if all of:
+        - reporter.progress true (def: false)
+        - reportConfig.output "-"
+        - CONF.quiet false
+     - addMeasures() is still done for incremental sorting and concatenating (to prevent big slowdown at end)
+     - computeStats() and reporter.report() are also still done at end of combination
   - screen refreshing:
      - refresh whole screen at the beginning
         - use `signal-exit`
@@ -118,27 +136,8 @@ Reporter live updating:
         - must return a STR
         - must be sync
      - remove progress.start|stop()
-  - compute reporter.report()->STR
-     - after:
-        - all loadCost samples have completed (showing no stats yet, but showing all combination names)
-        - each measureTask sample completion
-           - if CONF.parallel, after whole group of processes completed
-     - only if all of:
-        - reporter.progress true (def: false)
-        - reportConfig.output "-"
-        - CONF.quiet false
-     - pass return value of `computeStats()` to reporter.report()
-     - if sample has repeatInit true, do not live report it yet
-     - called with same arguments as the final reporter.report():
-        - including result being normalized
-        - including having information from initial listResults() (e.g. for previous combinations and diff)
-        - including all possible result.combinations, even ones not measured yet
-        - excluding CONF.show, always empty
-     - limit the amount of changes of the general shape of the output between the initial call and the final one, to make it look nicer
-        - e.g. tables should be initially shown with all rows|columns and empty cells
-  - on each progress update, prepend last reporter.report()->STR, from each such reporter
-  - if reporter.progress false, reporter.report() can be async. If true, cannot.
-
+  - limit the amount of changes of the general shape of the output between the initial call and the final one, to make it look nicer
+     - e.g. tables should be initially shown with all rows|columns and empty cells
 
 Infinite duration:
   - CONF.duration 0
@@ -146,7 +145,7 @@ Infinite duration:
      - default value still 10 if not iteractive TTY
   - measures forever
   - stopping:
-     - on `SIGINT`, `SIGBREAK`, `SIGHUP` or SIGTERM
+     - on `SIGINT`, `SIGBREAK`, `SIGHUP` or `SIGTERM`
         - either interactive TTY or not
      - keep both progress reporter and live reporter printed
      - report all other reporters too
@@ -156,19 +155,18 @@ Infinite duration:
         - incrementing, not decrementing
         - time units increase too: SSs, then MMmSSs, then HHhMMmSSs
   - reportCost|measureCost:
-     - instead of spending first 10% duration concurrently with main processGroup, orchestrator gives their duration a weight 0.1 when comparing with other progressGroups
-     - i.e. measured 10 times less than main processGroups in average
+     - instead of spending first 10% duration concurrently with main samplingGroup, orchestrator gives their duration a weight 0.1 when comparing with other progressGroups
+     - i.e. measured 10 times less than main samplingGroups in average
   - not allowed if CONF.save true
   - no timing during measuring:
      - no process timeout
      - no `measureDurationLeft` in `maxDuration`
-     - orchestrator does not check for processGroupEnd
+     - orchestrator does not check for samplingGroupEnd
   - print "Type CTRL-C to exit" below progress reporter
      - or equivalent key on Windows
 
-Parallel:
-  - CONF.parallel NUM
-     - validate that CONF.parallel NUM is integer >1
+CONF.concurrency NUM
+  - validate that CONF.concurrency NUM is integer >=1
   - spawns NUM processes in parallel
      - in `bench` command, but not in `exec` command
      - start|end group of processes together
@@ -177,77 +175,76 @@ Parallel:
      - if one process fails, the other ones should be terminated
      - measureCost|repeatCost computation should use the same amount of parallel processes
   - add code comment that:
-     - CONF.parallel is meant to measure cost of parallelism
+     - CONF.concurrency is meant to measure cost of parallelism
         - both CPU and I/O parallelism
      - if task is I/O bound, it can also improve precision by performing more measures, at the cost of accuracy (due to cost of parallelism)
         - the number where parallel processes start competing for CPU depends on how much duration the task spend on CPU vs I/O
         - above that number:
            - median measure increases much more
            - precision decreases much more
-     - move the current code comment from src/measure/combination.js
+     - move the current code comment from src/measure/combination.js (about spawning processes serially)
   - handle spawn errors due to too many processes at once
-     - try to remove process limit with ulimit, and see if another error can happen with a high CONF.parallel, e.g. too many open files
-  - part of system
-     - result.systems[*].config.parallel
-     - if result.sharedSystem.config.parallel 1, removed instead so it does not show up
-     - when merging partialResults, CONF.parallel should behave like CONF.duration, i.e. not allow merging with different values
+     - try to remove process limit with ulimit, and see if another error can happen with a high CONF.concurrency, e.g. too many open files
+  - set result.systems[*].config.concurrency
+     - if result.sharedSystem.config.concurrency 1, removed instead so it does not show up
+     - when merging partialResults, CONF.concurrency should behave like CONF.duration, i.e. not allow merging with different values
 
 Sort all the code comments in `measure/**` and the `node|cli` runners. It's a bit messy right now, and some might be outdated
 
 CONF.report|run|store|progress:
   - CONF.report|run|store|progress 'NAME'_ARR (enable|disable)
-  - CONF.report|run|store|progress-NAME-VAR VAL (config)
-     - can set config even if disabled. Does not enable
+  - CONF.report|run|store|progress_NAME_PROP VAL (config)
+     - can set config even if disabled. Does not enable.
   - reasons:
      - flat simpler than nesting
      - single delimiter character. No mixing several like - _ .
      - distinction selecting adapters vs configuring them
-     - allow different users and programming languages to use preferes characters in ids
-     - CLI flag friendly since starts with --
+     - allow different users and programming languages to use prefered characters in ids
      - works unescaped with YAML and JSON
-     - easy to understand when both CONF.VAR and CONF.system-{systemId}-VAR are possible. The second is just like a selector/namespace
+     - easy to understand when both CONF.VAR and CONF.report_{reporterId}-PROP are possible. The second is just like a selector/namespace
   - remove the `addRunners()` function which split CONF.run to CONF.run|runners
+  - environment variables:
+     - use _ as delimiter instead of __
+     - no need for `set()` nesting anymore since all config properties are flat now
 
 ID validation:
   - for user-defined (task|input|system|mergeId):
      - [[a-zA-Z0-9]._-]+
      - no empty string
-     - for both system.id and system.value
   - for plugins (report|run|store|progress):
-     - [a-z][a-z0-9-]*
+     - [a-z][a-z0-9]*
      - no empty string
+     - no _
+        - reason: not allowed in npm package name
+        - reason: used as config property delimiter
+     - no .
+        - reason: not allowed in npm package name
+     - no -
+        - reason: confusing when mixed with _ delimiter in config properties
+        - reason: not friendly in envvars
      - force module name to spyd-report|run|store|progress-NAME
   - default mergeId in CI:
      - use a more generic characters replacement logic, with a slugify library, using the list of allowed characters in mergeId
 
-result.systems shape
-  - still an OBJ_ARR, one per systemId
-  - result.systems[0] -> result.sharedSystem
-     - created on results load
-  - result.systems[*]:
-     - id STR
-     - title STR
-     - machine: os|memory|cpu
-     - config: duration|parallel
-     - run (runner system variables)
-     - git (not result.git)
-     - ci "URL" (not OBJ, and not result.ci)
+Add comment that we enforce [a-z][a-z0-9_]* in configuration property names
+  - in core (as opposed to plugins), we try to avoid _ too
+  - reasons:
+     - no mixed case, because it is not common in CLI flags nor environment variables
+     - consistent option name across spyd.yml, CLI flags, envvars, programmatic
+     - no multiple delimiters
 
-CONF.info|context -> CONF.show STR_ARR among 'system', 'metadata'
-  - if no:
-     - 'system': pass `undefined` to reporters for result.sharedSystem|systems[*].machine|config|run
-     - 'metadata': pass `undefined` to reporters for result.sharedSystem|systems[*].git|ci and result.id|timestamp
-  - default value:
-     - has "system" if CONF.system defined
-     - has "metadata" if `show|remove` command
+runner.config.PROP.example STR[_ARR]
+  - for all plugins: reporter, progress, runner, store
+  - meant for validation, using jest-validate (same validation as for CONF.*):
+     - validate against unknown props
+     - if ARR, use multipleValidOptions()
+  - required
 
 runner.commands(runConfig):
   - rename to runner.launch(...)
-  - arguments (eventName, runConfig):
-     - split main entry file to 2 (load|run), so that requiring the file is faster
-  - CONF.run.node.versions -> CONF.run.node.version (only one version)
+  - CONF.run_node_versions -> CONF.run_node_version (only one version)
   - return a single OBJ instead of OBJ_ARR:
-     - should use systems instead to perform several runConfig
+     - should use configProps instead to perform several runConfig
      - commands is not a input-like dimension anymore, including in:
         - combination.name|columnName
         - combination.commandRank
@@ -266,27 +263,148 @@ runner.commands(runConfig):
   - remove any instances of the word "command", except for CLI commands, to avoid confusion
      - commandConfig -> runConfig
 
+Each task file should contain a single task
+  - reason: lower loadCost
+  - instead of exporting tasks OBJ_ARR, named exports:
+     - before|main|after
+     - isAsync BOOL
+     - variables|shell (for CLI)
+     - inputs ARR
+  - runner.benchmark() does not need taskId anymore, only taskPath
+
+CONF.include|exclude STR_ARR
+  - possible combinations are cartesian product of: tasks, inputs, runners, configProps, systems
+  - format:
+     - CONF.include|exclude STR_ARR
+        - def:
+           - include: all
+           - exclude: none
+        - combination is used if included and not excluded
+     - STR_ARR: does union
+        - each STR do not need to share same dimensions
+     - STR is a space-separated list of groups
+        - groups are intersected
+        - groups must all be from different dimensions
+     - each group is a comma-separated list of IDs
+        - all IDs must be from same dimension
+        - can prepend ! to whole group to invert its selection
+           - done before intersecting with other groups
+        - no space allowed around comma
+  - remove the special parsing with CLI flags to allow ARR values using comma-separated lists
+  - no more need for:
+     - CONF.tasks|inputs
+     - task.inputs
+  - CONF.limit should be STR_ARR with same format as CONF.include
+     - except each STR is prepended with percentage (then space) and IDs are optional
+
+CONF.settings "DIR"
+  - def: first .[/...]/benchmark
+     - "benchmark", not "benchmarks"
+  - in CLI, is a normal flag (not positional)
+  - remove CONF.cwd
+  - used for task files
+  - used for results file (SETTINGS/results.ndjson)
+  - used as the cwd for CONF.output|insert
+  - used for config file
+
+Config file:
+  - merge several:
+     - in priority:
+        - CLI flag --config
+        - environment variables
+        - CONF.settings/[.../]spyd.yml
+        - ./[.../]spyd.yml
+        - home dir  using `env-paths` `config`, i.e. /home/USER/.config/NAME, /Users/USER/Library/Preferences/NAME, C:/Users/USER/AppData/Roaming/NAME/Config
+     - need two rounds, since CONF.settings/spyd.yml might be found using CONF.settings from other locations
+  - shallow merge
+
+CONF.run "RUNNER_ID"_ARR
+  - default value
+     - only bundled runners
+        - reason: runners in CONF.run not installed fail, and we do not want to force npm installs
+     - def: ["node", "cli"]
+     - should not put several runners with same|shared EXTs
+  - is a dimension, i.e. can CONF.include|exclude
+     - only cartesian product to tasks with matching file extension
+  - add code comment that we use explicit CONF.run instead of:
+     - using code comment
+        - bad performance with big files
+        - transpiling removing comments
+        - does not work in compiled binaries
+     - using filenames:
+        - does not work will with multiple runners per task
+        - leads to odd filenames when runner and extension are similar|same
+     - guessing using require()
+        - too implicit/magic
+        - would also find dependencies dependencies
+        - does not work well with bundled runners
+
+Task files selection:
+  - SETTINGS[/*]/TASK_ID.task.[RUNNER.]EXT
+     - allows for both regular files and 1-depth directories
+  - no more CONF.files (CLI positional argument)
+  - use `junk` to filter out
+  - only task files with matching runners
+     - only if present in CONF.run
+     - based on runner.extensions "EXT"_ARR
+        - EXT can have dot in it, e.g. 'EXT.EXT2'
+     - can override with RUNNER in filename, in which case runner.extensions is ignored
+        - must still be present in CONF.run
+        - possible goals:
+           - if runner.extensions does not contain the extension wanted by user
+           - allow two files with same taskId, same file extension but different runners
+              - e.g. taskId.task.node.js and taskId.task.browser.js
+     - single task file can target several runners, which spawns several combinations
+     - no errors if no matching runners
+        - reason: selecting with CONF.run
+  - validate that no two task files have same taskId + runner
+     - but can have same taskId and different runner, or vice-versa
+  - the resulting tasks can all be selected with CONF.include|exclude
+  - no need to return taskId anymore in runner load()
+
+inputs.yml:
+  - instead of inputs inside tasks
+  - located at SETTINGS/inputs.yml
+  - use JSON_SCHEMA js-yaml option
+  - OBJ_ARR: id STR, title STR, value VAL
+  - runner.benchmark() gets `input` value instead of inputId
+  - the resulting inputs can all be selected with CONF.include|exclude
+     - no more need to return variationId|variationTitle from runner.load()
+
+Return `title` in runner.benchmark()
+  - no more need to return taskTitle from runner.load()
+  - allow not returning it (parent process does the default value assignment)
+
+loadCost sample
+  - run before measureCost sample, only once
+  - same behavior as measureCost but with maxDuration -1
+  - used to retrieve:
+     - initial value of loadCost
+     - taskTitle
+
+Remove runner.load():
+  - after loadCost sample, returning `title` from runner.benchmark(), inputs.yml and CONF.include|exclude have made it unnecessary
+  - remove event.type
+
+CONF.info|context -> CONF.show STR_ARR among 'system', 'metadata'
+  - if no:
+     - 'system': pass `undefined` to reporters for result.sharedSystem|systems[*].machine|config|run
+     - 'metadata': pass `undefined` to reporters for result.sharedSystem|systems[*].git|ci and result.id|timestamp
+  - default value:
+     - has "system" if CONF.system defined
+     - has "metadata" if `show|remove` command
+
 Instead of runner.system:
-  - runner.run(eventName, runConfig)->OBJ with OBJ.system OBJ_ARR (def: []):
-     - id STR
-     - title STR
-     - value STR
+  - some of it can be done with configProps dimension instead
+  - runner.launch(runConfig)->OBJ with OBJ.system OBJ_ARR (def: []):
+     - name STR
         - no more STR_ARR to let core execute command. Runners must provide direct value themselves instead.
      - description STR
-     - version BOOL (def: false). If true:
-        - value must contain X.Y.Z
-        - expand OBJ to 3 OBJs instead:
-           - id is suffixed with _major|minor|patch
-           - value X[.Y[.Z]]
-           - same title|description
-  - CONF.system STR can use {{VAR}}
-     - VAR is system.id
-     - subtituted by system.value
   - result.system.run.VAR STR
-     - VAR is system.title
+     - VAR is system.name
      - STR is system.description
   - with `node` runner:
-     - if no CONF.run-node.version: id "node", title "Node.js", value "X.Y.Z" (using process.version), description "X.Y.Z"
+     - if no CONF.run-node.version: name "Node.js", description "X.Y.Z"
      - if CONF.run-node.version: same but using nvexeca()
 
 Variables:
@@ -294,20 +412,26 @@ Variables:
      - remove user-defined `variables`. Can use either subshells, or command wrapper instead
      - add code comment that {{main}} is purposely not provided so users only put what they want to measure in main, not cleanup code for "after"
   - use same logic for both CONF.system and `cli` runner
-  - variable case:
-     - ENV_VAR: use process.env as is, i.e. case sensitive on Unix, case insensitive on Windows
-     - others:
-        - case sensitive
-        - lowercase (unless user-defined)
   - available variables (in lowest priority order):
      - CONF.system:
         - {{ENV_VAR}}
+           - use process.env as is, i.e. case sensitive on Unix, case insensitive on Windows
         - {{os}} {{os_full}}
-        - runner-specific variable, e.g. {{node_major_version}}
      - `cli` runner:
         - {{ENV_VAR}}
         - {{before}}, {{main}}
         - {{inputId}}
+
+combination.name|columnName:
+  - task dimension not present if all combinations have same value (like other dimensions)
+     - exception: if single dimension, show only task
+  - columnName order is input, system, runner, configProps
+  - if there are runner-specific configProps dimensions:
+     - must be last
+     - empty values (when on different runners) removed
+        - i.e. different configProps for different runners might be aligned together
+     - columnName arrays should all have same length, by appending empty strings
+        - i.e. if one runner has 1 configProp, and another has 2, the first gets an empty strig appended
 
 Persist result.tasks|inputs|systems|commands:
   - only data which cannot be computed: id|title|description
@@ -331,12 +455,12 @@ After listResults(), core should normalize partialResults to results:
   - perform an array of reducing functions:
      - meant for migration, when a new release of spyd is making changes to result properties
      - array is empty for the moment
-  - filter by tasks|inputs|systems
+  - filter by tasks|inputs|systems|configProps
   - sort by partialResult.timestamp
   - group partialResults to result using partialResult.mergeId
      - partialResult.id -> not kept in result
      - partialResult.mergeId -> result.id
-  - silently filter out duplicate combinations (same mergeId+taskId+inputId+systemId)
+  - silently filter out duplicate combinations (same mergeId+taskId+inputId+systemId+configPropId)
      - reason: might happen if two results with same mergeId ran in parallel
      - keep one with earliest timestamp
 
@@ -349,8 +473,8 @@ Add in comment and --help that CONF.merge is meant only for doing a single bench
   - benchmark across different machines|hardware|software (including in CI): same mergeId, different systemId
   - continue stopped benchmark
 
-When merging combination and there is a duplicate of same mergeId and taskId+inputId+systemId:
-  - different os|cpu|memory|git|runnerConfig|duration|parallel:
+When merging combination and there is a duplicate of same mergeId and taskId+inputId+systemId+configPropId:
+  - different os|cpu|memory|git|runnerConfig|duration|concurrency:
      - throw and suggest to either use a different systemId, or make a different benchmark
      - reason: merge is meant for incremental benchmarks, i.e. combinations must be comparable
   - different CI build|job:
@@ -384,18 +508,6 @@ Stopping benchmark:
         - figure out the exact set of settings to compare.
            - some are ok to change, e.g. reporting-related
   - remove CONF.merge "" to mean "same|last result"
-
-Allow comparing different systems in a single benchmark:
-  - CONF.system "systemId"[_ARR]
-     - id not title, i.e. no slugification
-     - if several, creates several combinations in current benchmark
-     - def: ['default'] (title "Default system")
-     - used to target results in `show|remove` commands too
-  - CONF.system-{systemId}-VAR:
-     - title STR (def: "systemId")
-     - runner-{runnerId}-VAR
-     - duration|parallel
-     - parsing needs to take into account that systemId might have a "-"
 
 Deltas:
   - in `show|remove` commands, and CONF.since|diff
@@ -465,7 +577,7 @@ CONF.quiet true:
   - for all commands
   - effect:
      - no console.log()
-        - no logs on `debug` command
+        - no logs on `exec` command
         - exception: errors are still printed
      - CONF.progress|report forces to empty ARR
   - remove CONF.progress|report "silent"
@@ -477,18 +589,6 @@ Reporting on `remove` command:
   - then print confirmation removal suceeded
      - unless CONF.quiet true
 
-Named exports in task files:
-  - instead of exporting `tasks` array of objects, export each object individually
-     - for `cli` runner, means top-level property of YAML whole file, which is a plain object
-  - export name is the default value for `task.id`, which can be overridden
-  - some known properties (`inputs` and `shell`) are also exported. Users can still use those words as task `id` by specifying them as `task.id` explicitely
-  - both in `node` and `cli` runners
-
-Shortcut notation in task files:
-  - instead of a plain object, if only property is `main`, can use:
-     - `node` runner: function
-     - `cli` runner: string
-
 CONF.run-cli.shell:
   - instead of taskFile.shell
   - STR instead of BOOL: "none", "sh", "bash"
@@ -497,6 +597,14 @@ CONF.run-cli.shell:
      - if "none": none
      - if "bash": id "shell", title "Shell", value "bash_X_Y_Z", description "Bash X.Y.Z"
      - if "sh": id "shell", title "Shell", value "sh_X_Y_Z", description "sh X.Y.Z"
+
+Plugin shape should be validated:
+  - including that plugin properties values cannot be:
+     - OBJ
+        - reason: nesting does not work well in CLI flags or envvars
+     - ARR
+        - reason: configProps dimension
+  - including that plugin properties names must be [a-z][a-z0-9_]*
 
 Error handling:
   - better way for all plugins (report, progress, stores, runners) to signal user error vs bugs
@@ -525,6 +633,7 @@ When killing child process, should kill descendants too
 Consider lowering the valid Node version for spyd-runner-node, so that `run.node.versions` can target lower versions
 
 Add REPL to evaluate Node.js or `cli` runner task on-the-fly???
+  - should allow OPTS.save, so differences are shown
 
 Create a store that works in GitHub actions???
 
