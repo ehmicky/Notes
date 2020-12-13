@@ -14,7 +14,7 @@ Make `process_group.js` faster, doing at the end of each combination (until ther
      - should reuse same processMedian logic as before
         - compare how much repeat varies more both inside same benchmark and between benchmarks
         - getUnsortedMedian() -> approximateMedian()
-  - check if loopDurationsToMedians() os fast enough to do on whole childMeasures directly, or if should do on items used by approximateMedian() only first
+  - check if loopDurationsToMedians() is fast enough to do on whole childMeasures directly, or if should do on items used by approximateMedian() only first
   - check if `process_group.js` is now fast, or if there is anything that can still be made faster
 
 Quantiles|histogram:
@@ -29,9 +29,6 @@ Quantiles|histogram:
      - both: use difference from median in durations
   - show in `debug` reporter
 
-Set epsilon to partialBenchmark.stats.epsilon
-  - but not stored to file, computed on load instead
-
 reporter.debugStats BOOL
   - def: false
   - true for `debug` reporter
@@ -40,7 +37,7 @@ reporter.debugStats BOOL
         - add comment that we must ensure median is the main one used, so different reporters are consistent, and also because it is used in sorting combinations, and also it is less precise
      - times
         - add comment that it is a bad indicator of precision, and also might be confused as an indicator of speed due to other benchmark libraries showing it like that
-     - loadCost, measureCost, reportCost, processes, repeat, loops
+     - loadCost, measureCost, processes, repeat, loops
 
 New processGroups logic
   - rename processes|processGroups to samples|samplingGroup
@@ -49,33 +46,23 @@ New processGroups logic
      - an outer function, passing state around and deciding which samplingGroup's inner function to call next, and computing how much time left
 
 reportCost|measureCost progressive computation:
-  - measure all samplesGroups concurrently: main one, repeatCost, measureCost
+  - measure all samplesGroups concurrently: main one, measureCost
      - concurrent, but still one at a time
      - the samplingGroup with lowest samplingGroupDuration spent always executes next
         - exception: if last had repeatInit true, execute it again
            - unless out of samplingGroupDuration
            - i.e. do not switch to other progressGroup
-     - if same samplingGroupDuration spent (including 0), priority is: measureCost > repeatCost > main
+     - if same samplingGroupDuration spent (including 0), priority is: measureCost > main
      - reason: not to block live reporting at the beginning of the benchmark and between each combination
-  - repeatCost|measureCost gets 10% of combinationDuration, main gets 80%
-     - i.e. after 30% of combinationDuration, only main is left executing
-  - add comment that first 12.5% of main samplingGroup will have more imprecise repeatCost|measureCost when normalizing measures and computing repeat|maxDuration, but that's fine
+  - measureCost gets 10% of combinationDuration, main gets 90%
+     - i.e. after 20% of combinationDuration, only main is left executing
+  - add comment that first 11% of main samplingGroup will have more imprecise measureCost when normalizing measures and computing repeat|maxDuration, but that's fine
   - the `timeResolution` should be recomputed after each measureCost sample, but `Math.min(newTimeResolution, oldTimeResolution)` should be used
   - check if `loadCost` is still different between samplingGroups
      - if not, share loadCost array|estimation between them
 
-Delay repeatCost measuring:
-  - at beginning, repeatCost is not measured and has 0 samplingGroupDuration
-     - main samplingGroup gets additional 10% samplingGroupDuration
-     - repeatCost is 0
-  - after first sample of main samplingGroup completes, if its repeatInit is still true:
-     - before executing main samplingGroup again, measure repeatCost samplingGroup until either:
-        - its repeatInit becomes true
-        - it is out of samplingGroupDuration
-     - then finish executing main samplingGroup until its repeatInit becomes true (or it is out of samplingGroupDuration)
-
 Measure combinations concurrently
-  - concurrently, but still one at a time, using same sample orchestration logic as the one used to orchestrate repeatCost|measureCost|main samples
+  - concurrently, but still one at a time, using same sample orchestration logic as the one used to orchestrate measureCost|main samples
   - reason: better live reporting
   - other reason: provides with fast fail if one combination times out or throw exception
   - if two combinations have same combinationDuration left, pick a random one
@@ -154,7 +141,7 @@ Infinite duration:
      - instead of durationLeft, pass just duration
         - incrementing, not decrementing
         - time units increase too: SSs, then MMmSSs, then HHhMMmSSs
-  - reportCost|measureCost:
+  - measureCost:
      - instead of spending first 10% duration concurrently with main samplingGroup, orchestrator gives their duration a weight 0.1 when comparing with other progressGroups
      - i.e. measured 10 times less than main samplingGroups in average
   - not allowed if CONF.save true
@@ -173,7 +160,7 @@ CONF.concurrency NUM
         - i.e. spawns only the process execution logic in parallel, not the whole performRun()
      - use same maxDuration and timeoutNs
      - if one process fails, the other ones should be terminated
-     - measureCost|repeatCost computation should use the same amount of parallel processes
+     - measureCost computation should use the same amount of parallel processes
   - add code comment that:
      - CONF.concurrency is meant to measure cost of parallelism
         - both CPU and I/O parallelism
@@ -316,6 +303,53 @@ runner.versions
      - OBJ values can be either STR (direct value) or STR_ARR (command to retrieve stdout from, all called in parallel)
   - required
   - meant for software versions, mode (e.g. type of shell) and options
+
+propSets:
+  - name:
+     - propSet: whole dimension
+     - propItem: each item in a propSet
+     - called "configuration property sets" in comments and documentation
+  - specified by either:
+     - passing ARR to specific CONF.*
+        - validate no duplicate values in that ARR
+     - merging results with different VALs for specific CONF.*
+        - i.e. remove that results with different CONF.* cannot be merged
+  - only on any CONF.* that can change the results:
+     - CONF.concurrency
+     - CONF.duration
+        - not documented since this is generally not a good idea
+        - however, this ensures that when merging results, different durations are clearly marked as such
+     - any CONF.run_{runnerId}_*
+        - cartesian product only to combinations with that runner
+  - each propSet is a separate dimension, distinct from other propSets:
+     - in CONF.include|exclude
+     - in combination.columnName: several STR
+     - result.propSets OBJ_ARR_ARR, not OBJ_ARR
+     - combination.propSets ARR
+  - propItemId:
+     - property key appended by 0-based index, e.g. "concurrency_0" or "run_node_version_2"
+        - index in current benchmark only (not previous ones)
+        - when adding a new propItem through CONF.merge, use incremented index
+     - used when selecting with CONF.include|exclude|limit
+        - can optionally omit repeated part, e.g. concurrency_0,3,4
+  - propItemValue:
+     - property VAL
+     - used as identifier when comparing between combinations (including between different benchmarks), using util.isStrictDeepEqual()
+  - propItemTitle:
+     - returned by runner.config.PROP.title(VAL)->STR
+     - optional. Default function:
+        - `${PROP} ${VAL}`
+        - PROP is titleized, e.g. aa_bb_cc -> Aa bb cc
+        - VAL: String() on STR|NUM|BOOL|null, max decimals on FLOAT
+     - truncate result with ellipsis if too big
+  - set on result.* like other dimensions:
+     - for combinations sorting, mean, rank, selection, etc.
+     - result.propSets OBJ_ARR_ARR: id STR, value VAL, title STR
+     - combination.propSets OBJ_ARR: id STR, value VAL, title STR
+  - just like tasks and inputs, only reported in main reporting table, not in system info below it
+  - if several propItems have different runner.versions.VAR VAL, they are concatenated as a  result.systems[*].versions.VAR ARR
+     - printed as a comma-separated list by reporter prettify logic
+     - does not mention which propItem used which ones. It should be obvious enough from propItemTitles
 
 Each task file should contain a single task
   - reason: lower loadCost
