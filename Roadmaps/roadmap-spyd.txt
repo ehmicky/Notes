@@ -5,6 +5,54 @@
 
 
 
+`duration` should not include time to load tasks and spawn processes
+  - reasons:
+     - adding imports to tasks does not change number of measures
+     - adding slow-to-load tasks does not change other tasks duration
+
+Keep the fake pSetTimeout() at end of benchmark
+
+New measurement with single process:
+  - use maxLoops instead of maxDuration
+     - add code comments why:
+        - easier to implement for runner
+        - faster in runner (no timestamp retrieval), allowing more loops
+        - can be used to avoid memory crash
+     - maxLoops = Math.max(Math.round(100ms / (taskMedian * repeat)), 1)
+        - including during repeatInit true, including first sample
+        - add code comments why using fixed hardcoded 100ms:
+           - ensure each sample has same duration, so runtime optimization does not change over time
+           - ensure that tasks with slow measures aggregation do not prevent other tasks from doing live reporting
+           - if smaller, live reporting less responsive
+           - if larger, spend more benchmark time on orchestration and HTTP processing
+           - if larger, fewer measures per sample, i.e. more weight of sample cold starts
+        - add code comments why aimed at duration to run task median only, not duration to run benchmark logic, nor HTTP:
+           - simpler to compute
+           - more stable
+  - stats aggregation done after a specific duration has elapsed since last aggregation
+     - 9 times duration of last stats aggregate, i.e. benchmark spend only 10% on stats aggregation
+  - no need anymore for:
+     - loadCost
+     - most of maxDuration logic
+  - instead of taskMedians:
+     - compute real median
+     - re-compute:
+        - if repeatInit true, after each sample
+        - otherwise, during stats aggregation only
+  - compare precision:
+     - compare with multiple processes:
+        - variance between combinations of single benchmark, vs between single combinations of different benchmarks
+        - median vs standard deviation vs variation between processes
+        - small CONF.duration vs big CONF.duration
+  - check if using a fixed, low amount of processes helps with precision???
+
+Consider removing outliers
+  - providing this does not impact precision
+  - problems with them:
+     - complicates code
+     - does not get full histogram
+     - min|max look odd during live reporting
+
 Instead of taskMedian, use (lastMaxDuration / lastLoops) for:
   - targetTimesMin in max_duration.js
   - loopDuration in max_duration.js
@@ -83,7 +131,7 @@ Reporter live updating:
      - second step: the last output string is output and I/O is done, during progress reporting interval function
   - allocate 10% of total time to the output string computation:
      - all of: addMeasures(), computeStats(), reporter.report()
-     - initially done right after combination titles are available
+     - initially done right after combinations are available
         - showing no stats yet
      - then, done again after all other combined sampleGroups have spent 9 times reportDuration
         - reportDuration is the median of the last 3 durations of live reporting
@@ -225,12 +273,14 @@ runner.config.PROP.example STR[_ARR]
   - required
 
 CONF.system:
-  - CONF.system "systemId [(systemTitle)]"
+  - CONF.system "systemId"
      - id does not need any no slugification
-     - title is optional, and between parenthesis
-     - def: "default_system (Default system):
-        - note: default title not shown in core reporters (since sharedSystem is top-level)
+     - def: "default_system"
         - reason: unlikely to conflict with a taskId or inputId
+     - title:
+        - not needed due to titles.yml
+        - def: same as default id
+           - not shown in core reporters (since sharedSystem is top-level)
      - no variables
         - including {{ENV_VAR}}, {{os}}, {{os_full}}
         - instead can use:
@@ -447,18 +497,51 @@ Task files selection:
   - the resulting tasks can all be selected with CONF.include|exclude
   - no need to return taskId anymore in runner load()
 
+Better titles:
+  - specified in titles.yml
+     - OBJ:
+        - key is id
+        - value is title STR
+     - can be any dimension: task, input, system, propSets, runner
+     - reasons:
+        - no need to wait for processes spawn to start displaying task titles
+        - single place for users to specify titles for tasks, inputs and systems, i.e. simpler
+        - simpler for runner, which do not need to handle titles
+  - default title:
+     - task, input, system: same as id
+     - propSets: runner.config.PROP.title()
+     - runner: runner.title
+  - CONF.show "titles"
+     - if absent, show ids, not titles
+        - except propSets, which always show titles
+        - reasons:
+           - making id clear to users for CONF.include|exclude
+     - def: absent
+  - remove title specified in:
+     - task.title
+     - inputs
+     - no more need to return inputTitle|taskTitle from runner.load()
+
 inputs.yml:
   - instead of inputs inside tasks
   - located at SETTINGS/inputs.yml
   - use JSON_SCHEMA js-yaml option
-  - OBJ_ARR: id STR, title STR, value VAL
+  - OBJ:
+     - key is id
+     - value is value
   - runner.benchmark() gets `input` value instead of inputId
   - the resulting inputs can all be selected with CONF.include|exclude
-     - no more need to return variationId|variationTitle from runner.load()
+     - no more need to return inputId|inputTitle from runner.load()
 
-Return `title` in runner.benchmark()
-  - no more need to return taskTitle from runner.load()
-  - allow not returning it (parent process does the default value assignment)
+Multiple inputs dimensions:
+  - allow inputs.yml to be either:
+     - OBJ: single dimension
+     - OBJ_ARR: multiple dimensions of inputs, i.e. cartesian product between them
+  - runner gets array of input values
+     - not single input value
+        - even if only one dimension
+     - nor variadic arguments
+        - reason: it would require additional effort from runner to parse than just getting an array
 
 loadCost sample
   - where runner.load() currently is
@@ -471,7 +554,7 @@ loadCost sample
      - taskTitle
 
 Remove runner.load():
-  - after loadCost sample, returning `title` from runner.benchmark(), inputs.yml and CONF.include|exclude have made it unnecessary
+  - after loadCost sample, titles.yml, inputs.yml and CONF.include|exclude have made it unnecessary
   - remove event.type
 
 CONF.info|context -> CONF.show STR_ARR among 'system', 'metadata'
@@ -516,9 +599,9 @@ combination.name|columnName:
         - i.e. if one runner has 1 propSet, and another has 2, the first gets an empty string appended
 
 Persist result.tasks|inputs|systems|commands:
-  - only data which cannot be computed: id|title|description
+  - only data which cannot be computed: id|title
      - mean|rank should be computed during load normalization instead
-  - do not persist result.combinations[*].*Title|Description
+  - do not persist result.combinations[*].*Title
      - add those during load normalization instead
      - only persist result.combinations[*].*Id|stats
 
