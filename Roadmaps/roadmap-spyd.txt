@@ -5,12 +5,44 @@
 
 
 
-`duration` should not include time to load tasks and spawn processes
+Remove combination timeout of `bench` action
   - reasons:
-     - adding imports to tasks does not change number of measures
-     - adding slow-to-load tasks does not change other tasks duration
+     - requires killing process, which can leave uncleaned resources without calling afterEach|afterAll
+     - CONF.duration might be set for a specific machine that is faster than others, leading to failures on slower machines
+     - allows CONF.duration 0 to call each task only once
+
+Combination duration:
+  - `duration` should not include time to load tasks and spawn processes
+     - reasons:
+        - adding imports to tasks does not change number of measures
+        - adding slow-to-load tasks does not change other tasks duration
+     - how: right before starting first sample, set progressState.benchmarkEnd, as opposed to before load
+        - before this, should set progressState.description "Starting..."
+  - use a single timestamp for sample durations:
+     - right before starting first sample, set the combination's state.sampleDurationTimestamp now()
+     - do not record sampleStart anymore
+     - at end of each sample, update state.sampleDurationTimestamp now()
+     - compute sampleDurationLast with differences between two state.sampleDurationTimestamp
+  - combination stop:
+     - getRemainingCombinations() should exclude any combinations with either:
+        - state.loops < combinationMaxLoops
+           - combinationMaxLoops is computed once for all combinations (so the `combinations` does not to be passed down to each combination)
+           - it is MAX_LOOPS / combinations.length
+        - state.completed true
+           - initially false, i.e. each combination always measured at least once
+     - when a combination ends:
+        - compute sample duration
+        - if combinationDuration + sampleDurationMean > CONF.duration:
+           - send empty params OBJ to runner so it performs afterAll and exits
+           - compute cleanupDuration = now() - state.sampleDurationTimestamp
+           - progressState.benchmarkEnd += (CONF.duration - (combinationDuration + cleanupDuration))
+              - if combination had time left, progress counter will jump down
+              - if combination was slower (including only measured once and was over CONF.duration), progress counter will jump up
+              - remove the waitForTimeLeft() at end of benchmark
+           - set state.completed false
 
 Fix `exec`, e.g. `stdio` must be [`ignore`, `inherit`, `inherit`]
+  - unlike `bench` action, should timeout each combination after CONF.duration
 
 Fix CLI runner
 
@@ -55,12 +87,6 @@ reporter.debugStats BOOL
      - times
         - add comment that it is a bad indicator of precision, and also might be confused as an indicator of speed due to other benchmark libraries showing it like that
      - loadCost, measureCost, processes, repeat, loops
-
-New processGroups logic
-  - rename processes|processGroups to samples|samplingGroup
-  - split samplingGroup main function into:
-     - an inner function, receiving state, spawning process, computing new state and returning it
-     - an outer function, passing state around and deciding which samplingGroup's inner function to call next, and computing how much time left
 
 reportCost|measureCost progressive computation:
   - measure all samplesGroups concurrently: main one, measureCost
@@ -135,10 +161,19 @@ Reporter live updating:
   - limit the amount of changes of the general shape of the output between the initial call and the final one, to make it look nicer
      - e.g. tables should be initially shown with all rows|columns and empty cells
 
-Infinite duration:
+Once mode:
   - CONF.duration 0
-  - default value for CONF.duration if interactive TTY
-     - default value still 10 if not iteractive TTY
+  - measures each combination exactly once
+     - wait for repeatInit true though
+     - different from CONF.duration -1, which measures until CTRL-C
+  - default value: -1 if interactive TTY, 0 otherwise
+  - progress reporting same as CONF.duration -1:
+     - do not show percentage
+     - show time spent, not time left
+  - can be used with CONF.save true
+
+Infinite duration:
+  - CONF.duration -1
   - measures forever
   - stopping:
      - on `SIGINT`, `SIGBREAK`, `SIGHUP` or `SIGTERM`
@@ -181,6 +216,19 @@ CONF.concurrency NUM
      - move the current code comment from src/measure/combination.js (about spawning processes serially)
   - handle spawn errors due to too many processes at once
      - try to remove process limit with ulimit, and see if another error can happen with a high CONF.concurrency, e.g. too many open files
+
+isAsync:
+  - initial check for isAsync:
+     - execute func once, without await
+     - check if return value is promisable (using p-is-promise)
+     - sets func.isAsync BOOL (originally undefined)
+     - if isAsync, await return value
+  - do the above when func.isAsync undefined && repeat 1
+     - add code comment that repeat should always be 1 when func.isAsync undefined, and this probably won't change. It is more of a failsafe.
+  - do the above in a `sync_async` dir, next to `sync` and `async` dirs
+  - do the above independently for beforeEach, main and afterEach
+  - always use await on beforeAll|afterAll, i.e. allow both sync and async
+  - remove task.async BOOL
 
 Sort all the code comments in `measure/**` and the `node|cli` runners. It's a bit messy right now, and some might be outdated
 
@@ -364,11 +412,7 @@ propSets:
 
 Each task file should contain a single task
   - reason: lower loadCost
-  - instead of exporting tasks OBJ_ARR, named exports:
-     - before|main|after
-     - isAsync BOOL
-     - variables|shell (for CLI)
-     - inputs ARR
+  - instead of exporting tasks OBJ_ARR, named exports: beforeAll|beforeEach|main|afterEach|afterAll
   - runner.benchmark() does not need taskId anymore, only taskPath
 
 CONF.include|exclude STR_ARR
@@ -628,7 +672,7 @@ CONF.merge skipping previous combinations:
 Stopping benchmark:
   - on `SIGINT`, `SIGBREAK`, `SIGHUP` or `SIGTERM`
      - either interactive TTY or not
-     - including if CONF.duration 0
+     - including if CONF.duration -1 or 0
   - serialize current measuring state (including all `measures`) to file
      - in GLOBAL_CACHE_DIR/HASH/stopped_benchmark.json
         - HASH is SHA1 of normalized absolute file path of CONF.settings
