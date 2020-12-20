@@ -5,6 +5,14 @@
 
 
 
+Add comments why we measure combinations concurrently:
+  - better live reporting
+  - provides with fast fail if one combination times out or throw exception
+
+No need to pass taskId to runner.load() since error handling already prepends it
+
+aggregateMeasures() should do nothing (except decrementing aggregateCoutdown) if bufferedMeasures.length === 0
+
 Remove combination timeout of `bench` action
   - reasons:
      - requires killing process, which can leave uncleaned resources without calling afterEach|afterAll
@@ -40,17 +48,19 @@ Combination duration:
               - if combination was slower (including only measured once and was over CONF.duration), progress counter will jump up
               - remove the waitForTimeLeft() at end of benchmark
            - set state.completed false
+  - there is a small wait at the end of benchmark: why?
+     - ensure the above did not fix it
 
 Fix `exec`, e.g. `stdio` must be [`ignore`, `inherit`, `inherit`]
   - unlike `bench` action, should timeout each combination after CONF.duration
 
 Fix CLI runner
 
-There is a small wait at the end of benchmark: why?
-
 Put `return.js` into smaller function
 
 Fix `src/combinations/main.js` that is currently hardcoded
+  - instead of exporting tasks OBJ_ARR, named exports: beforeAll|beforeEach|main|afterEach|afterAll
+  - add comment why each task file contains a single task: lower loadCost
 
 Go through whole code, looking for bugs
 
@@ -66,60 +76,23 @@ Precision:
   - check if using a fixed, low amount of processes helps with precision???
   - find ways to improve precision even more???
 
-Quantiles|histogram:
-  - persist in stores
-  - some stats should have a space-efficient shape for stores, but be denormalized on load:
-     - histogram:
-        - denormalized: OBJ_ARR: low, high, frequency
-        - normalized: ARR of [high, frequency]
-     - quantiles:
-        - denormalized: OBJ_ARR: percentage NUM, value NUM
-        - normalized: NUM_ARR
-     - both: use difference from median in durations
-  - show in `debug` reporter
-
-reporter.debugStats BOOL
-  - def: false
-  - true for `debug` reporter
-  - if false, do not pass:
-     - mean
-        - add comment that we must ensure median is the main one used, so different reporters are consistent, and also because it is used in sorting combinations, and also it is less precise
-     - times
-        - add comment that it is a bad indicator of precision, and also might be confused as an indicator of speed due to other benchmark libraries showing it like that
-     - loadCost, measureCost, processes, repeat, loops
-
-The samplingGroup with lowest samplingGroupDuration spent always executes next
-  - exception: if last had repeatInit true, execute it again
-     - unless out of samplingGroupDuration
-     - i.e. do not switch to other progressGroup
-
-Measure combinations concurrently
-  - concurrently, but still one at a time, using same sample orchestration logic as the one used to orchestrate measureCost|main samples
-  - reason: better live reporting
-  - other reason: provides with fast fail if one combination times out or throw exception
-  - if two combinations have same combinationDuration left, pick a random one
-     - reason: random tasks progressing is more visually interesting than sequential
-  - when completing initial measureCost sample, do the first main sample right after it in order to provide with fast first reporting of each combination
-  - progress reporter should not show current combination nor counter anymore
-  - progress reporter durationLeft and percentage need to take into account that multiple combinations are measured concurrently
-
-Reporter live updating:
-  - do during each live reporting, instead of end of whole combination:
-     - addMeasures() (sorting and concatenating)
-     - computeStats() (including mean and standard deviation)
-  - sync vs async:
-     - first step: the output string is computed synchronously, during sample orchestration
-     - second step: the last output string is output and I/O is done, during progress reporting interval function
-  - allocate 10% of total time to the output string computation:
-     - all of: addMeasures(), computeStats(), reporter.report()
-     - initially done right after combinations are available
-        - showing no stats yet
-     - then, done again after all other combined sampleGroups have spent 9 times reportDuration
-        - reportDuration is the median of the last 3 durations of live reporting
-           - reason: allow adapting to increase over time, while still ignoring big reportDuration if reporting happened to be much slower from time to time
-        - if sample has repeatInit true, do not live report it yet
-     - if no new childMeasures, noop and do not change reportDuration
-     - done by sample orchestrator
+Live updating:
+  - steps:
+     - reporter.report()->STR:
+        - done after each measures aggregation:
+           - counted as part of the `aggregateDuration`
+           - unless repeatInit false
+              - reason: if repeatInit false, measures will be removed, which would create confusing reporting (e.g. for min|max)
+              - other reason: during repeatInit false, stats change a lot, creating flicker
+     - do I/O using the last reporter.report() STR
+        - done during progress reporting interval function
+           - not counted as part of the `aggregateDuration`
+  - both steps are:
+     - also initially done right after combinations are available, showing no stats yet
+     - only done if all of:
+        - reporter.progress true (def: false)
+        - reportConfig.output "-"
+        - CONF.quiet false
   - call reporter.report()->STR with same arguments as the final reporter.report():
      - including result being normalized
      - including having information from initial listResults() (e.g. for previous combinations and diff)
@@ -128,13 +101,6 @@ Reporter live updating:
   - if reporter.progress false, reporter.report() can be async. If true, cannot.
   - progress reporter is appended to it:
      - performed right after each live reporting
-  - computeStats() and reporter.report() only done:
-     - if all of:
-        - reporter.progress true (def: false)
-        - reportConfig.output "-"
-        - CONF.quiet false
-     - addMeasures() is still done for incremental sorting and concatenating (to prevent big slowdown at end)
-     - computeStats() and reporter.report() are also still done at end of combination
   - screen refreshing:
      - refresh whole screen at the beginning
         - use `signal-exit`
@@ -156,45 +122,33 @@ Once mode:
   - CONF.duration 0
   - measures each combination exactly once
      - wait for repeatInit true though
-     - different from CONF.duration -1, which measures until CTRL-C
-  - default value: -1 if interactive TTY, 0 otherwise
-  - progress reporting same as CONF.duration -1:
-     - do not show percentage
-     - show time spent, not time left
-  - can be used with CONF.save true
-
-Infinite duration:
-  - CONF.duration -1
-  - measures forever
-  - stopping:
-     - on `SIGINT`, `SIGBREAK`, `SIGHUP` or `SIGTERM`
-        - either interactive TTY or not
-     - keep both progress reporter and live reporter printed
-     - report all other reporters too
-  - progress reporter:
+  - progress reporting:
      - pass percentage undefined
      - instead of durationLeft, pass just duration
         - incrementing, not decrementing
         - time units increase too: SSs, then MMmSSs, then HHhMMmSSs
-  - measureCost:
-     - instead of spending first 10% duration concurrently with main samplingGroup, orchestrator gives their duration a weight 0.1 when comparing with other progressGroups
-     - i.e. measured 10 times less than main samplingGroups in average
-  - not allowed if CONF.save true
-  - no timing during measuring:
-     - no process timeout
-     - no `measureDurationLeft` in `maxDuration`
-     - orchestrator does not check for samplingGroupEnd
-  - print "Type CTRL-C to exit" below progress reporter
+
+Infinite duration:
+  - CONF.duration -1
+  - measures forever
+  - default value: -1 if interactive TTY, 0 otherwise
+  - progress reporter: like CONF.duration 0
+  - when manually interrupting benchmark:
+     - keep both progress reporter and live reporter printed
+     - report all other reporters too
+  - validate that CONF.save is not true
+  - progressState.description "Type CTRL-C to exit"
      - or equivalent key on Windows
 
 CONF.concurrency NUM
   - validate that CONF.concurrency NUM is integer >=1
-  - spawns NUM processes in parallel
+  - each sample spawns NUM processes in parallel
      - in `bench` command, but not in `exec` command
      - start|end group of processes together
-        - i.e. spawns only the process execution logic in parallel, not the whole performRun()
-     - use same maxDuration and timeoutNs
-     - if one process fails, the other ones should be terminated
+     - use same `params`, including `maxLoops`
+     - if one process fails
+        - the other ones should continue (for cleanup)
+        - but the sample should then propagate error
      - measureCost computation should use the same amount of parallel processes
   - add code comment that:
      - CONF.concurrency is meant to measure cost of parallelism
@@ -220,6 +174,28 @@ isAsync:
   - do the above independently for beforeEach, main and afterEach
   - always use await on beforeAll|afterAll, i.e. allow both sync and async
   - remove task.async BOOL
+
+Quantiles|histogram:
+  - persist in stores
+  - some stats should have a space-efficient shape for stores, but be denormalized on load:
+     - histogram:
+        - denormalized: OBJ_ARR: low, high, frequency
+        - normalized: ARR of [high, frequency]
+     - quantiles:
+        - denormalized: OBJ_ARR: percentage NUM, value NUM
+        - normalized: NUM_ARR
+     - both: use difference from median in durations
+  - show in `debug` reporter
+
+reporter.debugStats BOOL
+  - def: false
+  - true for `debug` reporter
+  - if false, do not pass:
+     - mean
+        - add comment that we must ensure median is the main one used, so different reporters are consistent, and also because it is used in sorting combinations, and also it is less precise
+     - times
+        - add comment that it is a bad indicator of precision, and also might be confused as an indicator of speed due to other benchmark libraries showing it like that
+     - loadCost, measureCost, processes, repeat, loops
 
 Sort all the code comments in `measure/**` and the `node|cli` runners. It's a bit messy right now, and some might be outdated
 
@@ -401,11 +377,6 @@ propSets:
      - printed as a comma-separated list by reporter prettify logic
      - does not mention which propItem used which ones. It should be obvious enough from propItemTitles
 
-Each task file should contain a single task
-  - reason: lower loadCost
-  - instead of exporting tasks OBJ_ARR, named exports: beforeAll|beforeEach|main|afterEach|afterAll
-  - runner.benchmark() does not need taskId anymore, only taskPath
-
 CONF.include|exclude STR_ARR
   - possible combinations are cartesian product of: tasks, inputs, runners, propSets, systems
   - format:
@@ -542,20 +513,6 @@ Multiple inputs dimensions:
      - nor variadic arguments
         - reason: it would require additional effort from runner to parse than just getting an array
 
-loadCost sample
-  - where runner.load() currently is
-     - i.e. all combinations are run in parallel
-     - but different process, and using runnner.run()
-  - should tell runner not to get any mainMeasures|emptyMeasures, not even once
-     - how???
-  - used to retrieve:
-     - initial value of loadCost
-     - taskTitle
-
-Remove runner.load():
-  - after loadCost sample, titles.yml, inputs.yml and CONF.include|exclude have made it unnecessary
-  - remove event.type
-
 CONF.info|context -> CONF.show STR_ARR among 'system', 'metadata'
   - if no:
      - 'system': pass `undefined` to reporters for result.sharedSystem|systems[*].machine|versions|spyd
@@ -660,10 +617,8 @@ CONF.merge skipping previous combinations:
   - if CONF.merge in `bench` command, do not measure (but still report) combinations already saved
   - reason: CONF.merge is meant for incremental benchmarks, including continuing stopped benchmark
 
-Stopping benchmark:
-  - on `SIGINT`, `SIGBREAK`, `SIGHUP` or `SIGTERM`
-     - either interactive TTY or not
-     - including if CONF.duration -1 or 0
+Saving stopped benchmark:
+  - when manually interrupting benchmark (SIGINT, etc.)
   - serialize current measuring state (including all `measures`) to file
      - in GLOBAL_CACHE_DIR/HASH/stopped_benchmark.json
         - HASH is SHA1 of normalized absolute file path of CONF.settings
