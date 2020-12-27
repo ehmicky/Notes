@@ -6,6 +6,14 @@
 
 
 Stopping benchmark:
+  - promisify stop logic using:
+     - await Promise.race(signals.map(signal => once(process, signal))
+        - with single AbortController to unregister
+     - then pSetTimeout(), unref'd
+  - add comment why we do not save results of stopped benchmark and allow continuing:
+     - require respawning processes, i.e. cold starts again, i.e lower precision
+        - defeats purpose of running longer
+        - creates difference between results depending on how many times interrupted/continued
   - when done once:
     - after 5 secs, "Stopping... Type KEY again to abort graceful exit" instead, using progressState.priorityDescription
        - unless already stopped twice
@@ -44,6 +52,16 @@ Infinite duration:
   - validate that CONF.save is not true
   - progressState.description "Type CTRL-C to stop"
      - or equivalent key on Windows
+
+Node runner task argument should be single object with properties:
+  - any input, with dimension name as key
+  - `context` OBJ:
+     - initially empty object, for each repeat iteration
+     - meant for communication between beforeEach, main and afterEach
+        - add comment that they can mutate global scope to communicate to self on next iteration, but not to communicate between each other on same iteration
+     - undefined unless beforeEach or afterEach defined
+        - reason: performance
+        - other reason: make it clear it is meant for communication with those
 
 Execute afterEach if beforeEach|main throws:
   - ignore exceptions in afterEach then
@@ -383,7 +401,7 @@ CONF.settings "DIR"
   - in CLI, is a normal flag (not positional)
   - remove CONF.cwd
   - used for task files
-  - used for results file (SETTINGS/results.ndjson)
+  - used for history file (SETTINGS/history.ndjson)
   - used as the cwd for CONF.output|insert
   - used for config file
 
@@ -471,22 +489,25 @@ inputs.yml:
   - instead of inputs inside tasks
   - located at SETTINGS/inputs.yml
   - use JSON_SCHEMA js-yaml option
-  - OBJ:
-     - key is id
-     - value is value
+  - format:
+     - OBJ:
+        - key is dimension name, used in variable name passed to runners
+        - value is OBJ2:
+           - key is input item id
+           - value is input item VAL (any JSON type)
+     - reasons:
+        - monomorphic
+        - simple
+        - allow any VAL type (including object) without ambiguity
+        - enforce user defining both dimension name and input ids
+           - more readable in reporting, selecting and task files
+           - using the value for id would require serializing it, which would limit the possible types of input values
   - runner.measure() gets `input` value instead of inputId
+  - multiple inputs dimensions:
+     - i.e. cartesian product between them
+     - runner gets each input as a named variable
   - the resulting inputs can all be selected with CONF.include|exclude
      - no more need to return inputId|inputTitle from runner.start()
-
-Multiple inputs dimensions:
-  - allow inputs.yml to be either:
-     - OBJ: single dimension
-     - OBJ_ARR: multiple dimensions of inputs, i.e. cartesian product between them
-  - runner gets array of input values
-     - not single input value
-        - even if only one dimension
-     - nor variadic arguments
-        - reason: it would require additional effort from runner to parse than just getting an array
 
 CONF.info|context -> CONF.show STR_ARR among 'system', 'metadata'
   - if no:
@@ -511,7 +532,6 @@ Spyd link in reporter
 
 Variables in `cli` runner:
   - remove user-defined `variables`. Can use either subshells, or command wrapper instead
-  - add {{main}} variable
   - use stdout "pipeInherit":
      - in beforeAll, beforeEach and main
      - only if variable is used by another command
@@ -524,7 +544,7 @@ Variables in `cli` runner:
   - available variables (in lowest priority order):
      - {{ENV_VAR}}
         - use process.env as is, i.e. case sensitive on Unix, case insensitive on Windows
-     - {{before}}, {{main}}
+     - {{beforeAll}}, {{beforeEach}}, {{main}}
      - {{inputId}}
 
 combination.name|columnName:
@@ -554,7 +574,6 @@ Execute `listResults()` earlier:
      - `show|remove` command: retrieving specific result (i.e. split `getFromStore` into two)
   - reasons:
      - with CONF.merge, allows skipping already saved combinations
-        - including when continuing stopped benchmark
      - show previous|diff during progress|live reporting
      - fail benchmark fast if problem with store
 
@@ -578,7 +597,6 @@ store.add(result) -> store.add(partialResult)
 Add in comment and --help that CONF.merge is meant only for doing a single benchmark but incrementally:
   - parallelize benchmarks across identical machines (including in CI): same mergeId, same systemId
   - benchmark across different machines|hardware|software (including in CI): same mergeId, different systemId
-  - continue stopped benchmark
 
 When merging combination and there is a duplicate of same mergeId and taskId+inputId+systemId+propItemValue:
   - different os|cpu|memory|git:
@@ -601,21 +619,7 @@ When merging combination and there is a duplicate of same mergeId and taskId+inp
 
 CONF.merge skipping previous combinations:
   - if CONF.merge in `bench` command, do not measure (but still report) combinations already saved
-  - reason: CONF.merge is meant for incremental benchmarks, including continuing stopped benchmark
-
-Saving stopped benchmark:
-  - when stopping benchmark (SIGINT, etc.)
-  - serialize current measuring state (including all `measures`) to file
-     - in GLOBAL_CACHE_DIR/HASH/stopped_benchmark.json
-        - HASH is SHA1 of normalized absolute file path of CONF.settings
-  - only last stopped benchmark (for a given CONF.settings) is saved
-  - CONF.continue BOOL:
-     - if true and there is a stopped_benchmark.json, use it to continue the last stopped benchmark
-     - must use similar settings
-        - e.g. main config values (like duration), combinations ids
-        - figure out the exact set of settings to compare.
-           - some are ok to change, e.g. reporting-related
-  - remove CONF.merge "" to mean "same|last result"
+  - reason: CONF.merge is meant for incremental benchmarks
 
 Deltas:
   - in `show|remove` commands, and CONF.since|diff
@@ -657,7 +661,7 @@ Stores:
      - not good practice to execute two benchmarks at same time on same machine
      - can easily fix it by doing a `sync`
   - store.start(storeConfig) -> FUNC(storeConfig)->store instead (closure)
-  - always saved at SETTINGS/results.ndjson
+  - always saved at SETTINGS/history.ndjson
   - results use ndjson format. Reasons:
      - JSON parsing much faster than YAML
      - appending a file is much faster than writing the whole file
@@ -781,7 +785,7 @@ Separate into different repos:
 Clarify features in `README`:
   - most precise and accurate benchmarking
   - pretty reporting
-  - comparison with previous results
+  - history
   - performance testing
   - automatically insert latest results into your documentation
   - custom reporters
