@@ -24,22 +24,65 @@ Hooks:
             throw error
           }
           afterAll()
-  - execute afterEach if beforeEach|main throws:
-     - ignore exceptions in afterEach then
-        - reason: beforeEach or main might not have finished repeat loop, or left in the middle of some logic, making cleanup code fail due to wrong assumptions
-     - in a repeat loop, repeat afterEach the same amount of times regardless of whether was triggered by exception or not
-     - get the same array of `this` objects as beforeEach, i.e. the array is created before beforeEach is called, and shared to both
-     - i.e.:
-          try {
-            beforeEach()
-            main()
-          } catch (error) {
-            try {
-              afterEach()
-            } catch {}
-            throw error
-          }
-          afterEach()
+
+Rename progressState.description "Finishing..." to "Stopping..."
+
+Manually interrupting benchmark:
+  - on `SIGINT`, `SIGBREAK`, `SIGHUP` or `SIGTERM`
+     - either interactive TTY or not
+     - including if CONF.duration -1 or 0
+  - listening for signals:
+     - setup listeners right before measureAllCombinations()
+     - allow listener handler to throw (when interrupting twice) using Promise.race() on measureAllCombinations()
+     - remove listeners in `finally` block right after measureAllCombinations()
+  - when done once:
+     - sets state.interrupted true
+     - getRemainingCombinations() should return empty ARR if state.interrupted true
+       - i.e. stop measuring but still allow for proper cleanup
+       - i.e. progressState.benchmarkEnd updated to show 0s left
+    - set progressState.priorityDescription "VERB???..."
+       - without delay
+       - progressState.priorityDescription is like progressState.description but overrides it when defined
+          - i.e. not updated by "Stopping..." nor by "" (when "Starting..." ends)
+       - after 5 secs, "VERB???... Type KEY again to abort graceful exit" instead, stickily
+          - unless already interrupted twice
+    - set progressState.benchmarkEnd:
+        - now() + sampleDurationMean + (now() - sampleDurationStart)
+        - not done if sampleDurationMean undefined, i.e. neither:
+           - not in measure stage
+           - first measure sample of category
+     - report, but do not CONF.save
+        - unless there is a combination.error, which is propagated instead
+     - if current combination is currently over CONF.duration, do childProcess.kill("SIGKILL") on it
+        - i.e. combinationDuration + now() - sampleDurationStart > CONF.duration
+        - reason: most likely mean user intended to stop a combination which last longer than CONF.duration, and might take a while to end
+        - do not throw with process exit error though
+  - when done twice:
+     - only if 5 secs have elapsed since first time:
+        - reason: promote proper cleanup
+        - reason: if users hit twice not intentionally
+     - throw, using a Promise.race() above measureAllCombinations()
+        - i.e. will not report not CONF.save
+        - as the error propagates, it executes the finally handler which does childProcess.kill("SIGKILL") all processes
+        - throw UserError with "Benchmark has been aborted."
+           - if there is a combination.error, throw it instead
+
+Execute afterEach if beforeEach|main throws:
+  - ignore exceptions in afterEach then
+     - reason: beforeEach or main might not have finished repeat loop, or left in the middle of some logic, making cleanup code fail due to wrong assumptions
+  - in a repeat loop, repeat afterEach the same amount of times regardless of whether was triggered by exception or not
+  - get the same array of `this` objects as beforeEach, i.e. the array is created before beforeEach is called, and shared to both
+  - i.e.:
+       try {
+         beforeEach()
+         main()
+       } catch (error) {
+         try {
+           afterEach()
+         } catch {}
+         throw error
+       }
+       afterEach()
 
 Fix `exec`, e.g. `stdio` must be [`ignore`, `inherit`, `inherit`]
   - pSetTimeout() should be either unref() or clearTimeout(), otherwise it will hold the process
