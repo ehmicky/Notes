@@ -5,8 +5,6 @@
 
 
 
-combination.maxDuration -> config.duration
-
 Node runner task argument should be single object with properties:
   - any input, with dimension name as key
   - `context` OBJ:
@@ -87,8 +85,8 @@ Live updating:
      - e.g. tables should be initially shown with all rows|columns and empty cells
   - when:
      - ending benchmark: clean progress reporting. Report again (do not keep the last live reporting)
-     - stopping benchmark once: keep progress reporting. Report again (do not keep the last live reporting)
-     - stopping benchmark twice: keep progress reporting + last live reporting
+     - stopping benchmark once: clean progress reporting. Report again (do not keep the last live reporting)
+     - stopping benchmark twice: clean progress reporting. Keep last live reporting
   - default CONF.duration should be 0 when some reporters are live updating instead
 
 CONF.concurrency NUM
@@ -146,9 +144,9 @@ reporter.debugStats BOOL
         - add comment that we must ensure median is the main one used, so different reporters are consistent, and also because it is used in sorting combinations, and also it is less precise
      - times
         - add comment that it is a bad indicator of precision, and also might be confused as an indicator of speed due to other benchmark libraries showing it like that
-     - loadCost, measureCost, processes, repeat, loops
+     - minLoopDuration, samples, repeat, loops
 
-Sort all the code comments in `measure/**` and the `node|cli` runners. It's a bit messy right now, and some might be outdated
+Sort all the code comments in `measure`, `sample`, `stats`, `process` and the `node|cli` runners. It's a bit messy right now, and some might be outdated
 
 CONF.report|run|store|progress:
   - CONF.report|run|store|progress 'NAME'_ARR (enable|disable)
@@ -167,7 +165,7 @@ CONF.report|run|store|progress:
      - no need for `set()` nesting anymore since all config properties are flat now
 
 ID validation:
-  - for user-defined (task|input|system|mergeId):
+  - for user-defined (task|input|system):
      - [[a-zA-Z0-9]._-]+
      - no empty string
   - for plugins (report|run|store|progress):
@@ -182,8 +180,6 @@ ID validation:
         - reason: confusing when mixed with _ delimiter in config properties
         - reason: not friendly in envvars
      - force module name to spyd-report|run|store|progress-NAME
-  - default mergeId in CI:
-     - use a more generic characters replacement logic, with a slugify library, using the list of allowed characters in mergeId
 
 Add comment that we enforce [a-z][a-z0-9_]* in configuration property names
   - in core (as opposed to plugins), we try to avoid _ too
@@ -217,13 +213,8 @@ CONF.system:
            - shell, e.g. subshell and environment variable expansion
            - passing SPYD_SYSTEM environment variable from caller
   - reporting|measuring:
-     - the current partialResult only uses one system: CONF.system
-        - only `bench` command
-     - CONF.include|exclude allows reporting several systems
-        - `bench|show|remove` commands
-        - either from current benchmark (with CONF.merge) or previous benchmarks
-        - does not apply to measuring
-        - current CONF.system always included
+     - CONF.system is only for `bench` command, i.e. only one system
+     - CONF.include|exclude is only for reporting in `show|remove` commands, i.e. allow reporting several systems
   - add comment that system is only for out-of-spyd env: hardware, OS, git branch, env vars, etc.
 
 result.systems:
@@ -269,9 +260,9 @@ Remove commands dimension:
 
 runner.commands(runConfig):
   - rename to runner.launch(runConfig)
-  - instead of returning [PROMISE_]OBJ, return [PROMISE_]STR, i.e. ['FILE', 'ARGS',... [, OBJ2]]
+  - instead of returning [PROMISE_]OBJ, return [PROMISE_]STR_ARR, i.e. ['FILE', 'ARGS',... [, OBJ2]]
      - OBJ2 is optional spawnOptions
-  - can optionally be directly a STR instead of FUNC()->[PROMISE_]STR
+  - can optionally be directly a STR_ARR instead of FUNC()->[PROMISE_]STR_ARR
 
 runner.versions
   - instead of runner.system
@@ -534,7 +525,6 @@ Execute `listResults()` earlier:
      - `bench` command: combination list computing
      - `show|remove` command: retrieving specific result (i.e. split `getFromStore` into two)
   - reasons:
-     - with CONF.merge, allows skipping already saved combinations
      - show previous|diff during progress|live reporting
      - fail benchmark fast if problem with store
 
@@ -542,60 +532,59 @@ After listResults(), core should normalize partialResults to results:
   - perform an array of reducing functions:
      - meant for migration, when a new release of spyd is making changes to result properties
      - array is empty for the moment
-  - filter by tasks|inputs|systems|propSets
-  - sort by partialResult.timestamp
-  - group partialResults to result using partialResult.mergeId
-     - partialResult.id -> not kept in result
-     - partialResult.mergeId -> result.id
-  - silently filter out duplicate combinations (same mergeId+taskId+inputId+systemId+propItemValue)
-     - reason: might happen if two results with same mergeId ran in parallel
-     - keep one with earliest timestamp
+  - filter by CONF.include|exclude
+  - sort according to sorting order
+
+Sorting order:
+  - mostly based on partialResult.timestamp
+  - if some previous partialResults have same CI build URL (not job), and one has that combination, use only those partialResults
+  - otherwise, do same check but using git commit
+
+New merging logic:
+  - when using bench action, only use partialResults
+     - filter combinations during measure and reporting using CONF.include|exclude
+     - reasons:
+        - stronger focus during bench action on the combination being measured
+        - remove need during the bench action to have separate CONF.include|exclude for measuring and reporting, which is simpler
+           - instead, users should two separate bench then show actions if they want to measure only few combinations then report all of them
+  - when using show|remove actions, merge partialResults into results
+     - only for the partialResult targeted by delta, not to any result.previous
+        - reason: makes more sense for time series reporters
+     - steps:
+        - use the list of possible combinations from when partialResult was taken
+           - as opposed to:
+              - list of possible combinations from now
+                 - reason: make results immutable
+                    - easier to understand
+                    - might want to report a combination that has now been removed
+              - list of combinations measured|reported when partialResult was taken (i.e. CONF.include|exclude from back then)
+        - filter using the current CONF.include|exclude
+        - for any missing combination (i.e. was possible back then, but not measured), use the "latest" one:
+           - must be before the partialResult was taken
+           - "latest" is according to "sorting order" (see below)
+     - when several combinations have different:
+        - timestamp: keep earliest
+        - CI build|job:
+           - merge:
+              - if one has no CI build|job URL, use other
+              - if same CI job URL, use it
+              - if same CI build URL, use it
+              - if several CI build URLs, use the new one
+           - reason: benchmark parallelized on several machines
 
 store.add(result) -> store.add(partialResult)
   - i.e. append only, not merged with previous ones
   - same for addResult()
 
-Add in comment and --help that CONF.merge is meant only for doing a single benchmark but incrementally:
-  - parallelize benchmarks across identical machines (including in CI): same mergeId, same systemId
-  - benchmark across different machines|hardware|software (including in CI): same mergeId, different systemId
-
-When merging combination and there is a duplicate of same mergeId and taskId+inputId+systemId+propItemValue:
-  - different os|cpu|memory|git:
-     - throw and suggest to either use a different systemId, or make a different benchmark
-     - reason: merge is meant for incremental benchmarks, i.e. combinations must be comparable
-  - different CI build|job:
-     - merge:
-        - if one has no CI build|job URL, use other
-        - if same CI job URL, use it
-        - if same CI build URL, use it
-        - if several CI build URLs, use the new one
-     - reason: benchmark parallelized on several machines
-  - different timestamp: keep earliest
-  - different CONF.*:
-     - if propItemValue: different propItems
-     - otherwise: ignored
-  - no difference check if different systemId
-     - only appends to result.systems
-     - reasons: using systems to compare machines, git branches, etc.
-
-CONF.merge skipping previous combinations:
-  - if CONF.merge in `bench` command, do not measure (but still report) combinations already saved
-  - reason: CONF.merge is meant for incremental benchmarks
-
 Deltas:
   - in `show|remove` commands, and CONF.since|diff
   - computed by core
-  - based on listResults() output, after tasks|inputs|systems filtering
-     - reason: if a user is doing `bench` always filtered for specific tasks|inputs|systems, without using CONF.merge (e.g.  each task is a library, and is only recomputed on a new version of the library), then `show` or default CONF.diff 1 should compare each combination to the latest which had same taskId|inputId|systemId
-        - should document this, since it is an alternative to CONF.merge, with similar goals for settings slow or with many dimensions
   - can be:
      - absolute timestamp
      - relative duration like "3m"
      - NUM
-     - mergeId
-  - operates on results, not on partialResults
-  - when using timestamps|duration, should retrieve the full result
-     - even if some partialResult are before, some after the timestamp, for this specific result
+  - operates on partialResults, not results
+     - before CONF.include|exclude filtering
   - delta which cannot be resolved should:
      - CONF.since: empty array
         - reason: allows not doing `sync` before `bench` in CI
