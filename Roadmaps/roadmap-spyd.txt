@@ -5,6 +5,40 @@
 
 
 
+Error handling:
+  - handle combination-wise errors:
+     - should return { ...combination, error } instead of throwing them and using try/catch
+        - in receiveReturnValue(), also return new res
+     - for all stages: start, measure, stop, exit
+     - for IPC error and `error` response
+  - instead of throwing and using try/catch/finally, make each stage aware of potential errors:
+     - make getNextCombination() return undefined if combinations.some(({ error }) => error !== undefined)
+     - measure stage should `continue` loop if combination.error !== undefined
+     - skip stop stage for any combination with error !== undefined
+  - after all combinations have exited:
+     - add task prefix at the error message
+     - propagate error
+
+Process exit:
+  - process spawned with execa OPTS.reject false
+  - keep the childProcess.kill()
+     - but change to "SIGKILL" in case of bugs, and also for when hitting CTRL-C twice
+     - add comment that we purposely use OPTS.cleanup true in case programmatic caller exits process
+  - during start, measure or stop, each combination-wise logic should use Promise.race() with failOnProcessExit(combination)
+     - await combination.childProcess PROMISE
+     - on exit (success or not), return { ...combination, error }
+     - both for success and failure (wrong exit code, signal, stream error), but with different error message
+     - it indicates that task user code exited the process, even though it should not
+  - during exit should
+     - use Promise.race() between:
+        - childProcess PROMISE (not failOnProcessExit())
+        - send final response, then await childProcess PROMISE
+     - do not set combination.error, except if final response sending throws
+
+onOrchestrateError:
+  - should instead pass an ERROR as payload to "return" to all combinations
+  - each combination should then return it as { ...combination, error }
+
 Hooks:
   - execute afterEach if beforeEach|main throws:
      - ignore exceptions in afterEach then
@@ -40,10 +74,6 @@ Hooks:
             throw error
           }
           afterAll()
-
-Progress description:
-  - "Finishing..." (with delay) on non-error cleanup+exit
-  - "Stopping..." (without delay) on error or interruption
 
 Fix `exec`, e.g. `stdio` must be [`ignore`, `inherit`, `inherit`]
   - pSetTimeout() should be either unref() or clearTimeout(), otherwise it will hold the process
