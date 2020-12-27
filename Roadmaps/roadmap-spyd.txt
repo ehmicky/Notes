@@ -5,47 +5,41 @@
 
 
 
-Hooks:
-  - add beforeAll:
-     - performed right after start, but before first sendReturnValue()
-  - add afterAll, performed either:
-     - after the measure loop has stopped, right before successExit()
-        - exception in afterAll propagated
-     - if exception during beforeAll or measureSamples():
-        - but exception in afterAll not propagated
-     - i.e.:
-          try {
-            beforeAll()
-            measureSamples()
-          } catch (error) {
-            try {
-              afterAll()
-            } catch {}
-            throw error
-          }
-          afterAll()
+Progress:
+  - `signal-exit` not good because intercept signals???
+  - screen refreshing:
+     - refresh whole screen at the beginning
+        - use `signal-exit`
+        - experiment if there is a way to refresh partial screen instead of whole screen
+           - it should still work if user types newline or characters
+     - each update should refresh the whole screen with the new content
+        - but by printing over it, not clearing it first, to avoid flickering
+        - i.e. need to padRight() the new content if the old content was larger
+  - new progress.*() shape:
+     - since core now handles refreshing the screen
+     - progress.update():
+        - must return a STR
+        - must be sync
+     - remove progress.start|end()
 
-Rename progressState.description "Finishing..." to "Stopping..."
-
-Manually interrupting benchmark:
+Stopping benchmark:
   - on `SIGINT`, `SIGBREAK`, `SIGHUP` or `SIGTERM`
-     - either interactive TTY or not
-     - including if CONF.duration -1 or 0
+     - add comment that either interactive TTY or not
   - listening for signals:
      - setup listeners right before measureAllCombinations()
-     - allow listener handler to throw (when interrupting twice) using Promise.race() on measureAllCombinations()
+     - allow listener handler to throw (when stopping twice) using Promise.race() on measureAllCombinations()
      - remove listeners in `finally` block right after measureAllCombinations()
   - when done once:
-     - sets state.interrupted true
-     - getRemainingCombinations() should return empty ARR if state.interrupted true
+     - sets state.stopped true
+     - getRemainingCombinations() should return empty ARR if state.stopped true
        - i.e. stop measuring but still allow for proper cleanup
        - i.e. progressState.benchmarkEnd updated to show 0s left
-    - set progressState.priorityDescription "VERB???..."
+    - set progressState.priorityDescription "Stopping..."
        - without delay
        - progressState.priorityDescription is like progressState.description but overrides it when defined
-          - i.e. not updated by "Stopping..." nor by "" (when "Starting..." ends)
-       - after 5 secs, "VERB???... Type KEY again to abort graceful exit" instead, stickily
-          - unless already interrupted twice
+          - i.e. not updated by "Ending..." nor by "" (when "Starting..." ends)
+       - after 5 secs, "Stopping... Type KEY again to abort graceful exit" instead, stickily
+          - unless already stopped twice
     - set progressState.benchmarkEnd:
         - now() + sampleDurationMean + (now() - sampleDurationStart)
         - not done if sampleDurationMean undefined, i.e. neither:
@@ -53,6 +47,7 @@ Manually interrupting benchmark:
            - first measure sample of category
      - report, but do not CONF.save
         - unless there is a combination.error, which is propagated instead
+        - keep the progress reporting printed
      - if current combination is currently over CONF.duration, do childProcess.kill("SIGKILL") on it
         - i.e. combinationDuration + now() - sampleDurationStart > CONF.duration
         - reason: most likely mean user intended to stop a combination which last longer than CONF.duration, and might take a while to end
@@ -66,6 +61,26 @@ Manually interrupting benchmark:
         - as the error propagates, it executes the finally handler which does childProcess.kill("SIGKILL") all processes
         - throw UserError with "Benchmark has been aborted."
            - if there is a combination.error, throw it instead
+        - keep the progress reporting printed
+
+Once mode:
+  - CONF.duration 0
+  - measures each combination exactly once
+     - wait for repeatInit true though
+  - progress reporting:
+     - pass percentage undefined
+     - instead of durationLeft, pass just duration
+        - incrementing, not decrementing
+        - time units increase too: SSs, then MMmSSs, then HHhMMmSSs
+
+Infinite duration:
+  - CONF.duration -1
+  - measures forever
+  - default value: -1 if interactive TTY, 0 otherwise
+  - progress reporter: like CONF.duration 0
+  - validate that CONF.save is not true
+  - progressState.description "Type CTRL-C to stop"
+     - or equivalent key on Windows
 
 Execute afterEach if beforeEach|main throws:
   - ignore exceptions in afterEach then
@@ -130,46 +145,12 @@ Live updating:
      - including all possible result.combinations, even ones not measured yet
      - excluding CONF.show, always empty
   - if reporter.progress false, reporter.report() can be async. If true, cannot.
+     - what about progress reporter itself??? Allow progress reporter to be async and not return a STR for tty???
   - progress reporter is appended to it:
      - performed right after each live reporting
-  - screen refreshing:
-     - refresh whole screen at the beginning
-        - use `signal-exit`
-        - experiment if there is a way to refresh partial screen instead of whole screen
-           - it should still work if user types newline or characters
-     - each update should refresh the whole screen with the new content
-        - but by printing over it, not clearing it first, to avoid flickering
-        - i.e. need to padRight() the new content if the old content was larger
-  - new progress.*() shape:
-     - since core now handles refreshing the screen
-     - progress.update():
-        - must return a STR
-        - must be sync
-     - remove progress.start|stop()
   - limit the amount of changes of the general shape of the output between the initial call and the final one, to make it look nicer
      - e.g. tables should be initially shown with all rows|columns and empty cells
-
-Once mode:
-  - CONF.duration 0
-  - measures each combination exactly once
-     - wait for repeatInit true though
-  - progress reporting:
-     - pass percentage undefined
-     - instead of durationLeft, pass just duration
-        - incrementing, not decrementing
-        - time units increase too: SSs, then MMmSSs, then HHhMMmSSs
-
-Infinite duration:
-  - CONF.duration -1
-  - measures forever
-  - default value: -1 if interactive TTY, 0 otherwise
-  - progress reporter: like CONF.duration 0
-  - when manually interrupting benchmark:
-     - keep both progress reporter and live reporter printed
-     - report all other reporters too
-  - validate that CONF.save is not true
-  - progressState.description "Type CTRL-C to exit"
-     - or equivalent key on Windows
+  - when stopping benchmark (either once or twice), should keep the last live reporting printed
 
 CONF.concurrency NUM
   - validate that CONF.concurrency NUM is integer >=1
@@ -660,7 +641,7 @@ CONF.merge skipping previous combinations:
   - reason: CONF.merge is meant for incremental benchmarks, including continuing stopped benchmark
 
 Saving stopped benchmark:
-  - when manually interrupting benchmark (SIGINT, etc.)
+  - when stopping benchmark (SIGINT, etc.)
   - serialize current measuring state (including all `measures`) to file
      - in GLOBAL_CACHE_DIR/HASH/stopped_benchmark.json
         - HASH is SHA1 of normalized absolute file path of CONF.settings
