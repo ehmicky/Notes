@@ -122,46 +122,6 @@ reporter.debugStats BOOL
 
 Sort all the code comments in `measure`, `sample`, `stats`, `process` and the `node|cli` runners. It's a bit messy right now, and some might be outdated
 
-CONF.report|run|store|progress:
-  - CONF.report|run|store|progress 'NAME'_ARR (enable|disable)
-  - CONF.report|run|store|progress_NAME_PROP VAL (config)
-     - can set config even if disabled. Does not enable.
-  - reasons:
-     - flat simpler than nesting
-     - single delimiter character. No mixing several like - _ .
-     - distinction selecting adapters vs configuring them
-     - allow different users and programming languages to use prefered characters in ids
-     - works unescaped with YAML and JSON
-     - easy to understand when both CONF.VAR and CONF.report_{reporterId}-PROP are possible. The second is just like a selector/namespace
-  - remove the `addRunners()` function which split CONF.run to CONF.run|runners
-
-ID validation:
-  - for user-defined (task|input|system):
-     - [[a-zA-Z0-9]._-]+
-     - no empty string
-  - for plugins (report|run|store|progress):
-     - [a-z][a-z0-9]*
-     - no empty string
-     - no _
-        - reason: not allowed in npm package name
-        - reason: used as config property delimiter
-     - no .
-        - reason: not allowed in npm package name
-     - no -
-        - reason: confusing when mixed with _ delimiter in config properties
-        - reason: not friendly in envvars
-     - force module name to spyd-report|run|store|progress-NAME
-
-Add comment that we enforce [a-z][a-z0-9_]* in configuration property names
-  - in core (as opposed to plugins), we try to avoid _ too
-  - reasons:
-     - no mixed case, because it is not common in CLI flags nor environment variables
-     - consistent option name across spyd.yml, CLI flags, envvars, programmatic
-     - no multiple delimiters
-
-Validate that there are no duplicate ids for tasks|inputs|systems|propSets|runners
-  - reason: allows using id only (without specifyig the type) in some contexts, e.g. CONF.include|exclude
-
 runner.config.PROP.example STR[_ARR]
   - for all plugins: reporter, progress, runner, store
   - meant for validation, using jest-validate (same validation as for CONF.*):
@@ -175,7 +135,7 @@ CONF.system:
      - def: "default_system"
         - reason: unlikely to conflict with a taskId or inputId
      - title:
-        - not needed due to titles.yml
+        - not needed due to CONF.titles
         - def: same as default id
            - not shown in core reporters (since sharedSystem is top-level)
      - no variables
@@ -207,6 +167,54 @@ result.systems:
      - no more config nor runConfig
         - should use propSets instead
 
+CONF.report|run|store|progress:
+  - CONF.report|run|store|progress.use 'NAME'_ARR (enable|disable)
+  - CONF.report|run|store|progress.NAME.PROP VAL (config)
+     - i.e. OBJ
+     - can set config even if disabled. Does not enable.
+  - reasons:
+     - allow more complex spyd.yml
+     - single delimiter character. No mixing several like - _ .
+     - distinction selecting adapters vs configuring them
+     - allow dashes in user-defined IDs
+     - allow different users and programming languages to use prefered characters in ids
+     - works unescaped with YAML and JSON
+  - remove the `addRunners()` function which split CONF.run to CONF.run|runners
+
+CLI flags are dot-delimited VARR converted to OBJ
+  - reasons:
+     - allow dashes in IDs
+     - make it clear that in YAML, OBJs must be used
+
+Envvars names: SPYD.VARR (dot-delimited)
+
+ID validation:
+  - for user-defined (task|input|system):
+     - [[a-zA-Z0-9]_-]+
+     - no empty string
+  - for plugins (report|run|store|progress) and configuration properties (including runConfig):
+     - [a-z][a-z0-9]*
+     - no empty string
+     - no _
+        - reason: not allowed in npm package name
+        - reason: used as config property delimiter
+     - no .
+        - reason: not allowed in npm package name
+     - no -
+        - reason: confusing when mixed with _ delimiter in config properties
+        - reason: not friendly in envvars
+     - force module name to spyd-report|run|store|progress-NAME
+
+Add comment that we enforce [a-z][a-z0-9_]* in configuration property names
+  - in core (as opposed to plugins), we try to avoid _ too
+  - reasons:
+     - no mixed case, because it is not common in CLI flags nor environment variables
+     - consistent option name across spyd.yml, CLI flags, envvars, programmatic
+     - no multiple delimiters
+
+Validate that there are no duplicate ids for tasks|inputs|systems|propSets|runners
+  - reason: allows using id only (without specifyig the type) in some contexts, e.g. CONF.include|exclude
+
 Remove commands dimension:
   - runner.launch() returns a single OBJ instead of OBJ_ARR:
      - commands is not a input-like dimension anymore, including in:
@@ -232,22 +240,128 @@ Remove commands dimension:
   - remove any instances of the word "command", except for CLI commands, to avoid confusion
      - commandConfig -> runConfig
 
+Configuration load:
+  - steps:
+     - load flags and envvars -> CONF
+     - get CONF.config from it
+        - def: [.../]./benchmark/spyd.y[a]ml
+           - do not fail if none found
+     - load spyd.yml
+        - omit any `config` property from it (including through CONF.extend)
+  - remove:
+     - global config dir
+     - CONF.settings
+
+CONF.extend STR
+  - merge another config
+  - allows repo-wide, machine-wide or org-wide config
+  - STR is either "PATH" or "MODULE"
+  - merge:
+     - OBJ: deep merge
+     - ARR: override (no merge nor concat)
+     - any other type: override
+  - after merging, any null values should be omitted
+     - this allows unsetting extended config properties
+
+Cwd:
+  - CONF.config|extend|output|insert:
+     - if CLI flag or envvar, current directory
+     - if spyd.yml, its directory
+  - processes: task file's directory
+  - remove CONF.cwd
+
+CONF.run "RUNNER_ID"_ARR
+  - default value
+     - only bundled runners
+        - reason: runners in CONF.run not installed fail, and we do not want to force npm installs
+     - def: ["node", "cli"]
+     - should not put several runners with same|shared EXTs
+  - is a dimension, i.e. can CONF.include|exclude
+     - only cartesian product to tasks with matching file extension
+  - add code comment that we use explicit CONF.run instead of:
+     - using code comment
+        - bad performance with big files
+        - transpiling removing comments
+        - does not work in compiled binaries
+     - using filenames:
+        - does not work will with multiple runners per task
+        - leads to odd filenames when runner and extension are similar|same
+     - guessing using require()
+        - too implicit/magic
+        - would also find dependencies dependencies
+        - does not work well with bundled runners
+
+Tasks and runners selection
+  - CONF.tasks.RUNNER 'GLOB'[_ARR]
+     - def: empty ARR, i.e. tasks must be explicitly set
+     - RUNNER that are used and loaded are the ones with at least one matching file
+        - single task file can target several runners, which spawns several combinations
+  - task ID is up until first dot in filename
+     - this allows two different task files with same ID
+     - validate that no two task files have same taskId + runner
+        - but can have same taskId and different runner, or vice-versa
+  - remove runner.extensions
+
+Better titles:
+  - specified in CONF.titles
+     - OBJ:
+        - key is id
+        - value is title STR
+     - can be any dimension: task, input, system, propSets, runner
+     - reasons:
+        - no need to wait for processes spawn to start displaying task titles
+        - single place for users to specify titles for tasks, inputs and systems, i.e. simpler
+        - simpler for runner, which do not need to handle titles
+  - default title:
+     - task, input, system, propSets: same as id
+     - runner: runner.title
+  - CONF.show "titles"
+     - if absent, show ids, not titles
+        - reason: making id clear to users for CONF.include|exclude
+     - def: absent
+  - remove title specified in:
+     - task.title
+     - inputs
+     - no more need to return inputTitle|taskTitle from runner.start()
+
+CONF.inputs
+  - instead of inputs inside tasks
+  - format:
+     - OBJ:
+        - key is dimension name, used in variable name passed to runners
+        - value is OBJ2:
+           - key is input item id
+           - value is input item VAL (any JSON type)
+     - reasons:
+        - monomorphic
+        - simple
+        - allow any VAL type (including object) without ambiguity
+        - enforce user defining both dimension name and input ids
+           - more readable in reporting, selecting and task files
+           - using the value for id would require serializing it, which would limit the possible types of input values
+  - runner.measure() gets `input` value instead of inputId
+  - multiple inputs dimensions:
+     - i.e. cartesian product between them
+     - runner gets each input as a named variable
+  - the resulting inputs can all be selected with CONF.include|exclude
+     - no more need to return inputId|inputTitle from runner.start()
+
 propSets:
   - name:
      - propSet: whole dimension
      - propItem: each item in a propSet
      - called "configuration property sets" in comments and documentation
-  - some config properties can have an optional "_{ID}" suffix:
-     - if same config property name excluding suffix -> same propSet
-     - if same suffix too -> same propItem
-     - validate that no runner configuration property name starts with another followed by _, since that would prevent using propSets on that one
-  - "_{ID}" suffix is optional:
-     - without it, it is still a propItem
+  - some config properties can optional be PROP: { ID: VAL, ... } instead of VAL
+     - if same PROP -> same propSet
+     - if same PROP + ID -> same propItem
+  - when merging results:
+     - if some PROP uses propSets in one result, but not in another
+     - then use ID 'default' to convert so all instances of that PROP have a propSet
      - this allows keeping history continuity when introducing propItems
   - only on any CONF.* that can change the results:
      - CONF.concurrency
      - CONF.duration
-     - any CONF.run_{runnerId}_*
+     - any CONF.run.{runnerId}.*
         - cartesian product only to combinations with that runner
   - each propSet is a separate dimension, distinct from other propSets:
      - in CONF.include|exclude
@@ -255,7 +369,7 @@ propSets:
      - result.propSets OBJ_ARR_ARR, not OBJ_ARR
      - combination.propSets ARR
   - propItemId:
-     - full config property name, including "_{ID}" (unless there is none)
+     - 'PROP.ID' (not just 'ID')
      - used as identifier like for other dimensions, including:
         - comparing between combinations (including between different benchmarks)
         - selecting with CONF.include|exclude|limit
@@ -296,105 +410,6 @@ CONF.include|exclude STR_ARR
      - task.inputs
   - CONF.limit should be STR_ARR with same format as CONF.include
      - except each STR is prepended with percentage (then space) and IDs are optional
-
-CONF.settings "DIR"
-  - used for task files
-  - used as the cwd for CONF.output|insert
-  - used as the cwd of processes
-  - remove CONF.cwd
-
-Config file need two rounds, since CONF.settings/spyd.yml might be found using CONF.settings from other locations
-  - is this even possible???
-
-CONF.run "RUNNER_ID"_ARR
-  - default value
-     - only bundled runners
-        - reason: runners in CONF.run not installed fail, and we do not want to force npm installs
-     - def: ["node", "cli"]
-     - should not put several runners with same|shared EXTs
-  - is a dimension, i.e. can CONF.include|exclude
-     - only cartesian product to tasks with matching file extension
-  - add code comment that we use explicit CONF.run instead of:
-     - using code comment
-        - bad performance with big files
-        - transpiling removing comments
-        - does not work in compiled binaries
-     - using filenames:
-        - does not work will with multiple runners per task
-        - leads to odd filenames when runner and extension are similar|same
-     - guessing using require()
-        - too implicit/magic
-        - would also find dependencies dependencies
-        - does not work well with bundled runners
-
-Task files selection:
-  - SETTINGS[/*]/TASK_ID.task.[RUNNER.]EXT
-     - allows for both regular files and 1-depth directories
-  - no more CONF.files (CLI positional argument)
-  - use `junk` to filter out
-  - only task files with matching runners
-     - only if present in CONF.run
-     - based on runner.extensions "EXT"_ARR
-        - EXT can have dot in it, e.g. 'EXT.EXT2'
-     - can override with RUNNER in filename, in which case runner.extensions is ignored
-        - must still be present in CONF.run
-        - possible goals:
-           - if runner.extensions does not contain the extension wanted by user
-           - allow two files with same taskId, same file extension but different runners
-              - e.g. taskId.task.node.js and taskId.task.browser.js
-     - single task file can target several runners, which spawns several combinations
-     - no errors if no matching runners
-        - reason: selecting with CONF.run
-  - validate that no two task files have same taskId + runner
-     - but can have same taskId and different runner, or vice-versa
-  - the resulting tasks can all be selected with CONF.include|exclude
-  - no need to return taskId anymore in runner start()
-
-Better titles:
-  - specified in titles.yml
-     - OBJ:
-        - key is id
-        - value is title STR
-     - can be any dimension: task, input, system, propSets, runner
-     - reasons:
-        - no need to wait for processes spawn to start displaying task titles
-        - single place for users to specify titles for tasks, inputs and systems, i.e. simpler
-        - simpler for runner, which do not need to handle titles
-  - default title:
-     - task, input, system, propSets: same as id
-     - runner: runner.title
-  - CONF.show "titles"
-     - if absent, show ids, not titles
-        - reason: making id clear to users for CONF.include|exclude
-     - def: absent
-  - remove title specified in:
-     - task.title
-     - inputs
-     - no more need to return inputTitle|taskTitle from runner.start()
-
-inputs.yml:
-  - instead of inputs inside tasks
-  - located at SETTINGS/inputs.yml
-  - use JSON_SCHEMA js-yaml option
-  - format:
-     - OBJ:
-        - key is dimension name, used in variable name passed to runners
-        - value is OBJ2:
-           - key is input item id
-           - value is input item VAL (any JSON type)
-     - reasons:
-        - monomorphic
-        - simple
-        - allow any VAL type (including object) without ambiguity
-        - enforce user defining both dimension name and input ids
-           - more readable in reporting, selecting and task files
-           - using the value for id would require serializing it, which would limit the possible types of input values
-  - runner.measure() gets `input` value instead of inputId
-  - multiple inputs dimensions:
-     - i.e. cartesian product between them
-     - runner gets each input as a named variable
-  - the resulting inputs can all be selected with CONF.include|exclude
-     - no more need to return inputId|inputTitle from runner.start()
 
 CONF.info|context -> CONF.show STR_ARR among 'system', 'metadata'
   - if no:
@@ -487,17 +502,16 @@ New merging logic:
      - only for the partialResult targeted by delta, not to any result.previous
         - reason: makes more sense for time series reporters
      - steps:
-        - use the list of possible combinations from when partialResult was taken
-           - as opposed to:
-              - list of possible combinations from now
-                 - reason: make results immutable
-                    - easier to understand
-                    - might want to report a combination that has now been removed
-              - list of combinations measured|reported when partialResult was taken (i.e. CONF.include|exclude from back then)
-        - filter using the current CONF.include|exclude
-        - for any missing combination (i.e. was possible back then, but not measured), use the "latest" one:
+        - use the current list of possible combinations
+           - including current CONF.include|exclude
+           - as opposed to list of possible combinations from when partialResult was taken
+              - reason: this requires storing list of possible combinations, which is not possible when they are being restricted using CONF.tasks|inputs
+        - find matching combinations from the ones measured in the partialResult
+        - for any combination missing (not measured), use the "latest" one:
            - must be before the partialResult was taken
            - "latest" is according to "sorting order" (see below)
+           - if none found, silently ignore it
+              - except if none found for all combinations, in which case errors
      - when several combinations have different:
         - timestamp: keep earliest
         - spydVersion: keep the lowest one
@@ -695,6 +709,11 @@ Competitors benchmark:
 
 Add roadmap:
   - point to it from contribution doc to orient contributors towards features I want (e.g. HTML reporter)
+
+Send PRs to do or redo benchmarks of repositories to
+  - get user feedback
+  - experience the library as a user
+  - get visibility
 
 Promote
 
