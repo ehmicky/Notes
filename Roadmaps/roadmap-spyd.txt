@@ -193,7 +193,7 @@ CONF.*:
   - CONF.context -> CONF.showMetadata
   - pass `undefined` to reporters:
      - if CONF.showSystem false: for result.sharedSystem|systems[*].machine|versions|spyd
-     - if CONF.showMetadata false: for result.sharedSystem|systems[*].git|ci and result.timestamp
+     - if CONF.showMetadata false: for result.sharedSystem|systems[*].git|ci and result.id|timestamp
   - default value:
      - CONF.showSystem: CONF.system !== undefined
      - CONF.showMetadata: command === `show|remove`
@@ -311,53 +311,101 @@ New merging logic:
               - versions: same but do shallow merge
 
 New merging logic:
-  compareResults():
-    - done as reduce(), from earliest to most recent
-    - based on last lastCombinations, modify each combination to add:
-       - diff NUM: only set if CONF.diff true
-       - slow BOOL: only set if CONF.limit defined
-    - return lastCombinations OBJ
-       - shallow merged with last lastCombinations (initially empty OBJ)
-       - key is combination.key
-       - value is OBJ2: combination OBJ3, result OBJ4
+  remove compareResults()
   mergeResults():
     - add result.previous ARR results.slice(-1)
        - no combination.previous
        - ARR of result OBJ
        - same shape OBJ
           - including groups|collections
-          - including combination.diff|slow
-          - excluding result.previous
-       - merging adds combination to lastResult, but does not remove any from previous
+          - excluding result.previous and combination.stats.diff
+    - merge previous missing combinations
+       - steps:
+          - find all possible combination dimensions
+             - after filtering (done by selectResults())
+             - excluding ones already in last result
+          - for each:
+             - find the most recent combination
+             - append to result.combinations
+       - does not modify previous results
           - i.e. added combinations are present both in latest result and in one of the previous results
-    - for each lastCombinations:
-       - present in last result: result add diff
-       - otherwise: append to combinations
+    - add result.combinations[*].stats.diff
+       - resolve CONF.compare -> comparedResult
+       - for each combination
+          - including the ones which just got added
+       - compared with comparedCombinations OBJ
+          - same as lastCombinations but up until result targeted by CONF.compare
+             - should not have any of the "previous missing combinations" which just got merged
     - add grouped info
        - override any existing ones
   On bench:
     - create a result with all combinations but empty results
-       - add combinations[*].key
     - on each new sample:
        - append result to previous results
        - mergeResults()
     - keep `result` intact so it can be `store.save()`
 
+CONF.showDiff:
+  - CONF.diff -> CONF.showDiff
+  - BOOL|delta -> BOOL
+  - compare target benchmark with CONF.compare benchmark
+  - def: true if interactive output, false otherwise
+  - combination.stats.diff:
+     - set only in target benchmark
+     - omitted to reporters if CONF.showDiff false
+
+CONF.limit:
+  - compare target benchmark (i.e. currently measured) with CONF.compare benchmark
+  - no reporting:
+     - no CONF.reportId.limit
+     - not available in show|remove commands, only in bench command
+     - do not set combination.stats.limit|slow
+     - never reported
+  - only conditionally throws error:
+     - after reporting
+     - using combination.stats.diff
+  - def: empty ARR, i.e. never match
+
+CONF.compare DELTA
+  - def: 1
+  - used by both CONF.showDiff and CONF.limit
+  - DELTA:
+     - relative to target benchmark
+        - bench command: measured benchmark
+        - show|remove commands: shown benchmark
+     - target benchmark filtered out before resolving DELTA
+        - i.e. never compare target benchmark with self
+        - i.e. DELTA 1 always mean benchmark before target benchmark
+     - fails if cannot resolve
+        - except if there are no benchmarks before target benchmark: silently ignore CONF.showDiff|limit instead
+  - combinations not in delta benchmark:
+     - use the most recent benchmark before delta benchmark that has that combination
+     - if none, silently ignore
+
+Reverse results order, when sorting
+  - including result.previous
+
+Revert commit which removed reporting of result.id
+
 Deltas:
-  - in `show|remove` commands, and CONF.since|diff
+  - in `show|remove` commands, and CONF.since|compare
   - computed by core
   - can be:
      - absolute timestamp
      - relative duration like "3m"
      - NUM
+     - result.id
+     - result.git.commit|branch|tag
+        - for commit: either 8 or 40 chars
+        - if several matches, use latest
   - operates on results after CONF.include|exclude filtering
   - delta which cannot be resolved should:
      - CONF.since: empty array
         - reason: allows not doing `sync` before `bench` in CI
-     - CONF.diff: same as no diff
+     - CONF.compare: same as no diff|limit
      - `show|remove`: error
   - for relative duration and NUM, base:
-     - CONF.since|diff in `show|remove` command: shown result
+     - CONF.since|compare in `show|remove` command: shown result
      - otherwise, latest|now
   - for absolute|relative date: target the closest earlier (not later) result
 
