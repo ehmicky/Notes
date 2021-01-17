@@ -6,40 +6,6 @@
 
 ------------------------------- TEMPORARY
 
-Calling runner.measure() with multiple steps:
-  - call runner.measure() once per step or once per task???
-  - currently:
-     - per runner.measure():
-        - `measureDuration`
-           - note that measureDuration should not vary based on number of steps (i.e. measures sum of all steps):
-              - splitting a step should not change the sample target duration
-              - better responsiveness
-     - per step:
-        - `maxLoops`: currently 100ms / `measureDuration`
-        - `scale`
-           - merge this with `maxLoops`, by multiplying to it instead???
-        - `repeat`
-        - `empty`
-        - result `stats`
-           - including aggregation and aggregate countdown
-     - per task:
-        - `context` OBJ
-        - `measureCosts` and `resolution`
-
-measureCost computation:
-  - computed only once during task start???
-     - use a hardcoded number of measureCosts, e.g. 1e5??? or duration, e.g. 1s???
-     - returning it or not replaces `runner.repeat` BOOL???
-  - in a separate process???
-     - i.e. CONF.empty BOOL is passed as start time instead, making the task be empty
-        - or use CONF.taskId undefined???
-     - task-independent???
-        - shared between combinations with same runner???
-     - no more need to send both mainMeasures and emptyMeasures
-     - does not decrease precision anymore
-     - with no before|after???
-     - call empty function, because it is simpler to implement for runners (just need to return it during start, and `bench` loop can be kept the same)
-
 Metrics
   - custom metric:
      - return NUM from step function
@@ -286,6 +252,37 @@ Step functions:
      - part of CONF.rowName, not CONF.columnName
      - result.steps OBJ_ARR
      - combination.steps ARR
+  - implementation:
+     - runner:
+        - on start, returns `steps` "stepId"_ARR to parent
+           - ARR in execution order
+        - on measure, gets param `steps` OBJ_ARR: id "stepId", scale NUM, repeat NUM
+           - ARR in execution order
+        - do {
+            const context = { ...beforeContext }
+            const args = { context }
+
+            for (const { id, scale, repeat } of steps) {
+              while (scale--) {
+                startTime()
+                while (repeat--) {
+                  steps[id](args)
+                }
+                endTime()
+              }
+            }
+          } while (maxLoops--)
+        - ensure:
+           - last step measured is always real last step, i.e. does not leave state half-finished
+           - each step run at least once
+        - returns `measures` ARR_ARR_NUM
+           - ARR in steps execution order
+     - parent:
+        - `measureDuration`, `aggregationCountdown` are for whole sample (it is already the case)
+        - `maxLoops` = 100ms / sum(steps.map((step) => step.median * step.repeat * step.scale))
+        - `combination.steps` OBJ_ARR: id "stepId", ...
+           - for all step-wise state: measures, bufferedMeasures, stats, loops, times, repeat, repeatInit
+           - not for: everything related to minLoopDuration, samples
   - reporting:
      - report one separate table per step
         - step title should be in top-left corner
@@ -737,6 +734,27 @@ combination.rowName|columnName:
      - except the ones not useful, e.g. system (since there is only one per execution), or inputs if none are used, etc.
   - use in `taskPrefix` used when there is a error during measuring???
 
+Compute emptyMeasures only once during each combination start:
+  - reason why during start and not continuously during measuring:
+     - simpler for runner and parent
+     - more stable as config and tasks change
+     - precision of `minLoopDuration` is not very critical since both maxLoops and `scale` runs a step more|less if `repeat` is lower|higher due to lower|higher `minLoopDuration`
+     - do not impact optimization of step functions since it is run first
+  - using a hardcoded number of emptyMeasures, e.g. 1e4 or 1e5
+     - reasons:
+        - avoid differences due to some engines like v8 optimize speed at specific thresholds
+        - avoid differences due to different CONF.duration
+        - computing emptyMeasures is fast enough
+        - resolution estimation requires a minimum amount of numbers
+  - for each combination, even if same runner
+     - reasons:
+        - runnerConfig might impact result
+        - more difference between combination for a given result, but less between average of combinations for several results
+  - instead of `runner.repeat` false, runner should return an empty ARR for `emptyMeasures`
+  - no more `empty` params
+  - spawnParams.empty NUM (number of emptyMeasures)
+  - rename mainMeasures to measures
+
 CONF.compare DELTA
   - fix `getComparedIndex()` to use CONF.compare
      - CONF.compare should not error when there are no results yet
@@ -861,6 +879,10 @@ Consider lowering the valid Node version for spyd-runner-node, so that `run.node
 
 Add REPL to evaluate Node.js or `cli` runner task on-the-fly???
   - should allow OPTS.save, so differences are shown
+  - or instead re-use shell REPL, and just allow one-off commands
+     - e.g. spyd fast "CLI command"...
+       or spyd fast "Node statements"...
+     - each STR is a task
 
 Create a store that works in GitHub actions???
 
