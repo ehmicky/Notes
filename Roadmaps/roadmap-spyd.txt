@@ -4,6 +4,493 @@
         
 
 
+------------------------------- TEMPORARY
+
+Calling runner.measure() with multiple steps:
+  - call runner.measure() once per step or once per task???
+  - currently:
+     - per runner.measure():
+        - `measureDuration`
+           - note that measureDuration should not vary based on number of steps (i.e. measures sum of all steps):
+              - splitting a step should not change the sample target duration
+              - better responsiveness
+     - per step:
+        - `maxLoops`: currently 100ms / `measureDuration`
+        - `scale`
+           - merge this with `maxLoops`, by multiplying to it instead???
+        - `repeat`
+        - `empty`
+        - result `stats`
+           - including aggregation and aggregate countdown
+     - per task:
+        - `context` OBJ
+        - `measureCosts` and `resolution`
+
+Metrics
+  - custom metric:
+     - return NUM from step function
+        - reasons, as opposed to set `measure` argument:
+           - argument could be destructured, leading to assignment not working
+           - arguments used for too many things: inputs, message passing, output
+           - clear that return value has this type of semantics
+        - reason why NUM instead of OBJ: works for every language, including cli runner
+     - overrides the automatic duration
+        - except with ratio, when both are used
+     - can sometimes return undefined, sometimes not???
+        - in same step+task???
+        - in same step but different task???
+           - e.g. some use auto duration, others custom duration
+     - type: float
+        - allow negative???
+        - allow 0???
+     - forbid returning undefined if non-duration unit is configured???
+     - impact on repeat|scale computation???
+        - with custom metrics
+           - duration and non-duration
+           - ratio and non-ratio
+        - with single step or multiple steps (precise mode or not)
+     - runner implementation:
+        - tell runner when computing duration is not needed???
+        - tell runner to return automatic duration, return value, or both???
+           - or always return both???
+     - stastd integration???
+  - unit:
+     - of the custom metric
+        - can it be used even without custom metrics???
+           - e.g. for ratios???
+     - default CONF.unit "ns"???
+        - possible reasons not make it required instead:
+           - avoid functions returning value but not intended, e.g. when exported directly
+           - avoid returning seconds or ms when ns is expected
+     - can be duration unit, allowing custom duration:
+        - could be useful when task file is measuring another process, e.g. time spent on a server
+     - same step from different tasks should have same unit
+        - including if single step for all tasks
+     - unit is used as is in measuring
+     - do not allow empty string???
+     - configuration???
+        - CONF.unit[.stepId] "UNIT[/TIME_UNIT]"
+     - reporting:
+        - unit is automatically scaled to the most appropriate
+           - e.g. 'ns' -> 's' or 'B' -> 'MB'
+           - re-use existing logic for this
+           - only if the unit scale can be understood, based on hardcoded list:
+              - duration
+              - SI prefixes: K, Ki, M, etc., with known suffixes: B, b, etc.
+           - allow opt-out???
+        - asc|desc sorting???
+           - based on metric type???
+           - add config property to change???
+        - max size or truncate???
+        - anything else???
+  - ratio:
+     - for both custom metrics and normal metrics
+     - instead of duration|metric per iteration, show iteration per duration|metric
+     - specified by appending '/...' or 'per ...' to CONF.unit???
+     - how to decide the ratio unit: in CONF.unit too???
+
+Error handling:
+  - propagate afterAll() errors even if was called due to another exception
+     - reason: afterAll() should take into account that it might be called on an exception, and still do proper cleanup
+  - do not call afterAll() if an exception happened in beforeAll()
+
+Context OBJ:
+  - initialized to empty OBJ
+     - passed to before|after
+  - before each iteration, shallow copy that OBJ
+     - i.e. each iteration has fresh copy
+     - i.e. cannot communicate with next iteration
+        - reason: might accidentally get previous iteration state, especially if property is set considitionally
+        - other reason: ensure proper garbage collection
+        - exception: top-level state, or in properties created during before()
+  - passed as named argument
+     - reason: bound FUNCs, including arrow FUNCs
+  - advantages over top-level scope (which can still be used)
+     - not shared between tasks
+     - not shared between iterations
+     - does not require declaring a variable
+  - add comments about problems with alternatives to single `context` OBJ:
+     - separate `context` arguments for input and output (to next step)
+        - information meant for later steps must be passed between several steps
+     - `context` argument for input, return for output (to next step)
+        - information meant for later steps must be passed between several steps
+     - `{stepId}` argument for input, return for output
+        - custom metrics cannot use `return`, using instead something like `args.measures.push(value)`
+        - name conflict with any core argument
+           - except inputs, which are validated against duplicates with steps
+        - more complex to explain:
+           - return vs context
+           - `stepId` argument name
+           - when repeating a step, only last iteration's return value is used
+
+Multiple tasks per file:
+  - reasons:
+     - user-friendlier if small tasks and/or single steps
+     - prevents users declaring steps when meant tasks
+  - each exported variable:
+     - key is taskId
+        - taskId is not specified in filename anymore
+        - runners should enforce that no duplicate taskId is exported
+           - making users use an OBJ enforces this automatically
+           - using same taskId with different runners is allowed though
+           - keep check for duplicate of runnerId + taskId: but make it a PluginError
+     - value is either:
+        - FUNC: same as { main FUNC }
+        - OBJ:
+           - key is beforeAll|beforeEach|afterAll|afterEach|main
+           - value is FUNC
+     - reason why not concatenating taskId and stepId names: harder for user to distinguish them
+  - each task initializes its own context OBJ
+     - reason: discourage inter-task communication
+
+Task selection:
+  - no CONF.tasks.RUNNER
+  - CONF.runner STR[_ARR]
+     - def: 'node'
+        - reason not external ones: cannot know for sure whether installed or not
+        - reason not ['node', 'cli']: enforce that every CONF.runner has a task file, instead of optionally having one
+     - cannot be empty ARR
+  - CONF.tasks "PATH"
+     - like CONF.runnerId.tasks "PATH"
+     - for all runners, except the ones which have CONF.runnerId.tasks defined
+     - def: undefined
+  - CONF.runnerId.tasks "PATH"
+     - only checked if part of CONF.runners
+     - error if file does not exist
+        - including when using the default value
+     - default:
+        - tasks.EXT
+           - EXT is any from runner.extensions "EXT"_ARR exported by runner
+        - cwd is normal cwd, i.e. spyd.yml directory
+     - do not allow several tasks files per runner (using ARR or globbing):
+        - reason: user might not understand that only entry files must be specified, creating confusing errors
+        - no need for junk library anymore
+
+Automatic repeat:
+  - `repeat` vs `scale`:
+     - both passed to runner.measure()
+     - both are per step (not per task)
+     - repeat is inside timestamp, scale outside
+         while (scale) { start = now(); while (repeat) { stepFunc() }; end = now() }
+     - goal:
+        - repeat: removing imprecision when step function is faster than resolution or timestamp computation
+        - scale: fast steps should be run more often than slow steps because:
+           - they are less precise, i.e. each iteration brings more value
+           - they take a smaller percentage of the overall CONF.duration
+  - `repeat` NUM: keep current logic as is
+  - `scale` NUM
+     - always passed to runner.measure()
+     - value:
+        - Math.round(maxStepDuration / currentStepDuration)
+           - maxStepDuration = for current task, median duration of slowest step
+           - currentStepDuration = median duration of current step
+        - i.e. always 1 if single step
+  - CONF.precise BOOL
+     - def: false
+     - if false and task has multiple steps, then:
+        - for all steps of that task
+        - `repeat` and `scale` are always 1
+     - if true and task has multiple steps, then:
+        - each step function must be idempotent
+           - reason: they will be repeated in repeat|scale loops
+        - including: cannot both read+write same property in neither arguments nor top-level scope
+           - including:
+              - stateful class instances like event emitters and streams
+              - measuring any mutating function (e.g. ARR.sort())
+        - possible solutions:
+           - cloning arguments before mutating them
+           - instead of CONF.precise true, increase step function complexity (including increasing input size)
+           - split step into its own task
+  - report imprecise steps
+     - only if CONF.precise false and multiple steps
+        - reason: result might be slightly imprecise due to approximation of the repeat algorithm
+     - when, if repeat had been used, it would have been >1
+     - set combination.imprecise BOOL
+        - stats prettify logic prepends ~ to duration
+        - only for specific steps with imprecise durations, not whole task
+  - add comments:
+     - reasons why CONF.precise:
+        - does not allow selecting tasks:
+           - simpler syntax BOOL
+           - prevents comparing steps with very different `repeat` since they would be more|less optimized
+        - is opt-in instead of opt-out:
+           - adds idempotency constraint gradually, once users have understood first how steps work
+           - make the default experience not appear buggy (due to users not understanding the flow)
+     - problems with alternative solutions to CONF.scale|precise:
+        - common to many of those solutions:
+           - since steps share data, they must either have same number of repeats or be idempotent
+              - this forbids top-level scope or global changes (e.g. filesystem):
+                 - big constraint that might cause many users to make mistakes
+           - number of repeats being sub-optimal
+           - encourage manual user looping:
+              - users should not have to worry about it, and rely on spyd instead
+              - based on count instead of duration, which is less precise for faster tasks
+              - users are most likely to pick a sub-optimal number of loops
+           - require work from user, either in code or to learn utility
+        - making user manually loop:
+           - either in code or with CONF.repeat.* NUM
+        - making CONF.scale the same for all steps of a given task:
+           - slower steps would repeat more than needed leading them to:
+              - increase task duration, potentially a lot
+              - have poorer stats distribution
+           - make fast steps run as much as slow steps, leading to poorer precision and inefficient use of total CONF.duration
+        - utility to signal start|end of measuring in code:
+           - duplicate solution than FUNC steps, which solve a similar problem
+        - pass some repeat() utility to task
+           - problem: the repeat number would only be known once the task has been run once
+        - when deciding which step's optimal repeat number to pick, insteading of using the max, use some value in-between the min and max
+           - for example, enforce a max ratio between the min and max
+        - enforce the number of repeats does not go over CONF.duration
+           - problem: does not work with CONF.duration 0|1
+        - enforce the number of repeats does not go over specific duration, e.g. 1s
+           - problem: increases sample duration, i.e. reduce responsiveness
+           - problem: relies on hardcoded duration, which might not fit all machines' speeds
+
+Step functions:
+  - export one function per step, i.e. each task value is either:
+     - FUNC: same as { main FUNC }
+     - OBJ:
+        - key is before|after|stepId
+        - value is FUNC
+  - each function is run serially
+     - in the order functions were declarared (runner-specific)
+  - steps can communicate to each other using `context`
+     - the top-level or global scope can also be used
+  - identifier:
+     - stepId, i.e. exported OBJ key
+     - runners should enforce "main" as the default stepId
+     - validated like other combination user-defined ids: character validation, duplicate ids check
+        - including CONF.steps.stepId
+  - requires spawning processes earlier, in order to know available steps
+     - also to know whether repeat should be used
+  - remove beforeEach|afterEach
+     - remove error handling tied to afterEach
+     - rename beforeAll|afterAll to before|after
+     - add comment that runners should avoid specific case for reserved exported names, since users might use different case convention for stepIds
+  - each step is a combination category:
+     - selection in CONF.include|exclude|limit|titles
+     - part of CONF.rowName, not CONF.columnName
+     - result.steps OBJ_ARR
+     - combination.steps ARR
+  - reporting:
+     - report one separate table per step
+        - step title should be in top-left corner
+     - sorting between tables:
+        - by step execution order
+        - step groups:
+           - right before their earliest child
+           - if two step groups have same earliest child, decide using:
+              - if latest child is earlier, comes first
+              - otherwise, CONF.steps.* index
+  - excluding steps with CONF.include|exclude:
+     - like any other combination categories:
+        - filtered out from the `combinations` array created by `getCombinations()`
+        - not persisted in results
+        - not reported
+     - however, runners always run all steps of a given task, even if excluded
+        - providing at least one combination for that task exist
+        - i.e. parent process measuring logic ignores steps:
+           - at the beginning of measuring logic, combinations with same task but different steps are grouped
+           - parent process does not pass any information to runner process about steps, and runner runs them all
+           - at the end of measuring logic, combinations are ungrouped to different steps
+     - add comments explaining reasons why:
+        - we always run all steps:
+           - ensure cleanup steps are always run
+           - ensure steps never miss data|state created by previous steps
+           - users most likely want to restrict reporting, not measuring, when selecting steps with CONF.include|exclude
+        - skipping steps is done through CONF.* instead of inside task files contents:
+           - allow changing it as CLI flag
+        - steps skipping requires user action (setting CONF.*) instead of providing some defaults:
+           - encourage users to see steps durations before exclusing them from reporting
+           - help users understand how steps can be toggled in/off in case they want to see skipped steps duration
+        - we do not skip steps based on some stepId prefix (e.g. _):
+           - CONF.include|excluse already provide the feature
+           - it would be hard to allow users to explicitly report those steps both exclusively ("only _stepIds") and inclusively ("also _stepIds")
+  - step groups:
+     - behave like steps except:
+        - specified with CONF.steps.stepId 'stepId'_ARR
+           - ignored if empty ARR
+           - reasons for the syntax:
+              - allow non-consecutive steps
+              - not verbose (unlike using stepId, e.g. using stepId common prefixes)
+        - stats are based on a sum of the `measures` of their child steps
+           - i.e. we must ensure the number of `measures` for a given tasks is same for each of its steps
+     - computed after each sample
+        - then persisted in stores
+           - as opposed to being dynamically computed during reporting
+        - reason: so we can use all `measures` for better stats
+     - including|excluding step groups does not have impact on whether its children are included|excluded, and vice-versa
+        - reason: users might want to see children only when need details
+           - and vice-versa
+     - to group all steps, must enumerate the ids of each of them
+        - no "*" special token because:
+           - it would only make sense if it groups only included steps
+           - however:
+              - included steps might be change dynamically with CONF.include|exclude
+              - and user might not expect that "*" groups different steps then
+              - it would also make comparison with previous benchmarks wrong if saved
+           - instead, being explicit avoids any confusion
+  - add comments about:
+     - complex step order:
+        - problems:
+           - order of steps is static (must always be the same)
+           - sub-steps must completly "cover" their parent step
+              - e.g. does not allow parallel steps
+           - if a step starts after another one, it must end before it
+        - solution:
+           - user must change the code being measured to allow for a serial mode
+           - then add 2 variations, one serial (to measure child steps), one not (to measure parent steps)
+     - reasons on why using individual step functions (as opposed to start|end('stepId') utility for example)
+        - works with cli runner
+        - more declarative, giving more information to core
+        - simple interface
+        - little room for user misuse, i.e. no need for lots of validation and documentation
+        - allow reporting all the steps, including in-between them
+        - does not require running the task to know which steps are used
+        - does not require setting a default stepId
+        - does not require lots of work for the runner
+     - measuring logic that's not exposed to users:
+        - i.e. different steps within the library implementation
+        - should return an EventEmitter and wait for specific events inside each spyd step
+     - why measureDuration should not vary based on number of steps (i.e. measures sum of all steps):
+        - splitting a step should not change the sample target duration
+        - better responsiveness
+
+measureCost computation:
+  - computed only once during task start???
+     - use a hardcoded number of measureCosts, e.g. 1e5??? or duration, e.g. 1s???
+     - returning it or not replaces `runner.repeat` BOOL???
+  - in a separate process???
+     - i.e. CONF.empty BOOL is passed as start time instead, making the task be empty
+        - or use CONF.taskId undefined???
+     - task-independent???
+        - shared between combinations with same runner???
+     - no more need to send both mainMeasures and emptyMeasures
+     - does not decrease precision anymore
+     - with no before|after???
+     - call empty function, because it is simpler to implement for runners (just need to return it during start, and `bench` loop can be kept the same)
+
+Progress/reporting:
+  - start|end() for progress and/or reporters??? If state, e.g. server
+  - merge progress reporters to normal reporters???
+     - e.g. reporter.progress(...)
+     - progress reporting is called more often, and faster, i.e. keep separate???
+        - reporter.report() duration is taken into account for aggregation time
+           - what if async???
+     - what about reporters which might need progress bar, but no live reporting??? e.g. json reporter
+     - what about multiple reporters??? e.g. json + tty reporters, both with progress???
+  - allow progress and/or normal reporters to be async???
+  - how to disable:
+     - live reporting??? per reporter or for all???
+     - progress reporting???
+     - normal reporting???
+  - Multiple reporters in the same terminal output at once???
+     - live reporting too???
+  - Progress reporters with no TTY output???
+
+MAX_LOOPS:
+  - use two arrays:
+     - measures is the final one
+     - extraMeasures:
+        - used instead of measures when measures.length > MAX_LOOPS / 2
+        - merged to measures when either:
+           - extraMeasures.length > MAX_LOOPS / 2
+           - combination ended
+        - merge with ever-decreasing weight:
+           - before each merge, increase extraWeight integer from 1
+           - pick NUM measures and NUM2 extraMeasures
+              - NUM2 = Math.round(extraMeasures.length / extraWeight)
+              - NUM = (MAX_LOOPS / 2) - NUM2
+           - use quantiles
+              - for both arrays, always start with min and end with max, with even spaces between picked items
+           - concatenate + adaptive sort
+  - have a little buffer, doing the merge a little before extraMeasures is full, so the last process does not have very short maxLoops or maxDuration???
+  - pass limit to runners too???
+     - with number of loops left???
+     - add a maxTimes??? Or named maxLoops???
+        - or add estimated duration to maxDuration instead???
+           - e.g. maxLoopsMore: maxLoopsLeft / CONF.concurrency
+           - is it needed??? would it be ok if measures were slightly over the limit???
+     - is it even a concern due to maxDuration???
+  - ensure the computed `stats.loops` is correct even when going over MAX_LOOPS
+  - how does this work considering measures are split between `measures` and an array of not-merged-yet `childMeasures`???
+     - done during aggregation???
+  - lower limit due to several combinations and sampleGroups at same time???
+     - each combination should get same max amount, so they don't influence each other (except for the number of combinations making that max amount smaller)
+  - would above change the measure profile, which defeats the point of longer benchmarks???
+  - pick elements to remove randomly instead of using quantiles, so it keeps statistical profile
+     - random pick should have a uniform distribution. E.g. Math.random() entropy is less than 1e7, i.e. many indexes will have 0 probability to be picked
+  - alternative: just stop iteration
+  - max length (1e8) also applies to HTTP body (unless streaming used), i.e. limit might need to be lower inside each sample???
+
+Concurrency:
+  - run tasks in parallel inside the runner process instead of spawning several processes in parallel???
+
+Try to see if anything more can be removed from `node` runner, i.e. simplified for all runners
+
+Abstract runner orchestration so it is easier to create a runner???
+   - how???
+      - maybe an execute which maintains a state machine (using combination.id) and returns next action???
+
+How to handle live reporting with big output???
+  - At the moment, not possible to scroll
+  - scrolling:
+     - listen for UpArrow/k and DownArrow/j
+     - keep track of current scroll integer
+     - remove first and last lines before printing according to scrolling
+     - when either stopping or ending benchmark, should show in full
+
+Precision stat???
+  - means difference between another benchmark with same settings
+  - as opposed to standard deviation is variation between measures
+  - how to compute???
+
+Rethink making the history file a builtin store instead???
+  - what's the directory of history.ndjson now that CONF.settings is removed???
+     - common dir of task files???
+     - CONF.save argument???
+     - CONF.store.STORE.output PATH???
+  - rename CONF.store to CONF.history???
+
+Allow multiple stores???
+  - At the moment, CONF.stores is an array, but only the first one is used
+
+Programmatic usage???
+
+REPL
+  - maybe focus on simplicity and direct feedback with fewer features
+    - no progress reporting
+    - reporter much simpler, only one line
+    - no inputs
+    - no systems
+    - no before|after???
+  - alternative to having a REPL: CONF.run.{runnerId}.inline STR???
+
+Localization:
+  - CONF.lang "LANG"
+     - e.g. "en_US"
+     - def: "en_US", not guessed???
+ - changes number formatting
+ - translates text in reporters:
+    - for common text like "Memory"
+    - reporters use a translation utility which uses some shared translations, which can be augmented by contributors (not users)
+ - translates titles:
+    - allow titles.yml to optionally be OBJ: LANG: OBJ2
+    - i.e. defined by users
+ - what about units???
+    - known units, e.g. duration
+    - user-defined units
+
+Slogan???
+  - Current: Simple and precise benchmarking
+  - Potential issues:
+     - "benchmarking" might not be clear enough
+     - remove "simple"??? there are simpler alternatives, e.g. just using for loops or console.time()
+     - not enough stress on the great DX
+        - use word "fun"??? "pretty"???
+
+-------------------------------
+
 
 Fix `exec`
   - e.g. `stdio` must be [`ignore`, `inherit`, `inherit`]
