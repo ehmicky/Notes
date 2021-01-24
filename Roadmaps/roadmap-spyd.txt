@@ -7,116 +7,6 @@
 ------------------------------- TEMPORARY
 
 
-Manual mode:
-  - opt-in
-     - ignore all of this unless CONF.[steps.stepId.]manual defined for that step
-     - reasons:
-        - avoid functions returning value but not intended, e.g. when exported directly
-        - avoid returning seconds or ms when ns is expected
-  - CONF.[steps.stepId.]manual "UNIT"
-     - if no stepId: all steps
-     - i.e. same step from different tasks have same unit
-        - including if single step for all tasks
-     - validation:
-        - max length 4
-           - i.e. must be abbreviations
-           - omit trailing dots
-        - not empty string
-           - reason: ambiguous as user might either intend to use it to specify CONF.unit should not be used, or should be displayed with no units
-           - reason: forces distinguishing between different units
-  - use hardcoded list of units:
-     - list:
-        - duration: fs ps ns us|μs ms s m h d
-           - i.e. allow custom duration
-              - could be useful when task file is measuring another process, e.g. time spent on a server
-        - %
-        - bytes: B KB MB GB TB PB
-           - also KiB ...
-           - also ...b (bits not bytes)
-        - counts: x req err
-           - also used as the default fallback
-     - match unit case-insensitively, but report using same case as specified by others
-  - repeat always 1
-     - do not set combination.imprecise
-  - pass `steps[*].manual` true to runner:
-     - each measure should then be an ARR of two values:
-        - automatic duration NUM
-        - step return VAL
-  - must return NUM from step function
-     - reasons, as opposed to set `measure` argument:
-        - argument could be destructured, leading to assignment not working
-        - argument would be used for too many things: inputs, message passing, manual measures
-        - clear that return value has this type of semantics
-     - reason why NUM instead of OBJ: works for every language, including cli runner
-  - parent validates NUM:
-     - for:
-        - all tasks of a given step
-        - all measures of a given combination
-     - allow:
-        - 0
-        - floats
-     - do not allow:
-        - negative floats
-        - not numbers
-        - NaN and Infinity
-        - undefined
-  - combination.stats:
-     - used for manual measures NUM
-     - automatic durations are still:
-        - measured (for CONF.rate) in combination.durationStats
-        - used for calibration: maxLoops, scale
-  - persisted at result.steps.stepId.manual "UNIT"
-     - optional, including steps.stepId itself, to keep result small
-     - on load, normalized to results.steps OBJ_ARR: id, manual
-  - re-use existing unit-specific logic for:
-     - automatic scaling
-        - e.g. 'ns' -> 's' or 'B' -> 'MB'
-     - significant digits|decimals
-  - reporting sorting:
-     - duration, %: asc
-     - bytes, count: desc
-     - do not allow configuring|overridding for the moment, to keep things simple, because most users won't need it
-  - what if different results compared for the same step but changed:
-     - the "UNIT"???
-     - whether auto|manual is used???
-  - should it be a reporting-only option???
-
-Rate:
-  - CONF.[steps.stepId.]rate BOOL
-     - def: false
-  - reporting-only
-     - not persisted in stores
-     - reporting flag
-  - changes the reported value:
-     - duration: 1/medianDuration, i.e. times per duration
-     - %, bytes, count: value/medianDuration, i.e. scales the left side
-  - sorting order:
-     - duration: inverted
-     - %, bytes, count: kept
-  - reported unit:
-     - duration, count: "x/TIME_UNIT"
-     - %, bytes: "UNIT/TIME_UNIT"
-  - automatic scaling
-     - duration, %, count: focused on TIME_UNIT
-     - bytes: focused on UNIT, leaving TIME_UNIT as "s"
-
-`context` type:
-  - if plain OBJ:
-     - what if user changes the type???
-     - make sure args.context is accessed lazily in case user re-assigns property
-  - if any type:
-     - makes shallow merge harder (to get copy of `before` context at the beginning of each iteration)
-        - not possible if type is a class instance???
-     - harder to add specific properties for it in the future
-
-Make before|after special steps???
-  - except:
-     - only run once
-     - before sets initial context OBJ for other steps
-     - run at beginning|end
-     - not taken into account for precise mode
-  - i.e. measured, reported, selectable
-
 Error handling:
   - propagate afterAll() errors even if was called due to another exception
      - reason: afterAll() should take into account that it might be called on an exception, and still do proper cleanup
@@ -133,6 +23,10 @@ Context OBJ:
         - exception: top-level state, or in properties created during before()
   - passed as named argument
      - reason: bound FUNCs, including arrow FUNCs
+  - after each step function (after both repeat+scale loops done), throw if `context` argument reference was changed:
+      const oldContext = args.context
+      ...
+      if (args.context !== oldContext) { ... }
   - advantages over top-level scope (which can still be used)
      - not shared between tasks
      - not shared between iterations
@@ -205,6 +99,25 @@ Task selection:
      - do not allow several tasks files per runner (using ARR or globbing):
         - reason: user might not understand that only entry files must be specified, creating confusing errors
         - no need for junk library anymore
+
+Task selection questions:
+  - allow spyd.yml to be optional
+     - reason: allows quick/on-the-fly benchmarks
+  - cwd:
+     - used in:
+        - runner processes
+        - resolving CONF.config|output|insert|tasks 'PATH'
+           - currently spyd.yml's directory is only used if in spyd.yml. Otherwise, process.cwd() used
+        - `git` cwd to retrieve branch|commit with env-ci
+        - runner.versions 'COMMAND'_ARR
+     - value:
+        - common directory of task files???
+        - spyd.yml directory???
+        - current cwd???
+        - CONF.cwd???
+  - CONF.task
+     - positional CLI flag
+     - still have default value???
 
 Automatic repeat:
   - `repeat` vs `scale`:
@@ -430,6 +343,110 @@ Step functions:
      - why measureDuration should not vary based on number of steps (i.e. measures sum of all steps):
         - splitting a step should not change the sample target duration
         - better responsiveness
+     - why before|after are not handled as special kinds of steps:
+        - if user wants to measure them, should run them more than once, i.e. use a normal step
+        - most users would use it for init|cleanup, i.e. do not want reporting
+        - too many differences: only runs once, sets initial context, always at beginning|end, error handling, CONF.precise error handling, etc.
+
+Manual mode:
+  - opt-in
+     - ignore all of this unless CONF.[steps.stepId.]manual defined for that step
+     - reasons:
+        - avoid functions returning value but not intended, e.g. when exported directly
+        - avoid returning seconds or ms when ns is expected
+  - CONF.[steps.stepId.]manual "UNIT"
+     - if no stepId: all steps
+     - i.e. same step from different tasks have same unit
+        - including if single step for all tasks
+  - use hardcoded list of units:
+     - list:
+        - duration: fs ps ns us|μs ms s m h d
+           - i.e. allow custom duration
+              - could be useful when task file is measuring another process, e.g. time spent on a server
+        - %
+        - bytes: B KB|KiB MB|MiB GB|GiB TB|TiB PB|PiB
+           - also ...b (bits not bytes)
+        - counts: x
+     - enum validation:
+        - reasons (as opposed to allow custom counts units):
+           - simpler to explain
+           - no need for case insensitivity
+           - no need to validate max length
+     - reasons why no empty string units:
+        - ambiguous as user might either intend to use it to specify CONF.unit should not be used, or should be displayed with no units
+        - forces distinguishing between different units
+  - repeat loop still used
+     - because automatic duration still measured, for CONF.rate
+     - but do not set combination.imprecise
+  - pass `steps[*].manual` true to runner:
+     - each measure should then be an ARR of two values:
+        - automatic duration NUM
+        - step return VAL
+  - must return NUM from step function
+     - reasons, as opposed to set `measure` argument:
+        - argument could be destructured, leading to assignment not working
+        - argument would be used for too many things: inputs, message passing, manual measures
+        - clear that return value has this type of semantics
+     - reason why NUM instead of OBJ: works for every language, including cli runner
+  - parent validates NUM:
+     - for:
+        - all tasks of a given step
+        - all measures of a given combination
+     - allow:
+        - 0
+        - floats
+     - do not allow:
+        - negative floats
+        - not numbers
+        - NaN and Infinity
+        - undefined
+  - combination.stats:
+     - used for manual measures NUM
+     - automatic durations are still:
+        - measured (for CONF.rate) in combination.durationStats
+        - used for calibration: maxLoops, scale
+  - persisted at result.steps.stepId.manual "UNIT"
+     - optional, including steps.stepId itself, to keep result small
+     - on load, normalized to results.steps OBJ_ARR: id, manual
+  - re-use existing unit-specific logic for:
+     - automatic scaling
+        - e.g. 'ns' -> 's' or 'B' -> 'MB'
+     - significant digits|decimals
+  - reporting sorting:
+     - duration, %: asc
+     - bytes, count: desc
+     - do not allow configuring|overridding for the moment, to keep things simple, because most users won't need it
+  - when merging combinations from different results with same stepId but different unit:
+     - if same unit "kind" (duration, %, bytes|bits, count): allow comparing by normalizing stats during mergeResults():
+        - find the lowest scale among all units, then multiply to it
+        - if mixed manual + auto durations, turn all to manual durations
+           - i.e. copy combination.stats to combination.durationStats
+           - only if manual unit is duration
+        - reason: not losing history when:
+           - changing unit scale
+           - switching from auto to manual duration
+     - if different unit "kind":
+        - only keep most recent unit, filtering out previous combinations with different unit kind
+        - i.e. units are not a combination category
+
+Rate:
+  - CONF.[steps.stepId.]rate BOOL
+     - def: false
+  - reporting-only
+     - not persisted in stores
+     - reporting flag
+  - changes the reported value:
+     - duration: 1/medianDuration, i.e. times per duration
+     - %, bytes, count: value/medianDuration, i.e. scales the left side
+  - sorting order:
+     - duration: inverted
+     - %, bytes, count: kept
+  - reported unit:
+     - duration, count: "x/TIME_UNIT"
+     - %, bytes: "UNIT/TIME_UNIT"
+  - automatic scaling
+     - duration, %, count: focused on TIME_UNIT
+     - bytes: focused on UNIT, leaving TIME_UNIT as "s"
 
 Progress/reporting:
   - start|end() for progress and/or reporters??? If state, e.g. server
@@ -484,22 +501,28 @@ MAX_LOOPS:
   - alternative: just stop iteration
   - max length (1e8) also applies to HTTP body (unless streaming used), i.e. limit might need to be lower inside each sample???
 
-Concurrency:
-  - run tasks in parallel inside the runner process instead of spawning several processes in parallel???
-
 Try to see if anything more can be removed from `node` runner, i.e. simplified for all runners
 
 Abstract runner orchestration so it is easier to create a runner???
    - how???
       - maybe an execute which maintains a state machine (using combination.id) and returns next action???
 
-How to handle live reporting with big output???
-  - At the moment, not possible to scroll
-  - scrolling:
+Scrolling:
+  - only in live reporting
+     - when either stopping or ending benchmark, report in full without scrolling
+  - actions:
      - listen for UpArrow/k and DownArrow/j
-     - keep track of current scroll integer
-     - remove first and last lines before printing according to scrolling
-     - when either stopping or ending benchmark, should show in full
+     - keep track of current scroll amount
+     - remove first and last lines before printing according to scroll amount
+     - show top of screen initially, not bottom
+  - instructions:
+     - shown at bottom of screen, regardless of scroll amount
+     - includes progress bar, i.e. is whole progress output
+     - show:
+         Up/Down: scroll
+         CTRL-C: stop
+  - not if output fits within process.stdout.rows
+     - do not show scrolling instructions
 
 Precision stat???
   - means difference between another benchmark with same settings
@@ -615,8 +638,9 @@ CONF.concurrency NUM
      - if one process fails
         - the other ones should continue (for cleanup)
         - but the sample should then propagate error
-     - measureCost computation should use the same amount of parallel processes
-  - add code comment that:
+  - handle spawn errors due to too many processes at once
+     - try to remove process limit with ulimit, and see if another error can happen with a high CONF.concurrency, e.g. too many open files
+  - add code comments that:
      - CONF.concurrency is meant to measure cost of parallelism
         - both CPU and I/O parallelism
      - if task is I/O bound, it can also improve precision by performing more measures, at the cost of accuracy (due to cost of parallelism)
@@ -625,8 +649,10 @@ CONF.concurrency NUM
            - median measure increases much more
            - precision decreases much more
      - move the current code comment from src/measure/combination.js (about spawning processes serially)
-  - handle spawn errors due to too many processes at once
-     - try to remove process limit with ulimit, and see if another error can happen with a high CONF.concurrency, e.g. too many open files
+     - why different processes instead of Promise.all() in a single process:
+        - works for any runner
+        - no global scope conflicts
+        - uses multiple CPU cores
 
 isAsync:
   - initial check for isAsync:
@@ -675,6 +701,7 @@ plugin.config.PROP STR[_ARR]
   - validate PROP matches /^[a-z][a-zA-Z\d]*$/
      - i.e. use - (not _ nor case) as delimiter
   - if STR starts with ./ ../ or /, add to `PATH_CONFIG_PROPS` during config file path resolution
+     - no more need to pass `cwd` to stores
 
 Variations:
   - some config properties can be optionally variable:
