@@ -29,13 +29,14 @@ Manual mode:
            - automatic duration NUM
            - step return VAL
         - true when CONF.manual[.stepId] defined for the step
-     - validate against returning undefined
-        - if non-duration unit, could undefined be used to skip a specific iteration???
-        - if duration unit, for a given step, could some task use automatic duration and others manual duration???
      - type: float
         - allow negative???
         - allow 0???
-        - validate
+           - what about current behavior of reportwrs skipping metrics with value 0???
+        - do not allow undefined
+        - validate for:
+           - all tasks of a given step
+           - all measures of a given combination
   - unit:
      - CONF.manual[.stepId] "UNIT"
         - if no stepId: all steps
@@ -86,12 +87,6 @@ Make before|after special steps???
      - run at beginning|end
      - not taken into account for precise mode
   - i.e. measured, reported, selectable
-
-If multiple tasks per file, some tasks might influence each other???
-  - engine optimization
-  - global changes
-     - including memoization
-  - spawn one process per task, even though the file defines several tasks???
 
 Error handling:
   - propagate afterAll() errors even if was called due to another exception
@@ -146,6 +141,18 @@ Multiple tasks per file:
      - reason why not concatenating taskId and stepId names: harder for user to distinguish them
   - each task initializes its own context OBJ
      - reason: discourage inter-task communication
+  - processes:
+     - each combination should have its own process, even if tasks file has multiple tasks declared
+        - reason: avoid tasks to influence each other with:
+           - global state
+           - engine optimization
+     - should pass `task: 'taskId'` as spawnArgs:
+        - at benchmark start, pass undefined:
+           - return `tasks: 'taskId'_ARR` to parent
+           - exit right away
+        - for each combination, pass taskId:
+           - do not return any `tasks` to parent
+           - use only this task for measuring
 
 Task selection:
   - no CONF.tasks.RUNNER
@@ -265,6 +272,10 @@ Step functions:
      - runners should enforce "main" as the default stepId
      - validated like other combination user-defined ids: character validation, duplicate ids check
         - including CONF.steps.stepId
+  - processes:
+     - at benchmark start, when runner communicates available tasks to parent, it should also return available steps
+        - returned as `tasks: { taskId: 'stepId'_ARR, ... }`
+     - all steps of a given combination use same process
   - requires spawning processes earlier, in order to know available steps
      - also to know whether repeat should be used
   - remove beforeEach|afterEach
@@ -520,12 +531,16 @@ Fix `exec`
   - should show ids, not titles
 
 Fix CLI runner
-
-Fix `src/combinations/main.js` that is currently hardcoded
-  - instead of exporting tasks OBJ_ARR, named exports: beforeAll|beforeEach|main|afterEach|afterAll
-  - add comment why each task file contains a single task: faster to spawn
-
-Go through whole code, looking for bugs
+  - remove all template variables:
+     - user-defined
+        - can use either subshells, or command wrapper instead
+     - {{ENV_VAR}}
+        - can use environment variable in command instead
+     - step variables
+        - steps should communicate with filesystem instead
+     - inputs
+        - should be passed as environment variables instead of template variables
+  - use stdout|stderr "ignore"
 
 Precision:
   - compare precision:
@@ -696,23 +711,6 @@ Variations:
      - inputId is only part of the variationId
         - used in `inputs` passed to runner.measure()
 
-Variables in `cli` runner:
-  - remove user-defined `variables`. Can use either subshells, or command wrapper instead
-  - use stdout "pipeInherit":
-     - in beforeAll, beforeEach and main
-     - only if variable is used by another command
-  - validate against using a variable in the wrong command
-     - beforeAll: only beforeEach|main|afterEach|afterAll
-     - beforeEach: only main|afterEach
-     - main: only afterEach
-     - afterEach, afterAll: none
-     - any other: none
-  - available variables (in lowest priority order):
-     - {{ENV_VAR}}
-        - use process.env as is, i.e. case sensitive on Unix, case insensitive on Windows
-     - {{beforeAll}}, {{beforeEach}}, {{main}}
-     - {{inputId}}
-
 combination.rowName|columnName:
   - remove combination categories where all combinations have same value:
      - exception: if all combination categories removed, show only task
@@ -729,47 +727,81 @@ combination.rowName|columnName:
   - use in `taskPrefix` used when there is a error during measuring???
   - fix `name` in `compare/limit.js`
 
-CONF.compare DELTA
-  - DELTA:
-     - relative to target benchmark
-        - bench command: measured benchmark
-        - show|remove commands: shown benchmark
-     - target benchmark filtered out before resolving DELTA
-        - i.e. never compare target benchmark with self
-        - i.e. DELTA 1 always mean benchmark before target benchmark
-     - fails if cannot resolve
-        - except if there are no benchmarks before target benchmark: silently ignore CONF.showDiff|limit instead
-  - combinations not in delta benchmark:
-     - use the most recent benchmark before delta benchmark that has that combination
-     - if none, silently ignore
-  - CONF.compare should not error when there are no results yet
-     - should it never error???
+In addCombinationsDiff():
+  - use findValue()
+  - remove `combinationA !== combinationB`: should compare with result the way it was back then, which might include no changes on some combinations
 
-Deltas:
-  - delta which cannot be resolved should:
-     - CONF.since: empty array
-        - reason: allows not doing `sync` before `bench` in CI
-     - CONF.compare: same as no diff|limit
-     - `show|remove`: error
-  - for relative duration and NUM, base:
-     - CONF.since|compare in `show|remove` command: shown result
-     - otherwise, latest|now
-  - for absolute|relative date: target the closest earlier (not later) result
+CONF.since:
+  - rename CONF.compare to CONF.since
+  - at the beginning of mergeResults():
+     - i.e. after both:
+        - include|exclude filtering
+        - show|remove delta application
+     - sinceResult = findByDelta(previous, CONF.since)
+        - add comment that this excludes target result (since not part of `previous`)
+           - i.e. never compare target result with self
+           - i.e. delta 1 always means result before target result
+     - do mergeResults() on sinceResult
+        - `previous` are results before `sinceResult`
+        - split mergeResults() so that this recursive call does not:
+           - resolve|merge CONF.since itself
+           - add `previous` property
+     - filter out all results before sinceResult and used the filtered array in the rest of the logic:
+        - mergePairs(): should not be a problem because sinceResult already has all combinations before it (but not necessarily after it)
+        - addCombinationsDiff(): use sinceResult directly instead of `previous`
+        - result.previous
+  - i.e. CONF.since is relative to:
+     - bench command: measured result
+     - show|remove commands: shown result
 
-CONF.since VAL
-  - filters result.previous
-     - i.e. after they have been CONF.include|exclude filtered
-     - does not impact other deltas resolution (`show|remove`, CONF.diff)
-  - VAL is delta, or "" (def, no filtering)
-  - same delta as `show|remove` commands
-  - result.previous maximum timestamp should be currently shown result's
-     - e.g. if `show|remove` command and CONF.since delta starts after `show|remove` delta, result.previous should be empty
+Delta formats:
+  - value is always a minimum, i.e. use >=
+     - reason: allows specifying a larger "since target" (e.g. high NUM or very old date) without error
+     - including absolute|relative date|time
+     - absolute date: should be start of day
+     - count: if too high, return first result
+     - git commit|tag|branch: return most recent instead, because git refs are meant to be pointers to last commit, and users most likely intend to compare with last result of ref
+  - if >= target result
+     - if:
+        - show|remove delta: error
+        - CONF.since delta:
+           - sinceResult undefined
+           - result.previous empty ARR
+           - no stats.diff
+           - no combinations merging
+     - happens with formats:
+        - date|time > last previous result
+           - including through git ref resolution
+        - count 0
+           - negative should error though
+     - this includes when there are no previous results
+
+Delta git commit|branch|tag:
+  - if none found, use `git` binary to resolve ref to a timestamp:
+     - if none found, error
+     - otherwise, use timestamp the same way as delta timestamp format
+
+Delta "first" for first result
+
+CI:
+  - sortResults() should group by system.ci, not by system.git.commit
+  - delta "ci":
+     - most recent result with a different CI job
+        - use envCi(), so that show|remove can use it
+     - error if no current CI job
+     - if all results have same system.ci as current CI job, retrieve oldest result
+
+Default value for show|remove and CONF.since:
+  - in CI: "ci"
+  - otherwise: 1
 
 Improve date delta:
   - learn day.js
   - parse absolute durations using day.js
   - add relative duration (like "3m") using day.js
      - add it to CLI help messages for `show` command and `compare|since` properties
+     - use the closest result that is after (not before) the resolved timestamp
+        - this is how absolute date/time delta format works too
 
 Stores:
   - add comment that no support for multiple stores because not very useful and bring questions around data sync
