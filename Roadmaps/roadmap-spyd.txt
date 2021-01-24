@@ -153,34 +153,59 @@ Slogan???
 -------------------------------
 
 
-Cwd:
-  - allow CONF.cwd in spyd.yml???
-     - normalize and validate `cwd`???
-     - normalize and validate `config`???
-
 Task selection:
-  - no CONF.tasks.RUNNER
-  - CONF.runner STR[_ARR]
-     - def: 'node'
-        - reason not external ones: cannot know for sure whether installed or not
-        - reason not ['node', 'cli']: enforce that every CONF.runner has a task file, instead of optionally having one
-     - cannot be empty ARR
-  - CONF.[runnerId.]tasks:
-     - only in bench|exec commands, not show|remove
-  - CONF.runnerId.tasks "PATH"
-     - only checked if part of CONF.runners
-     - def: [.../]./benchmark/tasks.EXT
-        - EXT is any from runner.extensions "EXT"_ARR exported by runner
-        - only use the first matching one
-     - error if:
-        - specified but file does not exist
-        - using the default value but none was found
-     - do not allow several tasks files per runner (using ARR or globbing):
-        - reason: user might not understand that only entry files must be specified, creating confusing errors
-        - no need for junk library anymore
-  - CONF.tasks "PATH"
-     - used as CONF.runnerId.tasks "PATH" for any runner without it defined
-     - positional CLI flag
+  - if both CONF.tasks and CONF.runnerId.tasks undefined, try [.../]./benchmark/tasks.EXT
+     - using CONF.cwd, similar logic than `config` retrieval
+     - EXT is any from runner.extensions "EXT"_ARR exported by runner
+     - only use the first matching one
+     - error if none found
+  - error if tasks file does not exist
+
+Multiple tasks per file:
+  - reasons:
+     - user-friendlier if small tasks and/or single steps
+     - prevents users declaring steps when meant tasks
+  - each exported variable:
+     - key is taskId
+        - taskId is not specified in filename anymore
+        - runners should enforce that no duplicate taskId is exported
+           - making users use an OBJ enforces this automatically
+           - using same taskId with different runners is allowed though
+           - keep check for duplicate of runnerId + taskId: but make it a PluginError
+     - value is either:
+        - FUNC: same as { main FUNC }
+        - OBJ:
+           - key is beforeAll|beforeEach|afterAll|afterEach|main
+           - value is FUNC
+     - reason why not concatenating taskId and stepId names: harder for user to distinguish them
+  - each task initializes its own context OBJ
+     - reason: discourage inter-task communication
+  - processes:
+     - each combination should have its own process, even if tasks file has multiple tasks declared
+        - reason: avoid tasks to influence each other with:
+           - global state
+           - engine optimization
+     - should pass `task: 'taskId'` as spawnArgs:
+        - at benchmark start, pass undefined:
+           - return `tasks: 'taskId'_ARR` to parent
+           - exit right away
+        - for each combination, pass taskId:
+           - do not return any `tasks` to parent
+           - use only this task for measuring
+
+plugin.config.PROP STR[_ARR]
+  - for all plugins: reporter, progress, runner, store
+  - meant for validation, using jest-validate (same validation as for CONF.*):
+     - validate against unknown props
+        - including automatic suggestion when using wrong case
+     - if ARR, use multipleValidOptions()
+  - required to use PROP
+  - validate PROP matches /^[a-z][a-zA-Z\d]*$/
+     - i.e. use - (not _ nor case) as delimiter
+  - if STR starts with ./ ../ or /, add to `PATH_CONFIG_PROPS` during config file path resolution
+     - no more need to pass `cwd` to stores
+     - including for CONF.runnerId.tasks
+        - i.e. CONF.runnerId.tasks in spyd.* is relative to `spyd.yml`'s directory
 
 Error handling:
   - propagate afterAll() errors even if was called due to another exception
@@ -219,38 +244,6 @@ Context OBJ:
            - return vs context
            - `stepId` argument name
            - when repeating a step, only last iteration's return value is used
-
-Multiple tasks per file:
-  - reasons:
-     - user-friendlier if small tasks and/or single steps
-     - prevents users declaring steps when meant tasks
-  - each exported variable:
-     - key is taskId
-        - taskId is not specified in filename anymore
-        - runners should enforce that no duplicate taskId is exported
-           - making users use an OBJ enforces this automatically
-           - using same taskId with different runners is allowed though
-           - keep check for duplicate of runnerId + taskId: but make it a PluginError
-     - value is either:
-        - FUNC: same as { main FUNC }
-        - OBJ:
-           - key is beforeAll|beforeEach|afterAll|afterEach|main
-           - value is FUNC
-     - reason why not concatenating taskId and stepId names: harder for user to distinguish them
-  - each task initializes its own context OBJ
-     - reason: discourage inter-task communication
-  - processes:
-     - each combination should have its own process, even if tasks file has multiple tasks declared
-        - reason: avoid tasks to influence each other with:
-           - global state
-           - engine optimization
-     - should pass `task: 'taskId'` as spawnArgs:
-        - at benchmark start, pass undefined:
-           - return `tasks: 'taskId'_ARR` to parent
-           - exit right away
-        - for each combination, pass taskId:
-           - do not return any `tasks` to parent
-           - use only this task for measuring
 
 Step functions:
   - export one function per step, i.e. each task value is either:
@@ -578,18 +571,6 @@ Rate:
   - automatic scaling
      - duration, %, count: focused on TIME_UNIT
      - bytes: focused on UNIT, leaving TIME_UNIT as "s"
-
-plugin.config.PROP STR[_ARR]
-  - for all plugins: reporter, progress, runner, store
-  - meant for validation, using jest-validate (same validation as for CONF.*):
-     - validate against unknown props
-        - including automatic suggestion when using wrong case
-     - if ARR, use multipleValidOptions()
-  - required to use PROP
-  - validate PROP matches /^[a-z][a-zA-Z\d]*$/
-     - i.e. use - (not _ nor case) as delimiter
-  - if STR starts with ./ ../ or /, add to `PATH_CONFIG_PROPS` during config file path resolution
-     - no more need to pass `cwd` to stores
 
 Variations:
   - some config properties can be optionally variable:
