@@ -6,70 +6,99 @@
 
 ------------------------------- TEMPORARY
 
+
 Manual mode:
-  - manual measure:
-     - opt-in
-        - ignore all of this unless CONF.manual[.stepId] defined for that step
-        - reasons:
-           - avoid functions returning value but not intended, e.g. when exported directly
-           - avoid returning seconds or ms when ns is expected
-     - return NUM from step function
-        - reasons, as opposed to set `measure` argument:
-           - argument could be destructured, leading to assignment not working
-           - argument would be used for too many things: inputs, message passing, manual measures
-           - clear that return value has this type of semantics
-        - reason why NUM instead of OBJ: works for every language, including cli runner
-     - used in `combination.stats` instead of automatic duration
-        - except with rate + non-duration unit: both are used then???
-     - automatic duration is still used for calibration: maxLoops, scale
-     - repeat always 1
-        - do not set combination.imprecise
-     - pass `steps[*].manual` BOOL to runner:
-        - when true, each measure is an ARR of two values:
-           - automatic duration NUM
-           - step return VAL
-        - true when CONF.manual[.stepId] defined for the step
-     - type: float
-        - allow negative???
-        - allow 0???
-           - what about current behavior of reporters skipping metrics with value 0???
-        - do not allow undefined
-        - validate for:
-           - all tasks of a given step
-           - all measures of a given combination
-  - unit:
-     - CONF.manual[.stepId] "UNIT"
-        - if no stepId: all steps
-        - i.e. same step from different tasks have same unit
-           - including if single step for all tasks
-     - can be duration unit, allowing custom duration:
-        - could be useful when task file is measuring another process, e.g. time spent on a server
-     - reporting:
-        - used only for reporting
-        - unit reporting is automatically scaled to the most appropriate
-           - e.g. 'ns' -> 's' or 'B' -> 'MB'
-           - re-use existing logic for this
-           - only if the unit scale can be understood, based on hardcoded list:
-              - duration
-              - SI prefixes: K, Ki, M, etc., with known suffixes: B, b, etc.
-              - allow aliases, e.g. 's', 'second', 'seconds'
-              - case-insensitive
-        - asc|desc sorting???
-           - based on unit and|or rate???
-           - add config property to change???
-        - max size or truncate???
-        - anything else???
-     - do not allow empty string for "UNIT"???
-     - how is it persisted|stored???
-  - rate:
-     - for both manual and automatic mode
-     - instead of duration|measure per iteration, show iteration per duration|measure
-     - CONF.rate BOOL|"stepId"_ARR
-     - appends "/TIME_UNIT" to "UNIT" in reporting
-        - if automatic duration, "times/TIME_UNIT"
-     - auto-scale rate unit???
-        - down until min amount of significant digits???
-        - if non-duration unit, auto-scale that instead???
+  - opt-in
+     - ignore all of this unless CONF.[steps.stepId.]manual defined for that step
+     - reasons:
+        - avoid functions returning value but not intended, e.g. when exported directly
+        - avoid returning seconds or ms when ns is expected
+  - CONF.[steps.stepId.]manual "UNIT"
+     - if no stepId: all steps
+     - i.e. same step from different tasks have same unit
+        - including if single step for all tasks
+     - validation:
+        - max length 4
+           - i.e. must be abbreviations
+           - omit trailing dots
+        - not empty string
+           - reason: ambiguous as user might either intend to use it to specify CONF.unit should not be used, or should be displayed with no units
+           - reason: forces distinguishing between different units
+  - use hardcoded list of units:
+     - list:
+        - duration: fs ps ns us|μs ms s m h d
+           - i.e. allow custom duration
+              - could be useful when task file is measuring another process, e.g. time spent on a server
+        - %
+        - bytes: B KB MB GB TB PB
+           - also KiB ...
+           - also ...b (bits not bytes)
+        - counts: x req err
+           - also used as the default fallback
+     - match unit case-insensitively, but report using same case as specified by others
+  - repeat always 1
+     - do not set combination.imprecise
+  - pass `steps[*].manual` true to runner:
+     - each measure should then be an ARR of two values:
+        - automatic duration NUM
+        - step return VAL
+  - must return NUM from step function
+     - reasons, as opposed to set `measure` argument:
+        - argument could be destructured, leading to assignment not working
+        - argument would be used for too many things: inputs, message passing, manual measures
+        - clear that return value has this type of semantics
+     - reason why NUM instead of OBJ: works for every language, including cli runner
+  - parent validates NUM:
+     - for:
+        - all tasks of a given step
+        - all measures of a given combination
+     - allow:
+        - 0
+        - floats
+     - do not allow:
+        - negative floats
+        - not numbers
+        - NaN and Infinity
+        - undefined
+  - combination.stats:
+     - used for manual measures NUM
+     - automatic durations are still:
+        - measured (for CONF.rate) in combination.durationStats
+        - used for calibration: maxLoops, scale
+  - persisted at result.steps.stepId.manual "UNIT"
+     - optional, including steps.stepId itself, to keep result small
+     - on load, normalized to results.steps OBJ_ARR: id, manual
+  - re-use existing unit-specific logic for:
+     - automatic scaling
+        - e.g. 'ns' -> 's' or 'B' -> 'MB'
+     - significant digits|decimals
+  - reporting sorting:
+     - duration, %: asc
+     - bytes, count: desc
+     - do not allow configuring|overridding for the moment, to keep things simple, because most users won't need it
+  - what if different results compared for the same step but changed:
+     - the "UNIT"???
+     - whether auto|manual is used???
+  - should it be a reporting-only option???
+
+Rate:
+  - CONF.[steps.stepId.]rate BOOL
+     - def: false
+  - reporting-only
+     - not persisted in stores
+     - reporting flag
+  - changes the reported value:
+     - duration: 1/medianDuration, i.e. times per duration
+     - %, bytes, count: value/medianDuration, i.e. scales the left side
+  - sorting order:
+     - duration: inverted
+     - %, bytes, count: kept
+  - reported unit:
+     - duration, count: "x/TIME_UNIT"
+     - %, bytes: "UNIT/TIME_UNIT"
+  - automatic scaling
+     - duration, %, count: focused on TIME_UNIT
+     - bytes: focused on UNIT, leaving TIME_UNIT as "s"
 
 `context` type:
   - if plain OBJ:
@@ -727,8 +756,14 @@ combination.rowName|columnName:
   - use in `taskPrefix` used when there is a error during measuring???
   - fix `name` in `compare/limit.js`
 
+Stats logic:
+  - bug: serializePercentage() would show -0.5% as 0.5%???
+  - unitless counts should use exponential notation when possible, with 3 significant digits
+     - i.e. no need for thousands separators
+
 CONF.since:
-  - finish current commit
+  - problem: merging sinceResult.systems with result.systems
+     - because current code assumes previous results have only a single system OBJ
   - try to see if sinceResult can be computed during listResults() instead, so it is validated quickly
 
 Delta formats:
