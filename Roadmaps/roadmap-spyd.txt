@@ -82,6 +82,7 @@ History:
            - filter out if not in any of them
         - then by result.timestamp
            - filter out if result.timestamp > oldest result in child branch
+        - should still keep results with same result.systems[*].ci together (as we already do)
      - reasons:
         - easy to understand|explain
         - preserve chronologic order
@@ -94,27 +95,36 @@ History:
      - what if user checkout previous commit and save result???
         - forbid saving then???
      - what if there is no current branch???
-     - how to compare with last commit of parent branch??? As opposed to newest common commit
-        - very useful for PRs, about to be merged|rebased onto
-        - problem: preserving chronological order
-        - maybe???
-           - targetResult always use current git branch + parent branches
-           - but sinceResult|`previous` can use different branch + child branches
-              - providing it is not parent of targetResult (after branch+timestamp filtering)
-              - if child of targetResult (i.e. after it): return -1, i.e. `previous` empty ARR
-              - if several child branches: pick one leading to the result with latest result.timestamp
   - CONF.since commit|tag|branch:
-     - always use current `git` information, and not result.systems[*].git???
-     - error if not found in results???
-        - or try to find it, providing exists in current git repository???
-           - using result.timestamp against author date (not committer date)???
+     - if sinceResult not parent of targetResult, sincePrevious uses a different branch+parentBranches than targetResult's
+        - reason: allow comparing branches
+           - very useful for PRs, about to be merged|rebased onto
+           - still preserving chronological order, except for lastResult
+        - if sinceResult child of targetResult: return -1, i.e. empty `previous`
+     - logic:
+        - branch:
+           - use last result in branch+parentBranches
+           - reasons:
+              - what user probably expects when comparing branches, or to parent branch
+              - since branch is explictly named, try to use it if possible, not child branch
+        - commit|tag:
+           - get author date (not committer date)
+              - using `git`
+           - then find first result with result.timestamp >= authorDate, within same branch
+              - reasons child branches not used:
+                 - comparing between branches is most likely not wanted
+                 - if sinceResult not parent, hard to know which child branch is wanted
+              - if none found, find first previous result with result.timestamp < authorDate, within branch+parentBranches
+                 - reasons:
+                    - user might have meant this instead
+                    - graceful fallback
+     - if none found, returns -1, i.e. empty `previous`
+     - reasons we do not use result.systems[*].git:
+        - works with rebases (which modify commit hashes) and tag renames
+        - more uniform behavior regardless of whether a result with specific commit|tag exists
      - add CONF.since "parent"
         - same as CONF.since "branch" with parent branch
-        - def of CONF.since: still "1"
-  - still group results by commit hash???
-     - reason: if several CI builds around the same time
-     - if so: should should use earlier timestamp, not later???
-        - reason: checking out older commit and creating new result should not be shown last in history
+        - def of CONF.since is still "1"
   - branch aliases
      - reason: do not lose connection between results when git branch renamed
      - result.systems[*].git.branches STR_ARR_ARR:
@@ -130,7 +140,10 @@ History:
         - group results by `git.branches` with at least one common element, and add to branch aliases
         - set normalized result.systems[*].git.branches STR_ARR
            - using the { "ALIAS_BRANCH" -> "CURRENT_BRANCH" } map
-  - auto-delete results when git branch has been deleted???
+  - auto-delete results when git branch has been deleted
+     - done on CONF.save
+     - done by comparing `git branch` with result.systems[*].branches
+        - including branch aliases
      - unless has tag that has not been deleted???
      - reasons:
         - performance of read|write
@@ -157,6 +170,13 @@ CONF.system:
 
 CONF.remove true instead of `remove` command???
   - still ask for confirmation???
+
+Reporting on `remove` command:
+  - call reporters, like `show`
+     - i.e. must accept same CONF.*, e.g. CONF.tasks|system
+  - then prompt for removal confirmation
+     - unless CONF.force true
+  - do not print that confirmation removal suceeded (but print error if failed)
 
 Combination ids:
   - needed for:
@@ -681,7 +701,15 @@ Variations:
      - inputId is only part of the variationId
         - used in `inputs` passed to runner.measure()
 
-Assign default value to reporterConfig.* to default.js???
+Allow plugins to define top-level properties they override:
+  - runnerConfig: tasks
+     - remove current code in tasks
+  - reportConfig: output|insert|colors|show*
+     - remove current code in reporter
+  - use cleanObject() to avoid `undefined` overwrites
+  - move `getDefaultShowDiff()` to default.js
+  - move default `colors` to default.js
+     - split between colorsInteractive and colorsNonInteractive
 
 Reporters:
   - disabling normal reporting: CONF.reporter empty ARR
@@ -810,13 +838,6 @@ reporter.debugStats BOOL
      - times
         - add comment that it is a bad indicator of precision, and also might be confused as an indicator of speed due to other benchmark libraries showing it like that
      - minLoopDuration, samples, repeat, loops
-
-Reporting on `remove` command:
-  - call reporters, like `show`
-     - i.e. must accept same CONF.*, e.g. CONF.tasks|system
-  - then prompt for removal confirmation
-     - unless CONF.force true
-  - do not print that confirmation removal suceeded (but print error if failed)
 
 Precision:
   - compare precision:
