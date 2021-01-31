@@ -7,180 +7,14 @@
 ------------------------------- TEMPORARY
 
 
-History:
-  - remove CONF.store
-  - save results to a `spyd` git branch
-     - branch is created from init commit
-        - i.e. does not hold reference to any parent commits
-     - includes `README.md` explaining the branch
-     - switches to `spyd` git branch using git worktree:
-        - for both CONF.save and load
-        - on load: only if `spyd` branch exists
-        - temporary git worktree add + remove
-           - using `${gitRoot}/.spyd_branch`
-           - use `try {} finally {}` to ensure git worktree remove is called
-           - reasons:
-              - works even if uncommitted changes
-              - faster and less risky than git stash
-     - reasons to use git branch:
-        - unlike using regular file in codebase:
-           - does not pollute git log
-           - does not require git push --force on the codebase
-           - can update in CI without requiring developers to pull all the time
-        - unlike git hash-object + git cat-file:
-           - allows multiple files
-           - does not create many tags
-           - easy to understand
-           - no risk of pruning
-           - versioned
-  - `sync` command:
-     - git pull --rebase + git push, on `spyd` git branch
-        - git push not run if we know locally there is nothing to push
-        - retry (including git pull --rebase) if git push failed due to conflict
-           - fails if git fails for any other reasons
-           - fails if merge conflict, asking user to fix it
-     - stdin|stdout|stderr "inherit" on git pull|push
-        - reasons:
-           - allow entering passwords
-           - show any error message such as: authentication, git hooks, network, etc.
-           - provide with progress
-        - not on other git commands
-        - only if CONF.quiet false
-     - reasons we separate local (CONF.save) and remote (`sync` command) read|write:
-        - mimics git, i.e. easy to understand
-        - much faster, since read|write mostly locally
-        - easier to isolate, fix and understand many possible failures with git push|pull
-  - file structure:
-     - individual results:
-        - at /benchmark/history/FILE.json
-           - FILE is result.id
-        - one immutable FILE.json per result
-        - reasons (as opposed to single file for all results):
-           - fast to create new results
-           - does not create git conflicts
-           - concurrent safe
-           - small file size impact in git history
-        - format is JSON
-           - reason: fast
-     - cache file:
-        - at /benchmark/history.json
-        - cached concatenation of /benchmark/history/*.json
-           - reason: 10 times faster to read single file than individual ones
-        - if exists, read instead of /benchmark/history/*.json
-        - written at end of commands:
-           - not if does not read results (`exec`)
-           - if command does not update results (`show`, `remove`, `bench` with CONF.save false): only if `history.json` does not exist yet
-           - if command update results (`bench` with CONF.save true, `sync`): use updated results
-              - for `sync`: only if new results were pulled, or if `history.json` does not exist yet
-        - use atomic-file-write
-        - stringify each result separately
-           - due to max string size if many results
-        - add `.gitignore` in `spyd` branch to ignore it
-           - reasons:
-              - prevent merge conflicts
-              - less size in git repo
-  - multi-branch history:
-     - sort by:
-        - branchIndex in lastResult.systems[*].git.branches
-           - filter out if not in any of them
-        - then by result.timestamp
-           - filter out if result.timestamp > oldest result in child branch
-        - should still keep results with same result.systems[*].ci together (as we already do)
-     - reasons:
-        - easy to understand|explain
-        - preserve chronologic order
-           - good for reporting
-           - good for time-based deltas
-        - not impacted by rebasing
-        - does not require git, except for finding parent branches
-        - mostly follows "git log" order
-           - except for newest common commit of parent branch's result, if saved after current branch's first commit's result, but that's unlikely
-     - results with no git branch:
-        - `previous` always empty ARR
-           - including `sincePrevious`
-           - i.e. behaves as if part of single-result branch with no parent branch
-        - result.systems[*].git.branch empty ARR
-  - CONF.since commit|tag|branch:
-     - if sinceResult not parent of targetResult, sincePrevious uses a different branch+parentBranches than targetResult's
-        - reason: allow comparing branches
-           - very useful for PRs, about to be merged|rebased onto
-           - still preserving chronological order, except for lastResult
-        - if sinceResult child of targetResult: return -1, i.e. empty `previous`
-     - logic:
-        - branch:
-           - use last result in branch+parentBranches
-           - reasons:
-              - what user probably expects when comparing branches, or to parent branch
-              - since branch is explictly named, try to use it if possible, not child branch
-        - commit|tag:
-           - get author date (not committer date)
-              - using `git`
-           - then find first result with result.timestamp >= authorDate, within same branch
-              - reasons child branches not used:
-                 - comparing between branches is most likely not wanted
-                 - if sinceResult not parent, hard to know which child branch is wanted
-              - if none found, find first previous result with result.timestamp < authorDate, within branch+parentBranches
-                 - reasons:
-                    - user might have meant this instead
-                    - graceful fallback
-     - if none found, returns -1, i.e. empty `previous`
-     - reasons we do not use result.systems[*].git:
-        - works with rebases (which modify commit hashes) and tag renames
-        - more uniform behavior regardless of whether a result with specific commit|tag exists
-     - add CONF.since "parent"
-        - same as CONF.since "branch" with parent branch
-        - def of CONF.since is still "1"
-  - branch aliases
-     - reason: do not lose connection between results when git branch renamed
-     - result.systems[*].git.branches STR_ARR_ARR:
-        - computed on result creation
-        - includes all parent branches, in order
-           - using `git`
-              - previously merged|rebased branches should be ignored, using the branch they merged|rebased onto instead
-        - includes all branch renames
-           - using `git reflog`
-     - on load:
-        - find current branches using `git branch`
-        - for each branch, add aliases using `git reflog`
-        - group results by `git.branches` with at least one common element, and add to branch aliases
-        - set normalized result.systems[*].git.branches STR_ARR
-           - using the { "ALIAS_BRANCH" -> "CURRENT_BRANCH" } map
-  - auto-delete results when git branch has been deleted
-     - done on CONF.save
-     - done by comparing `git branch` with result.systems[*].git.branches
-        - including branch aliases
-     - do not delete result with a result.systems[*].git.tag
-        - providing the tag still exists (using `git tag`)
-     - reasons:
-        - performance of read|write
-        - prevents different branches with same name (created at different times) to be connected
-  - require git for both CONF.save and `sync` command and CONF.since branch|commit|tag|"parent"???
-     - but not required otherwise???
-     - require a minimum version???
-     - both `git` binary and `.git` must be found???
-     - reasons to store with git:
-        - no need to setup any remote store|database
-        - much faster (everything local)
-        - easy to share results
-        - easy to make it work with git branches
-        - easier data conflict resolution
-        - data is coupled with repository
-
-CONF.system:
-  - impact of new history concepts???
-     - e.g. comparing machines in CI, or comparing different devs laptops
-  - 'ID'[_ARR] instead of CONF.system 'ID'???
-     - e.g. in CI, matching both OS and software version
-
-CONF.remove true instead of `remove` command???
-  - still ask for confirmation???
-
-Reporting on `remove` command:
-  - call reporters, like `show`
-     - i.e. must accept same CONF.*, e.g. CONF.tasks|system
-  - then prompt for removal confirmation
+`remove` command:
+  - report, like `show`
+     - i.e. must accept same CONF.*
+  - prompt for removal confirmation
      - unless CONF.force true
-  - do not print that confirmation removal suceeded (but print error if failed)
+        - def: isInteractive(process.stdin)
+        - always use def???
+     - do not print that confirmation removal suceeded (but print error if failed)
 
 Combination ids:
   - needed for:
@@ -276,7 +110,7 @@ Slogan???
 -------------------------------
 
 plugin.config.PROP STR[_ARR]
-  - for all plugins: reporter, progress, runner, store
+  - for all plugins: reporter, runner, store
   - meant for validation, using jest-validate (same validation as for CONF.*):
      - validate against unknown props
         - including automatic suggestion when using wrong case
@@ -426,7 +260,7 @@ Step functions:
         - stats are based on a sum of the `measures` of their child steps
            - i.e. we must ensure the number of `measures` for a given tasks is same for each of its steps
      - computed after each sample
-        - then persisted in stores
+        - then persisted in history
            - as opposed to being dynamically computed during reporting
         - reason: so we can use all `measures` for better stats
      - including|excluding step groups does not have impact on whether its children are included|excluded, and vice-versa
@@ -635,7 +469,7 @@ Rate:
   - CONF.[steps.stepId.]rate BOOL
      - def: false
   - reporting-only
-     - not persisted in stores
+     - not persisted in history
      - reporting flag
   - changes the reported value:
      - duration: 1/medianDuration, i.e. times per duration
@@ -649,6 +483,26 @@ Rate:
   - automatic scaling
      - duration, %, count: focused on TIME_UNIT
      - bytes: focused on UNIT, leaving TIME_UNIT as "s"
+
+CONF.system "ID" -> CONF.system[.CATEGORY] "ID"
+  - systemCategory:
+     - validated like systemId
+     - def: none
+  - system.id "[CATEGORY.]ID ..."
+     - also at combination.systemId
+     - sorted by systemCategory, for stability
+     - used in comparisons
+  - system.title "[CATEGORY.]ID ..."
+     - also at combination.systemTitle
+     - used in reporting
+  - each systemCategory is its own category
+     - in CONF.include|exclude
+     - in result.categories.systems OBJ_ARR_ARR, not OBJ_ARR
+  - when merging systems:
+     - create shared systems even if only one systemCategory matches
+        - e.g. same CPU for a specific OS
+        - in partially shared systems, system.id|title only includes shared ids
+     - systems[0] is reserved for shared system where all ids match
 
 Variations:
   - some config properties can be optionally variable:
@@ -708,7 +562,10 @@ Variations:
 Preview:
   - do reportPreview(result, config) after each measures aggregation:
      - counted as part of the `aggregateDuration`
+        - done separately, but previewDurationLast is added to aggregateCountdown computation
+        - done as soon as one new aggregate was computed
      - assigned to previewState.report
+  - try to not recompute part of `mergeSystems()`???
   - also initially done right after combinations are available, showing no stats yet
   - not done until calibrated false
      - reason: if calibrated false, measures will be removed, which would create confusing reporting (e.g. for min|max)
@@ -788,8 +645,8 @@ isAsync:
   - remove task.async BOOL
 
 Quantiles|histogram:
-  - persist in stores
-  - some stats should have a space-efficient shape for stores, but be denormalized on load:
+  - persist in history
+  - some stats should have a space-efficient shape for history, but be denormalized on load:
      - histogram:
         - denormalized: OBJ_ARR: low, high, frequency
         - normalized: ARR of [high, frequency]
@@ -823,10 +680,180 @@ Precision:
   - check if using a fixed, low amount of processes helps with precision???
   - find ways to improve precision even more???
 
+History:
+  - remove CONF.store
+  - save results to a `spyd` git branch
+     - branch is created from init commit
+        - i.e. does not hold reference to any parent commits
+     - includes `README.md` explaining the branch
+     - switches to `spyd` git branch using git worktree:
+        - for both CONF.save and load
+        - on load: only if `spyd` branch exists
+        - temporary git worktree add + remove
+           - using global temp dir
+              - filename should be random ID because:
+                 - concurrency
+                 - prevent re-using previous worktree if not cleaned up
+           - use `try {} finally {}` to ensure git worktree remove is called
+           - reasons:
+              - works even if uncommitted changes
+              - faster and less risky than git stash
+     - reasons to use git branch:
+        - unlike using regular file in codebase:
+           - does not pollute git log
+           - does not require git push --force on the codebase
+           - can update in CI without requiring developers to pull all the time
+        - unlike git hash-object + git cat-file:
+           - allows multiple files
+           - does not create many tags
+           - easy to understand
+           - no risk of pruning
+           - versioned
+  - `sync` command:
+     - git pull --rebase + git push, on `spyd` git branch
+        - git push not run if we know locally there is nothing to push
+        - retry (including git pull --rebase) if git push failed due to conflict
+           - fails if git fails for any other reasons
+           - fails if merge conflict, asking user to fix it
+     - stdin|stdout|stderr "inherit" on git pull|push
+        - reasons:
+           - allow entering passwords
+           - show any error message such as: authentication, git hooks, network, etc.
+           - provide with progress
+        - not on other git commands
+        - also prints headers with cyan "Pulling latest results..." and "Pushing new results..."
+        - only if CONF.quiet false
+     - reasons we separate local (CONF.save) and remote (`sync` command) read|write:
+        - mimics git, i.e. easy to understand
+        - much faster, since read|write mostly locally
+        - easier to isolate, fix and understand many possible failures with git push|pull
+  - file structure:
+     - individual results:
+        - at /benchmark/history/FILE.json
+           - FILE is result.id
+        - one immutable FILE.json per result
+           - i.e. single OBJ
+        - reasons (as opposed to single file for all results):
+           - fast to create new results
+           - does not create git conflicts
+           - concurrent safe
+           - small file size impact in git history
+        - format is JSON
+           - reason: fast
+     - cache file:
+        - at /benchmark/history.json
+        - cached concatenation of /benchmark/history/*.json
+           - i.e. OBJ_ARR
+           - reason: 10 times faster to read single file than individual ones
+        - if exists, read instead of /benchmark/history/*.json
+        - written at end of commands:
+           - not if does not read results (`exec`)
+           - if command does not update results (`show`, `remove`, `bench` with CONF.save false, `sync` without git pull): only if `history.json` does not exist yet
+           - if command update results (`bench` with CONF.save true, `sync` with git pull): use updated results
+        - use atomic-file-write
+        - stringify each result separately
+           - due to max string size if many results
+        - add `.gitignore` in `spyd` branch to ignore it
+           - reasons:
+              - prevent merge conflicts
+              - less size in git repo
+  - multi-branch history:
+     - sort by:
+        - branchIndex in lastResult.systems[0].git.branches
+           - filter out if not in any of them
+        - then by result.timestamp
+           - filter out if result.timestamp > oldest result in child branch
+        - should still keep results with same result.systems[0].ci together (as we already do)
+     - reasons:
+        - easy to understand|explain
+        - preserve chronologic order
+           - good for reporting
+           - good for time-based deltas
+        - not impacted by rebasing
+        - does not require git, except for finding parent branches
+        - mostly follows "git log" order
+           - except for newest common commit of parent branch's result, if saved after current branch's first commit's result, but that's unlikely
+     - results with no git branch:
+        - `previous` always empty ARR
+           - including `sincePrevious`
+           - i.e. behaves as if part of single-result branch with no parent branch
+        - result.systems[0].git.branch empty ARR
+  - CONF.since commit|tag|branch:
+     - if sinceResult not parent of targetResult, sincePrevious uses a different branch+parentBranches than targetResult's
+        - reason: allow comparing branches
+           - very useful for PRs, about to be merged|rebased onto
+           - still preserving chronological order, except for lastResult
+        - if sinceResult child of targetResult: return -1, i.e. empty `previous`
+     - logic:
+        - branch:
+           - use last result in branch+parentBranches
+           - reasons:
+              - what user probably expects when comparing branches, or to parent branch
+              - since branch is explicitly named, try to use it if possible, not child branch
+        - commit|tag:
+           - get author date (not committer date)
+              - using `git`
+           - then find first result with result.timestamp >= authorDate, within same branch
+              - reasons child branches not used:
+                 - comparing between branches is most likely not wanted
+                 - if sinceResult not parent, hard to know which child branch is wanted
+              - if none found, find first previous result with result.timestamp < authorDate, within branch+parentBranches
+                 - reasons:
+                    - user might have meant this instead
+                    - graceful fallback
+     - if none found, returns -1, i.e. empty `previous`
+     - reasons we do not use result.systems[0].git:
+        - works with rebases (which modify commit hashes) and tag renames
+        - more uniform behavior regardless of whether a result with specific commit|tag exists
+     - add CONF.since "parent"
+        - same as CONF.since "branch" with parent branch
+        - if no parent branch, empty `previous`
+        - def of CONF.since is still "1"
+  - branch aliases
+     - reason: do not lose connection between results when git branch renamed
+     - result.systems[0].git.branches STR_ARR_ARR:
+        - computed on result creation
+        - includes all parent branches, in order
+           - using `git`
+              - previously merged|rebased branches should be ignored, using the branch they merged|rebased onto instead
+        - includes all branch renames
+           - using `git reflog`
+     - on load:
+        - find current branches using `git branch`
+        - for each branch, add aliases using `git reflog`
+        - group results by `git.branches` with at least one common element, and add to branch aliases
+        - set normalized result.systems[0].git.branches STR_ARR
+           - using the { "ALIAS_BRANCH" -> "CURRENT_BRANCH" } map
+  - auto-delete results when git branch has been deleted
+     - done on CONF.save
+     - done by comparing `git branch` with result.systems[0].git.branches
+        - including branch aliases
+     - do not delete result with a result.systems[0].git.tag
+        - providing the tag still exists (using `git tag`)
+     - reasons:
+        - performance, by making history.json smaller
+        - prevents different branches with same name (created at different times) to be connected
+  - require git:
+     - only for:
+        - CONF.save
+        - `sync` command
+        - CONF.since branch|commit|tag|"parent"
+     - require:
+        - `git` binary is executable (i.e. `git --version` has exit code 0)
+        - minimum version of `git`
+        - there is a `.git` in `[.../]{CONF.cwd}`
+     - reasons to store with git:
+        - no need to setup any remote store|database
+        - much faster (everything local)
+        - easy to share results
+        - easy to make it work with git branches
+        - easier data conflict resolution
+        - data is coupled with repository
+
 Plugin shape should be validated
 
 Error handling:
-  - better way for all plugins (report, progress, stores, runners) to signal user error vs bugs
+  - better way for all plugins (report, runners) to signal user error vs bugs
   - better handling of child process errors due to runner bugs (handled as user error right now)
   - plugin|core errors should print message to report GitHub issues to the plugin|core
      - it should include system information
@@ -859,7 +886,7 @@ When killing child process, should kill descendants too
 
 Consider lowering the valid Node version for spyd-runner-node, so that `run.node.versions` can target lower versions
 
-Create a store that works in GitHub actions???
+Create GitHub action
 
 Reporters:
   - types:
@@ -897,7 +924,7 @@ Split `precise-timestamp` to own repository
 Separate into different repos:
   - some plugins are builtin, i.e. required as production dependencies by core
      - including spyd-run-node and spyd-run-cli (until more runners are created)
-  - types: spyd-reporter|runner|store-*
+  - types: spyd-reporter|runner-*
   - spyd -> spyd (CLI) + spyd-core (non-CLI)
 
 Clarify features in `README`:
@@ -914,9 +941,7 @@ Add tests, documentation, etc.:
   - for all repos, including sub-repos
   - add keywords (GitHub, package.json)
 
-Use key-value abstraction layers to add more built-in spyd-store-*
-
-Utilities to help people creating reporters, runners, stores
+Utilities to help people creating reporters, runners
   - GitHub template
   - test utility
 
