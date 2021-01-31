@@ -12,9 +12,16 @@ History:
   - save results to a `spyd` git branch
      - branch is created from init commit
         - i.e. does not hold reference to any parent commits
-     - what if current branch has uncomitted changes???
+     - includes `README.md` explaining the branch
+     - switches to `spyd` git branch using git worktree:
+        - for both CONF.save and load
+        - on load: only if `spyd` branch exists
         - temporary git worktree add + remove
-        - or git stash + git checkout???
+           - using `${gitRoot}/.spyd_branch`
+           - use `try {} finally {}` to ensure git worktree remove is called
+           - reasons:
+              - works even if uncommitted changes
+              - faster and less risky than git stash
      - reasons to use git branch:
         - unlike using regular file in codebase:
            - does not pollute git log
@@ -27,55 +34,51 @@ History:
            - no risk of pruning
            - versioned
   - `sync` command:
-     - git pull --rebase + git push `spyd` git branch
-     - CONF.sync BOOL instead???
-     - how to handle failures???
-        - such as: authentication, git hooks, network, etc.
-     - allows providing with CLI flags to configure git push|pull???
-     - allow stdin???
-     - print stdout|stderr always, or only on failures???
-     - In CI, done by def???
+     - git pull --rebase + git push, on `spyd` git branch
+        - git push not run if we know locally there is nothing to push
+        - retry (including git pull --rebase) if git push failed due to conflict
+           - fails if git fails for any other reasons
+           - fails if merge conflict, asking user to fix it
+     - stdin|stdout|stderr "inherit" on git pull|push
+        - reasons:
+           - allow entering passwords
+           - show any error message such as: authentication, git hooks, network, etc.
+           - provide with progress
+        - not on other git commands
+        - only if CONF.quiet false
      - reasons we separate local (CONF.save) and remote (`sync` command) read|write:
         - mimics git, i.e. easy to understand
         - much faster, since read|write mostly locally
         - easier to isolate, fix and understand many possible failures with git push|pull
   - file structure:
-     - possible solutions???
+     - individual results:
+        - at /benchmark/history/FILE.json
+           - FILE is result.id
         - one immutable FILE.json per result
-           - con: slower to read
-        - one mutable FILE.json for all results
-           - con: slower to write
-           - con: require automated git conflict resolution
-           - con: much bigger git file size impact
-        - immutable FILE.json for all results, progressively created
-           - i.e. instead of appending|mutating, create a new FILE.json and remove previous one
-           - con: slower to write
-           - con: read potentially many duplicate results
-           - con: much bigger git file size impact
-     - performance???
-        - read:
-           - one *.json file for all results: 10ms per 1e3 results
-           - one *.json file per result: 100ms per 1e3 results
-        - write:
-           - one *.json file for all results: 5ms (JSON.stringify()) + 2ms (writeFile()) per 1e3 results
-              - must stringify each result separately due to max string size
-     - cache file???
-        - single JSON file with almost all results
-        - read at beginning of any spyd command:
-           - in parallel with readdir of individual results *.json
-           - then still read individual results, but only ones not in cache file (using result.id)
-              - is this even possible, or is the cache always matching the latest state of *.json???
-        - written:
-           - at end of any spyd command
-           - including `sync`
-        - use `.gitignore` in `spyd` branch to ignore it
-           - reason: prevent merge conflicts
-           - reason: less size in git repo
-     - format: normal JSON, ndjson, or "almost JSON" (JSON without [], for appending)???
-     - add comment that no need to make addResults() concurrent safe??? Reasons:
-        - append will be concurrent safe on many situations since the number of bytes to write is fairly small
-        - unlikely two benchmarks would end exactly at same time on same machine
-        - not good practice to execute two benchmarks at same time on same machine
+        - reasons (as opposed to single file for all results):
+           - fast to create new results
+           - does not create git conflicts
+           - concurrent safe
+           - small file size impact in git history
+        - format is JSON
+           - reason: fast
+     - cache file:
+        - at /benchmark/history.json
+        - cached concatenation of /benchmark/history/*.json
+           - reason: 10 times faster to read single file than individual ones
+        - if exists, read instead of /benchmark/history/*.json
+        - written at end of commands:
+           - not if does not read results (`exec`)
+           - if command does not update results (`show`, `remove`, `bench` with CONF.save false): only if `history.json` does not exist yet
+           - if command update results (`bench` with CONF.save true, `sync`): use updated results
+              - for `sync`: only if new results were pulled, or if `history.json` does not exist yet
+        - use atomic-file-write
+        - stringify each result separately
+           - due to max string size if many results
+        - add `.gitignore` in `spyd` branch to ignore it
+           - reasons:
+              - prevent merge conflicts
+              - less size in git repo
   - multi-branch history:
      - sort by:
         - branchIndex in lastResult.systems[*].git.branches
@@ -92,9 +95,11 @@ History:
         - does not require git, except for finding parent branches
         - mostly follows "git log" order
            - except for newest common commit of parent branch's result, if saved after current branch's first commit's result, but that's unlikely
-     - what if user checkout previous commit and save result???
-        - forbid saving then???
-     - what if there is no current branch???
+     - results with no git branch:
+        - `previous` always empty ARR
+           - including `sincePrevious`
+           - i.e. behaves as if part of single-result branch with no parent branch
+        - result.systems[*].git.branch empty ARR
   - CONF.since commit|tag|branch:
      - if sinceResult not parent of targetResult, sincePrevious uses a different branch+parentBranches than targetResult's
         - reason: allow comparing branches
@@ -142,18 +147,17 @@ History:
            - using the { "ALIAS_BRANCH" -> "CURRENT_BRANCH" } map
   - auto-delete results when git branch has been deleted
      - done on CONF.save
-     - done by comparing `git branch` with result.systems[*].branches
+     - done by comparing `git branch` with result.systems[*].git.branches
         - including branch aliases
-     - unless has tag that has not been deleted???
+     - do not delete result with a result.systems[*].git.tag
+        - providing the tag still exists (using `git tag`)
      - reasons:
         - performance of read|write
         - prevents different branches with same name (created at different times) to be connected
-  - how does this work with PRs???
-     - both from and not from fork
-  - require git for CONF.save???
+  - require git for both CONF.save and `sync` command and CONF.since branch|commit|tag|"parent"???
      - but not required otherwise???
      - require a minimum version???
-     - both `git` binary and `.git` can be found???
+     - both `git` binary and `.git` must be found???
      - reasons to store with git:
         - no need to setup any remote store|database
         - much faster (everything local)
@@ -701,13 +705,6 @@ Variations:
      - inputId is only part of the variationId
         - used in `inputs` passed to runner.measure()
 
-Rename CONF.preview to CONF.quiet
-  - invert BOOL
-  - document in CLI flag that reporters are still run
-  - alias "q"
-
-Rename both progress + live reporting to: [results] preview
-
 If multiple reporters in the same terminal output at once, concatenate their outputs
   - including during results preview
 
@@ -725,7 +722,7 @@ Preview:
   - both steps are:
      - also initially done right after combinations are available, showing no stats yet
      - only done if all of:
-        - CONF.preview true
+        - CONF.quiet false
         - reporter.preview true (def: false)
            - check reporter.report() return value instead???
         - reporterConfig.output "-"
@@ -747,7 +744,7 @@ Preview:
      - stopping benchmark once: clear preview. Report again (do not keep the last preview)
      - stopping benchmark twice: clear preview. Keep last preview
   - do not clear screen if either:
-     - CONF.preview false
+     - CONF.quiet true
      - no reporters with reporter.preview true + reporterConfig.output "-"
         - i.e. if only progress bar printed, should not clear screen
 
