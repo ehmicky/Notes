@@ -104,6 +104,7 @@ syntax = STR                      #Declare protobuf version
 import [weak|public] "PATH.proto" #Include another *.proto file
                                   #Can use TYPEs of PATH.proto, but not ones imported by it
                                   #  - unless "public" (only for one depth level)
+                                  #  - weak???
 package "VARR"                    #When imported, this file's TYPEs must be namespaced by VARR
                                   #Implementation is language-dependent.
                                   #VARR can be overridden for specific language using top-level OPTs:
@@ -123,7 +124,8 @@ message VAR { ... }               #Like an OBJ. Can be nested.
 
 option OPT_VARR = VAL             #Top-level or child of service|rpc|message|enum|oneof
                                   #Declare options for a specific file|service|rpc|message|enum|oneof
-                                  #The meaning of options depends on consumers, except for some core OPTs documented here.
+                                  #It is possible to define custom options, but hard.
+                                  #Core OPTs documented here.
                                   #OPT_VARR can be (OPT_VARR)
 OPTS                              #[OPT_VARR=VAL],... (uses [] brackets)
                                   #Same but for fields|map|enum values
@@ -133,7 +135,6 @@ enum VAR { ... }                  #Enum type. Top-level or child of message
 VAR = ID [OPTS]                   #Enum field declaration. Child of enum.
                                   #There must be at least one enum field with ID 0 (used as default value)
                                   #Two fields cannot have same ID unless ENUM_OPT.allow_alias true
-FIELD_OPT.deprecated              #BOOL (def: false). Document as deprecated and|or print warnings.
 
 oneof VAR { ... }                 #Child of message
                                   #Declares that at most one of several fields is declared at once.
@@ -149,6 +150,7 @@ oneof VAR { ... }                 #Child of message
                                   #Always optional
                                   #  - the default value is the empty value (0, false, "", [], enum value with ID 0)
                                   #  - the default value is always assigned
+FIELD_OPT.deprecated              #BOOL (def: false). Document as deprecated and|or print warnings.
 
 map<KEY_TYPE, VAL_TYPE> VAR = ID  #Key/value unordered map. Child of message
  [OPTS]                           #KEY_TYPE cannot be float|double|bytes|message|map|enum
@@ -350,37 +352,38 @@ JSON PARSING ==>                  #  - BOOL -> bool
 
 protoc FILE.proto...              #Convert FILE.proto to generated code.
                                   #The generated code usually needs some runtime library.
+                                  #Does not convert SERVICE|RPC.
 
---js|objc|php|python|ruby|cpp|    #Where to output generated code, and for which language
- csharp|java_out=OUT_DIR          #OUT_DIR can be also be LANG_OPT=STR,...,binary:OUT_DIR
+--js|objc|php|python|ruby|cpp|
+ csharp|java_out
+ [LANG_OPT[=STR],...]OUT_DIR      #Where to output generated code, and for which language
+
+--decode MESSAGE_TYPE             #Take message in binary format in stdin and outputs it in debug text format to stdout
+                                  #Not compatible with --*_out
+--encode MESSAGE_TYPE             #Inverse
+--decode_raw                      #Same as --decode but automatically guesses MESSAGE_TYPE
 
 -I|--proto_path DIR               #To resolve "import" statements.
                                   #Def: "."
                                   #Should be set to repository root.
                                   #Can be specified several times.
 
-  --encode=MESSAGE_TYPE       Read a text-format message of the given type from standard input and write it in binary to standard output.
-                              The message type must be defined in PROTO_FILES or their imports.
-  --decode=MESSAGE_TYPE       Read a binary message of the given type from standard input and write it in text format to standard output.
-                              The message type must be defined in PROTO_FILES or their imports.
-  --decode_raw                Read an arbitrary protocol message from standard input and write the raw tag/value pairs in text format to standard output.
-                              No PROTO_FILES should be given when using this flag.
-  --descriptor_set_in=FILES   Specifies a delimited list of FILES each containing a FileDescriptorSet (a protocol buffer defined in descriptor.proto).
+  --descriptor_set_in FILES   Specifies a delimited list of FILES each containing a FileDescriptorSet (a protocol buffer defined in descriptor.proto).
                               The FileDescriptor for each of the PROTO_FILES provided will be loaded from these FileDescriptorSets.
                               If a FileDescriptor appears multiple times, the first occurrence will be used.
-  -oFILE, --descriptor_set_out=FILE
+  -oFILE, --descriptor_set_out FILE
                               Writes a FileDescriptorSet (a protocol buffer, defined in descriptor.proto) containing all of the input files to FILE.
   --include_imports           When using --descriptor_set_out, also include all dependencies of the input files in the set, so that the set is self-contained.
   --include_source_info       When using --descriptor_set_out, do not strip SourceCodeInfo from the FileDescriptorProto.
                               This results in vastly larger descriptors that include information about the original location of each decl in the source file as well as surrounding comments.
-  --dependency_out=FILE       Write a dependency output file in the format expected by make.
+  --dependency_out FILE       Write a dependency output file in the format expected by make.
                               This writes the transitive set of input file paths to FILE
-  --error_format=FORMAT       Set the format in which to print errors.
+  --error_format FORMAT       Set the format in which to print errors.
                               FORMAT may be 'gcc' (the default) or 'msvs' (Microsoft Visual Studio format).
   --print_free_field_numbers  Print the free field numbers of the messages defined in the given proto files.
                               Groups share the same field number space with the parent message.
                               Extension ranges are counted as occupied fields numbers.
-  --plugin=EXECUTABLE         Specifies a plugin executable to use.
+  --plugin EXECUTABLE         Specifies a plugin executable to use.
                               Normally, protoc searches the PATH for plugins, but you may specify additional executables not in the path using this flag.
                               Additionally, EXECUTABLE may be of the form NAME=PATH, in which case the given plugin name is mapped to the given executable even if the executable's own name differs.
   @<filename>                 Read options and filenames from file.
@@ -400,10 +403,80 @@ protoc FILE.proto...              #Convert FILE.proto to generated code.
 
 google-protobuf                   #Runtime npm package
 
-LANG_OPT.import_style=STR         #'closure' (def) or 'commonjs'
-                                  #With 'commonjs':
-                                  #  - filename is "FILE_pb.js"
-                                  #  - --proto_path is OUT_DIR
+LANG_OPT.import_style=STR         #Can be:
+                                  #  - 'closure' (def)
+                                  #  - 'commonjs_strict':
+                                  #     - filename is "FILE_pb.js"
+                                  #     - --proto_path is OUT_DIR
+                                  #  - 'browser': global object
+                                  #  - 'commonjs': same as commonjs_strict + browser
+                                  #  - 'es6': ES modules
+LANG_OPT.error_on_name_conflict   #BOOL (def: false). Fail if two TYPEs with same name
+LANG_OPT.binary                   #BOOL (def: true). Enables *Binary()
+
+CASE ==>                          #  - kept as is: package, message, enum
+                                  #  - converted to UpperCase: fields, oneof, map
+                                  #  - converted to UPPERCASE: enum fields, oneof cases
+                                  #  - converted to lowercase: toObject()
+
+EXPORT ==>                        #Output file exports top-level message|enum, namespaced by package
+
+VARR|PACKAGE                      #Just plain OBJ
+
+new Message()                     #"Message" is the Message name
+MESSAGE.toObject()->OBJ           #
+MESSAGE.cloneMessage()->MESSAGE2  #
+
+MESSAGE.getFIELD()->VAL           #
+MESSAGE.setFIELD(VAL)->MESSAGE    #
+
+ARR_FIELD                         #Uses the following methods instead.
+MESSAGE.getFIELDList()->ARR
+MESSAGE.setFIELDList(ARR)->MESSAGE
+MESSAGE.clearFIELDList(ARR)
+ ->MESSAGE
+MESSAGE.addFIELD(VAL[,INDEX])
+ ->MESSAGE                        #Def INDEX: last
+
+NESTED_MESSAGE_FIELD              #undefined if not set
+                                  #Also have the following additional methods.
+MESSAGE.clearFIELD()->MESSAGE
+MESSAGE.hasFIELD()->BOOL          #Only if nested message field
+
+BYTES_FIELD                       #Use BUFFER|BASE64_STR
+                                  #Converted to BASE64_STR in toObject()
+                                  #Also have the following additional methods.
+MESSAGE.getFIELD_asB64()
+ ->'BASE64_STR'
+MESSAGE.getFIELD_asU8()->UINT8_ARR#
+
+MAP_FIELD                         #Uses the following methods instead.
+MESSAGE.getFIELDMap()->MAP        #
+MESSAGE.clearFIELDMap()->MESSAGE  #
+
+MESSAGE.ONEOFCase                 #OBJ:
+                                  #  - value is ID_INT
+                                  #  - key is either:
+                                  #     - field name
+                                  #     - {ONEOF}_NOT_SET (value 0)
+MESSAGE.getONEOFCase()->ID_INT    #
+
+ENUM                              #Just plain OBJ
+
+MESSAGE.serializeBinary
+ ()->UINT8_ARR
+Message.deserializeBinary
+ (UINT8_ARR)->MESSAGE             #Protobuf binary format
+
+new BinaryWriter()
+MESSAGE.serializeBinaryToWriter
+ (MESSAGE, BINARY_WRITER)
+BINARY_WRITER.getResultBuffer()
+ ->UINT8_ARR
+new BinaryReader()
+Message.
+ deserializeBinaryFromReader
+ (MESSAGE, BINARY_READER)->MESSAGE#Same but more advanced
 
 
                                              /=+===============================+=\
