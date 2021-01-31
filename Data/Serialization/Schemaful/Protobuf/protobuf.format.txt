@@ -27,7 +27,7 @@ VAL                               #VARR|BOOL|INT|NUM|STR
 VAR                               #Must use [a-zA-Z0-9_] and start with [a-zA-Z]
                                   #Case convention:
                                   #  - CamelCase for aggregates|types (service|rpc|message|enum type)
-                                  #  - snake_case for fields (normal|oneof|map|option|enum values), package, builtin types
+                                  #  - snake_case for fields (normal|oneof|map|option|enum values), package, files, builtin types
 VARR                              #Dot-delimited VAR
 
 BOOL                              #true|false
@@ -61,6 +61,16 @@ STR                               #"..." or '...' (same behavior)
 string                            #TYPE for human STR
 bytes                             #TYPE for machine STR
 
+TRANSTYPING ==>                   #The following TYPEs are automatically transtyped:
+                                  #  - when server|client are using different *.proto
+                                  #  - i.e. allows backward compatibility
+                                  #List of transtyping groups:
+                                  #  - [u]int32|64|bool
+                                  #  - sint32|64
+                                  #  - string|bytes, providing valid UTF-8
+                                  #  - [s]fixed32
+                                  #  - [s]fixed64
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -76,18 +86,29 @@ STATEMENT;                        #Always ; at end, for each line except ones en
 /* COMMENT */                     #
 
 syntax = STR                      #Declare protobuf version
-                                  #Must be "proto2|proto3" (only proto3 documented here)
+                                  #Must be "proto2|proto3"
+                                  #  - only proto3 documented here
+                                  #  - proto2 can be imported from proto3, but not other way around
                                   #Required. Must be first statement.
 
-package "VARR"                    #
-import [weak|public] "NAME.proto" #
+import [weak|public] "PATH.proto" #Include another *.proto file
+                                  #Can use TYPEs of PATH.proto, but not ones imported by it
+                                  #  - unless "public" (only for one depth level)
+package "VARR"                    #When imported, this file's TYPEs must be namespaced by VARR
+                                  #Implementation is language-dependent and influenced by OPTs:
+                                  #  - go_package STR (e.g. 'google.golang.org/protobuf/types/known/anypb')
+                                  #  - java_package STR (e.g. 'com.google.protobuf')
+                                  #  - csharp_namespace STR (e.g. 'Google.Protobuf.WellKnownTypes')
 
 service VAR { ... }               #A client|server.
 rpc VAR MTYPE returns MTYPE2      #An endpoint. Child of service
  [{ ... }]                        #MTYPE is ([stream] MESSAGE_TYPE)
 
 message VAR { ... }               #Like an OBJ. Can be nested.
-MESSAGE_TYPE                      #TYPE of message. [.]VARR
+                                  #VAR is the TYPE
+                                  #If a TYPE is declared inside message and used outside of it:
+                                  #  - must namespace it: VAR.TYPE
+                                  #  - for TYPEs of: nested message, enum
 
 option OPT_VARR = VAL             #Top-level or child of service|rpc|message|enum|oneof
                                   #OPT_VARR can be (OPT_VARR)
@@ -96,21 +117,31 @@ OPTS                              #[OPT_VARR=VAL],... (uses [] brackets)
                                   #Use options.
 
 enum VAR { ... }                  #Enum type. Top-level or child of message
+                                  #VAR is the TYPE
 VAR = ID [OPTS]                   #Enum field declaration. Child of enum.
-ENUM_TYPE                         #TYPE of enum. [.]VARR
+                                  #There must be at least one enum field with ID 0 (used as default value)
+                                  #Two fields cannot have same ID unless ENUM_OPT.allow_alias true
 
-oneof VAR { ... }                 #Union of several types. Child of message
+oneof VAR { ... }                 #Child of message
+                                  #Declares that at most one of several fields is declared at once.
+                                  #Allows serializing only one of them, i.e. more memory efficient.
+                                  #Cannot use ARRs nor MAPs
+                                  #Backward compatible changes:
+                                  #  - creating new oneof
+                                  #  - removing oneof fields
+                                  #  - but not adding oneof fields to existing oneof
 
 [repeated] TYPE VAR = ID [OPTS]   #Field declaration. Child of message|oneof.
-                                  #"repeated":
-                                  #  - for ARR
-                                  #  - cannot be used if child of oneof
-                                  #Optional by default
+                                  #"repeated" is for ordered ARR
+                                  #Always optional
+                                  #  - the default value is the empty value (0, false, "", [], enum value with ID 0)
+                                  #  - the default value is always assigned
 
-map<KEY_TYPE, VAL_TYPE> VAR = ID  #Key/value map. Child of message
- [OPTS]                           #KEY_TYPE cannot be float|double|bytes|[.]VARR
+map<KEY_TYPE, VAL_TYPE> VAR = ID  #Key/value unordered map. Child of message
+ [OPTS]                           #KEY_TYPE cannot be float|double|bytes|message|map|enum
+                                  #VAL_TYPE cannot be map nor ARR
 
-reserved ID [to ID2|max],...      #Child of message
+reserved ID [to ID2|max],...      #Child of message|enum
 reserved VAR,...                  #List of previously defined ID|VAR that have been deleted.
                                   #Forbids re-using those, to keep backward compatibility.
 
@@ -122,11 +153,22 @@ reserved VAR,...                  #List of previously defined ID|VAR that have b
                                              \=+===============================+=/
 
 
-CORE TYPES ==>                    #Contains core MESSAGE_TYPEs and ENUM_TYPEs
+package "google.protobuf"         #MESSAGE_TYPEs and ENUM_TYPEs always available.
                                   #Mostly for reflection, i.e. protobuf to represent protobuf itself.
                                   #Also define:
                                   #  - null|timestamp|duration
                                   #  - service versions, mixins
+import                            #NAME is:
+ "google/protobuf/NAME.proto"     #  - wrappers (*Value)
+                                  #  - struct (NullValue|ListValue|Struct|Value)
+                                  #  - empty
+                                  #  - any
+                                  #  - type (Field.*|Syntax|Type|Option|Enum|EnumValue)
+                                  #  - source_context
+                                  #  - api (Api|Method|Mixin)
+                                  #  - field_mask
+                                  #  - duration
+                                  #  - timestamp
 
 BoolValue|[U]Int32|64Value|
  FloatValue|DoubleValue|          #Protobuf builtin type
@@ -145,7 +187,7 @@ STRUCT.fields                     #MAP<STR,VALUE>
 Value                             #Protobuf VAL (i.e. any type).
                                   #If a union of one of the following.
 VALUE.bool_value                  #BOOL
-VALUE.number_value                #NUM|INT, excluding inf|nan
+VALUE.number_value                #DOUBLE, excluding inf|nan
 VALUE.string_value                #STR
 VALUE.null_value                  #NULL_VALUE
 VALUE.list_value                  #LIST_VALUE
@@ -155,10 +197,10 @@ Any                               #Protobuf VAL (i.e. any type)
 ANY.value                         #BYTES
 ANY.type_url                      #"URL" to a Type
 
-Kind                              #Protobuf type. ENUM_TYPE
+Field.Kind                        #Protobuf type. ENUM_TYPE
                                   #Can be: TYPE_BOOL|[S|U]INT32|64|DOUBLE|FLOAT|[S]FIXED32|64|STRING|BYTES|MESSAGE|ENUM|UNKNOWN
 
-Cardinality                       #Protobut type optionality|repeatedness. ENUM_TYPE
+Field.Cardinality                 #Protobuf type optionality|repeatedness. ENUM_TYPE
                                   #Can be: CARDINALITY_OPTIONAL|REPEATED|UNKNOWN
 
 Syntax                            #Protobuf syntax. ENUM_TYPE
@@ -217,7 +259,7 @@ OPTION.value                      #ANY
 
 Enum                              #Protobuf enum type
 ENUM.name                         #"VAR"
-ENUM.enumvalue                    #ENUMVALUE
+ENUM.enumvalue                    #ENUMVALUE_ARR
 ENUM.options                      #OPTION_ARR
 ENUM.source_context               #SOURCE_CONTEXT
 ENUM.syntax                       #SYNTAX
@@ -234,3 +276,15 @@ TIMESTAMP.nanos                   #INT32. Min 0, max 1e9
 Duration                          #
 DURATION.seconds                  #INT64. Min|max +|-1e4 years
 DURATION.nanos                    #INT32. Min|max +|-1e9
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:           COMPILER            :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+-I|--proto_path DIR               #To resolve "import" statements.
+                                  #Def: "."
+                                  #Should be set to repository root.
