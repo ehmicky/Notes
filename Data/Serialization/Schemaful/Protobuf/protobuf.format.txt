@@ -6,11 +6,21 @@
 
 
 VERSION ==>                       #3.14.0
+                                  #Serialization format.
+                                  #Fairly schemaful, yet somewhat cross-language.
+                                  #Generates code stub for many languages to parse/serialize data.
+                                  #Optimized for network payload with low size.
 
 FILE EXTENSION ==>                #.proto
 
-https://developers.google.com/protocol-buffers/docs/proto3#default
-https://developers.google.com/protocol-buffers/docs/reference/javascript-generated
+Continue:
+  - learn Node.js:
+     - https://developers.google.com/protocol-buffers/docs/reference/javascript-generated#compiler-options
+     - rm -r js/ 2> /dev/null; mkdir js && protoc a.proto --js_out=import_style=commonjs,binary:js && vim js/oh.js
+  - https://developers.google.com/protocol-buffers/docs/style
+  - https://developers.google.com/protocol-buffers/docs/encoding
+  - https://developers.google.com/protocol-buffers/docs/techniques
+  - https://github.com/protocolbuffers/protobuf/tree/master/docs
 
 
                                              /=+===============================+=\
@@ -95,7 +105,8 @@ import [weak|public] "PATH.proto" #Include another *.proto file
                                   #Can use TYPEs of PATH.proto, but not ones imported by it
                                   #  - unless "public" (only for one depth level)
 package "VARR"                    #When imported, this file's TYPEs must be namespaced by VARR
-                                  #Implementation is language-dependent and influenced by OPTs:
+                                  #Implementation is language-dependent.
+                                  #VARR can be overridden for specific language using top-level OPTs:
                                   #  - go_package STR (e.g. 'google.golang.org/protobuf/types/known/anypb')
                                   #  - java_package STR (e.g. 'com.google.protobuf')
                                   #  - csharp_namespace STR (e.g. 'Google.Protobuf.WellKnownTypes')
@@ -111,16 +122,18 @@ message VAR { ... }               #Like an OBJ. Can be nested.
                                   #  - for TYPEs of: nested message, enum
 
 option OPT_VARR = VAL             #Top-level or child of service|rpc|message|enum|oneof
+                                  #Declare options for a specific file|service|rpc|message|enum|oneof
+                                  #The meaning of options depends on consumers, except for some core OPTs documented here.
                                   #OPT_VARR can be (OPT_VARR)
-                                  #Declare options.
 OPTS                              #[OPT_VARR=VAL],... (uses [] brackets)
-                                  #Use options.
+                                  #Same but for fields|map|enum values
 
 enum VAR { ... }                  #Enum type. Top-level or child of message
                                   #VAR is the TYPE
 VAR = ID [OPTS]                   #Enum field declaration. Child of enum.
                                   #There must be at least one enum field with ID 0 (used as default value)
                                   #Two fields cannot have same ID unless ENUM_OPT.allow_alias true
+FIELD_OPT.deprecated              #BOOL (def: false). Document as deprecated and|or print warnings.
 
 oneof VAR { ... }                 #Child of message
                                   #Declares that at most one of several fields is declared at once.
@@ -238,7 +251,7 @@ TYPE.syntax                       #SYNTAX
 
 Field                             #Protobuf field
 FIELD.name                        #"VAR"
-FIELD.json_name                   #"VAR", for JSON
+FIELD.json_name                   #OPT.json_name
 FIELD.number                      #ID
 FIELD.kind                        #KIND representing the type
 FIELD.type_url                    #"URL" to a Type
@@ -250,7 +263,6 @@ FIELD.options                     #OPTION_ARR
 FieldMask                         #Protobuf field "VARR" path.
                                   #ARR fields can only be specified as last VAR.
                                   #Usually used for selection.
-                                  #When serializing FIELD_MASK_ARR, usually join with ","
 FIELD_MASK.paths                  #"VARR"_ARR
 
 Option                            #Protobuf options
@@ -280,11 +292,137 @@ DURATION.nanos                    #INT32. Min|max +|-1e9
 
                                              /=+===============================+=\
                                             /  :                               :  \
+                                            )==:             JSON              :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+JSON SERIALIZATION ==>            #  - bool -> BOOL
+                                  #  - [u]int|fixed32 -> NUM
+                                  #  - [u]int|fixed64 -> "NUM"
+                                  #  - float|double -> NUM|"NaN"|"[-]Infinity"
+                                  #  - string -> STR
+                                  #  - bytes -> standard base64 STR with padding
+                                  #  - message -> OBJ
+                                  #     - key is lowerCamelCase'd
+                                  #     - key can be set using OPT.json_name
+                                  #  - repeated -> ARR
+                                  #  - enum -> "VAR"
+                                  #  - map -> OBJ
+                                  #  - TYPE default value -> undefined
+                                  #  - *Value -> same as underlying type
+                                  #  - NullValue -> null
+                                  #  - EMPTY -> OBJ
+                                  #  - STRUCT -> OBJ
+                                  #  - ANY -> OBJ, with @type instead of type_url
+                                  #  - FIELD_MASK -> "VARR,..."
+                                  #  - TIMESTAMP -> "YYYY-MM-DDTHH:MM:SS[.SSS[SSS[SSS]]]Z"
+                                  #  - DURATION -> "N...[.N...]s"
+
+JSON PARSING ==>                  #  - BOOL -> bool
+                                  #  - NUM|"NUM" -> [u]int|fixed32|64
+                                  #  - NUM|"NUM[e...]"|"NaN"|"[-]Infinity" -> float|double
+                                  #  - STR -> string
+                                  #  - standard|url-safe base64 STR with|without padding -> bytes
+                                  #  - undefined|null -> TYPE default value
+                                  #  - OBJ -> message
+                                  #     - key is either lowerCamelCase, protobuf name or OPT.json_name
+                                  #  - "VAR"|ID_NUM -> enum
+                                  #  - ARR -> repeated
+                                  #     - [] or null -> empty repeated
+                                  #  - OBJ -> map
+                                  #  - same as underlying type -> *Value
+                                  #  - null -> NullValue
+                                  #  - OBJ -> EMPTY
+                                  #  - OBJ -> STRUCT
+                                  #  - OBJ, with @type instead of type_url -> ANY
+                                  #  - "VARR,..." -> FIELD_MASK
+                                  #  - "YYYY-MM-DDTHH:MM:SS[.SSS[SSS[SSS]]][TZ]" -> TIMESTAMP
+                                  #  - "N...[.N...]s" -> DURATION
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
                                             )==:           COMPILER            :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
+protoc FILE.proto...              #Convert FILE.proto to generated code.
+                                  #The generated code usually needs some runtime library.
+
+--js|objc|php|python|ruby|cpp|    #Where to output generated code, and for which language
+ csharp|java_out=OUT_DIR          #OUT_DIR can be also be LANG_OPT=STR,...,binary:OUT_DIR
+
 -I|--proto_path DIR               #To resolve "import" statements.
                                   #Def: "."
                                   #Should be set to repository root.
+                                  #Can be specified several times.
+
+  --encode=MESSAGE_TYPE       Read a text-format message of the given type from standard input and write it in binary to standard output.
+                              The message type must be defined in PROTO_FILES or their imports.
+  --decode=MESSAGE_TYPE       Read a binary message of the given type from standard input and write it in text format to standard output.
+                              The message type must be defined in PROTO_FILES or their imports.
+  --decode_raw                Read an arbitrary protocol message from standard input and write the raw tag/value pairs in text format to standard output.
+                              No PROTO_FILES should be given when using this flag.
+  --descriptor_set_in=FILES   Specifies a delimited list of FILES each containing a FileDescriptorSet (a protocol buffer defined in descriptor.proto).
+                              The FileDescriptor for each of the PROTO_FILES provided will be loaded from these FileDescriptorSets.
+                              If a FileDescriptor appears multiple times, the first occurrence will be used.
+  -oFILE, --descriptor_set_out=FILE
+                              Writes a FileDescriptorSet (a protocol buffer, defined in descriptor.proto) containing all of the input files to FILE.
+  --include_imports           When using --descriptor_set_out, also include all dependencies of the input files in the set, so that the set is self-contained.
+  --include_source_info       When using --descriptor_set_out, do not strip SourceCodeInfo from the FileDescriptorProto.
+                              This results in vastly larger descriptors that include information about the original location of each decl in the source file as well as surrounding comments.
+  --dependency_out=FILE       Write a dependency output file in the format expected by make.
+                              This writes the transitive set of input file paths to FILE
+  --error_format=FORMAT       Set the format in which to print errors.
+                              FORMAT may be 'gcc' (the default) or 'msvs' (Microsoft Visual Studio format).
+  --print_free_field_numbers  Print the free field numbers of the messages defined in the given proto files.
+                              Groups share the same field number space with the parent message.
+                              Extension ranges are counted as occupied fields numbers.
+  --plugin=EXECUTABLE         Specifies a plugin executable to use.
+                              Normally, protoc searches the PATH for plugins, but you may specify additional executables not in the path using this flag.
+                              Additionally, EXECUTABLE may be of the form NAME=PATH, in which case the given plugin name is mapped to the given executable even if the executable's own name differs.
+  @<filename>                 Read options and filenames from file.
+                              If a relative file path is specified, the file will be searched in the working directory.
+                              The --proto_path option will not affect how this argument file is searched.
+                              Content of the file will be expanded in the position of @<filename> as in the argument list.
+                              Note that shell expansion is not applied to the content of the file (i.e., you cannot use quotes, wildcards, escapes, commands, etc.).
+                              Each line corresponds to a single argument, even if it contains spaces.
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:             NODE              :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+google-protobuf                   #Runtime npm package
+
+LANG_OPT.import_style=STR         #'closure' (def) or 'commonjs'
+                                  #With 'commonjs':
+                                  #  - filename is "FILE_pb.js"
+                                  #  - --proto_path is OUT_DIR
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:    LANGUAGE-SPECIFIC OPTS     :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+LANGUAGE-SPECIFIC OPTS ==>        #Top-level OPTs for specific languages.
+
+OPT.java_outer_classname          #"Class". For outermost Java class name.
+                                  #Def: filename, CamelCased
+OPT.java_multiple_files           #BOOL (def: false). For Java. Split generated code into several files.
+OPT.cc_enable_arenas              #BOOL (def: false). For C++. Memory optimization.
+OPT.optimize_for                  #For C++|Java. How to optimize generated code. Can be:
+                                  #  - "SPEED" (def)
+                                  #  - "LITE_RUNTIME": like SPEED but uses libprotobuf-lite instead of libprotobuf, which
+                                  #    has fewer features (no reflection nor descriptors)
+                                  #  - "CODE_SIZE"
+OPT.objc_class_prefix             #STR. Objective-C class prefix.
+
