@@ -7,86 +7,153 @@
 ------------------------------- TEMPORARY
 
 
-Stores:
-  - add comment that no support for multiple stores because not very useful and bring questions around data sync
-    - allow multiple stores???
-       - At the moment, CONF.stores is an array, but only the first one is used
-  - add comment that no need to make addResults() concurrent safe. Reasons:
-     - append will be concurrent safe on many situations since the number of bytes to write is fairly small
-     - unlikely two benchmarks would end exactly at same time on same machine
-     - not good practice to execute two benchmarks at same time on same machine
-     - can easily fix it by doing a `sync`
-  - saved at [.../]./benchmark/history.ndjson
-     - configurable???
-  - results use ndjson format. Reasons:
-     - JSON parsing much faster than YAML
-     - appending a file is much faster than writing the whole file
-  - results file vs store:
-     - results file logic is not considered a store
-        - built-in, not configurable except for file location
-        - not loaded like the stores
-        - uses functions: addResult(), listResults(), removeResult(), syncResults()
-           - result file location is passed as argument (no start())
-     - listResults() at the beginning of `bench|show|remove`
-        - load full|unfiltered data
-     - if CONF.save true:
-        - await store.add()
-        - if no error, then do addResult()
-     - `remove` command:
-        - await store.remove()
-        - if no error, then do removeResult()
-     - `sync` command:
-        - store.list()->OBJ_ARR
-           - load full|unfiltered data
-        - then syncResults(OBJ_ARR)
-           - no more store.replace() method
-  - CONF.sync BOOL instead of `sync` command???
-     - for all commands
-     - done at beginning of command
-  - timestamps:
-     - client-side:
-        - where stored???
-        - do not attempt to sync for a specific duration
-     - server-side:
-        - computed by core, passed to store.add()
-        - store.timestamp() to get it
-        - called in parallel to reading history file
-           - if old, sync
-        - i.e. autosync and no need for CONF.sync???
-        - only if there is a CONF.store
-        - print a message while:
-           - getting timestamp???
-           - syncing???
-  - rethink making the history file a builtin store instead???
-     - what's the directory of history.ndjson now that CONF.settings is removed???
-        - common dir of task files???
-        - CONF.save argument???
-        - CONF.store{id}.output PATH???
-     - rename CONF.store to CONF.history???
-  - rethink whole thing:
-     - remove CONF.store and only use history files???
-     - results are only relevant on a specific machine
-        - what if different CONF.system???
-           - e.g. comparing machines in CI, or comparing different devs laptops
-           - merge concepts of systems and history files??? I.e. different history file <=> different system
-        - how to separate data???
-           - each machine has independent data???
-           - or centralized data, but namespaced???
-              - different files???
-              - different CONF.system in same file???
-           - or centralized data, merged/overwritten???
-     - how to reliably persist results???
-        - only git???
-        - what about CI??? How to share state between jobs???
-  - maybe:
-     - only use history files
-     - in CI, save to a spyd-benchmarks branch, with different files per CI job
-        - always in different branch, even locally???
-        - namespaced by current git branch???
-           - how to cleanup???
-        - how do PRs work???
-     - i.e. benchmarks are persisted in git, and synced with git pull
-     - save to single file, but allow loading from multiple
+History:
+  - remove CONF.store
+  - save results to a `spyd` git branch
+     - branch is created from init commit
+        - i.e. does not hold reference to any parent commits
+     - what if current branch has uncomitted changes???
+        - temporary git worktree add + remove
+        - or git stash + git checkout???
+     - reasons to use git branch:
+        - unlike using regular file in codebase:
+           - does not pollute git log
+           - does not require git push --force on the codebase
+           - can update in CI without requiring developers to pull all the time
+        - unlike git hash-object + git cat-file:
+           - allows multiple files
+           - does not create many tags
+           - easy to understand
+           - no risk of pruning
+           - versioned
+  - `sync` command:
+     - git pull --rebase + git push `spyd` git branch
+     - CONF.sync BOOL instead???
+     - how to handle failures???
+        - such as: authentication, git hooks, network, etc.
+     - allows providing with CLI flags to configure git push|pull???
+     - allow stdin???
+     - print stdout|stderr always, or only on failures???
+     - In CI, done by def???
+     - reasons we separate local (CONF.save) and remote (`sync` command) read|write:
+        - mimics git, i.e. easy to understand
+        - much faster, since read|write mostly locally
+        - easier to isolate, fix and understand many possible failures with git push|pull
+  - file structure:
+     - possible solutions???
+        - one immutable FILE.json per result
+           - con: slower to read
+        - one mutable FILE.json for all results
+           - con: slower to write
+           - con: require automated git conflict resolution
+           - con: much bigger git file size impact
+        - immutable FILE.json for all results, progressively created
+           - i.e. instead of appending|mutating, create a new FILE.json and remove previous one
+           - con: slower to write
+           - con: read potentially many duplicate results
+           - con: much bigger git file size impact
+     - performance???
+        - read:
+           - one *.json file for all results: 10ms per 1e3 results
+           - one *.json file per result: 100ms per 1e3 results
+        - write:
+           - one *.json file for all results: 5ms (JSON.stringify()) + 2ms (writeFile()) per 1e3 results
+              - must stringify each result separately due to max string size
+     - cache file???
+        - single JSON file with almost all results
+        - read at beginning of any spyd command:
+           - in parallel with readdir of individual results *.json
+           - then still read individual results, but only ones not in cache file (using result.id)
+              - is this even possible, or is the cache always matching the latest state of *.json???
+        - written:
+           - at end of any spyd command
+           - including `sync`
+        - use `.gitignore` in `spyd` branch to ignore it
+           - reason: prevent merge conflicts
+           - reason: less size in git repo
+     - format: normal JSON, ndjson, or "almost JSON" (JSON without [], for appending)???
+     - add comment that no need to make addResults() concurrent safe??? Reasons:
+        - append will be concurrent safe on many situations since the number of bytes to write is fairly small
+        - unlikely two benchmarks would end exactly at same time on same machine
+        - not good practice to execute two benchmarks at same time on same machine
+  - multi-branch history:
+     - sort by:
+        - branchIndex in lastResult.systems[*].git.branches
+           - filter out if not in any of them
+        - then by result.timestamp
+           - filter out if result.timestamp > oldest result in child branch
+     - reasons:
+        - easy to understand|explain
+        - preserve chronologic order
+           - good for reporting
+           - good for time-based deltas
+        - not impacted by rebasing
+        - does not require git, except for finding parent branches
+        - mostly follows "git log" order
+           - except for newest common commit of parent branch's result, if saved after current branch's first commit's result, but that's unlikely
+     - what if user checkout previous commit and save result???
+        - forbid saving then???
+     - what if there is no current branch???
+     - how to compare with last commit of parent branch??? As opposed to newest common commit
+        - very useful for PRs, about to be merged|rebased onto
+        - problem: preserving chronological order
+        - maybe???
+           - targetResult always use current git branch + parent branches
+           - but sinceResult|`previous` can use different branch + child branches
+              - providing it is not parent of targetResult (after branch+timestamp filtering)
+              - if child of targetResult (i.e. after it): return -1, i.e. `previous` empty ARR
+              - if several child branches: pick one leading to the result with latest result.timestamp
+  - CONF.since commit|tag|branch:
+     - always use current `git` information, and not result.systems[*].git???
+     - error if not found in results???
+        - or try to find it, providing exists in current git repository???
+           - using result.timestamp against author date (not committer date)???
+     - add CONF.since "parent"
+        - same as CONF.since "branch" with parent branch
+        - def of CONF.since: still "1"
+  - still group results by commit hash???
+     - reason: if several CI builds around the same time
+     - if so: should should use earlier timestamp, not later???
+        - reason: checking out older commit and creating new result should not be shown last in history
+  - branch aliases
+     - reason: do not lose connection between results when git branch renamed
+     - result.systems[*].git.branches STR_ARR_ARR:
+        - computed on result creation
+        - includes all parent branches, in order
+           - using `git`
+              - previously merged|rebased branches should be ignored, using the branch they merged|rebased onto instead
+        - includes all branch renames
+           - using `git reflog`
+     - on load:
+        - find current branches using `git branch`
+        - for each branch, add aliases using `git reflog`
+        - group results by `git.branches` with at least one common element, and add to branch aliases
+        - set normalized result.systems[*].git.branches STR_ARR
+           - using the { "ALIAS_BRANCH" -> "CURRENT_BRANCH" } map
+  - auto-delete results when git branch has been deleted???
+     - unless has tag that has not been deleted???
+     - reasons:
+        - performance of read|write
+        - prevents different branches with same name (created at different times) to be connected
+  - how does this work with PRs???
+     - both from and not from fork
+  - require git for CONF.save???
+     - but not required otherwise???
+     - require a minimum version???
+     - both `git` binary and `.git` can be found???
+     - reasons to store with git:
+        - no need to setup any remote store|database
+        - much faster (everything local)
+        - easy to share results
+        - easy to make it work with git branches
+        - easier data conflict resolution
+        - data is coupled with repository
+
+CONF.system:
+  - impact of new history concepts???
+     - e.g. comparing machines in CI, or comparing different devs laptops
+  - 'ID'[_ARR] instead of CONF.system 'ID'???
+     - e.g. in CI, matching both OS and software version
 
 CONF.remove true instead of `remove` command???
   - still ask for confirmation???
