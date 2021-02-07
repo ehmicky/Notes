@@ -5,15 +5,10 @@
 
 
 
-Check:
-  - *_gprc_pb.js
-  - MOPTS.*
-  - CHOPTS.*
-  - proxy
-  - load balancers
-https://github.com/grpc/grpc-node/blob/master/PACKAGE-COMPARISON.md
 https://github.com/grpc/grpc-node/tree/master/packages/grpc-tools
+  - related to *_gprc_pb.js
 https://github.com/grpc/grpc-node/tree/master/packages/grpc-health-check
+https://github.com/grpc/grpc/tree/master/doc
 
 VERSION ==>                       #1.35.0
 
@@ -72,11 +67,14 @@ application/gprc[+FORMAT]         #MIME
                                              \=+===============================+=/
 
 
-require('@gprc/grpc-js')          #Version 1.2.6
 require('gprc')                   #Version 1.24.5
-                                  #Same interface as grpc-js but:
-                                  #  - requires native addon
-                                  #  - a few more features
+                                  #Same interface as grpc-js but requires native addon
+require('@gprc/grpc-js')          #Version 1.2.6
+                                  #Misses a few features:
+                                  #  - compress only response, not request
+                                  #  - no automatic retries
+                                  #  - no stats|tracing|monitoring
+                                  #  - load balancing: only pick first and round robin
 
 
                                              /=+===============================+=\
@@ -147,6 +145,7 @@ RES                               #Response MESSAGE
 
 ORIGIN                            #'[RESOLVER]:HOST:PORT'
 RESOLVER ==>                      #Either dns (def) or uds
+CHOPTS.default_authority          #Customize how 'ORIGIN' is resolved
 
 SERVER.bindAsync
  ('ORIGIN', SCREDENTIALS,
@@ -179,6 +178,7 @@ new ABSERVICE('ORIGIN',
  CCREDENTIALS[, NOPTS])           #CLIENT
 CLIENT.waitForReady
  (DEADLINE, FUNC([ERROR]))        #Calls FUNC() once connected
+MOPTS.waitForReady                #BOOL (def: false). Do not send request until connection is ready.
 COPTS.host                        #STR
 CLIENT.close()                    #
 
@@ -206,7 +206,7 @@ status.VAR                        #STATUS_CODE, with VAR among:
                                   #  - OUT_OF_RANGE: user limit validation
                                   #  - UNAUTHENTICATED: authentication
                                   #  - PERMISSION_DENIED: authorization
-                                  #  - RESOURCE_EXHAUSTED: quota, or machine out-of-memory
+                                  #  - RESOURCE_EXHAUSTED: quota, or machine out-of-memory, or input too big
                                   #  - NOT_FOUND: entity not found
                                   #  - ALREADY_EXISTS: entity alredy exists
                                   #  - CANCELLED: client cancelled
@@ -251,11 +251,6 @@ SCALL.sendMetadata(METADATA)
 CCALL.on
  ('metadata', FUNC(METADATA))     #Non-trailing response METADATA
 TRAILING RESPONSE METADATA ==>    #Use RES_FUNC to send, and CCALL.on('status') to receive
-
-MOPTS.idempotentRequest           #BOOL (def: false): hint that request is idempotent (???)
-MOPTS.cacheableRequest            #BOOL (def: false): hint that response can be cached. GET can be used
-MOPTS.waitForReady                #BOOL (def: false): ???
-MOPTS.corked                      #BOOL (def: false) ???
 
 
                                              /=+===============================+=\
@@ -319,6 +314,7 @@ COPTS.credentials                 #CREDENTIALS
 
 
 CHANNEL                           #Underlying transport. By def, HTTP/2 logic
+                                  #Automatically reconnects
 
 NOPTS.channelOverride             #CHANNEL. Customize
 NOPTS.channelFactoryOverride
@@ -347,6 +343,30 @@ CCALL|SCALL.getPeer()->'ORIGIN'   #
 
 SOPTS|NOPTS.'grpc.PROP'           #Documented as [S|N]CHOPTS.PROP
 
+CHOPTS.max_send_message_length    #NUM (in bytes, def: -1)
+CHOPTS.max_receive_message_length #NUM (in bytes, def: 4MB)
+SCHOPTS.max_concurrent_streams    #NUM (def: unlim). Max number of requests at once.
+
+NCHOPTS.
+ primary|secondary_user_agent     #STR. Prepended|appended to user-agent METADATA
+
+CHOPTS.initial|                   #NUM (in ms) (def: 1s initial, 2m max).
+ max_reconnect_backoff_ms         #How long to wait to retry connecting.
+CHOPTS.keepalive_time_ms          #NUM (in ms) (def|max: 1 month). Send a ping every NUMms.
+CHOPTS.keepalive_timeout_ms       #NUM (in ms) (def: 20s). After a ping, timeout after NUMms, closing the channel.
+CHOPTS.
+ keepalive_permit_without_calls   #0|1 (def: 0). Send pings even when there are no REQ|RES streams.
+
+CHOPTS.use_local_subchannel_pool  #BOOL. Make the CHANNELs|sockets pool be local to this server, instead of being global.
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:          COMPRESSION          :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
 CHOPTS.                           #NUM
  default_compression_algorithm    #Compression of REQ
                                   #Can be:
@@ -354,28 +374,12 @@ CHOPTS.                           #NUM
                                   #  - 1: DEFLATE (non-streaming)
                                   #  - 2: GZIP (non-streaming)
                                   #  - 3: GZIP (streaming)
+                                  #Does not seem to be supported yet
 CHOPTS.default_compression_level  #NUM
                                   #Compression of RES
                                   #Can be: 0 (none), 1 (low), 2 (medium), 3 (high)
 writeFlags.ENUM                   #WRITE_FLAGS:
                                   #  - NO_COMPRESS: force no compression on a specific REQ|RES
-
-NCHOPTS.
- primary|secondary_user_agent     #STR. Prepended|appended to user-agent METADATA
-
-CHOPTS.default_authority          #???
-CHOPTS.keepalive_time_ms          #NUM (in ms). After NUM without requests, send a ping.
-CHOPTS.keepalive_timeout_ms       #NUM (in ms). After a ping, timeout after NUMms, closing the channel.
-CHOPTS.
- keepalive_permit_without_calls   #0|1. Whether pings are sent when there are no REQ|RES streams.
-CHOPTS.service_config             #'JSON'. ???
-CHOPTS.max_concurrent_streams     #NUM (def: unlim). Max number of requests at once.
-CHOPTS.initial|min|
- max_reconnect_backoff_ms         #NUM (in ms). How long to wait to retry connecting.
-CHOPTS.use_local_subchannel_pool  #BOOL. Re-use CHANNELs in a pool
-CHOPTS.max_send_message_length    #NUM (in bytes, def: -1)
-CHOPTS.max_receive_message_length #NUM (in bytes, def: 4MB)
-CHOPTS.enable_http_proxy          #BOOL. Allow HTTP proxy
 
 
                                              /=+===============================+=\
@@ -415,15 +419,37 @@ COPTS|NOPTS.interceptor_providers #FUNC3_ARR: same using FUNC3(RPC)->FUNC
                                              \=+===============================+=/
 
 
+CHOPTS.enable_http_proxy          #0|1 (def: 1). Allow client HTTP proxy (if configured with ENVVAR GRPC_PROXY)
+ENVVAR GRPC_PROXY="URL"           #Proxies all response from server to client at URL
+
 COPTS.parent                      #CCALL. Indicates current client is a proxy
 COPTS.propagate_flags             #NUM
                                   #With COPTS.parent, proxies some information
                                   #Bitwise-flag of propagate.VAR among:
                                   #  - DEADLINE: timeout
-                                  #  - CANCELLATION
+                                  #  - CANCELLATION: request cancellation
                                   #  - CENSUS_STATS_CONTEXT
                                   #  - CENSUS_TRACING_CONTEXT
-                                  #  - DEFAULTS
+                                  #  - DEFAULTS (default values, i.e. all of them)
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:        LOAD BALANCING         :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+CHOPTS.service_config             #'JSON'. Load balancing configuration.
+                                  #Is OBJ:
+                                  #  - loadBalancingPolicy STR
+                                  #  - loadBalancingConfig OBJ_ARR:
+                                  #     - pick_first|round_robin OBJ
+                                  #  - methodConfig OBJ_ARR:
+                                  #     - name OBJ: service STR, method STR
+                                  #     - waitForReady BOOL
+                                  #     - timeout 'NUM[.NUM]s'
+                                  #     - maxRequestBytes|maxResponseBytes NUM
 
 
                                              /=+===============================+=\
