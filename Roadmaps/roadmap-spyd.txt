@@ -5,6 +5,34 @@
 
 
 
+Terminal print:
+  - use stdout for progress
+     - quiet default should use stdout too
+     - screenwidth too
+  - printToTerminal():
+     - move getTtyContents() first
+     - re-use destroyed check + stdout.write in progress (but not getTtyContents())
+  - re-use getPreviewReport() code in main report:
+     - use once, on top of file
+     - filter out non-terminal reporters before using Promise.all()
+     - make printToTerminal() noop when ttyContents is undefined
+  - move all code manipulating stdout to report/tty.js
+  - move start preview after combinations and initialResult computed, but before listResults()
+  - move end preview after final reporter.report() for terminal reporters, but before final stdout write
+     - both clearInterval() and clear screen
+     - make sure to avoid race condition if there is an ongoing interval update
+     - move final stdout write after CONF.insert, not in parallel
+     - add delayedDescription "Ending..."
+  - clear screen:
+     - not done on clearInterval()
+     - done on uncaught exception, except for AbortError
+        - create this new error type, since it is user-driven but not an actual error
+     - final report does a clear screen right before printing to terminal
+         - including if there are no reporters with output === undefined (since progress bar must be cleared)
+         - including if stopped
+         - excluding if CONF.quiet true
+         - must be done after reporter.report()
+
 Preview:
   - if reporter is very slow, there is a blank screen between end of preview and final report -> remove???
   - do not wait for `listAll()` to start showing progress???
@@ -59,81 +87,6 @@ Add Node script:
      - COMMAND is each `package.json` `bin` key in /home/ether/{code,netlify}/*/package.json
      - PATH is the value
   - run to `exec` in .bashrc
-
-CONF.system "ID" -> CONF.system[.CATEGORY] "ID"
-  - systemCategory:
-     - validated like systemId
-     - def: none
-  - system.id "[CATEGORY.]ID ..."
-     - also at combination.systemId
-     - sorted by systemCategory, for stability
-     - used in comparisons
-  - system.title "[CATEGORY.]ID ..."
-     - also at combination.systemTitle
-     - used in reporting
-  - each systemCategory is its own category
-     - in CONF.include|exclude
-     - in result.categories.systems OBJ_ARR_ARR, not OBJ_ARR
-  - when merging systems:
-     - create shared systems even if only one systemCategory matches
-        - e.g. same CPU for a specific OS
-        - in partially shared systems, system.id|title only includes shared ids
-     - systems[0] is reserved for shared system where all ids match
-
-Variations:
-  - some config properties can be optionally variable:
-     - value PROP: { ID: VAL, ... } instead of VAL
-     - PROP: variable property (whole combination category)
-     - PROP + ID: variation
-  - when merging results:
-     - if some PROP uses variations in one result, but not in another
-     - then use ID 'default' to convert so all instances of that PROP have a variable property
-     - this allows keeping history continuity when introducing variations
-  - only on any CONF.* that can change the results:
-     - CONF.concurrency
-     - CONF.inputs.{inputId}
-     - not CONF.duration:
-        - no reasons why users would want to measure with different CONF.duration
-        - complicates implementation
-     - any CONF.runner.{runnerId}.PROP
-        - cartesian product only to combinations with that runner
-  - each variable property is a separate combination category, distinct from others:
-     - in CONF.include|exclude
-     - in combination.columnName: several STR
-     - result.variations OBJ_ARR_ARR, not OBJ_ARR
-     - combination.variations ARR
-  - variationId:
-     - 'PROP.ID' (not just 'ID')
-        - full property name
-           - including `inputs.*` and `runnerId.*`
-     - used as identifier like for other combination categories, including:
-        - comparing between combinations (including between different benchmarks)
-        - selecting with CONF.include|exclude|limit
-     - no duplicate ID check:
-        - reason: namespaces by property name, i.e. not needed
-     - should validate ID (not full variationId) allowed characters using the same validation as taskId|systemId|inputId
-  - variationTitle: default to same as id
-  - variationValue: property VAL
-  - set on result.* like other combination categories:
-     - for combinations sorting, mean, rank, selection, etc.
-     - result.variations OBJ_ARR_ARR: id STR, value VAL, title STR
-     - combination.variations OBJ_ARR: id STR, value VAL, title STR
-  - just like tasks and inputs, only reported in main reporting table, not in system info below it
-  - if several variations have different runner.versions.VAR VAL, they are concatenated as a result.systems[*].versions.VAR ARR
-     - printed as a comma-separated list by reporter prettify logic
-     - does not mention which variation used which ones. It should be obvious enough from ids or titles
-  - multiple inputs combination categories using variations:
-     - i.e. CONF.inputs.inputId.ID VAL
-     - input combination category is just like any other variation combination categories
-        - including for cartesian product, CONF.include|exclude|limit
-        - variationId is 'inputs.inputId.ID'
-           - reasons we do not use shorter 'inputId.ID' instead:
-              - forward compatiblity with future variable configuration properties
-              - consistent/monomorphic, i.e. simpler to learn
-           - like any variationId: no duplicate ID check
-           - including with CONF.titles
-     - inputId is only part of the variationId
-        - used in `inputs` passed to runner.measure()
 
 plugin.config.PROP STR[_ARR]
   - for all plugins: reporter, runner, store
@@ -898,32 +851,117 @@ Commercial offer:
 ==============================================
 
 
-Combination ids:
-  - combination.categories OBJ_ARR: category STR, id STR, title STR
-  - use result.categories instead for reporting???
-  - specific combinations can be absent too due to CONF.include|exclude
-  - sorted by:
-     - category: task, step, system, variation (input, concurrency, runnerConfig)
-        - system sorted by???
-        - runnerConfig sorted by runner.id, then config prop name, alphabetically
-  - used in:
-     - reporters
-        - distinguish rows (task, step) vs columns (system, runner, variation)???
-        - use titles instead of ids???
-     - `exec`
-     - limit errors
-     - measure errors
-        - fix it, so it shows all the combination categories
-           - except the ones not useful, e.g. system (since there is only one per execution), or inputs if none are used, etc.
+Categories:
+  - combination.categories.CATEGORY "ID" id
+  - result.categories.CATEGORY OBJ_ARR: id STR, title STR, titlePadded STR, value VAL
+     - sort result.categories OBJ keys
+        - order: task, step, system, variation (input, concurrency, runnerConfig)
+           - system sorted by???
+           - runnerConfig sorted by runner.id, then config prop name, alphabetically
+     - used by reporters to show rows|columns
+     - title[Padded] STR: not persisted in history
+     - value VAL:
+        - only for variations
+        - persisted in history
+           - used the most recent value
+        - passed to reporters, but should only be reported by reporters able to show details
+  - filter out unnecessary categories
+     - i.e. any category with 0|1 id
+     - exception: if all categories are unnecessary, keep task
+     - in both combination.categories and result.categories
+     - in reporting and getCombinationName(), but not in history
+  - getCombinationName()->STR:
+     - 'CATEGORY "ID",...'
+     - ids, not titles
+     - meant for `exec`, limit errors, measure errors
+     - not meant for reporters
+  - sort:
+     - result.categories.CATEGORY
+     - result.combinations
+  - CATEGORY: "task", "step", "runner", "system_{systemCategory}", "variation_{propName}"
+  - do not add combination.*Rank nor categories.*.mean|rank
   - remove current row|column|addTitles() logic
-  - remove combination categories where all combinations have same value:
-     - exception: if all combination categories removed, show only task
-  - if there are runnerConfig variable properties:
+  - if there are runnerConfig variable properties???
      - must be last
      - empty values (when on different runners) removed
         - i.e. different variable properties for different runners might be aligned together
      - columnName arrays should all have same length, by appending empty strings
         - i.e. if one runner has 1 variable property, and another has 2, the first gets an empty string appended
+
+CONF.system "ID" -> CONF.system[.CATEGORY] "ID"
+  - systemCategory:
+     - validated like systemId
+     - def: none
+  - system.id "[CATEGORY.]ID ..."
+     - also at combination.systemId
+     - sorted by systemCategory, for stability
+     - used in comparisons
+  - system.title "[CATEGORY.]ID ..."
+     - also at combination.systemTitle
+     - used in reporting
+  - each systemCategory is its own category
+     - in CONF.include|exclude
+     - in result.categories.systems OBJ_ARR_ARR, not OBJ_ARR
+  - when merging systems:
+     - create shared systems even if only one systemCategory matches
+        - e.g. same CPU for a specific OS
+        - in partially shared systems, system.id|title only includes shared ids
+     - systems[0] is reserved for shared system where all ids match
+
+Variations:
+  - some config properties can be optionally variable:
+     - value PROP: { ID: VAL, ... } instead of VAL
+     - PROP: variable property (whole combination category)
+     - PROP + ID: variation
+  - when merging results:
+     - if some PROP uses variations in one result, but not in another
+     - then use ID 'default' to convert so all instances of that PROP have a variable property
+     - this allows keeping history continuity when introducing variations
+  - only on any CONF.* that can change the results:
+     - CONF.concurrency
+     - CONF.inputs.{inputId}
+     - not CONF.duration:
+        - no reasons why users would want to measure with different CONF.duration
+        - complicates implementation
+     - any CONF.runner.{runnerId}.PROP
+        - cartesian product only to combinations with that runner
+  - each variable property is a separate combination category, distinct from others:
+     - in CONF.include|exclude
+     - in combination.columnName: several STR
+     - result.variations OBJ_ARR_ARR, not OBJ_ARR
+     - combination.variations ARR
+  - variationId:
+     - 'PROP.ID' (not just 'ID')
+        - full property name
+           - including `inputs.*` and `runnerId.*`
+     - used as identifier like for other combination categories, including:
+        - comparing between combinations (including between different benchmarks)
+        - selecting with CONF.include|exclude|limit
+     - no duplicate ID check:
+        - reason: namespaces by property name, i.e. not needed
+     - should validate ID (not full variationId) allowed characters using the same validation as taskId|systemId|inputId
+  - variationTitle: default to same as id
+  - variationValue: property VAL
+  - set on result.* like other combination categories:
+     - for combinations sorting, mean, rank, selection, etc.
+     - result.variations OBJ_ARR_ARR: id STR, value VAL, title STR
+     - combination.variations OBJ_ARR: id STR, value VAL, title STR
+  - just like tasks and inputs, only reported in main reporting table, not in system info below it
+  - if several variations have different runner.versions.VAR VAL, they are concatenated as a result.systems[*].versions.VAR ARR
+     - printed as a comma-separated list by reporter prettify logic
+     - does not mention which variation used which ones. It should be obvious enough from ids or titles
+  - multiple inputs combination categories using variations:
+     - i.e. CONF.inputs.inputId.ID VAL
+     - input combination category is just like any other variation combination categories
+        - including for cartesian product, CONF.include|exclude|limit
+        - variationId is 'inputs.inputId.ID'
+           - reasons we do not use shorter 'inputId.ID' instead:
+              - forward compatiblity with future variable configuration properties
+              - consistent/monomorphic, i.e. simpler to learn
+           - like any variationId: no duplicate ID check
+           - including with CONF.titles
+     - inputId is only part of the variationId
+        - used in `inputs` passed to runner.measure()
 
 MAX_LOOPS:
   - use two arrays:
