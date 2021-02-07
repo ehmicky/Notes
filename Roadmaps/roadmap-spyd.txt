@@ -49,6 +49,115 @@ plugin.config.PROP STR[_ARR]
      - including for CONF.runnerId.tasks
         - i.e. CONF.runnerId.tasks in spyd.* is relative to `spyd.yml`'s directory
 
+Categories:
+  - combination.categories.CATEGORY "ID"
+  - remove current result.categories OBJ_ARR
+  - on report (not persisted in stores):
+     - filter out unnecessary categories from combination.categories.CATEGORY
+        - i.e. any category with 0|1 id
+        - exception: if all categories are unnecessary, keep task
+        - reason this is not persisted: when merging results, those categories might get additional ids
+     - convert combination.categories.CATEGORY "ID" to OBJ:
+        - id STR
+        - title STR, titlePadded STR: using CONF.titles
+           - done on load. CONF.showTitles() just omit those properties later
+     - sort result.combinations by mean stats.median
+        - do not add combination.*Rank nor categories.*.mean|rank
+        - same priority order as result.categories ARR order
+        - reason this is not persisted: order might change depending on CONF.include|exclude
+     - set result.categories "CATEGORY"_ARR:
+        - with all categories
+        - sorted by: step, task, runner, system, variation
+  - reporters rows|columns computation:
+     - use result.categories, including ARR order
+     - preserve result.combinations ARR order
+     - when grouping categories (e.g. tables), filter out dimensions with no combinations, which can happen due to:
+        - CONF.include|exclude
+        - runnerConfig variations being runner-specific
+  - getCombinationName(combination)->STR:
+     - 'CATEGORY "ID",...'
+     - ids, not titles
+     - for: `exec`, limit errors, measure errors
+     - should re-use some of the normalization happening for reporters:
+        - result.categories ARR order
+        - filter out unnecessary categories
+     - not meant for reporters
+  - CATEGORY: "task", "step", "runner", "system[.{systemCategory}]", "variation.{variationCategory}"
+  - remove current row|column|addTitles() logic
+
+CONF.system "ID" -> CONF.system[.{systemCategory}] "ID"
+  - CATEGORY is "system[.{systemCategory}]"
+     - i.e. can use several categories
+     - def systemCategory: none
+     - getCombinationName() should remove "system." prefix from CATEGORY
+        - if no systemCategory: "system"
+  - system id is "[{systemCategory}.]ID"
+     - user-defined id validation should allow ".", but only in the middle, not in systemCategory|ID
+  - when sorting result.categories, system sorted:
+     - after runner, before variation
+     - by CONF.system ARR order
+  - result.systems[*].categories OBJ_ARR: id STR, title STR
+  - reporters show space-separated system titles
+     - i.e. by default, "[{systemCategory}.]ID ..."
+  - when merging systems:
+     - create shared systems even if only one system.categories matches
+        - e.g. same CPU for a specific OS
+        - in partially shared systems, system.categories only includes shared ids
+     - systems[0] is reserved for shared system where all ids match
+
+Variations:
+  - some config properties can be optionally variable:
+     - CONF.PROP { ID: VAL, ... } instead of CONF.PROP VAL
+     - PROP: "variable property" or "variation category"
+     - PROP + ID: variation
+  - only on any CONF.* that can change the results:
+     - CONF.concurrency
+     - CONF.inputs.{inputId}
+     - any CONF.runner{runnerId}.PROP
+        - cartesian product only to combinations with that runner
+     - add comment why not CONF.duration:
+        - no reasons why users would want to measure with different CONF.duration
+        - complicates implementation
+   - CATEGORY is "variation.{variationCategory}"
+      - i.e. each variable property is a category
+      - variationCategory is property VARR (dot-delimited)
+      - getCombinationName() should remove "variation." prefix from CATEGORY
+  - when sorting result.categories, variations sorted:
+     - at end
+     - input, then concurrency, then runnerConfig
+     - input: sorted by CONF.inputs OBJ order
+     - runnerConfig sorted by:
+        - CONF.runner ARR order
+        - then config prop name, alphabetically
+  - add combination.config CONF_OBJ
+     - not persisted in history nor used in report
+     - contains config, with combination-specific variations
+  - variation id is 'PROP.ID'
+     - full property name, including:
+        - `runner{RunnerId}.PROP.ID`
+        - `inputs.{inputId}.ID`
+           - reasons we do not use shorter 'inputId.ID' instead:
+              - forward compatiblity with future variable configuration properties
+              - consistent/monomorphic, i.e. simpler to learn
+     - user-defined id validation should allow ".", but only in the middle, not in ID
+  - when merging results:
+     - if some PROP uses variations in one result, but not in another
+     - then use ID 'default' to convert so all instances of that PROP have a variable property
+     - this allows keeping history continuity when introducing variations
+  - if several variations have different runner.versions.VAR VAL, they are concatenated as a result.systems[*].versions.VAR STR (commaSpace-separated list)
+     - does not mention which variation used which ones. It should be obvious enough from ids or titles
+  - when using several runners and runnerConfig variations, the other runners will not have those variations
+     - should still set combination.categories.{variationCategory} on those combinations, but with id "", title "", titlePadded " ... "
+     - when filtering unnecessary categories, should exclude ones with id ""
+     - shoup all be in result.categories "CATEGORY"_ARR
+  - result.variations.{variationCategory} VAL
+     - persisted in history
+        - used the most recent value
+     - on report:
+        - set combination.categories.{variationCategory}.value VAL
+           - should only be reported by reporters able to show details
+        - remove result.variations
+
 Context OBJ:
   - initialized to empty OBJ
      - passed to before|after
@@ -94,11 +203,10 @@ Steps:
      - in the order functions were declarared (runner-specific)
   - steps can communicate to each other using `context`
      - the top-level or global scope can also be used
-  - identifier:
-     - stepId, i.e. exported OBJ key
+  - stepId:
+     - exported OBJ key
      - runners should enforce "main" as the default stepId
      - validated like other combination user-defined ids: character validation, duplicate ids check
-        - including CONF.steps.stepId
   - processes:
      - at benchmark start, when runner communicates available tasks to parent, it should also return available steps
         - returned as `tasks: { taskId: 'stepId'_ARR, ... }`
@@ -106,11 +214,7 @@ Steps:
   - remove beforeEach|afterEach
      - rename beforeAll|afterAll to before|after
      - add comment that runners should avoid specific case for reserved exported names, since users might use different case convention for stepIds
-  - each step is a combination category:
-     - selection in CONF.include|exclude|limit|titles
-     - part of CONF.rowName, not CONF.columnName
-     - result.steps OBJ_ARR
-     - combination.steps ARR
+  - each step is a combination category
   - implementation:
      - runner:
         - on start, returns steps to parent
@@ -191,8 +295,6 @@ Steps:
            - reasons for the syntax:
               - allow non-consecutive steps
               - not verbose (unlike using stepId, e.g. using stepId common prefixes)
-        - stats are based on a sum of the `measures` of their child steps
-           - i.e. we must ensure the number of `measures` for a given tasks is same for each of its steps
         - stats are based on aggregation of other steps stats
            - use other steps stats, not `measures` because the number of `measures` might differ between steps
            - how:
@@ -201,9 +303,8 @@ Steps:
               - repeat: Math.round(loops / times)
               - deviation: mean
               - histogram: merge histograms (find solution online)
-     - computed after each sample
-        - then persisted in history
-           - as opposed to being dynamically computed during reporting
+     - persisted in history
+        - as opposed to being dynamically computed during reporting
         - reason: so we can use all `measures` for better stats
      - including|excluding step groups does not have impact on whether its children are included|excluded, and vice-versa
         - reason: users might want to see children only when need details
@@ -382,7 +483,6 @@ Manual mode:
         - used for calibration: maxLoops, scale
   - persisted at result.steps.stepId.manual "UNIT"
      - optional, including steps.stepId itself, to keep result small
-     - on load, normalized to results.steps OBJ_ARR: id, manual
   - re-use existing unit-specific logic for:
      - automatic scaling
         - e.g. 'ns' -> 's' or 'B' -> 'MB'
@@ -823,169 +923,67 @@ Commercial offer:
 ==============================================
 
 
-Categories:
-  - combination.categories.CATEGORY "ID"
-  - remove current result.categories OBJ_ARR
-  - on report (not persisted in stores):
-     - filter out unnecessary categories from combination.categories.CATEGORY
-        - i.e. any category with 0|1 id
-        - exception: if all categories are unnecessary, keep task
-        - reason this is not persisted: when merging results, those categories might get additional ids
-     - convert combination.categories.CATEGORY "ID" to OBJ:
-        - id STR
-        - title STR, titlePadded STR: using CONF.titles
-     - sort result.combinations by mean stats.median
-        - do not add combination.*Rank nor categories.*.mean|rank
-        - same priority order as result.categories ARR order
-        - reason this is not persisted: order might change depending on CONF.include|exclude
-     - set result.categories "CATEGORY"_ARR:
-        - with all categories
-        - sorted by: step, task, system, variation
-           - system sorted by CONF.system ARR order
-           - variation: input, then concurrency, then runnerConfig
-           - input: sorted by CONF.inputs OBJ order
-           - runnerConfig sorted by:
-              - CONF.runner ARR order
-              - then config prop name, alphabetically
-  - reporters rows|columns computation:
-     - use result.categories, including ARR order
-     - preserve result.combinations ARR order
-     - when grouping categories (e.g. tables), filter out dimensions with no combinations, which can happen due to:
-        - CONF.include|exclude
-        - runnerConfig variations being runner-specific
-  - getCombinationName(combination)->STR:
-     - 'CATEGORY "ID",...'
-        - remove "system|variation." prefix from CATEGORY
-     - ids, not titles
-     - for: `exec`, limit errors, measure errors
-     - should re-use some of the normalization happening for reporters:
-        - result.categories ARR order
-        - filter out unnecessary categories
-     - not meant for reporters
-  - CATEGORY: "task", "step", "runner", "system[.{systemCategory}]", "variation.{variationCategory}"
-  - remove current row|column|addTitles() logic
+Default categories:
+  - "default" with system so that can keep history???
+  - empty with variation???
+  - "main" instead of default???
+  - is keeping history important??? isn't any new dimension going to lose history???
+     - can compare previous combination with subset of dimensions???
+     - only a problem for dynamic categories (systems and variations)???
+  - maybe use first category in CONF.system|variableProp.*???
+  - for steps, use "main"???
+     - ask runners to enforce it
+        - i.e. return `tasks` `{ taskId: 'stepId'_ARR, ... }`
+     - or instead allow returning no steps, and let core default to "main"???
+        - i.e. return `tasks` `{ taskId: 'stepId'_ARR, ... }`, but ARR can be empty???
+        - pass `steps[*].id` `undefined` in child samples when no steps???
 
-CONF.system "ID" -> CONF.system[.{systemCategory}] "ID"
-  - CATEGORY is "system[.{systemCategory}]"
-     - i.e. can use several categories
-     - systemCategory:
-        - validated like systemId
-        - def: none
-  - system id is "[{systemCategory}.]ID"
-  - result.systems[*].categories OBJ_ARR: id STR, title STR, [category "{systemCategory}"]
-  - reporters show space-separated system titles
-     - i.e. by default, "[{systemCategory}.]ID ..."
-  - when merging systems:
-     - create shared systems even if only one system.categories matches
-        - e.g. same CPU for a specific OS
-        - in partially shared systems, system.categories only includes shared ids
-     - systems[0] is reserved for shared system where all ids match
+Step execution order:
+  - allow two tasks to run steps in different order???
+  - if so, how to sort steps as a category???
 
-To add to variations:
-  - result.variations.{variationCategory} VAL
-     - persisted in history
-        - used the most recent value
-     - on report:
-        - set combination.categories.{variationCategory}.value VAL
-           - should only be reported by reporters able to show details
-        - remove result.variations
-  - when using several runners and runnerConfig variations, the other runners will not have those variations
-     - should still set combination.categories.{variationCategory} on those combinations, but with id "", title "", titlePadded " ... "
-     - when filtering unnecessary categories, should exclude ones with id ""
-     - shoup all be in result.categories "CATEGORY"_ARR
+Step groups:
+  - make it reporting-only, instead of measuring-only???
 
-Variations:
-  - some config properties can be optionally variable:
-     - value PROP: { ID: VAL, ... } instead of VAL
-     - PROP: variable property (whole combination category)
-     - PROP + ID: variation
-  - when merging results:
-     - if some PROP uses variations in one result, but not in another
-     - then use ID 'default' to convert so all instances of that PROP have a variable property
-     - this allows keeping history continuity when introducing variations
-  - only on any CONF.* that can change the results:
-     - CONF.concurrency
-     - CONF.inputs.{inputId}
-     - not CONF.duration:
-        - no reasons why users would want to measure with different CONF.duration
-        - complicates implementation
-     - any CONF.runner.{runnerId}.PROP
-        - cartesian product only to combinations with that runner
-  - each variable property is a separate combination category, distinct from others:
-     - in CONF.include|exclude
-     - in combination.columnName: several STR
-     - result.variations OBJ_ARR_ARR, not OBJ_ARR
-     - combination.variations ARR
-  - variationId:
-     - 'PROP.ID' (not just 'ID')
-        - full property name
-           - including `inputs.*` and `runnerId.*`
-     - used as identifier like for other combination categories, including:
-        - comparing between combinations (including between different benchmarks)
-        - selecting with CONF.include|exclude|limit
-     - no duplicate ID check:
-        - reason: namespaces by property name, i.e. not needed
-     - should validate ID (not full variationId) allowed characters using the same validation as taskId|systemId|inputId
-  - variationTitle: default to same as id
-  - variationValue: property VAL
-  - set on result.* like other combination categories:
-     - for combinations sorting, mean, rank, selection, etc.
-     - result.variations OBJ_ARR_ARR: id STR, value VAL, title STR
-     - combination.variations OBJ_ARR: id STR, value VAL, title STR
-  - just like tasks and inputs, only reported in main reporting table, not in system info below it
-  - if several variations have different runner.versions.VAR VAL, they are concatenated as a result.systems[*].versions.VAR ARR
-     - printed as a comma-separated list by reporter prettify logic
-     - does not mention which variation used which ones. It should be obvious enough from ids or titles
-  - multiple inputs combination categories using variations:
-     - i.e. CONF.inputs.inputId.ID VAL
-     - input combination category is just like any other variation combination categories
-        - including for cartesian product, CONF.include|exclude|limit
-        - variationId is 'inputs.inputId.ID'
-           - reasons we do not use shorter 'inputId.ID' instead:
-              - forward compatiblity with future variable configuration properties
-              - consistent/monomorphic, i.e. simpler to learn
-           - like any variationId: no duplicate ID check
-           - including with CONF.titles
-     - inputId is only part of the variationId
-        - used in `inputs` passed to runner.measure()
+Max loops:
+  - MAX_LOOPS 1e7
+     - divided by combinations.length (including steps)
+  - add `packedMeasures` empty ARR
+  - `bufferedLoops`: sum of lengths of all current `bufferedMeasures`
+  - `maxLoops` should be Math.min() with MAX_LOOPS - packedMeasures.length - measures.length - bufferedLoops
+  - when packedMeasures.length + measures.length + bufferedLoops >= MAX_LOOPS:
+     - force aggregation
+     - random filter out `packedMeasures` and `measures`
+        - after merging `bufferedMeasures` to `measures`
+        - do ARR.filter(() => Math.random() < probability)
+           - i.e. not precise, but should be ok due to the high length of ARR
+           - reason: fast
+        - probability of:
+           - packedMeasures: 1/packCount
+              - packCount initially 1, and incremented before each packing
+           - measures 1 - (1/packCount)
+        - then mergeSort() `measures` to `packedMeasures`
+     - also done at end of benchmark
+  - keep stats that can be aggregated to single number???
+     - min|max
+     - sum (for mean)
+  - how does it work with previews???
+     - maybe only preview `packedMeasures` once it stopped being empty???
+  - does this actually help precision??? If randomly filtering, doesn't the merge have the same precision as the unmerged???
+  - alternatives:
+     - stop benchmark
+     - filter at regular intervals instead of randomly
+        - does this change distribution???
+        - use quantiles
+           - for both arrays, always start with min and end with max, with even spaces between picked items
+     - persist `packedMeasures` on-file instead of memory
+        - mergeSort() stream file on read+write
+        - computeStats() stream file on read
+        - previews???
 
-New categories: check impact on steps too
-
-MAX_LOOPS:
-  - use two arrays:
-     - measures is the final one
-     - extraMeasures:
-        - used instead of measures when measures.length > MAX_LOOPS / 2
-        - merged to measures when either:
-           - extraMeasures.length > MAX_LOOPS / 2
-           - combination ended
-        - merge with ever-decreasing weight:
-           - before each merge, increase extraWeight integer from 1
-           - pick NUM measures and NUM2 extraMeasures
-              - NUM2 = Math.round(extraMeasures.length / extraWeight)
-              - NUM = (MAX_LOOPS / 2) - NUM2
-           - use quantiles
-              - for both arrays, always start with min and end with max, with even spaces between picked items
-           - concatenate + adaptive sort
-  - have a little buffer, doing the merge a little before extraMeasures is full, so the last process does not have very short maxLoops or maxDuration???
-  - pass limit to runners too???
-     - with number of loops left???
-     - add a maxTimes??? Or named maxLoops???
-        - or add estimated duration to maxDuration instead???
-           - e.g. maxLoopsMore: maxLoopsLeft / CONF.concurrency
-           - is it needed??? would it be ok if measures were slightly over the limit???
-     - is it even a concern due to maxDuration???
-  - ensure the computed `stats.loops` is correct even when going over MAX_LOOPS
-  - how does this work considering measures are split between `measures` and an array of not-merged-yet `childMeasures`???
-     - done during aggregation???
-  - lower limit due to several combinations and sampleGroups at same time???
-     - each combination should get same max amount, so they don't influence each other (except for the number of combinations making that max amount smaller)
-  - would above change the measure profile, which defeats the point of longer benchmarks???
-  - pick elements to remove randomly instead of using quantiles, so it keeps statistical profile
-     - random pick should have a uniform distribution. E.g. Math.random() entropy is less than 1e7, i.e. many indexes will have 0 probability to be picked
-  - alternative: just stop iteration
-  - max length (1e8) also applies to HTTP body (unless streaming used), i.e. limit might need to be lower inside each sample???
-
+HTTP body max length:
+  - 1e8 max HTTP body length (unless streaming used)
+  - add `Math.min()` to `maxLoops`???
 Try to see if anything more can be removed from `node` runner, i.e. simplified for all runners
 
 Abstract runner orchestration so it is easier to create a runner???
