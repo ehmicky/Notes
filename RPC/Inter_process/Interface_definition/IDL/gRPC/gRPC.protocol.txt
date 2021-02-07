@@ -16,6 +16,11 @@ VERSION ==>                       #1.35.0
 Headers-like:
   - request|response:
      - metadata OBJ
+        - key is snake_case
+        - value can be:
+           - either STR or binary
+              - if binary, key must end with '-bin'
+           - array of them
         - response metadata can be sent:
            - either before|after receiving request message
            - additionally after response message sent (trailing metadata)
@@ -35,40 +40,62 @@ Streaming:
 Channel:
   - client-server socket|connection
 
-require('@gprc/grpc-js')          #GRPCJS
-                                  #Version 1.2.6
-require('gprc')                   #GRPCN
-                                  #Version 1.24.5
-                                  #Difference with GRPCJS:
+require('@gprc/grpc-js')          #Version 1.2.6
+require('gprc')                   #Version 1.24.5
+                                  #Difference with grpc-js:
                                   #  - requires native addon
 
-new GRPCJS.Server()               #SERVER
+new Server()                      #SERVER
 
 SERVER.bindAsync('HOST:PORT',
  SCREDENTIALS, FUNC())            #
 SERVER.start()                    #Must be done after SERVER.bindAsync() completed
 
-SCREDENTIALS|CCREDENTIALS         #Server|client authentication
-GRPCJS.ServerCredentials
- .createInsecure()->SCREDENTIALS  #No authentication
-GRPCJS.ServerCredentials          #SSL authentication
- .createSsl                       #BUFFER (def: null, i.e. guessed): customize root certificates
- (BUFFER|null, KEY_ARR[, BOOL])   #KEY_ARR: private_key BUFFER2, cert_chain BUFFER3
- ->SCREDENTIALS                   #BOOL (def: false): check client certificate
-GRPCJS.credentials.
- createInsecure()->CCREDENTIALS   #No authentication
-GRPCJS.credentials.createSsl      #SSL authentication
+SCREDENTIALS|CCREDENTIALS         #Server|client authentication settings
+CREDENTIALS                       #Request|response authentication data
+ServerCredentials.createInsecure()
+ ->SCREDENTIALS                   #No authentication
+ServerCredentials.createSsl       #SSL authentication
+ (BUFFER|null, KEY_ARR[, BOOL])   #BUFFER (def: null, i.e. guessed): customize root certificates
+ ->SCREDENTIALS                   #KEY_ARR: private_key BUFFER2, cert_chain BUFFER3
+                                  #BOOL (def: false): check client certificate
+credentials.createInsecure()
+ ->CCREDENTIALS                   #No authentication
+credentials.createSsl             #SSL authentication
  (BUFFER|null, BUFFER2|null,      #BUFFER2|3 are private_key|cert_chain
  BUFFER3|null[, OPTS])            #OPTS:
  ->CCREDENTIALS                   #  - checkServerIdentity('HOST', CERTIFICATE_OBJ)[->ERROR] (def: none)
+
+credentials.createEmpty()
+ ->CREDENTIALS                    #No authentication
+credentials.
+ createFromMetadataGenerator
+ (FUNC(OBJ, FUNC(ERROR,METADATA)))
+ ->CREDENTIALS                    #OBJ: service_url STR
+credentials.combineCallCredentials
+ (CREDENTIALS_ARR)->CREDENTIALS   #
+credentials.
+ combineChannelCredentials
+ (CCREDENTIALS, CREDENTIALS_ARR)
+ ->CCREDENTIALS                   #
 
 SERVER.addService(SSERVICE, OBJ)  #Define RPC endpoints in server.
                                   #Must define OBJ.RPC_NAME(CALL[, RES_FUNC])
 SERVER.addProtoService
  (SSERVICE, OBJ)                  #Same???
 
-CSERVICE.RPC_NAME                 #Call RPC endpoints from client.
- ([REQ][, RES_FUNC])              #REQ is non-streaming request
+CSERVICE.RPC_NAME
+ ([REQ, ][METADATA, ][OPTS, ][RES_FUNC])
+                                  #Call RPC endpoints from client.
+                                  #REQ is non-streaming request
+                                  #OPTS:
+                                  #  - deadline DATE or NUM (in ms)
+                                  #  - host STR
+                                  #  - parent ???
+                                  #  - propagate_flags NUM ???
+                                  #  - credentials CREDENTIALS
+                                  #  - interceptors INTERCEPTOR_ARR ???
+                                  #  - interceptor_providers INTERCEPTOR_PROVIDER_ARR ???
 
 MESSAGE                           #Either OBJ or google-protobuf MESSAGE
 REQ                               #Request MESSAGE
@@ -80,6 +107,26 @@ CALL.on('data', FUNC(REQ|RES))
 CALL.on('end', FUNC())            #Streaming receiving
 CALL.write(REQ|RES)
 CALL.end()                        #Streaming sending
+
+new Metadata([OPTS])              #METADATA
+                                  #OPTS:
+                                  #  - idempotentRequest BOOL (def: false): hint that request is idempotent (???)
+                                  #  - cacheableRequest BOOL (def: false): hint that response can be cached. GET can be used
+                                  #  - waitForReady BOOL (def: false): ???
+                                  #  - corked BOOL (def: false) ???
+METADATA.setOptions(OPTS)         #
+METADATA.getOptions()->OPTS       #
+METADATA.get('KEY')
+ ->STR|BUFFER_ARR                 #
+METADATA.set('KEY', STR|BUFFER)   #Set single value
+METADATA.add('KEY', STR|BUFFER)   #Add to ARR value
+METADATA.remove('KEY')            #
+METADATA.getMap()->MAP            #Clone
+METADATA.clone()->METADATA2       #
+METADATA.merge(METADATA2)         #
+METADATA.toHttp2Headers()->OBJ    #
+Metadata.fromHttp2Headers(OBJ)
+ ->METADATA                       #
 
 require('@gprc/proto-loader')     #LOADER
                                   #Version 0.5.6
@@ -100,8 +147,8 @@ LOADER.
 
 DEF                               #Similar to protobufjs ROOT, but different format
 
-DEF.[PACKAGE_VARR.]SERVICE_NAME   #SERVICE
-SERVICE.RPC_NAME                  #RPC
+DEF.[PACKAGE_VARR.]SERVICE_NAME   #SSERVICE
+SSERVICE.RPC_NAME                 #RPC
 RPC.path                          #'/[PACKAGE_VARR.]SERVICE_NAME/RPC_NAME'
 RPC.originalName                  #'RPC_NAME' (camelCase)
 RPC.request|responseStream        #BOOL
@@ -118,15 +165,30 @@ MESSAGE_TYPE|ENUM_TYPE.type       #OBJ
 MESSAGE_TYPE|ENUM_TYPE.
  fileDescriptorProtos             #BUFFER_ARR of Protobuf file descriptors sets
 
-GRPCJS.loadPackageDefinition(DEF)
+loadPackageDefinition(DEF)
  ->ROOT_OBJ                       #Proto file as ROOT_OBJ
-GRPCJS.makeClientConstructor
- (SERVICE)->ROOT_OBJ              #Same as loadPackageDefinition() but from SERVICE
 ROOT_OBJ[.PACKAGE_VARR]
- .SERVICE_VAR                     #SCSERVICE
-SCSERVICE.service                 #SSERVICE
-new SCSERVICE('HOST:PORT',        #CSERVICE
+ .SERVICE_VAR                     #ABSERVICE
+makeClientConstructor
+ (SSERVICE, 'SERVICE_NAME')
+ ->ABSERVICE                      #Same as loadPackageDefinition() but from SSERVICE
+ABSERVICE.service                 #SSERVICE
+new ABSERVICE('HOST:PORT',        #CSERVICE
  CCREDENTIALS[, OPTS])            #OPTS:
+                                  #  - interceptors INTERCEPTOR_ARR ???
+                                  #  - interceptor_providers INTERCEPTOR_PROVIDER_ARR ???
+                                  #  - callInvocationTransformer(OBJ)->OBJ:
+                                  #     - modify each request before sending
+                                  #     - OBJ:
+                                  #        - argument REQ
+                                  #        - metadata METADATA
+                                  #        - callOptions OPTS (of request)
+                                  #        - callback RES_FUNC
+                                  #        - methodDefinition RPC
+                                  #        - call ???
+                                  #        - channel ???
+                                  #  - channelOverride CHANNEL: customize the underlying transport (def: HTTP/2 logic)
+                                  #  - channelFactoryOverride('HOST', CCREDENTIALS, OPTS)->CHANNEL: same but as a method
                                   #  - 'grpc.default_compression_algorithm' NUM:
                                   #     - compression of REQ
                                   #     - can be:
@@ -150,6 +212,10 @@ new SCSERVICE('HOST:PORT',        #CSERVICE
                                   #  - 'grpc.max_send_message_length' NUM (in bytes, def: -1)
                                   #  - 'grpc.max_receive_message_length' NUM (in bytes, def: 4MB)
                                   #  - 'grpc.enable_http_proxy' ???
+CSERVICE.waitForReady             #Calls FUNC() once connected
+ (DATE|NUM, FUNC([ERROR]))        #DATE|NUM is timeout
+CSERVICE.close()                  #
+CSERVICE.getChannel()->CHANNEL    #
 
 *_gprc_pb.js                      #Generated by protoc with gprc plugin.
                                   #Exports ROOT_OBJ
