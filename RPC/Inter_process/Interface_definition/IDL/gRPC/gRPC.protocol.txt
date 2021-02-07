@@ -45,18 +45,29 @@ require('gprc')                   #GRPCN
 new GRPCJS.Server()               #SERVER
 
 SERVER.bindAsync('HOST:PORT',
- CREDENTIALS, FUNC())             #
+ SCREDENTIALS, FUNC())            #
 SERVER.start()                    #Must be done after SERVER.bindAsync() completed
 
-GRPCJS.ServerCredentials          #SCREDENTIALS
-SCREDENTIALS.createInsecure()
- ->CREDENTIALS                    #
+SCREDENTIALS|CCREDENTIALS         #Server|client authentication
+GRPCJS.ServerCredentials
+ .createInsecure()->SCREDENTIALS  #No authentication
+GRPCJS.ServerCredentials          #SSL authentication
+ .createSsl                       #BUFFER (def: null, i.e. guessed): customize root certificates
+ (BUFFER|null, KEY_ARR[, BOOL])   #KEY_ARR: private_key BUFFER2, cert_chain BUFFER3
+ ->SCREDENTIALS                   #BOOL (def: false): check client certificate
+GRPCJS.credentials.
+ createInsecure()->CCREDENTIALS   #No authentication
+GRPCJS.credentials.createSsl      #SSL authentication
+ (BUFFER|null, BUFFER2|null,      #BUFFER2|3 are private_key|cert_chain
+ BUFFER3|null[, OPTS])            #OPTS:
+ ->CCREDENTIALS                   #  - checkServerIdentity('HOST', CERTIFICATE_OBJ)[->ERROR] (def: none)
 
-SERVER.addService(SSERVICE, OBJ)  #Must define OBJ.RPC_NAME(CALL[, RES_FUNC])
+SERVER.addService(SSERVICE, OBJ)  #Define RPC endpoints in server.
+                                  #Must define OBJ.RPC_NAME(CALL[, RES_FUNC])
 SERVER.addProtoService
  (SSERVICE, OBJ)                  #Same???
 
-CSERVICE.RPC_NAME
+CSERVICE.RPC_NAME                 #Call RPC endpoints from client.
  ([REQ][, RES_FUNC])              #REQ is non-streaming request
 
 MESSAGE                           #Either OBJ or google-protobuf MESSAGE
@@ -72,26 +83,73 @@ CALL.end()                        #Streaming sending
 
 require('@gprc/proto-loader')     #LOADER
                                   #Version 0.5.6
-LOADER.loadSync
- ('PATH.proto'[, OPTS])->DEF      #
+                                  #Thin wrapper above protobufjs:
+                                  #  - use DEF instead of ROOT, which is similar but simpler
+                                  #  - provides with default serialize|deserialize() for RPC.*
+LOADER.load                       #OPTS:
+ ('PATH.proto'[_ARR][, OPTS])     #  - includeDirs STR_ARR: like protoc --proto_path
+ ->PROMISE_DEF                    #  - any from protobufjs toObject() (for MESSAGE parsing)
+                                  #  - any from protobufjs load()
+LOADER.loadSync(...)->DEF         #
+LOADER.
+ loadFileDescriptorSetFromObject
+ (FILE_DESCRIPTOR[, OPTS])->DEF   #Same from a FILE_DESCRIPTOR (see protobufjs)
+LOADER.
+ loadFileDescriptorSetFromBuffer
+ (BUFFER[, OPTS])->DEF            #Same from a file descriptor protobuf BUFFER
+
+DEF                               #Similar to protobufjs ROOT, but different format
+
+DEF.[PACKAGE_VARR.]SERVICE_NAME   #SERVICE
+SERVICE.RPC_NAME                  #RPC
+RPC.path                          #'/[PACKAGE_VARR.]SERVICE_NAME/RPC_NAME'
+RPC.originalName                  #'RPC_NAME' (camelCase)
+RPC.request|responseStream        #BOOL
+RPC.request|responseType          #MESSAGE_TYPE
+RPC.request|responseSerialize     #E.g. Buffer.from(MESSAGE.serializeBinary())
+ (MESSAGE)->BUFFER                #Should validate MESSAGE instanceof Message
+RPC.request|responseDeserialize
+ (BUFFER)->MESSAGE                #E.g. MESSAGE.deserializeBinary(new Uint8Array(BUFFER))
+
+DEF.[PACKAGE_VARR.]
+ MESSAGE_TYPE_NAME                #MESSAGE_TYPE
+DEF.[PACKAGE_VARR.]ENUM_TYPE_NAME #ENUM_TYPE
+MESSAGE_TYPE|ENUM_TYPE.type       #OBJ
+MESSAGE_TYPE|ENUM_TYPE.
+ fileDescriptorProtos             #BUFFER_ARR of Protobuf file descriptors sets
+
 GRPCJS.loadPackageDefinition(DEF)
  ->ROOT_OBJ                       #Proto file as ROOT_OBJ
-ROOT_OBJ.PACKAGE_VARR             #
-ROOT_OBJ.SERVICE_VAR.service      #SSERVICE
-new ROOT_OBJ.SERVICE_VAR
- ('HOST:PORT', CREDENTIALS)       #CSERVICE
-
-GRPCJS
- .makeGenericClientConstructor    #Same as loadPackageDefinition() but not from proto file
- (OBJ)->ROOT_OBJ                  #OBJ.RPC_NAME COPTS
-COPTS.path                        #'/[PACKAGE.]SERVICE_NAME/RPC_NAME'
-COPTS.request|responseStream      #BOOL
-COPTS.request|responseType        #Message type
-COPTS.request|responseSerialize   #E.g. Buffer.from(MESSAGE.serializeBinary())
- (MESSAGE)->BUFFER                #Should validate MESSAGE instanceof Message
-COPTS.
- request|responseDeserialize
-  (BUFFER)->MESSAGE               #E.g. MESSAGE.deserializeBinary(new Uint8Array(BUFFER))
+GRPCJS.makeClientConstructor
+ (SERVICE)->ROOT_OBJ              #Same as loadPackageDefinition() but from SERVICE
+ROOT_OBJ[.PACKAGE_VARR]
+ .SERVICE_VAR                     #SCSERVICE
+SCSERVICE.service                 #SSERVICE
+new SCSERVICE('HOST:PORT',        #CSERVICE
+ CCREDENTIALS[, OPTS])            #OPTS:
+                                  #  - 'grpc.default_compression_algorithm' NUM:
+                                  #     - compression of REQ
+                                  #     - can be:
+                                  #        - 0: none
+                                  #        - 1: DEFLATE (non-streaming)
+                                  #        - 2: GZIP (non-streaming)
+                                  #        - 3: GZIP (streaming)
+                                  #  - 'grpc.default_compression_level' NUM:
+                                  #     - compression of RES
+                                  #     - can be: 0 (none), 1 (low), 2 (medium), 3 (high)
+                                  #  - 'grpc.ssl_target_name_override' ???
+                                  #  - 'grpc.primary|secondary_user_agent' ???
+                                  #  - 'grpc.default_authority' ???
+                                  #  - 'grpc.keepalive_time_ms' ???
+                                  #  - 'grpc.keepalive_timeout_ms' ???
+                                  #  - 'grpc.keepalive_permit_without_calls' ???
+                                  #  - 'grpc.service_config' ???
+                                  #  - 'grpc.max_concurrent_streams' ???
+                                  #  - 'grpc.initial|max_reconnect_backoff_ms' ???
+                                  #  - 'grpc.use_local_subchannel_pool' ???
+                                  #  - 'grpc.max_send_message_length' NUM (in bytes, def: -1)
+                                  #  - 'grpc.max_receive_message_length' NUM (in bytes, def: 4MB)
+                                  #  - 'grpc.enable_http_proxy' ???
 
 *_gprc_pb.js                      #Generated by protoc with gprc plugin.
                                   #Exports ROOT_OBJ
