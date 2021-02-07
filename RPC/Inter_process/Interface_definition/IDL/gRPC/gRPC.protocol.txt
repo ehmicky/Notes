@@ -5,7 +5,6 @@
 
 
 
-Try locally
 Check:
   - *_gprc_pb.js
   - MOPTS.*
@@ -16,27 +15,45 @@ https://github.com/grpc/grpc-node/blob/master/PACKAGE-COMPARISON.md
 https://github.com/grpc/grpc-node/tree/master/packages/grpc-tools
 https://github.com/grpc/grpc-node/tree/master/packages/grpc-health-check
 
+  - low payload size (protobuf)
+  - request|response typing
+  - streaming-friendly (uni|bi-directional)
+  - on HTTP/2, but without any HTTP semantics
+  - timeout|cancellation
+  - SSL authentication
+
 VERSION ==>                       #1.35.0
 
-application/gprc                  #MIME
+GENERAL ==>                       #Uses protobuf 'services' to as endpoints IDL (for validation and stub generation)
+                                  #protobuf is also used for payloads most of the time. It can be customized, but difficult.
+                                  #Under the hood, use HTTP/2, but without any of its semantics exposed.
 
 CHANNEL ==>                       #Client-server socket|connection
-                                  #Client->server and server->client are 2 different channels
+                                  #Client->server and server->client are 2 different HTTP/2 streams
 
-STREAMING ==>                     #Order is preserved
+STREAMING ==>                     #Either|both request|response can be either streamed or not.
+                                  #When streamed, order is preserved
                                   #If request stream, server can start responding as soon as request stream starts
 
-HEADERS ==>                       #Metadata:
+HEADERS ==>                       #Under the hood, use HTTP/2 headers
+                                  #Metadata:
                                   #  - for request|response
-                                  #  - custom OBJ
-                                  #  - key is snake_case
+                                  #  - custom OBJ, outside of request|response payloads
+                                  #  - key is dash-case
                                   #  - value can be:
                                   #     - either STR or binary
                                   #        - if binary, key must end with '-bin'
                                   #     - array of them
+                                  #  - request metadata is always sent before request message
                                   #  - response metadata can be sent:
-                                  #     - either before|after receiving request message
+                                  #     - either before|after receiving response message
                                   #     - additionally after response message sent (trailing metadata)
+                                  #  - often set by framework:
+                                  #     (request)
+                                  #     - 'user-agent' 'grpc-node-js/X.Y.Z'
+                                  #     (response)
+                                  #     - 'content-type' 'application/grpc+proto'
+                                  #     - date 'DATE'
                                   #Method name: for request
                                   #Deadline:
                                   #  - for request
@@ -44,6 +61,8 @@ HEADERS ==>                       #Metadata:
                                   #Status:
                                   #  - for response
                                   #  - code NUM + message STR
+
+application/gprc[+FORMAT]         #MIME
 
 
                                              /=+===============================+=\
@@ -78,15 +97,14 @@ load('PATH.proto'[_ARR][, LOPTS]) #LOPTS:
  ->PROMISE_DEF                    #  - includeDirs STR_ARR: like protoc --proto_path
                                   #  - any from protobufjs toObject() (for MESSAGE parsing)
                                   #  - any from protobufjs load()
-                                  #     - keepCase is always true
 loadSync(...)->DEF                #
 loadFileDescriptorSetFromObject
  (FILE_DESCRIPTOR[, LOPTS])->DEF  #Same from a FILE_DESCRIPTOR (see protobufjs)
 loadFileDescriptorSetFromBuffer
  (BUFFER[, LOPTS])->DEF           #Same from a file descriptor protobuf BUFFER
 
-DEF.'[PACKAGE_VARR.]SERVICE_NAME' #SSERVICE
-SSERVICE.RPC_NAME                 #RPC
+DEF.'[PACKAGE_VARR.]SERVICE_NAME' #SERVICE
+SERVICE.RPC_NAME                  #RPC
 RPC.path                          #'/[PACKAGE_VARR.]SERVICE_NAME/RPC_NAME'
 RPC.originalName                  #'RPC_NAME' (camelCased)
 RPC.request|responseStream        #BOOL
@@ -114,11 +132,11 @@ MESSAGE_TYPE|ENUM_TYPE.
 
 new Server([SOPTS])               #SERVER
 
-SERVER.addService(SSERVICE, OBJ)  #Define RPC endpoints in server.
+SERVER.addService(SERVICE, OBJ)   #Define RPC endpoints in server.
                                   #Must define OBJ.RPC_NAME(SCALL[, RES_FUNC])
 SCALL.request                     #REQ (non-streaming request)
-RES_FUNC(SERROR, RES, METADATA
- [, WRITE_FLAGS])                 #Non-streaming response
+RES_FUNC(SERROR, RES, METADATA    #Non-streaming response
+ [, WRITE_FLAGS])                 #METADATA is trailing metadata (see below).
 ISTREAM ==>                       #SCALL is ISTREAM of REQ when receiving streaming.
                                   #Should handle errors
 OSTREAM ==>                       #SCALL is OSTREAM of RES when sending streaming.
@@ -127,9 +145,12 @@ MESSAGE                           #Either OBJ or google-protobuf MESSAGE
 REQ                               #Request MESSAGE
 RES                               #Response MESSAGE
 
+ORIGIN                            #'[RESOLVER]:HOST:PORT'
+RESOLVER ==>                      #Either dns (def) or uds
+
 SERVER.bindAsync
- ('URI', SCREDENTIALS,            #Start HTTP2 server
- FUNC(ERROR, PORT_NUM))           #'URI' is resolved with DNS or UDS
+ ('ORIGIN', SCREDENTIALS,
+ FUNC(ERROR, PORT_NUM))           #Start HTTP2 server
 SERVER.start()                    #Starts accepting requests
                                   #Must be done after SERVER.bindAsync() completed
 SERVER.tryShutdown(FUNC())        #Shutdown, waiting for ongoing requests to end
@@ -150,18 +171,18 @@ SERVER.forceShutdown()            #Shutdown, without waiting for ongoing request
 loadPackageDefinition(DEF)
  ->SERVICES                       #
 SERVICES.PACKAGE_VARR.SERVICE_VAR #ABSERVICE
-makeClientConstructor(SSERVICE)
- ->ABSERVICE                      #Same as loadPackageDefinition() but from SSERVICE
-ABSERVICE.service                 #SSERVICE
+makeClientConstructor(SERVICE)
+ ->ABSERVICE                      #Same as loadPackageDefinition() but from SERVICE
+ABSERVICE.service                 #SERVICE
 
-new ABSERVICE
- ('URI', CCREDENTIALS[, NOPTS])   #CSERVICE
-CSERVICE.waitForReady
+new ABSERVICE('ORIGIN',
+ CCREDENTIALS[, NOPTS])           #CLIENT
+CLIENT.waitForReady
  (DEADLINE, FUNC([ERROR]))        #Calls FUNC() once connected
 COPTS.host                        #STR
-CSERVICE.close()                  #
+CLIENT.close()                    #
 
-CSERVICE.RPC_NAME([REQ, ]
+CLIENT.RPC_NAME([REQ, ]
  [METADATA, ][COPTS, ][REQ_FUNC]) #Call RPC endpoints from client.
  ->CCALL                          #REQ is non-streaming request
 REQ_FUNC(SERROR, RES)             #Non-streaming response
@@ -198,7 +219,7 @@ status.VAR                        #STATUS_CODE, with VAR among:
                                   #  - INTERNAL: internal OS error
                                   #  - UNKNOWN: uncaught exception
 STATUS.details                    #STR
-STATUS.metadata                   #METADATA
+STATUS.metadata                   #METADATA (trailing)
 
 SERROR                            #ERROR with code STATUS_CODE
 
@@ -221,14 +242,15 @@ METADATA.remove('KEY')            #
 METADATA.getMap()->MAP            #Clone
 METADATA.clone()->METADATA2       #
 METADATA.merge(METADATA2)         #
-METADATA.toHttp2Headers()->OBJ    #
+METADATA.toHttp2Headers()->OBJ
 Metadata.fromHttp2Headers(OBJ)
- ->METADATA                       #
+ ->METADATA                       #Converts from|to plain OBJ
 
-SCALL.metadata                    #METADATA
-SCALL.sendMetadata(METADATA)      #
+SCALL.metadata                    #Request METADATA
+SCALL.sendMetadata(METADATA)
 CCALL.on
- ('metadata', FUNC(METADATA))     #
+ ('metadata', FUNC(METADATA))     #Non-trailing response METADATA
+TRAILING RESPONSE METADATA ==>    #Use RES_FUNC to send, and CCALL.on('status') to receive
 
 MOPTS.idempotentRequest           #BOOL (def: false): hint that request is idempotent (???)
 MOPTS.cacheableRequest            #BOOL (def: false): hint that response can be cached. GET can be used
@@ -271,7 +293,7 @@ credentials.createInsecure()
 credentials.createSsl             #SSL authentication
  (BUFFER|null, BUFFER2|null,      #BUFFER2|3 are private_key|cert_chain
  BUFFER3|null[, OPTS])            #OPTS:
- ->CCREDENTIALS                   #  - checkServerIdentity('URI', CERTIFICATE_OBJ)[->ERROR] (def: none)
+ ->CCREDENTIALS                   #  - checkServerIdentity('ORIGIN', CERTIFICATE_OBJ)[->ERROR] (def: none)
 
 credentials.createEmpty()
  ->CREDENTIALS                    #No authentication
@@ -300,11 +322,11 @@ CHANNEL                           #Underlying transport. By def, HTTP/2 logic
 
 NOPTS.channelOverride             #CHANNEL. Customize
 NOPTS.channelFactoryOverride
- ('URI', CCREDENTIALS, COPTS)
+ ('ORIGIN', CCREDENTIALS, COPTS)
  ->CHANNEL                        #Same but as a method
 
-CSERVICE.getChannel()->CHANNEL    #
-CHANNEL.getTarget()->'URI'        #
+CLIENT.getChannel()->CHANNEL      #
+CHANNEL.getTarget()->'ORIGIN'     #
 
 CHANNEL.getConnectivityState
  ([BOOL])->CONNECTIVITY_STATE     #If BOOL true (def: false), tries to connect if not connected
@@ -313,7 +335,7 @@ CHANNEL.watchConnectivityState
  FUNC(ERROR))                     #Call FUNC() when CONNECTIVITY_STATE, or after DEADLINE timeout
 connectivityState.ENUM            #Among: IDLE, CONNECTING, READY, TRANSIENT_FAILURE, SHUTDOWN
 
-CCALL|SCALL.getPeer()->'URI'      #
+CCALL|SCALL.getPeer()->'ORIGIN'   #
 
 
                                              /=+===============================+=\
@@ -323,7 +345,7 @@ CCALL|SCALL.getPeer()->'URI'      #
                                              \=+===============================+=/
 
 
-SOPTS|NOPTS.'grpc.PROP'           #Documented as CHOPTS.PROP
+SOPTS|NOPTS.'grpc.PROP'           #Documented as [S|N]CHOPTS.PROP
 
 CHOPTS.                           #NUM
  default_compression_algorithm    #Compression of REQ
@@ -338,8 +360,9 @@ CHOPTS.default_compression_level  #NUM
 writeFlags.ENUM                   #WRITE_FLAGS:
                                   #  - NO_COMPRESS: force no compression on a specific REQ|RES
 
-CHOPTS.
- primary|secondary_user_agent     #STR. Start|end of user-agent METADATA on every request
+NCHOPTS.
+ primary|secondary_user_agent     #STR. Prepended|appended to user-agent METADATA
+
 CHOPTS.default_authority          #???
 CHOPTS.keepalive_time_ms          #NUM (in ms). After NUM without requests, send a ping.
 CHOPTS.keepalive_timeout_ms       #NUM (in ms). After a ping, timeout after NUMms, closing the channel.
@@ -410,7 +433,17 @@ COPTS.propagate_flags             #NUM
                                              \=+===============================+=/
 
 
-ENVVAR GRPC_TRACE=STR             #Debug mode. STR can be 'all' or 'channel|connectivity_state'
-ENVVAR GRPC_VERBOSITY=STR         #Can be 'DEBUG|INFO|ERROR'
+ENVVAR GRPC_TRACE=STR             #Debug mode (def: none). STR can be 'all' or:
+                                  #  - 'channel'
+                                  #  - 'subchannel'
+                                  #  - 'subchannel_refcount'
+                                  #  - 'connectivity_state'
+                                  #  - 'resolving_load_balancer'
+                                  #  - 'dns_resolver'
+                                  #  - 'pick_first'
+                                  #  - 'call_stream'
+                                  #  - 'server'
+                                  #  - 'server_call'
+ENVVAR GRPC_VERBOSITY=STR         #Can be 'DEBUG|INFO|ERROR' (def: 'INFO')
 setLoggerVerbosity(NUM)           #Same, using logVerbositoy.DEBUG|INFO|ERROR
 setLogger(CONSOLE)                #Customize logging
