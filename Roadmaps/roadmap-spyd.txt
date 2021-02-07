@@ -5,22 +5,21 @@
 
 
 
+Merge CONF.insert with CONF.output:
+  - auto-detect whether to insert by reading file (if it exists) and finding comment delimiters
+
 `remove` command:
-  - report, like `show`
-     - i.e. must accept same CONF.*
-        - except output|insert
-           - keep `output` to be able to filter on it???
-        - filter out reporters with `output !== undefined`
+  - report should not clear screen
+  - but do not output|insert, only print to terminal
+     - i.e. filter for reporters with output undefined
+     - still call all reporters report() even if output undefined
   - prompt for removal confirmation
      - after report
      - do not print that confirmation removal succeeded
         - but print error if failed
-  - CONF.quiet BOOL
+  - CONF.force BOOL
      - def: true if isInteractive(process.stdin)
-     - alias "q"
-     - different CLI flag description than CONF.quiet for `bench` command
-        - rename it CONF.removeQuiet to prevent conflict in code
-           - including in `endPreview(quiet)`
+     - alias "f"
      - if false:
         - no report
         - no prompt
@@ -92,7 +91,7 @@ Context OBJ:
            - `stepId` argument name
            - when repeating a step, only last iteration's return value is used
 
-Step functions:
+Steps:
   - export one function per step, i.e. each task value is either:
      - FUNC: same as { main FUNC }
      - OBJ:
@@ -150,6 +149,14 @@ Step functions:
         - `combination.steps` OBJ_ARR: id "stepId", ...
            - for all step-wise state: measures, bufferedMeasures, stats, loops, times, repeat, calibrated
            - not for: everything related to minLoopDuration, samples
+        - total `benchmarkDuration` does not vary with number of steps
+           - fix preview logic (at the moment, it uses combinations.length * CONF.duration)
+           - also `measureDuration` measures sum of all steps
+           - add comments why:
+              - new steps are more likely to be due to splitting existing steps than adding new ones
+              - adding steps does not increase `measureDuration`, i.e. decrease preview responsiveness
+              - with CONF.include|exclude, all steps are still run.
+                It is simpler to explain this by documenting that steps never influence total benchmark duration
   - reporting:
      - report one separate table per step
         - step title should be in top-left corner
@@ -193,6 +200,14 @@ Step functions:
               - not verbose (unlike using stepId, e.g. using stepId common prefixes)
         - stats are based on a sum of the `measures` of their child steps
            - i.e. we must ensure the number of `measures` for a given tasks is same for each of its steps
+        - stats are based on aggregation of other steps stats
+           - use other steps stats, not `measures` because the number of `measures` might differ between steps
+           - how:
+              - samples|minLoopDuration: any
+              - median|mean|quantiles|min|max|loops|times: add
+              - repeat: Math.round(loops / times)
+              - deviation: mean
+              - histogram: merge histograms (find solution online)
      - computed after each sample
         - then persisted in history
            - as opposed to being dynamically computed during reporting
@@ -230,9 +245,6 @@ Step functions:
      - measuring logic that's not exposed to users:
         - i.e. different steps within the library implementation
         - should return an EventEmitter and wait for specific events inside each spyd step
-     - why measureDuration should not vary based on number of steps (i.e. measures sum of all steps):
-        - splitting a step should not change the sample target duration
-        - better responsiveness
      - why before|after are not handled as special kinds of steps:
         - if user wants to measure them, should run them more than once, i.e. use a normal step
         - most users would use it for init|cleanup, i.e. do not want reporting
@@ -820,70 +832,74 @@ Commercial offer:
 
 Categories:
   - combination.categories.CATEGORY "ID"
-  - result.categories.CATEGORY OBJ_ARR: id STR, value VAL
-     - value VAL:
-        - only for variations
-        - persisted in history
-           - used the most recent value
-        - passed to reporters, but should only be reported by reporters able to show details
+  - remove current result.categories OBJ_ARR
   - on report (not persisted in stores):
-     - convert combination.categories.CATEGORY to OBJ:
-        - id STR, value VAL: using result.categories
-        - title STR, titlePadded STR: using CONF.titles
-     - sort result.combinations sort results.combinations by mean stats.median
-        - do not add combination.*Rank nor categories.*.mean|rank
-        - same priority order as combination.categories OBJ keys
      - filter out unnecessary categories from combination.categories.CATEGORY
         - i.e. any category with 0|1 id
-           - excluding undefined ids
         - exception: if all categories are unnecessary, keep task
-     - remove result.categories
-     - sort combination.categories OBJ keys
-        - order: step, task, system, variation
+        - reason this is not persisted: when merging results, those categories might get additional ids
+     - convert combination.categories.CATEGORY "ID" to OBJ:
+        - id STR
+        - title STR, titlePadded STR: using CONF.titles
+     - sort result.combinations by mean stats.median
+        - do not add combination.*Rank nor categories.*.mean|rank
+        - same priority order as result.categories ARR order
+        - reason this is not persisted: order might change depending on CONF.include|exclude
+     - set result.categories "CATEGORY"_ARR:
+        - with all categories
+        - sorted by: step, task, system, variation
            - system sorted by CONF.system ARR order
            - variation: input, then concurrency, then runnerConfig
+           - input: sorted by CONF.inputs OBJ order
            - runnerConfig sorted by:
               - CONF.runner ARR order
               - then config prop name, alphabetically
-     - runnerConfig on different runners should still set the category, but with empty OBJ
-        - reason: allows reportets to use Object.keys() on any combination to retrieve rows|columns
   - reporters rows|columns computation:
-     - get categories with Object.keys(result.combinations[0])
-     - for each category, find unique ids
-        - preserve result.combinations sorting order
-     - reason: prevent empty rows|columns due to:
+     - use result.categories, including ARR order
+     - preserve result.combinations ARR order
+     - when grouping categories (e.g. tables), filter out dimensions with no combinations, which can happen due to:
         - CONF.include|exclude
         - runnerConfig variations being runner-specific
   - getCombinationName(combination)->STR:
      - 'CATEGORY "ID",...'
+        - remove "system|variation." prefix from CATEGORY
      - ids, not titles
-     - meant for `exec`, limit errors, measure errors
+     - for: `exec`, limit errors, measure errors
      - should re-use some of the normalization happening for reporters:
-        - category sorting
+        - result.categories ARR order
         - filter out unnecessary categories
      - not meant for reporters
-  - CATEGORY: "task", "step", "runner", "system_{systemCategory}", "variation_{propName}"
+  - CATEGORY: "task", "step", "runner", "system[.{systemCategory}]", "variation.{variationCategory}"
   - remove current row|column|addTitles() logic
 
-CONF.system "ID" -> CONF.system[.CATEGORY] "ID"
-  - systemCategory:
-     - validated like systemId
-     - def: none
-  - system.id "[CATEGORY.]ID ..."
-     - also at combination.systemId
-     - sorted by systemCategory, for stability
-     - used in comparisons
-  - system.title "[CATEGORY.]ID ..."
-     - also at combination.systemTitle
-     - used in reporting
-  - each systemCategory is its own category
-     - in CONF.include|exclude
-     - in result.categories.systems OBJ_ARR_ARR, not OBJ_ARR
+CONF.system "ID" -> CONF.system[.{systemCategory}] "ID"
+  - CATEGORY is "system[.{systemCategory}]"
+     - i.e. can use several categories
+     - systemCategory:
+        - validated like systemId
+        - def: none
+  - system id is "[{systemCategory}.]ID"
+  - result.systems[*].categories OBJ_ARR: id STR, title STR, [category "{systemCategory}"]
+  - reporters show space-separated system titles
+     - i.e. by default, "[{systemCategory}.]ID ..."
   - when merging systems:
-     - create shared systems even if only one systemCategory matches
+     - create shared systems even if only one system.categories matches
         - e.g. same CPU for a specific OS
-        - in partially shared systems, system.id|title only includes shared ids
+        - in partially shared systems, system.categories only includes shared ids
      - systems[0] is reserved for shared system where all ids match
+
+To add to variations:
+  - result.variations.{variationCategory} VAL
+     - persisted in history
+        - used the most recent value
+     - on report:
+        - set combination.categories.{variationCategory}.value VAL
+           - should only be reported by reporters able to show details
+        - remove result.variations
+  - when using several runners and runnerConfig variations, the other runners will not have those variations
+     - should still set combination.categories.{variationCategory} on those combinations, but with id "", title "", titlePadded " ... "
+     - when filtering unnecessary categories, should exclude ones with id ""
+     - shoup all be in result.categories "CATEGORY"_ARR
 
 Variations:
   - some config properties can be optionally variable:
@@ -939,6 +955,8 @@ Variations:
            - including with CONF.titles
      - inputId is only part of the variationId
         - used in `inputs` passed to runner.measure()
+
+New categories: check impact on steps too
 
 MAX_LOOPS:
   - use two arrays:
