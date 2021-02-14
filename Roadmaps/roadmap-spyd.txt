@@ -23,14 +23,19 @@ Learn:
         - no report
         - no prompt
 
-Preview lines:
-  - do `getCombinations()` and print first preview after fetching results
-     - reason: need results to compute combinations when adding support for missing categories
-     - should print a screen before the first preview: duration 0, percentage 0, no reporter.report() called
-  - considering the above, what looks best, while avoiding flicker at beginning???
-     - fixed at bottom
-     - fixed at top
-     - floating at bottom
+Preview init:
+  - initial preview:
+     - before both:
+        - getCombinations()
+        - fetchResults()
+     - reason: both can be slow
+     - should print only: duration 0, percentage 0, no reporter.report() called
+     - considering the above, what looks best, while avoiding flicker at beginning???
+        - fixed at bottom
+        - fixed at top
+        - floating at bottom
+        - fixed at left
+  - first preview: after both getCombinations(), fetchResults() and selectCombinations()
 
 Scrolling:
   - only during results preview
@@ -49,6 +54,8 @@ Scrolling:
          CTRL-C: stop
   - not if output fits within process.stdout.rows
      - do not show scrolling instructions either
+  - add scrollbar
+     - only if there is scrolling
 
 In isInit(), do not do beforeAll|afterAll()
 
@@ -64,6 +71,22 @@ plugin.config.PROP STR[_ARR]
   - if STR starts with ./ ../ or /, add to `PATH_CONFIG_PROPS` during config file path resolution
      - including for CONF.runnerId.tasks
         - i.e. CONF.runnerId.tasks in spyd.* is relative to `spyd.yml`'s directory
+
+Combinations filtering:
+  - list all unique ids from all results
+     - including currently measured result
+     - then find their categories
+  - order:
+     - getCombinations()
+     - fetchResults()
+     - listIdsCategories()
+     - selectCombinations()
+  - use category when filtering
+     - reason we need to know category: non-matching ids resolve differently if in different categories or not
+     - unknown category (i.e. unknown id) should error
+        - use levenstein distance to suggest typo (if close enough)
+  - duplicate id validation should use all results ids
+     - i.e. no new result id has a duplicate in a previous result with a different category
 
 Categories:
   - combination.categories.CATEGORY "ID"
@@ -98,8 +121,56 @@ Categories:
         - result.categories ARR order
         - filter out unnecessary categories
      - not meant for reporters
-  - CATEGORY: "task", "step", "runner", "system[.{systemCategory}]", "variation.{variationCategory}"
+  - CATEGORY: "task", "step", "runner", "system.{systemCategory}", "variation.{variationCategory}"
   - remove current row|column|addTitles() logic
+
+Default ids:
+  - add default ids on results load
+     - for all possible categories with default ids
+        - figure out possible variation categories by using all results categories
+           - do not also use currently measured runners' possible configuration properties
+              - because this is not available in `show|remove`, which would make CONF.include|exclude|limit behave differently between commands
+     - i.e. missing category should behave like the category with its default id, including in:
+        - CONF.include|exclude|limit
+        - diff
+        - reporting (e.g. when mixed with other results not missing the category)
+     - per category:
+        - task|runner: never missing
+        - step: "main"
+        - variation: "*_main" (see below)
+        - system: "system_*" (see below)
+  - when saving, remove default ids, to save space
+  - validate that new result ids do not match possible default ids (unless same category):
+     - "main": step
+     - "*_main": variations
+     - "system_*": system
+  - add comments about:
+     - problems with alternatives:
+        - alternatives:
+           - different categories -> different combinations
+           - missing category match any id of that category
+           - new category matches missing category, but not vice-versa (i.e. can add but not remove)
+        - problems:
+           - new category have multiple ids, and it is hard to know which ones the user expects to be compared to the previous missing category
+           - same problem when removing a category, but in the other direction
+           - when making a new result with a missing category, but previous results have that category, they should be kept in history
+              - this happens for example when running locally but still want to see latest CI results
+
+CONF.system "ID" -> CONF.system[.{systemCategory}] "ID"
+  - CATEGORY is "system[.{systemCategory}]"
+     - i.e. can use several categories
+     - getCombinationName() should use only systemCategory
+        - if systemCategory is default "main", use "system" instead
+  - system id is "ID", without systemCategory
+  - default systemCategory: "main"
+     - unlike default id, this is persisted
+  - default "ID": "system_{systemCategory}"
+  - when sorting result.categories, system sorted:
+     - after runner, before variation
+     - by CONF.system ARR order
+  - result.systems[*].categories OBJ_ARR: id STR, title STR, category STR
+    - remove result.systems[*].id|title
+  - reporters show space-separated system titles
 
 Variations:
   - some config properties can be optionally variable:
@@ -128,24 +199,18 @@ Variations:
   - add combination.config CONF_OBJ
      - not persisted in history nor used in report
      - contains config, with combination-specific variations
-  - variation id is 'PROP.ID'
-     - full property name, including:
-        - `runner{RunnerId}.PROP.ID`
-        - `inputs.{inputId}.ID`
-           - reasons we do not use shorter 'inputId.ID' instead:
-              - forward compatiblity with future variable configuration properties
-              - consistent/monomorphic, i.e. simpler to learn
-     - user-defined id validation should allow ".", but only in the middle, not in ID
-  - when merging results:
-     - if some PROP uses variations in one result, but not in another
-     - then use ID 'default' to convert so all instances of that PROP have a variable property
-     - this allows keeping history continuity when introducing variations
+  - variation id is 'ID', not 'PROP.ID'
+  - default id is "PROP_main"
+     - PROP is only last property
+     - exception: PROP is last two properties (_-separated) when either:
+        - two variable properties have same last property
+        - PROP is "system" (e.g. in runnerConfig), to avoid conflict with system default ids
   - if several variations have different runner.versions.VAR VAL, they are concatenated as a result.systems[*].versions.VAR STR (commaSpace-separated list)
      - does not mention which variation used which ones. It should be obvious enough from ids or titles
   - when using several runners and runnerConfig variations, the other runners will not have those variations
      - should still set combination.categories.{variationCategory} on those combinations, but with id "", title "", titlePadded " ... "
      - when filtering unnecessary categories, should exclude ones with id ""
-     - shoup all be in result.categories "CATEGORY"_ARR
+     - should all be in result.categories "CATEGORY"_ARR
   - result.variations.{variationCategory} VAL
      - persisted in history
         - used the most recent value
@@ -202,6 +267,7 @@ Steps:
   - stepId:
      - exported OBJ key
      - runners should enforce "main" as the default stepId
+        - i.e. must return `tasks` `{ taskId: ['main'] }` to parent
      - validated like other combination user-defined ids: character validation, duplicate ids check
   - processes:
      - at benchmark start, when runner communicates available tasks to parent, it should also return available steps
@@ -696,6 +762,7 @@ History:
         - does not require git, except for finding parent branches
         - mostly follows "git log" order
            - except for newest common commit of parent branch's result, if saved after current branch's first commit's result, but that's unlikely
+     - when listing all results ids|combinations, should use unfiltered results (i.e. of all branches)
      - results with no git branch:
         - `previous` always empty ARR
            - including `sincePrevious`
@@ -931,108 +998,16 @@ Commercial offer:
 ==============================================
 
 
-History cache:
-  - how to invalidate cache if git pull was manually called???
-     - use branch latest commit hash in filename???
-        - automatically cleanup old ones when creating new cache
-  - how to prevent switching git branches, for performance??? is this even a concern???
-     - use global cache dir???
-        - no need for .gitignore then
-        - maybe GLOBAL_CACHE_DIR/spyd/history/{dirname(GIT_ROOT_DIR)}-{spydBranchGitHash7Digits}???
-
-bench order:
-  - first preview
-  - getCombinations()
-     - reason: spawning init processes can be slow
-  - fetchResults()
-     - including listIdsCategories()
-  - selectCombinations()
-
-Combinations filtering:
-  - list all unique ids from all results
-     - including currently measured result
-     - then find their categories
-  - use category when filtering
-     - i.e. no more "unknown" category
-     - reason we need to know category: non-matching ids resolve differently if in different categories or not
-     - if unknown id, error
-        - use levenstein distance to suggest typo (if close enough)
-  - duplicate id should also check:
-     - all results, i.e. no new id has a duplicate in a previous result with different category
-     - combinations do not use ids matching default ids in the wrong category
-        - "main": step
-        - "PROP.main": since "." is not allowed otherwise, can only be variation???
-        - system default???
-
-Default ids:
-  - add default ids on results load
-     - use set of unique ids, in order to know all possible categories
-        - use ids from CONF.include|exclude|limit too???
-     - i.e. missing category should behave like the category with its default id, including in:
-        - CONF.include|exclude|limit
-        - diff
-        - reporting (e.g. when mixed with other results not missing the category)
-     - per category:
-        - task|runner: never missing
-        - step: "main"
-           - assigned by:
-              - runner???
-                 - runner returns `tasks` `{ taskId: ['step'] }` to parent
-              - parent???
-                 - runner returns `tasks` `{ taskId: [], ... }` to parent
-                 - parent passes `steps` ARR with single object and `id` `undefined` (`scale` and `repeat` are still defined)
-        - variation: "PROP.main"
-        - system???
-           - currently "default_system"??? Maybe use something with "main" instead
-  - add comments about:
-     - problems with alternatives:
-        - alternatives:
-           - different categories -> different combinations
-           - missing category match any id of that category
-           - new category matches missing category, but not vice-versa (i.e. can add but not remove)
-        - problems:
-           - new category have multiple ids, and it is hard to know which ones the user expects to be compared to the previous missing category
-           - same problem when removing a category, but in the other direction
-           - when making a new result with a missing category, but previous results have that category, they should be kept in history
-              - this happens for example when running locally but still want to see latest CI results
-
-CONF.system "ID"[_ARR]
-  - considered a single id in reporting
-     - i.e. each combination of unique ids has own column??? or would subset be reported to their supersets???
-        - e.g. if one combination had only linux, and another has linux+node8, how is this reported???
-        - if one result uses no CONF.system, lose all previous history lines???
-        - maybe missing catgeories match subset to superset, but not inverse??? i.e. can add new dimensions, but when removing, history line only with previous woth same dimensions???
-     - printed as space-separated list
-  - when matching combinations, subsets match any superset???
-     - in CONF.include|exclude|limit
-     - in result.previous and diff
-  - other possibility: "[{systemCategory}.]ID"_ARR???
-
-CONF.system "ID" -> CONF.system[.{systemCategory}] "ID"
-  - CATEGORY is "system[.{systemCategory}]"
-     - i.e. can use several categories
-     - getCombinationName() should remove "system." prefix from CATEGORY
-        - unless CATEGORY is only "system"
-  - system id is "[{systemCategory}.]ID"
-     - user-defined id validation should allow ".", but only in the middle, not in systemCategory|ID
-  - when sorting result.categories, system sorted:
-     - after runner, before variation
-     - by CONF.system ARR order
-  - result.systems[*].categories OBJ_ARR: id STR, title STR
-    - remove result.systems[*].id|title
-  - reporters show space-separated system titles
-     - i.e. by default, "[{systemCategory}.]ID ..."
-  - when going from CONF.system to CONF.system.{systemCategory}, would lose all history???
-
 Merging systems:
   - create shared systems even if only one system.categories matches
      - e.g. same CPU for a specific OS
      - in partially shared systems, system.categories only includes shared ids
   - systems[0] is reserved for shared system where all ids match
-  - expand missing category to each of the possible ids of that category
-     - if several system categories, do cartesian product
   - if at least two siblings share same property value, assign to parent depth pevel instead
      - reason: minimize repetitions
+  - undefined values:
+     - like other values when grouping
+     - but not printed by reporters, i.e. cleaned after grouping
 
 Remove result.previous.combinations, keeping only result.combinations[*].previous???
   - at the moment, no result.combinations[*].previous???
