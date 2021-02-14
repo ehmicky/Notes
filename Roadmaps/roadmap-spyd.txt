@@ -112,10 +112,10 @@ Variations:
      - add comment why not CONF.duration:
         - no reasons why users would want to measure with different CONF.duration
         - complicates implementation
-   - CATEGORY is "variation.{variationCategory}"
-      - i.e. each variable property is a category
-      - variationCategory is property VARR (dot-delimited)
-      - getCombinationName() should remove "variation." prefix from CATEGORY
+  - CATEGORY is "variation.{variationCategory}"
+     - i.e. each variable property is a category
+     - variationCategory is property VARR (dot-delimited)
+     - getCombinationName() should remove "variation." prefix from CATEGORY
   - when sorting result.categories, variations sorted:
      - at end
      - input, then concurrency, then runnerConfig
@@ -917,20 +917,74 @@ Commercial offer:
 ==============================================
 
 
+Missing categories:
+  - assign a default to any missing category
+     - task|runner: never missing
+     - step: "main"
+        - assigned by:
+           - runner???
+              - runner returns `tasks` `{ taskId: ['step'] }` to parent
+           - parent???
+              - runner returns `tasks` `{ taskId: [], ... }` to parent
+              - parent passes `steps` ARR with single object and `id` `undefined` (`scale` and `repeat` are still defined)
+     - variation: "PROP.main"
+     - system???
+        - currently "default_system"??? Maybe use something with "main" instead
+  - forbid using default ids in different categories???
+     - e.g. "main" cannot be used as task
+  - selecting a missing category with a default id
+     - e.g. "main" on a result with no steps
+     - how to know that the default id is intended for a specific category???
+     - either:
+        - assign default ids during load???
+        - make selection logic handle missing categories, based on default ids????
+  - remove the fact that results must be fetched before first preview???
+  - add comments about:
+     - problems with alternatives:
+        - alternatives:
+           - different categories -> different combinations
+           - missing category match any id of that category
+           - new category matches missing category, but not vice-versa (i.e. can add but not remove)
+        - problems:
+           - new category have multiple ids, and it is hard to know which ones the user expects to be compared to the previous missing category
+           - same problem when removing a category, but in the other direction
+           - when making a new result with a missing category, but previous results have that category, they should be kept in history
+              - this happens for example when running locally but still want to see latest CI results
+
+Unknown ids:
+  - after loading results, list all unique ids of all results
+     - also add the currently measures combinations, for `bench` command
+  - validate CONF.include|exclude|limit with it
+     - if contains any unknown ids, error
+     - use levenstein distance to suggest typo (if close enough)
+
+CONF.system "ID"[_ARR]
+  - considered a single id in reporting
+     - i.e. each combination of unique ids has own column??? or would subset be reported to their supersets???
+        - e.g. if one combination had only linux, and another has linux+node8, how is this reported???
+        - if one result uses no CONF.system, lose all previous history lines???
+        - maybe missing catgeories match subset to superset, but not inverse??? i.e. can add new dimensions, but when removing, history line only with previous woth same dimensions???
+     - printed as space-separated list
+  - when matching combinations, subsets match any superset???
+     - in CONF.include|exclude|limit
+     - in result.previous and diff
+  - other possibility: "[{systemCategory}.]ID"_ARR???
+
 CONF.system "ID" -> CONF.system[.{systemCategory}] "ID"
   - CATEGORY is "system[.{systemCategory}]"
      - i.e. can use several categories
-     - def systemCategory: none
      - getCombinationName() should remove "system." prefix from CATEGORY
-        - if no systemCategory: "system"
+        - unless CATEGORY is only "system"
   - system id is "[{systemCategory}.]ID"
      - user-defined id validation should allow ".", but only in the middle, not in systemCategory|ID
   - when sorting result.categories, system sorted:
      - after runner, before variation
      - by CONF.system ARR order
   - result.systems[*].categories OBJ_ARR: id STR, title STR
+    - remove result.systems[*].id|title
   - reporters show space-separated system titles
      - i.e. by default, "[{systemCategory}.]ID ..."
+  - when going from CONF.system to CONF.system.{systemCategory}, would lose all history???
 
 Merging systems:
   - create shared systems even if only one system.categories matches
@@ -939,53 +993,8 @@ Merging systems:
   - systems[0] is reserved for shared system where all ids match
   - expand missing category to each of the possible ids of that category
      - if several system categories, do cartesian product
-  - each property should be set to only one depth level
-     - e.g. if Linux has specific CPU, but macOS and Windows share same, they should each show it, instead of using the top-level system for macOS and Windows
-  - result.systems: one system per category id, or one per category set of ids???
-
-Missing categories:
-  - should behave as if the category was present but with all ids present at once:
-     - after fetching all results, find categories of all ids
-        - if id duplicate but different category (between different results), use more recent result
-        - use it to assign categories to ids when parsing CONF.include|exclude|limit
-     - when filtering with CONF.include|exclude|limit:
-        - by an id whose category is unknown:
-           - i.e. not present in any results
-           - error
-           - both in target result and in previous results
-           - use levenstein distance to suggest typo (if close enough)
-        - with include|limit, absent category matches any id of that category
-           - i.e. always true except when passing all ids, and inverting each with ~
-        - with exclude, absent category matches only if all ids of that category are passed
-     - when comparing combination for equality of categories, absent category always matches
-        - if a combination in a target result has several possible comparable combinations in a previous result, only pick the one with slowest median
-        - reasons:
-           - need only one because:
-              - stats.diff
-              - line series simpler
-              - simpler combination.previous shape
-           - not triggering CONF.limit, and showing the most optimistic change
-     - reasons:
-        - does not require user to prefix ids with category
-        - filtering each combination is independent from others
-           - e.g. does not need to know target result
-           - needed since target result does not have all combinations until merged
-        - keeps history when adding|removing categories, and without requiring user action nor knowledge
-           - unlike setting default values for categories (e.g. "main" for steps)
-        - allows CONF.include|exclude "invalid id" failure not to be dependent of which result is targetted
-           - e.g. might include old ids, now removed, but still useful when showing older results
-  - some categories are optional
-     - step
-        - no "main" default value
-        - if no steps:
-           - runner return `tasks` `{ taskId: [], ... }` to parent
-           - parent passes `steps` ARR with single object and `id` `undefined` (`scale` and `repeat` are still defined)
-     - system, all of:
-        - CONF.system defined vs not defined
-           - no "default_system" default value
-        - CONF.system vs CONF.system.{systemCategory}
-        - any CONF.system.{systemCategory}
-     - variation, on any property
+  - if at least two siblings share same property value, assign to parent depth pevel instead
+     - reason: minimize repetitions
 
 Remove result.previous.combinations, keeping only result.combinations[*].previous???
   - at the moment, no result.combinations[*].previous???
