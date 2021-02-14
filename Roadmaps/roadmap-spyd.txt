@@ -72,6 +72,12 @@ plugin.config.PROP STR[_ARR]
      - including for CONF.runnerId.tasks
         - i.e. CONF.runnerId.tasks in spyd.* is relative to `spyd.yml`'s directory
 
+Previous combinations:
+  - result.previous[*].combinations ARR:
+     - indexes of each combination match current result's combination
+     - if no match, undefined, i.e. sparse ARR
+  - no result.combinations[*].previous
+
 Combinations filtering:
   - list all unique ids from all results
      - including currently measured result
@@ -168,9 +174,28 @@ CONF.system "ID" -> CONF.system[.{systemCategory}] "ID"
   - when sorting result.categories, system sorted:
      - after runner, before variation
      - by CONF.system ARR order
-  - result.systems[*].categories OBJ_ARR: id STR, title STR, category STR
-    - remove result.systems[*].id|title
-  - reporters show space-separated system titles
+  - result.systems[*].categories:
+     - before merging: OBJ where key is category, value is id
+     - after merging:
+        - OBJ_ARR_ARR: id STR, title STR, category STR
+        - second ARR is when merging combinations with same shared props
+     - reported as comma-separated list of space-separated lists
+     - remove result.systems[*].id|title
+  - merging:
+     - create shared systems in decreasing number of shared categories:
+        - first look for properties shared on all system categories. On any match:
+           - create a shared system OBJ for it, unless either:
+              - no shared properties
+                 - except top-level one, at systems[0], always defined
+              - another shared system has exact same properties:
+                 - just append categories ids to it instead
+           - remove props from the matching combinations, so they are not in two different system OBJs
+        - then same for all categories minus 1|2|...
+           - using all possible sets of "categories minus 1|2|..."
+     - undefined values:
+        - like other values when grouping
+        - but cleaned after grouping
+           - i.e. not printed by reporters
 
 Variations:
   - some config properties can be optionally variable:
@@ -316,16 +341,25 @@ Steps:
               - adding steps does not increase `measureDuration`, i.e. decrease preview responsiveness
               - with CONF.include|exclude, all steps are still run.
                 It is simpler to explain this by documenting that steps never influence total benchmark duration
-  - reporting:
-     - report one separate table per step
-        - step title should be in top-left corner
-     - sorting between tables:
-        - by step execution order
+  - result.steps OBJ_ARR: id 'STR'
+     - for all steps, even if not measured
+     - ARR is sorted by step execution order
+        - two tasks might run steps in different order
+           - including between different results
+        - i.e. use the step mean order:
+           - percentage of step index within its task's steps ARR
+              - 0 for first step, 1 for last step
+           - take the arithmetic mean between all tasks defining that step
+           - if two steps equal, use stepId alphabetical order
         - step groups:
            - right before their earliest child
            - if two step groups have same earliest child, decide using:
               - if latest child is earlier, comes first
-              - otherwise, CONF.steps.* index
+              - otherwise, use stepId alphabetical order
+  - reporting:
+     - report one separate table per step
+        - step title should be in top-left corner
+     - sorting between tables: by result.steps ARR order
   - excluding steps with CONF.include|exclude:
      - like any other combination categories:
         - filtered out from the `combinations` array created by `getCombinations()`
@@ -367,7 +401,10 @@ Steps:
               - histogram: merge histograms (find solution online)
      - persisted in history
         - as opposed to being dynamically computed during reporting
-        - reason: so we can use all `measures` for better stats
+        - reason: allows not losing history when:
+           - step group change which steps it includes
+           - or their names
+           - or whether it is a step group or a normal step
      - including|excluding step groups does not have impact on whether its children are included|excluded, and vice-versa
         - reason: users might want to see children only when need details
            - and vice-versa
@@ -543,8 +580,7 @@ Manual mode:
      - automatic durations are still:
         - measured (for CONF.rate) in combination.durationStats
         - used for calibration: maxLoops, scale
-  - persisted at result.steps.stepId.manual "UNIT"
-     - optional, including steps.stepId itself, to keep result small
+  - persisted at result.steps[*].manual "UNIT"
   - re-use existing unit-specific logic for:
      - automatic scaling
         - e.g. 'ns' -> 's' or 'B' -> 'MB'
@@ -622,42 +658,6 @@ isAsync:
   - do the above independently for beforeEach, main and afterEach
   - always use await on beforeAll|afterAll, i.e. allow both sync and async
   - remove task.async BOOL
-
-Quantiles|histogram:
-  - persist in history
-  - some stats should have a space-efficient shape for history, but be denormalized on load:
-     - histogram:
-        - denormalized: OBJ_ARR: low, high, frequency
-        - normalized: ARR of [high, frequency]
-     - quantiles:
-        - denormalized: OBJ_ARR: percentage NUM, value NUM
-        - normalized: NUM_ARR
-     - both: use difference from median in durations
-  - show in `debug` reporter
-
-Add stats.p95
-
-reporter.debugStats BOOL
-  - def: false
-  - true for `debug` reporter
-  - if false, do not pass:
-     - mean
-        - add comment that we must ensure median is the main one used, so different reporters are consistent, and also because it is used in sorting combinations, and also it is less precise
-     - times
-        - add comment that it is a bad indicator of precision, and also might be confused as an indicator of speed due to other benchmark libraries showing it like that
-     - minLoopDuration, samples, repeat, loops
-
-Precision:
-  - compare precision:
-     - compare with multiple processes:
-        - difference between combinations of single benchmark, vs between single combinations of different benchmarks
-        - median vs standard deviation vs variation between processes
-        - small CONF.duration vs big CONF.duration
-  - note: using a "for loop" without spyd does work:
-     - increasing the count makes the results more and more precise
-     - the first 2 loops (regardless of the total count) always seem to be different from others
-  - check if using a fixed, low amount of processes helps with precision???
-  - find ways to improve precision even more???
 
 History:
   - save results to a `spyd` git branch
@@ -849,6 +849,13 @@ History:
            - `previous`: ARR of each results from sinceResult to lastResult (excluded)
         - add `previous` titles on load
 
+Precision:
+  - find ways to improve precision even more???
+  - compare precision:
+     - difference between combinations of single benchmark, vs between single combinations of different benchmarks
+     - median vs standard deviation vs variation between processes
+     - small CONF.duration vs big CONF.duration
+
 Plugin shape should be validated
 
 Error handling:
@@ -998,35 +1005,54 @@ Commercial offer:
 ==============================================
 
 
-Merging systems:
-  - create shared systems even if only one system.categories matches
-     - e.g. same CPU for a specific OS
-     - in partially shared systems, system.categories only includes shared ids
-  - systems[0] is reserved for shared system where all ids match
-  - if at least two siblings share same property value, assign to parent depth pevel instead
-     - reason: minimize repetitions
-  - undefined values:
-     - like other values when grouping
-     - but not printed by reporters, i.e. cleaned after grouping
-
-Remove result.previous.combinations, keeping only result.combinations[*].previous???
-  - at the moment, no result.combinations[*].previous???
-  - keep result.previous only, but making each result.combinations a sparse array where indexes match with all other results???
-
-Step execution order:
-  - allow two tasks to run steps in different order???
-  - if so, how to sort steps as a category???
-
 Step groups:
-  - make it reporting-only, instead of measuring-only???
-     - what about selection, validation, etc. done during combinations load???
-  - performance???
-     - do not include histogram and quantiles???
-     - persist in history???
+  - are they measured if some of their children are filtered by CONF.include|exclude???
+     - note: this is why there is no "all" special token
+  - can they target another step group???
+     - what about cycles???
 
-Rethink percentiles:
+Look at benchmark.js for ideas
+
+Precision stat:
+  - means difference between another benchmark with same settings
+  - as opposed to standard deviation is variation between measures
+  - how to compute???
+     - would standard error work for it???
+        - or relative margin of error???
+  - use in progress bar of CONF.duration 0???
+     - i.e. would show a combiation as complete once its precision is good enough
+
+Percentiles:
   - how to report them???
   - are all of them needed??? Or only min, p1, p5, p25, median, p75, p95, p99, max??? Or only 20 instead of 100???
+  - add stats.p95???
+  - make sure just adding works when computing step groups???
+
+Histogram:
+  - persist in history or not??? Current size: 100
+  - how to compute for step groups???
+
+Quantiles|histogram:
+  - persist in history
+  - some stats should have a space-efficient shape for history, but be denormalized on load:
+     - histogram:
+        - denormalized: OBJ_ARR: low, high, frequency
+        - normalized: ARR of [high, frequency]
+     - quantiles:
+        - denormalized: OBJ_ARR: percentage NUM, value NUM
+        - normalized: NUM_ARR
+     - both: use difference from median in durations
+  - show in `debug` reporter
+
+reporter.debugStats BOOL
+  - def: false
+  - true for `debug` reporter
+  - if false, do not pass:
+     - mean
+        - add comment that we must ensure median is the main one used, so different reporters are consistent, and also because it is used in sorting combinations, and also it is less precise
+     - times
+        - add comment that it is a bad indicator of precision, and also might be confused as an indicator of speed due to other benchmark libraries showing it like that
+     - minLoopDuration, samples, repeat, loops
 
 Max loops:
   - MAX_LOOPS 1e7
@@ -1073,13 +1099,6 @@ Try to see if anything more can be removed from `node` runner, i.e. simplified f
 Abstract runner orchestration so it is easier to create a runner???
    - how???
       - maybe an execute which maintains a state machine (using combination.id) and returns next action???
-
-Precision stat???
-  - means difference between another benchmark with same settings
-  - as opposed to standard deviation is variation between measures
-  - how to compute???
-  - use in progress bar of CONF.duration 0???
-     - i.e. would show a combiation as complete once its precision is good enough
 
 Programmatic usage???
 
