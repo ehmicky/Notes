@@ -369,15 +369,16 @@ npm update [PKGNAME...]       #npm install ignores dependencies that:
                               #  - even if a newer version exists
                               #npm update works like npm install but does not ignore those
                               #  - and only works for already installed dependencies
+                              #  - including nested dependencies
                               #New version is persisted to PACKAGE.*dependencies according to CONF.save*
---depth NUM                   #
-CONF.depth                    #Recursive depth NUM (def: 0, i.e. only top-level)
 
 npm outdated [PKGNAME...]     #Print dependencies whose "latest" tag does not match installed version.
 -l|--long
 CONF.long                     #If true (def: false), also show if dependencies or dev|optional|bundledDependencies
---depth NUM
-CONF.depth                    #Recursive depth NUM (def: 0, i.e. only top-level)
+--all
+CONF.all                      #BOOL. If false (def), only top-level
+--omit|include
+CONF.production               #Like npm install
 
 npm uninstall [PKGNAME...]    #Inverse of npm install. Can use same options (ones that make sense)
 
@@ -391,24 +392,23 @@ PACKAGE.optionalDependencies. #PKGTARGET
 PACKAGE.bundledDependencies   #PKGNAME_ARR
                               #Bundled dependencies are packed by npm publish
 PACKAGE.peerDependencies.     #PKGTARGET
- PKGNAME                      #Like dependencies, except when nested:
-                              #  - if parent does not have the dependency: installed by the parent
-                              #  - otherwise:
-                              #     - if parent does not have a matching version: installed by the child
-                              #     - otherwise: no installation
-                              #Should be as loose as possible to minimize constraint on parent package.
+ PKGNAME                      #When not consumed by another package, behave like `dependencies`.
+                              #When consumed by another package, install the dependency by the consumer instead:
+                              #  - if the consumer also installs it:
+                              #     - use the consumer semver instead
+                              #     - failure if the current semver and the consumer semver do not match
+                              #        - unless CONF.force true
+                              #        - only if consumer is root project if CONF.strict-peer-deps false (def)
+                              #Should be as loose as possible to minimize constraint on consumer.
+CONF.legacy-peer-deps         #BOOL (def: false). Enable pre-npm-v7 peerDependencies behavior (i.e. peerDependencies not installed by parent)
 PACKAGE.peerDependenciesMeta.
- PKGNAME.optional             #BOOL. Whether peer dependency is optional (def: false)
+ PKGNAME.optional             #BOOL. Do not automatically install this peer dependency (def: false). I.e. only used to enforce version.
 
---only=prod
-CONF.only "production"        #Do not install PACKAGE.devDependencies with npm install (without PKG)
-CONF.production               #Same but also:
+--include|omit=prod|dev|optional
+CONF.include|omit STR_ARR     #[Do not] install PACKAGE.dependencies|devDependencies|optionalDependencies with npm install (without PKG)
+CONF.production               #Same as CONF.omit "dev" but also:
                               #  - def true if NODE_ENV === 'production'
                               #  - set NODE_ENV to 'production' in scripts
---only=dev
-CONF.only "development"       #Install only PACKAGE.devDependencies with npm install (without PKG)
---no-optional
-CONF.optional                 #If false (def: true), do not install PACKAGE.optionalDependencies with npm install (without PKG)
 
 -P|--save-prod
 -D|--save-dev
@@ -450,6 +450,7 @@ LPREFIX/package-lock.json     #Description of all the dependencies currently ins
                               #  - already published version of a package changed (including because of malicious attack)
                               #     - cannot happen on npm registry
                               #Always excluded from npm publish, i.e. only locks down for other developers, not for consumers
+                              #If yarn.lock present, use it on read, but not on write, and still create package-lock.json
 npm install
 --no-package-lock|shrinkwrap
 CONF.package-lock|shrinkwrap  #If false (def: true), do not use nor update package-lock.json and npm-shrinkwrap.json
@@ -504,7 +505,7 @@ PACKAGE.workspaces[.WORKSPACE]#'DIR_GLOB'_ARR to monorepo directories
 
 BINDIR                        #GBINDIR|LBINDIR
 GBINDIR                       #GPREFIX/[bin/] (no bin/ on Windows)
-LBINDIR                       #LPREFIX/node_modules/.bin/
+LBINDIR                       #LPREFIX/[.../]node_modules/.bin/
 npm bin                       #Prints BINDIR
 
 PACKAGE.bin[.SYMLINK]         #LPATH to a binary file
@@ -527,7 +528,7 @@ VERSION ==>                   #10.2.0 (but part of npm)
 
 npx COMMAND[@RANGE] [...]     #Fire COMMAND [...] from either:
                               #  - $PATH
-                              #  - node_modules/.bin/
+                              #  - node_modules/[.../].bin/
                               #  - global npx directory ~/.npm/_npx/
                               #If missing, npm install COMMAND[@RANGE] to global npx directory first
 npx -c 'BASH'                 #Runs 'BASH' like a npm script.
@@ -564,8 +565,7 @@ npm link PKGNAME              #Symlink local dependency -> global dependency
                               #Symlink is removed on next npm install|ci|uninstall
 
 npm link DIR                  #npm link in DIR + npm link PKGNAME in current DIR
-npm install --link PKGNAME    #npm install -g PKGNAME + npm link PKGNAME
-CONF.link                     #If true (def: false), use --link on any npm install PKGNAME if a global dependency exists
+CONF.link                     #If true (def: false), use npm install -g PKGNAME + npm link PKGNAME on any npm install PKGNAME if a global dependency exists
                               #unless it has a different version
 
 
@@ -576,7 +576,6 @@ CONF.link                     #If true (def: false), use --link on any npm insta
                                              \=+===============================+=/
 
 
-npm build [DIR]               #Lower level command called by npm install
 npm rebuild [PKGNAME...]      #It compiles Node C++ native modules with node-gyp
 
 npm install
@@ -598,7 +597,8 @@ npm ls [PKGNAME...]           #Print deduped dependencies tree
 -l|--long
 CONF.long                     #Also print dependency's PACKAGE.description|repository|homepage
 --depth NUM
-CONF.depth                    #Don't go more than NUM depth level (def: Infinity)
+CONF.depth                    #Don't go more than NUM depth level (def: 0)
+--all                         #Max depth level
 --prod|dev                    #Only show PACKAGE.dependencies|devDependencies
 --link                        #Only show linked dependencies
 
@@ -637,7 +637,8 @@ npm dedupe [PKGNAME...]       #Deduce dependencies' dependencies, i.e.:
                               #     - use a version that matches both ranges
                               #     - if none, install one of them at a lower depth instead to resolve conflict
                               #  - goal: avoid installing same dependency several times, to decrease node_modules size
-                              #Automatically done by npm install
+npm install --prefer-dedupe   #BOOL (def: false). Run `npm dedupe` on `npm install`.
+CONF.prefer-dedupe            #Event when false, npm install already does some light deduping.
 npm install --global-style
 CONF.global-style             #BOOL (def: true if -g). Do not dedupe top-level dependencies (but dedupe second depth level)
 
@@ -649,6 +650,8 @@ CONF.production               #Def true if NODE_ENV === 'production'
 npm prune|dedupe
 --dry-run
 CONF.dry-run                  #
+
+npm find-dupes                #Same as npm dedupe --dry-run
 
 
                                              /=+===============================+=\
@@ -963,8 +966,13 @@ LISTALLDIR/.hooks/            #Like PACKAGE.scripts.[pre|post]CLI_COMMAND but:
                               #  - applies to both current package and each of its dependencies
 
 ENVVARS ==>                   #The following ENVVARs are set during npm scripts
+ENVVAR npm_command            #Set to current npm COMMAND, e.g. "run-script"
 ENVVAR npm_config_VARR        #CONF.VARR
-ENVVAR npm_package_config_VARR#CONF.PKGNAME:VARR
+ENVVAR npm_package_json       #"PATH/to/package.json"
+ENVVAR npm_package_name       #PACKAGE.name
+ENVVAR npm_package_version    #PACKAGE.version
+ENVVAR
+ npm_package_engines_node     #PACKAGE.engines.node
 ENVVAR npm_lifecycle_event    #[pre]CLI_COMMAND
 ENVVAR npm_lifecycle_script   #SHELL_COMMAND
 ENVVAR INIT_CWD               #$PWD when running script
@@ -977,10 +985,6 @@ CONF.script-shell             #Shell used in SHELL_COMMAND
                               #Def: null, i.e. sh on Unix, cmd.exe on Windows
 CONF.node-options             #STR. NODE_OPTIONS ENVVAR passed to scripts
 
-CONF.unsafe-perm              #If false (def if root) and running as root, switch UID|GID to CONF.user|group
-CONF.user                     #UID|STR (def: "nobody")
-CONF.group                    #GID|STR (def: current one)
-
 CONF.scripts-prepend-node-path#Whether to add node binary directory to $PATH:
                               #  - BOOL
                               #  - "auto": only if different from one currently used by npm
@@ -990,8 +994,6 @@ npm install --ignore-scripts
 CONF.ignore-scripts           #Is true (def: false), does not run scripts
 
 npm install-[ci-]test         #Same as npm install|ci + npm test
-
-CONF.onload-script            #PATH to a file to require() when npm starts
 
 
                                              /=+===============================+=\
@@ -1047,13 +1049,8 @@ npm audit                     #Prints vulnerabilities found in dependencies (pac
                               #Checks PACKAGE.[dev|optional|bundled]dependencies but not PACKAGE.peerDependencies
                               #Print each vulnerability path (i.e. same vulnerability might be reported twice)
                               #Use vulnerabilities from nsp / Node security advisories.
---only=prod
-CONF.only "production"
-CONF.production
---only=dev
-CONF.only "development"
---no-optional
-CONF.optional                 #Like npm install
+--omit|include
+CONF.production               #Like npm install
 CONF.audit
 npm install --no-audit        #BOOL (def: true). Run npm audit with npm install
 --audit-level
@@ -1088,8 +1085,6 @@ CONF.unicode                  #If true (def), use Unicode chars for trees drawin
 
 CONF.loglevel                 #STR (def: "notice").
                               #Verbosity level of npm among "silent|error|warn|notice|http|timing|info|verbose|silly"
-CONF.logstream                #OSTREAM to pipe logging (def: process.stderr)
-                              #Cannot be done through CLI
 ./npm-debug.log               #Dump logs on npm errors, with verbosity "verbose"
 CONF.logs-max                 #Max number of npm-debug.log files to store
 
