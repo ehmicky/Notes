@@ -21,13 +21,23 @@ Learn:
         - no report
         - no prompt
 
+Preview lines:
+  - do `getCombinations()` and print first preview after fetching results
+     - reason: need results to compute combinations when adding support for missing categories
+     - should print a screen before the first preview: duration 0, percentage 0, no reporter.report() called
+  - considering the above, what looks best, while avoiding flicker at beginning???
+     - fixed at bottom
+     - fixed at top
+     - floating at bottom
+
 Scrolling:
   - only during results preview
      - when either stopping or ending benchmark, report in full without scrolling
   - actions:
-     - listen for UpArrow/k and DownArrow/j
+     - listen for UpArrow/k/CTRL-P and DownArrow/j/CTRL-N
      - keep track of current scroll amount
      - remove first and last lines before printing according to scroll amount
+        - take into account that one string line might take several lines in terminal due to wrapping
      - show top of screen initially, not bottom
   - instructions:
      - shown at bottom of screen, regardless of scroll amount
@@ -88,26 +98,6 @@ Categories:
      - not meant for reporters
   - CATEGORY: "task", "step", "runner", "system[.{systemCategory}]", "variation.{variationCategory}"
   - remove current row|column|addTitles() logic
-
-CONF.system "ID" -> CONF.system[.{systemCategory}] "ID"
-  - CATEGORY is "system[.{systemCategory}]"
-     - i.e. can use several categories
-     - def systemCategory: none
-     - getCombinationName() should remove "system." prefix from CATEGORY
-        - if no systemCategory: "system"
-  - system id is "[{systemCategory}.]ID"
-     - user-defined id validation should allow ".", but only in the middle, not in systemCategory|ID
-  - when sorting result.categories, system sorted:
-     - after runner, before variation
-     - by CONF.system ARR order
-  - result.systems[*].categories OBJ_ARR: id STR, title STR
-  - reporters show space-separated system titles
-     - i.e. by default, "[{systemCategory}.]ID ..."
-  - when merging systems:
-     - create shared systems even if only one system.categories matches
-        - e.g. same CPU for a specific OS
-        - in partially shared systems, system.categories only includes shared ids
-     - systems[0] is reserved for shared system where all ids match
 
 Variations:
   - some config properties can be optionally variable:
@@ -927,20 +917,79 @@ Commercial offer:
 ==============================================
 
 
-Default categories:
-  - "default" with system so that can keep history???
-  - empty with variation???
-  - "main" instead of default???
-  - is keeping history important??? isn't any new dimension going to lose history???
-     - can compare previous combination with subset of dimensions???
-     - only a problem for dynamic categories (systems and variations)???
-  - maybe use first category in CONF.system|variableProp.*???
-  - for steps, use "main"???
-     - ask runners to enforce it
-        - i.e. return `tasks` `{ taskId: 'stepId'_ARR, ... }`
-     - or instead allow returning no steps, and let core default to "main"???
-        - i.e. return `tasks` `{ taskId: 'stepId'_ARR, ... }`, but ARR can be empty???
-        - pass `steps[*].id` `undefined` in child samples when no steps???
+CONF.system "ID" -> CONF.system[.{systemCategory}] "ID"
+  - CATEGORY is "system[.{systemCategory}]"
+     - i.e. can use several categories
+     - def systemCategory: none
+     - getCombinationName() should remove "system." prefix from CATEGORY
+        - if no systemCategory: "system"
+  - system id is "[{systemCategory}.]ID"
+     - user-defined id validation should allow ".", but only in the middle, not in systemCategory|ID
+  - when sorting result.categories, system sorted:
+     - after runner, before variation
+     - by CONF.system ARR order
+  - result.systems[*].categories OBJ_ARR: id STR, title STR
+  - reporters show space-separated system titles
+     - i.e. by default, "[{systemCategory}.]ID ..."
+
+Merging systems:
+  - create shared systems even if only one system.categories matches
+     - e.g. same CPU for a specific OS
+     - in partially shared systems, system.categories only includes shared ids
+  - systems[0] is reserved for shared system where all ids match
+  - expand missing category to each of the possible ids of that category
+     - if several system categories, do cartesian product
+  - each property should be set to only one depth level
+     - e.g. if Linux has specific CPU, but macOS and Windows share same, they should each show it, instead of using the top-level system for macOS and Windows
+  - result.systems: one system per category id, or one per category set of ids???
+
+Missing categories:
+  - should behave as if the category was present but with all ids present at once:
+     - after fetching all results, find categories of all ids
+        - if id duplicate but different category (between different results), use more recent result
+        - use it to assign categories to ids when parsing CONF.include|exclude|limit
+     - when filtering with CONF.include|exclude|limit:
+        - by an id whose category is unknown:
+           - i.e. not present in any results
+           - error
+           - both in target result and in previous results
+           - use levenstein distance to suggest typo (if close enough)
+        - with include|limit, absent category matches any id of that category
+           - i.e. always true except when passing all ids, and inverting each with ~
+        - with exclude, absent category matches only if all ids of that category are passed
+     - when comparing combination for equality of categories, absent category always matches
+        - if a combination in a target result has several possible comparable combinations in a previous result, only pick the one with slowest median
+        - reasons:
+           - need only one because:
+              - stats.diff
+              - line series simpler
+              - simpler combination.previous shape
+           - not triggering CONF.limit, and showing the most optimistic change
+     - reasons:
+        - does not require user to prefix ids with category
+        - filtering each combination is independent from others
+           - e.g. does not need to know target result
+           - needed since target result does not have all combinations until merged
+        - keeps history when adding|removing categories, and without requiring user action nor knowledge
+           - unlike setting default values for categories (e.g. "main" for steps)
+        - allows CONF.include|exclude "invalid id" failure not to be dependent of which result is targetted
+           - e.g. might include old ids, now removed, but still useful when showing older results
+  - some categories are optional
+     - step
+        - no "main" default value
+        - if no steps:
+           - runner return `tasks` `{ taskId: [], ... }` to parent
+           - parent passes `steps` ARR with single object and `id` `undefined` (`scale` and `repeat` are still defined)
+     - system, all of:
+        - CONF.system defined vs not defined
+           - no "default_system" default value
+        - CONF.system vs CONF.system.{systemCategory}
+        - any CONF.system.{systemCategory}
+     - variation, on any property
+
+Remove result.previous.combinations, keeping only result.combinations[*].previous???
+  - at the moment, no result.combinations[*].previous???
+  - keep result.previous only, but making each result.combinations a sparse array where indexes match with all other results???
 
 Step execution order:
   - allow two tasks to run steps in different order???
@@ -948,6 +997,14 @@ Step execution order:
 
 Step groups:
   - make it reporting-only, instead of measuring-only???
+     - what about selection, validation, etc. done during combinations load???
+  - performance???
+     - do not include histogram and quantiles???
+     - persist in history???
+
+Rethink percentiles:
+  - how to report them???
+  - are all of them needed??? Or only min, p1, p5, p25, median, p75, p95, p99, max??? Or only 20 instead of 100???
 
 Max loops:
   - MAX_LOOPS 1e7
@@ -988,6 +1045,7 @@ Max loops:
 HTTP body max length:
   - 1e8 max HTTP body length (unless streaming used)
   - add `Math.min()` to `maxLoops`???
+
 Try to see if anything more can be removed from `node` runner, i.e. simplified for all runners
 
 Abstract runner orchestration so it is easier to create a runner???
