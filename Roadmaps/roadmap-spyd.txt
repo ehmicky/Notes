@@ -1055,7 +1055,22 @@ Commercial offer:
 ==============================================
 
 
+figures:
+  - add math symbols (https://github.com/sindresorhus/figures/issues/53)
+  - add subscript (https://github.com/sindresorhus/figures/issues/52)
+  - add musical notes (https://github.com/sindresorhus/figures/issues/54)
+  - add triangles/lozenges (https://github.com/sindresorhus/figures/issues/55)
+  - add fill characters (https://github.com/sindresorhus/figures/issues/57)
+  - discuss names of box lines (https://github.com/sindresorhus/figures/issues/56)
+  - add ESM (https://github.com/sindresorhus/figures/issues/50)
+  - add cross-platform-terminal-characters repo (https://github.com/sindresorhus/figures/issues/58)
+
 Fix histogram for cmd.exe
+
+Rename deviation -> stdev
+
+Try to use jstat and simple-statistics
+  - including for t-value
 
 Do not slice() stats.low|high: use indexes instead
 
@@ -1064,92 +1079,124 @@ Histogram normalization:
   - persisted as NUM_ARR frequencies
      - use stats.histogramLow|High on denormalizing, by interpolating
 
+Persist + report standard deviation as duration instead of percentage
+  - reasons:
+     - easier to understand spread of a particular combination
+     - easier to understand together with percentiles and other distribution-related stats (that are also durations)
+     - con: worse when comparing combinations with different medians
+     - con: worse when relating it to stats.moe
+
+stats.diff:
+  - use arrow|triangle sign instead of +|-
+  - if neutral:
+     - use gray
+     - use horizontal|verticalDoubleArrow|≈ sign
+     - use absolute value
+     - do not use CONF.limit
+  - add comments why diff not:
+     - hidden: users might think it is a bug if CONF.showDiff true uses
+     - shown as 0%: users might notice the diff themselves, and use it, or think it is a bug
+     - showing sign when neutral: diff should be insignificant, including direction
+  - whether diff is reported as neutral should be based on a welch's t-test
+     - replace current logic
+     - not student's t-test because it assumes variances are the same
+     - not mann-whitney u-test because:
+        - we want compare medians, not full distribution
+           - e.g. if distributions mostly overlap, it should not be shown as "equivalent", if one is clearly shifted to the right, since it is useful to know this, so the faster combination can be preferred by user
+        - slower time complexity O(n^2)
+        - more complex to implement
+        - assumes both combinations have similar distributions
+        - not as good with skewed distributions
+
+stats.moe:
+  - use durations, not percentages
+  - stats.moePretty should be ±{moe}{unit}, with no colors
+  - add comments that stats.moe:
+     - is meant to be reported:
+        - by median-focused reporters (not distribution-focused)
+        - either graphically, or as number (stats.moePretty)
+     - is useful both for:
+        - reporting each combination's precision
+        - knowing if two combinations are comparable, by checking if their moe range overlap
+           - this is statistically imperfect, i.e. just an approximation
+           - the proper way would be to use a welch's t-test
+     - is for the precision of the current run, not for the possible range of values in future runs
+        - e.g. environment variation might change that range
+
+CONF.showPrecision BOOL
+  - def: false
+  - if false, stats.moe is not passed to reporters (similar to CONF.showDiff)
+  - add comments:
+     - whether combinations are statistically comparable is not reported because:
+        - on combination names:
+           - does not work well when combination name is spread (e.g. reporting table)
+           - one combination might be equivalent with several combinations, but those combinations might not be equivalent between each other, making ordering complicated
+        - on medians: different for each pair of combinations, not only next one
+        - can still be added in the future with a reporter showing list of too-close-to-compare combinations, with a welch's t-test between each combination pair
+
+Median change:
+  - goal:
+     - measure|reduce both:
+        - engine optimization variation
+        - environment change variation (during a single run, not between runs)
+     - moe is not enough for it when sample size is already very high and the variation suddenly happens, because moe would already be too low compared to its threshold
+        - this is especially likely for very fast tasks
+  - not persisted
+     - instead, it is weighted into stats.precision
+        - how much???
+  - reported as a sign next to moe
+     - reason: so can use for diff and inter-comb comparison
+     - does it mean it should be persisted as a boolean???
+     - ≈ prepended???
+  - value:
+     - lastMedian > midMedian ? (lastMedian / midMedian) - 1 : (midMedian / lastMedian) - 1
+     - midMedian is median computed when half of current times were done
+        - i.e. must record median after each sample aggregation
+        - floor() or ceil() to know which sample to use???
+     - undefined if:
+        - one of the medians is 0
+        - only one sample
+  - against a hardcoded threshold
+     - which???
+     - like moe, but mugh higher
+     - i.e. standard deviation is not taken into account
+        - i.e. combination with higher standard deviation will take longer to stabilize median, like moe
+  - not used when computing whether diff is "neutral"???
+     - reason: previous combination might have had unstable median, but should not completely forbid to compare it since it cannot be fixed anymore
+
 Types of variation:
   - statistical (low sample size):
-     - measured by: moe, stats.precision
-     - how is it persisted: stats.moe (duration), stats.rmoe (%), or both???
-        - stats.rmoe might not be needed due to stats.precision
      - reduced by increasing CONF.duration
-     - reporting:
-        - use a boolean???
-           - reasons:
-              - less information to report, i.e. simpler
-              - prevent users from thinking this shows inter-runs variation
-              - no confusion with diff percentage
-           - how???
-              - ~ prepended to median
-        - use a duration???
-           - how: ±MOEns (not %)
-              - some reporters might choose to display it visually, not in numbers
-        - only if CONF.showPrecision true???
-           - for both combination precision, and roughly guessing combinations overlaps
-     - combined with distribution variation when comparing combinations:
-        - computed by???
-           - welch t-test:
-              - compares medians
-           - mann-whitney u-test:
-              - compares full distribution
-              - more complex
-              - requires O(n^2) time
-              - assumes both combinations have similar distributions
-              - not as good with skew distributions
-        - when:
-           - same combination, different results (stats.diff)
-              - reporting???
-                 - hidden
-                 - ~0% in gray
-                 - ±DIFF% in gray
-                 - ~+|~-DIFF% in gray
-              - should replace current diff color logic
-              - when imprecise, do not use CONF.limit
-           - different combination, same result (combination ordering)
-              - reporting???
-                 - on combination name:
-                    - ~ prepended
-                    - prepend "NUM.", with same NUM when too close
-                    - problem: does not work well when combination name is spread (e.g. reporting table)
-                 - on median:
-                    - ~ prepended
-                       - what about ~ already prepended to median when repeat loop not used, although it should have, but could not due to multiple steps + CONF.precise false??? Add two of them???
-                       - problem with using same sign as current result precision:
-                          - if imprecise result, but inter-combination precision: results might look like equivalent, but are not
-                          - if precise result, but inter-combination imprecision: look like imprecise result, i.e. might continue benchmark in vain
-                    - * appended
-                 - not reported, relying on ±MOEns being reported instead???
-              - problem with reporting: different for each pair of combinations, not only next one
-                 - because might have different both variance and moe, not only median
-                 - also, hard to visualize next slower combination anyway in a table reporter
-  - distribution:
-     - measured by: standard deviation, percentiles
+     - types:
+        - same combination, same result (stats.moe, stats.precision)
+        - same combination, different results (stats.diff)
+        - different combination, same result (stats.moe)
+  - task itself:
+     - measured by: stats.stdev, stats.quantiles|min|low|median|high|max
      - no way (nor strong reason) to reduce it
-     - only reported by reporters explictly meant to see distribution (histogram, box chart, etc.), not most reporters
+     - only reported by reporters explicitely meant to see distribution (histogram, box chart, etc.), not most reporters
         - reason: simplicity, and putting focus on median instead
-     - report standard deviation as duration instead of percentage???
-        - pro: better at understanding spread of a particular combination
-        - con: worse at comparing combinations with different medians
   - engine optimization:
-     - i.e. specific case of distribution, but relative to CONF.duration
+     - measured by: stats.precision (median change), stats.stdev, stats.quantiles|min|low|median|high|max
      - reduced by higher CONF.duration
-     - how to measure???
   - environment:
-     - difference in OS load, hardware, etc.
-     - users might be explicitely comparing it, including inside same run (due to previous runs being merged to current one)
-     - measured by running exact same combination
+     - measured by: stats.precision (median change), stats.diff (with same combination)
      - reduced by: containers, VM, CI
-     - not measured by core, nor reported
-     - multidimensional: CPU, memory, network, i.e. specific to each combination
+     - difference in OS load, hardware, etc.
+        - multidimensional: CPU, memory, network, i.e. specific to each combination
+     - users might be explicitely comparing it, including inside same run (due to previous runs being merged to current one)
 
 stats.precision NUM:
   - value:
-     - 1 is when rmoe reaches a specific threshold
+     - 1 is when relative moe reaches a specific threshold
         - threshold is 1%
      - which value is 0???
      - use n**2 so that progress bar increases linearly, considering moe decreases at log2 rate
      - min|max is 0|1
-  - take into account engine optimization variation???
 
 Progress bar in CONF.duration "auto|forever":
   - mean of all combinations[*].stats.precision
+  - should never decrease over time, even when mean decreased
 
 CONF.duration "auto"
   - change other CONF.duration to: "once", "forever", NUM
