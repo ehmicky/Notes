@@ -947,6 +947,21 @@ Split `precise-timestamp` to own repository
   - make it work on browser + node
   - problem with browser: performance.now() is made only ms-precise by browser due to security timing attacks
 
+Terminal-histogram:
+  - separate to own repository
+  - add features:
+     - color themable (using terminal-theme)
+     - left bar with percentages
+     - can specify number of abscissa ticks
+        - or number of columns per tick
+        - stack labels, i.e. might need to stack deeper than one level
+    - allow minimum ordinate to be either 0 or minimum value
+    - labelling columns
+    - custom unit for ordinate
+    - when too many columns:
+       - if labeled: break into several histograms
+       - otherwise: extrapolate
+
 Separate into different repos:
   - some plugins are builtin, i.e. required as production dependencies by core
      - including spyd-run-node and spyd-run-cli (until more runners are created)
@@ -1040,17 +1055,6 @@ Commercial offer:
 ==============================================
 
 
-Finish polishing histogram/main.js code
-
-Separate histogram to own reporter
-  - show combination name on top, centered
-
-mini_histogram reporter:
-  - table like dev reporter but with columns: name, low, mode, median, high, histogram
-      - or maybe keep the lines below it instead???
-  - histogram is single line of height
-  - add a similar table to dev reporter, but only with columns: name, histogram
-
 Fix histogram for cmd.exe
 
 Do not slice() stats.low|high: use indexes instead
@@ -1060,94 +1064,73 @@ Histogram normalization:
   - persisted as NUM_ARR frequencies
      - use stats.histogramLow|High on denormalizing, by interpolating
 
-Terminal-histogram:
-  - separate to own repository
-  - add features:
-     - color themable (using terminal-theme)
-     - left bar with percentages
-     - can specify number of abscissa ticks
-        - or number of columns per tick
-        - stack labels, i.e. might need to stack deeper than one level
-    - allow minimum ordinate to be either 0 or minimum value
-    - labelling columns
-    - custom unit for ordinate
-    - when too many columns:
-       - if labeled: break into several histograms
-       - otherwise: extrapolate
-
-moe computation:
-  - fix margin of error, should not use hardcoded 2
-     - should use t-score, i.e. student t-distribution cumulative distribution function with probably p and degree of freedom n - 1
-        - n: measures.length
-        - p: confidence interval
-     - should be ~2 when n >= 4, p 95%
-        - https://github.com/mapbox/sample-sizer/blob/master/lib/ttable.js
-        - https://github.com/distributions-io/t-cdf
-  - add comments:
-     - standard error: standard deviation between runs, if each run followed the exact same distribution
-        - in our case: max difference between current median and future median if kept measuring forever
-           - i.e. precision of current run
-     - margin of error: +|- range within which 95% (or other p) of runs fall
-        - i.e. like standard error, but even better for measuring precision of current run
-     - relative margin of error: preferred as it is unitless, i.e. easier to compare against some "min precision threshold"
-     - measures are often not a normal distribution:
-        - often sums of several distributions (several modes)
-        - also tends to be lognormal
-        - however:
-           - it is close enough to normal distribution to be useful, while not completely statistically correct
-           - removing slow|fast outliers helps getting closer to a normal distribution
-
 Types of variation:
   - statistical (low sample size):
      - measured by: moe, stats.precision
+     - how is it persisted: stats.moe (duration), stats.rmoe (%), or both???
+        - stats.rmoe might not be needed due to stats.precision
      - reduced by increasing CONF.duration
      - reporting:
-        - when stats.diff insignificant due to high moe:
-           - i.e. difference on same combination, different results
+        - use a boolean???
+           - reasons:
+              - less information to report, i.e. simpler
+              - prevent users from thinking this shows inter-runs variation
+              - no confusion with diff percentage
            - how???
-              - hidden
-              - +|-DIFF% in gray
-              - ~+DIFF% or ~-DIFF% in gray
-           - should replace current diff color logic
-        - when order between two combinations not significant due to high moe:
-           - i.e. difference on different combinations, same result
-           - how???
-              - +|-MOEns (not %)
-              - ~ prepended to combination name
-              - prepend "NUM." to combination name, with same NUM when too close
               - ~ prepended to median
-                 - what about ~ already prepended to median when repeat loop not used, although it should have,
-                   but could not due to multiple steps + CONF.precise false???
-        - seeing precision of current result
-           - to know:
-              - when stop measuring
-              - whether a specific benchmark is imprecise
-           - most reporters use a boolean
-              - how???
-                 - ~ prepended to median
-              - reasons:
-                 - less information to report, i.e. simpler
-                 - prevent users from thinking this shows inter-runs variation
-                 - no confusion with diff percentage
-           - still, allow some reporters to show it as duration, i.e. +|-MOEns (not %)
-        - in call cases, probably nees to take into account distribution too. e.g. if very precise, but distribution mostly overlap
-     - how is it persisted:
-        - stats.moe (duration), stats.rmoe (%), or both???
-           - stats.rmoe might not be needed due to stats.precision
+        - use a duration???
+           - how: ±MOEns (not %)
+              - some reporters might choose to display it visually, not in numbers
+        - only if CONF.showPrecision true???
+           - for both combination precision, and roughly guessing combinations overlaps
+     - combined with distribution variation when comparing combinations:
+        - computed by???
+           - welch t-test:
+              - compares medians
+           - mann-whitney u-test:
+              - compares full distribution
+              - more complex
+              - requires O(n^2) time
+              - assumes both combinations have similar distributions
+              - not as good with skew distributions
+        - when:
+           - same combination, different results (stats.diff)
+              - reporting???
+                 - hidden
+                 - ~0% in gray
+                 - ±DIFF% in gray
+                 - ~+|~-DIFF% in gray
+              - should replace current diff color logic
+              - when imprecise, do not use CONF.limit
+           - different combination, same result (combination ordering)
+              - reporting???
+                 - on combination name:
+                    - ~ prepended
+                    - prepend "NUM.", with same NUM when too close
+                    - problem: does not work well when combination name is spread (e.g. reporting table)
+                 - on median:
+                    - ~ prepended
+                       - what about ~ already prepended to median when repeat loop not used, although it should have, but could not due to multiple steps + CONF.precise false??? Add two of them???
+                       - problem with using same sign as current result precision:
+                          - if imprecise result, but inter-combination precision: results might look like equivalent, but are not
+                          - if precise result, but inter-combination imprecision: look like imprecise result, i.e. might continue benchmark in vain
+                    - * appended
+                 - not reported, relying on ±MOEns being reported instead???
+              - problem with reporting: different for each pair of combinations, not only next one
+                 - because might have different both variance and moe, not only median
+                 - also, hard to visualize next slower combination anyway in a table reporter
   - distribution:
      - measured by: standard deviation, percentiles
      - no way (nor strong reason) to reduce it
      - only reported by reporters explictly meant to see distribution (histogram, box chart, etc.), not most reporters
         - reason: simplicity, and putting focus on median instead
-     - not relevant in comparing combination medians
-        - instead, relevant for users to know possible single durations in real execution
      - report standard deviation as duration instead of percentage???
         - pro: better at understanding spread of a particular combination
         - con: worse at comparing combinations with different medians
   - engine optimization:
      - i.e. specific case of distribution, but relative to CONF.duration
      - reduced by higher CONF.duration
-     - how to measure and reduce???
+     - how to measure???
   - environment:
      - difference in OS load, hardware, etc.
      - users might be explicitely comparing it, including inside same run (due to previous runs being merged to current one)
@@ -1158,10 +1141,8 @@ Types of variation:
 
 stats.precision NUM:
   - value:
-     - 1 is when moe reaches a specific threshold
-        - which???
-           - probably between 1% and 0.1%
-              - 0.1%: that reporters with 3 significant digits do not show anymore variation
+     - 1 is when rmoe reaches a specific threshold
+        - threshold is 1%
      - which value is 0???
      - use n**2 so that progress bar increases linearly, considering moe decreases at log2 rate
      - min|max is 0|1
@@ -1197,6 +1178,20 @@ CONF.duration "auto"
 
 When printing duration at end of run with CONF.duration 0, print as "MM:SS * NUM"??? So that suggested CONF.duration is printed.
   - also for CONF.duration 1???
+
+Why combinations running concurrently increase the standard deviation a lot, and change the distribution???
+  - problem of running serially:
+     - not as nice looking
+     - does not get quick feedback on likely results
+     - cannot CONF.duration "infinite"
+  - if needs to run serially, consider showing progress as:
+     - counter NUM/NUM2
+     - duration left for specific combination
+     - progress bar for specific combination
+
+How to prevent reporter footer being shown twice, when two reporters have it???
+  - make it its own reporter???
+  - make it a CONF.show* option???
 
 Percentiles:
   - how to report them???
