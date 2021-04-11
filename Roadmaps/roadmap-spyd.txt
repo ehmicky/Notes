@@ -1059,26 +1059,405 @@ Commercial offer:
 ==============================================
 
 
-Fix histogram for cmd.exe
+minLoopDuration
+  - solution:
+     - problem: current logic ignoring 0s in child is somewhat wrong in that it retrieves a combination of measureCost and minResolution
+     - `time-resolution` should stop after 1e3 or 1e4, even if argument has bigger length
+        - reason: performance, and no more precision gain
+        - do not ARR.slice()
+     - use a hardcoded duration instead of a number of loops for calibrations
+        - reason: ensures works even with high time resolution
+        - reason: works even with slow timestamps
+        - reason: runs as many times as possible for minLoopDuration precision, but still not experienced by user
+        - probably 100ms
+        - before adding, increase calibrateLength so duration effectively becomes 1e8:
+           - compare stats to make sure it is fine
+           - this will make minLoopDuration smaller. Adjust MIN_LOOP_DURATION_RATIO if needed
+     - try using getDuration() with repeat 0 instead, and see stats difference
+     - try mean instead of median
+        - including with outliers removal
+     - how to prevent loops >1e8 out-of-memory when timestamp is <1ns???
+        - try running a combination, with:
+           - exactly 10 samples (or min 10, then use rmoe???)
+           - sample target duration 10ms
+           - first sample maxLoops 1
+     - calibrations should be timestamps, not durations
+        - reason: simpler, assuming that any runner only needs to compute timestamps before|after measuring
+        - rename to `timestamps`
+     - cli runner should also allow repeat loops
+        - reason: if time resolution lower than duration to spawn process
+        - also, minLoopDuration should be low enough that repeat is always 1
+        - remove the possibility for runners to ignore repeat loops
+  - `repeat` should be precise because:
+     - when lower: too close to measureCost, i.e. all stats higher
+     - when higher: becomes more an arithmetic mean than a median, i.e. all stats higher
+     - stats stabilize around a specific range
+        - except max, which always decreases with higher value
+        - lower part of that range has better overall stats, notably rmoe
+     - rmoe is very low when repeat is very low (1-5) and task is very fast, due to measureCost becoming what's measured instead
+  - impact on `repeat`:
+     - with task random (current auto repeat: 3,000):
+        - repeat: 1  2  5  10   20  50   100  200  500  1,000 2,000 5,000 10,000 20,000 50,000 100,000 200,000 500,000 1,000,000 2,000,000 5,000,000 10,000,000
+        - median: 60 30 16 10.8 9.1 8.46 7.56 9.91 6.66 6.59  6.49  6.47  6.45   6.49   6.53   6.55    6.63    14.7    12.4      9.37      13.5      20.6
+        - diff %: 0  50 47 32   16  7    11   24   33   1     2     0.3   0.3    0.6    0.6    0.3     1       55      16        24        31        35
+        - mean:                                    ok   ok    ok    ok    ok     ok     ok     ok      ok
+        - min:                           ok   ok   ok   ok    ok    ok    ok     ok     ok     ok      ok      ok      ok
+        - low:                      ok   ok   ok   ok   ok    ok    ok    ok     ok     ok     ok      ok      ok      ok
+        - high:                     ok   ok   ok   ok   ok    ok    ok    ok     ok     ok     ok
+        - stdev:                              ok   ok   ok    ok    ok    ok     ok     ok
+        - even histogram:  bad           ok   ok   ok   ok    ok    ok    ok                   bad     ...
+        - rmoe:                                    best best  best  best                bad    ...
+        - times                     peak peak peak peak peak  peak  peak  peak   peak
+     - with task empty (current auto repeat: 25,000):
+        - repeat: 1     2     5     10    20   50   100  200  500  1,000 2,000 5,000 10,000 20,000 50,000 100,000 200,000 500,000 1,000,000 2,000,000 5,000,000 10,000,000
+        - median: 49000 25000 10600 5600  3000 2160 1500 1180 1010 932   886   861   855    851    844    840     838     836     836       839       5850      13300
+        - diff %: 0     49    58    47    46   28   31   21   14   8     5     3     0.7    0.5    0.8    0.5     0.2     0.2     0         0.4       85        56
+        - mean:                                                          ok    ok    ok     ok     ok     ok      ok      ok      ok        ok
+        - min:                                                           ok    ok    ok     ok     ok     ok      ok      ok
+        - low:                                                           ok    ok    ok     ok     ok     ok      ok      ok      ok        ok        ok
+        - high:                                                                ok    ok     ok     ok     ok
+        - stdev:                                                               ok    ok     ok     ok     ok      ok
+        - even histogram:                      ok   ok   ok   ok   ok    ok    ok    ok     ok     ok
+        - rmoe:                     ok    ok   ok   ok   ok   ok   ok    ok    ok    ok
+        - times                                     peak peak peak peak  peak  peak  peak
+  - how???
+     - problems:
+        - process.hrtime() optimizes suddenly at 3 different thresholds
+           - this is due to hot functions optimization in V8
+              - this is for all OS
+           - on my machine the thresholds are:
+              - <8 times (630ns +|-30ns)
+              - <2200 times (350ns +|-20ns)
+              - <15000 times (50ns +|-2ns)
+              - >15000 times (26ns +|-1ns)
+           - i.e. moe might look low until next threshold is reached, then increase suddenly
+              - i.e. why should not run samples with `repeat` 0 until reaching a specific precision threshold
+        - process.hrtime() varies greatly from process to process
+           - even when run many times inside a single process, it varies much
+        - some runners might have much slower measureCost, e.g. if a child process is required (could it be spawned in advance???)
+        - should not measure at same time as same measurement because:
+           - de-optimizes main measurement
+           - calibration might use imprecise minLoopDuration
+        - time resolution might be low
+           - e.g. 100ns on Windows
+  - maybe???
+     - run a new sample with repeat 0 instead of using `calibrations`???
+        - slightly higher stdev, but more convenient
+        - needs to work with low resolution
+     - spawn several processes with same CALIBRATE_LENGTH, and take median
+        - process spawning is what takes most time, i.e. can increase precision with higher CALIBRATE_LENGTH at almost no cost
+        - ~20ms per process
+        - spawning 10 processes gives ~1-2% variation
+           - 5 processes: 5% variation
+           - 3 processes: 7% variation
 
-Rename deviation -> stdev
+Progress:
+  - main reason right now: report when CONF.quiet was used but benchmark was stopped
+  - prepend counter NUM/NUM2
+     - NUM is number of combinations completed, i.e. starts at 0
+  - duration left is for specific combination
+  - progress bar is for all combinations
 
-Try to use jstat and simple-statistics
-  - including for t-value
+Fast abort:
+  - when stopping before completion of first sample, do not wait 5s before abort
+     - reasons:
+        - no sampleDurationMean yet, i.e. cannot show closure countdown
+        - high probability that task is too slow or is hanging forever
+  - error message should include a sentence about the task taking NUMs without completing
 
-Do not slice() stats.low|high: use indexes instead
+Move sampleDuration to stats.duration
+  - rename all sampleDuration* to duration*
+  - shown in "dev" reporter
+  - part of devStats
 
-Histogram normalization:
-  - should be OBJ_ARR, not ARR_ARR
-  - persisted as NUM_ARR frequencies
-     - use stats.histogramLow|High on denormalizing, by interpolating
+CONF.debug:
+  - rename "dev" reporter to "dev"
+  - force CONF.report "debug"
+  - force CONF.quiet true
+  - print row similar to "dev" reporter after each sample
+     - only of currently measured combination
+     - including: duration spent, estimated time left, progress bar percentage
 
-Persist + report standard deviation as duration instead of percentage
-  - reasons:
-     - easier to understand spread of a particular combination
-     - easier to understand together with percentiles and other distribution-related stats (that are also durations)
-     - con: worse when comparing combinations with different medians
-     - con: worse when relating it to stats.moe
+Report moe as medianMinusMoe-medianPlusMoe range instead of median (moe)???
+
+Steps:
+  - why allow non-serial steps??? Wouldn't it be easier to define additional tasks instead???
+  - some users might misuse steps to get parallel preview???
+  - `repeat` should be based on number of iterations left to reach moe, not on duration
+  - instead of passing `repeat`, ask runner to measure batches with different params???
+     - i.e. arg would be OBJ:
+        - serial BOOL
+        - steps OBJ_ARR
+           - task STR
+           - step STR
+           - maxLoops NUM
+           - repeat NUM|0
+     - runner would return measures of each
+     - if serial, maxLoops all same, and state is passed between steps
+  - rename CONF.precise to CONF.fast???
+
+Automatic duration:
+  - do not end combinations until loops >= 5:
+     - unless CONF.precision 0
+     - reasons:
+        - stdev|moe not precise enough
+        - ensure cold start does not impact median too much
+  - never report stdev|moe until loops >= 5
+  - stop measuring when combination.stats.moe (relative to median) reaches specific threshold defined by CONF.precision NUM:
+     - 0: like CONF.duration 1 (once)
+     - 1: relative moe 5%
+     - 2 (def): relative moe 1%
+     - 3: relative moe 0.5%
+     - 4: relative moe 0.1%
+  - remove CONF.duration
+  - add comments:
+     - why no CONF.duration:
+        - CONF.duration NUM ends up with higher moe on slower machines or when hardware load is higher
+           - only partially, since slower tasks have lower standard deviation in general, which compensates the lower number of loops
+        - two combinations with same moe are more statically comparable, than with same CONF.duration
+     - do not take into account:
+        - the fact that moe might still be too high to compare either:
+           - same combination, different results (stats.diff)
+           - different combination, same result
+        - reasons:
+           - the fact that they are too close to be compared is interesting in itself, since it indicates that they are not comparable
+           - at that level of closeness, increasing CONF.duration to know which one is faster is too influenced by environment variation
+           - allows computing stats.precision independently in each combination
+           - if a perfect setting, if the combinations are identical, they would always be too close
+     - stdev threshold must be high enough to avoid CONF.duration "auto" stopping early due to imprecise stdev
+
+Progress with automatic duration:
+  - show:
+     - counter of combinations done/total
+     - expected duration left
+        - only for current combination
+        - to reach moe based on CONF.precision
+        - not with CONF.precision 0
+        - add comments why important:
+           - helps chosing between different CONF.precision
+           - helps with impatience of waiting, or planning other things while benchmark is measuring
+     - progress bar
+        - for all combinations
+           - percentage = completedCombinations.length / totalCombinations.length + currentCombinationCompletion
+        - currentCombinationCompletion is based solely on duration spent and expected duration left
+           - timesGoal = times which would make relative moe <= threshold, with current stdev
+             - computed using current t-value. If new t-value different, try again with it. Could this be infinite???
+           - timesLeft = timesGoal - times
+           - samplesLeft = Math.ceil(timesLeft / meanTimesPerSample)
+           - durationLeft = samplesLeft * meanDurationPerSample
+              - meanDurationPerSample is whole logic, nor just child process
+              - exclude non-calibrated samples in meanTimesPerSample and meanDurationPerSample
+                 - i.e. no expected duration yet until calibrated
+  - when low number of loops:
+     - 0:
+        - no duration left preview
+           - show empty, or "--:--"???
+           - add some progress description???
+        - progress percentage for combination is 0
+     - 1-4: either???
+        - 0 duration left and progress percentage
+        - duration left use moe, but with Math.min() of median * combinationsLeftUntil5
+           - progress percentage based on duration left
+  - duration left and progress percentage computed after each sample, even if no aggregation
+  - how to avoid jitter in duration left???
+     - range +|-NUMs where, if total duration left changed within that range, it remains the same to avoid jitter???
+     - do not allow duration left to increase, freezing it instead???
+        - what if increase is big???
+
+spyd format:
+  - add comments for reasons for:
+     - spyd.*js (as opposed to only spyd.yml)
+        - shared config (CONF.extend)
+        - using environment variables (including checking if is CI)
+        - computing long list of inputs
+     - spyd.yml (as opposed to spyd.json)
+        - comments
+        - consistency with cli runner's tasks.yml
+     - tasks.yml (as opposed to tasks.json) with cli runner:
+        - no escaping of double quotes
+        - comments
+  - validate merged|normalized config against non-JSON values
+
+Sharing plugins:
+  - publish a package that includes whole benchmark, including:
+     - tasks file
+     - config (spyd.*) or CLI flags
+     - spyd binary
+     - spyd execution
+  - bundle spyd binary in package
+     - npm: as a production dependency
+     - docker: installed in Dockerfile
+     - others: spyd should be available as binary bundled by zeit pkg or similar
+  - publisher can choose any binary package manager, including:
+     - npm
+        - i.e. called as: npx spyd-benchmark-NAME [FLAGS...]
+     - dockerhub
+     - go binary
+  - encourage spyd-benchmark-NAME naming convention
+  - provide with some package-manager-specific helper to:
+     - create the thin wrapper forwarding to spyd???
+     - publish (package manager specific)???
+  - allow consumers to use CLI flags to:
+     - override any config property with CLI flags
+        - i.e. spyd execution must forward any CLI flags
+     - add an additional task file
+        - how???
+     - add a config file???
+        - instead of only allowing overriding with CLI flags
+        - publisher must use --config to ensure points to right dir, instead of relying on automatic lookup???
+     - override cwd??? What should cwd be: consumer or publisher???
+  - add comments:
+     - goals:
+        - make benchmark trustable
+           - reproducing results
+           - see if results would change by tweaking tasks
+              - done by comparing publisher task with consumer task based on it
+        - measuring with another machine|software (e.g. consumer's)
+        - measuring against another library (with consumer adding a task file)
+     - reasons to share benchmark either:
+        - library performance, for library consumers
+        - generic benchmark, meant to be applied to consumer's library
+           - including org-wide shared benchmark, i.e. like templates
+     - encourage users to:
+        - separate benchmark package from library package
+        - while still allowing running benchmark while developing library
+        - e.g. monorepo setup
+     - make publisher build as much as possible
+        - as opposed to consumer
+           - no arbitrary command execution for consumer, for security
+        - except when not possible, e.g. binary compilation
+
+Sharing plugins v3:
+  - language-specific package registries
+  - runner-specific instead??? or package-registry-specific???
+     - pass CONF.tasks as is to runner, allowing it to resolve it???
+        - i.e. user would execute install step
+        - what about config???
+           - make config depend on tasks file, instead of opposite???
+  - publish benchmark tasks and config
+     - but not spyd command execution itself
+     - config:
+        - allow consumers to override config
+           - use only CLI flags, not spyd.yml (except --config CLI flag)
+              - reasons:
+                 - project config is only meant for project tasks
+                 - global config
+                    - is not very useful and might override meaningful config properties unknowlingly
+                    - is hard to distinguish from project config
+        - allow publishers to provide default config
+  - argument to CONF.tasks???
+  - tasks merging
+     - users can still specify their own tasks but forbid using same combinations (taskId + stageId + runnerId)
+        - reason: enforce consumers to create separate tasks, not override shared ones, to:
+           - highlight in reports when shared task has been modified
+           - show difference between modified and unmodified task
+     - what about saving???
+     - what about history???
+  - how to publish, when there are multiple task files???
+  - allow both:
+     - persisted install, separate install step
+     - temporary install, single install+execution step
+        - e.g. npx -p flag
+     - reason: user might want to keep the shared task as part of project, or not
+        - wouldn't global caching be nough in both cases???
+  - automatically download and install shared tasks
+     - users only need one step: `npx spyd PREFIX:NAME [FLAGS...]"
+  - spyd versioning???
+     - what if published tasks need different version of spyd than the one run by consumer????
+     - probably publisher should ship its own version of spyd to run
+        - the only possible conflict would come from consumer config flags
+  - versioning of the shared tasks???
+  - security:
+     - tasks can execute any logic, i.e. trusted
+        - however, as insecure as any npm binary, especially as called with npx
+     - should avoid executing build command on consumer's behalf though
+        - i.e. if global dependencies, should be documented and manually installes by user
+  - global
+     - user-scoped
+        - i.e. no admin permission
+     - not tied to directory nor project
+     - i.e. automatically cached
+  - what is published:
+     - tasks file
+     - tasks file dependencies
+     - spyd.*
+        - is it entry point???
+           - maybe not. put focus on tasks file
+           - make spyd.* an optional addition that is searched based on tasks file location???
+  - reasons why containers (e.g. docker) not used:
+     - more setup for publisher
+     - does not use consumer's OS configuration
+     - higher risk that setup works for publisher (no docker) but not consumer (with docker)
+     - for most containers (e.g. docker):
+        - only run on Linux
+        - consumer might need to set some flags, e.g. for networking
+
+Sharing plugins v2:
+  - problems with building locally:
+     - insecure if arbitrary command
+     - slower for user
+     - might require global dependencies
+  - problems with building in advance:
+     - does not work with binary compilation
+     - slower for publisher
+  - possible solution:
+     - multiple possible registries:
+        - npm module
+           - i.e. already built
+           - installed manually by user, or automatically by us???
+        - dockerhub
+           - provide with base image???
+        - git URL
+           - no build command run, only git clone
+              - with exceptions when autodetected
+                 - e.g. "go build"
+     - specify type as prefix, e.g. npm:NAME???
+     - abstract to own repo, working for any command, not only spyd???
+
+Sharing plugins:
+  - current tasks sharing problems:
+     - not language agnostic:
+        - install deps only on npm
+        - use npm publish
+     - requires npm publish setup + constant process
+        - cannot share benchmark in same repo, since different npm publish and need also devDependencies
+  - possible solution:
+     - use git clone
+        - GitHub "user/repo" or git URL
+     - run build command
+        - specified by repo in spyd.yml CONF.VAR (which VAR???)
+        - default depending on detected language
+           - "npm install" if package.json
+        - before each command, runs node-which and if not installed, error with missing global dep
+        - can be ARR
+        - no shell
+     - caches it by default
+        - i.e. only run on first run
+        - but user can invalidate (how???)
+           - CONF.invalidate???
+        - cached globally, using normalized git URL
+        - both git cloning and build command???
+  - remove spyd-config-*, using normal node module for CONF.extend instead
+
+CONF.extend:
+  - should have a CLI flag alias
+  - keep current behavior of distinguishing modules from "PATH" by checking if starts with . or /
+  - can be ARR:
+     - reason: allows using together: machine-wide config, org-wide config, shared tasks, etc.
+  - when merging CONF.tasks, appended (lower priority)
+     - allow CONF.tasks ARR
+        - undocumented to avoid confusion with users specifying non-entry points
+        - file runners get ARR of `taskPaths`, that they merge following ARR order for priority
+           - shallow or deep??? (for steps)
+     - reason: allows sharing tasks, and comparing new tasks against them
+     - alternative: if user wants to compare new tasks, save the results of shared tasks, then make a new run with new tasks???
+
+Name convention for plugins:
+  - TYPE: reporter, runner, config (CONF.extend)
+  - spyd-TYPE-NAME or @NAME/spyd-TYPE
+  - character restriction on NAME: current one, i.e. [a-z][a-z\d]*
+     - including on spyd-config-*
+  - refered to by user as NAME
 
 stats.diff:
   - use arrow|triangle sign instead of +|-
@@ -1102,37 +1481,11 @@ stats.diff:
         - assumes both combinations have similar distributions
         - not as good with skewed distributions
 
-stats.moe:
-  - use durations, not percentages
-  - stats.moePretty should be ±{moe}{unit}, with no colors
-  - add comments that stats.moe:
-     - is meant to be reported:
-        - by median-focused reporters (not distribution-focused)
-        - either graphically, or as number (stats.moePretty)
-     - is useful both for:
-        - reporting each combination's precision
-        - knowing if two combinations are comparable, by checking if their moe range overlap
-           - this is statistically imperfect, i.e. just an approximation
-           - the proper way would be to use a welch's t-test
-     - is for the precision of the current run, not for the possible range of values in future runs
-        - e.g. environment variation might change that range
-
-CONF.showPrecision BOOL
-  - def: false
-  - if false, stats.moe is not passed to reporters (similar to CONF.showDiff)
-  - add comments:
-     - whether combinations are statistically comparable is not reported because:
-        - on combination names:
-           - does not work well when combination name is spread (e.g. reporting table)
-           - one combination might be equivalent with several combinations, but those combinations might not be equivalent between each other, making ordering complicated
-        - on medians: different for each pair of combinations, not only next one
-        - can still be added in the future with a reporter showing list of too-close-to-compare combinations, with a welch's t-test between each combination pair
-
 Types of variation:
   - statistical (low sample size):
      - reduced by increasing CONF.duration
      - types:
-        - same combination, same result (stats.moe, stats.precision)
+        - same combination, same result (stats.moe)
         - same combination, different results (stats.diff)
         - different combination, same result (stats.moe)
   - task itself:
@@ -1148,7 +1501,7 @@ Types of variation:
         - very fast tasks
      - do not need any specific statistic because:
         - stats.moe already takes care of it
-           - engine optimization implies slow outliers and bigger standard deviation.
+           - engine optimization implies slow outliers and bigger stdev
            - this increases the time required to reach the moe threshold, logarithmetically.
         - `repeat` callibration tends to soften it too
            - since it runs the tasks many times and discard those measures
@@ -1159,59 +1512,40 @@ Types of variation:
         - multidimensional: CPU, memory, network, i.e. specific to each combination
      - users might be explicitely comparing it, including inside same run (due to previous runs being merged to current one)
 
-stats.precision NUM:
-  - value:
-     - 1 is when relative moe reaches a specific threshold
-        - threshold is 1%
-     - which value is 0???
-     - use n**2 so that progress bar increases linearly, considering moe decreases at log2 rate
-     - min|max is 0|1
-
-Progress bar in CONF.duration "auto|forever":
-  - mean of all combinations[*].stats.precision
-  - should never decrease over time, even when mean decreased
-
-CONF.duration "auto"
-  - change other CONF.duration to: "once", "forever", NUM
-  - def value
-  - stop measuring when all combinations[*].stats.precision 1
-     - as opposed to:
-        - using average moe of all combinations (i.e. very precised combinations making up for less precised ones)
-        - stopping each combination when reaching stats.precision 1
-     - reasons:
-        - using the same duration but as CONF.duration NUM will give same results
-        - adding|removing combinations influence each others, but only by changing precision of results but precision is already high
-        - reduces probability of stopping early due to imprecise moe, since it uses moe of each combination
-  - do not take into account:
-     - the fact that moe might still be too high to compare either:
-        - same combination, different results (stats.diff)
-        - different combination, same result
-     - reasons:
-        - the fact that they are too close to be compared is interesting in itself
-        - at that level of closeness, increasing CONF.duration to know which one is faster is too influenced by environment variation
-        - allows computing stats.precision independently of other combinations
-        - if a perfect setting, if the combinations are identical, they would always be too close
-  - problem: discourage setting a specific duration. Is that bad???
-  - problem: harder to compare different results??? do not allow saving???
-  - add comments:
-     - standard deviation threshold must be high enough to avoid CONF.duration "auto" stopping early due to imprecise standard deviation
-
-When printing duration at end of run with CONF.duration 0, print as "MM:SS * NUM"??? So that suggested CONF.duration is printed.
-  - also for CONF.duration 1???
-
-Why combinations running concurrently increase the standard deviation a lot, and change the distribution???
-  - problem of running serially:
-     - not as nice looking
-     - does not get quick feedback on likely results
-     - cannot CONF.duration "infinite"
-  - if needs to run serially, consider showing progress as:
-     - counter NUM/NUM2
-     - duration left for specific combination
-     - progress bar for specific combination
-
 How to prevent reporter footer being shown twice, when two reporters have it???
   - make it its own reporter???
   - make it a CONF.show* option???
+
+CONF.tasks "temp"
+  - goal: on-the-fly benchmarking
+  - use a temporary file:
+     - created as empty file in the global temporary dir
+     - use OS editor to edit it, then use it
+     - reuse if already existing, i.e. allowing session
+     - done once per file extension using "temp.EXT" as task file
+  - file extension:
+     - try to use the right file extension for:
+        - syntax highlighting and IDE features
+        - if runner handles different file extensions differently (e.g. *.ts transpiling)
+     - each file extension has its own test file
+     - how to choose???
+        - require it???
+        - use runner.extensions???
+           - if several runners and they have some common extension, use it
+              - if several common ones, use the one with most shared runners
+              - otherwise, use the one with lowest index
+           - otherwise, use runner.extensions[0]
+  - forbid CONF.save true
+  - add comments:
+     - why not using CONF.[runnerRUNNER.]inline[.TASK[.STEP]] "BODY"
+        - cannot define content outside function body (e.g. imports) nor function declaration (e.g. async keyword)
+           - might be even more of a problem with some languages that use more top-level declarations
+        - encourages sharing tasks by sharing command lines, instead of using shareable npm modules
+        - entering long statements on command line is not ergonomic: no syntax highlighting, linting, autocompletion, etc.
+        - harder to specify file extension
+     - why not using global cache dir instead of temp dir: when starting a new session, it is easier and less confusing to start from an empty file than from the previous session
+
+Watch mode???
 
 Quantiles:
   - how to report them???
