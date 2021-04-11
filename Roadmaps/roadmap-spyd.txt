@@ -891,13 +891,16 @@ CONF.debug BOOL
   - add debug information, for bug reports
   - add to issue template
   - for all commands
+  - force CONF.report "debug"
+  - force CONF.quiet true
   - print:
      - resolved config
      - task files
      - runner.versions
      - combinations
-     - each sample's state (including maxDuration, repeat, etc.)
-     - last result, new result
+     - row similar to "debug" reporter after each sample
+        - only of currently measured combination
+        - including: duration spent, estimated time left, progress bar percentage
   - do not call reporters
 
 Allow with the node runner:
@@ -1059,97 +1062,42 @@ Commercial offer:
 ==============================================
 
 
-minLoopDuration
-  - solution:
-     - problem: current logic ignoring 0s in child is somewhat wrong in that it retrieves a combination of measureCost and minResolution
-     - `time-resolution` should stop after 1e3 or 1e4, even if argument has bigger length
-        - reason: performance, and no more precision gain
-        - do not ARR.slice()
-     - use a hardcoded duration instead of a number of loops for calibrations
-        - reason: ensures works even with high time resolution
-        - reason: works even with slow timestamps
-        - reason: runs as many times as possible for minLoopDuration precision, but still not experienced by user
-        - probably 100ms
-        - before adding, increase calibrateLength so duration effectively becomes 1e8:
-           - compare stats to make sure it is fine
-           - this will make minLoopDuration smaller. Adjust MIN_LOOP_DURATION_RATIO if needed
-     - try using getDuration() with repeat 0 instead, and see stats difference
-     - try mean instead of median
-        - including with outliers removal
-     - how to prevent loops >1e8 out-of-memory when timestamp is <1ns???
-        - try running a combination, with:
-           - exactly 10 samples (or min 10, then use rmoe???)
-           - sample target duration 10ms
-           - first sample maxLoops 1
-     - calibrations should be timestamps, not durations
-        - reason: simpler, assuming that any runner only needs to compute timestamps before|after measuring
-        - rename to `timestamps`
-     - cli runner should also allow repeat loops
-        - reason: if time resolution lower than duration to spawn process
-        - also, minLoopDuration should be low enough that repeat is always 1
-        - remove the possibility for runners to ignore repeat loops
-  - `repeat` should be precise because:
-     - when lower: too close to measureCost, i.e. all stats higher
-     - when higher: becomes more an arithmetic mean than a median, i.e. all stats higher
-     - stats stabilize around a specific range
-        - except max, which always decreases with higher value
-        - lower part of that range has better overall stats, notably rmoe
-     - rmoe is very low when repeat is very low (1-5) and task is very fast, due to measureCost becoming what's measured instead
-  - impact on `repeat`:
-     - with task random (current auto repeat: 3,000):
-        - repeat: 1  2  5  10   20  50   100  200  500  1,000 2,000 5,000 10,000 20,000 50,000 100,000 200,000 500,000 1,000,000 2,000,000 5,000,000 10,000,000
-        - median: 60 30 16 10.8 9.1 8.46 7.56 9.91 6.66 6.59  6.49  6.47  6.45   6.49   6.53   6.55    6.63    14.7    12.4      9.37      13.5      20.6
-        - diff %: 0  50 47 32   16  7    11   24   33   1     2     0.3   0.3    0.6    0.6    0.3     1       55      16        24        31        35
-        - mean:                                    ok   ok    ok    ok    ok     ok     ok     ok      ok
-        - min:                           ok   ok   ok   ok    ok    ok    ok     ok     ok     ok      ok      ok      ok
-        - low:                      ok   ok   ok   ok   ok    ok    ok    ok     ok     ok     ok      ok      ok      ok
-        - high:                     ok   ok   ok   ok   ok    ok    ok    ok     ok     ok     ok
-        - stdev:                              ok   ok   ok    ok    ok    ok     ok     ok
-        - even histogram:  bad           ok   ok   ok   ok    ok    ok    ok                   bad     ...
-        - rmoe:                                    best best  best  best                bad    ...
-        - times                     peak peak peak peak peak  peak  peak  peak   peak
-     - with task empty (current auto repeat: 25,000):
-        - repeat: 1     2     5     10    20   50   100  200  500  1,000 2,000 5,000 10,000 20,000 50,000 100,000 200,000 500,000 1,000,000 2,000,000 5,000,000 10,000,000
-        - median: 49000 25000 10600 5600  3000 2160 1500 1180 1010 932   886   861   855    851    844    840     838     836     836       839       5850      13300
-        - diff %: 0     49    58    47    46   28   31   21   14   8     5     3     0.7    0.5    0.8    0.5     0.2     0.2     0         0.4       85        56
-        - mean:                                                          ok    ok    ok     ok     ok     ok      ok      ok      ok        ok
-        - min:                                                           ok    ok    ok     ok     ok     ok      ok      ok
-        - low:                                                           ok    ok    ok     ok     ok     ok      ok      ok      ok        ok        ok
-        - high:                                                                ok    ok     ok     ok     ok
-        - stdev:                                                               ok    ok     ok     ok     ok      ok
-        - even histogram:                      ok   ok   ok   ok   ok    ok    ok    ok     ok     ok
-        - rmoe:                     ok    ok   ok   ok   ok   ok   ok    ok    ok    ok
-        - times                                     peak peak peak peak  peak  peak  peak
-  - how???
-     - problems:
-        - process.hrtime() optimizes suddenly at 3 different thresholds
-           - this is due to hot functions optimization in V8
-              - this is for all OS
-           - on my machine the thresholds are:
-              - <8 times (630ns +|-30ns)
-              - <2200 times (350ns +|-20ns)
-              - <15000 times (50ns +|-2ns)
-              - >15000 times (26ns +|-1ns)
-           - i.e. moe might look low until next threshold is reached, then increase suddenly
-              - i.e. why should not run samples with `repeat` 0 until reaching a specific precision threshold
-        - process.hrtime() varies greatly from process to process
-           - even when run many times inside a single process, it varies much
-        - some runners might have much slower measureCost, e.g. if a child process is required (could it be spawned in advance???)
-        - should not measure at same time as same measurement because:
-           - de-optimizes main measurement
-           - calibration might use imprecise minLoopDuration
-        - time resolution might be low
-           - e.g. 100ns on Windows
-  - maybe???
-     - run a new sample with repeat 0 instead of using `calibrations`???
-        - slightly higher stdev, but more convenient
-        - needs to work with low resolution
-     - spawn several processes with same CALIBRATE_LENGTH, and take median
-        - process spawning is what takes most time, i.e. can increase precision with higher CALIBRATE_LENGTH at almost no cost
-        - ~20ms per process
-        - spawning 10 processes gives ~1-2% variation
-           - 5 processes: 5% variation
-           - 3 processes: 7% variation
+CONF.runners should be use for combinations selection like CONF.include|exclude
+  - otherwise, it is confusing to use `bench --runner=cli` and be shown `node` combinations
+
+Fix time resolution impact on minLoopDuration:
+  - add comment that median 0 ok thanks to Math.max() with timeResolution:
+     - if real median <= timeResolution, measured median will be 0 or <= timeResolution
+     - if real median > timeResolution, measured median will not be 0
+  - keep spawning sample unless at least 1 measure is not 0
+     - since measures is sorted, can just check if last item is 0
+     - why 1 is enough:
+        - if real median <= timeResolution, non-0 measure will === timeResolution
+        - if real median > timeResolution, measured median will not be 0
+        - what about cold starts???
+           - require at least 5 measures???
+              - always use median, not mean, then???
+        - this also ensures that measureCost estimation does not last for too long when time resolution is very high
+  - time-resolution should ignore 0s:
+     - when deciding whether to return minResolution
+     - when deciding whether to end loop for specific resolution
+     - when checking specific resolution with specific resolution
+     - but ARR should not be cloned
+     - ARR should be searched in reverse order, since first elements might be 0 if sorted
+  - better use mean (without outliers) when median is close to time resolution??? only use if median is <= 10 * timeResolution???
+
+Fast abort:
+  - when all of:
+     - sampleDurationMean === undefined
+        - reason: only for first sample
+     - sampleStart !== undefined
+        - reason: not during combination start|exit
+     - now() - sampleStart > ABORT_DELAY
+  - then do not wait 5s to abort, nor change description
+     - reasons:
+        - no sampleDurationMean yet, i.e. cannot show closure countdown
+        - high probability that task is too slow or is hanging forever
+  - error message should include a sentence about the task taking NUMs without completing
 
 Progress:
   - main reason right now: report when CONF.quiet was used but benchmark was stopped
@@ -1158,27 +1106,26 @@ Progress:
   - duration left is for specific combination
   - progress bar is for all combinations
 
-Fast abort:
-  - when stopping before completion of first sample, do not wait 5s before abort
-     - reasons:
-        - no sampleDurationMean yet, i.e. cannot show closure countdown
-        - high probability that task is too slow or is hanging forever
-  - error message should include a sentence about the task taking NUMs without completing
+stats.*[Pretty|Padded] -> stats.value|pretty|padded.*
 
-Move sampleDuration to stats.duration
-  - rename all sampleDuration* to duration*
-  - shown in "dev" reporter
-  - part of devStats
+stats.medianLow|High NUM:
+  - stats.median +|- stats.moe
+  - undefined if either:
+     - stats.moe undefined
+     - CONF.showPrecision false
+  - stats.median undefined if CONF.showPrecision true
+     - i.e. reporters must use stats.medianLow|High instead
+  - stats.medianLow 0 if negative
+  - add moe to debugStats
+  - reporters must show both:
+     - histogram: two ticks
+     - debug: two columns
+     - bar: rectangle at end of bar, with both durations at the right of it "NUMms - NUM2ms"
+  - reason: easier to visualize and compare with other combinations than printing the moe
 
-CONF.debug:
-  - rename "dev" reporter to "dev"
-  - force CONF.report "debug"
-  - force CONF.quiet true
-  - print row similar to "dev" reporter after each sample
-     - only of currently measured combination
-     - including: duration spent, estimated time left, progress bar percentage
-
-Report moe as medianMinusMoe-medianPlusMoe range instead of median (moe)???
+progress bar:
+  - transition whole bar from white|gray to cyan as it increases??? i.e. time-based
+  - or from left to right instead???
 
 Steps:
   - why allow non-serial steps??? Wouldn't it be easier to define additional tasks instead???
@@ -1258,7 +1205,7 @@ Progress with automatic duration:
         - 0 duration left and progress percentage
         - duration left use moe, but with Math.min() of median * combinationsLeftUntil5
            - progress percentage based on duration left
-  - duration left and progress percentage computed after each sample, even if no aggregation
+  - duration left and progress percentage computed after each sample
   - how to avoid jitter in duration left???
      - range +|-NUMs where, if total duration left changed within that range, it remains the same to avoid jitter???
      - do not allow duration left to increase, freezing it instead???
@@ -1557,9 +1504,9 @@ Quantiles:
 Histogram:
   - how to compute for step groups???
 
-reporter.devStats BOOL
+reporter.debugStats BOOL
   - def: false
-  - true for `dev` reporter
+  - true for `debug` reporter
   - if false, do not pass:
      - mean
         - add comment that we must ensure median is the main one used, so different reporters are consistent, and also because it is used in sorting combinations, and also it is less precise
