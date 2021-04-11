@@ -1062,29 +1062,29 @@ Commercial offer:
 ==============================================
 
 
-CONF.runners should be use for combinations selection like CONF.include|exclude
-  - otherwise, it is confusing to use `bench --runner=cli` and be shown `node` combinations
+progress bar:
+  - transition whole bar from white|gray to cyan as it increases??? i.e. time-based
+  - or from left to right instead???
 
-Fix time resolution impact on minLoopDuration:
-  - add comment that median 0 ok thanks to Math.max() with timeResolution:
-     - if real median <= timeResolution, measured median will be 0 or <= timeResolution
-     - if real median > timeResolution, measured median will not be 0
-  - keep spawning sample unless at least 1 measure is not 0
-     - since measures is sorted, can just check if last item is 0
-     - why 1 is enough:
-        - if real median <= timeResolution, non-0 measure will === timeResolution
-        - if real median > timeResolution, measured median will not be 0
-        - what about cold starts???
-           - require at least 5 measures???
-              - always use median, not mean, then???
-        - this also ensures that measureCost estimation does not last for too long when time resolution is very high
-  - time-resolution should ignore 0s:
-     - when deciding whether to return minResolution
-     - when deciding whether to end loop for specific resolution
-     - when checking specific resolution with specific resolution
-     - but ARR should not be cloned
-     - ARR should be searched in reverse order, since first elements might be 0 if sorted
-  - better use mean (without outliers) when median is close to time resolution??? only use if median is <= 10 * timeResolution???
+IPC:
+  - make child spawn a HTTP server instead
+     - pros over alternatives:
+        - HTTP long polling: more complex to implement
+        - gRPC or other protocols: less known or cross-language
+        - named pipes: not cross-platform
+        - filesystem: requires listening for file change, which has cross-platform issues
+  - parent find an available port then pass it as process.argv
+  - move most of process.argv to start endpoint instead
+  - use URL path for each event: start, before, measure, after, end
+  - before|measure|after not called during `init`
+  - JSON payload
+  - no need for external libraries, just use events.on(), try|catch, JSON.*
+  - a state object must be shared between endpointa
+
+Fix selection:
+  - with `bench`, filters used during run, both explicit (CONF.include|exclude) and implicit (CONF.runner|inputs|system), should also be used in reporting
+     - i.e. only measured combinations are reported
+  - with `show|remove`, only explicit should be used, i.e. implicit CONF.* not allowed
 
 Fast abort:
   - when all of:
@@ -1100,7 +1100,6 @@ Fast abort:
   - error message should include a sentence about the task taking NUMs without completing
 
 Progress:
-  - main reason right now: report when CONF.quiet was used but benchmark was stopped
   - prepend counter NUM/NUM2
      - NUM is number of combinations completed, i.e. starts at 0
   - duration left is for specific combination
@@ -1122,26 +1121,6 @@ stats.medianLow|High NUM:
      - debug: two columns
      - bar: rectangle at end of bar, with both durations at the right of it "NUMms - NUM2ms"
   - reason: easier to visualize and compare with other combinations than printing the moe
-
-progress bar:
-  - transition whole bar from white|gray to cyan as it increases??? i.e. time-based
-  - or from left to right instead???
-
-Steps:
-  - why allow non-serial steps??? Wouldn't it be easier to define additional tasks instead???
-  - some users might misuse steps to get parallel preview???
-  - `repeat` should be based on number of iterations left to reach moe, not on duration
-  - instead of passing `repeat`, ask runner to measure batches with different params???
-     - i.e. arg would be OBJ:
-        - serial BOOL
-        - steps OBJ_ARR
-           - task STR
-           - step STR
-           - maxLoops NUM
-           - repeat NUM|0
-     - runner would return measures of each
-     - if serial, maxLoops all same, and state is passed between steps
-  - rename CONF.precise to CONF.fast???
 
 Automatic duration:
   - do not end combinations until loops >= 5:
@@ -1211,6 +1190,95 @@ Progress with automatic duration:
      - do not allow duration left to increase, freezing it instead???
         - what if increase is big???
 
+Sharing plugins:
+  - publish a package that includes whole benchmark, including:
+     - tasks file
+     - config (spyd.*) or CLI flags
+     - spyd binary
+     - spyd execution
+  - bundle spyd binary in package
+     - including:
+        - npm: as a production dependency
+        - docker: installed in Dockerfile
+        - others: spyd should be available as binary bundled by zeit pkg or similar
+     - reason: spyd versioning
+  - publisher can choose any binary package manager
+     - including:
+        - npm
+           - i.e. called as: npx spyd-benchmark-NAME [FLAGS...]
+        - dockerhub
+        - go binary
+  - encourage spyd-benchmark-NAME naming convention
+  - provide with some package-manager-specific helper to:
+     - create the thin wrapper forwarding to spyd???
+        - including docker base image???
+     - publish (package manager specific)???
+  - allow consumers to use CLI flags to:
+     - override any config property with CLI flags
+        - i.e. spyd execution must forward any CLI flags
+     - add an additional task file
+        - how???
+        - users can still specify their own tasks but forbid using same combinations (taskId + stageId + runnerId)???
+           - reason: enforce consumers to create separate tasks, not override shared ones, to:
+              - highlight in reports when shared task has been modified
+              - show difference between modified and unmodified task
+           - reason: no problem with merging
+        - concat tasks???
+           - still do not allow CONF.tasks ARR to avoid confusion with users specifying non-entry points
+        - file runners get ARR of `taskPaths`???
+           - or call `start` endpoint several times???
+     - add a config file???
+        - instead of only allowing overriding with CLI flags
+        - publisher must use --config to ensure points to right dir, instead of relying on automatic lookup???
+        - consumer must use --config, instead of relying on automatic lookup???
+           - reasons:
+              - project config is most likely meant for current project instead
+              - global config is not very useful and might override meaningful config properties unknowlingly
+     - override cwd??? What should cwd be: consumer or publisher???
+     - save???
+     - compare with their history???
+        - probably not, since only measured tasks are reported, and `show` cannot be used there
+  - add comments:
+     - goals:
+        - make benchmark trustable
+           - reproducing results
+           - see if results would change by tweaking tasks
+              - done by comparing publisher task with consumer task based on it
+        - measuring with another machine|software (e.g. consumer's)
+        - measuring against another library (with consumer adding a task file)
+     - reasons to share benchmark either:
+        - library performance, for library consumers
+        - generic benchmark, meant to be applied to consumer's library
+           - including org-wide shared benchmark, i.e. like templates
+     - allow both:
+        - one-off execution, e.g. npx
+        - persisted install to specific project, e.g. npm install
+     - encourage users to:
+        - separate benchmark package from library package
+        - while still allowing running benchmark while developing library
+        - e.g. monorepo setup
+     - make publisher build as much as possible
+        - as opposed to consumer
+           - no arbitrary command execution for consumer, for security
+        - except when not possible, e.g. binary compilation
+     - publishing as container is allowed but only when no other choices because:
+        - more setup for publisher
+        - does not use consumer's OS configuration
+        - higher risk that setup works for publisher but not consumer, if publisher runs benchmark without docker
+        - for most containers (e.g. docker):
+           - only run on Linux
+           - consumer might need to set some flags, e.g. for networking
+
+Allow CONF.extend to be ARR
+  - reason: allows using together: machine-wide config, org-wide config, shared tasks, etc.
+
+Name convention for plugins:
+  - TYPE: reporter, runner, benchmark (CONF.extend)
+  - spyd-TYPE-NAME or @NAME/spyd-TYPE
+  - character restriction on NAME: current one, i.e. [a-z][a-z\d]*
+     - including on spyd-benchmark-*
+  - refered to by user as NAME
+
 spyd format:
   - add comments for reasons for:
      - spyd.*js (as opposed to only spyd.yml)
@@ -1224,187 +1292,6 @@ spyd format:
         - no escaping of double quotes
         - comments
   - validate merged|normalized config against non-JSON values
-
-Sharing plugins:
-  - publish a package that includes whole benchmark, including:
-     - tasks file
-     - config (spyd.*) or CLI flags
-     - spyd binary
-     - spyd execution
-  - bundle spyd binary in package
-     - npm: as a production dependency
-     - docker: installed in Dockerfile
-     - others: spyd should be available as binary bundled by zeit pkg or similar
-  - publisher can choose any binary package manager, including:
-     - npm
-        - i.e. called as: npx spyd-benchmark-NAME [FLAGS...]
-     - dockerhub
-     - go binary
-  - encourage spyd-benchmark-NAME naming convention
-  - provide with some package-manager-specific helper to:
-     - create the thin wrapper forwarding to spyd???
-     - publish (package manager specific)???
-  - allow consumers to use CLI flags to:
-     - override any config property with CLI flags
-        - i.e. spyd execution must forward any CLI flags
-     - add an additional task file
-        - how???
-     - add a config file???
-        - instead of only allowing overriding with CLI flags
-        - publisher must use --config to ensure points to right dir, instead of relying on automatic lookup???
-     - override cwd??? What should cwd be: consumer or publisher???
-  - add comments:
-     - goals:
-        - make benchmark trustable
-           - reproducing results
-           - see if results would change by tweaking tasks
-              - done by comparing publisher task with consumer task based on it
-        - measuring with another machine|software (e.g. consumer's)
-        - measuring against another library (with consumer adding a task file)
-     - reasons to share benchmark either:
-        - library performance, for library consumers
-        - generic benchmark, meant to be applied to consumer's library
-           - including org-wide shared benchmark, i.e. like templates
-     - encourage users to:
-        - separate benchmark package from library package
-        - while still allowing running benchmark while developing library
-        - e.g. monorepo setup
-     - make publisher build as much as possible
-        - as opposed to consumer
-           - no arbitrary command execution for consumer, for security
-        - except when not possible, e.g. binary compilation
-
-Sharing plugins v3:
-  - language-specific package registries
-  - runner-specific instead??? or package-registry-specific???
-     - pass CONF.tasks as is to runner, allowing it to resolve it???
-        - i.e. user would execute install step
-        - what about config???
-           - make config depend on tasks file, instead of opposite???
-  - publish benchmark tasks and config
-     - but not spyd command execution itself
-     - config:
-        - allow consumers to override config
-           - use only CLI flags, not spyd.yml (except --config CLI flag)
-              - reasons:
-                 - project config is only meant for project tasks
-                 - global config
-                    - is not very useful and might override meaningful config properties unknowlingly
-                    - is hard to distinguish from project config
-        - allow publishers to provide default config
-  - argument to CONF.tasks???
-  - tasks merging
-     - users can still specify their own tasks but forbid using same combinations (taskId + stageId + runnerId)
-        - reason: enforce consumers to create separate tasks, not override shared ones, to:
-           - highlight in reports when shared task has been modified
-           - show difference between modified and unmodified task
-     - what about saving???
-     - what about history???
-  - how to publish, when there are multiple task files???
-  - allow both:
-     - persisted install, separate install step
-     - temporary install, single install+execution step
-        - e.g. npx -p flag
-     - reason: user might want to keep the shared task as part of project, or not
-        - wouldn't global caching be nough in both cases???
-  - automatically download and install shared tasks
-     - users only need one step: `npx spyd PREFIX:NAME [FLAGS...]"
-  - spyd versioning???
-     - what if published tasks need different version of spyd than the one run by consumer????
-     - probably publisher should ship its own version of spyd to run
-        - the only possible conflict would come from consumer config flags
-  - versioning of the shared tasks???
-  - security:
-     - tasks can execute any logic, i.e. trusted
-        - however, as insecure as any npm binary, especially as called with npx
-     - should avoid executing build command on consumer's behalf though
-        - i.e. if global dependencies, should be documented and manually installes by user
-  - global
-     - user-scoped
-        - i.e. no admin permission
-     - not tied to directory nor project
-     - i.e. automatically cached
-  - what is published:
-     - tasks file
-     - tasks file dependencies
-     - spyd.*
-        - is it entry point???
-           - maybe not. put focus on tasks file
-           - make spyd.* an optional addition that is searched based on tasks file location???
-  - reasons why containers (e.g. docker) not used:
-     - more setup for publisher
-     - does not use consumer's OS configuration
-     - higher risk that setup works for publisher (no docker) but not consumer (with docker)
-     - for most containers (e.g. docker):
-        - only run on Linux
-        - consumer might need to set some flags, e.g. for networking
-
-Sharing plugins v2:
-  - problems with building locally:
-     - insecure if arbitrary command
-     - slower for user
-     - might require global dependencies
-  - problems with building in advance:
-     - does not work with binary compilation
-     - slower for publisher
-  - possible solution:
-     - multiple possible registries:
-        - npm module
-           - i.e. already built
-           - installed manually by user, or automatically by us???
-        - dockerhub
-           - provide with base image???
-        - git URL
-           - no build command run, only git clone
-              - with exceptions when autodetected
-                 - e.g. "go build"
-     - specify type as prefix, e.g. npm:NAME???
-     - abstract to own repo, working for any command, not only spyd???
-
-Sharing plugins:
-  - current tasks sharing problems:
-     - not language agnostic:
-        - install deps only on npm
-        - use npm publish
-     - requires npm publish setup + constant process
-        - cannot share benchmark in same repo, since different npm publish and need also devDependencies
-  - possible solution:
-     - use git clone
-        - GitHub "user/repo" or git URL
-     - run build command
-        - specified by repo in spyd.yml CONF.VAR (which VAR???)
-        - default depending on detected language
-           - "npm install" if package.json
-        - before each command, runs node-which and if not installed, error with missing global dep
-        - can be ARR
-        - no shell
-     - caches it by default
-        - i.e. only run on first run
-        - but user can invalidate (how???)
-           - CONF.invalidate???
-        - cached globally, using normalized git URL
-        - both git cloning and build command???
-  - remove spyd-config-*, using normal node module for CONF.extend instead
-
-CONF.extend:
-  - should have a CLI flag alias
-  - keep current behavior of distinguishing modules from "PATH" by checking if starts with . or /
-  - can be ARR:
-     - reason: allows using together: machine-wide config, org-wide config, shared tasks, etc.
-  - when merging CONF.tasks, appended (lower priority)
-     - allow CONF.tasks ARR
-        - undocumented to avoid confusion with users specifying non-entry points
-        - file runners get ARR of `taskPaths`, that they merge following ARR order for priority
-           - shallow or deep??? (for steps)
-     - reason: allows sharing tasks, and comparing new tasks against them
-     - alternative: if user wants to compare new tasks, save the results of shared tasks, then make a new run with new tasks???
-
-Name convention for plugins:
-  - TYPE: reporter, runner, config (CONF.extend)
-  - spyd-TYPE-NAME or @NAME/spyd-TYPE
-  - character restriction on NAME: current one, i.e. [a-z][a-z\d]*
-     - including on spyd-config-*
-  - refered to by user as NAME
 
 stats.diff:
   - use arrow|triangle sign instead of +|-
@@ -1493,6 +1380,21 @@ CONF.tasks "temp"
      - why not using global cache dir instead of temp dir: when starting a new session, it is easier and less confusing to start from an empty file than from the previous session
 
 Watch mode???
+
+Steps:
+  - why allow non-serial steps??? Wouldn't it be easier to define additional tasks instead???
+  - some users might misuse steps to get parallel preview???
+  - `repeat` should be based on number of iterations left to reach moe, not on duration
+  - instead of passing `repeat`, ask runner to measure batches with different params???
+     - i.e. arg would be OBJ:
+        - serial BOOL
+        - steps OBJ_ARR
+           - step STR
+           - maxLoops NUM
+           - repeat NUM|0
+     - runner would return measures of each
+     - if serial, maxLoops all same, and state is passed between steps
+  - rename CONF.precise to CONF.fast???
 
 Quantiles:
   - how to report them???
