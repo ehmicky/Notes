@@ -11,6 +11,151 @@ figures:
 Execa:
   - add `debugString` (https://github.com/sindresorhus/execa/issues/455)
 
+Add comment about types of variation:
+  - statistical (low sample size):
+     - reduced by increasing CONF.duration
+     - types:
+        - same combination, same result (stats.moe)
+        - same combination, different results (stats.diff)
+        - different combination, same result (stats.moe)
+  - task itself:
+     - measured by: stats.stdev, stats.quantiles|min|low|median|high|max
+     - no way (nor strong reason) to reduce it
+     - only reported by reporters explicitely meant to see distribution (histogram, box chart, etc.), not most reporters
+        - reason: simplicity, and putting focus on median instead
+  - engine optimization:
+     - measured by: stats.moe, stats.stdev, stats.quantiles|min|low|median|high|max
+     - reduced by higher CONF.duration
+     - only happening in:
+        - the beginning of the measuring
+        - very fast tasks
+     - do not need any specific statistic because:
+        - stats.moe already takes care of it
+           - engine optimization implies slow outliers and bigger stdev
+           - this increases the time required to reach the moe threshold, logarithmetically.
+        - `repeat` callibration tends to soften it too
+           - since it runs the tasks many times and discard those measures
+  - environment:
+     - measured by: stats.diff (with same combination)
+     - reduced by: containers, VM, CI
+     - difference in OS load, hardware, etc.
+        - multidimensional: CPU, memory, network, i.e. specific to each combination
+     - users might be explicitely comparing it, including inside same run (due to previous runs being merged to current one)
+
+Refactor:
+  - preview shape:
+     - finish checking how the combinationName looks in the preview
+        - consider changing colors
+     - titleize (first char uppercase) the return value of getCombinationName()
+        - use library
+     - try using 'Measuring' description to give less of a flicker look
+        - otherwise try to see if can add back delayed description
+     - try using --:-- instead of '     ' for empty duration
+     - third line shows instruction: stop|abort, scrolling
+  - consider doing once for all combinations, instead of once per combination:
+     - start|end server
+     - logs file
+     - stopping logic
+
+Preview init:
+  - initial preview:
+     - before both:
+        - getCombinations() (especially taskIds retrieval)
+           - move it to after startPreview(), but before updatePreviewResult()
+           - durationLeft undefined, percentage 0, index|total undefined, combinationName undefined, description "Starting"
+        - listHistory()
+           - durationLeft undefined, percentage 0, index|total NUM, combinationName undefined, description "Starting"
+     - reason: both can be slow
+     - considering the above, what looks best, while avoiding flicker at beginning???
+        - fixed at bottom
+        - fixed at top
+        - floating at bottom
+        - fixed at left
+
+Call updatePreview() on SIGWINCH
+
+Scrolling:
+  - only during results preview
+     - when either stopping or ending benchmark, report in full without scrolling
+  - actions:
+     - listen for UpArrow/k/CTRL-P and DownArrow/j/CTRL-N
+     - keep track of current scroll amount
+     - remove first and last lines before printing according to scroll amount
+        - do not take into account that one string line might take several lines in terminal due to wrapping, because faster and makes scrolling faster when there are long lines
+     - show top of screen initially, not bottom
+  - add Up|Down (scroll) to bottom instructions
+  - not if output fits within process.stdout.rows
+     - do not show scrolling instructions either
+
+Adjust debug reporter according to terminal width
+
+Selection:
+  - single property:
+     - remove CONF.exclude
+     - rename CONF.include to CONF.select
+     - reason: using 2 properties makes it harder to override both when using CLI flags
+        - common example: including an id in CLI flags even though it has been excluded in spyd.yml
+  - "not " can be prepended to STR
+     - signify exclusion instead of inclusion
+     - reason for word: no shell escaping issues
+        - ~ needs escaping when followed by characters in Bash
+     - do not allow "not" as an id to select
+        - done both by id validation and selection logic
+        - reason: provide nice error message for users thinking "not" can be used anywhere in STR
+  - use ARR order, with last having priority
+     - reason: removes need for having both inversion + exclusion syntax
+     - documented only as "last one has priority"
+     - how:
+        - for each combination, find the first STR (starting from last) matching it
+        - if matches: exclude|include depending on whether STR is exclusion
+        - if no match:
+           - include if STR_ARR.length === 0, or if STR_ARR[0] is exclusion
+           - exclude if STR_ARR[0] is inclusion
+
+Fix selection:
+  - with `bench`, filters used during run, both explicit (CONF.include|exclude) and implicit (CONF.runner|inputs|system), should also be used in reporting
+     - i.e. only measured combinations are reported
+  - with `show|remove`, only explicit should be used, i.e. implicit CONF.* not allowed
+
+stats.*[Pretty|Padded] -> stats.value|pretty|padded.*
+
+stats.medianLow|High NUM:
+  - stats.median +|- stats.moe
+  - undefined if either:
+     - stats.moe undefined
+     - CONF.showPrecision false
+  - stats.median undefined if CONF.showPrecision true
+     - i.e. reporters must use stats.medianLow|High instead
+  - stats.medianLow 0 if negative
+  - add moe to debugStats
+  - reporters must show both:
+     - histogram: two ticks
+     - debug: two columns
+     - bar: rectangle at end of bar, with both durations at the right of it "NUMms - NUM2ms"
+  - reason: easier to visualize and compare with other combinations than printing the moe
+
+stats.diff:
+  - use arrow|triangle sign instead of +|-
+  - if neutral:
+     - use gray
+     - use horizontal|verticalDoubleArrow|≈ sign
+     - use absolute value
+     - do not use CONF.limit
+  - add comments why diff not:
+     - hidden: users might think it is a bug if CONF.showDiff true uses
+     - shown as 0%: users might notice the diff themselves, and use it, or think it is a bug
+     - showing sign when neutral: diff should be insignificant, including direction
+  - whether diff is reported as neutral should be based on a welch's t-test
+     - replace current logic
+     - not student's t-test because it assumes variances are the same
+     - not mann-whitney u-test because:
+        - we want compare medians, not full distribution
+           - e.g. if distributions mostly overlap, it should not be shown as "equivalent", if one is clearly shifted to the right, since it is useful to know this, so the faster combination can be preferred by user
+        - slower time complexity O(n^2)
+        - more complex to implement
+        - assumes both combinations have similar distributions
+        - not as good with skewed distributions
+
 Learn inquirer
 
 `remove` command:
@@ -1023,120 +1168,47 @@ Commercial offer:
 ==============================================
 
 
-IPC:
-  - how to pick port without race condition???
-  - how to know that child is ready to listen???
-  - before|measure|after not called during `init`
-  - fix all the TODOs introduced by `ipc` branch
-
-Fix selection:
-  - with `bench`, filters used during run, both explicit (CONF.include|exclude) and implicit (CONF.runner|inputs|system), should also be used in reporting
-     - i.e. only measured combinations are reported
-  - with `show|remove`, only explicit should be used, i.e. implicit CONF.* not allowed
-
-Fast abort:
-  - when all of:
-     - sampleDurationMean === undefined
-        - reason: only for first sample
-     - sampleStart !== undefined
-        - reason: not during combination start|exit
-     - now() - sampleStart > ABORT_DELAY
-  - then do not wait 5s to abort, nor change description
-     - reasons:
-        - no sampleDurationMean yet, i.e. cannot show closure countdown
-        - high probability that task is too slow or is hanging forever
-  - error message should include a sentence about the task taking NUMs without completing
-
-Progress:
-  - prepend counter NUM/NUM2
-     - NUM is number of combinations completed, i.e. starts at 0
-  - duration left is for specific combination
-  - progress bar is for all combinations
-
-stats.*[Pretty|Padded] -> stats.value|pretty|padded.*
-
-stats.medianLow|High NUM:
-  - stats.median +|- stats.moe
-  - undefined if either:
-     - stats.moe undefined
-     - CONF.showPrecision false
-  - stats.median undefined if CONF.showPrecision true
-     - i.e. reporters must use stats.medianLow|High instead
-  - stats.medianLow 0 if negative
-  - add moe to debugStats
-  - reporters must show both:
-     - histogram: two ticks
-     - debug: two columns
-     - bar: rectangle at end of bar, with both durations at the right of it "NUMms - NUM2ms"
-  - reason: easier to visualize and compare with other combinations than printing the moe
-
-Automatic duration:
-  - do not end combinations until loops >= 5:
-     - unless CONF.precision 0
-     - reasons:
-        - stdev|moe not precise enough
-        - ensure cold start does not impact median too much
-  - never report stdev|moe until loops >= 5
-  - stop measuring when combination.stats.moe (relative to median) reaches specific threshold defined by CONF.precision NUM:
-     - 0: like CONF.duration 1 (once)
-     - 1: relative moe 5%
-     - 2 (def): relative moe 1%
-     - 3: relative moe 0.5%
-     - 4: relative moe 0.1%
-  - remove CONF.duration
+CONF.tasks "temp"
+  - use a temporary file:
+     - created as empty file in the global temporary dir
+     - use OS editor to edit it, then use it
+     - reuse if already existing, i.e. allowing session
+     - done once per file extension using "temp.EXT" as task file
+  - file extension determined by runner.extensions:
+     - if several runners and they have some common extension, use it
+        - if several common ones, use the one with most shared runners
+        - otherwise, use the one with lowest index
+     - otherwise, use runner.extensions[0]
+  - forbid CONF.save true
+  - editing and running benchmark in same terminal tab is not great experience???
+  - launch editor in a new terminal window|tab???
+     - or print path to file and copy it to clipboard???
+     - no good way to open a new terminal window|tab for terminal editors
+        - however many editors are not in terminal
+     - alternatives: node-editor, launch-editor, open-in-editor, open-editor, node-external-editor
   - add comments:
-     - why no CONF.duration:
-        - CONF.duration NUM ends up with higher moe on slower machines or when hardware load is higher
-           - only partially, since slower tasks have lower standard deviation in general, which compensates the lower number of loops
-        - two combinations with same moe are more statically comparable, than with same CONF.duration
-     - do not take into account:
-        - the fact that moe might still be too high to compare either:
-           - same combination, different results (stats.diff)
-           - different combination, same result
-        - reasons:
-           - the fact that they are too close to be compared is interesting in itself, since it indicates that they are not comparable
-           - at that level of closeness, increasing CONF.duration to know which one is faster is too influenced by environment variation
-           - allows computing stats.precision independently in each combination
-           - if a perfect setting, if the combinations are identical, they would always be too close
-     - stdev threshold must be high enough to avoid CONF.duration "auto" stopping early due to imprecise stdev
+     - goal: on-the-fly benchmarking
+     - why file extension important:
+        - syntax highlighting and IDE features
+        - runner might handle different file extensions differently (e.g. *.ts transpiling)
+        - each file extension has its own temp file
+     - why not using CONF.[runnerRUNNER.]inline[.TASK[.STEP]] "BODY"
+        - cannot define content outside function body (e.g. imports) nor function declaration (e.g. async keyword)
+           - might be even more of a problem with some languages that use more top-level declarations
+        - encourages sharing tasks by sharing command lines, instead of using shareable modules
+        - entering long statements on command line is not ergonomic: no syntax highlighting, linting, autocompletion, etc.
+        - harder to specify file extension
+     - why not using global cache dir instead of temp dir: when starting a new session, it is easier and less confusing to start from an empty file than from the previous session
 
-Progress with automatic duration:
-  - show:
-     - counter of combinations done/total
-     - expected duration left
-        - only for current combination
-        - to reach moe based on CONF.precision
-        - not with CONF.precision 0
-        - add comments why important:
-           - helps chosing between different CONF.precision
-           - helps with impatience of waiting, or planning other things while benchmark is measuring
-     - progress bar
-        - for all combinations
-           - percentage = completedCombinations.length / totalCombinations.length + currentCombinationCompletion
-        - currentCombinationCompletion is based solely on duration spent and expected duration left
-           - timesGoal = times which would make relative moe <= threshold, with current stdev
-             - computed using current t-value. If new t-value different, try again with it. Could this be infinite???
-           - timesLeft = timesGoal - times
-           - samplesLeft = Math.ceil(timesLeft / meanTimesPerSample)
-           - durationLeft = samplesLeft * meanDurationPerSample
-              - meanDurationPerSample is whole logic, nor just child process
-              - exclude non-calibrated samples in meanTimesPerSample and meanDurationPerSample
-                 - i.e. no expected duration yet until calibrated
-  - when low number of loops:
-     - 0:
-        - no duration left preview
-           - show empty, or "--:--"???
-           - add some progress description???
-        - progress percentage for combination is 0
-     - 1-4: either???
-        - 0 duration left and progress percentage
-        - duration left use moe, but with Math.min() of median * combinationsLeftUntil5
-           - progress percentage based on duration left
-  - duration left and progress percentage computed after each sample
-  - how to avoid jitter in duration left???
-     - range +|-NUMs where, if total duration left changed within that range, it remains the same to avoid jitter???
-     - do not allow duration left to increase, freezing it instead???
-        - what if increase is big???
+Config validation:
+  - warnings not shown due to preview clear???
+     - keep warning on top???
+     - or wait for several seconds before preview clear???
+  - make unknown properties failures???
+     - how to maintain backward compatiblity when removing|renaming config properties???
+        - maybe add some normalization logic before validation, printing warnings
+  - unknown CLI aliases are not being validated (due to being removed by CLI logic)
+     - would using yargs strict() fix it???
 
 Sharing plugins:
   - publish a package that includes whole benchmark, including:
@@ -1241,93 +1313,15 @@ spyd format:
         - comments
   - validate merged|normalized config against non-JSON values
 
-stats.diff:
-  - use arrow|triangle sign instead of +|-
-  - if neutral:
-     - use gray
-     - use horizontal|verticalDoubleArrow|≈ sign
-     - use absolute value
-     - do not use CONF.limit
-  - add comments why diff not:
-     - hidden: users might think it is a bug if CONF.showDiff true uses
-     - shown as 0%: users might notice the diff themselves, and use it, or think it is a bug
-     - showing sign when neutral: diff should be insignificant, including direction
-  - whether diff is reported as neutral should be based on a welch's t-test
-     - replace current logic
-     - not student's t-test because it assumes variances are the same
-     - not mann-whitney u-test because:
-        - we want compare medians, not full distribution
-           - e.g. if distributions mostly overlap, it should not be shown as "equivalent", if one is clearly shifted to the right, since it is useful to know this, so the faster combination can be preferred by user
-        - slower time complexity O(n^2)
-        - more complex to implement
-        - assumes both combinations have similar distributions
-        - not as good with skewed distributions
-
-Types of variation:
-  - statistical (low sample size):
-     - reduced by increasing CONF.duration
-     - types:
-        - same combination, same result (stats.moe)
-        - same combination, different results (stats.diff)
-        - different combination, same result (stats.moe)
-  - task itself:
-     - measured by: stats.stdev, stats.quantiles|min|low|median|high|max
-     - no way (nor strong reason) to reduce it
-     - only reported by reporters explicitely meant to see distribution (histogram, box chart, etc.), not most reporters
-        - reason: simplicity, and putting focus on median instead
-  - engine optimization:
-     - measured by: stats.moe, stats.stdev, stats.quantiles|min|low|median|high|max
-     - reduced by higher CONF.duration
-     - only happening in:
-        - the beginning of the measuring
-        - very fast tasks
-     - do not need any specific statistic because:
-        - stats.moe already takes care of it
-           - engine optimization implies slow outliers and bigger stdev
-           - this increases the time required to reach the moe threshold, logarithmetically.
-        - `repeat` callibration tends to soften it too
-           - since it runs the tasks many times and discard those measures
-  - environment:
-     - measured by: stats.diff (with same combination)
-     - reduced by: containers, VM, CI
-     - difference in OS load, hardware, etc.
-        - multidimensional: CPU, memory, network, i.e. specific to each combination
-     - users might be explicitely comparing it, including inside same run (due to previous runs being merged to current one)
-
 How to prevent reporter footer being shown twice, when two reporters have it???
-  - make it its own reporter???
-  - make it a CONF.show* option???
-
-CONF.tasks "temp"
-  - goal: on-the-fly benchmarking
-  - use a temporary file:
-     - created as empty file in the global temporary dir
-     - use OS editor to edit it, then use it
-     - reuse if already existing, i.e. allowing session
-     - done once per file extension using "temp.EXT" as task file
-  - file extension:
-     - try to use the right file extension for:
-        - syntax highlighting and IDE features
-        - if runner handles different file extensions differently (e.g. *.ts transpiling)
-     - each file extension has its own test file
-     - how to choose???
-        - require it???
-        - use runner.extensions???
-           - if several runners and they have some common extension, use it
-              - if several common ones, use the one with most shared runners
-              - otherwise, use the one with lowest index
-           - otherwise, use runner.extensions[0]
-  - forbid CONF.save true
-  - add comments:
-     - why not using CONF.[runnerRUNNER.]inline[.TASK[.STEP]] "BODY"
-        - cannot define content outside function body (e.g. imports) nor function declaration (e.g. async keyword)
-           - might be even more of a problem with some languages that use more top-level declarations
-        - encourages sharing tasks by sharing command lines, instead of using shareable npm modules
-        - entering long statements on command line is not ergonomic: no syntax highlighting, linting, autocompletion, etc.
-        - harder to specify file extension
-     - why not using global cache dir instead of temp dir: when starting a new session, it is easier and less confusing to start from an empty file than from the previous session
-
-Watch mode???
+  - make it not part of reporter???
+     - problem: might differ per reporter, e.g. terminal vs markdown reporter
+  - or:
+     - if several reporters with same CONF.output
+     - and their report() returns a string
+     - then for all of them except last one:
+        - make CONF.{reporterId}.showSystem|showMetadata false, unless explicitely defined (not CONF.showSystem|showMetadata)
+  - add footer to histogram reporter
 
 Steps:
   - why allow non-serial steps??? Wouldn't it be easier to define additional tasks instead???
@@ -1343,6 +1337,16 @@ Steps:
      - runner would return measures of each
      - if serial, maxLoops all same, and state is passed between steps
   - rename CONF.precise to CONF.fast???
+
+Differentiate between reporter intent (dev, histogram, etc.) and output format (terminal, markdown, image, HTML)???
+   - pros:
+      - smaller list of reporters
+      - automatically adapts to CONF.output
+   - either:
+      - reporter exports different method for each
+         - pro: can know in advance when format supported
+      - format is passed as argument to report()
+      - different modules, named spyd-reporter-{CONF.reporter}-{CONF.format}
 
 Quantiles:
   - how to report them???
