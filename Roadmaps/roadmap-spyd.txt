@@ -12,11 +12,6 @@ Execa:
   - add `debugString` (https://github.com/sindresorhus/execa/issues/455)
 
 Scrolling:
-  - applyScrolling() should never truncate bottom bar:
-     - pass bottomBar (including separator), take its height and remove it from the screenHeight used in that logic
-     - only concatenate bottomBar (including separator) after scrolling has been applied to report
-     - add comment that if screenHeight < bottomBarHeight, no report shown and bottom bar truncated
-  - make sure refreshPreview() is called on: new report, SIGWINCH (already done)
   - key event handler:
      - not set if:
         - previewState.quiet
@@ -25,28 +20,40 @@ Scrolling:
      - keys:
         - UpArrow|k|CTRL-P and DownArrow|j|CTRL-N: 1
         - PageUp|CTRL-B and PageDown|CTRL-F: ScreenHeight - 2
-        - CTRL-P, pageUp, etc. should move half page (or full page???)
-     - applyScrolling should set previewState.scrollTopLast = Math.max(0, Math.min(contentHeight - screenHeight, scrollTop))
-        - only as perf optimization. Could otherwise just call refreshPreview() twice in key event handler
-     - update previewState.scrollTop based on previewState.scrollTopLast, not current previewState.scrollTop
-     - then call refreshPreview()
-     - reasons for that logic:
-        - keep scrollTop stable as window is resized
-        - still take into account that resize might have made scrollTop negative, by takinng into account when it is being updated by key event
-  - actions must take space, i.e. be a placeholder before applyScrolling(), but be replaced after applyScrolling() since they depend on it
-  - updateScrolling():
-     - done on:
-        - UpArrow/k/CTRL-P and DownArrow/j/CTRL-N
-           - this also adds|subtracts 1 to scrollTop (before minimum|maximum assigned)
-     - update action:
+     - update previewState.scrollTop, then call refreshPreview()
+  - actions:
+     - must take space, i.e. be a placeholder before applyScrolling(), but be replaced after applyScrolling() since they depend on it
+     - value is:
         - toggle ScrollUp depending on scrollTop === 0
         - toggle ScrollDown depending on scrollTop === contentHeight - screenHeight
         - if both ScrollUp + ScrollDown -> ScrollUpDown
         - if neither ScrollUp nor ScrollDown -> no scrolling action
   - on StopError, the last preview report should not use scrolling
-  - add comment that do not take into account that one string line might take several lines in terminal due to wrapping, because faster and makes scrolling faster when there are long lines
 
 Adjust debug reporter according to terminal width
+
+Max loops:
+  - stop combination when reaching maxLoops
+     - update preview logic: getLoopsFromLength() should be Math.min() with `maxLoops`
+  - maxLoops is 1e7
+  - add comments:
+     - we must ensure `measures` are ready to be garbage collected after each combination
+     - why no more elaborate logic to allow for higher number of loops (such as persisting on files, or aggregating measures in-memory): needing more loops is unlikely
+        - with single step and max `precision`, number of loops is 4e4 with rstdev 10%, 4e6 with rstdev 100%
+        - rstdev could theoritically be > 100% if task duration is exponential based on a random factor, but this is unlikely
+
+result.duration
+  - reported|handled similarly to result.timestamp
+     - i.e. meant only as metadata
+     - only reported with --showMetadata alongside timestamp, not otherwise
+  - total time measuring, as perceived by user
+     - including time to load history, combinations, config
+     - excluding time to report
+     - starts at beginning of programmatic bench()
+     - ends in getFinalResult()
+        - i.e. shown and updated in preview
+  - shown as [HH:]MM:SS like in preview
+  - when merging results, use mean of result.duration, with Math.ceil()
 
 Selection:
   - single property:
@@ -508,6 +515,7 @@ Steps:
         - select all available steps
            - including ones not measured|included
         - forbid "all" as a stepId name, either normal step or step group
+  - `maxLoops` should be divided by number of steps, for the current combination, since all steps measures are in-memory at once
   - add comments about:
      - complex step order:
         - problems:
@@ -1329,48 +1337,6 @@ reporter.debugStats BOOL
         - add comment that moe is more useful for end users, including to allow seeing if two combinations overlap
      - minLoopDuration, samples, repeat, loops
 
-Print total duration spent at end of run with CONF.duration 0|1???
-  - printed without progress bar, but otherwise same as preview mode???
-  - not printed if CONF.quiet true
-  - printed after final reporter
-
-Max loops:
-  - MAX_LOOPS 1e7
-     - divided by combinations.length (including steps)
-  - add `packedMeasures` empty ARR
-  - `bufferedLoops`: sum of lengths of all current `bufferedMeasures`
-  - `maxLoops` should be Math.min() with MAX_LOOPS - packedMeasures.length - measures.length - bufferedLoops
-  - when packedMeasures.length + measures.length + bufferedLoops >= MAX_LOOPS:
-     - force aggregation
-     - random filter out `packedMeasures` and `measures`
-        - after merging `bufferedMeasures` to `measures`
-        - do ARR.filter(() => Math.random() < probability)
-           - i.e. not precise, but should be ok due to the high length of ARR
-           - reason: fast
-        - probability of:
-           - packedMeasures: 1/packCount
-              - packCount initially 1, and incremented before each packing
-           - measures 1 - (1/packCount)
-        - then mergeSort() `measures` to `packedMeasures`
-     - also done at end of benchmark
-  - keep stats that can be aggregated to single number???
-     - min|max
-     - sum (for mean)
-  - how does it work with previews???
-     - maybe only preview `packedMeasures` once it stopped being empty???
-  - does this actually help precision??? If randomly filtering, doesn't the merge have the same precision as the unmerged???
-  - should also be applied during minLoopDuration samples
-  - alternatives:
-     - stop benchmark
-     - filter at regular intervals instead of randomly
-        - does this change distribution???
-        - use quantiles
-           - for both arrays, always start with min and end with max, with even spaces between picked items
-     - persist `packedMeasures` on-file instead of memory
-        - mergeSort() stream file on read+write
-        - computeStats() stream file on read
-        - previews???
-
 Terminal width|height should use default, not stderr, when output is not tty
 
 How to insert terminal content in Markdown, since ``` block needed???
@@ -1387,10 +1353,6 @@ HTTP body max length:
   - add `Math.min()` to `maxLoops`???
 
 Try to see if anything more can be removed from `node` runner, i.e. simplified for all runners
-
-Abstract runner orchestration so it is easier to create a runner???
-   - how???
-      - maybe an execute which maintains a state machine (using combination.id) and returns next action???
 
 Programmatic usage???
 
