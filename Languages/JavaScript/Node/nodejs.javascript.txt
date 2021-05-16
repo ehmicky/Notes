@@ -6,7 +6,7 @@
 
 
 Todo:
-  - document CRYPTO.generateKey[Sync](), CRYPTO.getCipherInfo(), hkdf[Sync](), webcrypto, X509Certificate
+  - document CRYPTO: generateKey[Sync](), getCipherInfo(), hkdf[Sync](), webcrypto, X509Certificate, NodeEdKey*
   - document http/2
   - document quic (including NET.createQuicSocket())
 
@@ -21,7 +21,7 @@ Todo:
 PURPOSE ==>                                     #Execute JavaScript code server-side
                                                 #Based on Chrome JavaScript engine V8
 
-VERSION ==>                                     #15.6.0 (current), 14.15.0 (active LTS), 12.19.0 (active LTS), 10.23.0 (maintenance)
+VERSION ==>                                     #15.8.0 (current), 14.15.0 (active LTS), 12.19.0 (active LTS), 10.23.0 (maintenance)
                                                 #Branches:
                                                 #  - "current": latest major version. New one every 0.5 years
                                                 #  - LTS: every even-numbered version
@@ -88,6 +88,8 @@ setImmediate([VAL[, OPTS]])->PROMISE     15.0.0*#OPTS:
                                          15.0.0*#  - ref BOOL (def: true): yield macrotask
                                          15.0.0*#  - signal ABORT_SIGNAL
                                          15.0.0*#Those OPTS are available to promisify(setTimeout|setImmediate) too
+setInterval(NUM[, VAL[, OPTS]])          15.9.0*#Same but for setInterval()
+ ->ASYNC_ITERATOR                        15.9.0*#ASYNC_ITERATOR is resolving to VAL each time
 
 
                                              /=+===============================+=\
@@ -538,11 +540,13 @@ require(STR)                                    #Load file STR:
                                                 #  - 'DIR' (absolute or relative):
                                                 #     - DIR/package.json, using main 'PATH' (relative to DIR)
                                                 #     - DIR/index[.EXT]
+                                         16.0.0*#        - prints a warning for PACKAGE.main|exports file
                                                 #  - 'MODULE[/PATH]':
                                                 #     - i.e. anything that does not start with / or .
                                                 #     - tries require('DIR2/MODULE'), with DIR2 [.../[..]]./node_modules/
                                                 #Paths can omit extensions: .js, .mjs, .cjs, .json, .node
                                                 #  - decide file type based on file extension
+                                         16.0.0*#  - prints a warning for PACKAGE.main|exports file
                                                 #If not found, throw ERROR with code "MODULE_NOT_FOUND"
                                              12*#and ERROR.requireStack 'PATH'_ARR
 MODULE.require(...)                             #Reference to require(...)
@@ -1097,6 +1101,7 @@ createInterface(OPTS)->INTERFACE                #OPTS:
                                                 #  - historySize NUM (def: 30) (0 for none): in-memory, not persisted
                                                 #  - removeHistoryDuplicates BOOL (def: false): new history lines that are duplicate
                                                 #    of a previous one removes that older one
+                                         15.8.0*#  - history STR_ARR (def: []): initial history
                                                 #  - prompt STR (def: '> ')
                                                 #  - crlfDelay NUM (def: 100, cannot be lower): if input reads \r and \n
                                                 #    successively but more than NUMms apart, treat them as two newlines, not one
@@ -1122,7 +1127,9 @@ INTERFACE.getPrompt()->STR               15.3.0*#
 INTERFACE.prompt([BOOL])                        #Write in beginning of current OSTREAM line the OPTS.prompt
                                                 #If false (def), move cursor back to beginning of line
 
-INTERFACE.question(STR, FUNC(STR2))             #Replace current prompt by STR on OSTREAM, and fires FUNC(STR2) on line event instead of normal line event.
+INTERFACE.question(STR, [OPTS, ]FUNC(STR2))     #Replace current prompt by STR on OSTREAM, and fires FUNC(STR2) on line event instead of normal line event.
+                                         15.8.0*#OPTS:
+                                         15.8.0*#  - signal ABORT_SIGNAL
 
 INTERFACE.pause|resume()                        #Like ISTREAM.pause|resume()
                                                 #ISTREAM still accept input but buffers it, and reads it once resumed.
@@ -1130,6 +1137,9 @@ INTERFACE.pause|resume()                        #Like ISTREAM.pause|resume()
                                                 #resume() is called by write(), prompt() and question()
 INTERFACE.on("pause|resume", FUNC())            #
 INTERFACE.on("SIGINT|SIGTSTP|SIGCONT", FUNC())  #
+
+INTERFACE.on("history", FUNC(STR_ARR))   15.8.0*#When history changes
+                                         15.8.0*#Can be used to edit history or persist it
 
 clearLine(OSTREAM, NUM[, FUNC()])->BOOL         #Can be 0 (entire line, \e[2k) or -1|1 (to the left|right of cursor, \e[0k, \e[1k)
                                                 #FUNC|BOOL are from the underlying OSTREAM.write()
@@ -1251,6 +1261,7 @@ createSocket(STR|OPTS[, FUNC(BUFFER, OPTS)])    #OPTS:
                                                 #  - lookup FUNC (def: DNS.lookup)
                                                 #  - recvBufferSize|sendBufferSize NUM: in|out buffer size
                                              11*#  - ipv6Only BOOL (def: false)
+                                         15.8.0*#  - signal ABORT_SIGNAL
                                                 #STR is OPTS.type
                                                 #FUNC is 'message' event handler.
 UDPSOCKET.address()                             #{ address, port, family }
@@ -2258,7 +2269,8 @@ open(PATH, STR|NUM[, MODE], FUNC(ERROR, FD_INT))#Open a file and return a file d
                                                 #  - UV_FS_O_FILEMAP: use memory file mapping, i.e. bytewise copy of file in RAM. Only on Windows.
                                                 #On Windows, those flags are mapped to file attributes, file permissions and share permissions
                                                 #MODE INT is 0666 by def.
-close(FD_INT, FUNC(ERROR))                      #
+close(FD_INT[, FUNC(ERROR)])                    #
+                                        <15.9.0*#FUNC not optional
 write(FD_INT, TDBUFFER, INT, INT2, [ INT3,]     #Write INT2 bytes from TDBUFFER at its position INT to file FD_INT at its position INT3 (def: current).
 FUNC(ERROR, INT4, TDBUFFER))                    #INT4 is the number of bytes written.
                                                 #INT|INT2 are optional
@@ -2325,6 +2337,7 @@ watch('FILE|DIR'[, OPTS][, FUNC])->FSWATCHER    #FSWATCHER fires events when fil
                                                 #  - persistent BOOL: if true (def), calls ref(), yielding the macrotask
                                                 #  - recursive BOOL (def: false) (not on Linux)
                                                 #  - encoding 'ENCODING' (def: 'utf8')
+                                         15.9.0*#  - signal ABORT_SIGNAL
                                                 #FUNC is the FSWATCHER 'change' event handler.
                                                 #Unstable. Prefer Chokidar.
 FSWATCHER.on
@@ -2345,7 +2358,8 @@ constants                                       #Low-level file-system constants
 
 FS.promises                                     #Like FS but:
                                                 #  - return PROMISE instead
-                                                #     - no FS.unwatch|watch[File]() nor FS.*Stream()
+                                                #     - no FS.unwatch|watchFile() nor FS.*Stream()
+                                         15.9.0*#  - FS.watch() returns ASYNC_ITERATOR of OBJ: eventType 'EVENT', filename SBUFFER
                                                 #  - FD_INT are FILE_HANDLE instead
                                                 #     - no FS.close() but FILE_HANDLE.close() is available
                                                 #  - FS.constants|Stats|*OK remain on FS.*
@@ -3086,7 +3100,8 @@ runInThisContext(STR[, RUN_OPTS])               #Same as runInNewContext(STR, gl
 
 compileFunction('CODE'[, 'PARAM_NAME'_ARR]      #Like new Function() but use OPTS.parsingContext COBJ (def: global)
  [, RUN_OPTS|SCRIPT_OPTS])->FUNC                #RUN_OPTS|SCRIPT_OPTS:
-                                                #  - filename, line|columnOffset, cachedData
+                                                #  - filename, line|columnOffset, cachedData,
+                                         15.9.0*#    importModuleDynamically()
                                                 #  - contextExtensions OBJ_ARR (def: []): objects wrapping COBJ
 
 new Script(STR[, RUN_OPTS])                     #Returns a SCRIPT, i.e. a compiled version of STR:
@@ -3268,6 +3283,7 @@ generateKeyPair[Sync]('TYPE', OPTS              #Create asym key pair, where SBU
 createPrivate|PublicKey(OPTS|SBUFFER)->KEY   11*#Create asym key pair. OPTS:
                                              11*#  - key SBUFFER or (for 'Public') KEY
                                              11*#  - format 'pem' (def) or 'der': of key
+                                         15.9.0*#    or 'jwk'
                                              11*#  - type 'pkcs1', 'spki' or (privateKey only) 'sec1': ignored if format 'pem'
                                              11*#  - passphrase SBUFFER (privateKey only)
                                          15.0.0*#SBUFFER can be STDABUFFER
@@ -3355,6 +3371,18 @@ randomInt([UINT, ]UINT2)->UINT3         12.19.0*#Is cryptographically secure (e.
 randomUUID([OPTS])->STR                  15.6.0*#Returns UUIDv4. Cryptographically secure (e.g. from /dev/random)
                                          15.6.0*#OPTS:
                                          15.6.0*#  - disableEntropyCache BOOL: if false (def), cache 128 UUIDs in advance
+
+generatePrime[Sync](NUM[, OPTS],         15.8.0*#Creates a random prime number
+ FUNC(ERROR, ARRBUFFER|BIGINT))          15.8.0*#OPTS:
+                                         15.8.0*#  - bigint BOOL (def: false): return as BIGINT
+                                         15.8.0*#  - safe BOOL (def: false): return a safe prime, i.e. (prime - 1) / 2 is also prime
+                                         15.8.0*#  - add|rem TDABUFFER|BIGINT: enforce prime % OPTS.add = OPTS.rem (for Diffie-Hellman)
+checkPrime[Sync](TDABUFFER|BIGINT        15.8.0*#Gives an estimation of whether number is prime.
+ [, OPTS], FUNC(ERROR, BOOL))            15.8.0*#OPTS:
+                                         15.8.0*#  - checks NUM:
+                                         15.8.0*#     - higher takes more time (O(n))
+                                         15.8.0*#     - probability of false positive is 1/(4**NUM)
+                                         15.8.0*#     - def: automatically guessed to give false positive probability of 1/(2e64)
 
 --secure-heap=NUM                        15.6.0*#Randomize the heap used by several CRYPTO.* methods
                                          15.6.0*#Must be power of 2
@@ -3547,6 +3575,13 @@ HISTOGRAM.min|max
 HISTOGRAM.mean|stddev                        11*#Duration NUM (in ns)
 HISTOGRAM.percentiles                        11*#Same as a MAP where key is percentile NUM (0-100) and value is duration NUM (in ns)
 HISTOGRAM.exceeds                            11*#How many microtasks took more than 1 hour
+
+createHistogram([OPTS])                  15.9.0*#OPTS:
+ ->RECORDABLE_HISTOGRAM                  15.9.0*#  - min|max NUM|BIGINT (def: 1|MAX_SAFE_INTEGER): min|max value
+                                         15.9.0*#  - figures NUM (def: 3, from 1 to 5): number of significant digits
+RECORDABLE_HISTOGRAM                     15.9.0*#Like HISTOGRAM, with additional methods to manually add values
+RECORDABLE_HISTOGRAM.record(NUM|BIGINT)  15.9.0*#Add value
+RECORDABLE_HISTOGRAM.recordDelta()       15.9.0*#Like record() but using the amount of ns spent since last record()
 
 
                                              /=+===============================+=\
