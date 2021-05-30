@@ -20,8 +20,46 @@ Upgrade Node version in my projects
   - make breaking change releases
   - fix nve tests
 
-CONF.tasks:
-  - look at the whole thing again
+Rename "child config" to "parent config" in code
+
+Plugins config:
+  - shallow merge plugins config with top-level config, as opposed to deep merging using same logic as config merging
+  - plugins config merging should happen before parent|child config merging
+     - i.e. parent top-level config merging has priority over child plugins config
+  - reasons:
+     - top-level config should behave the same as adding plugins config for each plugin
+     - increase isolation of each config file fron each other
+
+Default CONF.tasks
+  - use same logic as default CONF.config:
+     - i.e.:
+        - cwd/[.../][benchmark|packages/config-spyd-*/]tasks.*
+        - cwd is process.cwd(), not CONF.cwd
+        - only first found, in priority
+     - no "default" special token
+  - only apply default if no CONF.tasks defined
+     - performed after CONF fully merged and normalized, inside tasks logic
+     - some runners might have configured tasks while others not
+        - then apply same default tasks but only to runners without configured tasks
+  - fail if no default CONF.tasks found
+     - but explicit empty ARR allowed, unless all runners have no tasks, in which case it will fail due to no combinations
+  - keep current behavior when it comes to:
+     - appending tasks instead of overridding
+        - i.e. since default CONF.tasks only applied when no other tasks, never appended
+     - globbing
+  - add comments:
+     - reasons for design:
+        - ensures same default dirs|behavior as CONF.config
+        - avoid typing during on-the-fly benchmarking
+        - avoid having to configure `tasks` most of the time
+        - enforce a preferred file structure and naming
+        - works with shared configs
+        - works with multiple config files (`tasks` ARR)
+        - works with multiple runners
+        - extensible to other future file configuration properties
+     - shared config must explicitly set `tasks`, otherwise does not work for consumers
+
+Look at whole CONF.tasks implementation again
 
 Validation:
   - used by:
@@ -1053,49 +1091,68 @@ Commercial offer:
 
 ==============================================
 
+Is CONF.config "default" special token rally needed???
 
-i18n:
-  - only for reporting, not core (e.g. not error messages)
-  - CONF.locale
-     - def en_US, not guessed
-  - changes:
-     - number formatting
-     - date formatting
-     - units
-  - pass `texts` OBJ to reporters
-     - { KEY: STR, ... } of common words
-     - using hardcoded translations
-        - try to use *.po file or similar
-  - allow CONF.titles.LANG???
-     - what about CONF.manual.LANG "UNIT"???
+report.report{Format}():
+  - reasons:
+     - differentiate between reporter intent (dev, histogram, etc.) and output format
+     - smaller list of reporters
+     - allows knowing in advance which format is supported
+  - alternatives not as good:
+      - report() returning all formats at once
+         - reason: requires computing unused formats
+      - format passed as argument to report()
+      - different modules, named spyd-reporter-{reporter}-{format}
+         - reasons:
+            - requires uninstalling/installing to change format
+            - harder for publisher
+  - Format: Terminal|Markdown|Html|Svg|External()
+     - all return PROMISE_STR
+     - except External which only return PROMISE
+        - meant for: separate program, network requests, desktop notifications
+  - converts svg to other image formats
+  - default some formats when unspecified by reporters:
+     - terminal: markdown as is
+     - markdown: terminal in ``` block
+     - html: rendered from markdown
+     - svg: rendered from html
+     - external: no default
+  - format is guessed based on CONF.output
+     - use hardcoded list of file extensions, using mime library
+     - def: "terminal"
+        - based on default CONF.output instead, since reporters can change it???
+     - how does this work for reporters with "external" format???
+        - do not allow other render*() if renderExternal()???
+        - special CONF.output string, e.g. "external"???
 
-Differentiate between reporter intent (dev, histogram, etc.) and output format (terminal, markdown, svg, html, none)???
-   - pros:
-      - smaller list of reporters
-      - automatically adapts to CONF.output
-   - either:
-      - reporter exports different method for each
-         - pro: can know in advance when format supported
-      - reporter returns OBJ: FORMAT STR, ...
-         - con: performs all format logic even if only one needed
-         - con: cannot know in advance which format supported
-      - format is passed as argument to report()
-      - different modules, named spyd-reporter-{CONF.reporter}-{CONF.format}
-         - con: requires uninstalling/installing to change format
-         - con: harder for publisher
-   - converts svg to other image formats
-   - default some formats when unspecified by reporters:
-      - markdown: terminal in ``` block
-      - html: rendered from markdown
-      - svg: rendered from html
-   - no CONF.format
-      - guessed based on CONF.output file extension instead
-         - if not guessed, default to terminal output
+Default output:
+  - can be specified per reporter
+  - e.g. reporter.config.output.default STR
+  - if unspecified, use "stdout"
+     - i.e. "terminal" format
+  - reason: indicates most likely format and filename
 
-How to insert terminal content in Markdown, since ``` block needed???
-  - maybe:
-     - reporters declare format: terminal, Markdown, HTML, image, etc.
-     - use inserted document file extension, with hardcoded list (using mime library)
+Default CONF.quiet:
+  - can be specified per reporter
+  - e.g. reporter.config.quiet.default BOOL
+  - when specified, overrides the default automatic guess
+  - requires allowing CONF.reporterReporter.quiet too
+  - do previews do not make sense for specific formats???
+
+Multiple outputs per reporter???
+  - for example, to use same reporter but with mutiple formats
+  - also with multiple reporter options???
+  - potential solutions???
+     - CONF.reporter{Reporter} optional ARR
+        - how does it work with CLI flags???
+        - too many depth levels in config???
+        - does not work with top-level CONF.tasks????
+           - can convert it to nested one though
+     - CONF.reporter{Reporter}[Index]
+     - CONF.reporter{Reporter}[Any]
+     - CONF.reporter{Reporter}[.any]
+     - CONF.[reporter{Reporter}.]output optional ARR
+        - for multiple reporter options, call `show` several times instead
 
 How to prevent reporter footer being shown twice, when two reporters have it???
   - make it not part of reporter???
@@ -1104,7 +1161,7 @@ How to prevent reporter footer being shown twice, when two reporters have it???
      - if several reporters with same CONF.output
      - and their report() returns a string
      - then for all of them except last one:
-        - make CONF.{reporterId}.showSystem|showMetadata false, unless explicitely defined (not CONF.showSystem|showMetadata)
+        - make CONF.{reporterId}.showSystem|showMetadata false, unless explicitly defined (not CONF.showSystem|showMetadata)
   - add footer to histogram reporter
 
 reporter.debugStats BOOL
