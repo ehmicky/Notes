@@ -11,6 +11,8 @@ Upgrade Node version in my projects
   - fix examples on repl.it
   - add ESM to figures (https://github.com/sindresorhus/figures/issues/50)
 
+`spyd exec` should use stdio "pipe", not "inherit", to mimic `spyd bench` behavior???
+
 Plugins new shape:
   - rename CONF.reporter|runner to report|run
   - CONF.{type} OPTS[_ARR]
@@ -28,12 +30,27 @@ Plugins new shape:
      - only for reporters, not runners
         - reason: encourage using CONF.select
   - CLI flags --{type}[.NUM].PROP[=VAL]
-     - NUM:
-        - can add new elements
-        - sparse elements ignored
-        - if, with CLI flags of same type, some have NUM and others not, the ones without NUM are ignored
-        - if CLI flag has no NUM but config file property is ARR, CLI flag is catch-all, i.e. applied to all elements of the ARR (after all config files have been merged)
-           - reason: convenience to set options for all reporters on the CLI
+     - if:
+        - NUM: converted to OBJ_ARR
+           - if sparse array, fill with empty OBJs
+        - not NUM: converted to OBJ
+     - error if specifying both NUM and not NUM flags for the same plugin type
+  - merging CONF.{type}:
+     - when merging:
+        - OBJ with OBJ2: deep merge
+        - OBJ[2] with OBJ_ARR[2]: deep merge OBJ[2] with each OBJ in ARR[2]
+        - OBJ_ARR with OBJ_ARR2:
+           - merge each OBJ index-wise
+           - validate that each ARR element is an OBJ (including empty), not undefined|null
+           - if different lengths, use OBJ from longer ARR on the later indices
+     - for merging both:
+        - parent and child config files
+        - CLI|programmatic flags with config file
+     - reasons:
+        - works with both CLI flags, programmatic and config file
+        - optimized for patching as opposed to replacing, which makes more sense
+        - allow both patching all plugins or only specific ones
+        - allow setting options for all reporters on the CLI
   - remove top-level CONF.* (CONF.tasks|quiet|...)
      - i.e. plugin options only specified in CONF.{type}.*
   - add comment that design is for simplicity:
@@ -106,6 +123,7 @@ report.report{Format}():
             - harder for publisher
   - format is guessed based on CONF.report.output (def: reporter.defaultOutput)
      - reportTerminal() is the fallback otherwise
+     - automatically create intermediary directories (except when "external|stdout")
   - when report.report{Format}() does not exist, each format has its own default to re-use another format's return value
   - Formats:
      - report.reportTerminal()->PROMISE_STR
@@ -117,7 +135,7 @@ report.report{Format}():
 
 Concatenating result of reporters with same report.output is format-specific:
   - terminal: newline joined
-  - external: none
+  - external: errors
 
 Footer:
   - added by core, not reporter
@@ -183,6 +201,15 @@ Validation:
         - simpler to implement
            - warnings would need to be returned from start() and passed to parent
 
+Remove outliers for all stats:
+  - including: min|max, mean, quantiles
+  - reason:
+     - make all stats consistent with each other
+     - avoid two different sets of min|max (with|without outliers)
+  - rename
+     - low|high to min|max
+     - medianLow|High to medianMin|Max
+
 reporter.debugStats BOOL
   - def: false
   - true for `debug` reporter
@@ -196,6 +223,12 @@ reporter.debugStats BOOL
         - add comment that medianLow|High is more useful for end users, including to allow seeing if two combinations overlap
      - minLoopDuration, samples, repeat, loops
         - add comment that those are internal
+
+Box plot reporter:
+  - name "box"
+  - show: min, p25, median (or medianMin|medianMax), p75, max
+  - abscissa min|max is same for all
+  - also shown in `dev` reporter
 
 Combinations filtering:
   - list all unique ids from all results
@@ -1050,14 +1083,19 @@ Add formats:
      - footer: appended as Markdown
   - report.reportHtml()->PROMISE_STR
      - for CONF.report.output "*.html|htm"
+     - file should be whole (i.e. have <html> tag)
+     - reporter can save other files (imported by the main file) in the same directory or subdirectory
      - def: reportMarkdown() return value rendered to HTML
      - footer: inject to any element with id "spyd-footer"
   - report.reportSvg()->PROMISE_STR
      - for CONF.report.output "*.svg|png|jpg|jpeg|webp"
      - def: reportHtml() return value rendered to SVG
      - converts SVG to PNG|JPEG|WebP
-     - concatenation of reporters with same CONF.report.output: done with svg manipulation
      - footer: added with svg manipulation
+  - error if same CONF.report.output and format external|html|svg (unlike terminal|markdown)
+     - reasons:
+        - hard to concatenate
+        - can emulate concatenation using a parent HTML file
 
 Reporters:
   - types:
@@ -1193,37 +1231,38 @@ Commercial offer:
 
 ==============================================
 
-How to prevent reporter footer being shown twice, when two reporters have it???
-  - make it not part of reporter???
-     - problem: might differ per reporter, e.g. terminal vs markdown reporter
-  - or:
-     - if several reporters with same CONF.report.output
-     - and their report() returns a string
-     - then for all of them except last one:
-        - make CONF.report.showSystem|showMetadata false, unless explicitly defined
-  - add footer to histogram reporter
+Rename spyd bench???
+  - to spyd measure???
+  - to spyd run???
+     - rename spyd exec to:
+        - spyd dev???
+        - spyd debug???
+           - rename CONF.debug to CONF.verbose???
 
-reporter.debugStats BOOL
-  - def: false
-  - true for `debug` reporter
-  - if false, do not pass:
-     - mean
-        - add comment that we must ensure median is the main one used, so different reporters are consistent, and also because it is used in sorting combinations, and also it is less precise
-     - times
-        - add comment that it is a bad indicator of precision, and also might be confused as an indicator of speed due to other benchmark libraries showing it like that
-     - rstdev|rmoe|moe
-        - add comment that medianLow|High is more useful for end users, including to allow seeing if two combinations overlap
-     - minLoopDuration, samples, repeat, loops
+CONF.debug:
+  - print to stdout or to file???
+  - always print on error???
+  - make copy friendly to me or to users???
+  - interaction with previews and CONF.quiet???
+  - print env-info???
 
-Quantiles:
-  - how to report them???
-     - show in `dev` reporter
-  - are all of them needed??? Or only min, p1, p5, p25, median, p75, p95, p99, max??? Or only 20 instead of 100???
-  - add stats.p95???
-
-Steps groups:
-  - quantiles: make sure just adding works when computing step groups???
-  - histogram: how to compute for step groups???
+Programmatic usage:
+  - do not return reporting:
+     - can report to a file and load that file instead if needed
+  - let exceptions propagate
+  - `spyd bench|exec` return result:
+     - post or pre-reporting normalization???
+        - pro: more consistent documentation
+        - con: properties might be report-centric???
+        - con: report config is reporter-specific
+  - `spyd remove`: return removed result, or return nothing
+  - `spyd exec`: return processes output??? return nothing???
+  - same default CONF as CLI???
+     - i.e. reports to stdout by default
+     - pro: easier to switch between CLI and programmatic
+     - pro: consistent
+     - con: require CONF.quiet true and CONF.report.enabled false to suppress output
+  - allow CONF.config false (or "", or "none", or null)???
 
 Steps:
   - why allow non-serial steps??? Wouldn't it be easier to define additional tasks instead???
@@ -1240,9 +1279,11 @@ Steps:
      - if serial, maxLoops all same, and state is passed between steps
   - rename CONF.precise to CONF.fast???
 
-Try to see if anything more can be removed from `node` runner, i.e. simplified for all runners
+Steps groups:
+  - quantiles: make sure just adding works when computing step groups???
+  - histogram: how to compute for step groups???
 
-Programmatic usage???
+Try to see if anything more can be removed from `node` runner, i.e. simplified for all runners
 
 Positioning:
   - all of:
