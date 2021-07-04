@@ -17,54 +17,22 @@ Rename:
 `spyd dev` should use stdio "pipe", not "inherit", to mimic `spyd run` behavior???
 
 Plugins new shape:
-  - rename CONF.reporter|runner to report|run
-  - CONF.{type} OPTS[_ARR]
-     - def: empty OBJ
-  - OPTS.name "NAME"
-     - no CONF.{type} "NAME"
-     - def: "node" for CONF.run, "debug" for CONF.report
-     - forbid two plugins with same type and name, but only for runners
-        - reason: should use variations instead
-     - rename plugin ids to plugin names in code
-     - add "-" to the list of allowed characters in plugin names
-  - OPTS.enabled BOOL
-     - reason: meant for adding|removing with CLI flags
-     - def: true
-     - only for reporters, not runners
-        - reason: encourage using CONF.select
-  - CLI flags --{type}[.NUM].PROP[=VAL]
-     - if:
-        - NUM: converted to OBJ_ARR
-           - if sparse array, fill with empty OBJs
-        - not NUM: converted to OBJ
-     - error if specifying both NUM and not NUM flags for the same plugin type
-  - merging CONF.{type}:
-     - when merging:
-        - OBJ with OBJ2: deep merge
-        - OBJ[2] with OBJ_ARR[2]: deep merge OBJ[2] with each OBJ in ARR[2]
-        - OBJ_ARR with OBJ_ARR2:
-           - merge each OBJ index-wise
-           - validate that each ARR element is an OBJ (including empty), not undefined|null
-           - if different lengths, use OBJ from longer ARR on the later indices
-     - for merging both:
+  - CONF.runner|reporter{Id} -> CONF.runnerConfig|reporterConfig.{id}
+  - add reasons for plugins configuration design:
+     - works with both CLI flags, programmatic and config file
+     - optimized for patching as opposed to replacing, which makes more sense
+     - works both for:
+        - selection + configuration (reporter|runner)
+        - configuration-only (steps|tasks)
+     - simple to enable|disable plugins
+     - optimized for common use case where there is only one plugin
+     - simple config merging (deep merging of objects) for all of:
+        - CONF.config ARR
         - parent and child config files
         - CLI|programmatic flags with config file
-     - reasons:
-        - works with both CLI flags, programmatic and config file
-        - optimized for patching as opposed to replacing, which makes more sense
-        - allow both patching all plugins or only specific ones
-        - allow setting options for all reporters on the CLI
-  - remove top-level CONF.* (CONF.tasks|quiet|...)
-     - i.e. plugin options only specified in CONF.{type}.*
-  - add comment that design is for simplicity:
-     - does not require two different config properties for selecting and configuring plugins
-     - monomorphism:
-        - no shortcut notation when no plugin options (like OPTS.report "NAME")
-        - no shortcut notation to apply options to all plugins (like top-level CONF.tasks|quiet)
-           - except for CLI flags array index omission
-     - allow CLI flags to:
-        - add|remove plugins
-        - patch plugin options
+     - allow options to target both:
+        - all instances (e.g. CONF.tasks)
+        - specific instances (e.g. CONF.runnerConfig.{runnerId}.tasks)
 
 Remove CONF.config "default"
   - default lookup logic should only be when --config CLI flag is undefined, and not inside config filed
@@ -72,45 +40,45 @@ Remove CONF.config "default"
 Ensure that CONF.config [] (empty ARR) removes the default lookup
   - add comment that it is useful for programmatic usage
 
-Default CONF.run.tasks
+Default CONF.tasks
   - use same logic as default CONF.config:
      - i.e.:
         - cwd/[.../][benchmark|packages/config-spyd-*/]tasks.*
         - cwd is process.cwd(), not CONF.cwd
         - only first found, in priority
      - no "default" special token
-  - only apply default if no CONF.run.tasks defined
+  - only apply default if no CONF.tasks defined
      - performed after CONF fully merged and normalized, inside tasks logic
      - some runners might have configured tasks while others not
         - then apply same default tasks but only to runners without configured tasks
-  - fail if no default CONF.run.tasks found
+  - fail if no default CONF.tasks found
      - but explicit empty ARR allowed, unless all runners have no tasks, in which case it will fail due to no combinations
   - keep current behavior when it comes to:
      - appending tasks instead of overridding
-        - i.e. since default CONF.run.tasks only applied when no other tasks, never appended
+        - i.e. since default CONF.tasks only applied when no other tasks, never appended
      - globbing
   - add comments:
      - reasons for design:
         - ensures same default dirs|behavior as CONF.config
         - avoid typing during on-the-fly benchmarking
-        - avoid having to configure CONF.run.tasks most of the time
+        - avoid having to configure CONF.tasks most of the time
         - enforce a preferred file structure and naming
         - works with shared configs
-        - works with multiple config files (CONF.run.tasks ARR)
+        - works with multiple config files (CONF.tasks ARR)
         - works with multiple runners
         - extensible to other future file configuration properties
-     - shared config must explicitly set CONF.run.tasks, otherwise does not work for consumers
+     - shared config must explicitly set CONF.tasks, otherwise does not work for consumers
 
-Look at whole CONF.run.tasks implementation again
+Look at whole CONF.tasks implementation again
 
-Default CONF.report.output:
+Default CONF.output:
   - can be specified per reporter at reporter.defaultOutput
   - if unspecified, use "stdout"
      - i.e. "terminal" format
   - reason: indicates most likely format and filename
 
-Default CONF.report.quiet|colors|showDiff:
-  - false if CONF.report.output is "stdout" and stdout is interactive
+Default CONF.quiet|colors|showDiff:
+  - false if CONF.output is "stdout" and stdout is interactive
   - applied per-reporter
   - remove reporter.quiet
 
@@ -127,7 +95,7 @@ report.report{Format}():
          - reasons:
             - requires uninstalling/installing to change format
             - harder for publisher
-  - format is guessed based on CONF.report.output (def: reporter.defaultOutput)
+  - format is guessed based on CONF.output (def: reporter.defaultOutput)
      - reportTerminal() is the fallback otherwise
      - automatically create intermediary directories (except when "external|stdout")
   - when report.report{Format}() does not exist, each format has its own default to re-use another format's return value
@@ -137,7 +105,7 @@ report.report{Format}():
      - report.reportExternal()->PROMISE
         - meant for: separate program, network requests, desktop notifications
         - no default value
-        - for CONF.report.output "external"
+        - for CONF.output "external"
 
 Concatenating result of reporters with same report.output is format-specific:
   - terminal: newline joined
@@ -162,7 +130,7 @@ Programmatic usage:
         - reasons:
            - simpler to document
            - every returned properties might be useful
-     - use CONF.report.show* true for all of them
+     - use CONF.show* true for all of them
         - reasons:
            - do not tie programmatic return value with CONF.report
            - every returned properties might be useful
@@ -207,7 +175,7 @@ Validation:
      - when loading config:
         - must keep OBJ { VARR: "CWD" } since this depends on how config was loaded, and this is known only before validation
         - replace current `PATH_CONFIG_PROPS` logic
-        - including for CONF.run.tasks
+        - including for CONF.tasks
      - FUNC can return empty STR to not do path resolution
         - used by CONF.config when prefixed with "npm:" for example
   - opts.validPropName REGEXP
@@ -282,8 +250,8 @@ Categories:
         - reason this is not persisted: when merging results, those categories might get additional ids
      - convert combination.categories.CATEGORY "ID" to OBJ:
         - id STR
-        - title STR, titlePadded STR: using CONF.report.titles
-           - done on load. CONF.report.showTitles just omit those properties later
+        - title STR, titlePadded STR: using CONF.titles
+           - done on load. CONF.showTitles just omit those properties later
      - sort result.combinations by mean stats.median
         - do not add combination.*Rank nor categories.*.mean|rank
         - same priority order as result.categories ARR order
@@ -383,7 +351,7 @@ Variations:
   - only on any CONF.* that can change the results:
      - CONF.concurrency
      - CONF.inputs.{inputId}
-     - any CONF.run.PROP
+     - any CONF.runnerConfig.{runnerId}.PROP
         - cartesian product only to combinations with that runner
      - add comment why not CONF.duration:
         - no reasons why users would want to measure with different CONF.duration
@@ -581,18 +549,18 @@ Steps:
            - it would be hard to allow users to explicitly report those steps both exclusively ("only _stepIds") and inclusively ("also _stepIds")
   - step groups:
      - behave like steps except:
-        - specified with CONF.steps.stepId 'stepId'_ARR
+        - specified with CONF.stepsConfig.{stepId}.group 'stepId'_ARR
            - ignored if empty ARR
            - reasons for the syntax:
               - allow non-consecutive steps
               - not verbose (unlike using stepId, e.g. using stepId common prefixes)
         - stats are based on aggregation of other steps stats
-           - use other steps stats, not `measures` because the number of `measures` might differ between steps when CONF.precise true
-              - add comment that could in principle use `measures` when CONF.precise false, but does not because:
-                 - it would make stats differ between CONF.precise true|false
-                    - this is confusing and might lead some users to use CONF.precise false
-                    - using CONF.precise true|false should only change precision, not accuracy
-                 - it would give better stats for step groups, discouraging CONF.precise true
+           - use other steps stats, not `measures` because the number of `measures` might differ between steps when CONF.repeat true
+              - add comment that could in principle use `measures` when CONF.repeat false, but does not because:
+                 - it would make stats differ between CONF.repeat true|false
+                    - this is confusing and might lead some users to use CONF.repeat false
+                    - using CONF.repeat true|false should only change precision, not accuracy
+                 - it would give better stats for step groups, discouraging CONF.repeat true
                  - it is slower
            - how:
               - samples|minLoopDuration: any
@@ -612,7 +580,7 @@ Steps:
      - can target another step group
         - error if cycle
      - special stepId "all":
-        - only allowed in steps.{stepId} ARR
+        - only allowed in stepsConfig.{stepId}.group ARR
            - when present, do not allow other values in ARR
         - select all available steps
            - including ones not measured|included
@@ -643,7 +611,7 @@ Steps:
      - why before|after are not handled as special kinds of steps:
         - if user wants to measure them, should run them more than once, i.e. use a normal step
         - most users would use it for init|cleanup, i.e. do not want reporting
-        - too many differences: only runs once, sets initial context, always at beginning|end, error handling, CONF.precise error handling, etc.
+        - too many differences: only runs once, sets initial context, always at beginning|end, error handling, CONF.repeat error handling, etc.
 
 Automatic repeat:
   - `repeat` vs `scale`:
@@ -664,7 +632,7 @@ Automatic repeat:
            - maxStepDuration = for current task, median duration of slowest step
            - currentStepDuration = median duration of current step
         - i.e. always 1 if single step
-  - CONF.precise BOOL
+  - CONF[.tasks.{taskId}].repeat BOOL
      - def: false
      - if false and task has multiple steps, then:
         - for all steps of that task
@@ -678,24 +646,24 @@ Automatic repeat:
               - measuring any mutating function (e.g. ARR.sort())
         - possible solutions:
            - cloning arguments before mutating them
-           - instead of CONF.precise true, increase step function complexity (including increasing input size)
+           - instead of CONF.repeat true, increase step function complexity (including increasing input size)
            - split step into its own task
   - report imprecise steps
-     - only if CONF.precise false and multiple steps
+     - only if CONF.repeat false and multiple steps
         - reason: result might be slightly imprecise due to approximation of the repeat algorithm
      - when, if repeat had been used, it would have been >1
      - set combination.imprecise BOOL
         - stats prettify logic prepends ~ to duration
         - only for specific steps with imprecise durations, not whole task
   - add comments:
-     - reasons why CONF.precise:
+     - reasons why CONF.repeat:
         - does not allow selecting tasks:
            - simpler syntax BOOL
            - prevents comparing steps with very different `repeat` since they would be more|less optimized
         - is opt-in instead of opt-out:
            - adds idempotency constraint gradually, once users have understood first how steps work
            - make the default experience not appear buggy (due to users not understanding the flow)
-     - problems with alternative solutions to CONF.scale|precise:
+     - problems with alternative solutions to CONF.repeat and `scale`:
         - common to many of those solutions:
            - since steps share data, they must either have same number of repeats or be idempotent
               - this forbids top-level scope or global changes (e.g. filesystem):
@@ -727,11 +695,11 @@ Automatic repeat:
 
 Manual mode:
   - opt-in
-     - ignore all of this unless CONF.[steps.stepId.]manual defined for that step
+     - ignore all of this unless CONF.[stepsConfig.{stepId}.]manual defined for that step
      - reasons:
         - avoid functions returning value but not intended, e.g. when exported directly
         - avoid returning seconds or ms when ns is expected
-  - CONF.[steps.stepId.]manual "UNIT"
+  - CONF.[stepsConfig.{stepId}.]manual "UNIT"
      - if no stepId: all steps
      - i.e. same step from different tasks have same unit
         - including if single step for all tasks
@@ -805,7 +773,7 @@ Manual mode:
         - i.e. units are not a combination category
 
 Rate:
-  - CONF.[steps.stepId.]rate BOOL
+  - CONF.[stepsConfig.{stepId}.]rate BOOL
      - def: false
   - reporting-only
      - not persisted in history
@@ -1115,23 +1083,23 @@ Learn the whole Terminal section in edl
 
 Add formats:
   - report.reportMarkdown()->PROMISE_STR
-     - for CONF.report.output "*.md|markdown|mdown|mkd|mkdn" or "README|readme"
+     - for CONF.output "*.md|markdown|mdown|mkd|mkdn" or "README|readme"
      - def: reportTerminal() return value in ``` block
      - add default value for reportTerminal(): using markdown return as is
-     - concatenation of reporters with same CONF.report.output: newline joined
+     - concatenation of reporters with same CONF.output: newline joined
      - footer: appended as Markdown
   - report.reportHtml()->PROMISE_STR
-     - for CONF.report.output "*.html|htm"
+     - for CONF.output "*.html|htm"
      - file should be whole (i.e. have <html> tag)
      - reporter can save other files (imported by the main file) in the same directory or subdirectory
      - def: reportMarkdown() return value rendered to HTML
      - footer: inject to any element with id "spyd-footer"
   - report.reportSvg()->PROMISE_STR
-     - for CONF.report.output "*.svg|png|jpg|jpeg|webp"
+     - for CONF.output "*.svg|png|jpg|jpeg|webp"
      - def: reportHtml() return value rendered to SVG
      - converts SVG to PNG|JPEG|WebP
      - footer: added with svg manipulation
-  - error if same CONF.report.output and format external|html|svg (unlike terminal|markdown)
+  - error if same CONF.output and format external|html|svg (unlike terminal|markdown)
      - reasons:
         - hard to concatenate
         - can emulate concatenation using a parent HTML file
@@ -1161,7 +1129,7 @@ Reporters:
   - default reporter:
      - CLI|Markdown table if more than half of cells would be filled, and some inputs are defined
         - CLI|Markdown list otherwise
-     - Markdown table|list if CONF.report.output inserts '*.md|*.markdown|README|readme'
+     - Markdown table|list if CONF.output inserts '*.md|*.markdown|README|readme'
         - CLI table|list otherwise
 
 Make `precise-now` work on browser + node
@@ -1283,7 +1251,6 @@ Steps:
            - repeat NUM|0
      - runner would return measures of each
      - if serial, maxLoops all same, and state is passed between steps
-  - rename CONF.precise to CONF.fast???
 
 Steps groups:
   - quantiles: make sure just adding works when computing step groups???
