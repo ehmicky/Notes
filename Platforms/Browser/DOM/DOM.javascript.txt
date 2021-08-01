@@ -1955,10 +1955,12 @@ new ReadableStream([ROPTS[, RROPTS]])          $#RSTREAM for input
                                                $#In-memory FIFO where:
                                                $#  - producer pushes data:
                                                $#     - either:
-                                               $#        - on-read-demand: pull()
-                                               $#        - otherwise: enqueue()
+                                               $#        - on read request: pull()
+                                               $#        - on new data: enqueue()
                                                $#     - can wait if full: QueuingStrategy
-                                               $#  - consumer pops data: read(), ITERATOR
+                                               $#  - consumer pops data:
+                                               $#     - read(), ITERATOR
+                                               $#     - can be deferred
 ROPTS.start(RSTREAM_CONTROLLER)[->PROMISE]     $#Called on new ReadableStream(), synchronously
                                                $#Exceptions propagate from new ReadableStream()
                                                $#PROMISE rejections call RSTREAM_CONTROLLER.error()
@@ -2066,7 +2068,8 @@ RSTREAM.values([OPTS])->ASYNC_ITERATOR         $#Steps:
                                                $#     - i.e. "for" loop iteration
                                                $#     - returns RSTREAM_READER.read(), i.e.:
                                                $#        - hangs if queue empty
-                                               $#        - stops if RSTREAM closed|canceled|errored (not done by ITERATOR.next() itself)
+                                               $#        - resolves if RSTREAM closed (queue empty) or canceled
+                                               $#        - rejects if RSTREAM errored
                                                $#  - ITERATOR.return([VAL])
                                                $#     - i.e. early break|return|throw in "for" loop
                                                $#     - calls:
@@ -2081,9 +2084,12 @@ RSTREAM.values([OPTS])->ASYNC_ITERATOR         $#Steps:
 
 new WritableStream([WOPTS[, WWOPTS]])          $#WSTREAM for output
                                                $#In-memory FIFO where:
-                                               $#  - consumer pushes data: WSTREAM_WRITER.write()
+                                               $#  - consumer pushes data:
+                                               $#     - WSTREAM_WRITER.write()
                                                $#     - can wait if full: QueuingStrategy
-                                               $#  - producer pops data: WOPTS.write()
+                                               $#  - producer pops data:
+                                               $#     - WOPTS.write()
+                                               $#     - cannot be deferred
 WOPTS.start(WSTREAM_CONTROLLER)[->PROMISE]     $#Called on new WritableStream(), synchronously
                                                $#Exceptions propagate from new WritableStream()
                                                $#PROMISE rejections call WSTREAM_CONTROLLER.error()
@@ -2143,49 +2149,95 @@ WOPTS.write(VAL, WSTREAM_CONTROLLER)->PROMISE  $#Called when a write is availabl
 new TransformStream                            $#TSTREAM for input+output
  ([TOPTS[, WWOPTS[, RROPTS]]])                 $#In-memory FIFO where:
                                                $#  - consumer pushes data
-                                               $#  - producer transforms data: transform()
+                                               $#     - WSTREAM_WRITER.write()
+                                               $#     - can wait if full: writable QueuingStrategy
+                                               $#  - producer transforms data:
+                                               $#     - WSTREAM -> transform() -> RSTREAM
+                                               $#     - automatically wait if full: readable QueuingStrategy
                                                $#  - consumer pops data
+                                               $#     - read(), ITERATOR
+                                               $#     - can be deferred
 TOPTS.start(TSTREAM_CONTROLLER)[->PROMISE]     $#Called on new TransformStream(), synchronously
                                                $#Exceptions propagate from new Transform()
-                                               $#PROMISE rejections call TSTREAM_CONTROLLER.error()
-TSTREAM.readable                               $#RSTREAM, created on init. Cannot pass ROPTS.
+                                               $#PROMISE rejections call readable|writable error()
+
+STREAMS ENDS ==>                               $#Calling:
+                                               $#  - writable close() -> readable close()
+                                               $#  - writable abort|error() -> readable error()
+                                               $#  - readable close|cancel|error() -> writable error()
+TSTREAM_CONTROLLER.terminate()                 $#Call readable close() and writable error()
+TSTREAM_CONTROLLER.error([VAL])                $#Call readable|writable error()
+
 TSTREAM.writable                               $#WSTREAM, created on init. Cannot pass WOPTS.
-
-TSTREAM_CONTROLLER.terminate()                 $#Call TSTREAM.readable close() and TSTREAM.writable error()
-TSTREAM_CONTROLLER.error([VAL])                $#Call TSTREAM.readable|writable error()
-TOPTS.flush(TSTREAM_CONTROLLER)->PROMISE       $#Called on TSTREAM.writable close()
-
-TOPTS.readableType|writableType                $#Always undefined
-TSTREAM_CONTROLLER                             $#Always TDSTREAM_CONTROLLER
-TDSTREAM_CONTROLLER.enqueue([VAL])             $#Call TSTREAM.readable enqueue()
-
-TOPTS.transform(VAL, TSTREAM_CONTROLLER)       $#Called just before WOPTS.write()
- ->PROMISE                                     $#Allows transforming chunks written to TSTREAM.writable
-                                               $#Should call TSTREAM_CONTROLLER.enqueue()
+TOPTS.writableType                             $#Always undefined
+TOPTS.transform(VAL, TSTREAM_CONTROLLER)       $#Allows transforming chunks written to writable
+ ->PROMISE                                     $#Similar to WOPTS.write():
+                                               $#  - called on a new writable write()
+                                               $#  - write() awaits transform() PROMISE, including:
+                                               $#     - rejection
+                                               $#     - waiting on readable queue not to be full
+                                               $#Awaits previous transform() PROMISE first
+                                               $#Writable queue:
+                                               $#  - can increase if too many writes but either:
+                                               $#     - transform() PROMISE too slow
+                                               $#     - readable queue full (e.g. not enough read())
+                                               $#  - desiredSize can be manually checked before write()
+                                               $#Readable:
+                                               $#  - queue added by calling TSTREAM_CONTROLLER.enqueue() 0-n times
+                                               $#  - read() does not await transform() PROMISE
+                                               $#Waits for the readable queue not to be full:
+                                               $#  - queue is added|subtracted by readable enqueue|read()
+                                               $#  - def RROPTS.highWaterMark 0, i.e. transform() always waits for a read(), one at a time
                                                $#Def: identity function
+TOPTS.flush(TSTREAM_CONTROLLER)->PROMISE       $#Meant to perform logic at the end of transform
+                                               $#  - including enqueue() final chunk to readable
+                                               $#Called on writable close() and all write|transform() have ended
+                                               $#But called before readable close()
+                                               $#writable write|close() follows PROMISE resolution|rejection
+                                               $#PROMISE rejections call readable|writable error()
+
+TSTREAM.readable                               $#RSTREAM, created on init. Cannot pass ROPTS.
+TOPTS.readableType                             $#Always undefined
+TSTREAM_CONTROLLER                             $#Always TDSTREAM_CONTROLLER
+TDSTREAM_CONTROLLER.enqueue([VAL])             $#Call readable enqueue([VAL])
 
 RSTREAM.pipeTo(WSTREAM[, OPTS])->PROMISE       $#Pipe RSTREAM to WSTREAM:
-                                               $#  - iterates over RSTREAM_ASYNC_ITERATOR
-                                               $#     - including creating underlyng RSTREAM_READER
-                                               $#  - pass each chunk to WSTREAM_WRITER.write() (from WSTREAM.getWriter())
-                                               $#PROMISE resolved|rejected based on iteration end.
+                                               $#  - wait for new chunk with RSTREAM_READER.read()
+                                               $#     - including creating underlying RSTREAM_READER
+                                               $#     - same behavior as RSTREAM_ASYNC_ITERATOR
+                                               $#  - pass each chunk to WSTREAM_WRITER.write()
+                                               $#     - including creating underlyng WSTREAM_WRITER
+                                               $#Meant for final piping
                                                $#Terminations:
-                                               $#  - RSTREAM.close() -> WSTREAM.close(), unless OPTS.preventClose true (def: false)
-                                               $#  - RSTREAM.error() -> WSTREAM.abort(), unless OPTS.preventAbort true (def: false)
-                                               $#  - WSTREAM.error() -> RSTREAM.cancel(), unless OPTS.preventCancel true (def: false)
+                                               $#  - RSTREAM close():
+                                               $#     - PROMISE resolved
+                                               $#     - if OPTS.preventClose:
+                                               $#        - false (def): WSTREAM close()
+                                               $#        - true: WSTREAM still open but unlocked
+                                               $#  - RSTREAM error([VAL]):
+                                               $#     - PROMISE rejected with VAL
+                                               $#     - if OPTS.preventAbort:
+                                               $#        - false (def): WSTREAM abort([VAL])
+                                               $#        - true: WSTREAM still open but unlocked
+                                               $#  - WSTREAM error([VAL]):
+                                               $#     - PROMISE rejected with VAL
+                                               $#     - if OPTS.preventCancel:
+                                               $#        - false (def): RSTREAM cancel([VAL])
+                                               $#        - true: RSTREAM still open but unlocked
+                                               $#  - WSTREAM close(), RSTREAM|WSTREAM cancel|abort():
+                                               $#     - method fails
+                                               $#     - RSTREAM|WSTREAM still open and locked
                                                $#OPTS:
-                                               $#  - signal ABORT_SIGNAL: RSTREAM.cancel() on abort
-RSTREAM.pipeThrough(OBJ[, OPTS])->RSTREAM2     $#Like RSTREAM.pipeTo() but for input/output:
-                                               $#  - OBJ is: writable WSTREAM, readable RSTREAM2
-                                               $#     - can be a TSTREAM
-                                               $#  - RSTREAM is still piped to WSTREAM
-                                               $#  - WSTREAM is piped to OBJ.readable RSTREAM2
-                                               $#     - on each WOPTS.write()
-                                               $#     - pass each chunk to RSTREAM2_CONTROLLER.enqueue()
-                                               $#  - RSTREAM2 is returned
-RSTREAM.tee()->[RSTREAM2, RSTREAM3]            $#Creates RSTREAM2|3 and pipe RSTREAM to them.
-                                               $#  - iterates over RSTREAM_ASYNC_ITERATOR
-                                               $#     - including creating underlyng RSTREAM_READER
+                                               $#  - signal ABORT_SIGNAL: on abort:
+                                               $#     - RSTREAM cancel(ABORT_ERROR), WSTREAM abort(ABORT_ERROR)
+                                               $#     - PROMISE rejected with ABORT_ERROR
+RSTREAM.pipeThrough(OBJ[, OPTS])->RSTREAM2     $#Like RSTREAM.pipeTo(OBJ.writable) but returns OBJ.readable instead
+                                               $#OBJ can be a TSTREAM
+                                               $#Meant for intermediary piping
+RSTREAM.tee()->[RSTREAM2, RSTREAM3]            $#Creates RSTREAM2|3 and pipe RSTREAM to them:
+                                               $#  - wait for new chunk with RSTREAM_READER.read()
+                                               $#     - including creating underlying RSTREAM_READER
+                                               $#     - same behavior as RSTREAM_ASYNC_ITERATOR
                                                $#  - pass each chunk to each RSTREAM_CONTROLLER.enqueue()
                                                $#Chunks are referenced for RDSTREAM, copied for RBSTREAM
 
@@ -2193,15 +2245,16 @@ DEFAULT STRATEGY ==>                           $#According to RROPTS|WWOPTS.type
                                                $#  - undefined:
                                                $#     - def size(): CountQueuingStrategy.size()
                                                $#     - def highWaterMark: 1
+                                               $#        - exception: RROPTS in TSTREAM: 0
                                                $#  - 'bytes':
                                                $#     - size(): ByteLengthQueuingStrategy.size()
                                                $#        - cannot change it (including through *QueuingStrategy)
                                                $#     - def highWaterMark: 0
 new ByteLengthQueuingStrategy(OPTS)            $#Can be used instead of RROPTS|WWOPTS
 new CountQueuingStrategy(OPTS)                 $#OPTS: highWaterMark NUM
-QUEUINGSTRATEGY|RROPTS|WWOPTS.highWaterMark    $#NUM. How much before queue is considered full.
+QUEUINGSTRATEGY|RROPTS|WWOPTS.highWaterMark    $#NUM. Queue max size.
 RSTREAM_CONTROLLER|WSTREAM_WRITER|             $#NUM (read-only)
- TSTREAM_CONTROLLER.desiredSize                $#How much left until queue is considered full
+ TSTREAM_CONTROLLER.desiredSize                $#How much left until queue is full
                                                $#Can be <= 0, i.e. queue is full
 QUEUINGSTRATEGY.size(VAL)->NUM                 $#Unit used by highWaterMark|desiredSize:
                                                $#  - ByteLengthQueuingStrategy: TDBUFFER.byteLength
