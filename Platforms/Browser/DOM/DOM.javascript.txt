@@ -1957,16 +1957,18 @@ new ReadableStream([ROPTS[, RROPTS]])          $#RSTREAM for input
                                                $#     - either:
                                                $#        - on-read-demand: pull()
                                                $#        - otherwise: enqueue()
-                                               $#     - can use backpressure: QueuingStrategy
+                                               $#     - can wait if full: QueuingStrategy
                                                $#  - consumer pops data: read(), ITERATOR
 ROPTS.start(RSTREAM_CONTROLLER)[->PROMISE]     $#Called on new ReadableStream(), synchronously
                                                $#Exceptions propagate from new ReadableStream()
                                                $#PROMISE rejections call RSTREAM_CONTROLLER.error()
 
 RSTREAM_CONTROLLER.close()                     $#Ends RSTREAM but can still read from queue
+                                               $#Fails if already closed|canceled|errored
 RSTREAM[_READER].cancel([VAL])->PROMISE        $#Ends RSTREAM and discard read queue
                                                $#VAL can be anything but should generally be undefined|ERROR
                                                $#PROMISE is resolved|rejected based on ROPTS.cancel() PROMISE2
+                                               $#Fails if already closed|canceled|errored
 RSTREAM_CONTROLLER.error([VAL])                $#Ends RSTREAM and discard read queue
                                                $#VAL can be anything (including undefined) but should generally be ERROR
 ROPTS.cancel([VAL])->PROMISE                   $#Called on RSTREAM[_READER].cancel()
@@ -2036,12 +2038,14 @@ RSTREAM.getReader([OPTS])->RSTREAM_READER      $#Same as (depending on OPTS.mode
 RSTREAM.locked                                 $#BOOL (read-only):
                                                $#  - true on new ReadableStream*Reader(RSTREAM)
                                                $#  - false on RSTREAM_READER.releaseLock()
-                                               $#Forbids:
+                                               $#If true, forbids:
                                                $#  - another new ReadableStream*Reader(RSTREAM)
                                                $#  - RSTREAM[_READER].cancel() (but not close())
+                                               $#If false, forbids read()
 RSTREAM_READER.releaseLock()                   $#Throws if a read() PROMISE is pending
                                                $#Does not fail if RSTREAM closed|canceled|errored
 RDSTREAM_READER.read()->PROMISE_OBJ            $#Pops a value from read queue, right away
+                                               $#If another read() ongoing, wait for it first
                                                $#If RSTREAM:
                                                $#  - open|closed (queue not empty): { value VAL, done: false }
                                                $#     - if ROPTS.type 'bytes', value is ARRBUFFER
@@ -2078,32 +2082,37 @@ RSTREAM.values([OPTS])->ASYNC_ITERATOR         $#Steps:
 new WritableStream([WOPTS[, WWOPTS]])          $#WSTREAM for output
                                                $#In-memory FIFO where:
                                                $#  - consumer pushes data: WSTREAM_WRITER.write()
-                                               $#     - can use backpressure: QueuingStrategy
+                                               $#     - can wait if full: QueuingStrategy
                                                $#  - producer pops data: WOPTS.write()
 WOPTS.start(WSTREAM_CONTROLLER)[->PROMISE]     $#Called on new WritableStream(), synchronously
                                                $#Exceptions propagate from new WritableStream()
                                                $#PROMISE rejections call WSTREAM_CONTROLLER.error()
-WSTREAM_WRITER.ready                           $#PROMISE resolved on init
 
 WSTREAM[_WRITER].close()->PROMISE              $#Ends WSTREAM, not allowing writing to queue
-                                               $#Can still process write queue
+                                               $#Ongoing writes are still processed
+                                               $#PROMISE is resolved|rejected based on WOPTS.close() PROMISE2
+                                               $#Fails if already closed|aborted|errored
 WSTREAM[_WRITER].abort([VAL])->PROMISE         $#Ends WSTREAM, not allowing writing to queue
-                                               $#Discard write queue
+                                               $#Ongoing writes are rejected with VAL
                                                $#VAL can be anything but should generally be undefined|ERROR
                                                $#PROMISE is resolved|rejected based on WOPTS.abort() PROMISE2
-WSTREAM_CONTROLLER.signal                      $#ABORT_SIGNAL: call WSTREAM.abort() on cancel
+                                               $#Fails if already closed|aborted|errored
 WSTREAM_CONTROLLER.error([VAL])                $#Ends WSTREAM, not allowing writing to queue
-                                               $#Discard write queue
+                                               $#Ongoing writes are rejected with VAL
                                                $#VAL can be anything (including undefined) but should generally be ERROR
+WOPTS.close()->PROMISE                         $#Called on WSTREAM[_WRITER].close()
 WOPTS.abort([VAL])->PROMISE                    $#Called on WSTREAM[_WRITER].abort()
+WSTREAM_CONTROLLER.signal                      $#ABORT_SIGNAL. onabort():
+                                               $#  - called on abort()
+                                               $#  - EVENT passed as argument, but must use abortReason to access abort VAL
+                                               $#  - exceptions are uncaught exceptions
 WSTREAM_CONTROLLER.abortReason                 $#VAL passed to WSTREAM[_WRITER].abort()
 WSTREAM_WRITER.closed                          $#PROMISE resolved on:
-                                               $#  - close() and queue empty
+                                               $#  - close()
                                                $#  - abort()
                                                $#Rejected on:
                                                $#  - error()
-                                               $#  - WSTREAM_WRITER end (releaseLock()) before close()
-WOPTS.close()->PROMISE                         $#Called when WSTREAM_WRITER.closed resolved|rejected
+                                               $#  - WSTREAM_WRITER end (releaseLock())
 
 new WritableStreamDefaultWriter(WSTREAM)       $#WDSTREAM_WRITER
 WSTREAM_WRITER                                 $#Always WDSTREAM_WRITER
@@ -2113,33 +2122,45 @@ WSTREAM.getWriter()->WSTREAM_WRITER            $#Same as new WritableStreamDefau
 WSTREAM.locked                                 $#BOOL (read-only):
                                                $#  - true on new WritableStream*Writer(WSTREAM)
                                                $#  - false on WSTREAM_WRITER.releaseLock()
-                                               $#Forbids:
+                                               $#If true, forbids:
                                                $#  - another new WritableStream*Writer(WSTREAM)
-                                               $#  - WSTREAM[_WRITER].abort() (but not close())
-WSTREAM_WRITER.releaseLock()                   $#Throws if a write() PROMISE is pending
-                                               $#Does not fail if WSTREAM closed|aborted|errored
+                                               $#  - WSTREAM[_WRITER].close|abort()
+                                               $#If false, forbids write()
+WSTREAM_WRITER.releaseLock()                   $#Does not fail if:
+                                               $#  - a write() PROMISE is pending (and the write is not aborted)
+                                               $#  - WSTREAM closed|aborted|errored
 WDSTREAM_WRITER.write([VAL])->PROMISE          $#Pushes a new writes to the queue
                                                $#Resolves|rejects based on WOPTS.write() PROMISE
+                                               $#If another write() ongoing, wait for it first
+WSTREAM_WRITER.ready                           $#PROMISE:
+                                               $#  - resolved when no more ongoing write()
+                                               $#  - rejected when any ongoing write() PROMISE is rejected
 
 WOPTS.type                                     $#Always undefined
 WSTREAM_CONTROLLER                             $#Always WDSTREAM_CONTROLLER
 WOPTS.write(VAL, WSTREAM_CONTROLLER)->PROMISE  $#Called when a write is available from the queue, popping it
 
-new TransformStream
- ([TOPTS[, WWOPTS[, RROPTS]]])                 $#TSTREAM for input+output
-TOPTS.readable                                 $#RSTREAM
-TOPTS.writable                                 $#WSTREAM
+new TransformStream                            $#TSTREAM for input+output
+ ([TOPTS[, WWOPTS[, RROPTS]]])                 $#In-memory FIFO where:
+                                               $#  - consumer pushes data
+                                               $#  - producer transforms data: transform()
+                                               $#  - consumer pops data
+TOPTS.start(TSTREAM_CONTROLLER)[->PROMISE]     $#Called on new TransformStream(), synchronously
+                                               $#Exceptions propagate from new Transform()
+                                               $#PROMISE rejections call TSTREAM_CONTROLLER.error()
+TSTREAM.readable                               $#RSTREAM, created on init. Cannot pass ROPTS.
+TSTREAM.writable                               $#WSTREAM, created on init. Cannot pass WOPTS.
+
+TSTREAM_CONTROLLER.terminate()                 $#Call TSTREAM.readable close() and TSTREAM.writable error()
+TSTREAM_CONTROLLER.error([VAL])                $#Call TSTREAM.readable|writable error()
+TOPTS.flush(TSTREAM_CONTROLLER)->PROMISE       $#Called on TSTREAM.writable close()
+
 TOPTS.readableType|writableType                $#Always undefined
 TSTREAM_CONTROLLER                             $#Always TDSTREAM_CONTROLLER
+TDSTREAM_CONTROLLER.enqueue([VAL])             $#Call TSTREAM.readable enqueue()
 
-TOPTS.start(TSTREAM_CONTROLLER)[->PROMISE]     $#Called synchronously on init
-TOPTS.flush(TSTREAM_CONTROLLER)->PROMISE       $#Called on TOPTS.writable close()
-TSTREAM_CONTROLLER.terminate()                 $#Call TOPTS.readable close() and TOPTS.writable error()
-TSTREAM_CONTROLLER.error([VAL])                $#Call TOPTS.readable|writable error()
-
-TDSTREAM_CONTROLLER.enqueue([VAL])             $#Call TOPTS.readable enqueue()
 TOPTS.transform(VAL, TSTREAM_CONTROLLER)       $#Called just before WOPTS.write()
- ->PROMISE                                     $#Allows transforming chunks written to TOPS.writable
+ ->PROMISE                                     $#Allows transforming chunks written to TSTREAM.writable
                                                $#Should call TSTREAM_CONTROLLER.enqueue()
                                                $#Def: identity function
 
