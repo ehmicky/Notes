@@ -1952,15 +1952,37 @@ MESSAGEEVENT.*                                $$#Like others, except ports|sourc
 
 
 new ReadableStream([ROPTS[, RROPTS]])          $#RSTREAM for input
+ROPTS.start(RSTREAM_CONTROLLER)[->PROMISE]     $#Called on new ReadableStream(), synchronously
+                                               $#Exceptions propagate from new ReadableStream()
+                                               $#PROMISE rejections call RSTREAM_CONTROLLER.error()
 
-ROPTS.type                                     $#'bytes'|undefined
+RSTREAM_CONTROLLER.close()                     $#Ends RSTREAM but can still read from queue
+RSTREAM[_READER].cancel([VAL])->PROMISE        $#Ends RSTREAM and discard read queue
+                                               $#VAL can be anything but should generally be undefined|ERROR
+                                               $#PROMISE is resolved|rejected based on ROPTS.cancel() PROMISE2
+RSTREAM_CONTROLLER.error([VAL])                $#Ends RSTREAM and discard read queue
+                                               $#VAL can be anything (including undefined) but should generally be ERROR
+ROPTS.cancel([VAL])->PROMISE                   $#Called on RSTREAM[_READER].cancel()
+RSTREAM_READER.closed                          $#PROMISE resolved on:
+                                               $#  - close() and queue empty
+                                               $#  - cancel()
+                                               $#Rejected on:
+                                               $#  - error()
+                                               $#  - RSTREAM_READER end (releaseLock()) before close()
+
+ROPTS.type                                     $#undefined|'bytes'
 RSTREAM_CONTROLLER                             $#Either:
                                                $#  - RDSTREAM_CONTROLLER (ROPTS.type undefined)
                                                $#  - RBSTREAM_CONTROLLER (ROPTS.type 'bytes')
+RDSTREAM_CONTROLLER.enqueue(VAL)               $#Pushes a value to read queue
+                                               $#Succeeds even if read queue full
+RBSTREAM_CONTROLLER.enqueue(TDBUFFER)          $#Same but with TDBUFFER
 
+new ReadableStreamDefaultReader(RSTREAM)       $#RDSTREAM_READER
+                                               $#Does not fail if RSTREAM closed|canceled|errored
+new ReadableStreamByobReader(RSTREAM)          $#Same for RBSTREAM_READER
+                                               $#Requires ROPTS.type 'bytes'
 RSTREAM_READER                                 $#RDSTREAM_READER|RBSTREAM_READER
-new ReadableStreamDefaultReader(RSTREAM)       $#RDSTREAM_READER|RBSTREAM_READER
-new ReadableStreamByobReader(RSTREAM)          $#Does not fail if RSTREAM closed|canceled|errored
 RSTREAM.getReader([OPTS])->RSTREAM_READER      $#Same as (depending on OPTS.mode):
                                                $#  - undefined (def): new ReadableStreamDefaultReader(RSTREAM)
                                                $#  - 'byob': new ReadableStreamByobReader(RSTREAM)
@@ -1972,33 +1994,14 @@ RSTREAM.locked                                 $#BOOL (read-only):
                                                $#  - RSTREAM[_READER].cancel() (but not close())
 RSTREAM_READER.releaseLock()                   $#Throws if a read() PROMISE is pending
                                                $#Does not fail if RSTREAM closed|canceled|errored
-
-ROPTS.start(RSTREAM_CONTROLLER)[->PROMISE]     $#Called on new ReadableStream(), synchronously
-                                               $#Exceptions propagate from new ReadableStream()
-                                               $#PROMISE rejections call RSTREAM_CONTROLLER.error()
-
-RSTREAM_CONTROLLER.close()                     $#Ends RSTREAM but can still read from queue
-RSTREAM[_READER].cancel([VAL])->PROMISE        $#Ends RSTREAM and discard read queue
-                                               $#VAL can be anything but should generally be undefined|ERROR
-                                               $#PROMISE is resolved|rejected based on ROPTS.cancel() PROMISE2
-RSTREAM_CONTROLLER.error(VAL)                  $#Ends RSTREAM and discard read queue
-                                               $#VAL can be anything (including undefined) but should generally be ERROR
-ROPTS.cancel([VAL])->PROMISE                   $#Called on RSTREAM[_READER].cancel()
-RSTREAM_READER.closed                          $#PROMISE resolved on:
-                                               $#  - RSTREAM_CONTROLLER.close|cancel()
-                                               $#     - close(): not if queue not empty???
-                                               $#Rejected on:
-                                               $#  - RSTREAM_CONTROLLER.error()
-                                               $#  - RSTREAM_READER end (releaseLock()) before RSTREAM_CONTROLLER.close()
-
-RDSTREAM_CONTROLLER.enqueue(VAL)               $#Pushes a value to read queue
-RBSTREAM_CONTROLLER.enqueue(TDBUFFER)          $#Succeeds even if read queue full
 RDSTREAM_READER.read()->PROMISE_OBJ            $#Pops a value from read queue, right away
-RBSTREAM_READER.read(TDBUFFER)->PROMISE_OBJ    $#If RSTREAM:
+                                               $#If RSTREAM:
+                                               $#  - open|closed (queue not empty): { value VAL, done: false }
+                                               $#     - if ROPTS.type 'bytes', value is ARRBUFFER
+                                               $#  - open (queue empty): PROMISE waits for a value to get pushed
+                                               $#  - closed (queue empty) or canceled: { value: undefined, done: true }
                                                $#  - errored: rejection
-                                               $#  - canceled (queue [not] empty) or closed (queue empty): { value: undefined, done: true }
-                                               $#  - not errored|canceled|closed (queue not empty): { value VAL|ARRBUFFER, done: false }
-                                               $#  - not errored|canceled|closed (queue empty): PROMISE waits for a value to get pushed
+RBSTREAM_READER.read(TDBUFFER)->PROMISE_OBJ    $#
 
 RSTREAM_ASYNC_ITERATOR                         $#RSTREAM is an ASYNC_ITERATOR
 RSTREAM.values([OPTS])->ASYNC_ITERATOR         $#Steps:
@@ -2011,6 +2014,7 @@ RSTREAM.values([OPTS])->ASYNC_ITERATOR         $#Steps:
 
 ROPTS.pull(RSTREAM_CONTROLLER)->PROMISE        $#Called repeatedly, if the read queue is not empty nor full
                                                $#If previous PROMISE still pending, debounced.
+
 RSTREAM_CONTROLLER.byobRequest                 $#RBSTREAM_REQUEST
                                                $#null if not inside ROPTS.pull()
                                                $#Can only be used with:
@@ -2068,7 +2072,7 @@ WSTREAM[_WRITER].close()->PROMISE              $#Ends WSTREAM, not allowing furt
 WSTREAM[_WRITER].abort([VAL])->PROMISE         $#Ends WSTREAM, not allowing further write()
                                                $#Discard pending writes
 WSTREAM_CONTROLLER.signal                      $#ABORT_SIGNAL: call WSTREAM.abort() on cancel
-WSTREAM_CONTROLLER.error(VAL)                  $#Ends WSTREAM, not allowing further write()
+WSTREAM_CONTROLLER.error([VAL])                $#Ends WSTREAM, not allowing further write()
                                                $#Discard pending writes
                                                $#Called by rejecting PROMISE in WOPTS.start|write|close()
 WOPTS.abort([VAL])->PROMISE                    $#Called on WSTREAM[_WRITER].abort()
@@ -2101,16 +2105,26 @@ TOPTS.transform(VAL, TSTREAM_CONTROLLER)       $#Called just before WOPTS.write(
                                                $#Should call TSTREAM_CONTROLLER.enqueue()
                                                $#Def: identity function
 
+DEFAULT STRATEGY ==>                           $#According to RROPTS|WWOPTS.type:
+                                               $#  - undefined:
+                                               $#     - def size(): CountQueuingStrategy.size()
+                                               $#     - def highWaterMark: 1
+                                               $#  - 'bytes':
+                                               $#     - size(): ByteLengthQueuingStrategy.size()
+                                               $#        - cannot change it (including through *QueuingStrategy)
+                                               $#     - def highWaterMark: 0
 new ByteLengthQueuingStrategy(OPTS)            $#Can be used instead of RROPTS|WWOPTS
-new CountQueuingStrategy(OPTS)                 $#Def RROPTS|WWOPTS: CountQueuingStrategy with highWaterMark 1
-                                               $#OPTS: highWaterMark NUM
-RROPTS|WWOPTS.highWaterMark                    $#NUM. How much before queue is considered full.
+new CountQueuingStrategy(OPTS)                 $#OPTS: highWaterMark NUM
+QUEUINGSTRATEGY|RROPTS|WWOPTS.highWaterMark    $#NUM. How much before queue is considered full.
 RSTREAM_CONTROLLER|WSTREAM_WRITER|             $#NUM (read-only)
  TSTREAM_CONTROLLER.desiredSize                $#How much left until queue is considered full
                                                $#Can be <= 0, i.e. queue is full
 QUEUINGSTRATEGY.size(VAL)->NUM                 $#Unit used by highWaterMark|desiredSize:
-                                               $#  - ByteLengthQueuingStrategy: TDBUFFER byte length
-                                               $#  - CountQueuingStrategy: always 1, i.e. number of chunks
+                                               $#  - ByteLengthQueuingStrategy: TDBUFFER.byteLength
+                                               $#     - i.e. number of bytes
+                                               $#     - only works if TDBUFFERs are enqueued
+                                               $#  - CountQueuingStrategy: always 1
+                                               $#     - i.e. number of chunks
 RROPTS|WWOPTS.size(VAL)->NUM                   $#Custom unit for highWaterMark|desiredSize
 
 new TextEncoderStream()                        $#Like TextEncoder but using RSTREAM|WSTREAM
