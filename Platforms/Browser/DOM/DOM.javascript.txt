@@ -1967,14 +1967,15 @@ new ReadableStreamDefaultReader(RSTREAM)
 new ReadableStreamByobReader(RSTREAM)          $#RDSTREAM_READER|RBSTREAM_READER
 RSTREAM.locked                                 $#BOOL (read-only)
                                                $#True when a RSTREAM_READER exists and is still open
+                                               $#Only one RSTEAM_READER at a time can lock a given RSTREAM
 RSTREAM_READER.releaseLock()                   $#Ends RSTREAM_READER
                                                $#Fails if a read() PROMISE is pending
 
 ROPTS.start(RSTREAM_CONTROLLER)[->PROMISE]     $#Called on init
 
 RSTREAM_CONTROLLER.close()                     $#Ends RSTREAM but can still read from queue
-RSTREAM[_READER].cancel([VAL])->PROMISE        $#Ends RSTREAM and discard queue
-RSTREAM_CONTROLLER.error(VAL)                  $#Ends RSTREAM and discard queue
+RSTREAM[_READER].cancel([VAL])->PROMISE        $#Ends RSTREAM and discard read queue
+RSTREAM_CONTROLLER.error(VAL)                  $#Ends RSTREAM and discard read queue
                                                $#Called by rejecting PROMISE in WOPTS.start|pull()
 ROPTS.cancel([VAL])->PROMISE                   $#Called on RSTREAM[_READER].cancel()
 RSTREAM_READER.closed                          $#PROMISE resolved on either:
@@ -1990,28 +1991,52 @@ RBSTREAM_READER.read(TDBUFFER)->PROMISE_OBJ    $#OBJ:
                                                $#  - done BOOL: true if RSTREAM ended
                                                $#Rejected on error
 
-RSTREAM_ASYNC_ITERATOR                         $#RSTREAM is an ASYNC_ITERATOR, like iterating over read() until done true
-RSTREAM.values([OPTS])->ASYNC_ITERATOR         $#OPTS:
-                                               $#  - preventCancel BOOL (def: false)
-ROPTS.pull(RSTREAM_CONTROLLER)->PROMISE        $#Called repeatedly
+RSTREAM_ASYNC_ITERATOR                         $#RSTREAM is an ASYNC_ITERATOR
+RSTREAM.values([OPTS])->ASYNC_ITERATOR         $#Steps:
+                                               $#  - RSTREAM.getReader({ mode: undefined })
+                                               $#  - RSTREAM_READER.read() is repeated until done true
+                                               $#  - RSTREAM.close()
+                                               $#RSTREAM.cancel() is called:
+                                               $#  - on ASYNC_ITERATOR throw|return() (exception or early break|return)
+                                               $#  - unless OPTS.preventCancel true (def: false)
+
+ROPTS.pull(RSTREAM_CONTROLLER)->PROMISE        $#Called repeatedly, if the read queue is not empty
                                                $#If previous PROMISE still pending, debounced.
+RSTREAM_CONTROLLER.byobRequest                 $#RBSTREAM_REQUEST
+                                               $#null if not inside ROPTS.pull()
+                                               $#Can only be used with:
+                                               $#  - RBSTREAM
+                                               $#  - RDSTREAM only if ROPTS.autoAllocateChunkSize NUM defined
+                                               $#     - this allocates a TDBUFFER of NUM bytes
+RBSTREAM_REQUEST.view                          $#TDBUFFER currently passed to RBSTREAM_READER.read(TDBUFFER)
+RBSTREAM_REQUEST.respond(NUM)                  $#Like RBSTREAM_CONTROLLER.enqueue() except RBSTREAM_REQUEST.view can directly written to
+                                               $#NUM is number of bytes written to RBSTREAM_REQUEST.view
+RBSTREAM_REQUEST.respondWithNewView(TDBUFFER2) $#Same but using a new TDBUFFER2
 
-RSTREAM.pipeThrough(OBJ[, OPTS])->RSTREAM2     $#OBJ:
-                                               $#  - readable RSTREAM2
-                                               $#  - writable WSTREAM
+RSTREAM.pipeTo(WSTREAM[, OPTS])->PROMISE       $#Pipe RSTREAM to WSTREAM:
+                                               $#  - iterates over RSTREAM_ASYNC_ITERATOR
+                                               $#     - including creating underlyng RSTREAM_READER
+                                               $#  - pass each chunk to WSTREAM_WRITER.write() (from WSTREAM.getWriter())
+                                               $#PROMISE resolved|rejected based on iteration end.
+                                               $#Terminations:
+                                               $#  - RSTREAM.close() -> WSTREAM.close(), unless OPTS.preventClose true (def: false)
+                                               $#  - RSTREAM.error() -> WSTREAM.abort(), unless OPTS.preventAbort true (def: false)
+                                               $#  - WSTREAM.error() -> RSTREAM.cancel(), unless OPTS.preventCancel true (def: false)
                                                $#OPTS:
-                                               $#  - preventAbort BOOL (def: false)
-                                               $#  - preventCancel BOOL (def: false)
-                                               $#  - preventClose BOOL (def: false)
-                                               $#  - signal ABORT_SIGNAL
-RSTREAM.pipeTo(WSTREAM[, OPTS])->PROMISE       $#
-                                               $#OPTS: preventAbort|preventCancel|preventClose|signal (see pipeThrough())
-RSTREAM.tee()->[RSTREAM2, RSTREAM3]            $#
-
-RBSTREAM_CONTROLLER.byobRequest                $#RBSTREAM_REQUEST
-RBSTREAM_REQUEST.view                          $#TDBUFFER
-RBSTREAM_REQUEST.respond(NUM)                  $#
-RBSTREAM_REQUEST.respondWithNewView(TDBUFFER2) $#
+                                               $#  - signal ABORT_SIGNAL: RSTREAM.cancel() on abort
+RSTREAM.pipeThrough(OBJ[, OPTS])->RSTREAM2     $#Like RSTREAM.pipeTo() but for input/output:
+                                               $#  - OBJ is: writable WSTREAM, readable RSTREAM2
+                                               $#     - can be a TSTREAM
+                                               $#  - RSTREAM is still piped to WSTREAM
+                                               $#  - WSTREAM is piped to OBJ.readable RSTREAM2
+                                               $#     - on each WOPTS.write()
+                                               $#     - pass each chunk to RSTREAM2_CONTROLLER.enqueue()
+                                               $#  - RSTREAM2 is returned
+RSTREAM.tee()->[RSTREAM2, RSTREAM3]            $#Creates RSTREAM2|3 and pipe RSTREAM to them.
+                                               $#  - iterates over RSTREAM_ASYNC_ITERATOR
+                                               $#     - including creating underlyng RSTREAM_READER
+                                               $#  - pass each chunk to each RSTREAM_CONTROLLER.enqueue()
+                                               $#Chunks are referenced for RDSTREAM, copied for RBSTREAM
 
 new WritableStream([WOPTS[, WWOPTS]])          $#WSTREAM for output
 
@@ -2023,6 +2048,7 @@ WSTREAM_WRITER                                 $#Always WDSTREAM_WRITER
 new WritableStreamDefaultWriter(WSTREAM)       $#WDSTREAM_WRITER
 WSTREAM.locked                                 $#BOOL (read-only)
                                                $#True when a WSTREAM_WRITER exists and is still open
+                                               $#Only one WSTEAM_WRITER at a time can lock a given WSTREAM
 WSTREAM_WRITER.releaseLock()                   $#Ends WSTREAM_WRITER
                                                $#Fails if a write() PROMISE is pending
 
@@ -2056,14 +2082,16 @@ TOPTS.writable                                 $#WSTREAM
 TOPTS.readableType|writableType                $#Always undefined
 TSTREAM_CONTROLLER                             $#Always TDSTREAM_CONTROLLER
 
-TOPTS.start(TSTREAM_CONTROLLER)[->PROMISE]     $#
-TSTREAM_CONTROLLER.terminate()                 $#
-TSTREAM_CONTROLLER.error([VAL])                $#
+TOPTS.start(TSTREAM_CONTROLLER)[->PROMISE]     $#Called on init
+TOPTS.flush(TSTREAM_CONTROLLER)->PROMISE       $#Called on TOPTS.writable close()
+TSTREAM_CONTROLLER.terminate()                 $#Call TOPTS.readable close() and TOPTS.writable error()
+TSTREAM_CONTROLLER.error([VAL])                $#Call TOPTS.readable|writable error()
 
-TDSTREAM_CONTROLLER.enqueue([VAL])             $#
-TOPTS.transform(VAL, TSTREAM_CONTROLLER)
- ->PROMISE                                     $#
-TOPTS.flush(TSTREAM_CONTROLLER)->PROMISE       $#
+TDSTREAM_CONTROLLER.enqueue([VAL])             $#Call TOPTS.readable enqueue()
+TOPTS.transform(VAL, TSTREAM_CONTROLLER)       $#Called just before WOPTS.write()
+ ->PROMISE                                     $#Allows transforming chunks written to TOPS.writable
+                                               $#Should call TSTREAM_CONTROLLER.enqueue()
+                                               $#Def: identity function
 
 new ByteLengthQueuingStrategy(OPTS)            $#Can be used instead of RROPTS|WWOPTS
 new CountQueuingStrategy(OPTS)                 $#Def RROPTS|WWOPTS: CountQueuingStrategy with highWaterMark 1
@@ -2073,12 +2101,11 @@ RROPTS|WWOPTS.highWaterMark                    $#NUM. How much before queue is c
                                                $#  - ROPTS.pull() not called
 RSTREAM_CONTROLLER|WSTREAM_WRITER|             $#NUM (read-only)
  TSTREAM_CONTROLLER.desiredSize                $#How much left until queue is considered full
+                                               $#Can be <= 0, i.e. queue is full
 QUEUINGSTRATEGY.size(VAL)->NUM                 $#Unit used by highWaterMark|desiredSize:
                                                $#  - ByteLengthQueuingStrategy: VAL byte length
                                                $#  - CountQueuingStrategy: always 1, i.e. number of VALs
 RROPTS|WWOPTS.size(VAL)->NUM                   $#Custom unit for highWaterMark|desiredSize
-
-ROPTS.autoAllocateChunkSize                    $#NUM (only with ROPTS.type 'bytes')
 
 new TextEncoderStream()                        $#Like TextEncoder but using RSTREAM|WSTREAM
 new TextDecoderStream(['ENCODING'[, OPTS]])    $#Like TextDecoder but using RSTREAM|WSTREAM
