@@ -959,7 +959,6 @@ do { ... } while ( TEST )
 
 for ( [QUAL] VAR in OBJ ) { ... }               #Iterate over own+shared enumerable keys.
                                                 #OBJ can be ITERATOR.
-for ( [QUAL] VAR of ITERABLE ) {...}          -|#Iterates with VAR = NEXT
 
 break [LABEL]                                   #Stop current for|while|switch iteration or (only with LABEL)
                                                 #if_else|anonymous block
@@ -1509,7 +1508,6 @@ Array.of(VAL...)                              -|#Same as new Array(VAL...) excep
                                               -|#only VAL is NUM
 [ [VAL...] ]                                    #Literal form.
                                                 #Can use trailing commas
-                                              -|#VAL can be ...ITERABLE
 
 ARR[NUM]                                        #
 ARR?.[NUM]                             14.0.0*-|#Like ARR == null ? undefined : ARR[NUM]
@@ -1702,39 +1700,66 @@ Atomics.isLockFree(S_ARRBUFFER, NUM)->BOOL     -#True if underlying hardware can
 
 
 ITERATOR                                      -|#OBJ with:
-                                              -|#  - next([VAL])->{ done BOOL, value NEXT }
-                                              -|#     - NEXT is next value
-                                              -|#     - iteration stops when BOOL true, then should always return {done true}
-                                              -|#     - consumers usually call NEXT = next() until BOOL true
-                                              -|#  (optional)
-                                              -|#  - return(FINAL_NEXT)->{ done true, value FINAL_NEXT }
-                                              -|#     - consumer can use this to stop iteration, e.g. for (... of ...)
-                                              -|#       break|throw
-                                              -|#  - throw(ERROR):
-                                              -|#     - should throw ERROR, from where current iteration is
-                                              -|#     - consumer can use this to notify of iteration error
+                                              -|#  - next([ARG]):
+                                              -|#     - iterates over next value -> { done: false, value: NEXT }
+                                              -|#     - if iteration finished -> { done: true, value: undefined }
+                                              -|#  - return([ARG])->{ done: true, value: RETURN }
+                                              -|#     - finish iteration successfully
+                                              -|#     - RETURN is the optional return value of the whole iteration
+                                              -|#        - it is not the iteration's last value
+                                              -|#     - if iteration finished, noop and RETURN is ignored
+                                              -|#     - optional
+                                              -|#  - throw([ARG]):
+                                              -|#     - finish iteration due to error
+                                              -|#     - if iteration finished, fails
+                                              -|#     - ARG is usually ERROR
+                                              -|#     - optional
 ITERABLE                                      -|#OBJ where OBJ[Symbol.iterator]()->ITERATOR
-                                              -|#STR|[TYPED_]ARR|MAP|SET are ITERABLE.
-ITERABLETOR                                   -|#ITERABLE which is also an ITERATOR.
+                                              -|#Each call returns a new ITERATOR
+                                              -|#STR|[TYPED_]ARR|MAP|SET are ITERABLE (only next() is defined)
+ITERABLETOR                                   -|#ITERATOR where OBJ[Symbol.iterator]()->ITERABLETOR (itself)
+                                              -|#I.e. used as an ITERABLE, but always with the same ITERATOR
 
-function* [FUNC](){...}                       -|#Generator.
-[class ...] { * FUNC(...) {...} ... }         -|#Returns a FUNC()->ITERABLETOR:
-                                              -|#  - next([VAL]):
-                                              -|#     - VAL is current "yield" returns value
-                                              -|#        - note: for (... of ...) only calls next(), so yield returns undefined
-                                              -|#     - stops at next "yield NEXT" or "return FINAL_NEXT"
-                                              -|#  - return(FINAL_NEXT)->{ done true, value FINAL_NEXT }
-                                              -|#     - meant for cleanup code
-                                              -|#  - throw(ERROR): throw ERROR from context of last yield
-                                              -|#Can also use yield* ITERABLE:
-                                              -|#  - yield NEXT several times
-                                              -|#  - return value is final yield's return value
-                                              -|#ITERABLETOR[Symbol.iterable]() returns ITERABLETOR itself, i.e. must call
-                                              -|#FUNC() again to create new ITERATOR
-                                              -|#  - as oppose to other ITERABLEs (ARR, MAP, etc.) which create new ITERATOR each time
+function* [FUNC](){...}                       -|#Generator. FUNC returns an ITERABLETOR:
+[class ...] { * FUNC(...) {...} ... }         -|#  - next([VAL]):
+                                              -|#     - continue execution of function until any of:
+                                              -|#        - yield NEXT -> { done: false, value: NEXT }
+                                              -|#        - return RETURN -> { done: true, value: RETURN }
+                                              -|#        - execution finished -> { done: true, value: undefined }
+                                              -|#        - throw VAL -> propagate exception
+                                              -|#     - VAL is last "yield" return value
+                                              -|#     - initially stopped at the beginning
+                                              -|#        - i.e. VAL is noop since no "yield" yet
+                                              -|#  - return([RETURN])
+                                              -|#     - "return RETURN" from current execution position, i.e. finish execution
+                                              -|#     - if execution finished, noop and RETURN ignored
+                                              -|#     - returns { done: true, value: RETURN }
+                                              -|#  - throw(VAL):
+                                              -|#     - "throw VAL" from current execution position
+                                              -|#     - if execution finished, throw VAL from caller position
+yield* ITERABLE                               -|#Like: for (const NEXT of ITERABLE) { yield NEXT }
+                                              -|#Return value is ITERABLE's RETURN
 new GeneratorFunction(...)                    -|#Like new Function(...) but for function*(){}
                                               -|#GeneratorFunction not available globally, but with:
                                               -|#  Object.getPrototypeOf(function*(){}).constructor
+
+ASYNC_ITERATOR                                -|#ITERATOR whose next|return|throw(...)->PROMISE(VAL) (instead of returning|throwing VAL)
+ASYNC_ITERABLE                                -|#OBJ where OBJ[Symbol.asyncIterator]()->ASYNC_ITERATOR
+                                              -|#PROMISE_ARR are ASYNC_ITERABLE
+                                              -|#Cannot be used as an ITERABLE, only as an ASYNC_ITERABLE (i.e. for await)
+
+async function * [FUNC](...) {...}            -|#Generator that:
+[class ...] { async * FUNC(...) {...} ... }   -|#  - is an ASYNC_ITERATOR|ITERABLE
+new AsyncGeneratorFunction(...)               -|#  - can use yield* ASYNC_ITERABLE
+
+for ( [QUAL] VAR of ITERABLE ) {...}          -|#Iterates with VAR = ITERATOR.next().value until done true
+                                              -|#break|return|throw calls ITERATOR.return()
+                                              -|#Does not call ITERATOR.throw()
+for await (QUAL VAR of ASYNC_ITERABLE) {...}  -|#Same but using await ITERATOR.next().value
+
+[...ITERABLE]                                 -|#In ARR literal form
+                                              -|#Iterates with ITERATOR.next().value until done true, then return aggregated values as ARR
+                                              -|#Does not call ITERATOR.return|throw()
 
 
                                              /=+===============================+=\
@@ -1967,17 +1992,6 @@ await PROMISABLE|VAL                          -|#Inside async FUNC:
                                               -|#     - VAL is like Promise.resolve(VAL)
                                               -|#  - then returns|throws PROMISABLE value
                                        14.8.0*-|#Can be in top-level scope too
-
-ASYNC_ITERATOR                                -|#ITERATOR whose next|return|throw(...)->PROMISE(VAL) (instead of returning|throwing VAL)
-ASYNC_ITERABLE                                -|#OBJ where OBJ[Symbol.asyncIterator]()->ASYNC_ITERATOR
-                                              -|#PROMISE_ARR are ASYNC_ITERABLE
-                                              -|#Cannot be used as an ITERABLE, only as an ASYNC_ITERABLE (i.e. for await)
-for await (QUAL VAR of ASYNC_ITERABL) {...}   -|#Iterates with VAR = NEXT_PROMISABLE_VAL, i.e. async loop
-                                              -|#Must be within an async function
-
-async function * [FUNC](...) {...}            -|#Generator that:
-[class ...] { async * FUNC(...) {...} ... }   -|#  - is an ASYNC_ITERATOR|ITERABLE
-new AsyncGeneratorFunction(...)               -|#  - can use yield* ASYNC_ITERABLE
 
 
                                              /=+===============================+=\
