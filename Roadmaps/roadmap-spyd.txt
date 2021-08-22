@@ -63,34 +63,23 @@ Validation:
 
 --------------------
 
-reporter.debugStats:
-  - figure out exactly which stat can be undefined, and when
-     - handle every case it might be
-     - check codebase (not only reporters) for logic using stats, to ensure it checks for undefined
-  - fix linting
+Problem with programmatic result:
+  - in previews, `reporters` does not include it, i.e. logic fails
+  - maybe, the programmatic reporter should be added later??? so it is used by `reportResult()` but not by `reportPreview()`
 
-getFooter() should be called earlier and assigned to result.footer
-  - before:
-     - title logic
-     - not called once per reporter
-     - as early as possible
-  - also move addSharedSystem() to reportStart()
+result.history shows NaN in column headers
+
+Figure out exactly which stat can be undefined, and when
+  - document it in comments
+  - handle every case where it might be
+  - check codebase (not only reporters) for logic using stats, to ensure it checks for undefined
+
+Fix linting
 
 prettifyStats()
   - add medianMinMax, combining medianMin|Max with STATS_SEPARATOR when defined
   - extract it outside of reporters
   - make it format specific, e.g. markdown does not need padding|colors
-
-Should timestamp printing be local or not?
-  - not local might be good for sharing, but local is more intuitive if not shared
-  - currently different between footer and timeseries reporters
-  - also, their format should be more similar
-     - add `result.day|time`???
-
-showPrecision does not work with result.history???
-  - because those are not normalized with `omit` logic
-  - currently, they use the showPrecision from the target combinations
-     - however, this means non-measured yet combinations always use showPrecision: false
 
 Box plot reporter:
   - name "box"
@@ -103,14 +92,25 @@ Box plot reporter:
 
 --------------------
 
-CONF.select:
+CONF.select|limit:
   - use "and" keyword instead of guessing dimensions
      - reasons:
         - knowing dimensions requires loading all results
         - making union|intersection implicit is confusing for users
      - "not" still applies to whole STR (i.e. current behavior)
      - do not allow "and": at beginning|end, after "not" or after another "and"
-  - "not|and" should be parsed case-sensitively but validated case-insensitively
+  - use partial substring match (STR.includes())
+     - add comments:
+        - use cases:
+           - allow selecting a group of related tasks
+           - faster to type on the CLI
+        - simpler and as useful as globbing or regexp
+        - guessing if a selector is meant to target a default id might fail when using a substring, but this is not a problem because:
+           - only impacts variations and systems (only if multiple system dimensions) since the other default ids are persisted
+           - most substrings matching "primary|main_*" would match all of the other ids of the dimension, making the selectors not useful for users, i.e. unlikely
+  - case insensitive
+     - including when applying default ids
+     - including "not|and"
 
 Dimensions:
   - remove result.dimensions OBJ_ARR
@@ -217,6 +217,8 @@ Variations:
      - variationDimension is property VARR (dot-delimited)
      - getCombinationName() should remove "variation." prefix from DIMENSION
   - variation id is 'ID', not 'PROP.ID'
+  - configuration normalization|validation should apply to each VAL
+     - including yargs flags parsing
   - when sorting result.combinations per dimension, variations sorted:
      - at end
      - input, then concurrency, then runnerConfig
@@ -453,61 +455,6 @@ Steps:
         - we do not skip steps based on some stepId prefix (e.g. _):
            - CONF.select already provide the feature
            - it would be hard to allow users to explicitly report those steps both exclusively ("only _stepIds") and inclusively ("also _stepIds")
-  - step groups:
-     - behave like steps except:
-        - specified with CONF.stepsConfig.{stepId}.group 'stepId'_ARR
-           - ignored if empty ARR
-           - reasons for the syntax:
-              - allow non-consecutive steps
-              - not verbose (unlike using stepId, e.g. using stepId common prefixes)
-        - stats are based on aggregation of other steps stats
-           - use other steps stats, not `measures` because the number of `measures` might differ between steps when CONF.repeat true
-              - add comment that could in principle use `measures` when CONF.repeat false, but does not because:
-                 - it would make stats differ between CONF.repeat true|false
-                    - this is confusing and might lead some users to use CONF.repeat false
-                    - using CONF.repeat true|false should only change precision, not accuracy
-                 - it would give better stats for step groups, discouraging CONF.repeat true
-                 - it is slower
-           - how:
-              - samples|minLoopDuration: any
-              - mean|quantiles|median|min|max|stdev|loops|times: add
-              - repeat: Math.round(loops / times)
-              - histogram:
-                 - among all histograms first buckets, find one with smallest frequency:
-                    - create a bucket with:
-                       - frequency: smallestFrequency
-                       - low|high: sum of all histograms first bucket's low|high
-                    - for each first bucket:
-                       - if smallestFrequency === firstBucketFrequency:
-                          - discard bucket, i.e. next one becomes first bucket for that histogram
-                          - also if >= (due to possible rounding error)
-                       - otherwise, update:
-                          - frequency: subtract smallestFrequency to it
-                          - low|high: kept as is
-                    - repeat
-                 - re-distribute buckets:
-                    - so buckets width is uniform, and so there are 1000 buckets
-                    - do it by summing and interpolating
-           - add comment that this assumes steps measures are positively corrolated
-              - for: quantiles|median|min|max, stdev, histogram
-              - if not, result is a bit inaccurate, but remains precise
-     - persisted in history
-        - as opposed to being dynamically computed during reporting
-        - reason: allows not losing history when:
-           - step group change which steps it includes
-           - or their names
-           - or whether it is a step group or a normal step
-     - including|excluding step groups does not have impact on whether its children are included|excluded, and vice-versa
-        - reason: users might want to see children only when need details
-           - and vice-versa
-     - can target another step group
-        - error if cycle
-     - special stepId "all":
-        - only allowed in stepsConfig.{stepId}.group ARR
-           - when present, do not allow other values in ARR
-        - select all available steps
-           - including ones not measured|included
-        - forbid "all" as a stepId name, either normal step or step group
   - `maxLoops` should be divided by number of steps, for the current combination, since all steps measures are in-memory at once
   - add comments about:
      - complex step order:
@@ -535,6 +482,62 @@ Steps:
         - if user wants to measure them, should run them more than once, i.e. use a normal step
         - most users would use it for init|cleanup, i.e. do not want reporting
         - too many differences: only runs once, sets initial context, always at beginning|end, error handling, CONF.repeat error handling, etc.
+
+Step groups:
+  - behave like steps except:
+     - specified with CONF.stepsConfig.{stepId}.group 'stepId'_ARR
+        - ignored if empty ARR
+        - reasons for the syntax:
+           - allow non-consecutive steps
+           - not verbose (unlike using stepId, e.g. using stepId common prefixes)
+     - stats are based on aggregation of other steps stats
+        - use other steps stats, not `measures` because the number of `measures` might differ between steps when CONF.repeat true
+           - add comment that could in principle use `measures` when CONF.repeat false, but does not because:
+              - it would make stats differ between CONF.repeat true|false
+                 - this is confusing and might lead some users to use CONF.repeat false
+                 - using CONF.repeat true|false should only change precision, not accuracy
+              - it would give better stats for step groups, discouraging CONF.repeat true
+              - it is slower
+        - how:
+           - samples|minLoopDuration: any
+           - mean|quantiles|median|min|max|stdev|loops|times: add
+           - repeat: Math.round(loops / times)
+           - histogram:
+              - among all histograms first buckets, find one with smallest frequency:
+                 - create a bucket with:
+                    - frequency: smallestFrequency
+                    - low|high: sum of all histograms first bucket's low|high
+                 - for each first bucket:
+                    - if smallestFrequency === firstBucketFrequency:
+                       - discard bucket, i.e. next one becomes first bucket for that histogram
+                       - also if >= (due to possible rounding error)
+                    - otherwise, update:
+                       - frequency: subtract smallestFrequency to it
+                       - low|high: kept as is
+                 - repeat
+              - re-distribute buckets:
+                 - so buckets width is uniform, and so there are 1000 buckets
+                 - do it by summing and interpolating
+        - add comment that this assumes steps measures are positively corrolated
+           - for: quantiles|median|min|max, stdev, histogram
+           - if not, result is a bit inaccurate, but remains precise
+  - persisted in history
+     - as opposed to being dynamically computed during reporting
+     - reason: allows not losing history when:
+        - step group change which steps it includes
+        - or their names
+        - or whether it is a step group or a normal step
+  - including|excluding step groups does not have impact on whether its children are included|excluded, and vice-versa
+     - reason: users might want to see children only when need details
+        - and vice-versa
+  - can target another step group
+     - error if cycle
+  - special stepId "all":
+     - only allowed in stepsConfig.{stepId}.group ARR
+        - when present, do not allow other values in ARR
+     - select all available steps
+        - including ones not measured|included
+     - forbid "all" as a stepId name, either normal step or step group
 
 Automatic repeat:
   - `repeat` vs `scale`:
@@ -1225,10 +1228,20 @@ Ideas for articles about benchmarking:
 
 ------------------------
 
-System:
-  - default dimension "system" and default id "main_{dimension}" instead???
-     - instead of current: "main" and "system_{dimension}"
+Should timestamp printing be local or not?
+  - not local might be good for sharing, but local is more intuitive if not shared
+  - currently different between footer and timeseries reporters
+  - also, their format should be more similar
+     - add `result.day|time`???
 
-Globbing with CONF.select???
-  - use case: benchmark with many tasks, grouped by themes
-  - problem: harder to guess default ids???
+showPrecision does not work with result.history???
+  - because those are not normalized with whole logic
+     - no `result.footer` (and keep `result.id|timestamp|systems`)
+        - `reporter.footer` applied to all output, taking the target result
+     - no `result.history`
+     - no `stats.diff[Precise]`
+     - no titles
+     - no show*
+     - no `result.screenWidth|Height`
+  - currently, they use the showPrecision from the target combinations
+     - however, this means non-measured yet combinations always use showPrecision: false
