@@ -64,20 +64,31 @@ Validation:
 --------------------
 
 reporter.debugStats:
-  - problems:
-     - every stats might be undefined
-     - initial preview report (empty table) creates lots of logic
-     - median[Low|High] might be undefined based on showPrecision, but also medianLow|High might be undefined if not enough samples
-        - including in history
-     - stats[name] might be either `undefined` or { pretty: '' } depending on whether other combinations have a value
-  - possible solutions:
-     - consider removing the initial preview, showing only the progress bar, or showing only "Starting..."
-     - figure out exactly which property can be undefined, and when
+  - figure out exactly which stat can be undefined, and when
+     - handle every case it might be
+     - CONF.median[Min|Max]:
+        - when omitting due to CONF.showPrecision, should only omit if the other property is not undefined
+           - i.e. median might be shown if the combination does not have enough measures due to either:
+              - CONF.precision 0
+              - start of run
+        - reporters should assume:
+           - either|both properties might be undefined
+           - might be different between combinations of the same result
+           - reasons:
+              - with CONF.precision 0, result ends and combinations might or might not have enough measures for medianMin|Max
+     - check codebase (not only reporters) for logic using stats, to ensure it checks for undefined
+        - diffPrecise false if either result does not have the required stats as defined
   - fix linting
+
+Move NON_TRIMMING_SPACE to src/report/utils/
 
 getFooter() should be called earlier and assigned to result.footer
   - instead of being called once per reporter
   - also move addSharedSystem() to reportStart()
+
+prettifyStats()
+  - extract it outside of reporters
+  - make it format specific, e.g. markdown does not need padding|colors
 
 Add column headers to time series reporter in `debug` with date|time
 
@@ -85,6 +96,9 @@ Box plot reporter:
   - name "box"
   - show: min, p25, median (or medianMin|medianMax), p75, max
   - abscissa min|max is same for all
+  - each vertical bar should have a different color, shown in abscissa numbers too, to help distinguish
+     - probably: median[Min|Max] cyan, p25|p75 gray, min|max white
+  - medianMin|Max should be separated by dash, not space
   - also shown in `dev` reporter
 
 --------------------
@@ -153,10 +167,9 @@ CONF.system "ID" -> CONF.system[.{systemDimension}] "ID"
   - DIMENSION is "system[.{systemDimension}]"
      - i.e. can use several dimensions
      - getCombinationName() should use only systemDimension
-        - if systemDimension is default "main", use "system" instead
   - system id is "ID", without systemDimension
-  - default systemDimension: "main"
-  - default "ID": "system_{systemDimension}"
+  - default systemDimension: "machine"
+  - default "ID": "primary_{systemDimension}"
   - when sorting result.combinations per dimension, system sorted:
      - after runner, before variation
      - by CONF.system OBJ order
@@ -199,13 +212,11 @@ Variations:
      - CONF.inputs.{inputId}
      - any CONF.runnerConfig.{runnerId}.PROP
         - cartesian product only to combinations with that runner
-     - add comment why not CONF.duration:
-        - no reasons why users would want to measure with different CONF.duration
-        - complicates implementation
   - DIMENSION is "variation.{variationDimension}"
      - i.e. each variable property is a dimension
      - variationDimension is property VARR (dot-delimited)
      - getCombinationName() should remove "variation." prefix from DIMENSION
+  - variation id is 'ID', not 'PROP.ID'
   - when sorting result.combinations per dimension, variations sorted:
      - at end
      - input, then concurrency, then runnerConfig
@@ -216,7 +227,6 @@ Variations:
   - add combination.config CONF_OBJ
      - not persisted in history nor used in report
      - contains config, with combination-specific variations
-  - variation id is 'ID', not 'PROP.ID'
   - if several variations have different runner.versions.VAR VAL, they are concatenated as a result.systems[*].versions.VAR STR (commaSpace-separated list)
      - does not mention which variation used which ones. It should be obvious enough from ids or titles
   - when using several runners and runnerConfig variations, the other runners will not have those variations
@@ -246,21 +256,23 @@ Default ids:
      - per dimension:
         - task|runner: never missing
         - step: "main"
-        - system: "system_*"
-        - variation: "PROP_main"
+           - assigned on result creation, i.e. saved
+        - system: "primary_DIMENSION"
+           - assigned on result creation, i.e. saved, except if multiple system dimensions
+        - variation: "main_PROP"
+           - not assigned on result creation, i.e. not saved
            - PROP is only last property
-           - exception: PROP is last two properties (_-separated) when either:
-              - two variable properties have same last property
-              - PROP is "system" (e.g. in runnerConfig), to avoid conflict with system default ids
+           - exception: PROP is last two properties (_-separated) when two variable properties have same last property
   - CONF.select:
      - when retrieving combination ids:
-        - if CONF.select contains default ids (e.g. "main", "*_main")
+        - if CONF.select contains default ids
+           - except for persisted default ids: "main" and "primary_machine"
         - then add those default to the combination ids, if the combination is missing the relevant dimensions
      - reason: selection is applied before results are loaded, i.e. before all dimensions are known and default ids are applied
   - validate that new result ids do not match possible default ids (unless same dimension):
      - "main": step
-     - "*_main": variations
-     - "system_*": system
+     - "main_*": variations
+     - "primary_*": system
   - add comments:
      - purpose is when a result is missing a dimension that other results have, that result should still:
         - be comparable in the history
