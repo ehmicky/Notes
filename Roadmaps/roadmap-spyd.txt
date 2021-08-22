@@ -63,31 +63,6 @@ Validation:
 
 --------------------
 
-Problem with programmatic result:
-  - in previews, `reporters` does not include it, i.e. logic fails
-  - maybe, the programmatic reporter should be added later??? so it is used by `reportResult()` but not by `reportPreview()`
-
-result.history shows NaN in column headers
-
-id|timestamp:
-  - timezone:
-     - local if `reporter.tty: true` (output stdout + interactive), UTC otherwise
-        - reason: interactive terminal expects single viewer, but other outputs might be shared and viewed by several people
-     - for both result.* and footer
-  - result.id|timestamp passed to reporter
-     - to result.history[*] (including last)
-        - reason: time series reporters
-     - but not to top-level result.*
-        - reason: should rely on footer instead
-  - result.timestamp "YYYY-MM-DD HH:MM:SS"
-     - for both reporters and footer
-     - footer appends " UTC" if UTC (nothing appended if local)
-
-Move normalize/*
-  - normalizeMeasuredResult() -> run/
-  - loadResults() -> history/
-  - normalizeReportedResult(), applySince() -> report/
-
 Report flow:
   - reportStart():
      - applySince()
@@ -126,12 +101,19 @@ Report flow:
         - merge each reporter.history
            - append target result to it
 
-median 0:
-  - do not stop combination if median 0
-     - unless `stopped` (CTRL-C) or `dev` command
-     - but even if maxMeasures or CONF.precision 0
-  - remove all "median === 0" checks
-     - including in diff[Precise]
+id|timestamp:
+  - timezone:
+     - local if `reporter.tty: true` (output stdout + interactive), UTC otherwise
+        - reason: interactive terminal expects single viewer, but other outputs might be shared and viewed by several people
+     - for both result.* and footer
+  - result.id|timestamp passed to reporter
+     - to result.history[*] (including last)
+        - reason: time series reporters
+     - but not to top-level result.*
+        - reason: should rely on footer instead
+  - result.timestamp "YYYY-MM-DD HH:MM:SS"
+     - for both reporters and footer
+     - footer appends " UTC" if UTC (nothing appended if local)
 
 Figure out exactly which stat can be undefined, and when
   - document it in comments
@@ -143,6 +125,8 @@ Fix linting
 prettifyStats()
   - extract it outside of reporters
   - make it format specific, e.g. markdown does not need padding|colors
+
+--reporter="" CLI flag works but not -r=""
 
 Box plot reporter:
   - name "box"
@@ -431,8 +415,6 @@ Steps:
      - rename beforeAll|afterAll to before|after
      - add comment that runners should avoid specific case for reserved exported names, since users might use different case convention for stepIds
   - each step is a combination dimension
-  - passed to runner:
-     - as OBJ: maxLoops NUM, steps OBJ_ARR: id 'stepId', scale NUM, repeat NUM
   - implementation:
      - runner:
         - on start, returns steps to parent
@@ -440,20 +422,17 @@ Steps:
         - on measure, gets OBJ:
            - maxLoops NUM
            - steps OBJ_ARR:
-              - id "stepId", scale NUM, repeat NUM
+              - id "stepId", repeat NUM
               - ARR in execution order
         - do {
             const context = { ...beforeContext }
-            const args = { context }
-
-            for (const { id, scale, repeat } of steps) {
-              while (scale--) {
-                startTime()
-                while (repeat--) {
-                  steps[id].apply(context, args)
-                }
-                endTime()
+            for (const { id, repeat } of steps) {
+              const step = steps[id]
+              startTime()
+              while (repeat--) {
+                step.apply(context, args)
               }
+              endTime()
             }
           } while (maxLoops--)
         - ensure:
@@ -462,8 +441,8 @@ Steps:
         - returns `measures` ARR_ARR_NUM
            - ARR in steps execution order
      - parent:
-        - `measureDuration`, `aggregationCountdown` are for whole sample (it is already the case)
-        - `maxLoops` = 100ms / sum(steps.map((step) => step.median * step.repeat * step.scale))
+        - `measureDuration` is for whole sample (it is already the case)
+        - `maxLoops` = 100ms / sum(steps.map((step) => step.median * step.repeat))
         - `combination.steps` OBJ_ARR: id "stepId", ...
            - for all step-wise state: measures, bufferedMeasures, stats, loops, times, repeat, calibrated
            - not for: everything related to minLoopDuration, samples
@@ -475,6 +454,15 @@ Steps:
               - adding steps does not increase `measureDuration`, i.e. decrease preview responsiveness
               - with CONF.select, all steps are still run.
                 It is simpler to explain this by documenting that steps never influence total benchmark duration
+  - error handling:
+     - keep current logic i.e. exceptions are propagated and in:
+        - `before` -> do not call later steps nor `after`
+        - any other steps -> do not call later steps, but call `after`
+           - exceptions in `after` itself are ignored
+        - `after` -> nothing else to call
+     - reasons:
+        - ensures `after` does cleanup, but only if `before` completed
+        - but assumes that exception leaves bad state, i.e. should not run additional steps, and `after` might fail
   - result.steps OBJ_ARR: id 'STR'
      - for all steps, even if not measured
      - ARR is sorted by step execution order
@@ -609,7 +597,21 @@ Automatic repeat:
      - both passed to runner.measure()
      - both are per step (not per task)
      - repeat is inside timestamp, scale outside
-         while (scale) { start = now(); while (repeat) { stepFunc() }; end = now() }
+     - passed to runner:
+        - as OBJ: maxLoops NUM, steps OBJ_ARR: id 'stepId', scale NUM, repeat NUM
+        - do {
+            const context = { ...beforeContext }
+            for (const { id, scale, repeat } of steps) {
+              const step = steps[id]
+              while (scale--) {
+                startTime()
+                while (repeat--) {
+                  step.apply(context, args)
+                }
+                endTime()
+              }
+            }
+          } while (maxLoops--)
      - goal:
         - repeat: removing imprecision when step function is faster than resolution or timestamp computation
         - scale: fast steps should be run more often than slow steps because:
@@ -1293,20 +1295,15 @@ Ideas for articles about benchmarking:
 
 ------------------------
 
-Should timestamp printing be local or not?
-  - not local might be good for sharing, but local is more intuitive if not shared
-  - currently different between footer and timeseries reporters
-  - also, their format should be more similar
-     - add `result.day|time`???
-
-showPrecision does not work with result.history???
-  - because those are not normalized with whole logic
-     - no `result.footer` (and keep `result.id|timestamp|systems`)
-        - `reporter.footer` applied to all output, taking the target result
-     - no `result.history`
-     - no `stats.diff[Precise]`
-     - no titles
-     - no show*
-     - no `result.screenWidth|Height`
-  - currently, they use the showPrecision from the target combinations
-     - however, this means non-measured yet combinations always use showPrecision: false
+Steps:
+  - stats/samples:
+     - measureCost estimation: step-wise or not???
+     - getMaxLoops()???
+        - probably:
+           - compute for each step, using targetSampleDuration divided by steps.length
+           - then find the slowest amount of maxLoops
+              - use it for all steps
+              - use scale 1
+           - use `scale` = Math.round(stepMaxLoops / topMaxLoops), for each step
+           - what if no `scale` (CONF.repeat false)???
+     - sampleMeasures|sampleMedian|sampleLoops: step-wise
