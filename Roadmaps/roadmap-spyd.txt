@@ -69,6 +69,70 @@ Problem with programmatic result:
 
 result.history shows NaN in column headers
 
+id|timestamp:
+  - timezone:
+     - local if `reporter.tty: true` (output stdout + interactive), UTC otherwise
+        - reason: interactive terminal expects single viewer, but other outputs might be shared and viewed by several people
+     - for both result.* and footer
+  - result.id|timestamp passed to reporter
+     - to result.history[*] (including last)
+        - reason: time series reporters
+     - but not to top-level result.*
+        - reason: should rely on footer instead
+  - result.timestamp "YYYY-MM-DD HH:MM:SS"
+     - for both reporters and footer
+     - footer appends " UTC" if UTC (nothing appended if local)
+
+Move normalize/*
+  - normalizeMeasuredResult() -> run/
+  - loadResults() -> history/
+  - normalizeReportedResult(), applySince() -> report/
+
+Report flow:
+  - reportStart():
+     - applySince()
+     - normalizeHistory()
+        - add report-related properties, only history
+        - add historyResult empty ARR
+        - normalizeNonStatsAll()
+           - not changed during run, not reporter-specific
+           - result.screenWidth|Height
+        - normalizeStatsAll()
+           - changed during run, not reporter-specific
+           - stats.diff[Precise]
+           - result.dimensions + result.combinations sorting
+        - normalizeNonStatsEach()
+           - not changed during run, reporter-specific
+           - add titles
+        - normalizeStatsEach()
+           - changed during run, reporter-specific
+           - assigned to reporter.history
+           - apply CONF.show* to stats
+              - fix time series reporter: it can now use history results to know whether median or medianMin|Max should be used
+     - normalizeTargetResult()
+        - non-stats-related, reporter-specific, for target result only
+        - add each reporter.footerParam|String
+        - omit result.id|timestamp
+        - normalizeNonStatsAll()
+        - normalizeNonStatsEach()
+           - assigned to reporter.resultProps
+  - reportCompute():
+     - normalizeComputedReport()
+        - merge historyResult
+        - normalizeStatsAll()
+        - normalizeStatsEach()
+        - apply each reporter.footerParam
+        - merge each reporter.resultProps
+        - merge each reporter.history
+           - append target result to it
+
+median 0:
+  - do not stop combination if median 0
+     - unless `stopped` (CTRL-C) or `dev` command
+     - but even if maxMeasures or CONF.precision 0
+  - remove all "median === 0" checks
+     - including in diff[Precise]
+
 Figure out exactly which stat can be undefined, and when
   - document it in comments
   - handle every case where it might be
@@ -77,7 +141,6 @@ Figure out exactly which stat can be undefined, and when
 Fix linting
 
 prettifyStats()
-  - add medianMinMax, combining medianMin|Max with STATS_SEPARATOR when defined
   - extract it outside of reporters
   - make it format specific, e.g. markdown does not need padding|colors
 
@@ -368,6 +431,8 @@ Steps:
      - rename beforeAll|afterAll to before|after
      - add comment that runners should avoid specific case for reserved exported names, since users might use different case convention for stepIds
   - each step is a combination dimension
+  - passed to runner:
+     - as OBJ: maxLoops NUM, steps OBJ_ARR: id 'stepId', scale NUM, repeat NUM
   - implementation:
      - runner:
         - on start, returns steps to parent
@@ -385,7 +450,7 @@ Steps:
               while (scale--) {
                 startTime()
                 while (repeat--) {
-                  steps[id](args)
+                  steps[id].apply(context, args)
                 }
                 endTime()
               }
