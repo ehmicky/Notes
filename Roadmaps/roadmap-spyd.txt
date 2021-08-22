@@ -68,6 +68,10 @@ reporter.debugStats:
      - pretty() normalizes those to '', which is bad since reporters should not even know about them???
   - fix big file call.js
 
+getFooter() should be called earlier and assigned to result.footer
+  - instead of being called once per reporter
+  - also move addSharedSystem() to reportStart()
+
 Add column headers to time series reporter in `debug` with date|time
 
 Box plot reporter:
@@ -138,37 +142,6 @@ Cross-dimensions duplicate id validation:
         - use _ instead of .
      - not done on the dimension with the most recent result
 
-Default ids:
-  - add default ids on results load
-     - for all possible dimensions with default ids
-        - figure out possible variation dimensions by using dimensions of target result (after merging)
-           - do not also use currently measured runners' possible configuration properties
-              - because this is not available in `show|remove`, which would make CONF.select|limit behave differently between commands
-     - i.e. missing dimension should behave like the dimension with its default id, including in:
-        - CONF.select|limit
-        - diff
-        - reporting (e.g. when mixed with other results not missing the dimension)
-     - per dimension:
-        - task|runner: never missing
-        - step: "main"
-        - variation: "*_main" (see below)
-        - system: "system_*" (see below)
-  - validate that new result ids do not match possible default ids (unless same dimension):
-     - "main": step
-     - "*_main": variations
-     - "system_*": system
-  - add comments about:
-     - problems with alternatives:
-        - alternatives:
-           - different dimensions -> different combinations
-           - missing dimension match any id of that dimension
-           - new dimension matches missing dimension, but not vice-versa (i.e. can add but not remove)
-        - problems:
-           - new dimension have multiple ids, and it is hard to know which ones the user expects to be compared to the previous missing dimension
-           - same problem when removing a dimension, but in the other direction
-           - when making a new result with a missing dimension, but previous results have that dimension, they should be kept in history
-              - this happens for example when running locally but still want to see latest CI results
-
 CONF.system "ID" -> CONF.system[.{systemDimension}] "ID"
   - DIMENSION is "system[.{systemDimension}]"
      - i.e. can use several dimensions
@@ -176,11 +149,10 @@ CONF.system "ID" -> CONF.system[.{systemDimension}] "ID"
         - if systemDimension is default "main", use "system" instead
   - system id is "ID", without systemDimension
   - default systemDimension: "main"
-     - unlike default id, this is persisted
   - default "ID": "system_{systemDimension}"
   - when sorting result.combinations per dimension, system sorted:
      - after runner, before variation
-     - by CONF.system ARR order
+     - by CONF.system OBJ order
   - result.systems[*].dimensions:
      - before merging: OBJ where key is dimension, value is id
      - after merging:
@@ -203,6 +175,12 @@ CONF.system "ID" -> CONF.system[.{systemDimension}] "ID"
         - like other values when grouping
         - but cleaned after grouping
            - i.e. not printed by reporters
+  - add comments:
+     - reasons for allowing multiple system dimensions (e.g. CONF.system.os "linux") instead of a single one (e.g. CONF.system "os_linux")
+        - separating those in reporting looks nicer
+        - easier to configure titles
+        - better dimension-wise sorting in reporting
+        - easier to select (CONF.select|limit)
 
 Variations:
   - some config properties can be optionally variable:
@@ -232,11 +210,6 @@ Variations:
      - not persisted in history nor used in report
      - contains config, with combination-specific variations
   - variation id is 'ID', not 'PROP.ID'
-  - default id is "PROP_main"
-     - PROP is only last property
-     - exception: PROP is last two properties (_-separated) when either:
-        - two variable properties have same last property
-        - PROP is "system" (e.g. in runnerConfig), to avoid conflict with system default ids
   - if several variations have different runner.versions.VAR VAL, they are concatenated as a result.systems[*].versions.VAR STR (commaSpace-separated list)
      - does not mention which variation used which ones. It should be obvious enough from ids or titles
   - when using several runners and runnerConfig variations, the other runners will not have those variations
@@ -244,11 +217,60 @@ Variations:
      - when filtering unnecessary dimensions, should exclude ones with id ""
   - result.variations.{variationDimension} VAL
      - persisted in history
-        - used the most recent value
+        - using the most recent value
      - on report:
         - set combination.dimensions.{variationDimension}.value VAL
            - should only be reported by reporters able to show details
         - remove result.variations
+
+Default ids:
+  - add default ids:
+     - done:
+        - right after results load
+        - before CONF.since merge
+     - for all possible dimensions with default ids
+        - figure out all possible dimensions by using dimensions of all loaded results
+           - add comment: do not also use currently measured runners' possible configuration properties
+              - because this is not available in `show|remove`, which would make CONF.select|limit behave differently between commands
+     - i.e. missing dimension should behave like the dimension with its default id, including in:
+        - CONF.select|limit
+        - diff
+        - reporting (e.g. when mixed with other results not missing the dimension)
+     - per dimension:
+        - task|runner: never missing
+        - step: "main"
+        - system: "system_*"
+        - variation: "PROP_main"
+           - PROP is only last property
+           - exception: PROP is last two properties (_-separated) when either:
+              - two variable properties have same last property
+              - PROP is "system" (e.g. in runnerConfig), to avoid conflict with system default ids
+  - CONF.select:
+     - when retrieving combination ids:
+        - if CONF.select contains default ids (e.g. "main", "*_main")
+        - then add those default to the combination ids, if the combination is missing the relevant dimensions
+     - reason: selection is applied before results are loaded, i.e. before all dimensions are known and default ids are applied
+  - validate that new result ids do not match possible default ids (unless same dimension):
+     - "main": step
+     - "*_main": variations
+     - "system_*": system
+  - add comments:
+     - purpose is when a result is missing a dimension that other results have, that result should still:
+        - be comparable in the history
+           - e.g. only one step was used (undefined) but another step was added, forcing to rename the first step but it should still be comparable
+        - be reported nicely
+        - be selectable with CONF.select
+     - history matching problem:
+        - when:
+           - a result misses a dimension
+           - it must be compared with results with that dimension
+           - those other results have multiple ids of that dimension
+        - then it becomes difficult to know which id should be used to compare
+        - possible solutions (others than default ids):
+           - missing dimension never matches an id from a non-missing dimension
+              - problem: creates discontinuity in history
+           - missing dimension matches any ids from a non-missing dimension
+              - problem: non-limear history and most likely wrong results
 
 --------------------
 
