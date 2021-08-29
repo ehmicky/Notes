@@ -386,28 +386,78 @@ Steps:
         - returns `measures` ARR_ARR_NUM
            - ARR in steps execution order
      - parent:
-        - `measureDuration` is for whole sample (it is already the case)
-        - `maxLoops` = 100ms / sum(steps.map((step) => step.median * step.repeat))
-        - `combination.steps` OBJ_ARR: id "stepId", ...
-           - for all step-wise state: measures, bufferedMeasures, stats, loops, times, repeat, calibrated
-           - not for: everything related to minLoopDuration, samples
-        - total `benchmarkDuration` does not vary with number of steps
-           - fix preview logic (at the moment, it uses combinations.length * CONF.duration)
-           - also `measureDuration` measures sum of all steps
-           - add comments why:
-              - new steps are more likely to be due to splitting existing steps than adding new ones
-              - adding steps does not increase `measureDuration`, i.e. decrease preview responsiveness
-              - with CONF.select, all steps are still run.
-                It is simpler to explain this by documenting that steps never influence total benchmark duration
+        - measureEachCombination() [un]groups combinations with same dimensions except stepId into series, and iterates over those instead
+           - rename "combination" to "series" for any group of steps with same other dimensions
+        - getSampleState() and getStats() are iterated over sampleState.steps[*]
+        - sampleState:
+           - measureDuration|totalDuration|sampleDurationMean: not-step-wise
+           - allSamples: not-step-wise
+           - all other properties: step-wise, at sampleState.steps OBJ_ARR including: repeat, calibration, stats, sampleMeasures|sampleMedian|sampleLoops
+        - sample payload:
+           - payload.steps[*].repeat NUM: sampleState.repeat
+           - payload.steps[*].scale NUM:
+              - step-wise
+              - also set at sampleState.steps[*].scale[Last]
+              - if:
+                 - CONF.repeat false: 1
+                 - first sample (sampleMedian === undefined): 1
+                 - at least one step has no rstdev: 1
+                    - happens if either <5 measures or median 0
+                       - i.e. always the case when uncalibrated
+                    - reason: ensure all steps have a rstdev as soon as possible
+                 - otherwise:
+                    - step with lowest(rstdev**2): scale = 1
+                    - other steps: scale = Math.round(current(rstdev**2) / slowest(rstdev**2))
+                    - reasons:
+                       - repeat imprecise steps more so that all steps reach CONF.precision roughly at the same time
+                       - keep scale stable across the run, since difference scales can lead to different engine optimization
+                       - produce same results regardless of CONF.precision
+           - payload.maxLoops NUM:
+              - not step-wise
+              - if:
+                 - first sample (measureDuration === 0): 1
+                 - CONF.repeat false: keep current logic except include steps and scales in `repeatGrowth` computation
+                    - renamed to `growth`
+                    - sumEachStep(repeatGrowth * scaleGrowth * sampleMedianWeight)
+                       - repeatGrowth = repeat / repeatLast
+                       - scaleGrowth = scale / scaleLast
+                       - sampleMedianWeight = sampleMedian / sampleMediansSum
+                          - sampleMediansSum = sum of each step sampleMedian
+                          - if sampleMedianSum 0: sampleMedianWeight is 1 for each step
+                          - if sampleMedianSum not 0 but sampleMedian 0: sampleMedianWeight is 0 for that step
+                    - maxMeasures: keep current behavior, i.e. applied to maxLoops at end, but using sum of all sampleState.steps[*].measures.length instead
+                 - CONF.repeat true: re-use same logic as CONF.repeat false, but instead:
+                    - multiply each payload.steps[*].scale by it
+                       - including if some steps have no rstdev
+                       - but excluding if first sample
+                    - set payload.maxLoops 1
+                       - reasons:
+                          - each step has bigger loops, i.e. less cross-step optimization influence
+                          - gives more flexibility to slow down some steps over others
+        - previewStats:
+           - combinationEnd: keep most logic except:
+              - compute samplesLeft for each step, and only use the Math.max()
+           - skipping logic (uncalibrated or median === 0) should be step-wise
+              - preview should be skipped only if all steps are skipped
+        - tweak isRemainingCombination logic for multiple steps:
+           - stopped, `dev` stage: keep as is (not-step-wise)
+           - median === 0: steps.some()
+           - maxMeasures: use sum of all samplesState.step[*].measures.length
+           - loops === 0 (CONF.precision 0): steps.some()
+           - rmoe: steps.some()
+        - minLoopDuration: run measureCost measurements for each step, serially
+        - truncateLogs: not-step-wise
   - error handling:
-     - keep current logic i.e. exceptions are propagated and in:
-        - `before` -> do not call later steps nor `after`
-        - any other steps -> do not call later steps, but call `after`
-           - exceptions in `after` itself are ignored
-        - `after` -> nothing else to call
-     - reasons:
-        - ensures `after` does cleanup, but only if `before` completed
-        - but assumes that exception leaves bad state, i.e. should not run additional steps, and `after` might fail
+     - keep current logic i.e. exceptions are propagated
+        - in:
+           - `before` -> do not call later steps nor `after`
+           - any other steps -> do not call later steps, but call `after`
+              - exceptions in `after` itself are ignored
+           - `after` -> nothing else to call
+        - reasons:
+           - ensures `after` does cleanup, but only if `before` completed
+           - but assumes that exception leaves bad state, i.e. should not run additional steps, and `after` might fail
+     - child should pass an optional stepId alongside error string, so that parent can print it
   - result.steps OBJ_ARR: id 'STR'
      - for all steps, even if not measured
      - ARR is sorted by step execution order
@@ -453,7 +503,6 @@ Steps:
         - we do not skip steps based on some stepId prefix (e.g. _):
            - CONF.select already provide the feature
            - it would be hard to allow users to explicitly report those steps both exclusively ("only _stepIds") and inclusively ("also _stepIds")
-  - `maxLoops` should be divided by number of steps, for the current combination, since all steps measures are in-memory at once
   - add comments about:
      - complex step order:
         - problems:
@@ -480,6 +529,9 @@ Steps:
         - if user wants to measure them, should run them more than once, i.e. use a normal step
         - most users would use it for init|cleanup, i.e. do not want reporting
         - too many differences: only runs once, sets initial context, always at beginning|end, error handling, CONF.repeat error handling, etc.
+     - why sampleTargetDuration does not increase with number of steps:
+        - new steps are more likely to be due to splitting existing steps than adding new ones
+        - keep preview responsive
 
 Step groups:
   - behave like steps except:
@@ -1303,12 +1355,12 @@ Steps stats|samples:
      - maxMeasures: use sum of all samplesState.step[*].measures.length
      - loops === 0 (CONF.precision 0): steps.some()
      - rmoe: steps.some()
+  - minLoopDuration: run measureCost measurements for each step, serially
   - truncateLogs: not-step-wise
   - flow:
      - getSampleState() and getStats() are iterated over sampleState.steps[*]
      - measureEachCombination() [un]groups combinations with same dimensions except stepId into series, and iterates over those instead
         - rename "combination" to "series" for any group of steps with same other dimensions
   - error handling: child should pass an optional stepId alongside error string, so that parent can print it
-  - minLoopDuration???
-  - initial task retrieval logic???
   - dev command???
+     - have to run all steps at once, without headers in-between???
