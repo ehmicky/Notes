@@ -68,9 +68,21 @@ Report flow:
      - problem: must apply `showPrecision` on history results so that reporters know whether to show median[Min|Max]
        but `diff` also needs `median` from history
      - ensure ensure `limit` has access to diff
+  - diff:
+     - keep current diff logic which does not use afterSince
+        - except pass sinceResult directly as argument instead of `history`
+     - should add diff[Precise] to each history result
+        - passing the same sinceResult
+        - i.e. sinceResult itself has 0% diffs
+        - remove comment about not adding diff to history results
+     - then add diff[Result] to unmergedResult, right before merging historyResult
+     - put the call to normalize diff[Result] in a `normalizeUnmergedResult()` meant to add reporting-related properties that are not reporter-specific and should be added before history is merged
+        - move the call to it + to mergeHistoryResult() back to report/main.js
   - titles to normalizeNonCombEach()
 
 id|timestamp:
+  - ensure that the footer logic removes id|timestamp from the target result
+     - and that system is removed from both the target result and history results
   - timezone:
      - local if `reporter.tty: true` (output stdout + interactive), UTC otherwise
         - reason: interactive terminal expects single viewer, but other outputs might be shared and viewed by several people
@@ -83,6 +95,8 @@ id|timestamp:
   - result.timestamp "YYYY-MM-DD HH:MM:SS"
      - for both reporters and footer
      - footer appends " UTC" if UTC (nothing appended if local)
+
+Logs normalization: lines with only whitespaces should never be used for duplicates
 
 Figure out exactly which stat can be undefined, and when
   - document it in comments
@@ -1264,15 +1278,96 @@ Ideas for articles about benchmarking:
 
 ------------------------
 
-Steps:
-  - stats/samples:
-     - measureCost estimation: step-wise or not???
-     - getMaxLoops()???
-        - probably:
-           - compute for each step, using targetSampleDuration divided by steps.length
-           - then find the slowest amount of maxLoops
-              - use it for all steps
-              - use scale 1
-           - use `scale` = Math.round(stepMaxLoops / topMaxLoops), for each step
-           - what if no `scale` (CONF.repeat false)???
-     - sampleMeasures|sampleMedian|sampleLoops: step-wise
+Manual mode:
+  - decide which logic uses:
+     - the step real duration???
+        - includes: scale computation
+     - the manually returned number???
+
+Steps stats|samples:
+  - sampleState:
+     - measureDuration|totalDuration|sampleDurationMean: not-step-wise
+     - allSamples: not-step-wise
+     - all other properties: step-wise, at sampleState.steps OBJ_ARR including:
+        - repeat
+        - calibration
+        - stats
+        - sampleMeasures|sampleMedian|sampleLoops
+  - sample payload:
+     - payload.steps[*].repeat: sampleState.repeat
+     - payload.steps[*].scale:
+        - step-wise
+        - also set at sampleState.steps[*].scale[Last]
+        - if first sample (sampleMedian === undefined): 1
+        - if CONF.repeat:
+           - false: 1
+           - true:
+              - step with highest (sampleMedian * repeat): scale = 1
+              - if current sampleMedian 0: scale = scaleLast
+              - otherwise: scale = Math.min(Math.round(slowest(sampleMedian * repeat) / current(sampleMedian * repeat)), 1)
+     - payload.maxLoops:
+        - not step-wise
+        - if first sample (measureDuration === 0): 1
+        - keep current logic except include steps and scales in `repeatGrowth` computation
+           - renamed to `growth`
+           - sumEachStep(repeatGrowth * scaleGrowth * sampleMedianWeight)
+              - repeatGrowth = repeat / repeatLast
+              - scaleGrowth = scale / scaleLast
+              - sampleMedianWeight = sampleMedian / sampleMediansSum
+                 - sampleMediansSum = sum of each step sampleMedian
+                 - if sampleMedianSum 0: sampleMedianWeight is 1 for each step
+                 - if sampleMedianSum not 0 but sampleMedian 0: sampleMedianWeight is 0 for that step
+        - maxMeasures: keep current behavior, i.e. applied to maxLoops at end, but using sum of all sampleState.steps[*].measures.length instead
+  - scale is computed even during calibration
+     - reasons:
+        - since based on (repeat * sampleMedian) which product targets measureCost, most of the instability during calibration impacts `repeat` instead
+        - instability tends to underestimate, not overestimate it, i.e. no problem of samples being too slow
+        - ensures `scale` is closer to real value at end of calibration, since it might impact optimization, i.e. measures
+        - ensures `scaleGrowth` is closer to 1 at end of calibration
+  - test to see if calibration should wait or not for `scale` to stabilize (like `repeat`) by checking how much a different scale impacts measures
+     - if needed, add it like we do for repeat
+  - previewStats:
+     - combinationEnd: keep most logic except:
+        - compute samplesLeft for each step, and only use the Math.max()
+     - skipping logic (uncalibrated or median === 0) should be step-wise
+        - preview should be skipped only if all steps are skipped
+  - truncateLogs: not-step-wise
+  - add stats[*].scale: like stats[*].repeat, i.e.  only meant for debug reporting
+  - flow:
+     - getSampleState() and getStats() are iterated over sampleState.steps[*]
+     - measureEachCombination() [un]groups combinations with same dimensions except stepId into series, and iterates over those instead
+        - rename "combination" to "series" for any group of steps with same other dimensions
+  - error handling:
+     - child should pass an optional stepId alongside error string, so that parent can print it
+  - isRemaining logic???
+  - dev command???
+  - initial task retrieval logic???
+  - minLoopDuration???
+
+New steps logic:
+  - when CONF.repeat true, maxLoops should always be 1
+     - i.e. only scale is used to reach sample target duration
+     - reasons:
+        - less cross-step optimization influence
+        - gives more flexibility to slow down some steps over others
+  - find a way to avoid steps from keeping being measured once they reached the target precision???
+     - decrease scale to minimum when they do???
+  - scale should be based on precision, not median
+     - problems???
+        - should remain stable across the run, to avoid different optimizations|measures due to different scales
+        - should self adjust
+        - should work when not enough measures for stdev
+        - should not have to run one sample per step to complete each at the end
+        - should not produce different results with different CONF.precision
+           - make calculation assume a fixed CONF.precision 2???
+  - possible solutions:
+     - based on rstdev**2
+        - then divided by sampleMedian (or stats.median???)
+     - number loops left
+     - estimated number of loops to reach precision, divided by sampleMedian (or stats.median???)
+     - a mix of both, linearly based on the completion percentage
+        - so get benefit of both (stability and auto-correction)
+        - i.e. if e is total estimated and n is current loops: n/e * e + (1-n/e) * (e-n)
+     - when no stdev (less than 5 measures), fall back to
+        - median???
+        - no weight??? i.e. same scale as average of others
