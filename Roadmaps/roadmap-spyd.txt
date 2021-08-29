@@ -65,13 +65,25 @@ Validation:
 
 Fix linting
 
-Add reporter.history BOOL as a performance optimization???
+Group some files into subdirectories:
+  - report/config/
+  - see if others can be moved
+
+reporter.debugStats -> reporter.capabilities.debugStats
+
+reporter.capabilities.history BOOL
+  - if false (def)
+     - omit result.history
+     - do not normalize history, as a performance optimization
 
 prettifyStats()
-  - extract it outside of reporters
-     - apply on time series too???
-        - ~1ms per result
-  - make it format specific, e.g. markdown does not need padding|colors
+  - in normalizeCombAll():
+     - i.e. applied on both target result and history results
+  - not format-specific nor reporter-specific, always applied
+  - move the code from /report/utils to /report/normalize/
+
+addTitles()
+  - move outside of reporters, to normalizeCombAll()
 
 Box plot reporter:
   - name "box"
@@ -113,7 +125,7 @@ Dimensions:
      - filter out unnecessary dimensions from combination.dimensions.DIMENSION
         - i.e. any dimension with only 1 id
         - exception: if all dimensions are unnecessary, keep task dimension
-     - when adding titles, convert combination.dimensions.DIMENSION "ID" to OBJ: id STR, title STR, titlePadded STR
+     - on report normalization, convert combination.dimensions.DIMENSION "ID" to OBJ: id STR, title STR, titlePadded STR
         - re-use then remove the current addTitles() logic
      - sort result.combinations by mean stats.median
         - do not add combination.*Rank nor dimensions.*.mean|rank
@@ -128,7 +140,7 @@ Dimensions:
            - CONF.select might remove some ids
            - CONF.since might add some ids
   - getCombinationName(combination)->STR:
-     - 'DIMENSION "ID",...'
+     - 'DIMENSION "ID", ...'
      - ids, not titles
      - for: `dev`, limit errors, measure errors
         - not reporters
@@ -137,7 +149,7 @@ Dimensions:
         - filter out unnecessary dimensions
   - getCombinationTitle[Padded](combination)->STR:
      - titles, not ids
-        - using result.dimensions.*.title[Padded]
+        - using combination.dimensions.*.title[Padded]
      - for reporters
 
 Cross-dimensions duplicate id validation:
@@ -226,13 +238,11 @@ Variations:
   - when using several runners and runnerConfig variations, the other runners will not have those variations
      - should still set combination.dimensions.{variationDimension} on those combinations, but with id "", title "", titlePadded " ... "
      - when filtering unnecessary dimensions, should exclude ones with id ""
-  - result.variations.{variationDimension} VAL
-     - persisted in history
-        - using the most recent value
-     - on report:
-        - set combination.dimensions.{variationDimension}.value VAL
-           - should only be reported by reporters able to show details
-        - remove result.variations
+  - add comments:
+     - why we only persist variation ids, not values
+        - value might change but user intend the id to be constant, which is more relevant
+        - value might be big to store, or have secrets
+        - value might be not nice to report (e.g. big objects)
 
 Default ids:
   - add default ids:
@@ -447,49 +457,19 @@ Steps:
            - rmoe: steps.some()
         - minLoopDuration: run measureCost measurements for each step, serially
         - truncateLogs: not-step-wise
-  - error handling:
-     - keep current logic i.e. exceptions are propagated
-        - in:
-           - `before` -> do not call later steps nor `after`
-           - any other steps -> do not call later steps, but call `after`
-              - exceptions in `after` itself are ignored
-           - `after` -> nothing else to call
-        - reasons:
-           - ensures `after` does cleanup, but only if `before` completed
-           - but assumes that exception leaves bad state, i.e. should not run additional steps, and `after` might fail
-     - child should pass an optional stepId alongside error string, so that parent can print it
-  - result.steps OBJ_ARR: id 'STR'
-     - for all steps, even if not measured
-     - ARR is sorted by step execution order
-        - two tasks might run steps in different order
-           - including between different results
-        - i.e. use the step mean order:
-           - percentage of step index within its task's steps ARR
-              - 0 for first step, 1 for last step
-           - take the arithmetic mean between all tasks defining that step
-           - if two steps equal, use stepId alphabetical order
-        - step groups:
-           - right before their earliest child
-           - if two step groups have same earliest child, decide using:
-              - if latest child is earlier, comes first
-              - otherwise, use stepId alphabetical order
-  - reporting:
-     - report one separate table per step
-        - step title should be in top-left corner
-     - sorting between tables: by result.steps ARR order
   - excluding steps with CONF.select:
      - like any other combination dimensions:
         - filtered out from the `combinations` array created by `getCombinations()`
         - not persisted in results
         - not reported
-        - not taken into account to decide whether to stop combinations (based on rmoe)
-           - including in the preview duration estimation
+        - not taken into account in:
+           - isRemainingCombinationLogic logic
+           - preview logic, including duration estimation
+           - minLoopDuration
+           - payload computation
+              - except repeat|scale always 1
      - however, runners always run all steps of a given task, even if excluded
-        - providing at least one combination for that task exist
-        - i.e. parent process measuring logic ignores steps:
-           - at the beginning of measuring logic, combinations with same task but different steps are grouped
-           - parent process does not pass any information to runner process about steps, and runner runs them all
-           - at the end of measuring logic, combinations are ungrouped to different steps
+        - providing at least one step for that task is selected
      - add comments explaining reasons why:
         - we always run all steps:
            - ensure cleanup steps are always run
@@ -503,9 +483,20 @@ Steps:
         - we do not skip steps based on some stepId prefix (e.g. _):
            - CONF.select already provide the feature
            - it would be hard to allow users to explicitly report those steps both exclusively ("only _stepIds") and inclusively ("also _stepIds")
+  - error handling:
+     - keep current logic i.e. exceptions are propagated
+        - in:
+           - `before` -> do not call later steps nor `after`
+           - any other steps -> do not call later steps, but call `after`
+              - exceptions in `after` itself are ignored
+           - `after` -> nothing else to call
+        - reasons:
+           - ensures `after` does cleanup, but only if `before` completed
+           - but assumes that exception leaves bad state, i.e. should not run additional steps, and `after` might fail
+     - child should pass an optional stepId alongside error string, so that parent can print it
   - add comments about:
      - complex step order:
-        - problems:
+        - limitations of current solution:
            - order of steps is static (must always be the same)
            - sub-steps must completly "cover" their parent step
               - e.g. does not allow parallel steps
@@ -518,7 +509,7 @@ Steps:
         - more declarative, giving more information to core
         - simple interface
         - little room for user misuse, i.e. no need for lots of validation and documentation
-        - allow reporting all the steps, including in-between them
+        - allows reporting all the steps, including in-between them
         - does not require running the task to know which steps are used
         - does not require setting a default stepId
         - does not require lots of work for the runner
@@ -532,6 +523,7 @@ Steps:
      - why sampleTargetDuration does not increase with number of steps:
         - new steps are more likely to be due to splitting existing steps than adding new ones
         - keep preview responsive
+     - we do not store steps execution order because not used for the moment
 
 Step groups:
   - behave like steps except:
@@ -740,7 +732,8 @@ Manual mode:
      - automatic durations are still:
         - measured (for CONF.rate) in combination.durationStats
         - used for calibration: maxLoops, scale
-  - persisted at result.steps[*].manual "UNIT"
+  - persisted at result.combinations[*].unit "UNIT"
+     - used and removed by prettifyStats() normalization
   - re-use existing unit-specific logic for:
      - automatic scaling
         - e.g. 'ns' -> 's' or 'B' -> 'MB'
@@ -1292,75 +1285,18 @@ Ideas for articles about benchmarking:
 
 ------------------------
 
+Steps:
+  - minLoopDuration:
+     - cannot measure single steps???
+     - increase duration with number of steps???
+  - dev command???
+     - have to run all steps at once, without headers in-between???
+
+Automatic repeat:
+  - move "scale" documentation to the Automatic repeat section???
+
 Manual mode:
   - decide which logic uses:
      - the step real duration???
         - includes: scale computation
      - the manually returned number???
-
-Steps stats|samples:
-  - sampleState:
-     - measureDuration|totalDuration|sampleDurationMean: not-step-wise
-     - allSamples: not-step-wise
-     - all other properties: step-wise, at sampleState.steps OBJ_ARR including: repeat, calibration, stats, sampleMeasures|sampleMedian|sampleLoops
-  - sample payload:
-     - payload.steps[*].repeat: sampleState.repeat
-     - payload.steps[*].scale:
-        - step-wise
-        - also set at sampleState.steps[*].scale[Last]
-        - if:
-           - CONF.repeat false: 1
-           - first sample (sampleMedian === undefined): 1
-           - at least one step has no rstdev (<5 measures): 1
-              - happens if either <5 measures or median 0
-                 - i.e. always the case when uncalibrated
-              - reason: ensure all steps have a rstdev as soon as possible
-           - otherwise:
-              - step with lowest(rstdev**2): scale = 1
-              - other steps: scale = Math.round(current(rstdev**2) / slowest(rstdev**2))
-              - reasons:
-                 - repeat imprecise steps more so that all steps reach CONF.precision roughly at the same time
-                 - keep scale stable across the run, since difference scales can lead to different engine optimization
-                 - produce same results regardless of CONF.precision
-     - payload.maxLoops:
-        - not step-wise
-        - if:
-           - first sample (measureDuration === 0): 1
-           - CONF.repeat false: keep current logic except include steps and scales in `repeatGrowth` computation
-              - renamed to `growth`
-              - sumEachStep(repeatGrowth * scaleGrowth * sampleMedianWeight)
-                 - repeatGrowth = repeat / repeatLast
-                 - scaleGrowth = scale / scaleLast
-                 - sampleMedianWeight = sampleMedian / sampleMediansSum
-                    - sampleMediansSum = sum of each step sampleMedian
-                    - if sampleMedianSum 0: sampleMedianWeight is 1 for each step
-                    - if sampleMedianSum not 0 but sampleMedian 0: sampleMedianWeight is 0 for that step
-              - maxMeasures: keep current behavior, i.e. applied to maxLoops at end, but using sum of all sampleState.steps[*].measures.length instead
-           - CONF.repeat true: re-use same logic as CONF.repeat false, but instead:
-              - multiply each payload.steps[*].scale by it
-                 - including if some steps have no rstdev
-                 - but excluding if first sample
-              - set payload.maxLoops 1
-                 - reasons:
-                    - each step has bigger loops, i.e. less cross-step optimization influence
-                    - gives more flexibility to slow down some steps over others
-  - previewStats:
-     - combinationEnd: keep most logic except:
-        - compute samplesLeft for each step, and only use the Math.max()
-     - skipping logic (uncalibrated or median === 0) should be step-wise
-        - preview should be skipped only if all steps are skipped
-  - tweak isRemainingCombination logic for multiple steps:
-     - stopped, `dev` stage: keep as is (not-step-wise)
-     - median === 0: steps.some()
-     - maxMeasures: use sum of all samplesState.step[*].measures.length
-     - loops === 0 (CONF.precision 0): steps.some()
-     - rmoe: steps.some()
-  - minLoopDuration: run measureCost measurements for each step, serially
-  - truncateLogs: not-step-wise
-  - flow:
-     - getSampleState() and getStats() are iterated over sampleState.steps[*]
-     - measureEachCombination() [un]groups combinations with same dimensions except stepId into series, and iterates over those instead
-        - rename "combination" to "series" for any group of steps with same other dimensions
-  - error handling: child should pass an optional stepId alongside error string, so that parent can print it
-  - dev command???
-     - have to run all steps at once, without headers in-between???
