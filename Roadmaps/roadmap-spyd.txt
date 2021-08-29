@@ -391,69 +391,47 @@ Steps:
            - each step run at least once
         - returns `measures` ARR_ARR_NUM
            - ARR in steps execution order
-     - parent:
-        - measureEachCombination() [un]groups combinations with same dimensions except stepId into series, and iterates over those instead
-           - rename "combination" to "series" for any group of steps with same other dimensions
-        - getSampleState() and getStats() are iterated over sampleState.steps[*]
-        - sampleState:
-           - measureDuration|totalDuration|sampleDurationMean: not-step-wise
-           - allSamples: not-step-wise
-           - all other properties: step-wise, at sampleState.steps OBJ_ARR including: repeat, calibration, stats, sampleMeasures|sampleMedian|sampleLoops
-        - sample payload:
-           - payload.steps[*].repeat NUM: sampleState.repeat
-           - payload.steps[*].scale NUM:
-              - step-wise
-              - also set at sampleState.steps[*].scale[Last]
-              - if:
-                 - CONF.repeat false: 1
-                 - first sample (sampleMedian === undefined): 1
-                 - at least one step has no rstdev: 1
-                    - happens if either <5 measures or median 0
-                       - i.e. always the case when uncalibrated
-                    - reason: ensure all steps have a rstdev as soon as possible
-                 - otherwise:
-                    - step with lowest(rstdev**2): scale = 1
-                    - other steps: scale = Math.round(current(rstdev**2) / slowest(rstdev**2))
-                    - reasons:
-                       - repeat imprecise steps more so that all steps reach CONF.precision roughly at the same time
-                       - keep scale stable across the run, since difference scales can lead to different engine optimization
-                       - produce same results regardless of CONF.precision
-           - payload.maxLoops NUM:
-              - not step-wise
-              - if:
-                 - first sample (measureDuration === 0): 1
-                 - CONF.repeat false: keep current logic except include steps and scales in `repeatGrowth` computation
-                    - renamed to `growth`
-                    - sumEachStep(repeatGrowth * scaleGrowth * sampleMedianWeight)
-                       - repeatGrowth = repeat / repeatLast
-                       - scaleGrowth = scale / scaleLast
-                       - sampleMedianWeight = sampleMedian / sampleMediansSum
-                          - sampleMediansSum = sum of each step sampleMedian
-                          - if sampleMedianSum 0: sampleMedianWeight is 1 for each step
-                          - if sampleMedianSum not 0 but sampleMedian 0: sampleMedianWeight is 0 for that step
-                    - maxMeasures: keep current behavior, i.e. applied to maxLoops at end, but using sum of all sampleState.steps[*].measures.length instead
-                 - CONF.repeat true: re-use same logic as CONF.repeat false, but instead:
-                    - multiply each payload.steps[*].scale by it
-                       - including if some steps have no rstdev
-                       - but excluding if first sample
-                    - set payload.maxLoops 1
-                       - reasons:
-                          - each step has bigger loops, i.e. less cross-step optimization influence
-                          - gives more flexibility to slow down some steps over others
-        - previewStats:
-           - combinationEnd: keep most logic except:
-              - compute samplesLeft for each step, and only use the Math.max()
-           - skipping logic (uncalibrated or median === 0) should be step-wise
-              - preview should be skipped only if all steps are skipped
-        - tweak isRemainingCombination logic for multiple steps:
-           - stopped, `dev` stage: keep as is (not-step-wise)
-           - median === 0: steps.some()
-           - maxMeasures: use sum of all samplesState.step[*].measures.length
-           - loops === 0 (CONF.precision 0): steps.some()
-           - rmoe: steps.some()
-        - minLoopDuration: run measureCost measurements for each step, serially
-        - truncateLogs: not-step-wise
-  - excluding steps with CONF.select:
+     - measureEachCombination() [un]groups combinations with same dimensions except stepId into series, and iterates over those instead
+        - rename "combination" to "series" for any group of steps with same other dimensions
+     - getSampleState() and getStats() are iterated over sampleState.steps[*]
+     - sampleState:
+        - measureDuration|totalDuration|sampleDurationMean: not-step-wise
+        - allSamples: not-step-wise
+        - all other properties: step-wise, at sampleState.steps OBJ_ARR including: repeat, calibration, stats, sampleMeasures|sampleMedian|sampleLoops
+     - sample payload:
+        - payload.steps[*].repeat NUM: sampleState.repeat
+        - payload.maxLoops NUM:
+           - not step-wise
+           - if first sample (measureDuration === 0): 1
+           - otherwise: keep current logic except include steps in `repeatGrowth` computation
+              - renamed to `growth`
+              - sumEachStep(repeatGrowth * sampleMedianWeight)
+                 - repeatGrowth = repeat / repeatLast
+                 - sampleMedianWeight = sampleMedian / sampleMediansSum
+                    - sampleMediansSum = sum of each step sampleMedian
+                    - if sampleMedianSum 0: sampleMedianWeight is 1 for each step
+                    - if sampleMedianSum not 0 but sampleMedian 0: sampleMedianWeight is 0 for that step
+              - maxMeasures: keep current behavior, i.e. applied to maxLoops at end, but using sum of all sampleState.steps[*].measures.length instead
+     - previewStats:
+        - combinationEnd: keep most logic except:
+           - compute samplesLeft for each step, and only use the Math.max()
+        - skipping logic (uncalibrated or median === 0) should be step-wise
+           - preview should be skipped only if all steps are skipped
+     - tweak isRemainingCombination logic for multiple steps:
+        - stopped, `dev` stage: keep as is (not-step-wise)
+        - median === 0: steps.some()
+        - maxMeasures: use sum of all samplesState.step[*].measures.length
+        - loops === 0 (CONF.precision 0): steps.some()
+        - rmoe: steps.some()
+     - minLoopDuration:
+        - each step has its own minLoopDuration
+        - multiply TARGET_DURATION by steps.length
+        - maxMeasures should use sum of steps[*].measures.length
+        - hasEnoughMeasures(): use steps.every()
+        - run steps normally otherwise, i.e. the runner executes them serially but with `repeat: 0`
+     - truncateLogs: not-step-wise
+     - dev command: run all steps at once, without headers in-between
+  - steps excluded by CONF.select:
      - like any other combination dimensions:
         - filtered out from the `combinations` array created by `getCombinations()`
         - not persisted in results
@@ -463,7 +441,7 @@ Steps:
            - preview logic, including duration estimation
            - minLoopDuration
            - payload computation
-              - except repeat|scale always 1
+              - except repeat always 1
      - however, runners always run all steps of a given task, even if excluded
         - providing at least one step for that task is selected
      - add comments explaining reasons why:
@@ -578,62 +556,81 @@ Step groups:
      - forbid "all" as a stepId name, either normal step or step group
 
 Automatic repeat:
-  - `repeat` vs `scale`:
-     - both passed to runner.measure()
-     - both are per step (not per task)
-     - repeat is inside timestamp, scale outside
-     - passed to runner:
-        - as OBJ: maxLoops NUM, steps OBJ_ARR: id 'stepId', scale NUM, repeat NUM
-        - do {
-            const context = { ...beforeContext }
-            for (const { id, scale, repeat } of steps) {
-              const step = steps[id]
-              while (scale--) {
-                startTime()
-                while (repeat--) {
-                  step.apply(context, args)
-                }
-                endTime()
-              }
-            }
-          } while (maxLoops--)
-     - goal:
-        - repeat: removing imprecision when step function is faster than resolution or timestamp computation
-        - scale: fast steps should be run more often than slow steps because:
-           - they are less precise, i.e. each iteration brings more value
-           - they take a smaller percentage of the overall CONF.duration
-  - `repeat` NUM: keep current logic as is
-  - `scale` NUM
-     - always passed to runner.measure()
-     - value:
-        - Math.round(maxStepDuration / currentStepDuration)
-           - maxStepDuration = for current task, median duration of slowest step
-           - currentStepDuration = median duration of current step
-        - i.e. always 1 if single step
   - CONF[.tasksConfig.{taskId}].repeat BOOL
      - def: false
-     - if false and task has multiple steps, then:
-        - for all steps of that task
-        - `repeat` and `scale` are always 1
-     - if true and task has multiple steps, then:
+  - runner:
+     - params OBJ: maxLoops NUM, steps OBJ_ARR: id 'stepId', scale NUM, repeat NUM
+     - do {
+         const context = { ...beforeContext }
+         for (const { id, scale, repeat } of steps) {
+           const step = steps[id]
+           while (scale--) {
+             startTime()
+             while (repeat--) {
+               step.apply(context, args)
+             }
+             endTime()
+           }
+         }
+       } while (maxLoops--)
+  - payload:
+     - payload.steps[*].repeat NUM:
+        - if CONF.repeat false and task has multiple steps: 1
+     - payload.steps[*].scale NUM:
+        - step-wise
+        - also set at sampleState.steps[*].scale[Last]
+        - if:
+           - CONF.repeat false: 1
+           - first sample (sampleMedian === undefined): 1
+           - at least one step has no rstdev: 1
+              - happens if either <5 measures or median 0
+                 - i.e. always the case when uncalibrated
+              - reason: ensure all steps have a rstdev as soon as possible
+           - otherwise:
+              - step with lowest(rstdev**2): scale = 1
+              - other steps: scale = Math.round(current(rstdev**2) / slowest(rstdev**2))
+              - reasons:
+                 - repeat imprecise steps more so that all steps reach CONF.precision roughly at the same time
+                 - keep scale stable across the run, since difference scales can lead to different engine optimization
+                 - produce same results regardless of CONF.precision
+     - payload.maxLoops NUM:
+        - if:
+           - first sample (measureDuration === 0): 1
+           - CONF.repeat false: growth = sumEachStep(repeatGrowth * scaleGrowth * sampleMedianWeight)
+              - repeatGrowth = repeat / repeatLast
+              - scaleGrowth = scale / scaleLast
+           - CONF.repeat true: re-use same logic as CONF.repeat false, but instead:
+              - multiply each payload.steps[*].scale by it
+                 - including if some steps have no rstdev
+                 - but excluding if first sample
+              - set payload.maxLoops 1
+                 - reasons:
+                    - each step has bigger loops, i.e. less cross-step optimization influence
+                    - gives more flexibility to slow down some steps over others
+     - steps excluded by CONF.select:
+        - payload.steps[*].scale: always 1
+  - combination.imprecise BOOL
+     - true when all of:
+        - CONF.repeat false
+        - multiple steps
+        - if repeat had been used, it would have been >1
+     - reporting:
+        - stats prettify logic prepends ~ to duration
+        - only for specific steps with imprecise durations, not whole task
+  - add comments:
+     - repeat vs scale:
+        - repeat: removing imprecision when step function is faster than resolution or timestamp computation
+        - scale: make benchmark faster by ensuring each step reaches its rmoe target at same time
+     - requirements for tasks with CONF.repeat true:
         - each step function must be idempotent
            - reason: they will be repeated in repeat|scale loops
-        - including: cannot both read+write same property in neither arguments nor top-level scope
-           - including:
-              - stateful class instances like event emitters and streams
-              - measuring any mutating function (e.g. ARR.sort())
+        - i.e. cannot both read+write same property in neither arguments nor top-level scope, including:
+           - stateful class instances like event emitters and streams
+           - measuring any mutating function (e.g. ARR.sort())
         - possible solutions:
            - cloning arguments before mutating them
            - instead of CONF.repeat true, increase step function complexity (including increasing input size)
            - split step into its own task
-  - report imprecise steps
-     - only if CONF.repeat false and multiple steps
-        - reason: result might be slightly imprecise due to approximation of the repeat algorithm
-     - when, if repeat had been used, it would have been >1
-     - set combination.imprecise BOOL
-        - stats prettify logic prepends ~ to duration
-        - only for specific steps with imprecise durations, not whole task
-  - add comments:
      - reasons why CONF.repeat:
         - does not allow selecting tasks:
            - simpler syntax BOOL
@@ -665,8 +662,6 @@ Automatic repeat:
            - problem: the repeat number would only be known once the task has been run once
         - when deciding which step's optimal repeat number to pick, insteading of using the max, use some value in-between the min and max
            - for example, enforce a max ratio between the min and max
-        - enforce the number of repeats does not go over CONF.duration
-           - problem: does not work with CONF.duration 0|1
         - enforce the number of repeats does not go over specific duration, e.g. 1s
            - problem: increases sample duration, i.e. reduce responsiveness
            - problem: relies on hardcoded duration, which might not fit all machines' speeds
@@ -772,6 +767,19 @@ Rate:
 
 --------------------
 
+isAsync:
+  - initial check for isAsync:
+     - execute func once, without await
+     - check if return value is promisable (using p-is-promise)
+     - sets func.isAsync BOOL (originally undefined)
+     - if isAsync, await return value
+  - do the above when func.isAsync undefined && repeat 1
+     - add code comment that repeat should always be 1 when func.isAsync undefined, and this probably won't change. It is more of a failsafe.
+  - do the above in a `sync_async` dir, next to `sync` and `async` dirs
+  - do the above independently for beforeEach, main and afterEach
+  - always use await on beforeAll|afterAll, i.e. allow both sync and async
+  - remove task.async BOOL
+
 CONF.concurrency NUM
   - validate that CONF.concurrency NUM is integer >=1
   - each sample spawns NUM processes in parallel
@@ -796,19 +804,6 @@ CONF.concurrency NUM
         - works for any runner
         - no global scope conflicts
         - uses multiple CPU cores
-
-isAsync:
-  - initial check for isAsync:
-     - execute func once, without await
-     - check if return value is promisable (using p-is-promise)
-     - sets func.isAsync BOOL (originally undefined)
-     - if isAsync, await return value
-  - do the above when func.isAsync undefined && repeat 1
-     - add code comment that repeat should always be 1 when func.isAsync undefined, and this probably won't change. It is more of a failsafe.
-  - do the above in a `sync_async` dir, next to `sync` and `async` dirs
-  - do the above independently for beforeEach, main and afterEach
-  - always use await on beforeAll|afterAll, i.e. allow both sync and async
-  - remove task.async BOOL
 
 --------------------
 
@@ -1075,6 +1070,8 @@ day.js:
   - serialize `result.timestamp` for reporting using day.js
 
 Learn package 'simple-statistics' and|or 'jstat' and use it in spyd, where needed
+
+Find performance bottlenecks and optimize them
 
 --------------------
 
