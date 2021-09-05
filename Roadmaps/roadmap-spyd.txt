@@ -65,6 +65,17 @@ Validation:
 
 Boxplot min|maxBlockWidth should take into account min horizontal shift (min|max.index)
   - i.e. ensure that leftmost|rightmost min|max is on the first|last column
+  - boxplot widths calculation:
+     - subtract titleWidth from screenWidth to get contentWidth
+     - for each combination
+        - compute contentWidth that'd make minWidth === getPaddedLength(combination.stats.min) - min.index
+        - for each computation:
+           - compute getPaddedLength(combination.stats.min) - min.index
+           - keep the maximum one as maxShift
+     - keep the minWidth of the combination with the minimim maxShift
+     - subtract minWidth from contentWidth
+     - do the same thing with maxWidth
+        - but using max.index * -1 instead of min.index
 
 --------------------
 
@@ -1274,63 +1285,171 @@ Ideas for articles about benchmarking:
 
 ------------------------
 
-Manual mode:
-  - default CONF.rate:
-     - true for ops|bytes
-     - false for durations|percentage
-  - runner returns two ARR `measures` and `durations` instead of one with pairs
-  - saved using smallest unit??? (bytes, ns)
-  - only offer a single scale per unit???
-     - 'ns', 'bytes', 'ops', '%'
-     - pros:
-        - ensure user uses the most granular unit
-        - simpler configuration property
-     - con: requires user to multiply
-  - decide which logic uses:
-     - the step real duration???
-        - repeat
-     - the manually returned number???
-        - scale
-  - only persist mean duration when in manual mode (as opposed to all stats related to both real durations and returned measure)???
-  - repeat loop:
-     - none???
-        - reason: some units cannot be summed, e.g. percentages
-        - needed for duration taking with rate
-     - still set combination.imprecise???
-  - is rmoe accurate when only returning 0|1???
-  - boolean return values???
-     - with CONF.manual "%"
-        - can still use NUM but only if not mixed with BOOL
-     - stats:
-        - mean[Min|Max]|histogram: same
-        - [r]stdev|[r]moe: use bernoulli distribution???
-           - i.e. variance is mean*(1/mean) instead???
-        - quantiles|min|max|median: does not make sense???
-  - histogram with integer measures:
-     - make buckets fit integers perfectly???
-     - if small integers, no smoothing???
-  - stdev with small integer measures:
-     - can be inaccurate???
-        - only lower stdev is a problem since it might make run stop too early
-     - how to take into account that real stdev might be 0???
-     - solutions:
-        - higher threshold???
-           - especially when there are duplicates, or only duplicates???
-           - make it proportional to how small integers are???
-           - deciding the threshold:
-              - formula for:
-                 - given n measures
-                 - from 0 to max
-                 - normally distributed
-                 - stdev s without rounding
-                 - stdev t with integer nearest rounding
-                 - ratio r = s/t
-                 - threshold u
-                 - what's the probability of r <= u?
-              - then compute the minimum n for 95% probability for a given r
-              - then decide on the best r, and use the minimum n as threshold
+stdev threshold:
+  - main problem is preventing too low threshold (making run stop too early) not too high (making run slower)
+  - solutions need to take into account that real stdev might be 0
+  - with durations: hardcoded 5 is not great??? Use better formula???
+  - with CONF.manual "percentage": should it be different???
+  - with CONF.manual "boolean": what should it be???
+  - with CONF.manual "loop|bytes|percentage|custom integer" and small integer measures???
+     - proportional to how small integers are???
+     - deciding the threshold:
+        - formula for:
+           - given n measures
+           - from 0 to max
+           - normally distributed
+           - stdev s without rounding
+           - stdev t with integer nearest rounding
+           - ratio r = s/t
+           - threshold u
+           - what's the probability of r <= u?
+        - then compute the minimum n for 95% probability for a given r
+        - then decide on the best r, and use the minimum n as threshold
      - add comments:
-        - applies even with CONF.rate true since the ratio is multiplied by the returned integer, unless either:
-           - the integer is meant to be constant
-              - but we cannot know this from a series of samples, since they might appear to be constant but not really be
-           - using duration unit
+        - applies even with CONF.rate true since the ratio is multiplied by the returned integer
+           - unless the integer is meant to be constant, but we cannot know this from a series of samples, since they might appear to be constant but not really be
+
+payload.manual BOOL
+  - passed to runner
+  - if true, runner must return a `measures` VAL_ARR in response, using tasks return values
+
+Runner should validate custom measures
+  - depending on the unit type
+     - e.g. with "boolean", must be BOOL
+
+Add comment why CONF.manual enum values are single words, not units:
+  - make it clear that:
+     - this does not set the specific unit being reported
+     - autoscaling happens at reporting time, not measuring time
+  - simpler configuration property
+
+Types of units:
+  - auto duration:
+     - persist auto duration as is (ns)
+     - payload.manual false
+  - auto duration + custom NUM
+     - divide auto duration by task return NUM
+        - done during normalization when parent receives sample
+     - persist the result duration as is (ns)
+     - reason why we do not persist both the duration and NUM:
+        - would require whole logic to be duplicated for both: stats, preview duration estimation, isRemainingCombination(), saving, etc.
+     - payload.manual true
+  - custom measure:
+     - persist task return value as a NUM
+     - combination.imprecise always false
+     - payload.manual true
+
+Units:
+  - auto duration
+     - type: auto duration
+     - no return
+     - def CONF.rate false
+     - reported unit:
+        - CONF.rate false: {scaledTimeUnit}
+        - CONF.rate true: ops/{scaledTimeUnit}
+  - manual duration
+     - type: custom measure
+     - return NUM ns
+     - def CONF.rate false
+     - reported unit:
+        - CONF.rate false: {scaledTimeUnit}
+        - CONF.rate true: ops/{scaledTimeUnit}
+  - loops|frequency
+     - type: auto duration + custom NUM
+     - return NUM
+     - possible intents:
+        - run a manual loop and return the loop size
+        - run an operation and return how many times it occured (e.g. number of writes)
+     - def CONF.rate??? depends on intent???
+     - reported unit:
+        - CONF.rate false: {scaledTimeUnit}
+        - CONF.rate true: ops/{scaledTimeUnit}
+  - bytes
+     - type: auto duration + custom NUM
+     - return NUM bytes
+     - def CONF.rate true
+     - reported unit:
+        - CONF.rate:
+           - false: {scaledTimeUnit}/{scaledByteUnit}
+           - true: {scaledByteUnit}/{scaledTimeUnit}
+        - autoscaled in "B" (not "iB" nor "b")
+  - percentage
+     - type: custom measure
+     - return NUM (1 is 100%)
+        - can be negative
+        - can be beyond 1
+        - can be float
+     - CONF.rate noop
+     - reported unit: %
+  - boolean
+     - type: custom measure
+     - return BOOL
+     - CONF.rate noop
+     - reported unit: %
+  - custom integer
+     - type: custom measure
+     - return NUM
+     - CONF.rate noop
+     - reported unit: none
+
+CONF.[stepsConfig.{stepId}.]rate BOOL
+  - applied on report time
+     - only modifies prettifyStats()
+     - does not change sorting
+
+Histogram with integer measures:
+  - make buckets fit integers perfectly???
+  - if small integers, no smoothing???
+
+CONF.manual "boolean" stats:
+  - mean[Min|Max]: same
+  - quantiles|min|max|median|histogram: undefined
+     - i.e. reporters show it the same way as not measured yet combinations
+  - [r]stdev|[r]moe: use bernoulli distribution???
+     - i.e. variance is mean*(1/mean) instead???
+
+Which logic uses???
+  - the automatic duration???
+     - repeat
+  - the measures???
+     - scale
+
+Naming:
+  - of units:
+     - "auto"???
+     - manual duration: "duration"???
+     - "loop"??? "frequency"??? "count"???
+     - "bytes"
+     - "percentage"???
+     - "boolean"??? "bool"??? "probability"???
+     - "custom"??? "number"??? "integer"??? "count"???
+  - rename CONF.manual???
+     - CONF.unit???
+
+CONF.manual "percentage"
+  - not needed since CONF.manual "boolean"???
+     - also since tasks can return ARRs???
+  - stdev must be computed differently???
+
+Allow tasks to return ARR in manual mode???
+  - needed or not???
+  - allow mixing returning ARR and not ARR???
+  - parent process:
+     - flattens ARR as if the task had returned several times
+        - but the duration of each measure is divided the size of the specific ARR it is from
+     - sample's mean ARR size:
+        - multiplies sampleMedian, i.e. used by:
+           - repeat
+           - medianWeight (maxLoops)
+        - multiplied during maxMeasures computation
+  - use case: manual looping
+     - reasons:
+        - slow loop init that is stateful, i.e. cannot be in a step with CONF.repeat true
+        - loop happens inside the benchmarked code itself
+  - add comment about all preferred ways to loop, by preference:
+     - remove manual loop and let core automatically loop
+     - if has init|end, use steps
+     - if init|end step slow, use CONF.repeat true
+     - if init|end step also stateful, use CONF.repeat false and CONF.manual "loop" in main step
+     - if main step uses non-duration measures, use CONF.manual and return ARR
+        - also: if looping happens inside benchmarked code
