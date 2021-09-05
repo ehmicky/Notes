@@ -1272,10 +1272,9 @@ Ideas for articles about benchmarking:
 stdev threshold:
   - main problem is preventing too low threshold (making run stop too early) not too high (making run slower)
   - solutions need to take into account that real stdev might be 0
-  - with durations: hardcoded 5 is not great??? Use better formula???
-  - with CONF.manual "percentage": should it be different???
-  - with CONF.manual "boolean": what should it be???
-  - with CONF.manual "loop|bytes|percentage|custom integer" and small integer measures???
+  - with duration units: hardcoded 5 is not great??? Use better formula???
+  - with CONF.unit "boolean": what should it be???
+  - with CONF.unit "loop|bytes|custom integer" and small integer measures???
      - proportional to how small integers are???
      - deciding the threshold:
         - formula for:
@@ -1296,12 +1295,30 @@ stdev threshold:
 payload.manual BOOL
   - passed to runner
   - if true, runner must return a `measures` VAL_ARR in response, using tasks return values
+  - runner does not inspect nor validate measures, it just serializes and sends them to parent
+  - parent validation:
+     - should validate response:
+        - durations never undefined
+        - measures undefined if auto duration only
+        - durations and measures ARR
+     - those are plugin errors
+     - wrong types in ARR elements are validated later and are user errors instead
 
-Runner should validate custom measures
-  - depending on the unit type
-     - e.g. with "boolean", must be BOOL
+Allow tasks to return ARR with manual units:
+  - allow mixing returning ARR and not ARR
+  - meant to be equivalent to having run the task several times returning each ARR element
 
-Add comment why CONF.manual enum values are single words, not units:
+Add comment about all preferred ways to loop, by preference:
+  - remove manual loop and let core automatically loop
+  - if has init|end: use steps
+  - if init|end step slow: use CONF.repeat true
+  - if init|end step also stateful: use CONF.repeat false, manual units and return ARR in main step
+     - also preferred if looping happens inside benchmarked code itself
+  - if main step does not have access to measures to return, and unit is duration: use CONF.repeat false, CONF.unit "loop" and CONF.rate false in main step
+
+Rename CONF.manual to CONF.unit
+
+Add comment why CONF.unit enum values are generic words, not specific units:
   - make it clear that:
      - this does not set the specific unit being reported
      - autoscaling happens at reporting time, not measuring time
@@ -1313,7 +1330,6 @@ Types of units:
      - payload.manual false
   - auto duration + custom NUM
      - divide auto duration by task return NUM
-        - done during normalization when parent receives sample
      - persist the result duration as is (ns)
      - reason why we do not persist both the duration and NUM:
         - would require whole logic to be duplicated for both: stats, preview duration estimation, isRemainingCombination(), saving, etc.
@@ -1322,57 +1338,64 @@ Types of units:
      - persist task return value as a NUM
      - combination.imprecise always false
      - payload.manual true
+     - still compute durations
+        - including repeat loop
+        - reason: needs it for medianWeight (maxLoops)
+     - but `calibrated` is always true
+        - by setting it initially to true
+        - reason: uncalibrated durations impact sample durations but not custom measures precision nor accuracy
 
 Units:
   - auto duration
      - type: auto duration
      - no return
+     - normalization: none, but set measured using durations ARR
      - def CONF.rate false
      - reported unit:
         - CONF.rate false: {scaledTimeUnit}
         - CONF.rate true: ops/{scaledTimeUnit}
   - manual duration
      - type: custom measure
-     - return NUM ns
+     - return float (ns)
+     - no normalization
      - def CONF.rate false
      - reported unit:
         - CONF.rate false: {scaledTimeUnit}
         - CONF.rate true: ops/{scaledTimeUnit}
-  - loops|frequency
+  - frequency
      - type: auto duration + custom NUM
-     - return NUM
-     - possible intents:
-        - run a manual loop and return the loop size
-        - run an operation and return how many times it occured (e.g. number of writes)
-     - def CONF.rate??? depends on intent???
+     - return float (ns)
+     - normalization: set measures to duration / NUM
+        - sub-ARR elements use the same duration but divided by sub-ARR.length
+     - possible intents depending on whether NUM is specified by:
+        - task code: i.e. task performs a loop and returns loop size
+           - in this case, returning ARR of durations is better instead, if possible
+        - code used by task: task does not know NUM and forwards it, i.e. check how many times something occured (e.g. number of writes)
+     - def CONF.rate: true
      - reported unit:
         - CONF.rate false: {scaledTimeUnit}
         - CONF.rate true: ops/{scaledTimeUnit}
   - bytes
      - type: auto duration + custom NUM
-     - return NUM bytes
+     - return integer (bytes)
+     - normalization: like "frequency" unit
      - def CONF.rate true
      - reported unit:
         - CONF.rate:
            - false: {scaledTimeUnit}/{scaledByteUnit}
            - true: {scaledByteUnit}/{scaledTimeUnit}
         - autoscaled in "B" (not "iB" nor "b")
-  - percentage
-     - type: custom measure
-     - return NUM (1 is 100%)
-        - can be negative
-        - can be beyond 1
-        - can be float
-     - CONF.rate noop
-     - reported unit: %
+        - always integer
   - boolean
      - type: custom measure
      - return BOOL
+     - normalization: set to 0|1
      - CONF.rate noop
      - reported unit: %
   - custom integer
      - type: custom measure
-     - return NUM
+     - return float
+     - no normalization
      - CONF.rate noop
      - reported unit: none
 
@@ -1385,55 +1408,65 @@ Histogram with integer measures:
   - make buckets fit integers perfectly???
   - if small integers, no smoothing???
 
-CONF.manual "boolean" stats:
+CONF.unit "boolean" stats:
   - mean[Min|Max]: same
   - quantiles|min|max|median|histogram: undefined
      - i.e. reporters show it the same way as not measured yet combinations
   - [r]stdev|[r]moe: use bernoulli distribution???
      - i.e. variance is mean*(1/mean) instead???
 
-Which logic uses???
-  - the automatic duration???
-     - repeat
-  - the measures???
-     - scale
+maxMeasures:
+  - checked in isRemaining() and also in maxLoops
+     - outside of sampleState, i.e. get real number of values???
+  - how work with sub-ARRs???
+  - how work with manual measures???
+     - twice memory
 
-Naming:
-  - of units:
-     - "auto"???
-     - manual duration: "duration"???
-     - "loop"??? "frequency"??? "count"???
-     - "bytes"
-     - "percentage"???
-     - "boolean"??? "bool"??? "probability"???
-     - "custom"??? "number"??? "integer"??? "count"???
-  - rename CONF.manual???
-     - CONF.unit???
+Naming of units:
+  - "auto"
+  - "duration" (manual)
+  - "frequency"??? "count"???
+  - "bytes"
+  - "boolean"??? "probability"???
+  - "custom"??? "number"??? "integer"??? "count"??? "none"???
 
-CONF.manual "percentage"
-  - not needed since CONF.manual "boolean"???
-     - also since tasks can return ARRs???
-  - stdev must be computed differently???
-
-Allow tasks to return ARR in manual mode???
-  - needed or not???
-  - allow mixing returning ARR and not ARR???
-  - parent process:
-     - flattens ARR as if the task had returned several times
-        - but the duration of each measure is divided the size of the specific ARR it is from
-     - sample's mean ARR size:
-        - multiplies sampleMedian, i.e. used by:
-           - repeat
-           - medianWeight (maxLoops)
-        - multiplied during maxMeasures computation
-  - use case: manual looping
-     - reasons:
-        - slow loop init that is stateful, i.e. cannot be in a step with CONF.repeat true
-        - loop happens inside the benchmarked code itself
-  - add comment about all preferred ways to loop, by preference:
-     - remove manual loop and let core automatically loop
-     - if has init|end, use steps
-     - if init|end step slow, use CONF.repeat true
-     - if init|end step also stateful, use CONF.repeat false and CONF.manual "loop" in main step
-     - if main step uses non-duration measures, use CONF.manual and return ARR
-        - also: if looping happens inside benchmarked code
+Measuring stages:
+  - parent keeps separate ARRs for measures and durations
+  - sample stage
+     - uses `durations` ARR, not `measures` ARR nor stats
+        - use durations, not measures for: repeat, sampleMedian, sort, merge
+        - use sampleLoops, not stats.loops
+           - ignores whether measures have sub-ARRs
+        - except stats.rmoe (for `scale`)
+     - `durations` ARR is only for current sample
+        - no accumulation between samples
+           - including no mergeSort()
+        - do not sort in-place (to retrieve sampleMedian)
+           - reason: must keep its order since it correlates to `measures` order
+           - only relevant for "auto duration + custom NUM" units ("frequency" and "bytes")???
+           - either:
+              - do ARR.slice().sort()
+              - use an algorithm that does not modify ARR but find the median in O(n)
+             CONF.unit "frequency"???
+  - stats computation stage
+     - does not use any sampleState
+        - use sampleMeasures and measures, not `durations` ARR
+        - use sampleMeasures.length, not sampleLoops
+           - i.e. after sub-ARR flattening
+           - including for `times` calculation
+        - except: calibrated, allSamples, durationState
+  - transformation stage:
+     - after sample stage, before stats computation stage
+     - handles and returns `measures` ARR
+     - in order:
+        - validation
+           - unless undefined, length must === durations.length
+              - ignoring whether there are sub-ARRs or not
+           - unit-specific
+           - must recurse over measures sub-ARR
+        - unit-specific normalization
+           - automatic duration: set from `durations` ARR
+        - flatten sub-ARR
+        - sort
+           - except CONF.unit "auto", which is already sorted???
+        - mergeSort() to previous measures
