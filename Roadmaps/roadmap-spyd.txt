@@ -63,6 +63,13 @@ Validation:
 
 --------------------
 
+Allow negative CONF.limit:
+  - hit hy mean decrease instead of increase
+  - reasons:
+     - decrease percentage is inverse from increase percentage (e.g. +100% is reverted by -50%), i.e. require different settings
+     - users might want different values gor increase and decrease
+     - some units do not have directions to know whether an increase|decrease is good|bad, i.e. require user to specify it
+
 CONF.select|limit:
   - use "and" keyword instead of guessing dimensions
      - reasons:
@@ -382,7 +389,7 @@ Steps:
                     - sampleMediansSum = sum of each step sampleMedian
                     - if sampleMedianSum 0: sampleMedianWeight is 1 for each step
                     - if sampleMedianSum not 0 but sampleMedian 0: sampleMedianWeight is 0 for that step
-              - maxMeasures: keep current behavior, i.e. applied to maxLoops at end, but using sum of all sampleState.steps[*].measures.length instead
+              - maxMeasures threshold: divide (MAX_MEASURES - measures.length) by steps.length
      - previewStats:
         - combinationEnd: keep most logic except:
            - compute samplesLeft for each step, and only use the Math.max()
@@ -527,6 +534,7 @@ Step groups:
      - forbid "all" as a stepId name, either normal step or step group
 
 Automatic repeat:
+  - rename `scale` in prettifyStats() to `scaling`
   - CONF[.tasksConfig.{taskId}].repeat BOOL
      - def: false
   - runner:
@@ -559,7 +567,15 @@ Automatic repeat:
               - reason: ensure all steps have a rstdev as soon as possible
            - otherwise:
               - step with lowest(rstdev**2): scale = 1
-              - other steps: scale = Math.round(current(rstdev**2) / slowest(rstdev**2))
+              - other steps:
+                 - scale = Math.round(current(rstdev**2) / slowest(rstdev**2))
+                 - scale is Math.min()'d with both:
+                    - Math.round(lowestRstdevStep.sampleMedian / currentStep.sampleMedian)
+                       - reason:
+                          - prevent `scale` from increasing sample duration too much
+                          - based on the fact that rstdev tends to be correlated with complexity, which is itself correlated with median duration
+                    - Math.floor((MAX_MEASURES - measures.length) / (steps.length - 1))
+                 - then scale is Math.max()'d with 1
               - reasons:
                  - repeat imprecise steps more so that all steps reach CONF.precision roughly at the same time
                  - keep scale stable across the run, since difference scales can lead to different engine optimization
@@ -572,7 +588,9 @@ Automatic repeat:
               - use growth = sumEachStep(repeatGrowth * scaleGrowth * sampleMedianWeight)
                  - repeatGrowth = repeat / repeatLast
                  - scaleGrowth = scale / scaleLast
-              - multiply each payload.steps[*].scale by it
+              - maxMeasures: divide (MAX_MEASURES - measures.length) by sum of all steps[*].scale
+                 - i.e. if all steps[*].scale 1, divide by steps.length
+              - multiply each payload.steps[*].scale by maxLoops
                  - including if some steps have no rstdev
                  - but excluding if first sample
               - set payload.maxLoops 1
@@ -638,13 +656,13 @@ Automatic repeat:
            - problem: increases sample duration, i.e. reduce responsiveness
            - problem: relies on hardcoded duration, which might not fit all machines' speeds
 
-Manual mode:
+CONF.unit
   - opt-in
-     - ignore all of this unless CONF.[stepsConfig.{stepId}.]manual defined for that step
+     - ignore all of this unless CONF.[stepsConfig.{stepId}.]unit defined for that step
      - reasons:
         - avoid functions returning value but not intended, e.g. when exported directly
         - avoid returning seconds or ms when ns is expected
-  - CONF.[stepsConfig.{stepId}.]manual "UNIT"
+  - CONF.[stepsConfig.{stepId}.]unit "UNIT"
      - if no stepId: all steps
      - i.e. same step from different tasks have same unit
         - including if single step for all tasks
@@ -668,7 +686,7 @@ Manual mode:
   - repeat loop still used
      - because automatic duration still measured, for CONF.rate
      - but do not set combination.imprecise
-  - pass `steps[*].manual` true to runner:
+  - pass `steps[*].unit` true to runner:
      - each measure should then be an ARR of two values:
         - automatic duration NUM
         - step return VAL
@@ -691,7 +709,7 @@ Manual mode:
         - NaN and Infinity
         - undefined
   - combination.stats:
-     - used for manual measures NUM
+     - used for custom measures NUM
      - automatic durations are still:
         - measured (for CONF.rate) in combination.durationStats
         - used for calibration: maxLoops, scale
@@ -700,7 +718,7 @@ Manual mode:
   - re-use existing unit-specific logic for:
      - automatic scaling
         - e.g. 'ns' -> 's' or 'B' -> 'MB'
-        - i.e. CONF.manual does not decide which unit is reported, only which unit is measured
+        - i.e. CONF.unit does not decide which unit is reported, only which unit is measured
      - significant digits|decimals
   - reporting sorting:
      - duration, %: asc
@@ -709,12 +727,12 @@ Manual mode:
   - when merging combinations from different results with same stepId but different unit:
      - if same unit "kind" (duration, %, bytes|bits, count): allow comparing by normalizing stats during mergeResults():
         - find the lowest scale among all units, then multiply to it
-        - if mixed manual + auto durations, turn all to manual durations
+        - if mixed custom measures + auto durations, turn all to custom durations
            - i.e. copy combination.stats to combination.durationStats
-           - only if manual unit is duration
+           - only if custom unit is duration
         - reason: not losing history when:
            - changing unit scale
-           - switching from auto to manual duration
+           - switching from auto to custom duration
      - if different unit "kind":
         - only keep most recent unit, filtering out previous combinations with different unit kind
         - i.e. units are not a combination dimension
@@ -1272,9 +1290,9 @@ Ideas for articles about benchmarking:
 stdev threshold:
   - main problem is preventing too low threshold (making run stop too early) not too high (making run slower)
   - solutions need to take into account that real stdev might be 0
-  - with duration units: hardcoded 5 is not great??? Use better formula???
-  - with CONF.unit "boolean": what should it be???
-  - with CONF.unit "loop|bytes|custom integer" and small integer measures???
+  - with unit "auto|duration": hardcoded 5 is not great??? Use better formula???
+  - with unit "probability": what should it be???
+  - with unit "frequency|bytes|count" and small integer measures???
      - proportional to how small integers are???
      - deciding the threshold:
         - formula for:
@@ -1292,181 +1310,322 @@ stdev threshold:
         - applies even with CONF.rate true since the ratio is multiplied by the returned integer
            - unless the integer is meant to be constant, but we cannot know this from a series of samples, since they might appear to be constant but not really be
 
-payload.manual BOOL
-  - passed to runner
-  - if true, runner must return a `measures` VAL_ARR in response, using tasks return values
-  - runner does not inspect nor validate measures, it just serializes and sends them to parent
-  - parent validation:
-     - should validate response:
-        - durations never undefined
-        - measures undefined if auto duration only
-        - durations and measures ARR
-     - those are plugin errors
-     - wrong types in ARR elements are validated later and are user errors instead
-
-Allow tasks to return ARR with manual units:
-  - allow mixing returning ARR and not ARR
-  - meant to be equivalent to having run the task several times returning each ARR element
-
-Add comment about all preferred ways to loop, by preference:
+Add comment about preferred ways to loop, by preference:
   - remove manual loop and let core automatically loop
   - if has init|end: use steps
   - if init|end step slow: use CONF.repeat true
-  - if init|end step also stateful: use CONF.repeat false, manual units and return ARR in main step
-     - also preferred if looping happens inside benchmarked code itself
-  - if main step does not have access to measures to return, and unit is duration: use CONF.repeat false, CONF.unit "loop" and CONF.rate false in main step
+  - if init|end step also stateful: use CONF.repeat false, custom units and return ARR in main step
+     - also preferred if manual looping happens inside library code
+  - if main step does not have access to measures to return, and unit is duration: use CONF.repeat false, unit "frequency" and CONF.rate false in main step
 
-Rename CONF.manual to CONF.unit
+combination.unit STR:
+  - persisted in results
+  - used and removed by prettifyStats() normalization
+  - at the moment, hardcoded to "auto"
 
-Add comment why CONF.unit enum values are generic words, not specific units:
-  - make it clear that:
-     - this does not set the specific unit being reported
-     - autoscaling happens at reporting time, not measuring time
-  - simpler configuration property
-
-Types of units:
-  - auto duration:
-     - persist auto duration as is (ns)
-     - payload.manual false
-  - auto duration + custom NUM
-     - divide auto duration by task return NUM
-     - persist the result duration as is (ns)
-     - reason why we do not persist both the duration and NUM:
-        - would require whole logic to be duplicated for both: stats, preview duration estimation, isRemainingCombination(), saving, etc.
-     - payload.manual true
-  - custom measure:
-     - persist task return value as a NUM
-     - combination.imprecise always false
-     - payload.manual true
-     - still compute durations
-        - including repeat loop
-        - reason: needs it for medianWeight (maxLoops)
-     - but `calibrated` is always true
-        - by setting it initially to true
-        - reason: uncalibrated durations impact sample durations but not custom measures precision nor accuracy
-
-Units:
-  - auto duration
-     - type: auto duration
-     - no return
-     - normalization: none, but set measured using durations ARR
-     - def CONF.rate false
-     - reported unit:
-        - CONF.rate false: {scaledTimeUnit}
-        - CONF.rate true: ops/{scaledTimeUnit}
-  - manual duration
-     - type: custom measure
-     - return float (ns)
-     - no normalization
-     - def CONF.rate false
-     - reported unit:
-        - CONF.rate false: {scaledTimeUnit}
-        - CONF.rate true: ops/{scaledTimeUnit}
-  - frequency
-     - type: auto duration + custom NUM
-     - return float (ns)
-     - normalization: set measures to duration / NUM
-        - sub-ARR elements use the same duration but divided by sub-ARR.length
-     - possible intents depending on whether NUM is specified by:
-        - task code: i.e. task performs a loop and returns loop size
-           - in this case, returning ARR of durations is better instead, if possible
-        - code used by task: task does not know NUM and forwards it, i.e. check how many times something occured (e.g. number of writes)
-     - def CONF.rate: true
-     - reported unit:
-        - CONF.rate false: {scaledTimeUnit}
-        - CONF.rate true: ops/{scaledTimeUnit}
-  - bytes
-     - type: auto duration + custom NUM
-     - return integer (bytes)
-     - normalization: like "frequency" unit
-     - def CONF.rate true
-     - reported unit:
-        - CONF.rate:
-           - false: {scaledTimeUnit}/{scaledByteUnit}
-           - true: {scaledByteUnit}/{scaledTimeUnit}
-        - autoscaled in "B" (not "iB" nor "b")
-        - always integer
-  - boolean
-     - type: custom measure
-     - return BOOL
-     - normalization: set to 0|1
-     - CONF.rate noop
-     - reported unit: %
-  - custom integer
-     - type: custom measure
-     - return float
-     - no normalization
-     - CONF.rate noop
-     - reported unit: none
-
-CONF.[stepsConfig.{stepId}.]rate BOOL
-  - applied on report time
-     - only modifies prettifyStats()
-     - does not change sorting
-
-Histogram with integer measures:
-  - make buckets fit integers perfectly???
-  - if small integers, no smoothing???
-
-CONF.unit "boolean" stats:
-  - mean[Min|Max]: same
-  - quantiles|min|max|median|histogram: undefined
-     - i.e. reporters show it the same way as not measured yet combinations
-  - [r]stdev|[r]moe: use bernoulli distribution???
-     - i.e. variance is mean*(1/mean) instead???
-
-maxMeasures:
-  - checked in isRemaining() and also in maxLoops
-     - outside of sampleState, i.e. get real number of values???
-  - how work with sub-ARRs???
-  - how work with manual measures???
-     - twice memory
-
-Naming of units:
-  - "auto"
-  - "duration" (manual)
-  - "frequency"??? "count"???
-  - "bytes"
-  - "boolean"??? "probability"???
-  - "custom"??? "number"??? "integer"??? "count"??? "none"???
-
-Measuring stages:
-  - parent keeps separate ARRs for measures and durations
+Split measures vs duration ARRs
+  - runner: rename `measures` to `durations`
   - sample stage
+     - assume that runner might return a `measures` ARR alongside the `durations` ARR
+        - it is just forwarded as is to the transformation stage
+        - renamed to `sampleMeasures`
      - uses `durations` ARR, not `measures` ARR nor stats
-        - use durations, not measures for: repeat, sampleMedian, sort, merge
+        - use durations, not measures for: repeat, sampleMedian
         - use sampleLoops, not stats.loops
-           - ignores whether measures have sub-ARRs
         - except stats.rmoe (for `scale`)
      - `durations` ARR is only for current sample
         - no accumulation between samples
            - including no mergeSort()
-        - do not sort in-place (to retrieve sampleMedian)
-           - reason: must keep its order since it correlates to `measures` order
-           - only relevant for "auto duration + custom NUM" units ("frequency" and "bytes")???
-           - either:
-              - do ARR.slice().sort()
-              - use an algorithm that does not modify ARR but find the median in O(n)
-             CONF.unit "frequency"???
+     - validation of the response general shape:
+        - check:
+           - `durations`:
+              - not undefined
+              - is array
+              - each element:
+                 - forbid: undefined, not float, NaN, Infinity, negative
+                 - allow: 0, float
+           - `measures` (unless undefined):
+              - is array
+              - has same length as `durations`
+        - those are plugin errors
+        - does not inspect `measures` ARR individual elements
+           - this is done by transformation stage instead
+  - transformation stage:
+     - transform sampleState to a sampleMeasures ARR
+     - if not calibrated, skip stage and return empty sampleMeasures ARR
+        - both stats computation stage and preview stage are skipped when samplesMeasures is empty
+     - in order:
+        - validation of each `sampleMeasures` ARR element
+           - unit-specific
+           - user errors (not plugin errors)
+        - unit-specific normalization of each `sampleMeasures` ARR element
+           - if unit "auto": none, but set from `durations` ARR
+        - sort `sampleMeasures`
+           - unless unit "auto": because already sorted
   - stats computation stage
      - does not use any sampleState
         - use sampleMeasures and measures, not `durations` ARR
+           - merge sampleMeasures to measures with mergeSort()
         - use sampleMeasures.length, not sampleLoops
            - i.e. after sub-ARR flattening
            - including for `times` calculation
         - except: calibrated, allSamples, durationState
-  - transformation stage:
-     - after sample stage, before stats computation stage
-     - handles and returns `measures` ARR
-     - in order:
-        - validation
-           - unless undefined, length must === durations.length
-              - ignoring whether there are sub-ARRs or not
-           - unit-specific
-           - must recurse over measures sub-ARR
-        - unit-specific normalization
-           - automatic duration: set from `durations` ARR
-        - flatten sub-ARR
-        - sort
-           - except CONF.unit "auto", which is already sorted???
-        - mergeSort() to previous measures
+  - maxMeasures check in isRemainingCombination() uses measures ARR, not durations ARR
+
+Allow custom measures:
+  - pass payload.sendMeasures BOOL to runner
+     - if true, runner must return a `measures` VAL_ARR in response, using tasks return values
+     - runner does not inspect nor validate measures, it just serializes and sends them to parent
+  - step functions must then return NUM:
+     - reasons, as opposed to setting `measure` argument:
+        - argument could be destructured, leading to assignment not working
+        - confusion with inputs also used as arguments
+        - clear that return value has this type of semantics
+     - reason why NUM instead of OBJ: works for every language, including cli runner
+
+Allow tasks to return ARR of custom measures:
+  - flattens ARR of custom measures into a `sampleMeasures` single ARR:
+     - done during transformation stage, after unit-specific normalization and before sorting
+     - allow mixing returning ARR and not ARR
+  - sample stage ignores sub-ARRs, but not later stages:
+     - sampleLoops ignores sub-ARRS
+        - but not sampleMeasures.length nor stats.loops, since those are done after sub-ARR flattening
+     - sample response general shape validation ignores sub-ARRs (since it does not look into ARR items)
+        - but ARR items validation recurse over sub-ARRs
+  - sampleLoopSize:
+     - mean length of step's returned ARRs for the last sample
+        - computed when flattening ARRs
+        - i.e. 1 when no ARRs
+     - used as part of maxMeasures in:
+        - `scale` as part of the Math.min():
+           - Math.floor((MAX_MEASURES - measures.length) / (steps.length - 1))
+           -> Math.floor((MAX_MEASURES - measures.length) / (steps.length - 1) / currentStep.sampleLoopSize)
+        - `maxLoop`:
+           - (MAX_MEASURES - measures.length) / sum(steps[*].scale)
+           -> (MAX_MEASURES - measures.length) / sum(steps[*].scale * steps[*].sampleLoopSize)
+  - add comments:
+     - meant to be equivalent to having run the task several times returning each ARR element
+
+CONF.[stepsConfig.{stepId}.]rate BOOL
+  - def: false
+  - applied on report time
+     - not persisted in history
+     - reporting flag
+     - only modifies prettifyStats()
+     - does not change sorting
+  - some units do nothing with CONF.rate
+     - do not error because this allows setting CONF.rate:
+        - without knowing unit yet
+        - with a mix of different units
+
+CONF.[stepsConfig.{stepId}.]unit "UNIT"
+  - if no stepId: all steps
+  - i.e. same step from different tasks have same unit
+     - including if single step for all tasks
+  - persisted during `run`, cannot be changed during reporting
+
+Units:
+  - Unit groups:
+     - "autoOnly":
+        - only use auto duration
+        - set `sampleMeasures` using `durations` ARR
+        - persisted unit: ns/ops
+        - payload.sendMeasures false
+        - parent validates that `response.measures` is undefined
+     - "ratio":
+        - use both auto duration and custom measure
+        - set measures to auto duration / custom NUM
+           - during measure normalization stage
+           - sub-ARR elements use the same duration but divided by sub-ARR.length
+        - persisted unit: ns/ops
+        - reason why we do not persist both the duration and NUM:
+           - would require whole logic to be duplicated for both: stats, preview duration estimation, isRemainingCombination(), saving, etc.
+        - payload.sendMeasures true
+        - parent validates that `response.measures` is not undefined
+        - use durations.slice().sort() instead of durations.sort() when retrieving sampleMedian
+           - reason: must keep its order since it correlates to `measures` order
+     - "customOnly":
+        - only use custom measure
+        - persist task return value as a NUM
+        - payload.sendMeasures true
+        - parent validates that `response.measures` is not undefined
+        - persisted unit: depends on unit
+        - still compute durations
+           - including repeat loop
+           - reason: needs it for medianWeight (maxLoops)
+           - but:
+              - `calibrated` always true
+                 - by setting it initially to true
+                 - reason: uncalibrated durations impact sample durations but not custom measures precision nor accuracy
+              - combination.imprecise always false
+  - Available units:
+     - "auto"
+        - default value
+        - group: "autoOnly"
+        - no return
+        - normalization: none, except one from group "autoOnly"
+        - def CONF.rate false
+        - reported unit:
+           - CONF.rate false: {scaledTimeUnit}
+           - CONF.rate true: ops/{scaledTimeUnit}
+             - or x/{scaledTimeUnit}???
+     - "duration"
+        - group: "customOnly"
+        - return float (ns)
+        - validation:
+           - forbid: undefined, not float, NaN, Infinity, negative
+           - allow: 0, float
+        - no normalization
+        - def CONF.rate false
+        - reported unit:
+           - CONF.rate false: {scaledTimeUnit}
+           - CONF.rate true: ops/{scaledTimeUnit}
+             - or x/{scaledTimeUnit}???
+           - unit scaling and significant digits|decimals: re-use current logic
+     - "frequency"??? "count"???
+        - group: "mixed"
+        - return float (ops)
+        - validation:
+           - forbid: undefined, not float, NaN, Infinity, negative
+           - allow: 0, float
+        - normalization: none except one from group "mixed"
+        - def CONF.rate: true
+        - reported unit:
+           - CONF.rate false: {scaledTimeUnit}
+           - CONF.rate true: ops/{scaledTimeUnit}
+             - or x/{scaledTimeUnit}???
+        - add comment: possible intents depends on whether NUM is specified by:
+           - code used by task: task does not know NUM and forwards it, i.e. check how many times something occured (e.g. number of writes)
+           - task code: i.e. task performs a loop and returns loop size
+              - in this case, returning ARR of durations is better instead, if possible
+     - "bytes"
+        - group: "mixed"
+        - return integer (bytes)
+        - validation:
+           - forbid: undefined, not integer, NaN, Infinity, negative
+           - allow: 0, integer
+        - normalization: none except one from group "mixed"
+        - def CONF.rate true
+        - reported unit:
+           - CONF.rate:
+              - false: {scaledTimeUnit}/{scaledByteUnit}
+              - true: {scaledByteUnit}/{scaledTimeUnit}
+           - unit scaling:
+              - automatically scaled: B KB MB GB TB PB
+              - in "B", not "iB" nor "b"
+           - always integer
+     - "probability"??? "boolean"??? "percentage"???
+        - group: "customOnly"
+        - return BOOL
+        - validation:
+           - forbid: undefined, not BOOL
+        - normalization:
+           - set to ARR with two numbers: `true` count, total count
+           - use BIGNUMs
+        - def CONF.rate false
+        - reported unit:
+           - CONF.rate false: %
+           - CONF.rate true: 1/NUM
+              - 1x/NUM??? 1/NUMx???
+     - "count"??? "custom"??? "number"??? "integer"??? "none"???
+        - group: "customOnly"
+        - return float
+        - validation:
+           - forbid: undefined, not float, NaN, Infinity, negative
+           - allow: 0, float
+        - no normalization
+        - CONF.rate noop
+        - reported unit: none
+  - when merging combinations from different results with same stepId but different unit:
+     - filter out older combinations with incompatible units
+     - compatible units:
+        - any unit with group "durationOnly" or "mixed", even if different unit
+        - units with group "customOnly", only if same unit
+  - add comments:
+     - why CONF.unit enum values are generic words, not specific units:
+        - make it clear that:
+           - this does not set the specific unit being reported
+           - autoscaling happens at reporting time, not measuring time
+        - simpler configuration property
+     - why default is "auto": makes returning values from task functions opt-in:
+        - avoid functions returning value but not intended, e.g. when exported directly
+        - avoid returning seconds or ms when ns is expected
+
+CONF.unit "probability":
+  - mean[Min|Max]: same
+  - quantiles|min|max|median|histogram: undefined
+     - i.e. reporters show it the same way as not measured yet combinations
+  - rstdev|rmoe: divide by (1-mean) instead of mean if mean > 0.5
+     - reason: inverting BOOL in task should not change them
+  - stdev|moe
+     - estimated with a normal distribution approximation:
+        - variance is mean * (1 - mean) instead
+        - rest is same, including:
+           - stdev = sqrt(variance)
+           - standardError, tvalue, moe
+     - add comments about statistical significance:
+        - BOOLs require binomial confidence interval
+        - normal distribution approximation is not as accurate as Wilson score interval
+        - however:
+           - most of the inaccuracy is when both percentage is very low|high and sample size is low
+              - however CONF.precision threshold makes sample size always high enough that the difference is minimal
+           - both `scale` computation and preview duration estimation rely on the assumption that rmoe is proportional to sqrt(loops)
+  - CONF.precision thresholds are: 50-10-5-1% instead
+     - i.e. 10 times higher
+     - reason:
+        - binomial distribution has much higher rstdev: minimum 100% (for mean 0.5), and higher as mean gets lower|higher
+        - i.e. using same CONF.precision thresholds would be too slow
+  - diff: same as other units
+     - add comments:
+        - why we do not make diff:
+           - behave the same for mean and 1 - mean
+              - e.g. diff(.2, .1) === diff(.8, .9)
+              - i.e. inverting BOOL does not change it
+              - reasons:
+                 - not intuitive, e.g. diff(.8, .6) is -100%
+                 - signedness would be ambiguous, e.g. diff(.8, .9) could be seen as positive (new value is higher) or negative (to make it behave like 1 - mean)
+           - absolute instead of relative to mean:
+              - inconsistent with other units
+              - inconsistent with rmoe and CONF.precision
+              - harder for users when percentage is very low|high
+           - show mean|diff as 0-50% true|false:
+              - confusing when a results includes percentages both above and below 50%
+              - generally confusing
+        - users should invert BOOL or not so the mean is <.5, making the diff|limit more intuitive
+           - e.g. .2 -> .1 is twice lower, i.e. -50%, but when inverted, .8 -> .9, i.e. +12.5%
+  - steps with unit "probability" are ignored by maxMeasures, both in isRemainingCombination() and in maxLoop computation
+
+prettifyStats(): impact of units on:
+  - `scaling`???
+  - decimals???
+  - unit autoscaling???
+  - sign???
+  - padding???
+  - color???
+  - impact of CONF.rate true???
+
+What happens when returning:
+  - empty sub-ARRs???
+  - 0 in CONF.unit "mixed"???
+  - 0 in CONF.unit "customOnly"???
+
+Histogram with integer measures:
+  - make buckets fit integers perfectly???
+     - set stats.integers BOOL if integer only
+        - not worth exposing if only for histogram???
+     - if integer only, histogram:
+        - buckets use integer edges
+        - number of buckets is Math.min(1000, max - min + 1)
+  - if small integers, no smoothing???
+     - when integer only, smoothing factor depends on Math.min(Math.max(Math.sqrt(max - min + 1) - 10, 0), Math.sqrt(1000 - 10)), i.e.:
+        - 0-10: no smoothing
+        - 10-1000: smoothing following O(srqt n)
+        - 1000: max smoothing
+        - not good because would depend on histogram max size, which might change???
+  - add some min width per column on the terminal so they do not stretch too much???
+     - base on histogram reporter `height`
+  - allow histogram with unit "probability"??? maybe not???
+  - checking if step has only integers, only check 100 items:
+     - if measures.length <= 100, use ARR.every(Number.isInteger)
+     - otherwise, pick 100 evenly spaced items
+  - add CONF.reporterConfig.histogram.smooth BOOL???
