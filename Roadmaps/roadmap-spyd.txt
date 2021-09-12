@@ -574,6 +574,7 @@ Automatic repeat:
                        - reason:
                           - prevent `scale` from increasing sample duration too much
                           - based on the fact that rstdev tends to be correlated with complexity, which is itself correlated with median duration
+                       - if currentStep.sampleMedian 0: 1
                     - Math.floor((MAX_MEASURES - measures.length) / (steps.length - 1))
                  - then scale is Math.max()'d with 1
               - reasons:
@@ -1355,7 +1356,6 @@ Split measures vs duration ARRs
   - transformation stage:
      - transform sampleState to a sampleMeasures ARR
      - if not calibrated, skip stage and return empty sampleMeasures ARR
-        - both stats computation stage and preview stage are skipped when samplesMeasures is empty
      - in order:
         - validation of each `sampleMeasures` ARR element
            - unit-specific
@@ -1372,6 +1372,10 @@ Split measures vs duration ARRs
            - i.e. after sub-ARR flattening
            - including for `times` calculation
         - except: calibrated, allSamples, durationState
+  - stats|preview computation stage:
+     - skipped when samplesMeasures is empty, which happens when either:
+        - not calibrated
+        - task has returned empty ARRs as custom measures
   - maxMeasures check in isRemainingCombination() uses measures ARR, not durations ARR
 
 Allow custom measures:
@@ -1386,9 +1390,11 @@ Allow custom measures:
      - reason why NUM instead of OBJ: works for every language, including cli runner
 
 Allow tasks to return ARR of custom measures:
+  - allow task to:
+     - mix returning ARR and not ARR
+     - return empty ARR
   - flattens ARR of custom measures into a `sampleMeasures` single ARR:
      - done during transformation stage, after unit-specific normalization and before sorting
-     - allow mixing returning ARR and not ARR
   - sample stage ignores sub-ARRs, but not later stages:
      - sampleLoops ignores sub-ARRS
         - but not sampleMeasures.length nor stats.loops, since those are done after sub-ARR flattening
@@ -1398,6 +1404,7 @@ Allow tasks to return ARR of custom measures:
      - mean length of step's returned ARRs for the last sample
         - computed when flattening ARRs
         - i.e. 1 when no ARRs
+        - Math.min() with 1 (in case the task only returns empty ARRs)
      - used as part of maxMeasures in:
         - `scale` as part of the Math.min():
            - Math.floor((MAX_MEASURES - measures.length) / (steps.length - 1))
@@ -1597,37 +1604,96 @@ CONF.unit "probability":
            - e.g. .2 -> .1 is twice lower, i.e. -50%, but when inverted, .8 -> .9, i.e. +12.5%
   - steps with unit "probability" are ignored by maxMeasures, both in isRemainingCombination() and in maxLoop computation
 
-prettifyStats(): impact of units on:
-  - `scaling`???
+What happens when returning 0:
+  - in:
+     - auto durations
+     - custom measures
+  - potential issues???
+     - if mean 0:
+        - cannot compute [r]stdev|[r]moe
+           - i.e. scale 1
+        - isRemainingCombination() true, even if CONF.precision 0 or maxMeasures
+        - no preview update
+        - for previousMean: diff does not work (divide by 0)
+        - ignored for prettifyStats()'s scaling
+           - if only 0s, no scaling
+     - if sampleMedian 0:
+        - scale 1
+     - if all steps sampleMedian 0:
+        - sampleMedian growth (for maxLoops) is 1
+     - unit group "mixed": would divide auto duration by 0???
+     - CONF.unit "probability": if mean 0|1: cannot compute stdev???
+     - CONF.rate:
+        - true:
+           - CONF.unit "auto|duration|frequency|bytes": if duration 0, how many ops/s???
+           - CONF.unit "probability": if duration 0, 1/0???
+        - false:
+           - CONF.unit "bytes": if duration 0, how many s/B??? How autoscale byte unit, use 'B'???
+
+prettifyStats():
+  - impact of both:
+     - units
+     - CONF.rate true
+  - `scaling` + unit autoscaling???
+     - all stats (except minLoopDuration) currently marked as "duration" actually use the given unit: mean[Min|Max]|median|min|max|quantiles|stdev|moe
+     - current available:
+        - duration:
+           - scaling: [1e9, 1e6, 1e3, 1e0, 1e-3, 1e-6]
+           - unit: NUMs|ms|us|ns|ps|fs
+        - count:
+           - scaling: [1e15, 1e12, ..., 1e-12, 1e-15]
+              - increase range???
+           - unit: NUMeNUM2
+        - percentage:
+           - scaling: [1e-2]
+           - unit: NUM%
+     - new ones:
+        - inverseCount:
+           - scaling: like count, but using 1/NUM
+           - unit: 1/{num}
+        - ops/duration
+           - scaling: [1e9, 1e6, 1e3, 1e0, 1e-3, 1e-6]
+           - unit: {num}x/s|ms|us|ns|ps|fs
+        - bytes/duration
+           - by duration???
+              - scaling: [1e9, 1e6, 1e3, 1e0, 1e-3, 1e-6]
+              - unit: {num}B/s|ms|us|ns|ps|fs
+           - or by byte, on ns???
+              - scaling: [1e15, 1e12, 1e9, 1e6, 1e3, 1e0]
+              - unit: {num}PB|TB|GB|MB|KB|B/ns
+           - or by byte, on s???
+              - scaling: [1e24, 1e21, 1e18, 1e15, 1e12, 1e9]
+              - unit: {num}PB|TB|GB|MB|KB|B/s
+        - duration/bytes
+           - 50000s/GB -> 50ms/MB
+           - scaling:
+           - unit:
+     - split between stat kind:
+        - "duration":
+           - for minLoopDuration
+           - scaling is based on itself
+           - always use duration unit
+        - "main":
+           - for all others: mean[Min|Max]|median|min|max|quantiles|stdev|moe
+           - scaling is based on a single stat (mean[Min]|median)
+           - scaling|unit depends on combination.unit:
+              - "auto":
+                 - CONF.rate false: duration
+                 - CONF.rate true: ops/duration
+              - "manual"
+                 - CONF.rate false: duration
+                 - CONF.rate true: ops/duration
+              - "frequency"
+                 - CONF.rate false: duration
+                 - CONF.rate true: ops/duration
+              - "bytes"
+                 - CONF.rate false: duration/bytes
+                 - CONF.rate true: bytes/duration
+              - "probability"
+                 - CONF.rate false: percentage
+                 - CONF.rate true: inverseCount
+              - "count"
+                 - CONF.rate false: count
+                 - CONF.rate true: count
   - decimals???
-  - unit autoscaling???
-  - sign???
-  - padding???
-  - color???
-  - impact of CONF.rate true???
-
-What happens when returning:
-  - empty sub-ARRs???
-  - 0 in CONF.unit "mixed"???
-  - 0 in CONF.unit "customOnly"???
-
-Histogram with integer measures:
-  - make buckets fit integers perfectly???
-     - set stats.integers BOOL if integer only
-        - not worth exposing if only for histogram???
-     - if integer only, histogram:
-        - buckets use integer edges
-        - number of buckets is Math.min(1000, max - min + 1)
-  - if small integers, no smoothing???
-     - when integer only, smoothing factor depends on Math.min(Math.max(Math.sqrt(max - min + 1) - 10, 0), Math.sqrt(1000 - 10)), i.e.:
-        - 0-10: no smoothing
-        - 10-1000: smoothing following O(srqt n)
-        - 1000: max smoothing
-        - not good because would depend on histogram max size, which might change???
-  - add some min width per column on the terminal so they do not stretch too much???
-     - base on histogram reporter `height`
-  - allow histogram with unit "probability"??? maybe not???
-  - checking if step has only integers, only check 100 items:
-     - if measures.length <= 100, use ARR.every(Number.isInteger)
-     - otherwise, pick 100 evenly spaced items
-  - add CONF.reporterConfig.histogram.smooth BOOL???
+  - current logic uses (raw / scale).toFixed(decimals) + unit: not flexible enough???
