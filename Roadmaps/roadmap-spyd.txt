@@ -402,6 +402,11 @@ Steps:
         - run steps normally otherwise, i.e. the runner executes them serially but with `repeat: 0`
      - truncateLogs: not-step-wise
      - dev command: run all steps at once, without headers in-between
+  - separate steps in reporters:
+     - reason: they might have different units or CONF.rate (i.e. min|max)
+     - for:
+        - tables (debug|history): each steps should have its own table
+        - boxplot: each step should have its own min|max
   - steps excluded by CONF.select:
      - like any other combination dimensions:
         - filtered out from the `combinations` array created by `getCombinations()`
@@ -763,14 +768,19 @@ CONF.[stepsConfig.{stepId}.]rate BOOL
   - applied on report time
      - not persisted in history
      - reporting flag
-  - does:
-     - with prettifyStats():
-        - invert `stat.raw`
-        - change factor|unitSuffix|unitPrefix
-     - invert combination sorting
-        - i.e. desc instead of asc
-        - for any unit
-        - add comment: do not allow configuring|overridding sorting for the moment, to keep things simple, because most users won't need it
+  - applyRate():
+     - done:
+        - after combination sorting
+           - i.e. kept as is
+           - add comment: do not allow configuring|overridding sorting for the moment, to keep things simple, because most users won't need it
+        - before prettifyStats()
+     - invert stats values (1/NUM)
+        - of all stats of mainKind
+        - for quantiles: each ARR element
+        - for histogram: each start|end
+     - swap min|max and meanMin|Max
+     - reverse ARR order of quantiles|histogram
+  - with prettifyStats(): change factor|unitSuffix|unitPrefix
 
 CONF.[stepsConfig.{stepId}.]unit "UNIT"
   - if no stepId: all steps
@@ -780,9 +790,6 @@ CONF.[stepsConfig.{stepId}.]unit "UNIT"
      - cannot be changed during reporting
 
 prettifyStats() factor|unit:
-  - if CONF.rate true, invert `stat.raw`
-     - i.e. NUM**-1 is used in prettifyStats() and reporting
-     - done at beginning, before factor|unitPrefix|decimals computed
   - rename `unit` suffix to `unitSuffix`
   - add `unitPrefix`
      - empty string for most units
@@ -1525,30 +1532,47 @@ stdev threshold:
            - unless the integer is meant to be constant, but we cannot know this from a series of samples, since they might appear to be constant but not really be
 
 What happens when returning 0:
-  - in:
-     - auto durations
-     - custom measures
-  - potential issues???
+  - current code:
      - if mean 0:
         - cannot compute [r]stdev|[r]moe
            - i.e. scale 1
         - isRemainingCombination() true, even if CONF.precision 0 or maxMeasures
         - no preview update
-        - for previousMean: diff does not work (divide by 0)???
+        - for previousMean: diff does not work (divide by 0)
         - ignored for prettifyStats()'s factor and decimals
            - if only 0s: no factor, no decimals
      - if sampleMedian 0:
         - scale 1
      - if all steps sampleMedian 0:
         - sampleMedian growth (for maxLoops) is 1
-     - unit "boolean": if mean 0|1: cannot compute stdev???
-     - unit group "mixed": would divide auto duration by 0???
+  - ideas:
+     - allow returning 0 with unit "duration|number"
+     - keep current code related to handling mean 0
+     - mean 0 is a problem:
+        - usually indicates a very low number rounded to 0 due to lack of precision:
+           - makes stdev much lower, i.e. stop combination too early
+           - information is less meaningful for users
+        - does not work with CONF.rate true as inverted 0 would be infinity
+        - does not work with CONF.diff as dividing by 0 would be infinity
+     - possible solutions:
+        - allow 0 measures but when mean 0: do not compute stats, preview results nor stop run
+        - allow 0 measures and mean 0 providing solution for the following???
+           - inverting with CONF.rate true
+           - stdev minimum threshold should handle repeated values (including 0) providing they are repeated many times???
+           - no diff of previous diff is 0???
+        - ignore 0 measures
+        - fail on 0 measures
+     - how does CONF.rate true work when inverting 0 with other stats than mean???
+        - make it undefined
+           - what if applied to min/max, since needed by some reporters???
+           - change reporters to take into account that any stat might now be undefined while others are not???
+     - returning 0 with unit group "mixed"???
         - different from other unit groups, because this is non0Measure/0, not 0
         - behave like returning an empty chunk ARR???
            - but does returning 0 contain information??? For example, task returning 0 bytes or 1 byte 50% of the time with same duration should be 0.5 bytes/{duration}
-     - CONF.rate:
-        - true:
-           - unit "auto|duration|count|bytes": if duration 0, how many ops/s???
-           - unit "boolean": if duration 0, 1/0???
-        - false:
-           - unit "bytes": if duration 0, how many s/B??? How autoscale byte unit, use 'B'???
+              - how to capture the duration in the division result though??? or report it in a single-dimensional way???
+        - if several measures 0 followed by non-0, transform to single averaged measure???
+     - mean 0 with unit "boolean":
+        - might be real mean???
+        - cannot compute stdev
+        - also for mean 1???
