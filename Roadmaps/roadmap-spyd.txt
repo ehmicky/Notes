@@ -562,6 +562,7 @@ Automatic repeat:
               - reasons:
                  - repeat imprecise steps more so that all steps reach CONF.precision roughly at the same time
                  - keep scale stable across the run, since difference scales can lead to different engine optimization
+                    - which we use we don't use rmoe**2 instead of rstdev**2: although it would be more accurate, it would be less stable
                  - produce same results regardless of CONF.precision
      - payload.maxLoops NUM:
         - if:
@@ -647,7 +648,7 @@ Add comment about preferred ways to loop, by preference:
   - if init|end step slow: use CONF.repeat true
   - if init|end step also stateful: use CONF.repeat false, non-"auto" unit and return chunk ARR in main step
      - also preferred if manual looping happens inside library code
-  - if main step does not have access to measures to return, and unit is duration: use CONF.repeat false, unit "count" and CONF.rate false in main step
+  - if main step does not have access to measures to return, and unit is duration: use CONF.repeat false, unit "count" and CONF.rate true in main step
 
 combination.unit STR:
   - persisted in results
@@ -748,7 +749,7 @@ Allow tasks to return chunks, i.e. ARR of custom measures:
      - meant to be equivalent to having run the task several times returning each chunk ARR element
 
 CONF.[stepsConfig.{stepId}.]rate BOOL
-  - def: depends on unit
+  - def: false
   - applied on report time
      - not persisted in history
      - reporting flag
@@ -813,11 +814,11 @@ Units:
         - parent validates that `response.measures` is undefined
      - "ratio":
         - use both auto duration and custom measure
-        - set measures to auto duration (in ns) / custom NUM
+        - set measures to custom NUM / auto duration (in ns)
            - during measure normalization stage
            - chunk ARR elements use the same duration but divided by chunk ARR.length
-        - persisted unit: ns for 1 operation
-        - reason why we do not persist both the duration and NUM:
+        - persisted unit: ops/ns
+        - reason why we do not persist both the auto duration and measure:
            - would require whole logic to be duplicated for both: stats, preview duration estimation, isRemainingCombination(), saving, etc.
         - payload.sendMeasures true
         - parent validates that `response.measures` is not undefined
@@ -844,7 +845,7 @@ Units:
         - no return
         - normalization: none, except one from group "autoOnly"
         - stat kind:
-           - CONF.rate false (def): durationUnit
+           - CONF.rate false: durationUnit
            - CONF.rate true: durationRate
      - "duration"
         - group: "customOnly"
@@ -854,7 +855,7 @@ Units:
            - allow: 0, float
         - no normalization
         - stat kind:
-           - CONF.rate false (def): durationUnit
+           - CONF.rate false: durationUnit
            - CONF.rate true: durationRate
      - "count"
         - group: "mixed"
@@ -864,8 +865,8 @@ Units:
            - allow: 0, float
         - normalization: none except one from group "mixed"
         - stat kind:
-           - CONF.rate false: durationUnit
-           - CONF.rate true (def): durationRate
+           - CONF.rate false: durationRate
+           - CONF.rate true: durationUnit
         - add comment: possible intents depends on whether NUM is specified by:
            - code used by task: task does not know NUM and forwards it, i.e. check how many times something occured (e.g. number of writes)
            - task code: i.e. task performs a loop and returns loop size
@@ -878,8 +879,8 @@ Units:
            - allow: 0, integer
         - normalization: none except one from group "mixed"
         - stat kind:
-           - CONF.rate false: inverseBytesRate
-           - CONF.rate true (def): bytesRate
+           - CONF.rate false: bytesRate
+           - CONF.rate true: inverseBytesRate
      - "boolean"
         - group: "customOnly"
         - return BOOL
@@ -889,7 +890,7 @@ Units:
            - set to ARR with two numbers: `true` count, total count
            - use BIGNUMs
         - stat kind:
-           - CONF.rate false (def): percentageUnit
+           - CONF.rate false: percentageUnit
            - CONF.rate true: inverseCountUnit
      - "number"
         - group: "customOnly"
@@ -899,7 +900,7 @@ Units:
            - allow: 0, float
         - no normalization
         - stat kind:
-           - CONF.rate false (def): countUnit
+           - CONF.rate false: countUnit
            - CONF.rate true: inverseCountUnit
   - when merging combinations from different results with same stepId but different unit:
      - filter out older combinations with incompatible units
@@ -1494,7 +1495,35 @@ Ideas for articles about benchmarking:
 
 stdev threshold:
   - main problem is preventing too low threshold (making run stop too early) not too high (making run slower)
-  - solutions need to take into account that real stdev might be 0
+  - potential problems:
+     - sample stdev is much lower than real stdev
+     - sample stdev is 0 (always the same)
+        - only a problem due to rounding either:
+           - due to float epsilon (2e-16)
+           - due to integer (1)
+        - need to take into account real stdev might be 0
+        - including when mean is 0
+           - or 0|1 with unit "boolean"
+  - findings:
+     - current mean estimation with t-test: t-value includes stdev uncertainty
+     - variance confidence interval:
+        - chi-squared test:
+           - variance * (n-1) / chi-value
+           - i.e. stdev * Math.sqrt(n - 1) / Math.sqrt(chi-value)
+           - chi-value:
+              - degrees of freedom: n - 1
+              - asymetric (biggest on the bigger side)
+              - must use half on each side, e.g. 95% -> 0.025|0.975
+              - Math.sqrt(n - 1) / Math.sqrt(chi-value) for n 2-... and 50-51:
+                 - 0.025 (inverted): 2.24, 1.92, 1.76, 1.67, 1.60, 1.55, ..., 1.1971, 1.1951
+                 - 0.975: 31.9, 6.26, 3.73, 2.87, 2.45, 2.20, 2.04, 1.91, 1.83, 1.75, 1.69, ..., 1.2461, 1.2430
+  - use different significance than 95%???
+     - values:
+        - 95%: 0% longer runs in average, and rstdev is multiplied by (for 2,3,4,5 samples): 42, 4.8, 2.6, 2
+        - 99%: 40% longer and: 260, 13, 5.4, 3.7
+        - 99.5%: 75% longer and: 10000, 26, 8.9, 5.5
+        - 99.9%: 150% longer and: 26000, 130, 27, 13
+     - make significance depend on sample size, since magnitude of error is bigger for smaller sample size???
   - with unit "auto|duration": hardcoded 5 is not great??? Use better formula???
   - with unit "boolean": what should it be???
   - with unit "count|bytes|number" and small integer measures???
@@ -1515,48 +1544,55 @@ stdev threshold:
         - applies even with CONF.rate true since the ratio is multiplied by the returned integer
            - unless the integer is meant to be constant, but we cannot know this from a series of samples, since they might appear to be constant but not really be
 
-What happens when returning 0:
-  - current code:
-     - if mean 0:
-        - cannot compute [r]stdev|[r]moe
-           - i.e. scale 1
-        - isRemainingCombination() true, even if CONF.precision 0 or maxMeasures
-        - no preview update
-        - for previousMean: diff does not work (divide by 0)
-        - ignored for prettifyStats()'s factor and decimals
-           - if only 0s: no factor, no decimals
-     - if sampleMedian 0:
-        - scale 1
-     - if all steps sampleMedian 0:
-        - sampleMedian growth (for maxLoops) is 1
-  - ideas:
-     - allow returning 0 with unit "duration|number"
-     - keep current code related to handling mean 0
-     - mean 0 is a problem:
-        - usually indicates a very low number rounded to 0 due to lack of precision:
-           - makes stdev much lower, i.e. stop combination too early
-           - information is less meaningful for users
-        - does not work with CONF.rate true as inverted 0 would be infinity
-        - does not work with CONF.diff as dividing by 0 would be infinity
-     - possible solutions:
-        - allow 0 measures but when mean 0: do not compute stats, preview results nor stop run
-        - allow 0 measures and mean 0 providing solution for the following???
-           - inverting with CONF.rate true
-           - stdev minimum threshold should handle repeated values (including 0) providing they are repeated many times???
-           - no diff of previous diff is 0???
-        - ignore 0 measures
-        - fail on 0 measures
-     - how does CONF.rate true work when inverting 0 with other stats than mean???
-        - make it undefined
-           - what if applied to min/max, since needed by some reporters???
-           - change reporters to take into account that any stat might now be undefined while others are not???
-     - returning 0 with unit group "mixed"???
-        - different from other unit groups, because this is non0Measure/0, not 0
-        - behave like returning an empty chunk ARR???
-           - but does returning 0 contain information??? For example, task returning 0 bytes or 1 byte 50% of the time with same duration should be 0.5 bytes/{duration}
-              - how to capture the duration in the division result though??? or report it in a single-dimensional way???
-        - if several measures 0 followed by non-0, transform to single averaged measure???
-     - mean 0 with unit "boolean":
-        - might be real mean???
-        - cannot compute stdev
-        - also for mean 1???
+Allow 0 measures:
+  - if mean 0, for [r]stdev|[r]moe|meanMin|Max:
+     - handled as if all measures are 0s
+        - which is the case almost always
+        - although the opposite is possible in principle if some measures are close to Number.EPSILON
+     - i.e. [r]stdev|[r]moe 0 and meanMin|Max === mean
+     - also applies to mean 1 for unit "boolean"
+     - still use logic to decide whether to skip stdev-related stats if sample size too small
+     - rstdev 0 when computing `scale`:
+        - scale 0
+        - lowest(rstdev**2) is taken only from non-0 rstdev combinations
+  - stats.diff[Precise] undefined if previousCombination.diff 0
+  - remove code that prevents, when mean 0:
+     - combination from stopping (isRemainingCombination())
+     - preview update
+  - applyRate():
+     - if a stat is 0, make it undefined
+     - histogram:
+        - if max 0: whole histogram undefined
+        - if min 0: first bucket's min = bucketMax / 2
+     - quantiles:
+        - if max 0: whole quantiles undefined
+        - if min 0:
+           - find first non-0 quantile
+           - replace all quantiles before it by its value divided by 2
+     - fix reporters so they take into account those new possibilities of stats being undefined
+  - add comments:
+     - we allow measures being 0
+        - including for any stats, including mean
+        - this is useful for most units:
+           - a task might randomly not perform an action
+              - measures being 0 remove the need for manually looping until the action is performed
+           - a task might have a real mean of 0
+              - e.g. task which never writes (0B/s), task which always return false (0%), etc.
+  - break down all of this into several parts for my notes: done right away, `scale`, CONF.rate, units, etc.???
+  - unit group "mixed", when normalizing returnedMeasure/autoDuration:
+     - returnedMeasure 0: result measure is 0
+     - autoDuration 0:
+        - skip the measure???
+        - performance:
+           - done after sorting
+           - check if first element is 0, as a quick early exit for most cases
+           - find first non-0 with binary search
+        - even if returnedMeasure also 0
+  - auto duration 0
+     - as opposed to measure 0 (including auto duration used as measure), is an anomaly???
+     - should not fail though
+        - for robustness since can happen due to:
+           - wrong measureCost estimation
+           - task too slow during calibration
+        - i.e. code provides fallback when auto duration is 0
+     - with unit "auto": keep measure 0, or filter them out???
