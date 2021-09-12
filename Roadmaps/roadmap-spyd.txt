@@ -63,6 +63,38 @@ Validation:
 
 --------------------
 
+Allow mean 0:
+  - if mean 0, for [r]stdev|[r]moe|meanMin|Max:
+     - [r]stdev|[r]moe 0 and meanMin|Max === mean
+        - reason: handled as if all measures are 0s
+           - which is the case almost always
+           - although the opposite is possible in principle if some measures are close to Number.EPSILON
+     - done after logic skipping stdev-related stats if sample size too small
+  - stats.diff[Precise] undefined if previousCombination.diff 0
+  - remove code that prevents, when mean 0:
+     - combination from stopping (isRemainingCombination())
+     - preview update
+
+Auto duration 0:
+  - add comments:
+     - auto duration 0:
+        - happens due to task duration being too close to either:
+           - runner's time resolution (on a given machine)
+           - runner's duration to take a timestamp
+        - i.e. 0 actually means an unknown duration lower than any non-0 auto durations
+        - i.e. unlike measures being 0, they are not desirable
+           - we try to reduce their occurences with the `repeat` loop
+           - but they can still occur due to:
+              - wrong measureCost estimation
+              - wrong timeResolution estimation
+              - task too slow during calibration
+        - as an unknown lowest duration, they are still useful and kept in the following cases:
+           - `sampleMedian` computation
+           - unit "auto" measures
+        - however, with unit group "mixed", they do not make sense and are filtered out
+
+--------------------
+
 Dimensions:
   - combination.dimensions.DIMENSION "ID"
      - DIMENSION: "task", "runner", "system"
@@ -544,9 +576,12 @@ Automatic repeat:
                  - i.e. always the case when uncalibrated
               - reason: ensure all steps have a rstdev as soon as possible
            - otherwise:
+              - steps with rstdev 0:
+                 - scale = 1
+                 - excluded from "lowest(rstdev**2)" below
               - step with lowest(rstdev**2): scale = 1
               - other steps:
-                 - scale = Math.round(current(rstdev**2) / slowest(rstdev**2))
+                 - scale = Math.round(current(rstdev**2) / lowest(rstdev**2))
                  - scale is Math.min()'d with both:
                     - Math.round(lowestRstdevStep.sampleMedian / currentStep.sampleMedian)
                        - reason:
@@ -755,12 +790,24 @@ CONF.[stepsConfig.{stepId}.]rate BOOL
            - i.e. kept as is
            - add comment: do not allow configuring|overridding sorting for the moment, to keep things simple, because most users won't need it
         - before prettifyStats()
-     - invert stats values (1/NUM)
-        - of all stats of mainKind
-        - for quantiles: each ARR element
-        - for histogram: each start|end
-     - swap min|max and meanMin|Max
-     - reverse ARR order of quantiles|histogram
+     - invert:
+        - invert stats values (1/NUM)
+           - of all stats of mainKind
+           - for quantiles: each ARR element
+           - for histogram: each start|end
+        - swap min|max and meanMin|Max
+        - reverse ARR order of quantiles|histogram
+     - stats 0:
+        - if a stat is 0, make it undefined
+        - histogram:
+           - if max 0: whole histogram undefined
+           - if min 0: first bucket's min = bucketMax / 2
+        - quantiles:
+           - if max 0: whole quantiles undefined
+           - if min 0:
+              - find first non-0 quantile
+              - replace all quantiles before it by its value divided by 2
+        - fix reporters so they take into account those new possibilities of stats being undefined
   - with prettifyStats(): change factor|unitSuffix|unitPrefix
 
 CONF.[stepsConfig.{stepId}.]unit "UNIT"
@@ -808,11 +855,14 @@ Units:
         - persisted unit: ns for 1 operation
         - payload.sendMeasures false
         - parent validates that `response.measures` is undefined
-     - "ratio":
+     - "mixed":
         - use both auto duration and custom measure
         - set measures to custom NUM / auto duration (in ns)
            - during measure normalization stage
            - chunk ARR elements use the same duration but divided by chunk ARR.length
+           - if custom NUM is 0: result is 0 (i.e. same handling as any other NUM)
+           - if auto duration 0: filter out the measure
+              - even if custom NUM also 0
         - persisted unit: ops/ns
         - reason why we do not persist both the auto duration and measure:
            - would require whole logic to be duplicated for both: stats, preview duration estimation, isRemainingCombination(), saving, etc.
@@ -910,9 +960,18 @@ Units:
      - why default is "auto": makes returning values from task functions opt-in:
         - avoid functions returning value but not intended, e.g. when exported directly
         - avoid returning seconds or ms when ns is expected
+     - we allow measures being 0
+        - including for any stats, including mean
+        - this is useful for most units:
+           - a task might randomly not perform an action
+              - measures being 0 remove the need for manually looping until the action is performed
+           - a task might have a real mean of 0
+              - e.g. task which never writes (0B/s), task which always return false (0%), etc.
 
 CONF.unit "boolean":
   - mean: `true` count / total count
+     - mean 1 is handled like mean 0
+        - including when checking whether to skip stdev-related stats
   - meanMin|Max: same as other units
   - quantiles|min|max|median|histogram: undefined
      - i.e. reporters show it the same way as not measured yet combinations
@@ -1540,55 +1599,24 @@ stdev threshold:
         - applies even with CONF.rate true since the ratio is multiplied by the returned integer
            - unless the integer is meant to be constant, but we cannot know this from a series of samples, since they might appear to be constant but not really be
 
-Allow 0 measures:
-  - if mean 0, for [r]stdev|[r]moe|meanMin|Max:
-     - handled as if all measures are 0s
-        - which is the case almost always
-        - although the opposite is possible in principle if some measures are close to Number.EPSILON
-     - i.e. [r]stdev|[r]moe 0 and meanMin|Max === mean
-     - also applies to mean 1 for unit "boolean"
-     - still use logic to decide whether to skip stdev-related stats if sample size too small
-     - rstdev 0 when computing `scale`:
-        - scale 0
-        - lowest(rstdev**2) is taken only from non-0 rstdev combinations
-  - stats.diff[Precise] undefined if previousCombination.diff 0
-  - remove code that prevents, when mean 0:
-     - combination from stopping (isRemainingCombination())
-     - preview update
-  - applyRate():
-     - if a stat is 0, make it undefined
-     - histogram:
-        - if max 0: whole histogram undefined
-        - if min 0: first bucket's min = bucketMax / 2
-     - quantiles:
-        - if max 0: whole quantiles undefined
-        - if min 0:
-           - find first non-0 quantile
-           - replace all quantiles before it by its value divided by 2
-     - fix reporters so they take into account those new possibilities of stats being undefined
-  - add comments:
-     - we allow measures being 0
-        - including for any stats, including mean
-        - this is useful for most units:
-           - a task might randomly not perform an action
-              - measures being 0 remove the need for manually looping until the action is performed
-           - a task might have a real mean of 0
-              - e.g. task which never writes (0B/s), task which always return false (0%), etc.
-  - break down all of this into several parts for my notes: done right away, `scale`, CONF.rate, units, etc.???
-  - unit group "mixed", when normalizing returnedMeasure/autoDuration:
-     - returnedMeasure 0: result measure is 0
-     - autoDuration 0:
-        - skip the measure???
-        - performance:
-           - done after sorting
-           - check if first element is 0, as a quick early exit for most cases
-           - find first non-0 with binary search
-        - even if returnedMeasure also 0
-  - auto duration 0
-     - as opposed to measure 0 (including auto duration used as measure), is an anomaly???
-     - should not fail though
-        - for robustness since can happen due to:
-           - wrong measureCost estimation
-           - task too slow during calibration
-        - i.e. code provides fallback when auto duration is 0
-     - with unit "auto": keep measure 0, or filter them out???
+Problems:
+  - with a somewhat accurate stdev and mean, 95% of times it will be within moe
+     - moe is as narrow as defined by CONF.precision
+     - but 5% can still be outside
+  - the higher a mean outlier is, the more precise it looks
+     - because it decreases rmoe, for a given moe
+     - amplitude:
+        - proportional to (sampleMean / realMean) / sqrt(n)
+        - in 97.5% times, max 1.96 / sqrt(n)
+        - but 2.5% times includes much higher values
+           - following normal distribution
+     - mitigated by higher sample size due to:
+        - outliers removal
+        - each outlier having less weight in the total mean
+           - proportional to sqrt(n) (like moe)
+     - this problem is specific to using rmoe as key logic
+        - moe alone does not have this problem, i.e. does not compensate for it
+
+Solutions:
+  - increase significance rate from 95%???
+  - have outliers removal start earlier (while keeping overall removal ratio)???
