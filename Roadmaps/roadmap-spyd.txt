@@ -71,8 +71,74 @@ Check distribution of my test tasks:
   - try with:
      - my tasks
      - nve, fast-cartesian, precise-now
+  - distribution:
+     - snappy: lognormal, slow tail 6 times longer
+     - fast: mostly normal, multiple modes
+     - slow: lognormal, fast tail 2 times longer, multiple modes
+     - precise: lognormal, slow tail 2 times longer, multiple modes
+     - imprecise: mostly normal, multiple smaller modes, 15% is a much slower bump
+     - cpu: mostly normal, multiple smaller modes
+     - read: lognormal, slow tail 2 times longer
+     - write: lognormal, slow tail 2 times longer
+     - spawn: lognormal, slow tail 4 times longer
+     - network: mostly normal, multiple big modes
+     - complex: mostly normal
+     - uniform: uniform
+     - exponential: logarithmic
+     - growing: uniform, growing
+     - nve: mostly normal, 2 separate modes of same size
+     - nvmExec: mostly normal
+     - npxNode: mostly normal
+     - hrtime: lognormal, slow tail 1.5 times longer
+     - hrtimeBig: mostly normal, multiple smaller modes
+     - performanceNow: mostly normal, multiple smaller modes
+     - dateNow: mostly normal, 2 separate modes of same size
+     - dateGetTime: mostly normal, multiple smaller modes
+     - dateNumber: mostly normal, 2 separate modes of same size
+     - fastCartesianMain: mostly normal
+     - bigCartesian: mostly normal, 2 separate modes of same size quite far
+     - fastCartesianProduct: mostly normal
+     - cartesianProduct: mostly normal, multiple big modes
+     - powerCartesianProduct: mostly normal, multiple modes
+     - cartesian: lognormal, slow tail 1.5 times longer
+     - lodashProduct: lognormal, slow tail 3 times longer, multiple modes
+  - distribution general notes:
+     - often the distribution has multiple modes
+        - the central one is often higher than the others
+        - modes sometimes disappear with higher sample size
 
 Lower the percentage of fast outliers (not slow) being removed???
+  - perfect outliers (fast, slow):
+     - snappy: .001, .02
+     - fast: .001, .03
+     - slow: .1, .03
+     - precise: .015, .005
+     - imprecise: .003, .2
+     - cpu: .001, .03
+     - read: .001, .06
+     - write: .001, .06
+     - spawn: 0, .02
+     - network: 0, .01
+     - complex: .001, .05
+     - uniform: 0, 0
+     - exponential: 0, 0
+     - growing: 0, 0
+     - nve: 0, .01
+     - nvmExec: .05, .01
+     - npxNode: 0, .015
+     - hrtime: .005, .01
+     - hrtimeBig: .002, .03
+     - performanceNow: .001, .02
+     - dateNow: .001, .015
+     - dateGetTime: .001, .02
+     - dateNumber: .001, .025
+     - fastCartesianMain: .001, .3
+     - bigCartesian: .001, .03
+     - fastCartesianProduct: 0, .27
+     - cartesianProduct: 0, .1
+     - powerCartesianProduct: .02, .07
+     - cartesian: .005, .02
+     - lodashProduct: .001, .01
 
 Figure out why increasing precision from the maximum (4) for some tasks like `cpu` yields different results???
 
@@ -538,6 +604,7 @@ Automatic repeat:
            }
          }
        } while (maxLoops--)
+     - `context` should be re-shallow copied (from previous step) on each `scale` iteration
   - payload:
      - payload.steps[*].repeat NUM:
         - if CONF.repeat false and task has multiple steps: 1
@@ -1526,17 +1593,99 @@ Ideas for articles about benchmarking:
 
 ------------------------
 
+before|after all:
+  - solutions:
+     - "all" task with shared steps
+        - con: more complex, since before|after are the main steps likely to be shared
+        - does not work with other steps since cannot specify order
+     - before|after task
+        - con: require splitting task files for tasks not using it
+        - con: less clear that `this` is shared with tasks
+        - con: mixes it with task functions, although separate
+        - con: unclear that run once per combination, as opposed to once for all tasks in the file
+           - however, so is top-level scope
+        - allow OBJ to make it step-specific???
+           - con: confusing structure since before|after > step while also task > step
+     - before|after task + step
+        - con: more complex
+     - before|after step
+        - con: mixes it with steps, although separate: run only once, cannot select, not reported
+        - con: require setting in each task to share
+        - con: hard to share with some runners, e.g. cli (although YAML can use variables)
+        - enforce that they are the first|last step in the task???
+
+Inputs:
+  - Possible solutions:
+     - Environment variable
+        - con: not JSON parsed
+     - Global variable
+        - con: bad for linting
+        - con: bad for testing
+     - `before` argument
+     - before|after + steps argument
+     - `this.*` argument
+        - con: discourage processing each input once per combination
+        - con: more complex `this`
+        - con: context makes it more feel like inputs are mutable
+        - con: mixed with user-defined, iteration-scoped, mutable properties set in previous steps
+        - con: namespace conflict with other usage of `this.*`
+           - namespace as `this.inputs.*`???
+     - step argument
+        - pro: shallow merged, i.e. discourage using it for message passing
+        - con: discourage processing each input once per combination
+        - con: makes it feel like input is step|task-specific
+        - con: more complex task interface
+
+Use logic to determine best outliers threshold instead of hardcoding it???
+  - slow outliers: first histogram bucket where (frequency / numberOfBucketsLeft) < hardcodedThreshold
+     - using 1000 buckets
+  - fast outliers: inverse, going backward
+  - or instead use 1000th-iles???
+     - first 1000th-ile where (numberOf1000thilesLeft / percentageLeft) < hardcodedThreshold
+        - percentageLeft: (max - 1000ile) / (max - min)
+  - what if:
+     - mean 0???
+     - same min|max???
+     - unit "boolean"???
+     - integers???
+        - e.g. fewer number of histogram buckets
+
+Unit group mixed using both integers and durations:
+  - not a problem since: ???
+     - if integer range small, rstdev big (since integers are multiplying factors), i.e. rmoe big
+     - if integer range wide, closer to a continous distribution, i.e. no stdev problem
+
+stdev|moe with always same measure:
+  - use n+1???
+     - i.e. compute stdev but as if one measure was 1 off
+        - note: stdev computed differently for unit "boolean" and other units
+     - reason: if n+1 still below rmoe threshold, no need to continue
+     - other reason: give a sense of precision range with some statistical meaning
+     - does not work for unit boolean since very low proportions have very high rmoe???
+  - or use Wilson score interval???
+     - use for other units than "boolean" too???
+        - reason: since repeated measures, assume:
+           - discrete distribution
+           - any divergent measure would be only off by 1
+           - therefore same as a probability|binomial situation
+
 stdev threshold:
   - main problem is preventing too low threshold (making run stop too early) not too high (making run slower)
   - potential problems:
      - sample stdev is much lower than real stdev
-     - sample stdev is 0 (always the same)
-        - only a problem due to rounding either:
-           - due to float epsilon (2e-16)
-           - due to integer (1)
-        - need to take into account real stdev might be 0
-        - including when mean is 0
+     - sample stdev computed from measures that are rounded:
+        - due to:
+           - float epsilon (2e-16)
+           - integers (1)
+        - including stdev 0 (always same measures)
+           - might be real one
+        - including with mean 0
+           - might be real one
            - or 0|1 with unit "boolean"
+  - impact on DX of lowering threshold:
+     - pro: faster first preview
+     - pro: some runs finish faster, especially very slow ones with low rstdev
+     - con: might increase inaccuracy of first preview durations
   - findings:
      - current mean estimation with t-test: t-value includes stdev uncertainty
      - variance confidence interval:
@@ -1545,18 +1694,13 @@ stdev threshold:
            - i.e. stdev * Math.sqrt(n - 1) / Math.sqrt(chi-value)
            - chi-value:
               - degrees of freedom: n - 1
-              - asymetric (biggest on the bigger side)
+              - asymetric (underestimations are bigger than overestimations)
               - must use half on each side, e.g. 95% -> 0.025|0.975
               - Math.sqrt(n - 1) / Math.sqrt(chi-value) for n 2-... and 50-51:
                  - 0.025 (inverted): 2.24, 1.92, 1.76, 1.67, 1.60, 1.55, ..., 1.1971, 1.1951
                  - 0.975: 31.9, 6.26, 3.73, 2.87, 2.45, 2.20, 2.04, 1.91, 1.83, 1.75, 1.69, ..., 1.2461, 1.2430
-  - use different significance than 95%???
-     - values:
-        - 95%: 0% longer runs in average, and rstdev is multiplied by (for 2,3,4,5 samples): 42, 4.8, 2.6, 2
-        - 99%: 40% longer and: 260, 13, 5.4, 3.7
-        - 99.5%: 75% longer and: 10000, 26, 8.9, 5.5
-        - 99.9%: 150% longer and: 26000, 130, 27, 13
-     - make significance depend on sample size, since magnitude of error is bigger for smaller sample size???
+              - why much higher than t-value???
+                 - maybe because underestimated stdev is more likely when measures are close to mean???
   - with unit "auto|duration": hardcoded 5 is not great??? Use better formula???
   - with unit "boolean": what should it be???
   - with unit "count|bytes|number" and small integer measures???
@@ -1581,20 +1725,45 @@ Problems:
   - with a somewhat accurate stdev and mean, 95% of times it will be within moe
      - moe is as narrow as defined by CONF.precision
      - but 5% can still be outside
-  - the higher a mean outlier is, the more precise it looks
-     - because it decreases rmoe, for a given moe
-     - amplitude:
-        - proportional to (sampleMean / realMean) / sqrt(n)
-        - in 97.5% times, max 1.96 / sqrt(n)
-        - but 2.5% times includes much higher values
-           - following normal distribution
-     - mitigated by higher sample size due to:
-        - outliers removal
-        - each outlier having less weight in the total mean
-           - proportional to sqrt(n) (like moe)
-     - this problem is specific to using rmoe as key logic
-        - moe alone does not have this problem, i.e. does not compensate for it
+  - distribution might me further from normal distribution when sample size small
+  - distribution of measures is not perfectly normal:
+     - unit:
+        - "auto|duration": lognormal???
+           - mean|stdev|moe are same, but exponeniated
+              - i.e. if low exponent, same as normal
+           - or is it normal but with slow outliers???
+        - "count|bytes": lognormal multiplied by discrete normal or lognormal???
+        - "boolean": binomial
+        - "number": unknown, but more likely normal or lognormal
+     - less of a problem with higher sample size since they become closer to normal distribution (central limit theorem)
+  - low stdev not a problem because tvalue compensates for it???
 
 Solutions:
   - increase significance rate from 95%???
+     - values:
+        - 95%: 0% longer runs in average, and rstdev is multiplied by (for 2,3,4,5 samples): 42, 4.8, 2.6, 2
+        - 99%: 40% longer and: 260, 13, 5.4, 3.7
+        - 99.5%: 75% longer and: 10000, 26, 8.9, 5.5
+        - 99.9%: 150% longer and: 26000, 130, 27, 13
+  - make significance depend on sample size, since magnitude of error is bigger for smaller sample size??? is it???
   - have outliers removal start earlier (while keeping overall removal ratio)???
+
+Add comments:
+  - rmoeMin|Max:
+     - unlike moe, rmoe can be impacted by mean's inaccuracy (due to being estimated)
+        - this can make run end earlier than expected
+     - it would be more accurate to use rmoeMin|Max instead of rmoe
+        - using as moe / meanMin|Max instead of moe / mean
+        - rmoeMax would be used like rmoe, i.e. mostly to check to see if combination should end
+     - for a given rmoe, rmoeMin|Max is [rmoe/(1+rmoe), rmoe/(1-rmoe)]
+        - the higher rmoe threshold, the more likely to reach too early
+        - with our CONF.precision thresolds, rmoeMax is rmoe multiplied by: 2 (50%), 1.11 (10%), 1.05 (5%), 1.01 (1%), 1.005 (.5%), 1.001 (.1%)
+     - while it would be more accurate, we do not use rmoeMin|Max because:
+        - the difference with rmoe is:
+           - too low to be worth the added complexity
+           - changing when run ends, but not the stats themselves (including moe)
+           - constant for a given CONF.precision, i.e. could be considered part of the rmoe threshold itself
+              - e.g. 10% rmoe threshold is actually always [9.1%, 11.1%]
+        - it is not a problem even when mean inaccuracy is high
+           - because that is only likely when rstdev is high and sample size low
+           - which is proportional to a higher [r]moe
