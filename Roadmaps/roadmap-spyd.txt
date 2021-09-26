@@ -322,12 +322,12 @@ Steps:
               - ARR in execution order
         - on measure, gets OBJ:
            - maxLoops NUM
-           - steps OBJ_ARR:
+           - series OBJ_ARR:
               - id "stepId", repeat NUM
               - ARR in execution order
         - do {
             const context = { ...beforeContext }
-            for (const { id, repeat } of steps) {
+            for (const { id, repeat } of series) {
               const step= steps[id]
               startTime()
               while (repeat--) {
@@ -340,17 +340,17 @@ Steps:
            - last step measured is always real last step, i.e. does not leave state half-finished
            - each step run at least once
         - returns `measures` ARR_ARR_NUM
-           - ARR in `steps` execution order
+           - ARR in `series` execution order
      - all steps of a given combination use same process
      - measureEachCombination() [un]groups combinations with same dimensions except stepId into series, and iterates over those instead
         - rename "combination" to "series" for any group of steps with same other dimensions
-     - getSampleState() and getStats() are iterated over sampleState.steps[*]
+     - getSampleState() and getStats() are iterated over sampleState.series[*]
      - sampleState:
         - measureDuration|totalDuration|sampleDurationMean: not-step-wise
         - allSamples: not-step-wise
-        - all other properties: step-wise, at sampleState.steps OBJ_ARR including: repeat, calibration, stats, sampleMeasures|sampleMedian|sampleLoops
+        - all other properties: step-wise, at sampleState.series OBJ_ARR including: step 'stepId', repeat, calibration, stats, sampleMeasures|sampleMedian|sampleLoops
      - sample payload:
-        - payload.steps[*].repeat NUM: sampleState.repeat
+        - payload.series[*].repeat NUM: sampleState.repeat
         - payload.maxLoops NUM:
            - not step-wise
            - if first sample (measureDuration === 0): 1
@@ -362,7 +362,7 @@ Steps:
                     - sampleMediansSum = sum of each step sampleMedian
                     - if sampleMedianSum 0: sampleMedianWeight is 1 for each step
                     - if sampleMedianSum not 0 but sampleMedian 0: sampleMedianWeight is 0 for that step
-              - maxMeasures threshold: divide (MAX_MEASURES - measures.length) by steps.length
+              - maxMeasures threshold: divide (MAX_MEASURES - measures.length) by series.length
      - previewStats:
         - combinationEnd: keep most logic except:
            - compute samplesLeft for each step, and only use the Math.max()
@@ -370,15 +370,15 @@ Steps:
            - preview should be skipped only if all steps are skipped
      - tweak isRemainingCombination logic for multiple steps:
         - stopped, `dev` stage: keep as is (not-step-wise)
-        - mean === 0: steps.some()
+        - mean === 0: series.some()
         - maxMeasures: use sum of all samplesState.step[*].measures.length
-        - loops === 0 (CONF.precision 0): steps.some()
-        - rmoe: steps.some()
+        - loops === 0 (CONF.precision 0): series.some()
+        - rmoe: series.some()
      - minLoopDuration:
         - each step has its own minLoopDuration
-        - multiply TARGET_DURATION by steps.length
-        - maxMeasures should use sum of steps[*].measures.length
-        - hasEnoughMeasures(): use steps.every()
+        - multiply TARGET_DURATION by series.length
+        - maxMeasures should use sum of series[*].measures.length
+        - hasEnoughMeasures(): use series.every()
         - run steps normally otherwise, i.e. the runner executes them serially but with `repeat: 0`
      - truncateLogs: not-step-wise
      - dev command: run all steps at once, without headers in-between
@@ -559,15 +559,15 @@ Automatic repeat:
   - CONF[.tasksConfig.{taskId}].repeat BOOL
      - def: false
   - runner:
-     - params OBJ: maxLoops NUM, steps OBJ_ARR: id 'stepId', scale NUM, repeat NUM
+     - params OBJ: maxLoops NUM, series OBJ_ARR: task 'taskId', step 'stepId', scale NUM, repeat NUM
      - do {
          const context = { ...beforeContext }
-         for (const { id, scale, repeat } of steps) {
-           const step = steps[id]
+         for (const { task, step, scale, repeat } of series) {
+           const stepFunc = tasks[task][step]
            while (scale--) {
              startTime()
              while (repeat--) {
-               step.apply(context, args)
+               stepFunc.apply(context, args)
              }
              endTime()
            }
@@ -575,11 +575,11 @@ Automatic repeat:
        } while (maxLoops--)
      - `context` should be re-shallow copied (from previous step) on each `scale` iteration
   - payload:
-     - payload.steps[*].repeat NUM:
+     - payload.series[*].repeat NUM:
         - if CONF.repeat false and task has multiple steps: 1
-     - payload.steps[*].scale NUM:
+     - payload.series[*].scale NUM:
         - step-wise
-        - also set at sampleState.steps[*].scale[Last]
+        - also set at sampleState.series[*].scale[Last]
         - if:
            - CONF.repeat false: 1
            - first sample (sampleMedian === undefined): 1
@@ -600,7 +600,7 @@ Automatic repeat:
                           - prevent `scale` from increasing sample duration too much
                           - based on the fact that rstdev tends to be correlated with complexity, which is itself correlated with median duration
                        - if currentStep.sampleMedian 0: 1
-                    - Math.floor((MAX_MEASURES - measures.length) / (steps.length - 1))
+                    - Math.floor((MAX_MEASURES - measures.length) / (series.length - 1))
                  - then scale is Math.max()'d with 1
               - reasons:
                  - repeat imprecise steps more so that all steps reach CONF.precision roughly at the same time
@@ -615,9 +615,9 @@ Automatic repeat:
               - use growth = sumEachStep(repeatGrowth * scaleGrowth * sampleMedianWeight)
                  - repeatGrowth = repeat / repeatLast
                  - scaleGrowth = scale / scaleLast
-              - maxMeasures: divide (MAX_MEASURES - measures.length) by sum of all steps[*].scale
-                 - i.e. if all steps[*].scale 1, divide by steps.length
-              - multiply each payload.steps[*].scale by maxLoops
+              - maxMeasures: divide (MAX_MEASURES - measures.length) by sum of all series[*].scale
+                 - i.e. if all series[*].scale 1, divide by series.length
+              - multiply each payload.series[*].scale by maxLoops
                  - including if some steps have no rstdev
                  - but excluding if first sample
               - set payload.maxLoops 1
@@ -625,7 +625,7 @@ Automatic repeat:
                     - each step has bigger loops, i.e. less cross-step optimization influence
                     - gives more flexibility to slow down some steps over others
      - steps excluded by CONF.select:
-        - payload.steps[*].scale: always 1
+        - payload.series[*].scale: always 1
   - combination.imprecise BOOL
      - true when all of:
         - CONF.repeat false
@@ -783,11 +783,11 @@ Allow tasks to return chunks, i.e. ARR of custom measures:
         - Math.min() with 1 (in case the task only returns empty chunk ARRs)
      - used as part of maxMeasures in:
         - `scale` as part of the Math.min():
-            - Math.floor((MAX_MEASURES - measures.length) / (steps.length - 1))
-           -> Math.floor((MAX_MEASURES - measures.length) / (steps.length - 1) / currentStep.sampleLoopSize)
+            - Math.floor((MAX_MEASURES - measures.length) / (series.length - 1))
+           -> Math.floor((MAX_MEASURES - measures.length) / (series.length - 1) / currentStep.sampleLoopSize)
         - `maxLoop`:
-            - (MAX_MEASURES - measures.length) / sum(steps[*].scale)
-           -> (MAX_MEASURES - measures.length) / sum(steps[*].scale * steps[*].sampleLoopSize)
+            - (MAX_MEASURES - measures.length) / sum(series[*].scale)
+           -> (MAX_MEASURES - measures.length) / sum(series[*].scale * series[*].sampleLoopSize)
   - add comments:
      - meant to be equivalent to having run the task several times returning each chunk ARR element
 
