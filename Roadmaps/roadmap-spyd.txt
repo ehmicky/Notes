@@ -63,28 +63,6 @@ Validation:
 
 --------------------
 
-Findings:
-  - moe with t-distribution works perfectly when measures follow normal distribution
-     - moe is correct 95% of the times (according to 95% significance rate)
-     - even when sample size is 2-5
-  - however, when moe is incorrect, how much bigger it usually should have been widens with small sample size:
-     sampleSize   mean    p50   p90   p95   p99  p99.9  max
-              2     16      2    10    20   1e2    1e3  1e6
-              3      2   1.44   3.3   4.6    10     32  1e3
-              4   1.58   1.31  2.34     3     5     11  1e2
-              5   1.43   1.26     2  2.43   3.7    6.6   35
-              6   1.37   1.23  1.85  2.18   3.1      5   25
-              7   1.33   1.21  1.76  2.03  2.77    4.2   13
-              8   1.30   1.20  1.70  1.94  2.57    3.7    9
-              9   1.28  1.193  1.66  1.87  2.43    3.4    8
-             10   1.27  1.186  1.63  1.83  2.34    3.2  6.5
-             20   1.22  1.162  1.51  1.66     2    2.4    3
-             40   1.20  1.151  1.47  1.60  1.87    2.2  2.7
-            1e2  1.199  1.148  1.45  1.56  1.81    2.1  2.4
-            1e3  1.198  1.144  1.43  1.55  1.78    2.0  2.3
-
---------------------
-
 Cross-dimensions duplicate id validation:
   - for newly measured result with `run`:
      - throw error
@@ -303,20 +281,31 @@ Steps:
      - runners should enforce "main" as the default stepId
         - i.e. must return `tasks` `{ taskId: ['main'] }` to parent
      - validated like other combination user-defined ids: character validation, duplicate ids check
-  - processes:
-     - at benchmark start, when runner communicates available tasks to parent, it should also return available steps
-        - returned as `tasks: { taskId: 'stepId'_ARR, ... }`
-     - all steps of a given combination use same process
-  - remove beforeEach|afterEach
-     - rename beforeAll|afterAll to before|after
-     - add comment that runners should avoid specific case for reserved exported names, since users might use different case convention for stepIds
-  - each step is a combination dimension
+  - before|after special steps:
+     - remove beforeEach|afterEach
+        - rename beforeAll|afterAll to before|after
+     - alongside other steps but not considered a step:
+        - run only once
+        - not reported
+        - not a dimension
+        - cannot be excluded by CONF.select
+        - no impact on CONF.repeat
+        - end() is run even on error or cancel
+     - can use `context`:
+        - in before:
+           - context is empty
+           - context mutations are passed to any other steps
+        - in after:
+           - receives only the context mutations from `before`, not individual steps
+     - validate that before|after is first|last in steps OBJ order
+  - each non-special step is a combination dimension
      - add combination.dimensions.step
      - when sorting combinations: sorted first, before tasks
   - implementation:
      - runner:
-        - on start, returns steps to parent
-           - ARR in execution order
+        - on start:
+           - return all `tasks: { taskId: 'stepId'_ARR, ... }`
+              - ARR in execution order
         - on measure, gets OBJ:
            - maxLoops NUM
            - steps OBJ_ARR:
@@ -325,7 +314,7 @@ Steps:
         - do {
             const context = { ...beforeContext }
             for (const { id, repeat } of steps) {
-              const step = steps[id]
+              const step= steps[id]
               startTime()
               while (repeat--) {
                 step.apply(context, args)
@@ -337,7 +326,8 @@ Steps:
            - last step measured is always real last step, i.e. does not leave state half-finished
            - each step run at least once
         - returns `measures` ARR_ARR_NUM
-           - ARR in steps execution order
+           - ARR in `steps` execution order
+     - all steps of a given combination use same process
      - measureEachCombination() [un]groups combinations with same dimensions except stepId into series, and iterates over those instead
         - rename "combination" to "series" for any group of steps with same other dimensions
      - getSampleState() and getStats() are iterated over sampleState.steps[*]
@@ -381,7 +371,7 @@ Steps:
   - separate steps in reporters:
      - reason: they might have different units or CONF.rate (i.e. min|max)
      - for:
-        - tables (debug|history): each steps should have its own table
+        - tables (debug|history): each step should have its own table
         - boxplot: each step should have its own min|max
   - steps excluded by CONF.select:
      - like any other combination dimensions:
@@ -442,10 +432,18 @@ Steps:
      - measuring logic that's not exposed to users:
         - i.e. different steps within the library implementation
         - should return an EventEmitter and wait for specific events inside each spyd step
-     - why before|after are not handled as special kinds of steps:
+     - why before|after are not handled as regular steps:
         - if user wants to measure them, should run them more than once, i.e. use a normal step
         - most users would use it for init|cleanup, i.e. do not want reporting
         - too many differences: only runs once, sets initial context, always at beginning|end, error handling, CONF.repeat error handling, etc.
+     - syntax alternatives for before|after not as good:
+        - top-level before|after{taskId} function:
+           - requires either picking a specific case or allowing multiple
+           - top-level like task functions, although different, creating confusion
+           - requires validating that it is not defined twice in multiple task files
+           - less clear that `this` is shared with steps
+        - before|after[.{taskId}], i.e. before|after is either a function or an object:
+           - use same OBJ syntax as steps but with tasks instead, making before|after > task > step hierarchy unclear
      - why sampleTargetDuration does not increase with number of steps:
         - new steps are more likely to be due to splitting existing steps than adding new ones
         - keep preview responsive
@@ -995,8 +993,8 @@ isAsync:
   - do the above when func.isAsync undefined && repeat 1
      - add code comment that repeat should always be 1 when func.isAsync undefined, and this probably won't change. It is more of a failsafe.
   - do the above in a `sync_async` dir, next to `sync` and `async` dirs
-  - do the above independently for beforeEach, main and afterEach
-  - always use await on beforeAll|afterAll, i.e. allow both sync and async
+  - do the above independently for each step
+  - always use await on before|after, i.e. allow both sync and async
   - remove task.async BOOL
 
 CONF.concurrency NUM
