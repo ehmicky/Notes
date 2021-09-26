@@ -1517,52 +1517,35 @@ Ideas for articles about benchmarking:
 
 ------------------------
 
-before|after hooks:
-  - instead of being alongside step, should be top-level function
+"each" special task:
+  - steps assigned to each task
+  - for both before|after() and normal steps
+  - lower priority, i.e. can be overridden by individual tasks
+     - for both before|after() and normal steps
+  - prepended, i.e. first in steps order of each task, unless either:
+     - overridden by task
+     - stepId starts with "after", case-insensitively
+  - only applies to tasks inside same file
+     - reasons:
+        - easier to reason about
+        - allows scoping to a group of tasks
+        - no possibility of redefining it in multiple files
+        - required since different task files have different processes
+  - runner:
+     - do not pass taskId anymore on start
+     - pass OBJ: series OBJ_ARR: task 'taskId', step: 'stepId'
+     - when runner returns all available tasks to parent, returns "each" as any other task
+     - "each" merging is performed by parent, not runner
+     - does not work because before|after run only once???
   - add comments:
-     - documented as hooks, to distinguish from steps
-     - named "before|after" to re-use test runners' terminology
-        - alternatives: start|end??? init|end???
-  - named before|after()
-     - or before|after_all()???
-     - run at beginning|end of each combination's child process
-  - before|after_{taskId}
-     - same as before|after() but only for combinations of a specific task
-     - not provide it at all???
-     - if:
-        - before() also specified, run after it
-        - after() also specified, run before it
-     - allow any case??? _ - Capitalized???
-        - pro: friendlier to linter
-        - pro: avoid mixed case names which are poor DX
-        - con: what if user specifies twice same hook but with different cases???
-        - con: polymorphic
-        - con: require taskId first letter case to be changed
-     - use suffix instead of prefix???
-        - pro: vertical alignment
-        - pro: no need to change taskId case
-        - con: does not look as nice with words "before|after"
-  - add comments
-     - alternatives not as good:
-        - before|after[.{taskId}], i.e. before|after is either a function or an object: too complex because:
-           - polymorphic
-           - use same OBJ syntax as steps but with tasks instead, making before|after > task > step hierarchy unclear
-     - task.before|after(), i.e. alongside steps:
-        - creates confusion with steps, although hooks are very different: run only once, not selectable, not reported, not always task-specific, no impact on CONF.repeat
-        - requires using an object instead of a top-level function for the task even if it does not have any steps
-        - more verbose to share between tasks
-  - change runner:
-     - start payload???
-     - start response???
-     - measure payload???
-  - do not allow `this` in before|after*, using top-level scope instead???
-     - pro: clear distinction with steps
-     - pro: no two ways of doing same thing
-     - pro: clear that the variable is set only once
-     - con: some runners might not have equivalent and need to reuse same mechanism used for steps
-     - con: two separate ways of message passing: for before|after and for steps
-     - con: one more line of code
-     - PROBABLY MORE CON
+     - example use cases for regular steps in "all":
+        - create temporary directory when all tasks write to filesystem
+        - create temporary REST entity when all tasks modify REST entities
+        - create temporary data when all tasks modify arguments
+           - e.g. sorting arrays
+     - reasons why shared steps are nested under "each" instead of being top-level:
+        - keep top-level for tasks and nested level for steps
+        - extensible if more properties were to be added to tasks
 
 Inputs:
   - Possible solutions:
@@ -1571,61 +1554,125 @@ Inputs:
      - Global variable
         - con: bad for linting
         - con: bad for testing
+        - pro: makes inputs feel less step|task-specific
      - `before` argument
+        - pro: encourage processing each input once per combination
      - before|after + steps argument
+        - con: more complex task interface
      - `this.*` argument
         - pro: reuse existing API
            - better for runners where message passing is hard, e.g. cli
-        - con: discourage processing each input once per combination
         - con: more complex `this`
         - con: context makes it more feel like inputs are mutable
+           - when transforming inputs, better to reassign them, or to assign a new variable???
         - con: mixed with user-defined, iteration-scoped, mutable properties set in previous steps
         - con: namespace conflict with other usage of `this.*`
            - namespace as `this.inputs.*`???
-     - step argument
-        - pro: shallow merged, i.e. discourage using it for message passing
-        - con: discourage processing each input once per combination
-        - con: makes it feel like input is step|task-specific
-        - con: more complex task interface
+     - named arguments: inputs OBJ, context OBJ
+        - pro: works with arrow functions and bound functions
+        - pro: clear distinction between inputs and context
+        - pro: extensible
+        - pro: more adaptable to different programming languages
+        - con: more complex argument
+        - allow task to reassign args.context = OBJ???
+     - positional argument is context OBJ, with context.inputs OBJ
+     - positional argument is both context and inputs OBJ
 
-Add comments about distribution of most duration-based measures:
-  - are normal-to-lognormal
-     - when lognormal:
-        - long tail is usually 1-4 times longer than faster tail
+Optimization:
+  - some tasks get optimized with time, i.e. higher CONF.precision -> lower mean???
+
+Non-normal distribution:
+  - distribution might me further from normal distribution when sample size small???
+  - distribution of measures is not perfectly normal???
+     - unit:
+        - "auto|duration": lognormal
+        - "count|bytes": lognormal multiplied by discrete normal or lognormal???
+        - "boolean": binomial
+        - "number": unknown, but more likely normal or lognormal
+     - less of a problem with higher sample size since they become closer to normal distribution (central limit theorem)
+  - solutions to distribution not being perfectly normal???
+     - multiply any moe by a constant number???
+        - or make it depend on how much data fits a normal distribution???
+     - make moe as skewed as distribution???
+        - e.g. keep [r]moe as is, but use:
+           - meanMin = mean - (moe * (1-meanPosition) * 2)
+           - meanMax = mean + (moe * meanPosition * 2)
+           - meanPosition: 0-1 position of mean within sorted measures ARR
+              - if present several times, use middle one
+              - use binary search
+              - or instead, base it on p25-p50 compared to p50-p75???
+     - assume lognormal distribution???
+        - guess parameters from data
+        - compute moe based on formula for lognormal
+
+Significance rate:
+  - increase significance rate from 95%???
+     - values:
+        - 95%: 0% longer runs in average, and rstdev is multiplied by (for 2,3,4,5 samples): 42, 4.8, 2.6, 2
+        - 99%: 40% longer and: 260, 13, 5.4, 3.7
+        - 99.5%: 75% longer and: 10000, 26, 8.9, 5.5
+        - 99.9%: 150% longer and: 26000, 130, 27, 13
+  - higher significance rate than 95% when sample size is low, since magnitude of moe error is then bigger???
+
+MIN_STDEV_LOOSP:
+  - compute correct value for unit "boolean"???
+     - i.e. check quantiles of moe difference for the 5% times it is wrong, based on sampleSize
+  - different value too for:
+     - unit group "mixed"???
+        - with small integers???
+     - unit "integer"???
+
+Difference between reported and real moe???
+  - real moe is 2-20 times higher than reported moe
+  - real moe decreases with higher CONF.precision, but slower than reported moe
+
+Add comments:
+  - mean is more robust than the median for strongly multimodal distributions
+  - rmoeMin|Max:
+     - unlike moe, rmoe can be impacted by mean's inaccuracy (due to being estimated)
+        - this can make run end earlier than expected
+     - it would be more accurate to use rmoeMin|Max instead of rmoe
+        - using as moe / meanMin|Max instead of moe / mean
+        - rmoeMax would be used like rmoe, i.e. mostly to check to see if combination should end
+     - for a given rmoe, rmoeMin|Max is [rmoe/(1+rmoe), rmoe/(1-rmoe)]
+        - the higher rmoe threshold, the more likely to reach too early
+        - with our CONF.precision thresolds, rmoeMax is rmoe multiplied by: 2 (50%), 1.11 (10%), 1.05 (5%), 1.01 (1%), 1.005 (.5%), 1.001 (.1%)
+     - while it would be more accurate, we do not use rmoeMin|Max because:
+        - the difference with rmoe is:
+           - too low to be worth the added complexity
+           - changing when run ends, but not the stats themselves (including moe)
+           - constant for a given CONF.precision, i.e. could be considered part of the rmoe threshold itself
+              - e.g. 10% rmoe threshold is actually always [9.1%, 11.1%]
+        - it is not a problem even when mean inaccuracy is high
+           - because that is only likely when rstdev is high and sample size low
+           - which is proportional to a higher [r]moe
+  - distribution of most duration-based measures:
+     - are normal-to-lognormal
         - most of the times (but not always) longer tail are on the slow side
-  - have multiple modes
-     - multiple modes sizes can go from barely noticeable to big, separate modes of same size
-     - the central one is often higher than the others
-     - some modes are only present when sample size is small
-     - this is less common for logic with higher complexity
-  - if they use randomness as input:
-     - might have multiple very separate modes
-     - might have a more uniform distribution
-  - outliers:
-     - most have 0-5% slow outliers which are due to both:
-        - lognormal long tail
-        - engine optimization, OS background processes, etc.
-     - many (but not all) have 0-0.5% fast outliers
-     - a few have a large amount 5-30% of slow outliers which are due to either:
-        - distribution having multiple modes
-        - engine optimization, i.e. slow outliers are less frequent as sample size increases
-     - rarely, there is a large amount 1-10% of fast outliers
-
-Solutions to distribution not being perfectly normal:
-  - multiply any moe by a constant number???
-     - or make it depend on how much data fits a normal distribution???
-  - make moe as skewed as distribution???
-     - e.g. keep [r]moe as is, but use:
-        - meanMin = mean - (moe * (1-meanPosition) * 2)
-        - meanMax = mean + (moe * meanPosition * 2)
-        - meanPosition: 0-1 position of mean within sorted measures ARR
-           - if present several times, use middle one
-           - use binary search
-           - or instead, base it on p25-p50 compared to p50-p75???
-  - assume lognormal distribution???
-     - guess parameters from data
-     - compute moe based on formula for lognormal
-  - add comment that means are more robust than the median for strongly multimodal distributions
+     - have multiple modes
+        - multiple modes sizes can go from barely noticeable to big, separate modes of same size
+        - the central one is often higher than the others
+        - some modes are only present when sample size is small
+        - this is less common for logic with higher complexity
+     - if they use randomness as input:
+        - might have multiple very separate modes
+        - might have a more uniform distribution
+     - outliers:
+        - most have 0-5% slow outliers which are due to both:
+           - lognormal long tail
+           - engine optimization, OS background processes, etc.
+        - many (but not all) have 0-0.5% fast outliers
+        - a few have a large amount 5-30% of slow outliers which are due to either:
+           - distribution having multiple modes
+           - engine optimization, i.e. slow outliers are less frequent as sample size increases
+        - rarely, there is a large amount 1-10% of fast outliers
+  - impact of changing MIN_STDEV_LOOPS:
+     - lower value:
+        - faster first preview
+        - runs with slow mean and low rstdev finish faster
+     - higher value: more likely to:
+        - end run too early
+        - report inaccurate first previews
 
 Unit group mixed using both integers and durations:
   - not a problem since: ???
@@ -1646,105 +1693,26 @@ stdev|moe with always same measure:
            - any divergent measure would be only off by 1
            - therefore same as a probability|binomial situation
 
-stdev threshold:
+stdev when rounded:
+  - when measures are rounded and sample size low, sample stdev might be too low, leading to rmoe too low???
+     - rounding due to:
+        - float epsilon (2e-16)
+        - integers (1)
+     - including stdev 0 (always same measures)
+        - might be real one
+     - including with mean 0
+        - might be real one
+        - or 0|1 with unit "boolean"
   - main problem is preventing too low threshold (making run stop too early) not too high (making run slower)
-  - potential problems:
-     - sample stdev is much lower than real stdev
-     - sample stdev computed from measures that are rounded:
-        - due to:
-           - float epsilon (2e-16)
-           - integers (1)
-        - including stdev 0 (always same measures)
-           - might be real one
-        - including with mean 0
-           - might be real one
-           - or 0|1 with unit "boolean"
-  - impact on DX of lowering threshold:
-     - pro: faster first preview
-     - pro: some runs finish faster, especially very slow ones with low rstdev
-     - con: might increase inaccuracy of first preview durations
-  - findings:
-     - current mean estimation with t-test: t-value includes stdev uncertainty
-     - variance confidence interval:
-        - chi-squared test:
-           - variance * (n-1) / chi-value
-           - i.e. stdev * Math.sqrt(n - 1) / Math.sqrt(chi-value)
-           - chi-value:
-              - degrees of freedom: n - 1
-              - asymetric (underestimations are bigger than overestimations)
-              - must use half on each side, e.g. 95% -> 0.025|0.975
-              - Math.sqrt(n - 1) / Math.sqrt(chi-value) for n 2-... and 50-51:
-                 - 0.025 (inverted): 2.24, 1.92, 1.76, 1.67, 1.60, 1.55, ..., 1.1971, 1.1951
-                 - 0.975: 31.9, 6.26, 3.73, 2.87, 2.45, 2.20, 2.04, 1.91, 1.83, 1.75, 1.69, ..., 1.2461, 1.2430
-              - why much higher than t-value???
-                 - maybe because underestimated stdev is more likely when measures are close to mean???
-  - with unit "auto|duration": hardcoded 5 is not great??? Use better formula???
-  - with unit "boolean": what should it be???
-  - with unit "count|bytes|number" and small integer measures???
-     - proportional to how small integers are???
-     - deciding the threshold:
-        - formula for:
-           - given n measures
-           - from 0 to max
-           - normally distributed
-           - stdev s without rounding
-           - stdev t with integer nearest rounding
-           - ratio r = s/t
-           - threshold u
-           - what's the probability of r <= u?
-        - then compute the minimum n for 95% probability for a given r
-        - then decide on the best r, and use the minimum n as threshold
-     - add comments:
-        - applies even with CONF.rate true since the ratio is multiplied by the returned integer
-           - unless the integer is meant to be constant, but we cannot know this from a series of samples, since they might appear to be constant but not really be
-
-Problems:
-  - with a somewhat accurate stdev and mean, 95% of times it will be within moe
-     - moe is as narrow as defined by CONF.precision
-     - but 5% can still be outside
-  - distribution might me further from normal distribution when sample size small
-  - distribution of measures is not perfectly normal:
-     - unit:
-        - "auto|duration": lognormal???
-           - mean|stdev|moe are same, but exponeniated
-              - i.e. if low exponent, same as normal
-           - or is it normal but with slow outliers???
-        - "count|bytes": lognormal multiplied by discrete normal or lognormal???
-        - "boolean": binomial
-        - "number": unknown, but more likely normal or lognormal
-     - less of a problem with higher sample size since they become closer to normal distribution (central limit theorem)
-  - some tasks get optimized with time, i.e. higher CONF.precision -> lower mean
-  - difference between reported and real moe
-     - real moe is 2-20 times higher than reported moe
-     - real moe decreases with higher CONF.precision, but slower than reported moe
-  - low stdev not a problem because tvalue compensates for it???
-
-Solutions:
-  - increase significance rate from 95%???
-     - values:
-        - 95%: 0% longer runs in average, and rstdev is multiplied by (for 2,3,4,5 samples): 42, 4.8, 2.6, 2
-        - 99%: 40% longer and: 260, 13, 5.4, 3.7
-        - 99.5%: 75% longer and: 10000, 26, 8.9, 5.5
-        - 99.9%: 150% longer and: 26000, 130, 27, 13
-  - make significance depend on sample size, since magnitude of error is bigger for smaller sample size??? is it???
-  - have outliers removal start earlier (while keeping overall removal ratio)???
-
-Add comments:
-  - rmoeMin|Max:
-     - unlike moe, rmoe can be impacted by mean's inaccuracy (due to being estimated)
-        - this can make run end earlier than expected
-     - it would be more accurate to use rmoeMin|Max instead of rmoe
-        - using as moe / meanMin|Max instead of moe / mean
-        - rmoeMax would be used like rmoe, i.e. mostly to check to see if combination should end
-     - for a given rmoe, rmoeMin|Max is [rmoe/(1+rmoe), rmoe/(1-rmoe)]
-        - the higher rmoe threshold, the more likely to reach too early
-        - with our CONF.precision thresolds, rmoeMax is rmoe multiplied by: 2 (50%), 1.11 (10%), 1.05 (5%), 1.01 (1%), 1.005 (.5%), 1.001 (.1%)
-     - while it would be more accurate, we do not use rmoeMin|Max because:
-        - the difference with rmoe is:
-           - too low to be worth the added complexity
-           - changing when run ends, but not the stats themselves (including moe)
-           - constant for a given CONF.precision, i.e. could be considered part of the rmoe threshold itself
-              - e.g. 10% rmoe threshold is actually always [9.1%, 11.1%]
-        - it is not a problem even when mean inaccuracy is high
-           - because that is only likely when rstdev is high and sample size low
-           - which is proportional to a higher [r]moe
+  - moe imprecision is same as stdev imprecision
+     - e.g. if stdev twice too high, so is moe
+  - use variance confidence interval, i.e. chi-squared test???
+     - variance * (n-1) / chi-value
+     - i.e. stdev * Math.sqrt(n - 1) / Math.sqrt(chi-value)
+     - chi-value:
+        - degrees of freedom: n - 1
+        - asymetric (underestimations are bigger than overestimations)
+        - must use half on each side, e.g. 95% -> 0.025|0.975
+        - Math.sqrt(n - 1) / Math.sqrt(chi-value) for n 2-... and 50-51:
+           - 0.025 (inverted): 2.24, 1.92, 1.76, 1.67, 1.60, 1.55, ..., 1.1971, 1.1951
+           - 0.975: 31.9, 6.26, 3.73, 2.87, 2.45, 2.20, 2.04, 1.91, 1.83, 1.75, 1.69, ..., 1.2461, 1.2430
