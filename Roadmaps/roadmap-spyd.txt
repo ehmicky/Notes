@@ -63,24 +63,6 @@ Validation:
 
 --------------------
 
-Check impact of outliers on all stats
-  - run many times, printing tabulated stats line-wise
-  - run with and without outliers
-  - run with different tasks
-  - especially check:
-     - mean should be lower but not too much
-     - rstdev should be lower
-     - mean should vary less
-
-Experiment with precision:
-  - for:
-     - each of my test tasks
-     - each CONF.precision except 0
-  - put minimum number of loops from 5 to 2 instead
-  - get mean then repeat 100 times then sort all
-  - also print other stats on same line, so that outliers show possible reason for problem
-  - expected result: difference from both result 2.5|97.5 and 50% is NUM% of mean, where NUM is CONF.precision
-
 Experiment with stats math:
   - using function returning number following normal distribution
   - use a set stdev and mean
@@ -1527,27 +1509,82 @@ Ideas for articles about benchmarking:
 
 ------------------------
 
-Outliers:
-  - how to prevent over-trimming???
-     - including for: distributions with a continuous very exponential slope
-     - if all quantiles are under threshold, stop outliers process???
-        - only for first iteration???
-        - problem: might look like it temporarily if very wide first quantile
-        - problem: creates big outliers* difference when a distribution flips between having all and most of its quantiles very exponential
-     - use log(log()) instead of log() on quantilePercentage???
-        - problem: not granularity independent anymore
-        - problem: does not completely eliminate the problem
-     - do not allow more than NUM% outliers removal???
-        - independently for outliersMax|Min so they do not influence each other
-        - use Math.floor() so that not all quantiles can be removed when sample size is low
+before|after hooks:
+  - instead of being alongside step, should be top-level function
+  - add comments:
+     - documented as hooks, to distinguish from steps
+     - named "before|after" to re-use test runners' terminology
+        - alternatives: start|end??? init|end???
+  - named before|after()
+     - or before|after_all()???
+     - run at beginning|end of each combination's child process
+  - before|after_{taskId}
+     - same as before|after() but only for combinations of a specific task
+     - not provide it at all???
+     - if:
+        - before() also specified, run after it
+        - after() also specified, run before it
+     - allow any case??? _ - Capitalized???
+        - pro: friendlier to linter
+        - pro: avoid mixed case names which are poor DX
+        - con: what if user specifies twice same hook but with different cases???
+        - con: polymorphic
+        - con: require taskId first letter case to be changed
+     - use suffix instead of prefix???
+        - pro: vertical alignment
+        - pro: no need to change taskId case
+        - con: does not look as nice with words "before|after"
+  - add comments
+     - alternatives not as good:
+        - before|after[.{taskId}], i.e. before|after is either a function or an object: too complex because:
+           - polymorphic
+           - use same OBJ syntax as steps but with tasks instead, making before|after > task > step hierarchy unclear
+     - task.before|after(), i.e. alongside steps:
+        - creates confusion with steps, although hooks are very different: run only once, not selectable, not reported, not always task-specific, no impact on CONF.repeat
+        - requires using an object instead of a top-level function for the task even if it does not have any steps
+        - more verbose to share between tasks
+  - change runner:
+     - start payload???
+     - start response???
+     - measure payload???
+  - do not allow `this` in before|after*, using top-level scope instead???
+     - pro: clear distinction with steps
+     - pro: no two ways of doing same thing
+     - pro: clear that the variable is set only once
+     - con: some runners might not have equivalent and need to reuse same mechanism used for steps
+     - con: two separate ways of message passing: for before|after and for steps
+     - con: one more line of code
+     - PROBABLY MORE CON
 
-Fix quantiles not being sorted correctly when close to epsilon???
+Inputs:
+  - Possible solutions:
+     - Environment variable
+        - con: not JSON parsed
+     - Global variable
+        - con: bad for linting
+        - con: bad for testing
+     - `before` argument
+     - before|after + steps argument
+     - `this.*` argument
+        - pro: reuse existing API
+           - better for runners where message passing is hard, e.g. cli
+        - con: discourage processing each input once per combination
+        - con: more complex `this`
+        - con: context makes it more feel like inputs are mutable
+        - con: mixed with user-defined, iteration-scoped, mutable properties set in previous steps
+        - con: namespace conflict with other usage of `this.*`
+           - namespace as `this.inputs.*`???
+     - step argument
+        - pro: shallow merged, i.e. discourage using it for message passing
+        - con: discourage processing each input once per combination
+        - con: makes it feel like input is step|task-specific
+        - con: more complex task interface
 
 Add comments about distribution of most duration-based measures:
   - are normal-to-lognormal
      - when lognormal:
         - long tail is usually 1-4 times longer than faster tail
-        - most of the times (but not always) longer tail are slow durations
+        - most of the times (but not always) longer tail are on the slow side
   - have multiple modes
      - multiple modes sizes can go from barely noticeable to big, separate modes of same size
      - the central one is often higher than the others
@@ -1576,50 +1613,11 @@ Solutions to distribution not being perfectly normal:
         - meanPosition: 0-1 position of mean within sorted measures ARR
            - if present several times, use middle one
            - use binary search
+           - or instead, base it on p25-p50 compared to p50-p75???
+  - assume lognormal distribution???
+     - guess parameters from data
+     - compute moe based on formula for lognormal
   - add comment that means are more robust than the median for strongly multimodal distributions
-
-before|after all:
-  - solutions:
-     - "all" task with shared steps
-        - con: more complex, since before|after are the main steps likely to be shared
-        - does not work with other steps since cannot specify order
-     - before|after task
-        - con: require splitting task files for tasks not using it
-        - con: less clear that `this` is shared with tasks
-        - con: mixes it with task functions, although separate
-        - con: unclear that run once per combination, as opposed to once for all tasks in the file
-           - however, so is top-level scope
-        - allow OBJ to make it step-specific???
-           - con: confusing structure since before|after > step while also task > step
-     - before|after task + step
-        - con: more complex
-     - before|after step
-        - con: mixes it with steps, although separate: run only once, cannot select, not reported
-        - con: require setting in each task to share
-        - con: hard to share with some runners, e.g. cli (although YAML can use variables)
-        - enforce that they are the first|last step in the task???
-
-Inputs:
-  - Possible solutions:
-     - Environment variable
-        - con: not JSON parsed
-     - Global variable
-        - con: bad for linting
-        - con: bad for testing
-     - `before` argument
-     - before|after + steps argument
-     - `this.*` argument
-        - con: discourage processing each input once per combination
-        - con: more complex `this`
-        - con: context makes it more feel like inputs are mutable
-        - con: mixed with user-defined, iteration-scoped, mutable properties set in previous steps
-        - con: namespace conflict with other usage of `this.*`
-           - namespace as `this.inputs.*`???
-     - step argument
-        - pro: shallow merged, i.e. discourage using it for message passing
-        - con: discourage processing each input once per combination
-        - con: makes it feel like input is step|task-specific
-        - con: more complex task interface
 
 Unit group mixed using both integers and durations:
   - not a problem since: ???
@@ -1707,6 +1705,10 @@ Problems:
         - "boolean": binomial
         - "number": unknown, but more likely normal or lognormal
      - less of a problem with higher sample size since they become closer to normal distribution (central limit theorem)
+  - some tasks get optimized with time, i.e. higher CONF.precision -> lower mean
+  - difference between reported and real moe
+     - real moe is 2-20 times higher than reported moe
+     - real moe decreases with higher CONF.precision, but slower than reported moe
   - low stdev not a problem because tvalue compensates for it???
 
 Solutions:
