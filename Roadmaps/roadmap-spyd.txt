@@ -216,34 +216,55 @@ Default ids:
 
 --------------------
 
+Task argument:
+  - should be single argument OBJ: context OBJ2, inputs OBJ3
+  - add comment about reasons:
+     - clear distinction between context and inputs:
+        - readonly vs read-write
+        - set in config file vs in tasks file
+        - combination-scoped vs iteration-scoped
+     - avoids `this` since it:
+        - does not work on tasks using arrow or bound functions
+        - requires nested functions to use arrow or bound functions
+     - extensible to more properties for future features
+     - allows any type (unlike environment variables)
+     - test-friendly and linting-friendly (unlike global variables)
+
+Inputs immutability:
+  - prevent mutations:
+     - for:
+        - arg.inputs = value
+        - arg.inputs.inputId = value
+     - reason:
+        - could lead to iterations to influence each other by using shared state
+           - encourage users to use context instead
+           - although users can still bypass it by using top-level state or by setting context in before()
+        - simpler for users to reason about inputs as constants
+  - use a Proxy instead of Object.freeze()
+     - show a nice error message
+     - check performance impact
+  - allow mutating arg.context[.VARR] = value
+     - next iteration should see the mutation, i.e. whole `arg` object should be passed
+
 Context OBJ:
   - initialized to empty OBJ
      - passed to before|after
   - each task initializes its own context OBJ
      - reason: discourage inter-task communication
-  - before each iteration, shallow copy that OBJ
-     - i.e. each iteration has fresh copy
-     - i.e. cannot communicate with next iteration
-        - reason: might accidentally get previous iteration state, especially if property is set considitionally
-        - other reason: ensure proper garbage collection
-        - exception: top-level state, or in properties created during before()
-  - passed as `this`
-     - check whether FUNC.call(context) or FUNC.bind(context) is faster
-        - probably bind() since it can be done once during init
-     - should document that does not work with arrow function nor bound function, i.e. must be avoided
-     - try to validate against binding step functions
-        - only if multiple steps
-  - should be passed to step function even when single step
+  - shallow copy context OBJ:
+     - before each main loop iteration
+        - i.e. each iteration has fresh copy
+        - i.e. cannot communicate with next iteration
+           - reason: might accidentally get previous iteration state, especially if property is set conditionally
+           - other reason: ensure proper garbage collection
+          - exception: top-level state, or in properties created during before()
+     - but not before each `repeat` iteration
+  - passed to step function even when single step
      - reasons:
         - stats do not vary depending on whether there is a single step or not
         - more monomorphic
   - forbid inputId named `context`, to allow other runners to pass `context` alongside named arguments
   - add comments about:
-     - advantages over using a named argument:
-        - cannot re-assign `this`, i.e. no need to validate it
-        - simpler syntax (no need to retrieve from arguments)
-        - intuitive|common pattern in JavaScript
-        - clearer separation between inputs and context
      - advantages over top-level scope (which can still be used)
         - not shared between tasks
         - not shared between iterations
@@ -261,6 +282,8 @@ Context OBJ:
               - return vs context
               - `stepId` argument name
               - when repeating a step, only last iteration's return value is used
+
+--------------------
 
 before|after special steps:
   - on runner start:
@@ -1566,63 +1589,28 @@ Ideas for articles about benchmarking:
 
 ------------------------
 
-Inputs:
-  - Possible solutions:
-     - Environment variable
-        - con: not JSON parsed
-     - Global variable
-        - con: bad for linting
-        - con: bad for testing
-        - pro: makes inputs feel less step|task-specific
-     - `before` argument
-        - pro: encourage processing each input once per combination
-     - before|after + steps argument
-        - con: more complex task interface
-     - `this.*` argument
-        - pro: reuse existing API
-           - better for runners where message passing is hard, e.g. cli
-        - con: more complex `this`
-        - con: context makes it more feel like inputs are mutable
-           - when transforming inputs, better to reassign them, or to assign a new variable???
-        - con: mixed with user-defined, iteration-scoped, mutable properties set in previous steps
-        - con: namespace conflict with other usage of `this.*`
-           - namespace as `this.inputs.*`???
-     - named arguments: inputs OBJ, context OBJ
-        - pro: works with arrow functions and bound functions
-        - pro: clear distinction between inputs and context
-        - pro: extensible
-        - pro: more adaptable to different programming languages
-        - con: more complex argument
-        - allow task to reassign args.context = OBJ???
-     - positional argument is context OBJ, with context.inputs OBJ
-     - positional argument is both context and inputs OBJ
-
-Optimization:
-  - some tasks get optimized with time, i.e. higher CONF.precision -> lower mean???
-
 Non-normal distribution:
-  - distribution might me further from normal distribution when sample size small???
-  - distribution of measures is not perfectly normal???
-     - unit:
-        - "auto|duration": lognormal
-        - "count|bytes": lognormal multiplied by discrete normal or lognormal???
-        - "boolean": binomial
-        - "number": unknown, but more likely normal or lognormal
-     - less of a problem with higher sample size since they become closer to normal distribution (central limit theorem)
-  - solutions to distribution not being perfectly normal???
-     - multiply any moe by a constant number???
-        - or make it depend on how much data fits a normal distribution???
-     - make moe as skewed as distribution???
-        - e.g. keep [r]moe as is, but use:
-           - meanMin = mean - (moe * (1-meanPosition) * 2)
-           - meanMax = mean + (moe * meanPosition * 2)
-           - meanPosition: 0-1 position of mean within sorted measures ARR
-              - if present several times, use middle one
-              - use binary search
-              - or instead, base it on p25-p50 compared to p50-p75???
-     - assume lognormal distribution???
-        - guess parameters from data
-        - compute moe based on formula for lognormal
+  - distribution of measures is not perfectly normal:
+     - unit "auto|duration": lognormal
+     - unit "count|bytes": lognormal multiplied by discrete normal or lognormal???
+     - unit "boolean": binomial
+     - unit "number": unknown, but more likely normal or lognormal
+  - less of a problem with higher sample size since they become closer to normal distribution (central limit theorem)
+     - solution should be based on sample size???
+  - problem for moe only???
+  - multiply any moe by a constant number???
+     - or make it depend on how much data fits a normal distribution???
+  - make moe as skewed as distribution???
+     - e.g. keep [r]moe as is, but use:
+        - meanMin = mean - (moe * (1-meanPosition) * 2)
+        - meanMax = mean + (moe * meanPosition * 2)
+        - meanPosition: 0-1 position of mean within sorted measures ARR
+           - if present several times, use middle one
+           - use binary search
+           - or instead, base it on p25-p50 compared to p50-p75???
+  - assume lognormal distribution???
+     - guess parameters from data
+     - compute moe based on formula for lognormal
 
 Significance rate:
   - increase significance rate from 95%???
@@ -1635,7 +1623,7 @@ Significance rate:
 
 MIN_STDEV_LOOSP:
   - compute correct value for unit "boolean"???
-     - i.e. check quantiles of moe difference for the 5% times it is wrong, based on sampleSize
+     - i.e. check quantiles of moe difference for the 5% times it is wrong, based on sampleSize, using similar logic as Desktop/gaussian.js
   - different value too for:
      - unit group "mixed"???
         - with small integers???
@@ -1645,7 +1633,57 @@ Difference between reported and real moe???
   - real moe is 2-20 times higher than reported moe
   - real moe decreases with higher CONF.precision, but slower than reported moe
 
+Unit group mixed using both integers and durations:
+  - not a problem since: ???
+     - if integer range small, rstdev big (since integers are multiplying factors), i.e. rmoe big
+     - if integer range wide, closer to a continous distribution, i.e. no stdev problem
+
+stdev|moe with always same measure:
+  - use n+1???
+     - i.e. compute stdev but as if one measure was 1 off
+        - note: stdev computed differently for unit "boolean" and other units
+     - reason: if n+1 still below rmoe threshold, no need to continue
+     - other reason: give a sense of precision range with some statistical meaning
+     - does not work for unit boolean since very low proportions have very high rmoe???
+  - or use Wilson score interval???
+     - use for other units than "boolean" too???
+        - reason: since repeated measures, assume:
+           - discrete distribution
+           - any divergent measure would be only off by 1
+           - therefore same as a probability|binomial situation
+
+stdev when rounded:
+  - when measures are rounded and sample size low, sample stdev might be too low, leading to rmoe too low???
+     - rounding due to:
+        - float epsilon (2e-16)
+        - integers (1)
+     - including stdev 0 (always same measures)
+        - might be real one
+     - including with mean 0
+        - might be real one
+        - or 0|1 with unit "boolean"
+  - main problem is preventing too low threshold (making run stop too early) not too high (making run slower)
+  - moe imprecision is same as stdev imprecision
+     - e.g. if stdev twice too high, so is moe
+  - use variance confidence interval, i.e. chi-squared test???
+     - variance * (n-1) / chi-value
+     - i.e. stdev * Math.sqrt(n - 1) / Math.sqrt(chi-value)
+     - chi-value:
+        - degrees of freedom: n - 1
+        - asymetric (underestimations are bigger than overestimations)
+        - must use half on each side, e.g. 95% -> 0.025|0.975
+        - Math.sqrt(n - 1) / Math.sqrt(chi-value) for n 2-... and 50-51:
+           - 0.025 (inverted): 2.24, 1.92, 1.76, 1.67, 1.60, 1.55, ..., 1.1971, 1.1951
+           - 0.975: 31.9, 6.26, 3.73, 2.87, 2.45, 2.20, 2.04, 1.91, 1.83, 1.75, 1.69, ..., 1.2461, 1.2430
+
 Add comments:
+  - user should set CONF.precision up to the highest duration they are willing to wait
+  - some tasks get optimized as they repeat
+     - by either runtime or OS
+     - often done at specific thresholds
+        - i.e. cannot know in advance whether there is a future optimization threshold until it has been hit
+     - this can lead to benchmark to end with unoptimized stdev and mean
+     - solution: user should increase CONF.precision
   - mean is more robust than the median for strongly multimodal distributions
   - rmoeMin|Max:
      - unlike moe, rmoe can be impacted by mean's inaccuracy (due to being estimated)
@@ -1692,46 +1730,3 @@ Add comments:
      - higher value: more likely to:
         - end run too early
         - report inaccurate first previews
-
-Unit group mixed using both integers and durations:
-  - not a problem since: ???
-     - if integer range small, rstdev big (since integers are multiplying factors), i.e. rmoe big
-     - if integer range wide, closer to a continous distribution, i.e. no stdev problem
-
-stdev|moe with always same measure:
-  - use n+1???
-     - i.e. compute stdev but as if one measure was 1 off
-        - note: stdev computed differently for unit "boolean" and other units
-     - reason: if n+1 still below rmoe threshold, no need to continue
-     - other reason: give a sense of precision range with some statistical meaning
-     - does not work for unit boolean since very low proportions have very high rmoe???
-  - or use Wilson score interval???
-     - use for other units than "boolean" too???
-        - reason: since repeated measures, assume:
-           - discrete distribution
-           - any divergent measure would be only off by 1
-           - therefore same as a probability|binomial situation
-
-stdev when rounded:
-  - when measures are rounded and sample size low, sample stdev might be too low, leading to rmoe too low???
-     - rounding due to:
-        - float epsilon (2e-16)
-        - integers (1)
-     - including stdev 0 (always same measures)
-        - might be real one
-     - including with mean 0
-        - might be real one
-        - or 0|1 with unit "boolean"
-  - main problem is preventing too low threshold (making run stop too early) not too high (making run slower)
-  - moe imprecision is same as stdev imprecision
-     - e.g. if stdev twice too high, so is moe
-  - use variance confidence interval, i.e. chi-squared test???
-     - variance * (n-1) / chi-value
-     - i.e. stdev * Math.sqrt(n - 1) / Math.sqrt(chi-value)
-     - chi-value:
-        - degrees of freedom: n - 1
-        - asymetric (underestimations are bigger than overestimations)
-        - must use half on each side, e.g. 95% -> 0.025|0.975
-        - Math.sqrt(n - 1) / Math.sqrt(chi-value) for n 2-... and 50-51:
-           - 0.025 (inverted): 2.24, 1.92, 1.76, 1.67, 1.60, 1.55, ..., 1.1971, 1.1951
-           - 0.975: 31.9, 6.26, 3.73, 2.87, 2.45, 2.20, 2.04, 1.91, 1.83, 1.75, 1.69, ..., 1.2461, 1.2430
