@@ -95,7 +95,7 @@ EXPR[;]                           #; can be a newline instead (recommended) when
                                   #  - ) ] } ++ --
                                   #  - return|break|continue|fallthrough
                                   #I.e. most of the time.
-[;]                               #Empty statement
+;                                 #Empty statement
 (VAL)                             #Parenthesis can be used to override operator precedence
 
 // COMMENT
@@ -120,16 +120,12 @@ if [EXPR;] BOOL_EXPR { ... }
  ...
  [else { ... }]                   #
 
-switch [EXPR;] [EXPR2] {
-  [case EXPR3,...:
-    [...]]
-  ...
-  [default:                       #Execute first case where EXPR2 == any EXPR3
-    [...]]                        #EXPR2 defaults to true
-}                                 #Cases are indentation-based
-  fallthrough                     #Cases "break" by default.
-                                  #Using fallthrough as last statement in a case continues to next case
-                                  #Cannot be done in last case.
+switch [EXPR;] [EXPR2] {          #Execute first case where EXPR2 == any EXPR3
+  [default|case EXPR3,...:        #EXPR2 defaults to true
+    [...]                         #Cases are indentation-based
+    [fallthrough]]                #Cases "break" by default.
+  ...                             #Using fallthrough as last statement in a case continues to next case
+}                                 #Cannot be done in last case.
 
 for [EXPR]; [BOOL_EXPR]; [EXPR2]  #For loop
  { ... }                          #BOOL_EXPR defaults to true
@@ -138,9 +134,11 @@ for [BOOL_EXPR] { ... }           #Same as for ; [BOOL_EXPR]; { ... }
                                   #I.e. while loop
 
 for KEY_VAR[, VAL_VAR2]           #Iterates
-  := range STR|MAP|[*]ARR|SLICE   #KEY is INT for ARR|SLICE
-  { ... }                         #For STR, VAL is RUNE, KEY is byte position INT
-                                  #For MAP, iteration is unordered
+  := range STR|MAP|[*]ARR|SLICE   #For STR:
+  { ... }                         #  - KEY is byte position INT, but iteration is Unicode codepoint-wise
+                                  #  - VAL is RUNE
+                                  #For ARR|SLICE: KEY is INT
+                                  #For MAP: iteration is unordered
 for ... = range ...               #Same but with already declared KEY_VAR, VAL_VAR
 
 LABEL: EXPR                       #
@@ -247,6 +245,140 @@ UINT32|RUNE -> STR
 []UINT32|[]RUNE <-> STR           #Using Unicode codepoint
 CHAN -> other CHAN                #Only if does not lose receiver|sender direction.
                                   #E.g. CHAN to CHAN<-, CHAN to <-CHAN, but not inverse.
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:          ASSIGNMENT           :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+SCOPE ==>                         #Block-scoped:
+                                  #  - "universe":
+                                  #     - pre-defined language: builtin TYPE|FUNC, true|false|iota|nil
+                                  #  - package:
+                                  #     - any top-level declaration, except import
+                                  #     - shared by all files of same package
+                                  #  - file:
+                                  #     - import statements only
+                                  #     - shared only within same file
+                                  #  - function
+                                  #  - statement
+                                  #     - including if|for|case
+                                  #     - if|for|switch first optional EXPR is scoped within following block
+                                  #Inherit parent scope, but not children
+                                  #  - including in anomymous FUNC ("closure")
+                                  #Cannot redeclare in same scope, but can in children ("shadowing")
+                                  #Method's scope (unlike FUNC) is same as receiver's
+                                  #type TYPE [=] TYPE2 can be in function|statement scope
+
+_                                 #Special VAR name ("blank identifier").
+                                  #Can only be declared. Value cannot be used.
+                                  #VAR name is not checked for uniqueness, i.e. can be declared several times without conflict.
+                                  #Not checked in STRUCT == STRUCT2
+                                  #Not allowed in INTERFACE
+
+ZERO-VALUE ==>                    #Default value when no assigned value (including nil, e.g. with new())
+INITIALIZED VALUE ==>             #First assigned value (including empty, e.g. with make()).
+
+VAL,...                           #Multiple values (MVAL)
+                                  #Similar to array, except must be stored in one variable each
+                                  #Evaluated together, before what they assigned to
+                                  #  - e.g. can swap using a, b = b, a
+
+var VAR,... TYPE
+var (VAR,... TYPE;...)            #Declare + assign zero-value
+
+VAR = VAL
+VAR,... = MVAL                    #Assign
+
+var VAR [TYPE] = VAL              #Declare + assign
+var (VAR [TYPE] = VAL;...)        #Infers TYPE from value:
+var VAR,... [TYPE] = MVAL         #  - for NUM:
+var (VAR,... [TYPE] = MVAL;...)   #     - complex128 if imaginary part
+                                  #     - float64 if decimal part
+                                  #     - int otherwise
+                                  #  - cannot be nil
+VAR := VAL                        #Shortcut syntax for var VAR = VAL, except:
+VAR,... := MVAL                   #  - can be in if|for|switch first optional EXPR
+                                  #  - cannot be top-level scope
+
+CONST_VAL                         #Value evaluated at compile-time
+                                  #Restrictions:
+                                  #  - only simple types, not composite.
+                                  #     - not Math.Inf|NaN()
+                                  #  - only literals or const VAR.
+                                  #    Not var VAR.
+                                  #  - operators, TYPE(), builtin FUNC imag|real|complex|len|cap(), unsafe.Sizeof|Offsetof|Alignof().
+                                  #    Not other FUNC()
+                                  #If not typed at declaration-time, "untyped constant". Becomes typed when:
+                                  #  - needs type through type inference
+                                  #     - e.g. passed as argument|operand or assigned to var VAR
+                                  #     - but not when passed to another const VAR
+                                  #  - explicitely transtyped (TYPE())
+const ...                         #Like var ... but CONST_VAL
+                                  #Cannot be re-assigned.
+                                  #VAL must be specified. Exception:
+                                  #  - if:
+                                  #     - inside const (...), and not first declaration
+                                  #     - TYPE omitted as well
+                                  #  - then defaults to previous statement's VAL (including iota)
+iota                              #Current const-declaration index (start at 0) inside const (...)
+                                  #Used for enums
+
+VAR += -= *= /= %= VAL
+VAR |= ^= &= &^= <<= >>= VAL      #Like VAR = VAR OP VAL2
+VAR++
+VAR--                             #Like VAR = VAR +|- 1. Statement, not EXPR
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:           FUNCTION            :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+func FUNC([VAR] [TYPE],...)       #Function declaration
+ [TYPE2|([VAR2] [TYPE2],...)]     #TYPE|TYPE2 defaults to the next one
+ { ... }                          #If VAR omitted:
+                                  #  - all other VAR must be omitted
+                                  #  - cannot refer to any arguments
+                                  #TYPE2 is return type
+                                  #  - TYPE,... is when returning MVAL
+                                  #     - if second is BOOL, often named "ok" ("comma ok")
+                                  #  - if named (VAR2): declare the variable on top of function
+                                  #TYPE can be variadic ...TYPE, i.e. 0-n arguments:
+                                  #  - must be last
+                                  #  - is a []TYPE
+                                  #  - called with FUNC([MVAL]) or FUNC(SLICE...)
+                                  #  - if no arguments:
+                                  #     - no MVAL arguments: nil
+                                  #     - empty SLICE... argument: empty SLICE
+                                  #{ ... } can be omitted if FUNC is declared in C|ASM
+nil                               #Zero-value
+                                  #Cannot call
+
+func(...) [...] {...}             #Anonymous function (no FUNC name)
+                                  #Same as function declaration except:
+                                  #  - can be used as value
+                                  #  - can be declared inside another FUNC
+                                  #  - cannot be a method
+                                  #Higher operator priority than FUNC(), i.e. can do func(...) {...}(...)
+
+func(...) [...]                   #Function TYPE
+                                  #I.e. anonymous functions can FUNC arguments
+                                  #Receiver is not part of function TYPE
+
+return [MVAL]                     #Required when there is a return TYPE2. Optional otherwise.
+                                  #If any return value is named (VAR2), MVAL defaults to them ("naked return"):
+                                  #  - if mixed with unnamed, those use their zero-value
+
+FUNC([MVAL])                      #Call a function
+FUNC(FUNC2(...)->MVAL)            #If FUNC2 returns MVAL, can pass as arguments directly
+
+PRE-DEFINED FUNC ==>              #Like len(), cap(), etc. can only be used in FUNC calls, not as value
 
 
                                              /=+===============================+=\
@@ -486,140 +618,6 @@ unsafe.Alignof(VAL)->UINTPTR      #Memory alignment byte size:
                                   #  - STRUCT|ARR: max of any element TYPE
                                   #  - STR|INTERFACE|MAP|SLICE|CHAN: 1 pointer
                                   #Means this value's address % ALIGNMENT must be 0
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:          ASSIGNMENT           :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-SCOPE ==>                         #Block-scoped:
-                                  #  - "universe":
-                                  #     - pre-defined language: builtin TYPE|FUNC, true|false|iota|nil
-                                  #  - package:
-                                  #     - any top-level declaration, except import
-                                  #     - shared by all files of same package
-                                  #  - file:
-                                  #     - import statements only
-                                  #     - shared only within same file
-                                  #  - function
-                                  #  - statement
-                                  #     - including if|for|case
-                                  #     - if|for|switch first optional EXPR is scoped within following block
-                                  #Inherit parent scope, but not children
-                                  #  - including in anomymous FUNC ("closure")
-                                  #Cannot redeclare in same scope, but can in children ("shadowing")
-                                  #Method's scope (unlike FUNC) is same as receiver's
-                                  #type TYPE [=] TYPE2 can be in function|statement scope
-
-_                                 #Special VAR name ("blank identifier").
-                                  #Can only be declared. Value cannot be used.
-                                  #VAR name is not checked for uniqueness, i.e. can be declared several times without conflict.
-                                  #Not checked in STRUCT == STRUCT2
-                                  #Not allowed in INTERFACE
-
-ZERO-VALUE ==>                    #Default value when no assigned value (including nil, e.g. with new())
-INITIALIZED VALUE ==>             #First assigned value (including empty, e.g. with make()).
-
-VAL,...                           #Multiple values (MVAL)
-                                  #Similar to array, except must be stored in one variable each
-                                  #Evaluated together, before what they assigned to
-                                  #  - e.g. can swap using a, b = b, a
-
-var VAR,... TYPE
-var (VAR,... TYPE;...)            #Declare + assign zero-value
-
-VAR = VAL
-VAR,... = MVAL                    #Assign
-
-var VAR [TYPE] = VAL              #Declare + assign
-var (VAR [TYPE] = VAL;...)        #Infers TYPE from value:
-var VAR,... [TYPE] = MVAL         #  - for NUM:
-var (VAR,... [TYPE] = MVAL;...)   #     - complex128 if imaginary part
-                                  #     - float64 if decimal part
-                                  #     - int otherwise
-                                  #  - cannot be nil
-VAR := VAL                        #Shortcut syntax for var VAR = VAL, except:
-VAR,... := MVAL                   #  - can be in if|for|switch first optional EXPR
-                                  #  - cannot be top-level scope
-
-CONST_VAL                         #Value evaluated at compile-time
-                                  #Restrictions:
-                                  #  - only simple types, not composite.
-                                  #     - not Math.Inf|NaN()
-                                  #  - only literals or const VAR.
-                                  #    Not var VAR.
-                                  #  - operators, TYPE(), builtin FUNC imag|real|complex|len|cap(), unsafe.Sizeof|Offsetof|Alignof().
-                                  #    Not other FUNC()
-                                  #If not typed at declaration-time, "untyped constant". Becomes typed when:
-                                  #  - needs type through type inference
-                                  #     - e.g. passed as argument|operand or assigned to var VAR
-                                  #     - but not when passed to another const VAR
-                                  #  - explicitely transtyped (TYPE())
-const ...                         #Like var ... but CONST_VAL
-                                  #Cannot be re-assigned.
-                                  #VAL must be specified. Exception:
-                                  #  - if:
-                                  #     - inside const (...), and not first declaration
-                                  #     - TYPE omitted as well
-                                  #  - then defaults to previous statement's VAL (including iota)
-iota                              #Current const-declaration index (start at 0) inside const (...)
-                                  #Used for enums
-
-VAR += -= *= /= %= VAL
-VAR |= ^= &= &^= <<= >>= VAL      #Like VAR = VAR OP VAL2
-VAR++
-VAR--                             #Like VAR = VAR +|- 1. Statement, not EXPR
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:           FUNCTION            :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-func FUNC([VAR] [TYPE],...)       #Function declaration
- [TYPE2|([VAR2] [TYPE2],...)]     #TYPE|TYPE2 defaults to the next one
- { ... }                          #If VAR omitted:
-                                  #  - all other VAR must be omitted
-                                  #  - cannot refer to any arguments
-                                  #TYPE2 is return type
-                                  #  - TYPE,... is when returning MVAL
-                                  #     - if second is BOOL, often named "ok" ("comma ok")
-                                  #  - if named (VAR2): declare the variable on top of function
-                                  #TYPE can be variadic ...TYPE, i.e. 0-n arguments:
-                                  #  - must be last
-                                  #  - is a []TYPE
-                                  #  - called with FUNC([MVAL]) or FUNC(SLICE...)
-                                  #  - if no arguments:
-                                  #     - no MVAL arguments: nil
-                                  #     - empty SLICE... argument: empty SLICE
-                                  #{ ... } can be omitted if FUNC is declared in C|ASM
-nil                               #Zero-value
-                                  #Cannot call
-
-func(...) [...] {...}             #Anonymous function (no FUNC name)
-                                  #Same as function declaration except:
-                                  #  - can be used as value
-                                  #  - can be declared inside another FUNC
-                                  #  - cannot be a method
-                                  #Higher operator priority than FUNC(), i.e. can do func(...) {...}(...)
-
-func(...) [...]                   #Function TYPE
-                                  #I.e. anonymous functions can FUNC arguments
-                                  #Receiver is not part of function TYPE
-
-return [MVAL]                     #Required when there is a return TYPE2. Optional otherwise.
-                                  #If any return value is named (VAR2), MVAL defaults to them ("naked return"):
-                                  #  - if mixed with unnamed, those use their zero-value
-
-FUNC([MVAL])                      #Call a function
-FUNC(FUNC2(...)->MVAL)            #If FUNC2 returns MVAL, can pass as arguments directly
-
-PRE-DEFINED FUNC ==>              #Like len(), cap(), etc. can only be used in FUNC calls, not as value
 
 
                                              /=+===============================+=\
