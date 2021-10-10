@@ -1597,43 +1597,103 @@ Ideas for articles about benchmarking:
 ------------------------
 
 Difference between reported and real moe???
-  - real moe is 2-20 times higher than reported moe
-  - real moe decreases with higher CONF.precision, but slower than reported moe
-  - why is it happening even for tasks mostly stable like "fast"???
-     - check theory: removing earlier measures before optimization is full would increase cross-runs precision
-        - do not remove earlier measures if faster, even if very different???
-           - i.e. one-sided welch t-test???
-        - if removing them, can:
-           - reduce how much outliers are removed??? or even stop removing outliers altogether???
-           - remove repeat `calibrated` since deoptimization removal would handle it???
-     - try comparing mean with that halfway confidence interval:
-        - keep track of each sample's loops and meanMin|Max
-        - for each sample, print:
-           - most stats, including mean
-           - meanMin|Max of the former sample closest to loops/2, i.e. halfway in past
-        - goal is to check that confidence interval works for a given constant process, i.e. the problem is when spawning new processes
-        - try both with:
-           - infinite duration, printing it in realtime preview
-           - as multiple runs, checking that for 95% of runs, halfway confidence interval was correct
-     - try with a mostly normally distributed task, to figure out why moe is too small
-     - confirm that lognormal tasks do not decrease moe precision too much
-        - try to see at which sample size this changes
+  - environment variation:
+     - different types of environment variation:
+        - small changes due to OS optimization and caching
+        - bigger temporary slowdowns due to recurring OS background processes
+        - temporary slowdowns due to other programs on the machine either:
+           - left in background
+           - user interacting with them while benchmark is running
+     - environment variations are hard to measure:
+        - their frequency can be hard to predict: does not follow clear patterns, user-driven
+        - their amplitude is variable and not necessarily bounded
+        - therefore, tasks' distribution is ever-changing
+           - especially its mean and stdev, not so much its general shape
+           - how much it changes between each sample is itself very variable in time
+              - i.e. it randomly alternates between period of high and low precision
+        - this creates imprecision
+        - this also makes it hard to compute moe because it relies on the central limit theorem which assumes the underlying distribution to be constant
+        - the variation shifts continuously in time, i.e.:
+           - the result looks like a single distribution
+           - but each quantile's frequency varies a lot between runs, which makes the overall precision much lower than statistical moe
+           - this also makes it impossible to distinguish individual distributions|modes in the final distribution
+     - distinct from statistical variation
+        - low statistical moe does not reduce it
+        - i.e. high environment variation does not change when to stop benchmark run
+           - since longer benchmarks are mostly meant to reduce statistical variation
+        - however, higher sample size:
+           - blends more temporary and recurring environment changes into a single distribution, making the reported stdev|moe include them, i.e. less of a problem
+           - makes engine optimization last for a smaller percentage of the whole run, i.e. easier to distinguish from environment variation detection
+     - this creates the following problems:
+        - makes reported moe not match user's experience of re-running the benchmark???
+        - makes diffPrecise less useful???
+           - if can measure environment variation, multiply stdev by it???
+           - or use quantiles instead of welch t-test???
+     - possible solutions???
+        - measure environment variation and take it into account:
+           - use time dimension, not sorted measures since those are timeless???
+              - since environment happens in time
+              - reduces probability of mistaking multimodal distribution as environment variation
+              - split measures into NUM by chronological order then check stdev???
+                 - subtract expected variation, i.e. moe (using sample size of each chunk)???
+           - use individual measures, not samples???
+              - since environment variation is independent from sampling
+              - for performance reason, use a binary search (using factor 2 or maybe lower)???
+           - use welch t-test to see if a group of measures is different distribution???
+           - what if slow task with very few measures???
+           - store both:
+              - non-adjusted moe: used to stop running benchmark, since cannot improve environment variation, can just measure it better
+              - adjusted moe: reported
+        - do not report moe
+        - report quantile range instead of moe
+           - also useful for users to get an idea of the distribution real range
+              - although some of it is due to environment variation
+           - p25-p75??? p5-p95??? p2.5-p97.5???
+              - it looks like p5-95 or p2.5-p97.5 are better to capture "mean is usually in this range"
+              - but p25-p75 has a smaller range, making it more visually interesting
+           - rename CONF.showPrecision to CONF.showRange???
+           - works better with central stat being median instead of mean???
+              - pro: removes influence of outliers removal logic on the central stat
+                 - still needed for min|max and histogram???
+              - con: less useful to users who want summed duration when task is repeated in hot path
+              - con: does not work well with small integer measures
+              - con: might encourage some users to manually loop to overcome some of the cons
+              - con: stdev|moe are meant to work on mean, not median
+              - con: more different from other benchmark tools, i.e. might result in surprising differences
+              - con: less precise with very skewed distributions
+  - confirm theory: the fact that a task is lognormal does not change its moe accuracy too much
+     - try to see at which sample size this changes
   - findings:
-     - using fixed outliers (instead of automatically computing them) with roughly the same value leads to the same stats and the same cross-runs precision
+     - currently:
+        - real moe is 2-20 times higher than reported moe
+        - real moe decreases with higher CONF.precision, but slower than reported moe
+     - automatic outliers logic is useful:
+        - removing outliers:
+           - improves stdev and min|max a lot
+           - does not change mean too much, when sample size is large enough
+        - using fixed outliers percentages:
+           - requires knowing that the best value for a given distribution before-hand
+           - even when known, leads to similar stats as when automatically computing those percentages instead
+        - outliers are spread through the run, not only at beginning
      - using repeat loop does not impact cross-runs precision
-     - when the measures follow a perfect normal distribution, cross-runs precision is perfect
-     - outliers are spread through the run, not only at beginning
-     - repeating a task decrease the following, until eventually stabilizing: mean|median, stdev, max, outliersMin|Max
-        - sometimes mean|median stabilizes faster
-        - but when enough samples are run, this quickly disappears from the aggregated stats???
-     - the stats differ between runs:
-        - for mean|median|stdev|max
-        - same whether optimized or not
-        - process-specific:
-           - for some tasks: sticks to a specific process, and differs per process, as opposed to being due to hardware load
-           - for other tasks, it also sometimes switches in the middle of a specific process
-              - and seems to stick over several processes, not be process-specific
-     - even when optimized, there are regular slowdowns, but they are fast, probably due to OS background processes
+     - when the measures follow a perfect normal distribution, not influenced by machine, cross-runs precision is perfect
+     - repeating a task changes the following, until eventually stabilizing: mean|median, stdev, max, outliersMin|Max
+        - usually improves, but sometimes opposite
+        - stripping earlier measures barely changes stats, providing sample size is high enough
+           - instead, it is more important to ensure sample size is high enough so that most of the measures were optimized
+     - environment variation:
+        - even when just repeating same task
+        - even when task is optimized
+        - sometimes, very temporary, for just one sample
+           - other times, persist for several minutes
+     - each process comes with stats variation
+        - i.e. running several processes instead of 1 for the same total amount of measures improves precision
+        - however, not by much and require too many processes to have an effect
+        - i.e. not worth it, especially considering:
+           - implementation complexity
+           - less precise preview duration
+           - confusing previews due to multiple slow starts
+           - having to load top-level scope of tasks file and before() multiple times
 
 Non-normal distribution:
   - distribution not always normal:
@@ -1668,6 +1728,10 @@ Engine optimization:
      - NUM% is based on number of measures, not samples
      - use a welch t-test
      - can use tStat / tValue ratio as part of preview durations computation???
+  - also check for stdev difference???
+  - is checking for mean difference useless since if there is one, stdev should be too high for rmoe target to be reached???
+     - and if optimization is too slow, cannot detect it with mean difference, not know for sure unless running longer
+     - i.e. only good solution is increasing CONF.precision???
   - what if it makes low CONF.precision last for too long???
      - different significance rate per CONF.precision???
      - not applied to CONF.precision 0 and|or 1???
