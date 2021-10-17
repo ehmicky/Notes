@@ -1596,38 +1596,114 @@ Ideas for articles about benchmarking:
 
 ------------------------
 
+Possible solution for environment variation:
+  - applies:
+     - to any distribution where nearby measures are more likely to have value close to each other
+        - as opposed to being fully independent from each other
+     - i.e. more generic than just product of two distributions as in our case
+  - assumption: there is a maximim neighborhood size where measures beyond this are independent from each other
+     - i.e. grouping with that size makes the resulting distribution have fully independent measures
+        - i.e. can use central limit theorem for moe
+  - i.e. only need to find the maximal ratio actualStdev/expectedStdev and return it, so that, when computing moe, consumer either:
+     - divides sampleSize by square of it
+     - multiplies stdev by it
+        - maybe result in stat.adjustedStdev, i.e. can be used by diffPrecise
+           - would be different for different sample sizes when below groupSize though, since statefulness decreases logarithmatically with higher sample size
+           - i.e. this is the stdev after sample size is high enough
+  - things to check:
+     - ratio stabilizes at some point
+        - use mean of several runs, due to variations
+        - when groupSize is small, it is slightly lower???
+           - probably due to chi-square distribution's mean not being centered when groupSize is low???
+           - the value is the one described in https://en.wikipedia.org/wiki/Unbiased_estimation_of_standard_deviation
+           - adjust it??? or not???
+              - only to find max ratio???
+              - return adjusted value???
+           - use median or mean???
+     - how to account for ratio variation???
+        - use a mean of several ratios???
+           - instead of dividing by chi-squared critical value
+           - do it by:
+              - finding maximum value
+              - assume maximum value is on the extreme of a 95% confidence interval, and find all ratios within that interval
+              - take mean
+        - number of clusters of the last group:
+           - at the moment, it is 2: increase it???
+           - make it a constant
+              - it is probably specified by "/ 2" when compiting number of groups
+     - check if using smaller increment (e.g. 1.1)
+        - works
+        - improve granularity without changing accuracy
+        - figure out how much time complexity it adds
+     - check if resulting ratio can be used to find the perfect moe of the distribution
+     - would using variance instead of stdev simplify code???
+  - does not work when sample size is small???
+     - use minimum duration???
+        - make it higher when CONF.precision higher
+        - verify assumption that longer duration reduces ratio between measured environment variation and real variation
+           - even when number of samples is same, i.e. try it using timeout pauses
+  - use result in stat.rmoe too, i.e. to end benchmark???
+     - could lead to ending too soon for tasks with very low rstdev since sample size might be too low to detect environment variation???
+  - performance issues???
+     - cannot sort, i.e. outliers require ARR.filter() on all measures
+     - due to outliers, cannot compute sums incrementally
+     - done on each sample
+        - skip doing it sometimes, reusing previous value, with exponential gaps???
+
 Possible logic to find environment variation:
-  - when adding normal distribution, their mean and variance (not stdev) get added, i.e. cannot just subtract statistical stdev???
-     - then use variance instead of stdev???
-  - use file in Desktop, not spyd codebase
-  - generate random variables:
-     - following gaussian distribution
-     - doubling the mean every 2**m measures
-        - i.e. multiply by (count % (2**m) % 2) === 0 ? 1 : rate
-        - m is hardcoded, >=0
-        - rate is 2
-  - guessing m:
-     - group measures:
-        - into groups of 2**m measures
-           - exclude any last group with not enough measures
-           - using increasing m, starting at 0
-        - then sum each group
-     - for each m:
-        - compute mean
-        - compute actualStdev
-           - using group of measures
-        - compute expectedStdev
-           - using all measures, ungrouped
-           - probably stdev / sqrt(2**m)???
-           - also divide by tvalue using groups.length???
-           - confirm using generated random values
-        - compute ratio between actualStdev and expectedStdev
-     - use m with highest ratio
-        - confirm this works using generated random values
-  - guessing rate:
+  - main situation:
+     - product of two uncorrelated distributions:
+        - task: independent variables
+        - environment: variables depend on:
+           - previous one, i.e. stateful on time
+              - solutions:
+                 - moe takes environment changes into account
+                 - increase CONF.precision to make benchmark run longer, which softens the statefulness on time by making that state fluctuate more
+           - global state that can change between runs
+              - e.g. OS upgrade, different machine, etc.
+              - solutions:
+                 - use CONF.system to signify environment differences
+                 - keep machine load constant as much as possible
+                    - during run
+                       - e.g. not using other applications while waiting for benchmark to end
+                    - between runs
+                       - e.g. using CI
+     - i.e. result is lognormal
+  - logic:
+     - goal is to guess both distributions from their product
+     - this relies on the fact that one distribution's measures are stateful on time
+        - i.e. sample size reduces first distribution's moe by sqrt(n), but other distribution much less
+        - i.e. when grouping elements and taking mean
+           - first distribution's stdev as divided by sqrt(moe) and closer in shape to normal distribution
+           - second distribution does not change much
+           - i.e. the product is closer to the second distribution than to the first
+        - the second distribution statefulness is finite:
+           - when grouped at a specific group size (the "period"), the statefulness is all within the group's timeline, but not in-between grous
+           - the period is the group size when the product of both distributions is closest to the second distribution
+  - random generation:
+     - multiply by another distribution instead of a periodic rate
+     - second distribution should use
+        - index % period instead of Math.random()
+        - realMeanRate as mean
+        - realStdevRate as stdev
+     - ensure existing logic is still accurate
+  - possible simplifications???
+     - only look for combined moe, not necessarily mean + stdev of both distributions
+     - assume that distributions are added, not multiplied
+        - not an issue regardless of means, but can be an issue if first distribution has high stdev???
+  - when multiplying normal distribution, the result mean and variance is:
+     - mean: meanA * meanB
+     - variance: (varianceA + meanSquaredA) * (varianceB + meanSquaredB) - meanSquaredA * meanSquaredB
+  - guessing period:
+     - ratio is not minimal at period. Instead, the ratio stops decreasing???
+  - guessing first distribution stdev:
+     - using difference of stdev between after grouping and in total, since all of that difference comes from first distribution stdev / sqrt(n)
+  - guessing realMeanRate:
      - using group with highest ratio
-     - is ratio the same as rate???
+     - is ratio the same as realMeanRate???
         - confirm this works using generated random values
+  - guessing realMeanStdev
+     - use mean of the stdevs of each cluster, and compare difference with what is expected???
   - then implement in spyd codebase:
      - confirm the guessed environment variation roughly matches what it seems to be
         - i.e. when multiplied to moe, the resulting meanMin|Max encompasses the real mean ~95% of the times, providing machine load is constant
@@ -1740,7 +1816,6 @@ Difference between reported and real moe???
            - less precise preview duration
            - confusing previews due to multiple slow starts
            - having to load top-level scope of tasks file and before() multiple times
-
 Non-normal distribution:
   - distribution not always normal:
      - unit "boolean": binomial
