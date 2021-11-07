@@ -1596,66 +1596,18 @@ Ideas for articles about benchmarking:
 
 ------------------------
 
-Possible solution for environment variation:
-  - applies:
-     - to any distribution where nearby measures are more likely to have value close to each other
+EnvDev:
+  - debugging:
+     - check my stats.txt
+     - see pattern when running in preview for a long time
+  - refactor envDev logic
+  - add comments, including:
+     - applies to any distribution where nearby measures are more likely to have value close to each other
         - as opposed to being fully independent from each other
-     - i.e. more generic than just product of two distributions as in our case
-  - assumption: there is a maximim neighborhood size where measures beyond this are independent from each other
-     - i.e. grouping with that size makes the resulting distribution have fully independent measures
-        - i.e. can use central limit theorem for moe
-  - i.e. only need to find the maximal ratio actualStdev/expectedStdev and return it, so that, when computing moe, consumer either:
-     - divides sampleSize by square of it
-     - multiplies stdev by it
-        - maybe result in stat.adjustedStdev, i.e. can be used by diffPrecise
-           - would be different for different sample sizes when below groupSize though, since statefulness decreases logarithmatically with higher sample size
-           - i.e. this is the stdev after sample size is high enough
-  - things to check:
-     - check the group index being picked
-        - it seems that it is usually too high???
-           - if so, why???
-           - this leads to big meanRatio stdev when period is low
-           - use low period like 2**2 to debug this
-        - maybe, when searching for startIndex, allow decrementing startIndex if it fits when also decrementing endIndex???
-           - i.e shift both ends
-     - debugging using the meanRatio percentiles, mean and stdev, tweak:
-        - significance rate
-        - whether to use Math.floor() or ceil() with invalidMax
-        - clusterFactor
-           - findings about smaller clusterFactor???
-              - makes accuracy+precision fluctuate less when sample size changes
-              - does not impact precision much, in average
-                 - except when groupCount is close to maximum: then precision decreased a little
-              - slightly decreases accuracy
-     - MIN_GROUP_SIZE:
-        - does not currently work
-           - make sure it applies to groupSize, not clusterSize
-        - increase it?
-           - or have some way to take groups with wide confidence interval less into account???
-        - use only a single group, with groupSize === clusterSize???
-     - CLUSTER_FACTOR:
-        - ensure it works
-        - figure out how much time complexity it adds
-           - it seems groupCount n -> duration log(n)
-           - try to improve it?
-        - find best value
-     - check if resulting ratio can be used to find the perfect moe of the distribution
-  - does not work when sample size is small???
-     - use minimum duration???
-        - make it higher when CONF.precision higher
-        - verify assumption that longer duration reduces ratio between measured environment variation and real variation
-           - even when number of samples is same, i.e. try it using timeout pauses
-  - use result in stat.rmoe too, i.e. to end benchmark???
-     - could lead to ending too soon for tasks with very low rstdev since sample size might be too low to detect environment variation???
-  - performance issues???
-     - tweak performance
-     - cannot sort, i.e. outliers require ARR.filter() on all measures
-     - due to outliers, cannot compute sums incrementally
-     - done on each sample
-        - skip doing it sometimes, reusing previous value, with exponential gaps???
-
-Possible logic to find environment variation:
-  - main situation:
+     - assumption: there is a maximum neighborhood size where measures beyond this are independent from each other
+        - i.e. grouping with that size makes the resulting distribution have fully independent measures
+           - i.e. can use central limit theorem for moe
+     - i.e. only need to find the maximal ratio actualStdev/expectedStdev and return it, so that, when computing moe, consumer multiplies stdev by it
      - product of two uncorrelated distributions:
         - task: independent variables
         - environment: variables depend on:
@@ -1672,154 +1624,77 @@ Possible logic to find environment variation:
                        - e.g. not using other applications while waiting for benchmark to end
                     - between runs
                        - e.g. using CI
-     - i.e. result is lognormal
-  - logic:
-     - goal is to guess both distributions from their product
-     - this relies on the fact that one distribution's measures are stateful on time
-        - i.e. sample size reduces first distribution's moe by sqrt(n), but other distribution much less
-        - i.e. when grouping elements and taking mean
-           - first distribution's stdev as divided by sqrt(moe) and closer in shape to normal distribution
-           - second distribution does not change much
-           - i.e. the product is closer to the second distribution than to the first
-        - the second distribution statefulness is finite:
-           - when grouped at a specific group size (the "period"), the statefulness is all within the group's timeline, but not in-between grous
-           - the period is the group size when the product of both distributions is closest to the second distribution
-  - random generation:
-     - multiply by another distribution instead of a periodic rate
-     - second distribution should use
-        - index % period instead of Math.random()
-        - realMeanRate as mean
-        - realStdevRate as stdev
-     - ensure existing logic is still accurate
-  - possible simplifications???
-     - only look for combined moe, not necessarily mean + stdev of both distributions
-     - assume that distributions are added, not multiplied
-        - not an issue regardless of means, but can be an issue if first distribution has high stdev???
-  - when multiplying normal distribution, the result mean and variance is:
-     - mean: meanA * meanB
-     - variance: (varianceA + meanSquaredA) * (varianceB + meanSquaredB) - meanSquaredA * meanSquaredB
-  - guessing period:
-     - ratio is not minimal at period. Instead, the ratio stops decreasing???
-  - guessing first distribution stdev:
-     - using difference of stdev between after grouping and in total, since all of that difference comes from first distribution stdev / sqrt(n)
-  - guessing realMeanRate:
-     - using group with highest ratio
-     - is ratio the same as realMeanRate???
-        - confirm this works using generated random values
-  - guessing realMeanStdev
-     - use mean of the stdevs of each cluster, and compare difference with what is expected???
-  - then implement in spyd codebase:
-     - confirm the guessed environment variation roughly matches what it seems to be
-        - i.e. when multiplied to moe, the resulting meanMin|Max encompasses the real mean ~95% of the times, providing machine load is constant
-     - stages:
-        - initially, for simplicity while confirming it works, keep unsorted measures ARR and compute everything once at end
-        - then, keep track of each group of measures as sums, computed sample by sample
-
-Difference between reported and real moe???
-  - environment variation:
+        - i.e. result is lognormal
+     - this does not work well when sample size low, i.e. need to increase CONF.precision to get it better
+     - also partially corrects engine optimization variation
      - different types of environment variation:
         - small changes due to OS optimization and caching
         - bigger temporary slowdowns due to recurring OS background processes
         - temporary slowdowns due to other programs on the machine either:
            - left in background
            - user interacting with them while benchmark is running
-     - environment variations are hard to measure:
-        - their frequency can be hard to predict: does not follow clear patterns, user-driven
-        - their amplitude is variable and not necessarily bounded
-        - therefore, tasks' distribution is ever-changing
-           - especially its mean and stdev, not so much its general shape
-           - how much it changes between each sample is itself very variable in time
-              - i.e. it randomly alternates between period of high and low precision
-        - this creates imprecision
-        - this also makes it hard to compute moe because it relies on the central limit theorem which assumes the underlying distribution to be constant
-        - the variation shifts continuously in time, i.e.:
-           - the result looks like a single distribution
-           - but each quantile's frequency varies a lot between runs, which makes the overall precision much lower than statistical moe
-           - this also makes it impossible to distinguish individual distributions|modes in the final distribution
+     - environment variation is hard to measure:
+        - frequency is hard to predict: does not follow clear patterns, user-driven
+        - amplitude is variable, i.e. alternates between period of high and low precision
+        - amplitude is not bounded
+        - it continuously shifts
      - distinct from statistical variation
         - low statistical moe does not reduce it
-        - i.e. high environment variation does not change when to stop benchmark run
-           - since longer benchmarks are mostly meant to reduce statistical variation
         - however, higher sample size:
            - blends more temporary and recurring environment changes into a single distribution, making the reported stdev|moe include them, i.e. less of a problem
            - makes engine optimization last for a smaller percentage of the whole run, i.e. easier to distinguish from environment variation detection
-     - cannot reduce the amount of environment variation???
-        - except for not doing anything while benchmark is running
-        - although can maybe measure it and add it to diffPrecise and reported moe???
-     - this creates the following problems:
-        - makes reported moe not match user's experience of re-running the benchmark???
-        - make runs results differ from each other???
-        - makes diffPrecise less useful???
-           - if can measure environment variation, multiply stdev by it???
-           - or use quantiles instead of welch t-test??? or use both???
-     - possible solutions???
-        - measure environment variation and take it into account:
-           - use time dimension
-              - reason: the only thing which distinguishes environment variation from task regular variation is that its mean|stdev changes over time
-              - i.e. cannot use sorted measures since those are timeless
-              - split measures into NUM by chronological order then check mean|stdev???
-                 - subtract expected variation, i.e. moe (using sample size of each chunk)???
-           - use individual measures, not samples???
-              - since environment variation is independent from sampling
-              - for performance reason, use a binary search (using factor 2 or maybe lower)???
-           - use welch t-test to see if a group of measures is different distribution???
-           - what if slow task with very few measures???
-           - store both:
-              - non-adjusted moe: used to stop running benchmark, since cannot improve environment variation, can just measure it better
-              - adjusted moe: reported
-        - do not report moe
-           - remove CONF.showPrecision
-           - remove meanMin|Max
-        - report quantile range instead of moe
-           - also useful for users to get an idea of the distribution real range
-              - although some of it is due to environment variation
-           - p25-p75??? p5-p95??? p2.5-p97.5???
-              - it looks like p5-95 or p2.5-p97.5 are better to capture "mean is usually in this range"
-              - but p25-p75 has a smaller range, making it more visually interesting
-           - rename CONF.showPrecision to CONF.showRange???
-           - is boxplot reporter enough instead???
-           - works better with central stat being median instead of mean???
-              - pro: removes influence of outliers removal logic on the central stat
-                 - still needed for min|max and histogram???
-              - con: less useful to users who want summed duration when task is repeated in hot path
-              - con: does not work well with small integer measures
-              - con: might encourage some users to manually loop to overcome some of the cons
-              - con: stdev|moe are meant to work on mean, not median
-              - con: more different from other benchmark tools, i.e. might result in surprising differences
-              - con: less precise with very skewed distributions
-  - confirm theory: the fact that a task is lognormal does not change its moe accuracy too much
-     - try to see at which sample size this changes
-  - findings:
-     - currently:
-        - real moe is 2-20 times higher than reported moe
-        - real moe decreases with higher CONF.precision, but slower than reported moe
-     - automatic outliers logic is useful:
-        - removing outliers:
-           - improves stdev and min|max a lot
-           - does not change mean too much, when sample size is large enough
-        - using fixed outliers percentages:
-           - requires knowing that the best value for a given distribution before-hand
-           - even when known, leads to similar stats as when automatically computing those percentages instead
-        - outliers are spread through the run, not only at beginning
-     - using repeat loop does not impact cross-runs precision
-     - when the measures follow a perfect normal distribution, not influenced by machine, cross-runs precision is perfect
-     - repeating a task changes the following, until eventually stabilizing: mean|median, stdev, max, outliersMin|Max
-        - usually improves, but sometimes opposite
-        - stripping earlier measures barely changes stats, providing sample size is high enough
-           - instead, it is more important to ensure sample size is high enough so that most of the measures were optimized
-     - environment variation:
-        - even when just repeating same task
-        - even when task is optimized
-        - sometimes, very temporary, for just one sample
-           - other times, persist for several minutes
-     - each process comes with stats variation
-        - i.e. running several processes instead of 1 for the same total amount of measures improves precision
-        - however, not by much and require too many processes to have an effect
-        - i.e. not worth it, especially considering:
-           - implementation complexity
-           - less precise preview duration
-           - confusing previews due to multiple slow starts
-           - having to load top-level scope of tasks file and before() multiple times
+     - cannot reduce the amount of environment variation, except for not doing anything while benchmark is running
+  - add way to filter `measures` dynamically
+     - used to filter out values >|< stats.min|max (for outliers)
+  - add stats.envDev
+     - check performance: time complexity and average duration???
+     - shown as debug stat
+  - add stats.realStdev
+     - is stats.stdev * stats.envDev
+     - used to compute:
+        - stats.[r]moe
+           - including as used to stop benchmark
+        - stats.meanMin|Max
+        - diffPrecise
+  - envDev varies too much between runs
+  - envDev is roughly 1-2 times too low
+     - especially when rmoe threshold is high
+
+Adjust CONF.precision thresholds???
+  - too high now due to envDev???
+  - add more than 5 different values, for higher granularity???
+     - e.g. 0-10
+
+Consider trying to remove outliers incrementally
+  - potentially:
+     - remove using min|maxValue
+        - computed by concatenated sorted measures as of previous samples
+        - applied on sampleMeasures before being sorted and merged
+  - If it works, then can optimize:
+     - Use incremental mean
+     - Use incremental variance
+     - Use increment environment variation
+     - stats.min|max never increase|decrease during previews
+     - remove minIndex|maxIndex
+  - problem: should use all values including outliers to compute outlier limits
+     - and this can only be solved by keeping two separate full ARRs of measures, and merge sorting them separately
+
+CONF.limit:
+  - allow CONF.limit '0%'???
+     - i.e. only use diffPrecise, not percentage threshold
+     - can be -0% for other direction
+     - make percentage optional, i.e. allow CONF.limit empty STR???
+  - instead of percentage:
+     - use ratio to the point where diffPrecise would be true???
+     - use an integer enum property so users do not need to figure out ratios???
+        - e.g. 0-4, with def 2, like CONF.precision
+  - remove the fact that limits configuration can be done per-combination using selectors???
+  - separate configuration properties to enable and to configure limits???
+     - separate configuration property to configure asc|desc order and percentage too???
+     - naming:
+        - different words
+        - same prefix???
+        - namespace like CONF.limits.*???
 
 Non-normal distribution:
   - distribution not always normal:
