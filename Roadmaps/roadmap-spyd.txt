@@ -1622,105 +1622,53 @@ Ideas for articles about benchmarking:
 
 ------------------------
 
-EnvDev:
-  - debugging:
-     - check my stats.txt
-     - see pattern when running in preview for a long time
-  - refactor envDev logic
-  - add comments, including:
-     - applies to any distribution where nearby measures are more likely to have value close to each other
-        - as opposed to being fully independent from each other
-     - assumption: there is a maximum neighborhood size where measures beyond this are independent from each other
-        - i.e. grouping with that size makes the resulting distribution have fully independent measures
-           - i.e. can use central limit theorem for moe
-     - i.e. only need to find the maximal ratio actualStdev/expectedStdev and return it, so that, when computing moe, consumer multiplies stdev by it
-     - product of two uncorrelated distributions:
-        - task: independent variables
-        - environment: variables depend on:
-           - previous one, i.e. stateful on time
-              - solutions:
-                 - moe takes environment changes into account
-                 - increase CONF.precision to make benchmark run longer, which softens the statefulness on time by making that state fluctuate more
-           - global state that can change between runs
-              - e.g. OS upgrade, different machine, etc.
-              - solutions:
-                 - use CONF.system to signify environment differences
-                 - keep machine load constant as much as possible
-                    - during run
-                       - e.g. not using other applications while waiting for benchmark to end
-                    - between runs
-                       - e.g. using CI
-        - i.e. result is lognormal
-     - this does not work well when sample size low, i.e. need to increase CONF.precision to get it better
-     - also partially corrects engine optimization variation
-     - different types of environment variation:
-        - small changes due to OS optimization and caching
-        - bigger temporary slowdowns due to recurring OS background processes
-        - temporary slowdowns due to other programs on the machine either:
-           - left in background
-           - user interacting with them while benchmark is running
-     - environment variation is hard to measure:
-        - frequency is hard to predict: does not follow clear patterns, user-driven
-        - amplitude is variable, i.e. alternates between period of high and low precision
-        - amplitude is not bounded
-        - it continuously shifts
-     - distinct from statistical variation
-        - low statistical moe does not reduce it
-        - however, higher sample size:
-           - blends more temporary and recurring environment changes into a single distribution, making the reported stdev|moe include them, i.e. less of a problem
-           - makes engine optimization last for a smaller percentage of the whole run, i.e. easier to distinguish from environment variation detection
-     - cannot reduce the amount of environment variation, except for not doing anything while benchmark is running
-  - add way to filter `measures` dynamically
-     - used to filter out values >|< stats.min|max (for outliers)
-  - add stats.envDev
-     - check performance: time complexity and average duration???
-     - shown as debug stat
-  - add stats.realStdev
-     - is stats.stdev * stats.envDev
-     - used to compute:
-        - stats.[r]moe
-           - including as used to stop benchmark
-        - stats.meanMin|Max
-        - diffPrecise
-  - envDev varies too much between runs
-  - envDev is roughly 1-2 times too low
-     - especially when rmoe threshold is high
+Skip computing stats unless preview mode:
+  - ensure this does not change results too much???
 
-Adjust CONF.precision thresholds???
-  - too high now due to envDev???
-  - add more than 5 different values, for higher granularity???
-     - e.g. 0-10
+CONF.precision 0-4 -> 0-10
+  - find correct values by checking how much rmoe threshold is needed for each of my test tasks to last for 2 minutes
 
-Consider trying to remove outliers incrementally
-  - potentially:
-     - remove using min|maxValue
-        - computed by concatenated sorted measures as of previous samples
-        - applied on sampleMeasures before being sorted and merged
-  - If it works, then can optimize:
-     - Use incremental mean
-     - Use incremental variance
-     - Use increment environment variation
-     - stats.min|max never increase|decrease during previews
-     - remove minIndex|maxIndex
-  - problem: should use all values including outliers to compute outlier limits
-     - and this can only be solved by keeping two separate full ARRs of measures, and merge sorting them separately
+Issue with how results are saved:
+  - It saves result after report normalization, while it should be before
+     - e.g. no `id|timestamp`
+  - However, it needs to run the benchmark to get the stats, and running the benchmark requires report normalization
 
-CONF.limit:
-  - allow CONF.limit '0%'???
-     - i.e. only use diffPrecise, not percentage threshold
-     - can be -0% for other direction
-     - make percentage optional, i.e. allow CONF.limit empty STR???
-  - instead of percentage:
-     - use ratio to the point where diffPrecise would be true???
-     - use an integer enum property so users do not need to figure out ratios???
-        - e.g. 0-4, with def 2, like CONF.precision
-  - remove the fact that limits configuration can be done per-combination using selectors???
-  - separate configuration properties to enable and to configure limits???
-     - separate configuration property to configure asc|desc order and percentage too???
-     - naming:
-        - different words
-        - same prefix???
-        - namespace like CONF.limits.*???
+Engine optimization:
+  - how to fix the fact that some tasks get faster as they repeat???
+  - maybe only stop running when NUM% earlier sample have same mean as current one???
+     - NUM% is based on number of measures, not samples
+     - use a welch t-test
+     - can use tStat / tValue ratio as part of preview durations computation???
+  - also check for stdev to stabilize???
+  - is checking for mean difference useless since if there is one, stdev should be too high for rmoe target to be reached???
+     - and if optimization is too slow, cannot detect it with mean difference, not know for sure unless running longer
+     - i.e. only good solution is increasing CONF.precision???
+  - what if it makes low CONF.precision last for too long???
+     - different significance rate per CONF.precision???
+     - not applied to CONF.precision 0 and|or 1???
+  - possible idea:
+     - stats.stability NUM:
+        - percentage of the orderedMeasures when they started stabilizing
+     - require stats.stability to be below a specific threshold to end run
+        - which???
+        - different per CONF.precision???
+     - preview duration:
+        - compute number of loops required to reach stability threshold
+           - i.e. Math.max((stats.stability / stabilityThreshold) - 1, 0) * currentLoops
+        - then use this as Math.max() with number of loops to reach rmoe threshold
+     - computing:
+        - use haveSimilarMeans() (welch t-test)
+           - including envDev
+           - if returned undefined (not enough measures), then default to considering those having different means
+        - between orderedMeasures up to a point, and whole of them
+           - or only ones after that point???
+        - use current outliersMin|Max, i.e. computed for each sample, like envDev
+        - performance optimization:
+           - use binary search
+           - use incremental mean|variance
+              - envDev too???
+              - make it work both adding and subtracting, since binary search can go both ways
+        - for testing initially to confirm general idea works, just use samples computed values, because faster to implement
 
 Non-normal distribution:
   - distribution not always normal:
@@ -1738,6 +1686,7 @@ Non-normal distribution:
      - too complex, making it harder to compute preview duration
   - multiply any moe by a constant number???
      - or make it depend on how much data fits a normal distribution???
+     - would be same as dividing CONF.precision thresholds, i.e. pointless???
   - make moe as skewed as distribution???
      - make meanMin|Max = mean +|- moe * factorMin|Max
      - either:
@@ -1748,20 +1697,6 @@ Non-normal distribution:
            - amount of measures of each side of mean|median
            - min|max difference with mean|median
         - ratio of stdev on each side of mean|median??? i.e. after removing the other half but keeping mean|median as is
-
-Engine optimization:
-  - how to fix the fact that some tasks get faster as they repeat???
-  - maybe only stop running when NUM% earlier sample have same mean as current one???
-     - NUM% is based on number of measures, not samples
-     - use a welch t-test
-     - can use tStat / tValue ratio as part of preview durations computation???
-  - also check for stdev difference???
-  - is checking for mean difference useless since if there is one, stdev should be too high for rmoe target to be reached???
-     - and if optimization is too slow, cannot detect it with mean difference, not know for sure unless running longer
-     - i.e. only good solution is increasing CONF.precision???
-  - what if it makes low CONF.precision last for too long???
-     - different significance rate per CONF.precision???
-     - not applied to CONF.precision 0 and|or 1???
 
 Significance rate:
   - increase significance rate from 95%???
