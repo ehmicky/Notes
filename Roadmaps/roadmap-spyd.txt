@@ -1625,98 +1625,34 @@ Ideas for articles about benchmarking:
 
 ------------------------
 
-Skip computing stats unless preview mode:
-  - ensure this does not change results too much???
+Engine optimization preview duration:
+  - compute expected number of loops left for stats.cold <= rmoeThreshold
+     - compute incrementalMeanMin|Max as totalMean * (1 -|+ rmoeThreshold)
+     - compute incremental mean from 50% to 100% of the unsortedMeasures
+        - same logic as for stats.cold, including filtering
+     - find index of first incremental mean both >=|<= incrementalMeanMin|Max
+        - at least one has to be found, since last incrementalMean is totalMean itself
+           - but due to potential rounding error (if any is possible?) default to totalMean is nothing found
+        - use filter like for stats.cold
+     - expected number of loops left is 2 * (indexFound - 50%Index)
+        - index should be of elements without filtering
+  - used as Math.max() with the expected number of loops left for stats.rmoe <= rmoeThreshold
+     - for loops, not length, since returned number of loops is without filtering
+  - not done if either:
+     - not preview
+     - stats.stability already good
 
-CONF.precision 0-4 -> 0-10
-  - find correct values by checking how much rmoe threshold is needed for each of my test tasks to last for 2 minutes
-
-Issue with how results are saved:
-  - It saves result after report normalization, while it should be before
-     - e.g. no `id|timestamp`
-  - However, it needs to run the benchmark to get the stats, and running the benchmark requires report normalization
-
-Engine optimization:
-  - how to fix the fact that some tasks get faster as they repeat???
-  - maybe only stop running when NUM% earlier sample have same mean as current one???
-     - NUM% is based on number of measures, not samples
-     - use a welch t-test
-     - can use tStat / tValue ratio as part of preview durations computation???
-  - also check for stdev to stabilize???
-  - is checking for mean difference useless since if there is one, stdev should be too high for rmoe target to be reached???
-     - and if optimization is too slow, cannot detect it with mean difference, not know for sure unless running longer
-     - i.e. only good solution is increasing CONF.precision???
-  - what if it makes low CONF.precision last for too long???
-     - different significance rate per CONF.precision???
-     - not applied to CONF.precision 0 and|or 1???
-  - possible idea:
-     - stats.stability NUM:
-        - percentage of the orderedMeasures when they started stabilizing
-     - require stats.stability to be below a specific threshold to end run
-        - which???
-        - different per CONF.precision???
-     - preview duration:
-        - compute number of loops required to reach stability threshold
-           - i.e. Math.max((stats.stability / stabilityThreshold) - 1, 0) * currentLoops
-        - then use this as Math.max() with number of loops to reach rmoe threshold
-     - computing:
-        - use haveSimilarMeans() (welch t-test)
-           - including envDev
-           - if returned undefined (not enough measures), then default to considering those having different means
-        - between orderedMeasures up to a point, and whole of them
-           - or only ones after that point???
-        - use current outliersMin|Max, i.e. computed for each sample, like envDev
-        - performance optimization:
-           - use binary search
-           - use incremental mean|variance
-              - envDev too???
-              - make it work both adding and subtracting, since binary search can go both ways
-        - for testing initially to confirm general idea works, just use samples computed values, because faster to implement
-
-Non-normal distribution:
-  - distribution not always normal:
-     - unit "boolean": binomial
-     - other units:
-        - often lognormal
-        - but can be other distributions in some occasions
-     - unit "count|bytes": mixed with discrete normal or lognormal
-  - only a problem for [r]moe, not other statistics
-  - less of a problem with higher sample size due to central limit theorem
-     - from my tests, seems not to be a problem at all when sample size high???
-  - cannot use traditional methods to compute moe for lognormal distributions because:
-     - too slow to compute
-     - the distribution might in some cases not be normal nor lognormal
-     - too complex, making it harder to compute preview duration
-  - multiply any moe by a constant number???
-     - or make it depend on how much data fits a normal distribution???
-     - would be same as dividing CONF.precision thresholds, i.e. pointless???
-  - make moe as skewed as distribution???
-     - make meanMin|Max = mean +|- moe * factorMin|Max
-     - either:
-        - make factorMin + factorMax = 1, i.e. same total interval???
-        - or one factor is 1 and the other is >= 1???
-     - what to use as skew factor???
-        - not good because does not take into account distribution:
-           - amount of measures of each side of mean|median
-           - min|max difference with mean|median
-        - ratio of stdev on each side of mean|median??? i.e. after removing the other half but keeping mean|median as is
-
-Significance rate:
-  - increase significance rate from 95%???
-     - values:
-        - 95%: 0% longer runs in average, and rstdev is multiplied by (for 2,3,4,5 samples): 42, 4.8, 2.6, 2
-        - 99%: 40% longer and: 260, 13, 5.4, 3.7
-        - 99.5%: 75% longer and: 10000, 26, 8.9, 5.5
-        - 99.9%: 150% longer and: 26000, 130, 27, 13
-  - higher significance rate than 95% when sample size is low, since magnitude of moe error is then bigger???
-
-MIN_STDEV_LOOPS:
-  - compute correct value for unit "boolean"???
-     - i.e. check quantiles of moe difference for the 5% times it is wrong, based on sampleSize, using similar logic as Desktop/gaussian.js
-  - different value too for:
-     - unit group "mixed"???
-        - with small integers???
-     - unit "integer"???
+stdev when rounded:
+  - when measures are rounded and sample size low, sample stdev might be too low, leading to rmoe too low???
+     - rounding due to:
+        - float epsilon (2e-16) when measures are extremely precise (unlikely)
+        - integers (1) (likely)
+     - including stdev 0 (always same measures)
+        - might be real one
+     - including with mean 0
+        - might be real one
+        - or 0|1 with unit "boolean"
+  - main problem is preventing too low threshold (making run stop too early) not too high (making run slower)
 
 Unit group mixed using both integers and durations:
   - not a problem since: ???
@@ -1725,8 +1661,10 @@ Unit group mixed using both integers and durations:
 
 stdev|moe with always same measure:
   - use n+1???
-     - i.e. compute stdev but as if one measure was 1 off
+     - i.e. compute stdev but as if one more measure and it was 1 off
         - note: stdev computed differently for unit "boolean" and other units
+        - for other units than booleans, what does "off" mean???
+           - use 1% of `stats.mean`???
      - reason: if n+1 still below rmoe threshold, no need to continue
      - other reason: give a sense of precision range with some statistical meaning
      - does not work for unit boolean since very low proportions have very high rmoe???
@@ -1738,39 +1676,26 @@ stdev|moe with always same measure:
            - therefore same as a probability|binomial situation
   - impact on diffPrecise???
 
-stdev when rounded:
-  - when measures are rounded and sample size low, sample stdev might be too low, leading to rmoe too low???
-     - rounding due to:
-        - float epsilon (2e-16)
-        - integers (1)
-     - including stdev 0 (always same measures)
-        - might be real one
-     - including with mean 0
-        - might be real one
-        - or 0|1 with unit "boolean"
-  - main problem is preventing too low threshold (making run stop too early) not too high (making run slower)
-  - moe imprecision is same as stdev imprecision
-     - e.g. if stdev twice too high, so is moe
-  - use variance confidence interval, i.e. chi-squared test???
-     - variance * (n-1) / chi-value
-     - i.e. stdev * Math.sqrt(n - 1) / Math.sqrt(chi-value)
-     - chi-value:
-        - degrees of freedom: n - 1
-        - asymetric (underestimations are bigger than overestimations)
-        - must use half on each side, e.g. 95% -> 0.025|0.975
-        - Math.sqrt(n - 1) / Math.sqrt(chi-value) for n 2-... and 50-51:
-           - 0.025 (inverted): 2.24, 1.92, 1.76, 1.67, 1.60, 1.55, ..., 1.1971, 1.1951
-           - 0.975: 31.9, 6.26, 3.73, 2.87, 2.45, 2.20, 2.04, 1.91, 1.83, 1.75, 1.69, ..., 1.2461, 1.2430
+MIN_STDEV_LOOPS:
+  - compute correct value for unit "boolean"???
+     - i.e. check quantiles of moe difference for the 5% times it is wrong, based on sampleSize, using similar logic as Desktop/gaussian.js
+  - different value too for:
+     - unit group "mixed"???
+        - with small integers???
+     - unit "integer"???
+
+Significance rate:
+  - increase significance rate from 95%???
+     - values:
+        - 95%: 0% longer runs in average, and rstdev is multiplied by (for 2,3,4,5 samples): 42, 4.8, 2.6, 2
+        - 99%: 40% longer and: 260, 13, 5.4, 3.7
+        - 99.5%: 75% longer and: 10000, 26, 8.9, 5.5
+        - 99.9%: 150% longer and: 26000, 130, 27, 13
+  - higher significance rate than 95% when sample size is low, since magnitude of moe error is then bigger???
 
 Add comments:
   - user should set CONF.precision up to the highest duration they are willing to wait
-  - some tasks get optimized as they repeat
-     - by either runtime or OS
-     - often done at specific thresholds
-        - i.e. cannot know in advance whether there is a future optimization threshold until it has been hit
-     - this can lead to benchmark to end with unoptimized stdev and mean
-     - solution: user should increase CONF.precision
-  - mean is more robust than the median for strongly multimodal distributions
+  - mean is more robust than median for strongly multimodal distributions
   - rmoeMin|Max:
      - unlike moe, rmoe can be impacted by mean's inaccuracy (due to being estimated)
         - this can make run end earlier than expected
@@ -1792,27 +1717,31 @@ Add comments:
   - distribution of most duration-based measures:
      - are normal-to-lognormal
         - most of the times (but not always) longer tail are on the slow side
+        - can be more uniform when using randomness as input
      - have multiple modes
-        - multiple modes sizes can go from barely noticeable to big, separate modes of same size
-        - the central one is often higher than the others
-        - some modes are only present when sample size is small
+        - due to:
+           - engine optimization
+              - this is because optimization is sometimes triggered at specific thresholds, as opposed to progressively
+              - this means the earlier modes decrease in frequency as run continues
+           - the `repeat` loop
+           - performing specific operations at regular thresholds
+              - e.g. memory allocation on a growing array
+                 - e.g. `Array.push()` does this, leading to its duration to be very fast most of the times, and much slower rarely
+           - logic using randomness
         - this is less common for logic with higher complexity
-     - if they use randomness as input:
-        - might have multiple very separate modes
-        - might have a more uniform distribution
-     - outliers:
-        - most have 0-5% slow outliers which are due to both:
-           - lognormal long tail
-           - engine optimization, OS background processes, etc.
-        - many (but not all) have 0-0.5% fast outliers
-        - a few have a large amount 5-30% of slow outliers which are due to either:
-           - distribution having multiple modes
-           - engine optimization, i.e. slow outliers are less frequent as sample size increases
-        - rarely, there is a large amount 1-10% of fast outliers
+  - outliers:
+     - most have 0-5% slow outliers which are due to both:
+        - lognormal long tail
+        - engine optimization, OS background processes, etc.
+     - many (but not all) have 0-0.5% fast outliers
+     - a few have a large amount 5-30% of slow outliers which are due to either:
+        - distribution having multiple modes
+        - engine optimization, i.e. slow outliers are less frequent as sample size increases
+     - rarely, there is a large amount 1-10% of fast outliers
   - impact of changing MIN_STDEV_LOOPS:
      - lower value:
         - faster first preview
-        - runs with slow mean and low rstdev finish faster
-     - higher value: more likely to:
+        - runs with slow mean finish faster, providing rstdev low enough
+     - higher value: less likely to:
         - end run too early
         - report inaccurate first previews
