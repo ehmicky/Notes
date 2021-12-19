@@ -1090,19 +1090,19 @@ CONF.unit "boolean":
   - no sorting
   - no outliers
   - mean: `true` count / total count
-     - logic that's currently specific when mean 0, when unit is "boolean":
-        - keep current logic, i.e. use mean 0 only:
-           - skip `diff` if previousMean 0
-           - make `cold` 1
-        - do not use specific logic at all:
-           - skip `variance|moe|...`: not skipped at all
-           - skip preview duration and `scale` computation: not skipped at all
+     - when unit is boolean, unlike other units, mean 0 has same behavior as other means
+        - reason: handled correctly by Wilson score interval (`moe`) and binomial test (`diff`)
+        - including:
+           - do not skip `diff`
+           - do not make `cold` 1
+           - do not skip `variance|moe|...`
+           - do not skip preview duration and `scale` computation
   - quantiles|min|max|median|histogram: undefined
      - i.e. reporters show it the same way as not measured yet combinations
   - MIN_STDEV_LOOPS:
      - not checked, i.e. computes variance|moe|... as soon as the first measure
      - reason:
-        - `rmoe` does not change much based on the value of measures, it is more based on the number of measures
+        - `moe` does not change much based on the value of measures, it is more based on the number of measures
         - especially when the number of measures is low
   - variance: mean * (1 - mean)
      - can be 0 if mean 0|1
@@ -1140,6 +1140,9 @@ CONF.unit "boolean":
             }
             const Z_VALUE = 1.96
             const Z_VALUE_SQUARED = Z_VALUE ** 2
+     - no need to Math.min|max() with:
+        - 0|1 because Wilson score interval (with continuitt correction) already does it
+        - stats.min|max because there are none
   - moe: (meanMax - meanMin) / 2
   - rstdev|rmoe: not computed
      - reasons:
@@ -1157,42 +1160,43 @@ CONF.unit "boolean":
      - use different CONF.precision values:
         - number of samples is linear, not quadratic, to moe
         - lower number of samples have higher moe than with normal distribution
-        - maybe something like: 0, 15%, 10%, 5%, 2%, 1% (def), .1%, .01%, .001%, .0001%, .00001%
+        - maybe something like: 0, 20%, 10%, 5%, 2%, 1% (def), .1%, .01%, .001%, .0001%, .00001%
+  - diff:
+     - use binomial test instead of welch t-test
+     - use absolute instead of relative diff
+        - reasons:
+           - consistent with moe, cold and CONF.precision
+           - simpler to interpret
+           - works the same for values below|above 0.5
+              - i.e. inverting BOOL does not change it
+     - add comments:
+        - why we do not show mean|diff as 0-50% true|false:
+           - confusing when a results includes percentages both above and below 50%
+           - generally confusing
+  - estimating number of loops left:
+     - used for both preview duration and step `scale`
+     - try to guess by inverting Wilson score interval (with continuity correction)
+  - identical measures: do not use special logic
+     - reason: Wilson score interval (for `moe`) and binomial test (for `diff`) handle identical measures correctly
+  - cold:
+     - do not divide by mean
+        - i.e. absolute diff, not relative diff
+     - reasons:
+        - same reasons as for moe
+        - more consistent with moe since they both use the same precisionTarget
+     - implementation:
+        - two entry points for boolean unit and other units
+        - boolean unit:
+           - pass incrementalMeanMin|Max as: mean +|- precisionTarget
+           - do not divide cold by mean before returning it
+        - other unit:
+           - pass incrementalMeanMin|Max as: mean * (1 +|- precisionTarget)
+           - divide cold by mean before returning it
   - envDev: try to handle booleans as 0|1s
      - i.e.:
         - variance is normal variance, not binomial variance
         - can use chi-squared distribution confidence interval
      - confirm this works well, i.e. correctly adjusts moe when there is environment variation
-  - diff:
-     - use binomial test instead of welch t-test
-     - add comments:
-        - why we do not make diff:
-           - behave the same for mean and 1 - mean
-              - e.g. diff(.2, .1) === diff(.8, .9)
-              - i.e. inverting BOOL does not change it
-              - reasons:
-                 - not intuitive, e.g. diff(.8, .6) is -100%
-                 - signedness would be ambiguous, e.g. diff(.8, .9) could be seen either as:
-                    - positive: new value is higher
-                    - negative: to make it behave like 1 - mean
-           - absolute instead of relative to mean:
-              - inconsistent with other units
-              - inconsistent with rmoe and CONF.precision
-              - harder for users when percentage is very low|high
-           - show mean|diff as 0-50% true|false:
-              - confusing when a results includes percentages both above and below 50%
-              - generally confusing
-        - users should invert BOOL or not so the mean is <.5, making the diff|limit more intuitive
-           - e.g. .2 -> .1 is twice lower, i.e. -50%, but when inverted, .8 -> .9, i.e. +12.5%
-  - estimating number of loops left:
-     - used for both preview duration and step `scale`
-     - try to guess by inverting Wilson score interval (with continuity correction)
-  - identical measures:
-     - use same special logic as other units for stdev
-        - except the additional measure is negated (instead of using 99% of repeatedMeasure)
-        - reason: stdev 0 would not work well otherwise with `diffPrecise`
-     - but moe are not based on stdev, i.e. not impacted
-        - Wilson score interval (with continuity correction) works well even on identical measures
 
 --------------------
 
@@ -1726,18 +1730,3 @@ Promote
 Ideas for articles about benchmarking:
   - choice between accuracy vs precision
   - choice between computing timestamp inside or outside the for-loop, and hybrid approach spyd takes
-
-------------------------
-
-Unit boolean:
-  - compute correct value for MIN_STDEV_LOOPS???
-     - i.e. check quantiles of moe difference for the 5% times it is wrong, based on sampleSize, using similar logic as Desktop/gaussian.js
-
-Significance rate:
-  - increase significance rate from 95%???
-     - values:
-        - 95%: 0% longer runs in average, and rstdev is multiplied by (for 2,3,4,5 samples): 42, 4.8, 2.6, 2
-        - 99%: 40% longer and: 260, 13, 5.4, 3.7
-        - 99.5%: 75% longer and: 10000, 26, 8.9, 5.5
-        - 99.9%: 150% longer and: 26000, 130, 27, 13
-  - higher significance rate than 95% when sample size is low, since magnitude of moe error is then bigger???
