@@ -1091,18 +1091,54 @@ CONF.unit "boolean":
   - no outliers
   - mean: `true` count / total count
      - any places with specific logic for mean 0: should do the same for mean 1 when unit "boolean"
-        - including when checking whether to skip stdev-related stats
+        - excluding some of them where `mean: 0|1` should not be treated specially
+           - e.g. `variance|moe|...` should still be computed even if mean 0|1
   - quantiles|min|max|median|histogram: undefined
      - i.e. reporters show it the same way as not measured yet combinations
+  - MIN_STDEV_LOOPS:
+     - not checked, i.e. computes variance|moe|... as soon as the first measure
+     - reason:
+        - `rmoe` does not change much based on the value of measures, it is more based on the number of measures
+        - especially when the number of measures is low
   - variance: mean * (1 - mean)
      - can be 0
-     - stdev: same as for other units, based on variance
+     - stdev: same as for other units, i.e. Math.sqrt(variance)
   - meanMin|Max:
-     - use Wilson score interval (without continuity correction)
+     - use Wilson score interval with continuity correction
         - this makes it asymmetric
+        - reason why continuity correction is used:
+           - more accurate: significance level is a minimum instead of average
+           - however, wider confidence interval:
+              - 0-25%, i.e. not that much wider
+              - wider when sample size low or `mean` very low|high
+           - also, works better with sample size 1
+        - implementation:
+            function (length, mean) {
+              const valueA = Z_VALUE_SQUARED - 1 / length + 4 * length * mean * (1 - mean)
+              const valueB = 2 * length * mean + Z_VALUE_SQUARED
+              const valueC = 4 * mean - 2
+              const valueD = 2 * (length + Z_VALUE_SQUARED)
+              const meanMin =
+                mean === 0
+                  ? 0
+                  : Math.max(
+                      (valueB - (Z_VALUE * Math.sqrt(valueA + valueC) + 1)) / valueD,
+                      0,
+                    )
+              const meanMax =
+                mean === 1
+                  ? 1
+                  : Math.min(
+                      (valueB + (Z_VALUE * Math.sqrt(valueA - valueC) + 1)) / valueD,
+                      1,
+                    )
+              return [meanMin, meanMax]
+            }
+            const Z_VALUE = 1.96
+            const Z_VALUE_SQUARED = Z_VALUE ** 2
   - moe: (meanMax - meanMin) / 2
   - rstdev|rmoe:
-     - same as other units, based on stdev|moe
+     - same as other units, i.e. stdev|moe / mean
      - except: divide by (1-mean) instead of mean if mean > 0.5
         - reason: inverting BOOL in task should not change them
   - CONF.precision: thresholds are 10 times higher instead.
@@ -1131,13 +1167,13 @@ CONF.unit "boolean":
            - e.g. .2 -> .1 is twice lower, i.e. -50%, but when inverted, .8 -> .9, i.e. +12.5%
   - estimating number of loops left:
      - used for both preview duration and step `scale`
-     - try to guess by inverting Wilson score interval
+     - try to guess by inverting Wilson score interval (with continuity correction)
   - identical measures:
      - use same special logic as other units for [r]stdev
         - except the additional measure is negated (instead of using 99% of repeatedMeasure)
         - reason: [r]stdev 0 would not work well otherwise with `diffPrecise`
      - but [r]moe are not based on [r]stdev, i.e. not impacted
-        - Wilson score interval works well even on identical measures
+        - Wilson score interval (with continuity correction) works well even on identical measures
 
 --------------------
 
