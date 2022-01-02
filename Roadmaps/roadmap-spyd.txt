@@ -63,66 +63,61 @@ Validation:
 
 --------------------
 
-Default ids:
-  - add default ids:
-     - applied before combinations filtering and `select`, in `normalizeRawResults()`
-     - for all dimensions in target result but not in a previous result
-     - i.e. missing dimension should behave like the dimension with its default id, including in:
-        - CONF.select|limit
-        - diff
-        - reporting (e.g. when mixed with other results not missing the dimension)
-     - per dimension:
-        - task|runner: never missing
-        - step: "main"
-           - assigned on result creation, i.e. saved
-        - system: "main_system_{systemDimension}"
-           - not assigned on result creation, i.e. not saved
-        - variation: main_{variationDimension.replaceAll(".", "_")}
-           - not assigned on result creation, i.e. not saved
-  - validate that new result ids do not match possible default ids (unless same dimension):
-     - "main": step
-     - "main_system_*": system
-     - "main_*" (but not "main_system_*"): variations
-  - add comments:
-     - purpose is when a result is missing a dimension that other results have, that result should still:
-        - be comparable in the history
-           - e.g. only one step was used (undefined) but another step was added, forcing to rename the first step but it should still be comparable
-        - be reported nicely
-        - be selectable with CONF.select
-     - history matching problem:
-        - when:
-           - a result misses a dimension
-           - it must be compared with results with that dimension
-           - those other results have multiple ids of that dimension
-        - then it becomes difficult to know which id should be used to compare
-        - possible solutions (others than default ids):
-           - missing dimension never matches an id from a non-missing dimension
-              - problem: creates discontinuity in history
-           - missing dimension matches any ids from a non-missing dimension
-              - problem: non-limear history and most likely wrong results
-
 CONF.merge STR
-  - arbitrary STR
-  - user ID validation
-  - no variables injection: use shell or JavaScript instead
+  - merging ids:
+     - give priority to older result
+        - reason: when merging a new result, the id of the group remains stable
+     - add comment: no need to show multiple ids since users interacts with the whole group as if it was a single result with a single id
+  - merging timestamp:
+     - add comments:
+        - we do not show benchmark's duration since some users might relate it to statistical significance even though it is not
+        - we do not show multiple timestamps because:
+           - too verbose
+           - users might mistake it for the benchmark's duration
+        - we show the most recent timestamp since users might expect any new result to have the current timestamp, even if merged
+  - value:
+     - arbitrary STR
+     - user ID validation
+     - no variables injection: use shell or JavaScript instead
   - set to result.merge STR
-  - on results load, merge results with same result.merge
+  - metadata:
+     - group metadata OBJ right after load as metadataGroups OBJ_ARR (same OBJ)
+        - sorted by timestamp
+     - ungroup metadata before fetching results
+  - grouping results:
+     - done before default id and filtering logic
+     - results with same group merge their combinations and systems
      - including for the target result, with both run and show|remove
      - use history/normalize/merge.js
-  - use cases:
-     - incremental benchmarks
-     - CI
-  - reasons why we ask users to specify merge ID
-     - instead of guessing it
-        - e.g. could merge combinations of previous results with lower priority
-     - merging would be less expected by users and create confusion
-        - e.g. when creating a new result, having already measured combinations shown might be confusing
-        - or showing combinations of results before CONF.since might be confusing
-     - whether a result should be shown merged or not could be ambiguous
-        - e.g. the first and last results in the history
-     - this would require loading files before resolving deltas
-     - this complicates the implementation a lot
-  - take it into account with delta resolution
+     - if same system, merge most recent one with priority
+     - result.system -> result.systems
+  - result.systems[*].dimensions
+     - not persisted
+     - when grouping results:
+        - set combinations[*].systemIndex NUM, meaning combination's system is at result.systems[NUM]
+     - after select logic:
+        - set result.system[NUM].dimensions using any combinations[*].dimensions with combinations[*].systemIndex NUM
+           - if none found, remove that system
+              - while still making sure next systemIndexes NUM have right count
+              - due to all combinations excluded by `select`
+        - omit combinations[*].systemIndex
+     - add reasons:
+        - ensure result.systems[*].dimensions are correct even when some combinations' system ids have changed, e.g. due to default ids or unused combinations filtering logic
+  - `remove` should delete several files if grouped
+  - add comments:
+     - use cases:
+        - incremental benchmarks
+        - CI
+     - reasons why we ask users to specify merge ID
+        - instead of guessing it
+           - e.g. could merge combinations of previous results with lower priority
+        - merging would be less expected by users and create confusion
+           - e.g. when creating a new result, having already measured combinations shown might be confusing
+           - or showing combinations of results before CONF.since might be confusing
+        - whether a result should be shown merged or not could be ambiguous
+           - e.g. the first and last results in the history
+        - this would require loading files before resolving deltas
+        - this complicates the implementation a lot
 
 Combination-specific config:
   - only for:
@@ -172,6 +167,9 @@ Variations:
      - variationDimension is property VARR (dot-delimited)
      - getCombinationName() should remove "variation." prefix from DIMENSION
   - variation id is 'ID', not 'PROP.ID'
+  - default id: main_{variationDimension.replaceAll(".", "_")}
+     - e.g. "main_inputs_{inputId}"
+     - defaultIdPrefix 'main_'
   - configuration normalization|validation should apply to each VAL
      - including yargs flags parsing
      - use same logic as combination-specific config
@@ -308,6 +306,9 @@ Steps:
      - runners should enforce "main" as the default stepId
         - i.e. must return `tasks` `{ taskId: ['main'] }` to parent
      - validated like other combination user-defined ids: character validation, duplicate ids check
+  - fix default id logic so that:
+     - does not need to add default id, since this is enforced by runners
+     - however, should validate that dimensions other than steps do not use "main" as id
   - before|after special steps:
      - remove beforeEach|afterEach
         - rename beforeAll|afterAll to before|after
