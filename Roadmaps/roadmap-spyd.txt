@@ -63,15 +63,53 @@ Validation:
 
 --------------------
 
+Split history files into several files
+  - First retrieve all file metadata
+     - Transform filename into OBJ_ARR with id, timestamp, group, etc.
+     - Consumer uses this information to resolve deltas
+  - Then retrieve file contents by ids
+
+Delta resolution:
+  - resolve both target result and since result before files are meant to be loaded
+  - delta NUM is now applied before CONF.select
+     - reasons:
+        - confusing to users because changing CONF.select changes the delta resolution
+        - requires loading files before resolving deltas, which is harder to implement
+  - remove notes about loading results in batches
+
+CONF.merge STR
+  - arbitrary STR
+  - user ID validation
+  - no variables injection: use shell or JavaScript instead
+  - set to result.merge STR
+  - on results load, merge results with same result.merge
+     - including for the target result, with both run and show|remove
+     - use history/normalize/merge.js
+  - use cases:
+     - incremental benchmarks
+     - CI
+  - reasons why we ask users to specify merge ID
+     - instead of guessing it
+        - e.g. could merge combinations of previous results with lower priority
+     - merging would be less expected by users and create confusion
+        - e.g. when creating a new result, having already measured combinations shown might be confusing
+        - or showing combinations of results before CONF.since might be confusing
+     - whether a result should be shown merged or not could be ambiguous
+        - e.g. the first and last results in the history
+     - this would require loading files before resolving deltas
+     - this complicates the implementation a lot
+  - take it into account with delta resolution
+
+Combinations filtering:
+  - Happens early during results load
+  - Remove combinations in previous results but not in target result
+  - Previous results without combinations should not error nor be filtered out
+  - Target result without combinations due to CONF.select should error in both run and show|remove
+
 Default ids:
   - add default ids:
-     - done:
-        - right after results load
-        - before CONF.since merge
-     - for all possible dimensions with default ids
-        - figure out all possible dimensions by using dimensions of all loaded results
-           - add comment: do not also use currently measured runners' possible configuration properties
-              - because this is not available in `show|remove`, which would make CONF.select|limit behave differently between commands
+     - applied during results load, before CONF.select
+     - for all combinations in target result but not in a previous result
      - i.e. missing dimension should behave like the dimension with its default id, including in:
         - CONF.select|limit
         - diff
@@ -80,26 +118,14 @@ Default ids:
         - task|runner: never missing
         - step: "main"
            - assigned on result creation, i.e. saved
-        - system: "primary_DIMENSION"
+        - system: "main_system_{systemDimension}"
            - not assigned on result creation, i.e. not saved
-        - variation: "main_PROP"
+        - variation: main_{variationDimension.replaceAll(".", "_")}
            - not assigned on result creation, i.e. not saved
-           - PROP is only last property
-           - exception: PROP is last two properties (_-separated) when two variable properties have same last property
-  - CONF.select:
-     - when retrieving combination ids:
-        - if CONF.select contains default ids
-           - except for persisted default ids: "main"
-           - should be checked case-insensitively
-           - add comment: this guess might fail due to using partial substring matching, but this is not a problem because:
-              - only impacts variations and systems (only if multiple system dimensions) since the other default ids are persisted
-              - most substrings matching "primary|main_*" would match all of the other ids of the dimension, making the selectors not useful for users, i.e. unlikely
-        - then add those default to the combination ids, if the combination is missing the relevant dimensions
-     - reason: selection is applied before results are loaded, i.e. before all dimensions are known and default ids are applied
   - validate that new result ids do not match possible default ids (unless same dimension):
      - "main": step
-     - "main_*": variations
-     - "primary_*": system
+     - "main_system_*": system
+     - "main_*" (but not "main_system_*"): variations
   - add comments:
      - purpose is when a result is missing a dimension that other results have, that result should still:
         - be comparable in the history
