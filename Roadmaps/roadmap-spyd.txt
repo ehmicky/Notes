@@ -6,17 +6,34 @@
 
 
 Config normalization:
-  - used by:
-     - main config
-     - plugin config (CONF.runnerConfig|reporterConfig)
-        - required to use any configuration property
+  - PROP.condition(value, opts)->BOOL
+     - if false, current prop attributes OBJ is skipped
+     - run before any other attributes
+     - if all PROP's OBJ[_ARR] condition() return false, value is transformed to undefined
+  - instead of exporting multiple sets of commands:
+     - export all as named exports
+     - import as wildcard import
+     - use PROP.condition: amongCommands("COMMAND"_ARR)
+        - which does commands.includes(opts.command)
+  - PROP.compute(opts)->value
+     - throw error if user specified the value
+     - cannot use PROP.transform|default() (others too???)
+  - in plugin config logic, no need to check for CONF.runner|reporter undefined: it cannot be due to the default value
+  - apply normalizeConfig() on:
+     - CONF.*Config is OBJ_OBJ of JSON values: validate this as part of main validation
+        - but do not validate plugin configuration itself
+     - plugin.*
+        - validate correct shape, assign default values, etc.
+        - including default reporter.defaultOutput|capabilities
+     - then plugin.config.*
+        - plugins define those by exporting a `config` property with all prop definitions
+        - each plugin type re-uses some definition for some properties
+           - they have higher priority, i.e. specific plugin cannot override their definition
         - handle errors to add plugin name
-        - including common properties, e.g. CONF.reporterConfig.{id}.output (which must do path resolution)
-     - not used to validate task files (runner-specific)
-        - reason: it runs in runner process, which might be different language
-        - runner should instead do the following on their own: default values, normalization, throwing errors
-        - try to use shared library between runners of same language
-           - including using the same validation code as main|plugin config for Node.js runners
+        - set reporter.format|tty on reporter.config.*
+           - i.e. can use normalized reporter.defaultOutput
+           - using PROP.compute()
+           - reporter.config.quiet|colors|showDiff use PROP.default() + opts.get("defaultOutput")
   - make it work deeply
      - at beginning, find any omitted parent VARRs and default them to empty props
         - reasons:
@@ -66,18 +83,21 @@ Config normalization:
   - allow prop attributes to be OBJ[_ARR]. If ARR:
      - run serially, reducing the same value
      - make some attributes default to previous OBJ's value: PROP.example
-  - PROP.condition(value, opts)->BOOL
-     - if false, current prop attributes OBJ is skipped
-     - run before any other attributes
-     - if all PROP's OBJ[_ARR] condition() return false, value is normalized to undefined
   - PROP.path BOOL|"PATH"[(value, ...args)]
-     - if defined and not false, resolve file path
+     - if defined and not false:
+        - validate value is a string
+        - resolve file path
      - use "PATH" as base
         - if true: "."
-     - use opts.configInfos to find base, like in current code
-     - return false when:
-        - CONF.output is special token like "stdout"
-        - CONF.config is not a path, e.g. when prefixed with a resolver like "npm:"
+     - if input value is empty string: handled like ".", i.e. return base "PATH" as is
+     - performed before PROP.transform|validate():
+        - allows using validate() to validate file existence, parent directories, timestamps, file types, etc.
+     - in current code:
+        - use opts.configInfos to find base
+        - PROP.validate() on existing props, e.g. CONF.cwd must exist and be a directory
+        - return false when:
+           - CONF.output is special token like "stdout"
+           - CONF.config is not a path, e.g. when prefixed with a resolver like "npm:"
   - merge plugins logic (what can be)
      - try to put `tasks` default value logic with the rest of the properties
         - remove `DEFAULT_TASKS_BASE`: base should be same as other config properties, i.e. '.' if CLI flags, config file otherwise
@@ -86,7 +106,7 @@ Config normalization:
   - PROP.validate(value, opts)
      - must either return undefined or throw AssertionError
         - other errors are propagated as is, i.e. are considered system errors
-        - other attributes' (including normalize()) AssertionError are handled like any other error types
+        - other attributes' (including transform()) AssertionError are handled like any other error types
      - errors propagate to children properties
         - this creates duplicate errors: ignore those when aggregating
         - but non-children properties run even if another property fail
@@ -98,11 +118,11 @@ Config normalization:
         - if true, on AssertionErrors, return it instead of throwing it
            - returned as is, not inside an OBJ
            - i.e. normalized config not returned then
-  - PROP.normalize(value, opts)->value
+  - PROP.transform(value, opts)->value
      - returning undefined omits the property
      - add comment: can only assign to current prop, not others because:
         - ensure each prop gets normalized, etc.
-           - if was returned by another prop's normalizer, order might be ambiguous
+           - if was returned by another prop's transformer, order might be ambiguous
         - can use get("VARR") in second prop tp retrieve first prop instead, to achieve same result
   - PROP.rename "VARR"
      - means
@@ -114,17 +134,34 @@ Config normalization:
      - shown on validation error
   - validate against unknown properties
      - unless "*" in VARR
+     - done deeply
+     - exclude props with PROP.compute() from list of known props
      - include automatic suggestion
   - PROP.schema OBJ
      - JSON schema
+  - validate() + transform() props themselves using metaprops
+     - metaprops are already normalized themselves
+     - throw a system error, not validation|assertion error
   - abstract config logic so it can its own library
   - do separate sync and async entry points
      - sync entrypoint:
         - uses runDag() instead of runDagAsync()
-        - does not allow validate|normalize() to be async
+        - does not allow validate|transform() to be async
      - async entrypoint:
-        - allow validate|normalize() to be either sync or async
+        - allow validate|transform() to be either sync or async
            - if sync, get('VARR') should not return a PROMISE
+  - consider whether using normalizeConfig() for runner task files is simpler
+     - add comments that:
+        - runners do not have to do so and can use own logic
+        - reason: it runs in runner process, which might be different language with some data types non-serializable (e.g functions)
+  - CLI flag parsing logic
+     - uses same PROPs as normalizeLogic()
+     - does not call normalizeLogic()
+        - reason: separate CLI and programmatic logic
+     - call flags parsing logic too
+     - PROP.description STR:
+        - shown after example if validation error
+        - used in CLI --help output
 
 --------------------
 
