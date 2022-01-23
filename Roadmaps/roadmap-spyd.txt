@@ -6,6 +6,10 @@
 
 
 Config normalization:
+  - instead of PROP.commands ARR:
+     - have a COMMANDS constant OBJ_OBJ
+     - use COMMANDS[command] OBJ
+     - re-use properties by just using normal variables
   - make it work deeply
      - deep props should be get|set deeply, with with wildcards:
         - recurse over OBJ|ARR for .* and [*]
@@ -70,17 +74,71 @@ Config normalization:
            - wrap `args.config` so that it does the above resolution
      - set opts.path ARR (using `prop_path/get.js` getPaths())
      - use async for globbing resolution
-  - CONF.path BOOL|"PATH"[(value, ...args)]
+  - allow prop attributes to be OBJ[_ARR]. If ARR:
+     - run serially, reducing the same value
+     - make some attributes default to previous OBJ's value: PROP.example
+  - PROP.condition(value, opts)->BOOL
+     - if false, current prop attributes OBJ is skipped
+     - run before any other attributes
+     - if all PROP's OBJ[_ARR] condition() return false, value is normalized to undefined
+  - PROP.path BOOL|"PATH"[(value, ...args)]
      - if defined and not false, resolve file path
      - use "PATH" as base
         - if true: "."
      - use opts.configInfos to find base, like in current code
+     - return false when:
+        - CONF.output is special token like "stdout"
+        - CONF.config is not a path, e.g. when prefixed with a resolver like "npm:"
   - merge plugins logic (what can be)
      - try to put `tasks` default value logic with the rest of the properties
         - remove `DEFAULT_TASKS_BASE`: base should be same as other config properties, i.e. '.' if CLI flags, config file otherwise
   - try to refactor so that only config properties logic is using check.js
-  - wrap with error handling logic so that `validate|normalize()` do not need to set the property name in error message
   - remove jest-replace: replace with own logic
+  - PROP.validate(value, opts)
+     - must either return undefined or throw AssertionError
+        - other errors are propagated as is, i.e. are considered system errors
+        - other attributes' (including normalize()) AssertionError are handled like any other error types
+     - errors propagate to children properties
+        - this creates duplicate errors: ignore those when aggregating
+        - but non-children properties run even if another property fail
+     - aggregate all errors as a single one
+        - whether CONF.loose true|false
+     - prefix property name in error message
+     - CONF.loose BOOL
+        - def: false
+        - if true, on AssertionErrors, return it instead of throwing it
+           - returned as is, not inside an OBJ
+           - i.e. normalized config not returned then
+  - PROP.normalize(value, opts)->value
+     - returning undefined omits the property
+     - add comment: can only assign to current prop, not others because:
+        - ensure each prop gets normalized, etc.
+           - if was returned by another prop's normalizer, order might be ambiguous
+        - can use get("VARR") in second prop tp retrieve first prop instead, to achieve same result
+  - PROP.rename "VARR"
+     - means
+        - return value is using a different "VARR" to set
+        - current "VARR" is deleted
+     - "VARR" has same syntax as PROP keys, i.e. can include *
+     - considered a parent of "VARR", i.e. run and set before it
+  - PROP.example VAL
+     - shown on validation error
+  - validate against unknown properties
+     - unless "*" in VARR
+     - include automatic suggestion
+  - PROP.schema OBJ
+     - JSON schema
+  - used by:
+     - main config
+     - plugin config (CONF.runnerConfig|reporterConfig)
+        - required to use any configuration property
+        - handle errors to add plugin name
+        - including common properties, e.g. CONF.reporterConfig.{id}.output (which must do path resolution)
+     - not used to validate task files (runner-specific)
+        - reason: it runs in runner process, which might be different language
+        - runner should instead do the following on their own: default values, normalization, throwing errors
+        - try to use shared library between runners of same language
+           - including using the same validation code as main|plugin config for Node.js runners
   - abstract config logic so it can its own library
   - do separate sync and async entry points
      - sync entrypoint:
@@ -89,6 +147,8 @@ Config normalization:
      - async entrypoint:
         - allow validate|normalize() to be either sync or async
            - if sync, get('VARR') should not return a PROMISE
+
+--------------------
 
 Variations:
   - git branch "variations"
@@ -144,65 +204,6 @@ Variations:
         - value might be big to store, or have secrets
         - value might be not nice to report (e.g. big objects)
   - use in fast-cartsian
-
---------------------
-
-Validation:
-  - used by:
-     - main config
-     - plugin config (CONF.runnerConfig|reporterConfig)
-        - required to use any configuration property
-        - handle errors to add plugin name
-        - including common properties, e.g. CONF.reporterConfig.{id}.output (which must do path resolution)
-     - not used to validate task files (runner-specific)
-        - reason: it runs in runner process, which might be different language
-        - runner should instead do the following on their own: default values, normalization, throwing errors
-        - try to use shared library between runners of same language
-           - including using the same validation code as main|plugin config for Node.js runners
-  - validate(object, config, opts)
-  - config.VARR.schema OBJ
-     - JSON schema
-  - config.VARR.validate(VAL, OPTS)[->"ERROR"]
-     - OPTS:
-        - parent OBJ
-        - root OBJ
-        - path 'VAR'|NUM_ARR
-        - name 'VARR'
-  - validate against unknown properties
-     - unless "*" in VARR
-     - include automatic suggestion
-  - config.VARR.example VAL
-     - shown on validation error
-  - config.VARR.normalize(VAL, OPTS)->VAL
-     - same OPTS as validate()
-  - config.VARR.default VAL
-     - applied if undefined
-  - opts.cwd STR[(VAL, OPTS)]
-     - used when resolving file paths
-        - done when config.VARR.schema.pattern "path"
-     - def: process.cwd()
-     - when loading config:
-        - must keep "CWD" of each VARR as an OBJ since this depends on how config was loaded, and this is known only before validation
-        - replace current `PATH_CONFIG_PROPS` logic
-        - including for CONF.tasks
-     - FUNC can return empty STR to not do path resolution
-        - used by CONF.config when prefixed with "npm:" for example
-  - opts.validPropName REGEXP
-     - use /^[a-z][a-zA-Z\d]*$/
-        - i.e. use case (not _ - .) as delimiter
-     - reason: when using "*" in VARR, property names are user-defined
-  - VARR:
-     - OBJ.VAR or OBJ.*
-     - ARR[NUM] or ARR[*]
-     - when using *, validate that parent is an OBJ|ARR
-  - add comments:
-     - no warnings, only errors because:
-        - simpler to specify
-        - prefer failing hard
-        - prefer semver major with breaking changes over deprecation period
-        - does not work well with previews since that clears screen
-        - simpler to implement
-           - warnings would need to be returned from start() and passed to parent
 
 --------------------
 
