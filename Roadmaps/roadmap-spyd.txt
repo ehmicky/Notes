@@ -6,40 +6,6 @@
 
 
 Config normalization:
-  - make it work deeply
-     - when get() on a non-parent VARR, its descendants should be awaited and set
-        - for the value returned by get() only
-        - similar logic as the one used to await parent VARRs and set them
-     - setting props should be stable and predictable
-        - sort queries, so that parent are set first
-           - definition of "parent" is same as above, when props await their parent
-        - do in `setConfigValues()`, so that children values awaiting parents also set it in that same order
-     - unwrapping wildcard dependencies:
-        - when retrieving get('VARR') where:
-           - VARR contains a wildcard .* or [*]
-           - where all the propName|index
-              - up until the wildcard
-                 - not after it
-              - match the current prop's path:
-                 - identical propName|index
-                 - or get('VARR') uses *, but not current prop's path
-                    - but not inverse
-        - replace that wildcard with the same propName|index as the current prop's path
-           - if current path uses wildcard too, use the current iteration's value
-        - e.g.:
-           - unwrapping:
-              - "a.*.c" referencing "a.*" -> "a.{propName}"
-              - "a.*.c" referencing "a.*.d" -> "a.{propName}.d"
-              - "a.b.c" referencing "a.*.d" -> "a.b.d"
-              - "a.*.c" referencing "*.*" -> "a.{propName}"
-           - partial unwrapping:
-              - "a.b.c.d.e" referencing "a.*.f.*.e" -> "a.b.f.*.e"
-           - no unwrapping:
-              - "a.*.c" referencing "b.*"
-              - "a.*.c" referencing "a.b.d.*"
-              - "*.*.c" referencing "a.*"
-        - implementation:
-           - wrap `args.config` so that it does the above resolution
   - selectors:
      - normalize all selectable properties to full shape:
         - using normalizeConfig() with a query "VARR"
@@ -75,48 +41,42 @@ Config normalization:
   - fix default `tasks`: it is not currently being applied
      - try to put `tasks` default value logic with the rest of the properties
         - remove `DEFAULT_TASKS_BASE`: base should be same as other config properties, i.e. '.' if CLI flags, config file otherwise
-  - PROP.path BOOL|"PATH"[(value, ...args)]
-     - if defined and not false:
-        - validate value is a string
-        - resolve file path
-     - use "PATH" as base
-        - if true: "."
-     - if input value is empty string: handled like ".", i.e. return base "PATH" as is
-     - performed before PROP.transform|validate():
-        - allows using validate() to validate file existence, parent directories, timestamps, file types, etc.
-     - in current code:
-        - use opts.configInfos to find base
-        - PROP.validate() on existing props, e.g. CONF.cwd must exist and be a directory
-        - return false when:
-           - CONF.output is special token like "stdout"
-           - CONF.config is not a path, e.g. when prefixed with a resolver like "npm:"
-  - remove jest-replace: replace with own logic
-  - PROP.validate(value, opts)
-     - must either return undefined or throw AssertionError
-        - other errors are propagated as is, i.e. are considered system errors
-        - other attributes' (including transform()) AssertionError are handled like any other error types
-     - errors propagate to children properties
-        - this creates duplicate errors: ignore those when aggregating
-        - but non-children properties run even if another property fail
-     - aggregate all errors as a single one
-        - whether CONF.loose true|false
-     - CONF.loose BOOL
+  - path props:
+     - PROP.path BOOL[(value, opts)]
+        - resolves as file path
+        - also validates value is a string
+        - if input value is empty string: handled like ".", i.e. returns PROP.cwd
+        - performed before PROP.transform|validate():
+           - allows using validate() to validate file existence, parent directories, timestamps, file types, etc.
         - def: false
-        - if true, on AssertionErrors, return it instead of throwing it
-           - returned as is, not inside an OBJ
-           - i.e. normalized config not returned then
+        - in current code:
+           - PROP.validate() on existing props, e.g. CONF.cwd must exist and be a directory
+           - return false when:
+              - CONF.output is special token like "stdout"
+              - CONF.config is not a path, e.g. when prefixed with a resolver like "npm:"
+     - PROP.glob BOOL[(value, opts)]
+        - noop if PROP.path false
+        - def: false
+     - PROP.cwd "PATH"[(value, opts)]
+        - noop if PROP.path false
+        - sets cwd for PROP.path true
+           - including if PROP.glob true
+        - def: "." (not process.cwd(), i.e. lazily evaluated)
+        - in current code:
+           - use opts.configInfos to find base
+  - remove jest-replace: replace with own logic
   - PROP.rename "VARR"
      - means
         - return value is using a different "VARR" to set
         - current "VARR" is deleted
      - "VARR" has same syntax as PROP keys, i.e. can include *
-     - considered a parent of "VARR", i.e. run and set before it
   - PROP.example VAL
      - shown on validation error
-     - if prop uses OBJ_ARR, default to previous OBJ's `example`
+     - if a previous definition has same `name` and has an `example`, default to it
   - unknown props:
      - validated deeply, but only for depth levels being defined
         - e.g. if "a" and "a.b" defined, no unknown "*" nor "a.*", but "a.b.*" allowed
+        - if "a.b" defined, both "a" and "a.b" are known
         - unless wildcard "*" used
            - i.e. can be used to allow and|or validate|normalize dynamic properties on a specific OBJ
      - if OPTS.unknown true (def: false)
@@ -135,12 +95,9 @@ Config normalization:
      - throw a system error, not validation|assertion error
   - abstract config logic so it can its own library
   - do separate sync and async entry points
-     - sync entrypoint:
-        - uses runDag() instead of runDagAsync()
-        - does not allow validate|transform() to be async
-     - async entrypoint:
-        - allow validate|transform() to be either sync or async
-           - if sync, get('VARR') should not return a PROMISE
+     - see then() helper removed in 080219d991c5e586e56df88d1412aae118c9277e
+     - sync entrypoint: does not allow any methods to be async
+     - async entrypoint: allow all methods to be either sync|async
   - consider whether using normalizeConfig() for runner task files is simpler
      - add comments that:
         - runners do not have to do so and can use own logic
