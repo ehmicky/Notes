@@ -8,25 +8,39 @@
 Config normalization:
   - wild-wild-path:
      - unions:
-        - query syntax: separator is 1-n spaces
-           - add to characters to escape
-        - path syntax: optional ARR of ARRs
-           - detection: Array.isArray(tokens) && tokens.every(Array.isArray)
-        - possible hard ones:
-           - 1-n spaces at start|middle|end
-           - .|.. at start|end
-           - root queries with a single|multiple paths
-        - `missing` entries with listEntries() should be done for each union alternative
-           - e.g. if union of a matching and a non-matching query, the non-matching one should still add a `missing` entry
-        - after entries found in listEntries(), remove duplicates
-           - only if there are >=2 union alternatives
-              - reason: duplicates not possible otherwise
-        - listEntries should sort
-           - order:
-              - parent before child
-                 - i.e. map() iterates in reverse order
-              - lexicographic order for STR
-              - small before big for NUM
+        - parsing:
+           - query syntax: separator is 1-n spaces
+              - add to characters to escape
+           - path syntax: optional ARR of ARRs
+              - detection: tokens.every(Array.isArray)
+                 - i.e. true for tokens.length === 0
+              - normalization should not remove optional top ARR
+              - entry.path should always have single ARR depth since no alternatives in an entry
+              - fix config normalization logic
+                 - funcOpts.path should still have single ARR depth
+           - syntax:
+              - "  " -> " " -> "" -> [] -> no alternatives, i.e. never matches
+              - "." -> [[]] -> root
+              - ".." -> [[""]]
+              - "a" -> ".a" -> [["a"]]
+              - "a." -> ".a." -> [["a", ""]]
+              - " a" -> "a " -> [["a"]]
+              - "a  b" -> "a b" -> [["a"], ["b"]]
+              - "\." -> ".\." -> [["."]]
+              - "\ a\ " -> [[" a "]]
+        - listEntries:
+           - might return mix of missing and non-missing entries
+           - do depth level by level:
+              - expand the first token of all alternatives
+              - if no match, return empty ARR
+              - flatten
+              - for each group of entries (grouped by matched prop), recurse to next depth level
+                 - follow Object.keys() order, not sorted
+                    - reason: performance
+                       - sorting can be done by consumer if needed
+                 - parents returned before children
+           - while recursing, should ignore duplicates
+        - recursion order:
            - map() should follow child-parent order
               - i.e. do not recurse on newly set value
                  - reason: avoids infinite recursion
@@ -41,8 +55,31 @@ Config normalization:
            - when checking plugin.config.*.name cannot be <= any pluginType.item.name: should be if any of the former is <= with any of the latter
            - use `pick()` for sharedConfig
            - forbid alternatives in transform() `newProp` return value
+     - iterate(...)
+        - like list() but returning ITERATOR of entries
+        - re-use current getEntries() logic but with yield and FUNC* instead
+        - use for:
+           - get|has(): stopping at first entry
+           - list()
+           - set(), for memory reason
+           - find(target, queryOrPaths, (entry) => bool) => entry|undefined
+              - add to wild-wild-path-utils
+     - globstar:
+        - token is OBJ: type "anyDeep"
+        - in query: "**", alone in its token
+        - add comment that *.**, *.*.** or **.*, **.*.*, etc. can be used to express min depth
+        - in listEntries():
+           - expand like *, but each entry has a second entry with ".**" appended
+           - i.e. do not add `missing` entries (like * token)
+           - prevent infinite recursion, but do not throw on them, just stop recursion and move to next item
+        - when ** and a parent is also **
+           - forbid repeating the intermediary tokens
+              - e.g. **.a.b.c.** -> second ** cannot match another a.b.c, but can match a.b.d
+              - and **.** -> second ** is ignored
+           - reason: avoid high number of duplicates, which would lead to poor performance
+              - but still allows recursing over all combinations, by promoting first ** to always be greedy
+        - replace `findValues()` by it
      - do not recurse over `__proto__`, `prototype` or `constructor`, like in dot-path
-     - stop `get|has()` at first entry
      - map|include|excludeAsync(...)
         - run siblings in parallel, parent-child serially
         - OPTS: concurrency NUM (def: Inf)
