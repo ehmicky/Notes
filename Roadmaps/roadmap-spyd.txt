@@ -7,7 +7,13 @@
 
 Config normalization:
   - error handling:
-     - validate|warn keyword:
+     - `validate` keyword
+        - make keyword.main() required for all keywords
+           - remove skipping main() when undefined
+        - add main() as empty function
+        - use undefinedDefinition true
+        - use exampleDefinition that is a STR showing a simple validate() FUNC
+     - `warn` keyword:
         - add exampleDefinition
         - ensure normalize() errors start with "must"
            - try them
@@ -25,6 +31,28 @@ Config normalization:
         - core bug
         - when: not one of the other errors
         - shows nothing
+  - plugins logic:
+     - forward opts.keywords to normalizeInputs()
+     - handle InputError, DefinitionError and KeywordError|CoreError as 3 separate error typed
+  - async declaration:
+     - keyword.test|normalize|main[Async]():
+        - can declare both sync and async
+           - the sync|async version is chosen based on whether normalizeInputs[Async]() is used
+           - reason: better performance with normalizeInputsAsync(), while still allowing with normalizeInputs()
+           - add to few keywords, including `cwd`
+     - definition function:
+        - always async|sync depending on whether normalizeInputs[Async]() used
+        - reason: requiring user to declare sync|async would be poorer DX and error-prone
+     - effects of being sync|async:
+        - call function with|without await, for performance
+        - parallel rules call async rules first
+           - reason: better performance, since sync rules yield task, i.e. prevent async operations from starting and run concurrently
+           - a rule is async if any keyword.*Async() will be run
+        - throw if normalizeInputs() (i.e. sync) used but either:
+           - some keyword has *Async() (and no sync method of same name)
+           - some definition function is async
+              - do it by checking AsyncFunction name
+              - this is only a failsafe as this is unreliable due to FUNCs returning a PROMISE instead of using async|await
   - keywords:
      - plugin.before|after "pluginId"_ARR
         - used to specify order
@@ -36,6 +64,29 @@ Config normalization:
      - make some definition keywords not builtin:
         - including schema, types, glob
      - potential other keywords: specific validation libraries like Joi
+  - parallelism:
+     - rules syntax:
+        - rules are run either:
+           - ARR: serially
+           - SET: in parallel
+        - nested, i.e. can be ARR_ARR_SET_ARR_...
+     - when using normalizeInput() (sync), no parallelism, i.e. SET behaves like ARR
+     - use Promise.allSettled() instead of Promise.all()
+        - if multiple exceptions, throw only first one
+        - reason: predictability
+     - add comments:
+        - reasons for syntax:
+           - simple
+           - serial by default, parallel requires explicit usage of SET
+           - allows multiple child dependencies
+        - types of dependencies between rules:
+           - returnValue.input from a rule with same|parent `name`
+           - returnValue.move
+           - info.inputs
+           - global state
+        - most dependencies are single parent
+           - exception: when using info.inputs or global state, but less frequent types
+           - multiple parents not supported by syntax, i.e. requires running parents serially
   - unknown props:
      - unknown if both:
         - property itself does not match any rules
@@ -112,13 +163,23 @@ Config normalization:
      - e.g. PROP.types VAL, with VAL being a JavaScript representation of TypeScript types from another library
         - e.g. a library using a build-time step to do so
      - still allow JSON schemas as well
-  - abstract config logic so it can have its own library
-  - do separate sync and async entry points
-     - see then() helper removed in 080219d991c5e586e56df88d1412aae118c9277e
-     - sync entrypoint: does not allow any methods to be async
-     - async entrypoint: allow all methods to be either sync|async
-     - plugins declare async BOOL
-        - if true and use sync entrypoint -> error
+  - compilation step
+     - compile[Async](rules[, opts])->FUNC(inputs[, opts])
+     - computes and memoizes any logic that can be without inputs, including:
+        - calling each keyword.normalize() with non-FUNCs definitions
+        - validation and normalization of keywords and rules
+     - opts might be defined both at compile-time and run-time
+        - shallow merged
+        - opts.all at runtime:
+           - will create new keywords and different rules ARR instance
+           - compile logic must take into account, i.e. rely on memoization
+     - to call once at load time, for:
+        - performance
+        - reliability: throw as soon as possible
+     - no shortcut FUNC(inputs, rules, opts):
+        - for simplicity|monomorphism
+        - to encourage best practice
+     - plugins logic should have similar feature, i.e. allow performing some logic at compile-time
   - consider whether using normalizeConfig() for runner task files is simpler
      - add comments that:
         - runners do not have to do so and can use own logic
@@ -132,6 +193,13 @@ Config normalization:
         - shown after example if validation error
         - used in CLI --help output
         - if prop uses OBJ_ARR, default to previous OBJ's `description` (like PROP.example)
+  - do separate sync and async entry points
+     - see then() helper removed in 080219d991c5e586e56df88d1412aae118c9277e
+     - sync entrypoint: does not allow any methods to be async
+     - async entrypoint: allow all methods to be either sync|async
+     - plugins declare async BOOL
+        - if true and use sync entrypoint -> error
+  - abstract to own library
 
 Config loading, including shared configs, should be own library
 
