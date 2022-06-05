@@ -863,16 +863,22 @@ OBJ.__proto__                                   #When OBJ.VAR is not defined, OB
 Object.getPrototypeOf(OBJ)->VAL                 #  - recursively (prototype chain)
                                                 #  - the last __proto__ is null
                                                 #Object.getPrototypeOf() is more standard.
+                                                #I.e. inheritance is prototype-based.
 Object.setPrototypeOf(OBJ, VAL)->OBJ           -|#Same as OBJ.__proto__ = VAL (to avoid because performance issues)
 OBJ.isPrototypeOf(OBJ2)                         #Returns true if OBJ2.__proto__ === OBJ
                                                 #Including through the prototype chain
-                                                #  - i.e. if instanceof TYPE, also true for PARENT_TYPE
+                                                #  - i.e. if instanceof TYPE, also true for TYPE_PARENT
                                                 #Always false for non-OBJs, but does not throw.
+
+MULTIPLE INHERITANCE ==>                        #Not supported, but be approximated using composition|mixins, including:
+                                                #  - own members: call several TYPE_PARENT(...) in constructor
+                                                #  - shared members: merge TYPE_PARENT.prototype to TYPE.prototype
+                                                #     - con: copied, not referenced (except deep properties)
 
 TYPE                                            #Constructor FUNC
                                                 #Cannot be an arrow FUNC
                                                 #By convention TYPE starts with uppercase
-TYPE.prototype                                  #Properties that TYPE instances should inherit
+TYPE.prototype                                  #Properties that all TYPE instances should inherit
                                                 #Set to Object.create(null) when any non-arrow FUNC is instantiated
                                                 #  - not for arrow FUNCs
 TYPE.prototype.constructor                      #TYPE itself.
@@ -891,6 +897,16 @@ Object.create(null)                             #In general, the top-level proto
                                                 #I.e. builtin methods should use:
                                                 #  - Object.prototype.FUNC.call(OBJ, ...)
                                                 #  - instead of OBJ.FUNC(...)
+TYPE.*                                          #Static members, i.e. properties of TYPE, not instances
+                                                #Can be inherited by using TYPE.__proto__ = TYPE_PARENT
+EXAMPLE ==>                                     #
+                                                #  function TYPE(...) {
+                                                #    TYPE_PARENT.apply(this[, ...])
+                                                #    this.VAR = ...; ...
+                                                #  }
+                                                #  TYPE.prototype = Object.create(TYPE_PARENT.prototype)
+                                                #  TYPE.prototype.constructor = TYPE
+                                                #  TYPE.__proto__ = TYPE_PARENT
 
 new TYPE[(...)]                                 #Create OBJ with Object.create(TYPE.prototype)
                                                 #Then call TYPE.call(OBJ, ...)
@@ -906,10 +922,12 @@ new.target                                    -|#In:
                                               -|#     - must be inside TYPE function itself, not through FUNC calls
                                               -|#     - when called through super(), keeps same TYPE, i.e. child TYPE
 super(...)                                    -|#Inside class constructor, same as TYPE_PARENT.call(this, ...) (including return value)
-                                              -|#If class has PARENT_TYPE, in constructor (if any):
+                                              -|#If class has TYPE_PARENT, in constructor (if any):
                                               -|#  - must be called
                                               -|#     - and before accessing this|new.target
-super.PROP ???
+                                              -|#  - if TYPE_PARENT() returns an object, it becomes `this`
+                                              -|#     - including for grandchildren types
+super.*                                       -|#Same as TYPE_PARENT.prototype.*
 
 OBJ instanceof TYPE                             #Returns true if:
                                                 #  - TYPE.prototype.isPrototypeOf(OBJ)
@@ -921,53 +939,45 @@ REALMS ==>                                      #TYPEs might be coming from anot
                                                 #This makes TYPE check fail (including instanceof)
                                                 #But typeof and Object.prototype.toString.call() work
 
-class ... { ... }                               #Default constructor is only: super(...args)
+NATIVE TYPE CONSTRUCTORS ==>                    #Some native type constructors can be called without "new":
+                                                #  - String|Boolean|Number|BigInt|Symbol: transtype
+                                                #  - Object|Array|Function|RegExp|Error: same as with "new" (but should avoid)
+                                                #  - Date: same as new Date().toString()
+                                                #  - all others: forbidden
+NATIVE TYPES INHERITANCE ==>                    #Native types constructors return a value instead of assigning to this.
+                                                #When:
+                                                #  - Inheriting manually with TYPE.__proto__|prototype|constructor:
+                                                #    This creates the issues mentioned above, i.e. does not work
+                                                #  - Uses class ... extends: this works
+TYPE[Symbol.species]                          -|#TYPE2 to override TYPE constructor used to create empty new objects.
+                                              -|#E.g. used by:
+                                              -|#  - ARR.concat|filter|map|slice|splice()
+                                              -|#  - STR.split(REGEXP)
+                                              -|#  - PROMISE.then()
+                                              -|#Should be set to TYPE_PARENT when extending native types
+                                              -|#  - unless want to keep child type, e.g. with Error
+                                              -|#E.g. if TYPE deriving from Array, TYPE.map() will return TYPE not ARR, unless this is used
 
 
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:             CLASS             :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
 
-INHERITANCE ==>                                 #Prototype-based, using either:
-                                                #  - own members:
-                                                #     - accessed directly on OBJ:
-                                                #        - TYPE(...) assigning this OBJ (or returning OBJ (to avoid))
-                                                #     - inheritance: children constructor fire parent constructor
-                                                #     - created each time new TYPE(...) is fired
-                                                #        - i.e. one object per instance
-                                                #  - shared members:
-                                                #     - accessed|inherited through prototype chain
-                                                #     - created once declaration-time
-                                                #        - i.e. single reference for all instances
-                                                #Example:
-                                                #  function TYPE(...) {
-                                                #    TYPE_PARENT.apply(this[, ...])
-                                                #    this.VAR = ...; ...
-                                                #  }
-                                                #  TYPE.prototype = Object.create
-                                                #    (TYPE_PARENT.prototype)
-                                                #  TYPE.prototype.constructor = TYPE
 
-STATIC MEMBERS ==>                              #Own members of TYPE itself, i.e. TYPE.VAR = VAL:
-                                                #  - not inherited (unless using Backbone extend())
-                                                #  - must be called on TYPE itself, not an instance
-
-class [TYPE] [extends TYPE_PARENT] {          -|#Other syntax to define inheritance, defining let TYPE = FUNC:
-  [constructor(...) { ... }]                  -|#  - extends TYPE2:
-  [static] FUNC(...) { ... }                  -|#      constructor() -> function TYPE():
-}                                             -|#       - must call super(...) before assigning to this
-                                              -|#       - by def: constructor(...args) { super(...args) }
-                                              -|#      TYPE.prototype = Object.create(TYPE2.prototype)
-                                              -|#      TYPE.prototype.constructor = TYPE (non-enumerable)
-                                              -|#      TYPE.__proto__ = TYPE2
-                                              -|#      Inherits static members too.
-                                              -|#  (non-static)
-                                              -|#  - TYPE.prototype.FUNC = FUNC (non-enumerable)
-                                              -|#  (static)
-                                              -|#  - TYPE.FUNC = FUNC (non-enumerable)
-                                              -|#TYPE has same naming restrictions as let TYPE = FUNC
+class [TYPE] [extends TYPE_PARENT] {          -|#Similar to:
+  [constructor(...) { ... }]                  -|#  TYPE.prototype = Object.create(TYPE2.prototype)
+  ...                                         -|#  TYPE.prototype.constructor = TYPE
+}                                             -|#  TYPE.__proto__ = TYPE2
                                               -|#Throw error if not called with new.
                                               -|#No comma between definition members.
                                               -|#Returns TYPE
-                                              -|#TYPE_PARENT can be a value, not only an identifier
-class ... {
+                                              -|#TYPE_PARENT can be a value, not only a VAR
+  constructor(...) { ... }                    -|#Similar to constructor TYPE(...)
+                                              -|#Def: calls super(...)
+  FUNC(...) { ... }                           -|#TYPE.prototype.FUNC = FUNC
+  static FUNC(...) { ... }                    -|#TYPE.FUNC = FUNC
   VAR[ = EXPR][, ...];                        -|#Calls this.VAR = EXPR in constructor, in beginning, just after super()
                                               -|#VAR can [STR]
   static VAR[ = EXPR][, ...];                 -|#Calls TYPE.VAR = EXPR right-away (in EXPR, `this` is TYPE)
@@ -976,42 +986,6 @@ class ... {
   static { ... }                       17.0.0*-|#Calls ... right away (`this` is TYPE)
   [static] accessor VAR [ = EXPR][, ...];   *-|~#Like #VAR with an automatic getter|setter
 }                                             -|#Can only be declared during class declaration.
-
-UTIL.inherits(TYPE, TYPE_PARENT)               ##For Node.js:
-                                               ##  TYPE.prototype = Object.create(TYPE_PARENT.prototype);
-                                               ##  TYPE.prototype.constructor = TYPE;
-                                               ##  TYPE.super_ = TYPE_PARENT;
-                                               ##So setup shared members, and allow TYPE constructor to call parent constructor
-                                               ##using this.constructor.super_.apply(this, arguments);
-
-MULTIPLE INHERITANCE ==>                        #For:
-                                                #  - own members: call several parent constructors in TYPE()
-                                                #  - shared members: use mixins, i.e. assign TYPE_PARENT.prototype.* to
-                                                #    TYPE.prototype.* instead of using prototype chain.
-
-USING EXTEND ==>                                #Basic extend() (like jQuery, Underscore, not like Backbone) are sometimes used
-                                                #for inheriting shared members. They help for mixins (see above). However:
-                                                #  - if does not include shared members (like Lodash), will not inherit
-                                                #    grandparents
-                                                #    members (unless copied to parent)
-                                                #  - TYPE_PARENT.prototype.VAR will be copied, not referenced, if it is
-                                                #    native type
-
-NATIVE OBJECTS INHERITANCE ==>                  #Native objects constructors return a value instead of assigning to this.
-                                                #So inheriting not possible, but can extend prototype (to avoid though).
-                                                #new TYPE() vs TYPE():
-                                                #  - Object|Array|Function|RegExp: no difference
-                                                #  - String|Boolean|Number: without new, returns native type
-                                                #  - Date: without new, returns DATE.toString()
-                                                #  - Error: same except stack trace (prefer new Error)
-                                                #  - ArrayBuffer: mandatory new
-                                              -|#Can however use class ... extends syntax to extend native objects.
-
-TYPE[Symbol.species]()->TYPE2                 -|#To override TYPE construcor used to create empty new objects.
-                                              -|#Used e.g. by ARR.concat|filter|map|slice|splice(), STR.split(REGEXP)
-                                              -|#or PROMISE.then ()
-                                              -|#E.g. if TYPE deriving from Array, TYPE.map() will return TYPE not ARR,
-                                              -|#unless this is used
 
 
                                              /=+===============================+=\
@@ -1943,7 +1917,7 @@ Date                                            #Milliseconds-precise. Is intern
                                                 #     - UTC: get|setUTC*(), getTime()
 new Date([YEAR,MONTH,DAY,HOUR,MIN,SEC,MILLISEC])#Each final arguments are optional. Def: now.
 new Date(STR)                                   #InvalidDate if cannot parse.
-Date([...])                                     #Same as (new Date()).toString()
+Date()                                          #Same as (new Date()).toString()
 
 DATE.toString()                                 #"Day Mon DD YYYY HH:MM:SS TZ" (local timezone)
 DATE.toISOString()                              #"YYYY-MM-DDTHH:MM:SS.SSSZ" (UTC)
