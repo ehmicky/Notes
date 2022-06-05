@@ -226,18 +226,10 @@ Boolean|String|Number|BigInt                    #Not same as boolean|string|numb
 
 typeof VAR                                      #Returns "boolean|string|number|bigint|symbol|undefined|object|function"
                                                 #"object": includes null, excludes FUNC
-OBJ.constructor                                 #Returns TYPE (read-only)
-VAR instanceof TYPE                             #Returns true if VAR is instance of TYPE (of a child of TYPE), i.e.:
-                                                #  - VAR.[__proto__...]constructor === TYPE,
-                                                #    but without transtyping VAR if it is not an OBJ
-                                                #  - VAR.[__proto__...]__proto__ === TYPE.prototype
-                                                #For TYPE that are global variables (e.g. instanceof Error):
-                                                #  - the caller might have a different sets of global variables than the callee
-                                                #     - e.g. when using Node.js 'vm', or iframes in browser
-                                                #  - should instead rely on VAR.toString()
-                                                #     - e.g. Object.prototype.toString.call(VAR) === '[object Error]'
-TYPE.prototype.isPrototypeOf(VAR)               #Same
-TYPE[Symbol.hasInstance](VAR)->BOOL           -|#Define to override VAR instanceof TYPE
+OBJ.constructor
+VAR instanceof TYPE
+TYPE.prototype.isPrototypeOf(VAR)
+TYPE[Symbol.hasInstance](VAR)->BOOL             #See inheritance docs
 
 Array.isArray(VAR)->BOOL                        #Same as VAR instanceof Array, except works if current global is different
                                                 #from VAR's global, e.g. if communicating between <iframe>
@@ -767,37 +759,64 @@ Object.isFrozen(OBJ)                            #
                                              \=+===============================+=/
 
 
-OBJ.__proto__                                   #When OBJ.VAR is not defined:
-Object.getPrototypeOf(OBJ)                      #  - tries OBJ.__proto__.[__proto__...]VAR (prototype chain)
-                                                #  - Object.prototype.__proto__ === null
-                                                #  - by convention, each __proto__ points to a TYPE.prototype
-                                                #    (first TYPE, then TYPE_PARENT, etc.)
+OBJ.__proto__                                   #When OBJ.VAR is not defined, OBJ.__proto__.VAR is tried
+Object.getPrototypeOf(OBJ)->VAL                 #  - recursively (prototype chain)
+                                                #  - the last __proto__ is null
                                                 #Object.getPrototypeOf() is more standard.
-Object.setPrototypeOf(OBJ, VAL)               -|#Same as OBJ.__proto__ = VAL (to avoid because performance issues)
-Object.create(TYPE.prototype[, OBJ])            #Returns OBJ2 { __proto__: TYPE.prototype }, then calls Object.defineProperties(OBJ2, OBJ)
-                                                #Can use null as first argument:
-                                                #  - this means OBJ will not have builtin OBJ methods
-                                                #     - i.e. should never do OBJ.BUILTIN_FUNC(...) but Object.prototype.BUILTIN_FUNC.call(OBJ, ...)
-                                                #     - for hasOwnProperty|isPrototypeOf|propertyIsEnumerable() and
-                                                #       toString|valueOf() (including STR|NUM|BIGINT transtyping)
-                                                #  - goals:
-                                                #     - preventing prototype pollution (security)
-                                                #     - semantically mean the OBJ is a map. Should use MAP instead
-FUNC.prototype.constructor                      #Returns FUNC
+Object.setPrototypeOf(OBJ, VAL)->OBJ           -|#Same as OBJ.__proto__ = VAL (to avoid because performance issues)
+
+TYPE                                            #Constructor FUNC
+                                                #Cannot be an arrow FUNC
+                                                #By convention TYPE starts with uppercase
+TYPE.prototype                                  #Properties that TYPE instances should inherit
+                                                #Set to Object.create(null) when TYPE function is instantiated
+                                                #  - not for arrow FUNCs
+TYPE.prototype.constructor                      #Set to TYPE when TYPE function is instantiated
+                                                #Not used by new TYPE
+                                                #Meant for TYPE instance to retrieve constructor FUNC with OBJ.constructor
+                                                #  - including instanceof
+Object.create(TYPE.prototype[, OBJ])->OBJ2      #Returns OBJ2 { __proto__: TYPE.prototype }
+                                                #Then calls Object.defineProperties(OBJ2, OBJ)
+Object.create(null)                             #In general, the top-level prototype is Object.prototype.
+                                                #null prototypes prevent this.
+                                                #This is useful to remove:
+                                                #  - Any OBJ.*: hasOwnProperty|propertyIsEnumerable|isPrototypeOf|to[Locale]String|valueOf()
+                                                #  - To prevent against prototype pollution (security)
+                                                #I.e. builtin methods should use:
+                                                #  - Object.prototype.FUNC.call(OBJ, ...)
+                                                #  - instead of OBJ.FUNC(...)
+
 new TYPE[(...)]                                 #Does:
-                                                #  var OBJ = Object.create(TYPE.prototype);
-                                                #  var ret = TYPE.call(OBJ, ...);
-                                                #  return ret == null ? OBJ : ret;
+                                                #  - OBJ = Object.create(TYPE.prototype)
+                                                #  - const OBJ2 = TYPE.call(OBJ, ...)
+                                                #  - return OBJ2 == null || typeof OBJ2 !== 'object' ? OBJ : OBJ2
+
+new.target                                    -|#In:
+                                              -|#  - FUNC(): undefined
+                                              -|#  - new TYPE(): TYPE
+                                              -|#     - must be inside TYPE function itself, not through FUNC calls
+                                              -|#     - when called through super(), keeps same TYPE, i.e. child TYPE
+
+OBJ.isPrototypeOf(OBJ2)                         #Returns true if OBJ2.__proto__ === OBJ
+                                                #Including through the prototype chain
+                                                #  - i.e. if instanceof TYPE, also instanceof PARENT_TYPE
+                                                #Always false for non-OBJs, but does not throw.
+OBJ instanceof TYPE                             #Same but also checks that OBJ.constructor === TYPE
+REALMS ==>                                      #TYPEs might be coming from another environment with a different global scope
+                                                #  - e.g. when using Node.js 'vm', or iframes in browser
+                                                #This makes TYPE check fail, but not OBJ.toString()
+OBJ.toString()->STR                             #???
+Object.prototype.toString.call(VAL)->STR        #Same as OBJ.toString() but preferred because:
+                                                #  - Prevents against prototype pollution
+                                                #  - Works with non-OBJ
+                                                #     - Including not throwing on null
+
+TYPE[Symbol.hasInstance](VAR)->BOOL           -|#Define to override VAR instanceof TYPE
+
                                                 #Avoid returning in constructor
                                                 #  - child TYPE's __proto__ would point to parent prototype instead, which is invalid
                                                 #     - instanceof childType would fail
                                                 #     - childType prototype properties would be missing
-                                                #By convention TYPE starts with uppercase
-                                                #Requires:
-                                                #  - TYPE.prototype OBJ: contains shared members
-                                                #  - TYPE.prototype.constructor === TYPE: for type information (optional)
-new.target                                    -|#In TYPE(), === TYPE (i.e. this.constructor). Otherwise undefined.
-                                              -|#In CHILD_TYPE(), === CHILD_TYPE
 
 INHERITANCE ==>                                 #Prototype-based, using either:
                                                 #  - own members:
