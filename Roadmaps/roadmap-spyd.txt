@@ -4,6 +4,9 @@
         
 
 
+Error-custom-classes:
+ - Add an example on how to normalize errors: after errorHandler(), using any logic from JavaScript directly
+
 set-error-message:
   - slogan: "Properly update an error's message"
   - setMessage(error, "newMessage"[, "currentMessage"])->void
@@ -113,54 +116,56 @@ OPTS.bugsUrl:
           - then, if bugsUrl defined, append it
        - use set-error-message so error.stack is updated
           - i.e. noop if message is same
- - errorHandler() should pass OPTS.bugsUrl to new UnknownError()'s second argument, instead of error message
+  - errorHandler() should pass OPTS.bugsUrl to new UnknownError()'s second argument, instead of error message
 
-New arguments:
-  - instead of errorNames ARR
-  - first argument is OBJ:
-     - key "ErrorName" or "default"
-        - do not allow WrapError nor UnknownError
-           - including in TypeScript types
-     - value OBJ2:
-        - bugsUrl STR
-        - props OBJ
-           - error-custom-classes should override OPTS.onCreate() to set it, in addition top of errorParams.props.*
-           - document how to add properties to all errors of a given class
-              - fix #error-class-properties anchor in README.md
-  - no more second argument
+OPTS.* validation:
+  - unknown OPTS throw in errorCustomClasses|modernErrors()
+  - add add types
+  - done by error-custom-classes
 
-Error-specific config:
-  - validate unknown OPTS.*:
-     - in:
-        - createErrorClasses|modernErrors(): throw
-        - new errors constructor's second argument: ignored
-           - reason: global Error constructor might have additional ones due to platform-specific, or recent JavaScript features, or library monkey patching Error
-           - fix `error-custom-class` TypeScript types so they use ConstructorParameters<Error>[1] instead of { cause: unknown }
-        - types
-     - both done by error-custom-classes
+OPTS.props:
+  - OBJ assigned to new errors in constructor, after merge-error-cause
+  - use set-error-props
+  - TypeScript typing:
+     - re-use set-error-props types
+     - validate them as input
+        - e.g. should not contain `options` nor core error props
+     - type the resulting error instance
+        - e.g. if props.one true, was passed, error.one is true
+        - including that they are deep merged
+        - only type error instance once both OPTS.props.* and errorParams.props.* are known, since the latter might override the former
   - validate OPTS.props.*:
-     - in:
-        - createErrorClasses|modernErrors(): throws
-        - new errors constructor's second argument: throws
-        - types
+     - throws in errorCustomClasses|modernErrors()
      - cannot be:
         - `options`
         - prototype properties like toString, etc.
            - remove it from `error-custom-class`
-     - both done by error-custom-classes
+     - done by error-custom-classes
+
+Error-specific config:
   - OBJ passed to any new CustomError() as second argument
      - except for known Error second arg: `cause`
      - only known options
-  - set on error.options.*
-     - except if resolved right away: `props`
-     - not set if no options to set
-     - kept enumerable to ensure it is preserved
-        - even if serialized
-        - or through user manipulation, since they would now see it in console
+  - validate:
+     - known option but invalid types throw
+        - including OPTS.props.* (same validation as global OPTS.props.*)
+     - unknown options are ignored silently
+        - reason: global Error constructor might have additional ones due to platform-specific, or recent JavaScript features, or library monkey patching Error
+        - fix `error-custom-class` TypeScript types so they use ConstructorParameters<Error>[1] instead of { cause: unknown }
+  - either:
+     - used in constructor right away: `props`, `bugsUrl`
+     - or set on error.options.*:
+        - `exitCode`, etc.
+        - not set if no options to set
+           - kept enumerable to ensure it is preserved
+           - even if serialized
+           - or through user manipulation, since they would now see it in console
   - when used, any specific option should be deleted
      - reason: to keep error.* clean
      - only if no chances to need to reuse that option again
      - if error.options now empty OBJ, delete it
+  - add TypeScript types
+     - for both CustomError() argument and error.options.*
   - when using causes, error.options.* are deeply merged by set-error-props (through merge-error-cause)
   - add comments:
      - properties and options are separated from each other by using OPTS.props.* and error.options.* instead of being set as OPTS.* and error.*
@@ -169,17 +174,30 @@ Error-specific config:
         - prevent injection risk
         - ensure options typos are caught
 
-params.props TypeScript typing:
-  - Validate them as input
-     - e.g. that they are an optional object
-     - also should not contain `options` nor core error props
-     - both runtime and as types
-  - Type the resulting error instance
-     - e.g. if props.one true, was passed, error.one is true
-     - including that they are deep merged
-     - only type error instance once both OPTS.props.* and errorParams.props.* are known, since the latter might override the former
-  - similar typing as params.props but for params.* themselves
-     - including being set to error.options.*
+New arguments:
+  - instead of errorNames ARR
+  - errorCustomClasses|modernErrors(OBJ)
+     - same return value
+     - OBJ:
+        - key is either error name or "AnyError"
+           - validated
+        - value is OPTS object
+           - validated, and required
+     - no more second argument
+  - specific errors:
+     - AnyError:
+        - can be configured, but not returned
+        - applied to all errors
+     - UnknownError: can be configured, but not returned
+     - WrapError: cannot be configured (throws), but is returned
+  - global OPTS and error-specific OPTS are merged and used inside error constructors
+  - document:
+     - Options subsection in Usage which shows examples for options applied to:
+        - all errors: OBJ.all.*
+        - errors of a specific type: OBJ.{errorName}.*
+        - individual errors: new CustomError("message", OBJ)
+     - how to add properties to all errors of a given class
+        - fix #error-class-properties anchor in README.md
 
 Once not anymore breaking changes, release error-custom-classes to modern-errors
   - create-error-types -> error-custom-classes
@@ -197,8 +215,26 @@ Use OPTS.bugsUrl() FUNC with plugins framework inside spyd:
      - options.bugsUrl
      - plugin.bugsUrl
 
-get-error-stack:
+Merge-error-cause:
+  - make type recursive
+
+create-error-stack:
   - normalize-exception's setStack() separated to own library
+  - OPTS.excludeFunction FUNC:
+     - use Error.captureStackTrace (if available)
+     - done before OPTS.excludeNames
+  - OPTS.excludeNames STR_ARR:
+     - def: empty ARR
+     - "create-error-stack" always implied
+     - filter out any lines with those words
+     - documented as meant for library names
+  - Error.stackTraceLimit
+     - only if exists and is a NUM
+     - done only once
+     - after applying OPTS.exclude*
+        - add NUM of filtered out lines to Error.stackTraceLimit
+        - regenerate stack
+        - restore Error.stackTraceLimit
 
 Integrate handle-cli-error in modern-errors:
   - return OBJ.handleCliError(error)
