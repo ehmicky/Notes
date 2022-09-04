@@ -4,20 +4,133 @@
         
 
 
-Forbidding extending:
-  - in constructor, throw if:
-     - in AnyError, and new.target !=== AnyError
-        - reason: extending AnyError with intent to reuse its wrapping logic is not allowed
-           - AnyError class changes, which makes inheritance less useful
-              - e.g. methods would not be used, which users might not expect
-     - in BaseError, in not one of the known classes
-        - reason: indicates unregistered subclass
+
+Remove notes about OPTS.soft: not needed
+
+Reverse step 2 and 3 of main Example
+
+Document AnyError.normalize() separately:
+  - for invalid error normalization, to use anytime an exception is manipulated imstead of just being passed as error.cause
+  - for unknown classes, as a top level error handler
+     - maybe put this next to Unknown Errors section
+
+Simpler API:
+  - allow classes to either extend from BaseError or from Error
+     - replace Error by BaseError when calling main function
+     - extending from TypeError, etc. should throw
+  - main function should be idempotent
+  - do not export BaseError anymore
+     - except as a type, but only typeof class
+        - can do: export const TypeError extends (Error as BaseError<"TypeError">) {...}
+  - make createAnyError() a default export
+  - add reasons:
+     - avoid confusion between BaseError and AnyError
+     - fewer exports, simpler API
+     - enforce calling main function
+
+Consider whether to swap API and Usage documentation sections
+
+OPTS.props:
+  - shallow merge, not deep merged
+     - done in set-error-props
+     - reasons:
+        - ensure outer error overrides all previously set props, e.g. when props are class-specicic
+        - user can deep merge using manual logic instead, after applying AnyError.normalize()
+  - when set, override previously set ones
+     - completely omit error.modernErrorsOptions.props "VAR"_ARR before new ones are set
+
+Options:
+  - class-specific OPTs:
+     - allow setting options as ErrorClass.OPT = VAL
+        - can use `static` class syntax to do so
+        - OPT is option name
+     - cannot be FUNC
+        - constructor() can be used for dynamic logic
+           - document it
+     - shallow merge all class-specific OPTs with their parent classes
+        - child classes have priority
+        - done once at createAnyError() time
+     - class-specific OPTs are validated and normalized once at createAnyError() time
+        - they are not re-validated nor re-normalized after this, unlike instance OPTs
+     - deep clone class-specific OPTs at each ERROR initialization
+        - reason: avoid mutations to have an effect between different ERROR instances
+        - caveat: does not work on non-plain OBJs since cannot be cloned
+           - user should create those inside constructors instead
+           - but that's an edge case
+  - error.modernErrorOptions.*:
+     - keeps all options
+        - after class-specific and instance-specific options merged
+     - must be JSON serializable
+        - for OPTS.props: use "VAR"_ARR instead
+     - add "modernErrorOptions" to OMITTED_PROPS from `props` option
+     - non-enumerable:
+        - reasons:
+           - not printed
+           - not exposed to users
+           - allows long name unlikely to collide with other libraries
+     - merging with error.cause:
+        - outer error completely override inner error's options
+           - even ones not specified:
+              - use their default values (including `undefined` for bugsUrl)
+              - except for AnyError, which only overrides options that were specified
+                 - e.g. it keeps bugsUrl, although it re-appends it at end
+           - reason: OPTs are often specific to a class
+              - even when set as an instance-specific option
+                 - also, distinguishing class-sprcific and instance-specific options is hard since constructors might pass either to super()
+              - mixing different errors' options could set options to classes where they do not belong
+              - users can use manual logic to reuse the inner's error properties, after applying AnyError.normalize()
+           - what "overridden" means is specific to each option:
+              - for bugsUrl, means if parent has undefined bugsUrl, any bugsUrl is just removed from error.message
+     - when error.cause is an unknown error converted to an UnknownError:
+        - keep any modernErrorsOptions from the error before conversion
+           - should be done automatically by merge-error-cause since it is a static property
+        - use the new error.modernErrorsOptions, including ones from UnknownError, when outer error is AnyError
+     - AnyError.normalize():
+        - normalizes error.modernErrorsOptions
+           - if any option invalid, replace it by its default value
+              - static property, if present
+              - otherwise, global default value for that option
+           - reason: user might have mutated the error
+        - done after normalizing class
+        - does not apply the option, just normalize error.modernErrorsOptions
+        - should always use before accessing error.modernErrorsOptions
+     - serialization:
+        - done in modern-errors plugin, not in error-serializer
+        - enumerability:
+           - error.toJSON() should make OPTS.modernErrorsOptions enumerable before calling errorSerializer.serialize()
+           - AnyError.parse() should make them non-enumerable again
+        - short size:
+           - OPTS.modernErrorsOptions that are identical to the default value for a given class should be omitted during serialization
+           - when OPTS.modernErrorsOptions is empty OBJ, omit it
+           - goal is that classes without dynamic options nor instance-specific options should not have to serialize their options
+  - add TypeScript types
+     - for both CustomError() argument and error.modernErrorsOptions.*
+  - add comments:
+     - unknown options are ignored silently
+        - reason: global Error constructor might have additional ones due to platform-specific, or recent JavaScript features, or library monkey patching Error
+     - why options are overridden by outer error by default:
+        - consistent with class merging, where outer class has priority by default
+        - consistent with usual pattern where last operation has merging priority (e.g. Object.assign(), etc.)
+        - ensure that class-specific OPTs are used by default
+     - keeps OPTS merging priority separate and orthogonal from merging of:
+        - class: `new AnyError()`
+        - message: STR message patterns
+        - stack: always use child
+  - document:
+     - Options subsection in Usage which shows examples for options applied to:
+        - all errors
+        - errors of a specific class
+           - including the "Features" bullet point about setting properties on all error of a class, which currently points to a wrong Markdown anchor
+        - individual errors
 
 AnyError:
   - when error.wrap true, merge-error-cause should mutate and return error.cause, instead of setting error.__proto__
      - reason: ensure class has always performed its own constructor
      - so it by splitting `parent` from a separate variable `target`, representing what's used for priority info vs what's mutated
   - AnyError constructor should then return a value
+
+Consider re-using custom-error-class in custom-error-classes
+  - remove set-error-props feature from it
 
 TypeScript typing:
   - OPTS.props: re-use set-error-props TypeScript types to type the resulting error instance
@@ -27,49 +140,39 @@ TypeScript typing:
   - new AnyError(...) type:
      - should be based on its `cause`
      - require `cause`
+  - add "Strict TypeScript types" to Features
+  - add a TypeScript section at the end with an example of TypeScript usage:
+     - importing AnyError type and assigning to caught error
+     - type narrowing with instanceof
+     - calling a function typed with a SpecificError type
+     - type error based on some props for that error type
 
-OPTS.soft BOOL:
-  - def: false
-  - when true, give other OPTS.* lower priority over error.cause:
-     - props: use OPTS.soft true of set-error-props
-     - bugsUrl:
-        - if a bugs URL already present in error.cause.message, use it instead of OPTS.bugsUrl
-        - still re-appended so it is at bottom
-     - others set to error.options.*:
-        - shallow merged with lower instead of higher priority over error.cause.options.*
-        - OPTS.soft itself is not set to error.options.*
-  - performed after class-specific have been merged to instance-specific OPTS
-     - does not impact that merging
-  - add comments:
-     - why default value of OPTS.soft is false:
-        - consistent with class merging, where outer class has priority by default
-        - consistent with usual pattern where last operation has merging priority (e.g. Object.assign(), etc.)
-        - ensure that class-specific OPTs are used by default unless explicitly overridden
-     - keeps OPTS merging priority separate and orthogonal from merging of:
-        - class: `new AnyError()`
-        - message: STR message patterns
-        - stack: always use child
+Plugins:
+  - rename custom-error-classes to modern-errors-core
+  - add modern-errors logo
+  - documentation should only mention plugins and redirect to modern-errors for more
+  - modern-errors is only a thin wrapper around modern-errors-core with some already installed plugins
+  - each plugin has own repository
+  - plugins:
+     - modern-errors-props
+     - modern-errors-bugs
+     - modern-errors-json
+     - modern-errors-cli
+     - modern-errors-stack
+     - modern-errors-sourcemap
+  - plugins are OBJs with several hooks to define options, init logic, etc.
+  - modern-errors-core expose them as OPTS.plugins OBJ_ARR
 
 Once not anymore breaking changes, release error-custom-classes to modern-errors
   - create-error-types -> error-custom-classes
   - re-use error-custom-classes types and tests instead of re-defining them
   - remove merge-error-cause
   - can remove error-cause-polyfill
-     - error-cause-polyfill should now in "Related projects" section, not "Modules"
+     - error-cause-polyfill should now be in "Related projects" section, not "Modules"
   - rename "custom error" to "known error" in modern-errors:
      - CustomError = KnownError + UnknownError + AnyError
   - set parse() as AnyError static method, i.e. AnyError.parse(error)->error
-
-modern-errors documentation:
   - add `toJSON()` to the list of "standard JavaScript" features
-  - TypeScript types:
-     - add "Strict TypeScript types" to Features
-     - add a TypeScript section at the end with an example of TypeScript usage:
-        - importing AnyError type and assigning to caught error
-        - type narrowing with instanceof
-        - calling a function typed with a SpecificError type
-        - type error based on some props for that error type
-  - consider whether to swap API and Usage sections
 
 Use OPTS.bugsUrl() FUNC with plugins framework inside spyd:
   - test all errors, including:
