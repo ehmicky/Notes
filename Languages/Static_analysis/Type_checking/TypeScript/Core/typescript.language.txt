@@ -343,12 +343,12 @@ TYPE[KUTYPE]                      #UTYPE of TYPE properties values (including me
                                              \=+===============================+=/
 
 
-COVARIANCE ==>                    #any >= unknown >= {}|undefined|null > others > any >= never
-
-unknown                        3.0#TYPE with all possible values.
+unknown                        3.0#TYPE with all possible values, i.e. > any TYPE.
                                3.0#Values can only use operators common to any TYPE, i.e. === !== =
+{} | undefined | null          4.8#Same as unknown
+                               4.8#With | and &, considered < unknown
 
-never                             #TYPE when no possible value.
+never                             #TYPE when no possible value, i.e. < any TYPE.
                                   #Values can only use operators common to any TYPE, i.e. === !== =
                                   #Examples:
                                   #  - union with no members
@@ -360,7 +360,10 @@ never                             #TYPE when no possible value.
                                   #     - infinite loop
                                   #     - process exit
 
-any                               #Combine unknown and never.
+any                               #Combine unknown and never:
+                                  #  - When transtyping, both < and > any TYPE, i.e. both directions always allowed
+                                  #  - With |, > any TYPE (including `unknown`), i.e. result in `any`
+                                  #  - With &, < any TYPE (except `never`), i.e. result in `any`
                                   #Prefer unknown|never when possible.
                                   #Values can use any operators of any TYPE.
                                   #Default TYPE when nothing can be infered.
@@ -376,10 +379,12 @@ any                               #Combine unknown and never.
 undefined                         #
 null                              #
 
---strictNullChecks                #Unless set, transtype always possible:
-                                  #  - TYPE <-- undefined|null
-                                  #  - {} <-- unknown
-                               4.8#     - i.e. narrower than ({} | undefined | null) <-- unknown, which is always possible regardless
+{}                             4.8#Includes any type (like unknown) except undefined|null
+TYPE & {}                      4.8#Excludes undefined|null
+NonNullable<TYPE>                 #Same
+
+--strictNullChecks                #Unless set, transtype TYPE <-- undefined|null always possible.
+                                  #Means {} <-- unknown also possible.
 --noUncheckedIndexedAccess     4.1#Consider any OBJ.VAR or OBJ[NUM|STR] potentially undefined:
                                4.1#  - if they have either:
                                4.1#     - an index type
@@ -387,9 +392,6 @@ null                              #
                                4.1#     - a mapped type, except if KUTYPE is literal
                                4.1#  - unless they are being iterated with "for of", "for in" or ARR.FUNC()
                                4.1#     - but not with normal "for" loop
-{}                                #Includes any types (like unknown) except undefined|null
-TYPE & {}                      4.8#Excludes undefined|null
-NonNullable<TYPE>                 #Same as TYPE & {}
 
 { VAR[?][: TYPE],... }            #Many TYPEs and assertions use ? which allows both:
 ([...]VAR[?][: TYPE],...) => TYPE2#  - undefined value: {VAR: undefined} FUNC(undefined) [undefined]
@@ -479,20 +481,24 @@ enum ENUM {...}                   #Like const ENUM but inlined as an OBJ:
                                              \=+===============================+=/
 
 
-object                            #TYPE of any OBJ
+{}                                #TYPE of any OBJ
                                   #Includes any child: FUNC, ARR, new String(STR), REGEXP, etc.
                                   #Includes Object.create(null)
-                                  #Excludes null
-
-{ VAR[?][: TYPE],... }            #TYPE of an OBJ with specific properties
-                                  #As opposed to object, allows string|number|boolean|symbol|bigint
+                                  #Includes types which can transtype to OBJ: string|number|boolean|symbol|bigint
                                   #  - transtyped to new String|Number|Boolean|Symbol|BigInt(), i.e. prototype properties
+                                  #Excludes null|undefined
+object                            #Subtype of {...} that excludes types that can transtype to OBJ
+
+PROTOTYPE CHAIN ==>               #OBJ.__proto__.* are typed when accessing OBJ.*
+
+ENUMERABILITY ==>                 #There is no concept of enumerability.
+                                  #OBJ iteration (Object.keys(), for ... in, etc.) always widens the type to string and|or symbol
+
+{ VAR[?][: TYPE],... }            #Like {} but with specific properties
                                   #Delimiters:
                                   #  - can be , ; or newline
                                   #  - can use trailing delimiters
                                   #No missing properties unless '?'
-                                  #There is no concept of enumerability
-                                  #  - because OBJ iteration (Object.keys(), for ... in, etc.) always widens the type to string and|or symbol
 { [VAR: KUTYPE][: TYPE], ... }    #TYPE of any OBJ[NUM|STR] or OBJ.PROP ("index type")
                                   #KUTYPE is the key type
                                   #  - STR: works for OBJ[NUM] too
@@ -606,38 +612,34 @@ INTERFACE MERGING ==>             #If INTERFACE declared several times, merge th
 
 
 Function                          #TYPE of any FUNC
-                                  #Unlike the FUNC_TYPEs below, does not have types for its arguments nor return value:
-                                  #  - Specific FUNC_TYPEs can be assigned to Function, but not inverse
-                                  #  - Cannot use ReturnType<...>, etc.
-CallableFunction               3.2#Same as Function (child of it) except arguments of FUNC.bind|call|apply() are type checked.
-NewableFunction                3.2#Same but for a constructor.
+                                  #Subtype of `object`
+CallableFunction               3.2#TYPE of any `Function` not callable with `new`
+NewableFunction                3.2#TYPE of any `Function` callable with `new`
 --strictBindCallApply          3.2#Make FUNC_TYPEs inherit from CallableFunction|NewableFunction instead of Function
 
-([...]VAR[?][: TYPE],...) => TYPE2#Type of specific FUNC (child of Function)
-                                  #TYPE2 is return value.
-                                  #No missing arguments unless '?'
-                                  #No additional arguments:
+{                                 #Subtype of CallableFunction with specific argument, return value and object properties.
+  [new]([...]VAR[?])[: TYPE2],    #If "new", subtype of NewableFunction instead.
+  ...                             #No missing arguments unless '?'
+}                                 #No additional arguments:
                                   #  - unless variadic ...VAR[: TYPE] (always optional)
                                   #     - must be last argument
                                   #        - but can use TUPLEs, e.g. ...[...ARR_TYPE, ...]
                                   #VAR names are not significant.
+                                  #Object properties:
+                                  #  - FUNC[KUTYPE] retrieves FUNC properties, not FUNC itself
+                                  #  - `keyof` iterates on FUNC properties, not FUNC itself
+                                  #     - including when iterating indirectly, e.g. with Omit<...>, etc.
+                                  #  - FUNC & VAL includes both FUNC properties and FUNC itself
+                                  #  - Can omit FUNC properties using:
+                                  #      type GetFunction<T> = T extends abstract (...args: infer U) => infer V ? (...args: U) => V : never
                                   #Function body is only checked against argument TYPEs during declaration statement:
                                   #  - not when FUNC is transtyped after declaration
                                   #  - not when FUNC(...VAL) is called
                                   #     - but VAL are checked against argument TYPEs
+[new] (...) => TYPE2              #Same as { [new](...)[: TYPE2] } without any additional properties.
+
 { [get|set] FUNC(...)[: TYPE2] }  #OBJ.FUNC: shortcut for { FUNC: (...) => TYPE2 }
                                4.3#Only syntax for getters|setters
-
-{ (...)[: TYPE2], ... }           #FUNC with OBJ properties
-                                  #FUNC[KUTYPE] retrieves FUNC properties, not FUNC itself
-                                  #`keyof` iterates on FUNC properties, not FUNC itself
-                                  #  - including when iterating indirectly, e.g. with Omit<...>, etc.
-                                  #FUNC & VAL includes both FUNC properties and FUNC itself
-                                  #Can omit FUNC properties using:
-                                  #  type GetFunction<T> = T extends abstract new(...args: infer U) => infer V ? new(...args: U) => V : never
-
-new (...) => TYPE2                #Require using new FUNC(), i.e. it is a constructor
-{ new (...)[: TYPE2] }            #Prefer using a CLASS definition
 
 FUNCTION OVERLOADING ==>          #Can declare several FUNC_TYPEs in a row:
                                   #  - with same name (including none)
@@ -646,6 +648,8 @@ FUNCTION OVERLOADING ==>          #Can declare several FUNC_TYPEs in a row:
                                   #If not a method (OBJ.FUNC):
                                   #  - must use syntax: function FUNC(...): TYPE
                                   #  - must define the FUNC (not its type) right afterwards
+
+FUNC_TYPE["prototype"]            #Always set, defaulting to `any`
 
 this                              #Can be:
                                   #  - VAR (argument): must be first parameter
@@ -657,10 +661,10 @@ ThisType<TYPE>                    #OBJ_TYPE where all OBJ.FUNC() use TYPE as `th
                                   #Only works when --noImplicitThis is used
                                   #Not needed for CLASSes (which guess `this`) or single FUNC (which can use `this` parameter)
 
-Parameters<FUNC_TYPE>             #Parameters [TYPE,...] (tuple)
-ReturnType<FUNC_TYPE>             #Return value TYPE2
-ConstructorParameters<FUNC_TYPE>  #Same as Parameters<> but for 'new FUNC'
-InstanceType<FUNC_TYPE>           #Same as ReturnType<> but for 'new FUNC'
+Parameters<FUNC_TYPE>             #Parameters [TYPE,...] (tuple). Must be a (...) => ...
+ReturnType<FUNC_TYPE>             #Return value TYPE2. Must be a (...) => ...
+ConstructorParameters<FUNC_TYPE>  #Same as Parameters<> but for a new (...) => ...
+InstanceType<FUNC_TYPE>           #Same as ReturnType<> but for a new (...) => ...
 
 
                                              /=+===============================+=\
@@ -785,6 +789,7 @@ interface INTERFACE<T,...> {}     #Type of T is, when instantiated:
                                   #        - with <T...>(...) => ... (or similar)
                                   #        - then function called
                                   #     - use TYPE3 & ... (of "extends TYPE3,...")
+                                  #Unlike "extends ? :", UTYPEs are not distributed.
                                   #Def TYPE3: unknown
                                   #There can be several <T,...>
                                   #  - each can refer to each other
