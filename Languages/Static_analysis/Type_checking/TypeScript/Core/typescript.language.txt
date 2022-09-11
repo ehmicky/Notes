@@ -254,6 +254,9 @@ typeof VAL                        #Returns its TYPE
                                              \=+===============================+=/
 
 
+TYPE | TYPE2                      #Union ("or")
+                                  #Not recursive over ARRs|tuples|OBJs
+
 TYPE extends TYPE2 ? TYPE3 : TYPE4#If TYPE <= TYPE2, resolves to TYPE3, otherwise TYPE4 ("conditional type")
                                   #If TYPE is generic:
                                   #  - at declaration time, TYPE is understood as TYPE & TYPE2 when used inside TYPE3
@@ -275,11 +278,15 @@ TYPE extends TYPE2 ? TYPE : never #Returns TYPE if <= TYPE2. Otherwise never.
 Extract<TYPE, TYPE2>              #If UTYPE, distribute, i.e. intersection: remove any TYPE >! TYPE2.
 
 TYPE & TYPE2                      #Intersection ("and")
-                                  #If both are OBJs, recursive:
-                                  #  - absent field are `unknown`, i.e. merge the other OBJ's field
-                                  #  - if at least one field has no intersection, whole OBJ result is empty
-
-TYPE | TYPE2                      #Union ("or")
+                                  #Returns TYPE if <= TYPE2 or TYPE2 if <= TYPE. Otherwise never.
+                                  #Recursive over:
+                                  #  - ARRs
+                                  #     - if no intersection, whole result is `never[]`
+                                  #  - tuples
+                                  #     - if different length or at least one field has no intersection, whole result is `never`
+                                  #  - OBJs
+                                  #     - if at least one field has no intersection, whole result is empty OBJ
+                                  #     - absent OBJ fields are `unknown`, i.e. use other type
 
 
                                              /=+===============================+=\
@@ -335,39 +342,30 @@ TYPE[KUTYPE]                      #UTYPE of TYPE properties values (including me
                                              \=+===============================+=/
 
 
-any                               #Union of all TYPEs
-                                  #Default TYPE when nothing can be infered.
-                                  #Values can use any operators of any TYPE.
-                                  #Transtype TYPE <-- any: all except never
-                                  #Transtype any <-- TYPE: all
-                                  #any | TYPE -> any
-                                  #any & TYPE -> TYPE (except unknown)
+ORDER ==>                         #any >= unknown >= {}|undefined|null > others > any >= never
+TRANSTYPING ==>                   #Supertype|equal, i.e. right-to-left
+TYPE | TYPE2 ==>                  #Use supertype, i.e. leftmost
+TYPE & TYPE2 ==>                  #Use subtype, i.e. rightmost
 
-unknown                        3.0#TYPE when unknown. Safer than any.
+unknown                        3.0#TYPE with all possible values.
                                3.0#Values can only use operators common to any TYPE, i.e. === !== =
-                               3.0#Transtype TYPE <-- unknown:
-                               3.0#  - unknown
-                               3.0#  - any
-                               4.8#  - ({} | undefined | null)
-                               3.0#Transtype unknown <-- TYPE: all
-                               3.0#unknown | TYPE -> unknown (except any)
-                               3.0#unknown & TYPE -> TYPE
 
 never                             #TYPE when no possible value.
                                   #Values can only use operators common to any TYPE, i.e. === !== =
-                                  #Transtype TYPE <-- never: all
-                                  #Transtype never <-- TYPE: never
-                                  #never | TYPE -> TYPE
-                                  #never & TYPE -> never
                                   #Examples:
                                   #  - union with no members
                                   #  - intersection with nothing in common
-                                  #  - elements of an ARR with length 0
+                                  #  - elements beyong ARR length
                                   #  - return statement that can't be reached, e.g.:
                                   #     - exception
                                   #     - type guard that can't be true
                                   #     - infinite loop
                                   #     - process exit
+
+any                               #Combine unknown and never.
+                                  #Prefer unknown|never when possible.
+                                  #Values can use any operators of any TYPE.
+                                  #Default TYPE when nothing can be infered.
 
 
                                              /=+===============================+=\
@@ -391,8 +389,9 @@ null                              #
                                4.1#     - a mapped type, except if KUTYPE is literal
                                4.1#  - unless they are being iterated with "for of", "for in" or ARR.FUNC()
                                4.1#     - but not with normal "for" loop
-NonNullable<TYPE>                 #Same as Exclude<TYPE, undefined|null>
-TYPE & {}                      4.8#Same as NonNullable<TYPE>
+{}                                #Includes any types (like unknown) except undefined|null
+TYPE & {}                      4.8#Excludes undefined|null
+NonNullable<TYPE>                 #Same as TYPE & {}
 
 { VAR[?][: TYPE],... }            #Many TYPEs and assertions use ? which allows both:
 ([...]VAR[?][: TYPE],...) => TYPE2#  - undefined value: {VAR: undefined} FUNC(undefined) [undefined]
@@ -635,6 +634,7 @@ NewableFunction                3.2#Same but for a constructor.
                                   #FUNC[KUTYPE] retrieves FUNC properties, not FUNC itself
                                   #`keyof` iterates on FUNC properties, not FUNC itself
                                   #  - including when iterating indirectly, e.g. with Omit<...>, etc.
+                                  #FUNC & VAL includes both FUNC properties and FUNC itself
                                   #Can omit FUNC properties using:
                                   #  type GetFunction<T> = T extends abstract new(...args: infer U) => infer V ? new(...args: U) => V : never
 
@@ -781,12 +781,12 @@ interface INTERFACE<T,...> {}     #Type of T is, when instantiated:
 { FUNC<T...>(...): ... }          #     - use the specified TYPE2
 { [new] <T...>(...): ... }        #     - if none, use "= TYPE4"
                                   #        - required otherwise
-                                  #     - TYPE2|TYPE4 must be contravariant to TYPE3 & ... from "extends TYPE3,..." ("generic constraint")
+                                  #     - TYPE2|TYPE4 must be <= each TYPE3 ("generic constraint")
                                   #  - through argument passing:
                                   #     - i.e. applied to argument type:
                                   #        - with <T...>(...) => ... (or similar)
                                   #        - then function called
-                                  #     - use TYPE3 & ...
+                                  #     - use TYPE3 & ... (of "extends TYPE3,...")
                                   #Def TYPE3: unknown
                                   #There can be several <T,...>
                                   #  - each can refer to each other
@@ -870,10 +870,12 @@ class ... { VAR!: TYPE; ... }     #  - VAR cannot be referenced until assigned
 
 DOCUMENTATION NOTATION ==>        #
 TYPE <= TYPE2                     #TYPE covariant|equal to TYPE2
+TYPE >= TYPE2                     #TYPE contravariant|equal to TYPE2
+TYPE <! TYPE2                     #TYPE covariant|different to TYPE2
 TYPE >! TYPE2                     #TYPE contravariant|different to TYPE2
 TYPE <=> TYPE2                    #TYPE bivariant|equal to TYPE2
 
-TRANSTYPING RULES ==>             #For TYPE2 <-- TYPE, TYPE2 must be contravariant to TYPE.
+TRANSTYPING RULES ==>             #For TYPE2 <-- TYPE, TYPE2 must >= TYPE
                                   #For FUNCs:
                                   #  - bivariant arguments
                                   #     - although should theoritically be covariant
@@ -967,7 +969,7 @@ TYPE GUARDS ==>                   #When:
                                   #Then inside the blocks:
                                   #  - ARG will be transtyped to the right TYPE
                                   #  - including return value TYPE if has `return` statement
-VAL instanceof FUNC               #Narrows to InstanceType<FUNC> when it is covariant to VAL
+VAL instanceof FUNC               #Narrows to VAL & InstanceType<FUNC>
 
 (...) => ARG is TYPE              #FUNC must:
                                   #  - take ARG as one of its parameters
