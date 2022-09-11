@@ -10,6 +10,37 @@ plugin.methods:
      - method calls
      - error.baseConstructorArgs being deleted
 
+Separate:
+  - plugin.staticMethods
+     - set on AnyError.*
+  - plugin.instanceMethods
+     - set on KnownClass.prototype.*
+
+Plugin.* arguments:
+  - for set|unset|normalize(): make it an OBJ
+  - `this` should always be undefined
+  - OBJ:
+     - error ERROR: set|unset|instanceMethods
+     - options VAL: normalize|set|unset|instanceMethods
+        - not for staticMethods, nor getOptions()
+     - AnyError: set|unset|instanceMethods|staticMethods
+     - KnownClasses ARR: set|unset|instanceMethods|staticMethods
+
+error.baseConstructorArgs -> error.modernErrorsOptions, with only second argument
+
+errorData:
+  - WeakMap with error as key, and { options } as value
+  - allows not setting those on error.*, so they are not exposed
+
+Deep clone:
+  - reason: prevent mutations from impacting logic
+  - of:
+     - BaseError arguments
+        - i.e. as used by error.constructorArgs and modernErrorsOptions
+     - class options after merging with each other but before merging with instance options and normalize()
+     - arguments passed to plugin methods just before calling them, if ok performance-wise
+        - except `error`
+
 Error-serializer:
   - OPTS.loose true (def: false) -> OPTS.normalize false (def: false)
      - modern-errors-json uses default value false
@@ -24,51 +55,18 @@ Error-serializer:
      - top-down for serialize(), bottom-up for parse()
      - OPTS.normalize is only for top-level value
      - modern-errors-json uses default value false
-
-Serialization:
-  - set:
-     - parse() as AnyError static method, i.e. AnyError.parse(errorObject)->error
-     - toJSON() to BaseError.prototype
-  - parse() should call AnyError.normalize() on output
-     - i.e. might convert to UnknownError
   - error.constructorArgs:
-     - serialize error.constructorArgs as is
-        - if either undefined or not ARR, not set, but does not throw
-     - when parsing, pass error.constructorArgs to constructor
-        - if either undefined or not ARR, use default ["__message__"]
-  - options.constructorArgs
-     - def: error.baseConstructorArgs
-     - sets error.constructorArgs
-     - applied lazily, during toJSON()
-        - i.e. if using default value, uses any mutation of error.baseConstructorArgs due to AnyError wrapping
-     - throw if not ARR
-     - can be `arguments`
-        - recommended value
-        - converted to ARR
-     - document:
-        - changing default value is only needed if both:
-           - using a custom constructor
-           - calling the child constructor with different arguments as super()
-              - but not in a idempotent way like defaulting values
-        - distinct from error.baseConstructorArgs:
-           - error.baseConstructorArgs are ones passed to BaseError
-           - while options|error.constructorArgs are ones passed to child class
-  - enumerability:
-     - serializes regardless of enumerability
-     - parses as non-enumerable
-  - add "constructorArgs" to OMITTED_PROPS from `props` option
-  - if constructor throws during parsing:
-     - error-serializer retries but:
-        - with Error|AggregateError
-        - with only a single message argument
-           - reason: keep constructor arguments class specific
-     - modern-errors-json:
-        - call AnyError.normalize() on return value, i.e. Error is converted to UnknownError
-  - small size:
-     - when a error.constructorArgs[*] is deeply equal to a top level error.*
-        - serialize it as "__VAR__"
-        - parse it back
-           - if missing, undefined (does not throw)
+     - serialize():
+        - serialized as is
+        - even if non-enumerable
+        - ignored if not ARR, but does not throw
+     - parse():
+        - use constructorArgs for instance creation
+        - constructorArgs is not set
+        - if missing, use message and empty OBJ as arguments
+  - if constructor throws during parsing, retries but:
+     - with Error|AggregateError
+     - with only a single message argument
   - static properties:
      - serialized even if will already set by constructor during parsing
      - override during parsing even if already set by constructor
@@ -79,9 +77,51 @@ Serialization:
               - exception: properties with both:
                  - key is symbol, private, upper scope or non-enumerable
                  - value is set in constructor
+  - error.constructorArgs can be `arguments`
+     - recommended value
+     - converted to ARR
+
+Serialization:
+  - set:
+     - AnyError.parse(errorObject)->error as static method
+     - error.toJSON()->errorObjct to instance method
+  - options.constructorArgs
+     - def: super()'s arguments
+     - sets error.constructorArgs
+     - general option, not a plugin option
+     - throw if not ARR|arguments
+     - add to errorData
+        - pass errorData to whitelisted plugins's instanceMethods|staticMethods, hardcoded by plugin.name
+           - only to modern-errors-json
+        - error.toJSON():
+           - sets constructorArgs|modernErrorsOptions:
+              - retrieved from errorData
+              - as enumerable property
+              - if undefined, not set, but does not throw
+              - after error-serializer serialize(), delete them
+           - modernErrorsOptions is handled as any regular static property
+        - AnyError.parse():
+           - set modernErrorsOptions to errorData, then discard it as property
+              - if missing, use empty OBJ
+           - if an OBJ has a modernErrorsOptions but is not a known error, discard that property
+              - could happen if constructor threw
+              - reason: keep constructor arguments class specific
+     - document:
+        - changing default value is only needed if both:
+           - using a custom constructor
+           - calling the child constructor with different arguments as super()
+              - but not in a idempotent way like defaulting values
+     - add comments:
+        - distinct purposes from error.modernErrorsOptions
+           - e.g. modernErrorsOptions are updated by AnyError wrapping, but constructorArgs cannot since it cannot know where the options are
+  - add "constructorArgs|modernErrorsOptions" to OMITTED_PROPS from `props` option
+  - call AnyError.normalize() on AnyError.parse()'s output, i.e. Error is converted to UnknownError
+  - try to optimize for space
+     - e.g. no need to set both if mostly deeply equal
+     - do it inside error-serializer or modern-errors-json???
   - see if makes sense to abstract serialize-class module from error-serializer
   - add comments:
-     - ensure AnyError.parse() when calling constructor:
+     - this ensures AnyError.parse() when calling constructor:
         - does not throw due to different arguments
         - works with classes with constructors with odd signatures
         - keeps properties that are non-enumerable, private, upper scope or SYM providing set either in prototype or in constructor
