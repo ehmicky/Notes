@@ -60,6 +60,26 @@ error-serializer:
         - only missing parse: can copy serialize
      - major release
      - mark https://github.com/ehmicky/error-serializer/issues/1 as fixed
+
+modern-errors-serialize:
+  - remove passing `allOptions` to plugins
+  - document:
+     - `custom` constructor must:
+        - use (message, options, ...args) as argument
+           - additional args allowed
+           - additional options allowed
+        - pass all args as is to super()
+  - set:
+     - error.toJSON()->errorObject as instance method
+        - calls error-serializer serialize(error)
+     - AnyError.parse(errorObject)->error as static method
+        - calls error-serializer parse(errorObject)
+        - then call AnyError.normalize(), but only on top-level value
+  - no plugins options
+     - always use default values, i.e. shallow|normalize: false for error-serializer
+     - pass ErrorClasses as `classes` option to error-serializer `parse()`
+
+error-serializer constructorArgs:
   - error.constructorArgs:
      - serialize():
         - serialized as is
@@ -85,61 +105,27 @@ error-serializer:
   - error.constructorArgs can be `arguments`
      - recommended value
      - converted to ARR
+  - space saving:
+     - done on serialize(), undone on parse()
+     - constructorArgs[0]: null <-> error.message
+     - constructorArgs: [null] or [null, {}] <-> not defined
 
-modern-errors-serialize:
-  - set:
-     - AnyError.parse(errorObject)->error as static method
-     - error.toJSON()->errorObject as instance method
-  - plugin `constructorArgs`:
-     - super()'s arguments
-     - kept in errorData
-        - deep cloned like instanceOpts
-     - default message to empty STR, to keep it JSON-serializable
-     - passed to plugin.normalize|set|unset|instanceMethods
-  - options.serialize.constructorArgs
-     - throw if not ARR|arguments
-     - def: plugin.normalize()'s `constructorArgs`
-     - error.toJSON():
-        - sets error.constructorArgs|modernErrorsOptions:
-           - from plugin.instanceMethods' `constructorArgs` and `allOptions`
-           - as enumerable property
-           - if undefined, not set, but does not throw
-           - after error-serializer serialize(), delete them
-        - modernErrorsOptions is handled as any regular static property
-     - AnyError.parse():
-        - set modernErrorsOptions to errorData `allOptions`, then discard it as property
-           - if missing, use empty OBJ
-        - if an OBJ has a modernErrorsOptions but is not a known error, discard that property
-           - could happen if constructor threw
-           - reason: keep constructor arguments class specific
-     - document:
-        - changing default value is only needed if both:
-           - using a custom constructor
-           - calling the child constructor with different arguments as super()
-              - but not in a idempotent way like defaulting values
-     - add comments:
-        - distinct purposes from error.modernErrorsOptions
-           - e.g. modernErrorsOptions are updated by AnyError wrapping, but constructorArgs cannot since it cannot know where the options are
-  - no other options???
-     - shallow always false
-     - normalize always false
-     - classes always ErrorClasses
-        - spyd should use a second step to convert error classes, using new ({ OneError: TwoError, ... })[cause.name]("", { cause })
-  - add "constructorArgs|modernErrorsOptions" to OMITTED_PROPS from `props` option
-  - AnyError.parse() should recurse on output:
-     - call AnyError.normalize() on any value that is `instanceof Error`
-     - recurse on plain OBJs, ARRs and ERROR instances
-        - i.e. must directly mutate output instead of cloning it
-     - add comment: goal is to normalize any error with a constructor that threw
-  - try to optimize for space
-     - e.g. no need to set both if mostly deeply equal
-     - do it inside error-serializer or modern-errors-serialize???
-  - see if makes sense to abstract serialize-class module from error-serializer
-  - add comments:
-     - this ensures AnyError.parse() when calling constructor:
-        - does not throw due to different arguments
-        - works with classes with constructors with odd signatures
-        - keeps properties that are non-enumerable, private, upper scope or SYM providing set either in prototype or in constructor
+modern-errors-serialize constructorArgs:
+  - super()'s arguments
+  - deep cloned like instanceOpts
+  - default message to empty STR, to keep it JSON-serializable
+  - set on error.*, non-enumerable, not documented
+     - not passed to plugins, since already available to them using error.*
+  - should assume might have been modified or corrupted
+     - if shape invalid, reset it as [message, pluginsOptions]
+  - when errorData.pluginsOptions updated, update constructorArgs[1] with it
+     - during:
+        - classOpts merging with instanceOpts
+        - AnyError() wrapping
+     - taking into account it might have non-plugin options, from either user or browser-specific
+  - omit cause|errors from constructorArgs[1]
+     - reason: smaller to serializer, and already set as properties or merged
+  - add "constructorArgs" to OMITTED_PROPS from `props` option
 
 Plugin.set|unset() return value
   - required
@@ -163,11 +149,14 @@ Plugins:
 
 Merge "next" git branch, then release
 
-Use OPTS.bugs() FUNC with plugins framework inside spyd:
-  - test all errors, including:
-     - invalid `plugin.bugs` shape
-     - options.bugs
-     - plugin.bugs
+Update in spyd:
+  - use AnyError.parse()
+     - use a second step to convert error classes, using new ({ OneError: TwoError, ... })[cause.name]("", { cause })
+  - use OPTS.bugs() FUNC with plugins framework
+     - test all errors, including:
+        - invalid `plugin.bugs` shape
+        - options.bugs
+        - plugin.bugs
 
 Go through code to take into account:
   - error.stack:
