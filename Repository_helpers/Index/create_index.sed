@@ -8,7 +8,7 @@
 # Remove files not related to note taking
 /LICENSE\]/ d
 /\[README/ d
-/Repository_helpers/ d
+/Repository\\\?_helpers/ d
 /Roadmaps/ d
 /__Index__/ d
 
@@ -16,12 +16,9 @@
 /swp\]/ d
 /~\]/ d
 
-# Remove top directory prefix
-s_Notes/__
-
 # Decrease indent, since we removed top directory from listing
 s/^  //
-s/^- /\n/
+s/^ - /\n/
 s/^  //
 
 # Remove file extension
@@ -62,9 +59,12 @@ s/\(__.*\)_\(.*__\)/\1 \2/
 s/\(__.*\)_\(.*__\)/\1 \2/
 s/\(__.*\)_\(.*__\)/\1 \2/
 
+# Replace \SPC by spaces.
+s/\\ / /g
+
 # Add subheaders
 s/^\s__\(.*\)__/\n## \1/
-s/^- __\(.*\)__/\n### \1\n/
+s/^ - __\(.*\)__/\n### \1\n/
 
 # Decrease indent again
 s/^  //
