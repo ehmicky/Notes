@@ -294,7 +294,7 @@ fragment FRAGMENT on OBJ_TYPE     #Declare named fragment
                                   #Possibly used in server definition, after:
                                   #  - scalar TYPE
 
-@defer(label: "LABEL"            N#Requests that a fragment be sent in a separate response.
+@defer([label: "LABEL"]          N#Requests that a FRAGMENT be sent in a separate response.
  [, if: BOOL])                   N#Initial response:
                                  N#  - is normal RES_OBJ
                                  N#  - but lacks the fragment
@@ -303,28 +303,23 @@ fragment FRAGMENT on OBJ_TYPE     #Declare named fragment
                                  N#  - incremental
                                  N#     - RES_OBJ2_ARR, with also:
                                  N#        - data OBJ2: with deferred fragment
-                                 N#        - label "LABEL"
                                  N#        - path "VAR"|NUM_ARR
+                                 N#        [- label "LABEL"]
                                  N#     - can be undefined if hasNext false
-                                 N#All responses have:
+                                 N#Initial|next responses also have:
                                  N#  - hasNext BOOL: true for final response
                                  N#  - extensions OBJ (any custom)
-                                 N#Responses are sent as multiple HTTP responses, using:
-                                 N#  - Transfer-Encoding: chunked [S]
-                                 N#  - Content-Type: multipart/mixed [S]
                                  N#Def BOOL: true
-                                 N#Possibly used after:
+                                 N#Possibly used in queries, after:
                                  N#  - ... [on OBJ_TYPE]
                                  N#  - ...FRAGMENT
 
-@stream(label: "LABEL"           N#Similar to @defer except:
- [, initialCount: INT]           N#  - meant for ARR attributes, not FRAGMENTs
- [, if: BOOL])                   N#  - the ARR attribute in the initial response has INT items
-                                 N#  - next responses are additional ARR items, 1 at a time
-                                 N#  - incremental.data OBJ2 -> incremental.items OBJ2_ARR
-                                 N#Def INT: 0
+@stream([label: "LABEL"]         N#Similar to @defer except meant for multiple ARR items, not a single FRAGMENT:
+ [, initialCount: INT]           N#  - the ARR attribute in the initial response has INT items (def: 0)
+ [, if: BOOL])                   N#  - each next response has 1-n additional ARR items
+                                 N#  - incremental.data OBJ2 -> incremental.items OBJ2_ARR (with single element)
                                  N#Def BOOL: true
-                                 N#Possibly used after:
+                                 N#Possibly used in queries, after:
                                  N#  - ATTR[(...)]
 
 
@@ -335,22 +330,19 @@ fragment FRAGMENT on OBJ_TYPE     #Declare named fragment
                                              \=+===============================+=/
 
 
-RESOLVER ==>                      #GraphQL from|to backend layer.
-                                  #Each GraphQL query ATTR:
-                                  #  - has its own resolver function
-                                  #  - when combined, it produces the query result
-                                  #Shape of return value and query are the same.
-
-{                                 #If ATTR has:
-  TYPE: {                         #  - OBJ_TYPE:
-    ATTR(RPARENT, ARGS, CONTEXT)  #     - RATTR is usually OBJ, but does not need to
-     ->[PROMISE_]RATTR            #     - RATTR passed to child as RPARENT
-    ...                           #  - OBJ_ARR_TYPE:
-  }                               #     - RATTR must be ARR
-}                                 #        - usually OBJ_ARR, but does not need to
-                                  #     - each RATTR item is passed to child as RPARENT
+RESOLVER_FUNC                     #How server resolves each GraphQL query ATTR, with its own function
+ (RPARENT, ARGS, CONTEXT)         #When combined, it produces the query result
+ ->[PROMISE_]RATTR                #Shape of return value and query are the same.
+                                  #If the ATTR has:
+                                  #  - OBJ_TYPE:
+                                  #     - RATTR is usually OBJ, but does not need to
+                                  #     - RATTR passed to child as RPARENT, unless undefined|null
+                                  #  - OBJ_ARR_TYPE:
+                                  #     - RATTR must be ARR
+                                  #        - usually OBJ_ARR, but does not need to
+                                  #     - each RATTR item is passed to child as RPARENT, except undefined|null items
                                   #  - otherwise: RATTR rendered as output
-                                  #For top-level ATTR, implementation can allow client to provide "root value" (initial RPARENT)
+                                  #For top-level ATTR, implementation can allow client to provide ROOTVAL (initial RPARENT)
                                   #ARGS: the ones passed by query, as OBJ
                                   #CONTEXT:
                                   #  - request-long object, i.e. holding request info
@@ -380,9 +372,7 @@ RES_OBJ.data                      #OBJ
                                   #null if error during operation
 
 RES_OBJ.errors                    #OBJ_ARR
-                                  #If queried data:
-                                  #  - is not defined: always present (query error)
-                                  #  - is defined: present if query|resolver error
+                                  #Present if query|resolver error
                                   #Always contain at least one element
                                   #Contains:
                                   #  - message STR
@@ -390,14 +380,37 @@ RES_OBJ.errors                    #OBJ_ARR
                                   #     - line NUM
                                   #     - column NUM
                                   #  - path 'VAR'|NUM_ARR
+                                  #  - extensions OBJ: any custom
                                   #  - any custom
-                                 !#  - stack STR
+                                 !#  (non-enumerable)
+                                 !#  - ERROR fields: stack, name, etc.
                                  !#  - originalError ERROR
                                  !#  - positions NUM_ARR
                                  !#  - nodes AST_NODE_ARR
                                  !#  - source SOURCE
 
 RES_OBJ.extensions                #OBJ (any custom)
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:         SUBSCRIPTION          :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+type subscription {               #Schema definition, similar to type query
+  CHANNEL(...) { ... }            #Resolver is expected to be like an ASYNC_ITERATOR:
+}                                 #  - optionally return an initial data as response
+                                  #  - then return 0-n additional responses
+
+subscription SUBSCRIPTION {       #Client query:
+  CHANNEL(...) { ... }            #  - subscribes to channel
+}                                 #  - server optionally returns data as part of response
+                                  #Additional data is pushed by server to client:
+                                  #  - server starts a push event
+                                  #  - event PAYLOAD is used as RPARENT, and query is performed
+                                  #  - query return value is communicated to client, e.g. via WebSocket
 
 
                                              /=+===============================+=\
@@ -409,8 +422,8 @@ RES_OBJ.extensions                #OBJ (any custom)
 
 INTROSPECTION ==>                 #Special attributes that request metadata
 
-__typename                        #'TYPE'
-                                  #It is:
+INTROSPECTION TYPES ==>           #OBJ below have their own types themselves
+                                  #Their typename is:
                                   #  - SCHEMA: '__Schema'
                                   #  - TYPEINFO: '__Type'
                                   #  - DIRECTIVEINFO: '__Directive'
@@ -421,7 +434,10 @@ __typename                        #'TYPE'
                                   #  - DIRECTIVE: '__Directive'
                                   #  - DIRECTIVELOCATION: '__DirectiveLocation'
 
-__type(name: 'TYPE')              #TYPEINFO
+OBJ.__typename                    #'TYPE_NAME', from `type TYPE_NAME`
+
+__type(name: 'TYPE_NAME')         #TYPEINFO
+                                  #Must be in root query
 
 __schema                          #SCHEMA:
                                   #  - description STR
@@ -429,9 +445,10 @@ __schema                          #SCHEMA:
                                   #     - all supported types, including scalar and __TYPE
                                   #  - queryType|mutationType|subscriptionType TYPEINFO (top-level operations)
                                   #  - directives DIRECTIVEINFO_ARR
+                                  #Must be in root query
 
 TYPEINFO                          #OBJ:
-                                  #  - name 'TYPE'
+                                  #  - name STR
                                   #  - description STR
                                   #  - kind TYPEKIND
                                   #  (only custom TYPEs)
@@ -502,31 +519,6 @@ VALIDATION ==>                    #Since query has explicit typing, can validate
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:         SUBSCRIPTION          :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-SUBSCRIPTIONS ==>                 #Top-level operation similar to query, except:
-                                  #  - receives results when server wants, i.e. on push, e.g. via WebSocket
-                                  #  - i.e. initial query ("subscription") is only an "addListener",
-                                  #    although can perform a query too
-
-type subscription {
-  CHANNEL(...) { ... }
-}                                 #Schema definition, similar to type query
-
-subscription SUBSCRIPTION {       #Client query, to subscribe to channel.
-  CHANNEL(...) { ... }            #Arguments can be passed to server to customize event handling for that channel.
-}                                 #When server wants to push to client:
-                                  #  - it triggers an event
-                                  #  - event PAYLOAD is used as root value of query, and query is performed
-                                  #  - query return value is communicated to client, e.g. via WebSocket
-                                  #The server may (or not) push right away a query as the response to subscription.
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
                                             )==:    IMPLEMENTATION-SPECIFIC    :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -543,8 +535,11 @@ PROTOCOL ==>                      #Single endpoint, usually /graphql
                                   #  - POST with parameters as request body JSON, Content-Type: application/json [C]
                                   #  - POST with QUERY as request body, Content-Type: application/graphql [C]
                                   #    and query variables for other parameters
+                                 N#For @defer|@stream, responses are sent as multiple HTTP responses, using:
+                                 N#  - Transfer-Encoding: chunked [S]
+                                 N#  - Content-Type: multipart/mixed [S]
 
-VERSIONING ==>                    #Recommends no versioning (but I don't agree with that)
+VERSIONING ==>                    #Recommends no breaking changes
 
 OTHER IMPLEMENTATION-SPECIFIC ==> #  - programming language
                                   #  - CONTEXT
