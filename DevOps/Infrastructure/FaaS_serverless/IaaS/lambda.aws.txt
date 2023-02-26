@@ -5,6 +5,11 @@
 
 
 
+TO DOCUMENT:
+  - CloudWatch logs
+     - ENVVAR AWS_LAMBDA_LOG_GROUP_NAME, AWS_LAMBDA_LOG_STREAM_NAME
+  - Permissions (https://docs.aws.amazon.com/lambda/latest/dg/lambda-permissions.html)
+
 VERSION ==>                       #2023-03-01
 
 
@@ -164,6 +169,7 @@ FUNC_VERSION
 FUNC_VERSION.FunctionArn          #'arn:aws:lambda:REGION:ACCOUNT_ID:function:FUNCTION'
 FUNC_VERSION.MasterArn            #Main FUNC_ARN. Only for Lambda@Edge
 FUNC_VERSION.FunctionName         #'FUNCTION'
+ENVVAR AWS_LAMBDA_FUNCTION_NAME   #'FUNCTION'
 
 REVISION_ID                       #Changes each time a specific model is updated.
                                   #Meant to pass current one to an update call so it fails if there is a concurrent update
@@ -188,6 +194,7 @@ FUNC_ARN                          #One of:
                                   #  - function full ARN
                                   #  - 'ACCOUNT_ID:function:FUNCTION[:QUALIFIER]'
                                   #  - 'FUNCTION[:QUALIFIER]'
+ENVVAR AWS_LAMBDA_FUNCTION_VERSION#'NUM'
 
 CreateAlias()                     #Request parameters: ALIAS
                                   #  - AliasArn -> FunctionName FUNC_ARN
@@ -281,15 +288,26 @@ BLUEPRINT ==>                     #Sample NEW_FUNC_CODE.ZipFile for a given Runt
                                              \=+===============================+=/
 
 
-FUNC_CODE.ResolvedImageUri        #'URI' to the container image
-                                  #It must follow OCI specification
+CONTAINER IMAGE ==>               #Must follow OCI 1.0.0 specification
+                                  #Must follow Docker image manifest v2, schema 2
+                                  #Must be Linux-based
                                   #Max 10GB uncompressed
+                                  #Must use the custom runtime API
+                                  #Must not write on the filesystem, except for /tmp
+
+FUNC_CODE.ResolvedImageUri        #'URI' to the container image
 [NEW_]FUNC_CODE.ImageUri          #'URI' to the container image in AWS ECR
+
 FUNC_VERSION.ImageConfigResponse  #IMAGE. Container image's configuration.
  .ImageConfig                     #Max 16KB
 IMAGE.EntryPoint                  #STR_ARR. Like Docker ENTRYPOINT
 IMAGE.Command                     #STR_ARR. Like Docker CMD, i.e. arguments to EntryPoint
 IMAGE.WorkingDirectory            #STR. Like Docker WORKDIR
+ENV ==>                           #Automatically filled by FUNC_VERSION.Environment
+
+public.ecr.aws/lambda/            #Recommended base images
+ RUNTIME[-ARCH]                   #Follow every constraint, including implementing the custom runtime API
+                                  #Exposes following ENVVARs: LAMBDA_TASK_ROOT, LAMBDA_RUNTIME_DIR
 
 
                                              /=+===============================+=\
@@ -358,6 +376,9 @@ LAYER_VERSION_SUMMARY
  .CodeSize|SigningJobArn|
  SigningProfileVersionArn         #Like LAYER_VERSION_OUTPUT.*
 
+/bin
+/lib                              #Preferred location for LAYERs shared binaries|libraries
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -366,12 +387,26 @@ LAYER_VERSION_SUMMARY
                                              \=+===============================+=/
 
 
-EXTENSION ==>                     #Only if PackageType 'Zip'
+/opt/extensions/FILE              #"External extensions", i.e. executable run separately from the runner
+                                  #  - different process than the FUNC_INSTANCE's
+                                  #  - initialized|shutdown at the same time as the runner
+                                  #Either:
+                                  #  - shared as LAYER, for PackageType 'Zip'
+                                  #  - added manually by Dockerfile, if PackageType 'image'
+                                  #Max 10 per FUNCTION
+                                  #Only partially documented
 
-INTERNAL EXTENSION ==>            #Logic that runs inside the runner's process, alongside every FUNCTION
+EAPI                              #http://AWS_LAMBDA_RUNTIME_API/2020-01-01/extension
+POST EAPI/register                #Initializes
+POST EAPI/init/error              #Initialization error
+GET EAPI/event/next               #Receives next INVOCATION or Shutdown event
+POST EAPI/exit/error              #Exit error
 
-EXTERNAL EXTENSION ==>            #Logic that runs in a different process than the runner's, alongside every FUNCTION
-                                  #Initialized|shutdown at the same time as the runner
+TELEMETRY API ==>                 #Allows extensions to retrieve logs, metrics and traces related to:
+                                  #  - the execution environment lifecycle|logs
+                                  #  - the INVOCATIONs logs
+                                  #  - the extension itself logs
+                                  #Done via HTTP|TCP webhooks
 
 
                                              /=+===============================+=\
@@ -398,27 +433,100 @@ NEW_FUNC_VERSION.Publish          #BOOL (def: false)
 
 
 FUNC_VERSION.Runtime              #STR. Runtime, among:
-                                  #  - 'nodejs[VERSION]' with VERSION: 4.3[-edge], 6.10, 8.10, 10.x, 12.x, 14.x, 16.x, 18.x
+                                  #  - 'nodejs[VERSION]' with VERSION: 14.x, 16.x, 18.x
                                   #  - 'goVERSION' with VERSION: 1.x
-                                  #  - 'pythonVERSION' with VERSION: 2.7, 3.6, 3.7, 3.8, 3.9
+                                  #  - 'pythonVERSION' with VERSION: 3.7, 3.8, 3.9
                                   #  - 'javaVERSION' with VERSION: 8.al2, 11
-                                  #  - 'rubyVERSION' with VERSION: 2.5, 2.7
-                                  #  - 'dotnetcoreVERSION' with VERSION: 1.0, 2.0, 2.1, 3.1, 6
+                                  #  - 'rubyVERSION' with VERSION: 2.7
+                                  #  - 'dotnetcoreVERSION' with VERSION: 5.0, 6
                                   #  - 'provided[VERSION]' with VERSION: .al2
-                                  #     - custom runtime
+                                  #OS:
+                                  #  - Amazon Linux 1: go*, python3.7, provided (not provided.al2)
+                                  #  - Amazon Linux 2: all others
                                   #Not if PackageType 'Image'
 LAYER_VERSION.CompatibleRuntimes  #STR_ARR among same values as FUNC_VERSION.Runtime
+ENVVAR AWS_EXECUTION_ENV          #'AWS_Lambda_RUNTIME'
 
 FUNC_VERSION.Handler              #STR. Code's entry point function name
                                   #Not if PackageType 'Image'
 
+ENVVAR LAMBDA_RUNTIME_DIR         #Path to Runtime files, e.g. /var/runtime
+
+ENVVAR NODE_OPTIONS               #Can be used with Runtime 'nodejs*'
+
+ENVVAR AWS_LAMBDA_EXEC_WRAPPER    #'PATH' to an executable script.
+                                  #"Wrapper script", executed instead of FUNC_VERSION.Runtime
+                                  #Script arguments are same as original Runtime
+                                  #  - including argv[0], i.e. runtime binary itself
+                                  #Only with Runtime using Amazon Linux 2, except 'provided.al2'
+INTERNAL EXTENSION ==>            #Logic that runs inside the FUNC_INSTANCE's process
+                                  #Achieved by using ENVVAR AWS_LAMBDA_EXEC_WRAPPER
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:      RUNTIME MANAGEMENT       :==(
+                                            )==:             NODE              :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
+
+ENVVAR NODE_PATH                  #'/opt/nodejs/nodeVERSION/node_modules/:/opt/nodejs/node_modules:$LAMBDA_RUNTIME_DIR/node_modules'
+LAMBDA_RUNTIME_DIR/node_modules   #Preferred locattion for node modules of FUNCTIONs
+/opt/nodejs[/nodeVERSION]
+ /node_modules                    #Preferred location for node modules of LAYERs
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:            PYTHON             :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+ENVVAR PYTHON_PATH                #LAMBDA_RUNTIME_DIR
+
+/opt/python                       #
+/opt/python/lib/pythonVERSION
+ /site-packages                   #Preferred location for LAYERs packages
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:        CUSTOM RUNTIME         :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+CUSTOM RUNTIME ==>                #When FUNC_VERSION.Runtime 'provided*'
+                                  #FUNC_CODE|LAYER must include an executable script at '/bootstrap', which is run
+                                  #Only partially documented here
+
+ENVVAR LAMBDA_TASK_ROOT           #FUNC_CODE's 'DIR', e.g. /var/task
+                                  #Should change cwd to it during initialization
+
+ENVVAR _HANDLER                   #'FILE.METHOD' of the main file, with METHOD being FUNC_VERSION.Handler
+
+ENVVAR AWS_LAMBDA_RUNTIME_API     #'HOST:PORT' of custom runtime API
+RAPI                              #http://AWS_LAMBDA_RUNTIME_API/2018-06-01/runtime
+
+POST RAPI/init/error              #Report error during initialization
+GET RAPI/invocation/next          #Get next INVOCATION_REQ
+                                  #Request body: empty
+                                  #Response body: INVOCATION_REQ.Payload
+POST RAPI/invocation/REQ_ID/      #Set INVOCATION_RES
+ response                         #Request body: INVOCATION_RES.ResponseBody
+                                  #Response body: empty
+POST RAPI/invocation/REQ_ID/error #Report error during INVOCATION
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:        RUNTIME VERSION        :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+RUNTIME_VERSION                   #Minor|patch version of a specific FUNC_VERSION.Runtime
 
 PutRuntimeManagementConfig()      #Request parameters: RUNTIME_MGMT
                                   #  - FunctionArn -> FunctionName FUNC_ARN + Qualifier 'QUALIFIER'
@@ -428,7 +536,7 @@ GetRuntimeManagementConfig()      #Request parameters:
                                   #  - only FunctionArn -> FunctionName FUNC_ARN + Qualifier 'QUALIFIER'
                                   #Response body: RUNTIME_MGMT
 
-RUNTIME_MGMT                      #How RUNTIMEs are upgraded
+RUNTIME_MGMT                      #How RUNTIMEs are upgraded to new RUNTIME_VERSIONs
 RUNTIME_MGMT.FunctionArn          #FUNC_ARN
 RUNTIME_MGMT.UpdateRuntimeOn      #STR. How RUNTIME upgrade happens, among:
                                   #  - 'Auto' (def):
@@ -454,8 +562,7 @@ FUNC_VERSION.Architectures        #STR_ARR. CPU architecture. Single item, among
                                   #  - 'arm64'
                                   #     - cheaper for equivalent performance
                                   #     - must:
-                                  #        - use a Runtime with Amazon Linux 2: 'nodejs12.x', 'python3.8',
-                                  #          'java*', 'ruby2.7', 'dotnetcore3.1', 'provided.al2' (and later)
+                                  #        - use a Runtime with Amazon Linux 2
                                   #        - make sure FUNC_VERSION|LAYER_VERSION's code supports ARM
                                   #Not if PackageType 'Image'
 LAYER_VERSION
@@ -464,14 +571,37 @@ LAYER_VERSION
 FUNC_VERSION.MemorySize           #NUM (in MB). Amount of memory
                                   #Min: 128, max: 10GB
                                   #Also allocates 1 vCPU for each 1769MB
+ENVVAR
+ AWS_LAMBDA_FUNCTION_MEMORY_SIZE  #'NUM'
+
+MAX PROCESSES ==>                 #1e3
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:     ENVIRONMENT VARIABLES     :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
 
 FUNC_VERSION.Environment          #'VAL'. Environment variable.
  .Variables.VAR                   #Not logged by CloudTrail
                                   #Max 4KB for all environment variables per FUNC_VERSION
+
 FUNC_VERSION.KMSKeyArn            #AWS KMS key ARN. Encrypt environment variables
                                   #Also encrypts SNAP_START's snapshot, if any
 
-MAX PROCESSES ==>                 #1e3
+ENVVAR AWS_REGION
+ENVVAR AWS_ACCESS_KEY
+ENVVAR AWS_ACCESS_KEY_ID
+ENVVAR AWS_SECRET_ACCESS_KEY
+ENVVAR AWS_SESSION_TOKEN          #
+
+ENVVAR LANG                       #'en_US.UTF-8'
+ENVVAR TZ                         #'UTC'
+ENVVAR PATH                       #'/usr/local/bin:/usr/bin/:/bin:/opt/bin'
+ENVVAR LD_LIBRARY_PATH            #'/lib64:/usr/lib64:$LAMBDA_RUNTIME_DIR:$LAMBDA_RUNTIME_DIR/lib:$LAMBDA_TASK_ROOT:$LAMBDA_TASK_ROOT/lib:/opt/lib'
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -1008,6 +1138,7 @@ DeleteProvisioned                 #Request parameters:
                                   #Response body: empty
 
 PCONCURRENCY                      #Provisioned concurrency: like reserved concurrency, but without cold start
+                                  #I.e. initializes runtime|function in advance
 PCONCURRENCY.FunctionArn          #FUNC_ARN
 PCONCURRENCY.LastModified         #'DATETIME'
 PCONCURRENCY.Status               #STR indicating allocation process, among 'IN_PROGRESS', 'READY' and 'FAILED'
@@ -1019,6 +1150,11 @@ PCONCURRENCY.Requested
  ProvisionedConcurrentExecutions  #NUM
 PCONCURRENCY.Allocated
  ProvisionedConcurrentExecutions  #NUM
+
+ENVVAR                            #Can be:
+ AWS_LAMBDA_INITIALIZATION_TYPE   #  - 'provisioned-concurrency': if part of PCONCURRENCY
+                                  #  - 'snap-start': if part of SNAP_START
+                                  #  - 'on-demand': otherwise
 
 MAX REQUESTS PER FUNC_INSTANCE ==>#Depending on InvocationType:
                                   #  - 'RequestResponse|DryRun': 10 per second
@@ -1035,7 +1171,7 @@ MAX REQUESTS PER FUNC_INSTANCE ==>#Depending on InvocationType:
 
 FUNC_VERSION.Timeout              #NUM (in secs). Times out for each INVOCATION
                                   #Excludes initialization, but includes extensions
-                                  #Def|max: 15m
+                                  #Def: 3s, max: 15m
 
 FUNC_VERSION.DeadLetterConfig
  .TargetArn                       #SQS|SNS_ARN where to send async FUNCTIONs failures event payloads
