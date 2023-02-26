@@ -18,6 +18,21 @@ VERSION ==>                       #2023-03-01
 PAGINATION ==>                    #  - request variable: Marker STR, MaxItems STR (max: 1e4)
                                   #  - response body: NextMarker STR
 
+LIMITS ==>                        #Max 15 requests per second, except:
+                                  #  - GetFunction(): 100 requests per second
+                                  #  - Invoke(): no limits
+
+PRICING ==>                       #Invocation:
+                                  #  - 1$ per 5e6 requests
+                                  #  - free: first 1e6 requests, per month
+                                  #Duration:
+                                  #  - amount of time spent running FUNCTION invocations
+                                  #  - including cold start and extensions shutdown
+                                  #  - each invocation's duration is rounded down to 1ms
+                                  #  - 1$ per 75000 seconds (~21h) with MemorySize 1GB
+                                  #  - price is proportional to MemorySize
+                                  #  - free: 4e5 seconds (~4.5 days) with MemorySize 1GB, per month
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -203,7 +218,12 @@ ACCOUNT_LIMIT.TotalCodeSize       #NUM (in bytes). Max size of all FUNC_VERSION|
                                   #I.e. should cleanup FUNC_VERSION|LAYER_VERSIONs.
 ACCOUNT_USAGE.TotalCodeSize       #NUM (in bytes). Current usage of ACCOUNT_LIMIT.TotalCodeSize
 ACCOUNT_LIMIT.CodeSizeZipped      #NUM (in bytes). Max size when uploading a single FUNCTION|LAYER's .zip archive directly (without S3)
+                                  #Max 50MB
 ACCOUNT_LIMIT.CodeSizeUnzipped    #NUM (in bytes). Max size when extracting a single FUNCTION|LAYER's .zip archive
+                                  #Max 250MB
+
+BLUEPRINT ==>                     #Sample NEW_FUNC_CODE.ZipFile for a given Runtime.
+                                  #Only available through the UI
 
 
                                              /=+===============================+=\
@@ -215,9 +235,10 @@ ACCOUNT_LIMIT.CodeSizeUnzipped    #NUM (in bytes). Max size when extracting a si
 
 FUNC_CODE.ResolvedImageUri        #'URI' to the container image
                                   #It must follow OCI specification
+                                  #Max 10GB uncompressed
 [NEW_]FUNC_CODE.ImageUri          #'URI' to the container image in AWS ECR
-FUNC_VERSION.ImageConfigResponse
- .ImageConfig                     #IMAGE. Container image's configuration.
+FUNC_VERSION.ImageConfigResponse  #IMAGE. Container image's configuration.
+ .ImageConfig                     #Max 16KB
 IMAGE.EntryPoint                  #STR_ARR. Like Docker ENTRYPOINT
 IMAGE.Command                     #STR_ARR. Like Docker CMD, i.e. arguments to EntryPoint
 IMAGE.WorkingDirectory            #STR. Like Docker WORKDIR
@@ -238,6 +259,8 @@ ListLayers()                      #Request parameters: LAYER_VERSION
 LAYER                             #Lambda layer, as output
                                   #.zip archive with files shared between multiple FUNCTIONs
                                   #E.g. libraries, custom runtime or data|config files
+                                  #Mounted at /opt
+                                  #Only if PackageType 'Zip'
                                   #Max 5 per FUNCTION
 LAYER.LayerArn                    #'arn:aws:lambda:REGION:ACCOUNT_ID:layer:LAYER_NAME'
 LAYER.LayerName                   #'LAYER_NAME'
@@ -290,6 +313,19 @@ LAYER_VERSION_SUMMARY
 
                                              /=+===============================+=\
                                             /  :                               :  \
+                                            )==:           EXTENSION           :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+INTERNAL EXTENSION ==>            #Logic that runs inside the runner's process, alongside every FUNCTION
+
+EXTERNAL EXTENSION ==>            #Logic that runs in a different process than the runner's, alongside every FUNCTION
+                                  #Initialized at the same moment as the runner
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
                                             )==:            PUBLISH            :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -319,6 +355,7 @@ FUNC_VERSION.Runtime              #STR. Runtime, among:
                                   #  - 'rubyVERSION' with VERSION: 2.5, 2.7
                                   #  - 'dotnetcoreVERSION' with VERSION: 1.0, 2.0, 2.1, 3.1, 6
                                   #  - 'provided[VERSION]' with VERSION: .al2
+                                  #     - custom runtime
                                   #Not if PackageType 'Image'
 LAYER_VERSION.CompatibleRuntimes  #STR_ARR among same values as FUNC_VERSION.Runtime
 
@@ -370,18 +407,26 @@ FUNC_VERSION.RuntimeVersionConfig #RUNTIME_VERSION_ARN. Runtime specific version
 FUNC_VERSION.Architectures        #STR_ARR. CPU architecture. Single item, among:
                                   #  - 'x86_64' (def)
                                   #  - 'arm64'
+                                  #     - cheaper for equivalent performance
+                                  #     - must:
+                                  #        - use a Runtime with Amazon Linux 2: 'nodejs12.x', 'python3.8',
+                                  #          'java*', 'ruby2.7', 'dotnetcore3.1', 'provided.al2' (and later)
+                                  #        - make sure FUNC_VERSION|LAYER_VERSION's code supports ARM
                                   #Not if PackageType 'Image'
 LAYER_VERSION
  .CompatibleArchitectures         #STR_ARR among same values as FUNC_VERSION.Architectures
 
 FUNC_VERSION.MemorySize           #NUM (in MB). Amount of memory
                                   #Min: 128, max: 10GB
+                                  #Also allocates 1 vCPU for each 1769MB
 
 FUNC_VERSION.Environment          #'VAL'. Environment variable.
  .Variables.VAR                   #Not logged by CloudTrail
+                                  #Max 4KB for all environment variables per FUNC_VERSION
 FUNC_VERSION.KMSKeyArn            #AWS KMS key ARN. Encrypt environment variables
                                   #Also encrypts SNAP_START's snapshot, if any
 
+MAX PROCESSES ==>                 #1e3
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -396,6 +441,8 @@ FUNC_VERSION.EphemeralStorage.Size#NUM (in MB) to allocate for /tmp
 FUNC_VERSION.FileSystemConfigs    #FUNC_EFS_ARR. Mount an AWS EFS
 FUNC_EFS.Arn                      #EFS ACCESS_POINT ARN
 FUNC_EFS.LocalMountPath           #'/mnt/DIR'
+
+MAX FILE DESCRIPTORS ==>          #1e3
 
 
                                              /=+===============================+=\
@@ -465,29 +512,21 @@ CORS.ExposeHeaders                #'HEADER'_ARR
 
 FUNC_VERSION.Role                 #IAM's ROLE ARN, assumed by the FUNCTION
 
-GetPolicy()                       #Retrieve a FUNC's IAM POLICY
-                                  #Request parameters:
-                                  #  - FunctionName FUNC_ARN + Qualifier 'QUALIFIER'
-                                  #Response body:
-                                  #  - Policy 'POLICY'
-                                  #  - RevisionId STR: of the POLICY
-GetLayerVersionPolicy()           #Retrieve a FUNC_LAYER's IAM POLICY
-                                  #Request parameters:
-                                  #  - LayerName 'LAYER_NAME'
-                                  #  - VersionNumber NUM
-                                  #Response body:
-                                  #  - Policy 'POLICY'
-                                  #  - RevisionId STR: of the POLICY
-
 AddPermission()                   #Request parameters: PERMISSION
                                   #  - no Statement
                                   #Response body: PERMISSION
                                   #  - only Statement
+GetPolicy()                       #Request parameters:
+                                  #  - FunctionName FUNC_ARN + Qualifier 'QUALIFIER'
+                                  #Response body:
+                                  #  - Policy 'POLICY'
+                                  #  - RevisionId STR: of the POLICY
 RemovePermission()                #Request parameters: PERMISSION
                                   #  - only FunctionName|Qualifier|RevisionId|StatementId
                                   #Response body: empty
 
 PERMISSION                        #Authorization to run a FUNC|FUNC_VERSION|ALIAS
+                                  #Max 'POLICY' size: 20KB
 PERMISSION.FunctionName           #FUNC_ARN
 PERMISSION.Qualifier              #'QUALIFIER'
 PERMISSION.RevisionId             #'REVISION_ID'
@@ -509,6 +548,12 @@ AddLayerVersionPermission()       #Request parameters: LAYER_PERMISSION
                                   #  - no Statement
                                   #Response body: LAYER_PERMISSION
                                   #  - only RevisionId, Statement
+GetLayerVersionPolicy()           #Request parameters:
+                                  #  - LayerName 'LAYER_NAME'
+                                  #  - VersionNumber NUM
+                                  #Response body:
+                                  #  - Policy 'POLICY'
+                                  #  - RevisionId STR: of the POLICY
 RemoveLayerVersionPermission()    #Request parameters: LAYER_PERMISSION
                                   #  - only LayerName|VersionNumber|RevisionId|StatementId
                                   #Response body: empty
@@ -619,6 +664,12 @@ CODE_SIGNING                      #What to do when code package not properly sig
 
 TRIGGER ==>                       #What triggers a FUNCTION: FUNC_URL, Invoke() or EVENT_SOURCE
 
+FUNC_INSTANCE                     #When a FUNCTION is first invoked ("cold start"):
+                                  #  - runtime is initialized
+                                  #  - function is initialized
+                                  #     - e.g. top-level scope is read with Node.js
+                                  #After invocation, the FUNC_INSTANCE stays up for a little bit to be re-used by the next invocation
+
 Invoke()                          #Request parameters: INVOCATION_REQ
                                   #  - URI path: FunctionName
                                   #  - Query variable: Qualifier
@@ -641,6 +692,9 @@ INVOCATION_REQ.InvocationType     #STR. One of:
                                   #  - 'DryRun': only validate parameters and permissions
 INVOCATION_REQ.Payload            #'JSON'. Request payload
                                   #Sometimes also called "event"
+                                  #Max size depends on InvocationType:
+                                  #  - RequestResponse|DryRun: 6MB
+                                  #  - Event: 256KB
 INVOCATION_REQ.ClientContext      #STR. Base64-encoded context 'JSON' to pass to FUNCTION
 INVOCATION_REQ.LogType            #Either:
                                   #  - 'None' (def)
@@ -657,6 +711,7 @@ INVOCATION_RES.StatusCode         #NUM.
 INVOCATION_RES.ResponseBody       #STR, as sent by FUNCTION
                                   #Or error OBJ if FUNCTION errored
                                   #Empty if InvocationType 'Event|DryRun'
+                                  #Max size: 6MB
 INVOCATION_RES.ExecutedVersion    #VERSION_NUM
 INVOCATION_RES.LogResult          #FUNCTION stdout|stderr
                                   #Last 4KB only
@@ -693,7 +748,7 @@ EVENT_INVOKE                      #Invocation configuration: retries, and persis
 EVENT_INVOKE.FunctionArn          #FUNC_ARN
 EVENT_INVOKE.LastModified         #DATETIME_NUM
 
-EVENT_INVOKE.DestinationConfig    #DEST. Send invocation payload to SNS|SQS on success|failure
+EVENT_INVOKE.DestinationConfig    #DESTINATION. Send invocation payload to SNS|SQS on success|failure
 EVENT_INVOKE.MaximumRetryAttempts #NUM of retries if FUNCTION fails.
                                   #Max: 2
 EVENT_INVOKE                      #NUM (in secs). Max amount of time to keep invocation payload, e.g. for retries
@@ -807,9 +862,9 @@ EVENT_SOURCE.ScalingConfig        #SCALING. Amazon SQS source config
 SCALING.MaximumConcurrency        #NUM.
                                   #Min: 2
                                   #Max: 1e4
-EVENT_SOURCE.DestinationConfig    #DEST. Amazon SQS|SNS destination config
+EVENT_SOURCE.DestinationConfig    #DESTINATION. Amazon SQS|SNS destination config
                                   #Only if source is stream
-DEST.OnSuccess|OnFailure
+DESTINATION.OnSuccess|OnFailure
  .Destination                     #SQS|SNS_ARN
 
 EVENT_SOURCE.Queues               #STR_ARR. Names of the Amazon MQ broker sources
@@ -833,6 +888,13 @@ EVENT_SOURCE
                                              \=+===============================+=/
 
 
+CONCURRENCY ==>                   #Amount of FUNC_INSTANCEs at once
+
+ACCOUNT_LIMIT.ConcurrentExecutions#NUM. Max concurrency for all FUNCTIONs at any given time
+                                  #1e4, but can be increased to a few 1e5 through support
+ACCOUNT_LIMIT
+ .UnreservedConcurrentExecutions  #NUM. Like ACCOUNT_LIMIT.ConcurrentExecutions, but minus reserved concurrencies
+
 PutFunctionConcurrency()          #Request parameters: CONCURRENCY
                                   #  - also FunctionName FUNC_URL
                                   #Response body: CONCURRENCY
@@ -843,7 +905,11 @@ DeleteFunctionConcurrency()       #Request parameters: CONCURRENCY
                                   #  - also|only FunctionName FUNC_URL
                                   #Response body: empty
 
-CONCURRENCY                       #Reserved concurrency, i.e. max amount of invocations of FUNCTIONs at once
+CONCURRENCY                       #Concurrency of a given FUNCTION.
+                                  #By def, sum of each FUNCTION concurrency is limited by ACCOUNT_LIMIT.ConcurrentExecutions
+                                  #Can "reserve" concurrency to specifically limit each FUNCTION's concurrency
+                                  #  - Lowers performance
+                                  #  - But avoids one FUNCTION impacting performance of others
 CONCURRENCY
  .ReservedConcurrentExecutions    #NUM of concurrent executions
 FUNCTION.Concurrency
@@ -876,10 +942,10 @@ PCONCURRENCY.Requested
 PCONCURRENCY.Allocated
  ProvisionedConcurrentExecutions  #NUM
 
-ACCOUNT_LIMIT.ConcurrentExecutions#NUM. Max amount of FUNCTIONs running at once
-                                  #1e4, but can be increased to a few 1e5 through support
-ACCOUNT_LIMIT
- .UnreservedConcurrentExecutions  #NUM. Like ACCOUNT_LIMIT.ConcurrentExecutions, but minus reserved concurrencies
+MAX REQUESTS PER FUNC_INSTANCE ==>#Depending on InvocationType:
+                                  #  - 'RequestResponse|DryRun': 10 per second
+                                  #  - 'Event': unlimited
+                                  #But, if withing max concurrency, new FUNC_INSTANCEs will be spawned to handle the load
 
 
                                              /=+===============================+=\
@@ -891,6 +957,7 @@ ACCOUNT_LIMIT
 
 FUNC_VERSION.Timeout              #NUM (in secs). Times out for each FUNCTION's invocation
                                   #Excluding initialization, but including extensions
+                                  #Def|max: 15m
 
 FUNC_VERSION.DeadLetterConfig
  .TargetArn                       #SQS|SNS_ARN where to send async FUNCTIONs failures event payloads
