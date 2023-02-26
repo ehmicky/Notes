@@ -6,10 +6,11 @@
 
 
 TO DOCUMENT:
-  - CloudWatch logs
+  - CloudWatch
      - ENVVAR AWS_LAMBDA_LOG_GROUP_NAME, AWS_LAMBDA_LOG_STREAM_NAME
      - https://docs.aws.amazon.com/lambda/latest/dg/urls-monitoring.html
      - https://docs.aws.amazon.com/lambda/latest/dg/nodejs-logging.html
+     - https://docs.aws.amazon.com/lambda/latest/dg/lambda-monitoring.html
   - IAM: https://docs.aws.amazon.com/lambda/latest/dg/lambda-permissions.html
   - VPC:
      - https://docs.aws.amazon.com/lambda/latest/dg/foundation-networking.html
@@ -18,8 +19,9 @@ TO DOCUMENT:
   - RDS proxy: https://docs.aws.amazon.com/lambda/latest/dg/configuration-database.html
   - AWS signer: https://docs.aws.amazon.com/lambda/latest/dg/configuration-codesigning.html
   - AWS resource management: https://docs.aws.amazon.com/lambda/latest/dg/configuration-tags.html
+  - X-Ray: https://docs.aws.amazon.com/lambda/latest/dg/nodejs-tracing.html
 
-VERSION ==>                       #2023-03-01
+VERSION ==>                       #2023-02-09
 
 
                                              /=+===============================+=\
@@ -29,68 +31,76 @@ VERSION ==>                       #2023-03-01
                                              \=+===============================+=/
 
 
-PAGINATION ==>                    #  - request variable: Marker STR, MaxItems STR (max: 1e4)
-                                  #  - response body: NextMarker STR
+PAGINATION ==>                    #Request variable: Marker STR, MaxItems STR (max: 1e4)
+                                  #Response body: NextMarker STR
 
 LIMITS ==>                        #Max 15 requests per second, except:
                                   #  - GetFunction(): 100 requests per second
                                   #  - Invoke(): no limits
 
-PRICING ==>                       #Summary:
-                                  #  - most of the price is proportional to:
-                                  #     - total duration of INVOCATIONs, especially if INVOCATION duration >15ms
-                                  #     - number of INVOCATIONs, especially if INVOCATION duration <15ms
-                                  #     - MemorySize
-                                  #  - free: 1 INVOCATION per 3s, with 400ms INVOCATION duration, MemorySize 1GB
-                                  #  - provisioned CONCURRENCY:
-                                  #     - cheap for FUNC_INSTANCEs run >60% of the time
-                                  #     - otherwise, quite expensive
-                                  #  - /tmp is cheap
-                                  #  - use ARM because cheaper
-                                  #INVOCATION:
-                                  #  - 1$ per 5e6 INVOCATIONs
-                                  #  - free: first 1e6 INVOCATIONs, per month (~1 per 3s)
-                                  #Duration:
-                                  #  - amount of time spent running FUNCTION|extensions initialization, INVOCATIONs and shutdown
-                                  #  - does not include time frozen, i.e. between INVOCATIONs
-                                  #  - each INVOCATION's duration is rounded up to 1ms
-                                  #  - 1$ per 7.5e3 seconds (~21h) with MemorySize 1GB
-                                  #  - price is proportional to duration + MemorySize
-                                  #  - free: 4e5 seconds (~4.5 days) with MemorySize 1GB, per month
-                                  #  - i.e. same price as INVOCATION cost if:
-                                  #     - 400ms per INVOCATION, with 1GB (in free tier)
-                                  #     - 15ms per INVOCATION, with 1GB (out of free tier)
-                                  #  - 25% more expensive with x86_64
-                                  #  - high duration discount:
-                                  #     - 10% cheaper over 7.5e9 seconds, with MemorySize 1GB, per month (~3000 FUNC_INSTANCEs fulltime)
-                                  #     - 20% cheaper over 11.25e9 seconds, with MemorySize 1GB, per month (~7000 FUNC_INSTANCEs fulltime)
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:            PRICING            :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+SUMMARY ==>                       #Most of the price is proportional to:
+                                  #  - total duration of INVOCATIONs, especially if INVOCATION duration >15ms
+                                  #  - number of INVOCATIONs, especially if INVOCATION duration <15ms
+                                  #  - MemorySize
+                                  #Free: 1 INVOCATION per 3s, with 400ms INVOCATION duration, MemorySize 1GB
                                   #Provisioned CONCURRENCY:
-                                  #  - 9$ per month, per provisioned CONCURRENCY, with MemorySize 1GB
-                                  #  - price is proportional to:
-                                  #     - MemorySize
-                                  #     - provisioned CONCURRENCY
-                                  #     - percentage of time it was enabled
-                                  #        - but not proportional to INVOCATIONs duration
-                                  #  - impacts INVOCATIONs duration price:
-                                  #     - 40% cheaper
-                                  #     - no free tier, nor high duration discount
-                                  #  - free: none
-                                  #  - provisioning the CONCURRENCY of a FUNC_INSTANCE can be less|more expensive,
-                                  #    depending on how much it runs:
-                                  #     (excuding free tier)
-                                  #     - 100% of the time: 15% cheaper
-                                  #     - 60% of the time: same price
-                                  #     - 30% of the time: 40% more expensive
-                                  #     - 10% of the time: 2x more expensive
-                                  #     - 1% of the time: 25x more expensive
-                                  #  - i.e. possible scenarios for a given FUNC_INSTANCE
-                                  #     - high-utilization: cheaper
-                                  #     - low-utilization: high fixed cost, in exchange for high latency
-                                  #/tmp cost:
-                                  #  - 1$ per 3e7 seconds (~1 year) with EphemeralStorage.Size 1GB
-                                  #  - i.e. when MemorySize === EphemeralStorage.Size, /tmp is 4000 times cheaper than RAM
-                                  #  - free: none
-                                  #Data transfer: same as EC2
+                                  #  - cheap for FUNC_INSTANCEs run >60% of the time
+                                  #  - otherwise, quite expensive
+                                  #/tmp is cheap
+                                  #Use ARM because cheaper
+
+INVOCATIONS ==>                   #1$ per 5e6 INVOCATIONs
+                                  #Free: first 1e6 INVOCATIONs, per month (~1 per 3s)
+
+DURATION ==>                      #Amount of time spent running FUNCTION|extensions initialization, INVOCATIONs and shutdown
+                                  #Does not include time frozen, i.e. between INVOCATIONs
+                                  #Each INVOCATION's duration is rounded up to 1ms
+                                  #1$ per 7.5e3 seconds (~21h) with MemorySize 1GB
+                                  #Price is proportional to duration + MemorySize
+                                  #Free: 4e5 seconds (~4.5 days) with MemorySize 1GB, per month
+                                  #I.e. same price as INVOCATION cost if:
+                                  #  - 400ms per INVOCATION, with 1GB (in free tier)
+                                  #  - 15ms per INVOCATION, with 1GB (out of free tier)
+                                  #25% more expensive with x86_64
+                                  #High duration discount:
+                                  #  - 10% cheaper over 7.5e9 seconds, with MemorySize 1GB, per month (~3000 FUNC_INSTANCEs fulltime)
+                                  #  - 20% cheaper over 11.25e9 seconds, with MemorySize 1GB, per month (~7000 FUNC_INSTANCEs fulltime)
+
+PROVISIONED CONCURRENCY ==>       #9$ per month, per provisioned CONCURRENCY, with MemorySize 1GB
+                                  #Price is proportional to:
+                                  #  - MemorySize
+                                  #  - provisioned CONCURRENCY
+                                  #  - percentage of time it was enabled
+                                  #     - but not proportional to INVOCATIONs duration
+                                  #Impacts INVOCATIONs duration price:
+                                  #  - 40% cheaper
+                                  #  - no free tier, nor high duration discount
+                                  #Free: none
+                                  #Provisioning the CONCURRENCY of a FUNC_INSTANCE can be less|more expensive,
+                                  #Depending on how much it runs:
+                                  #  (excuding free tier)
+                                  #  - 100% of the time: 15% cheaper
+                                  #  - 60% of the time: same price
+                                  #  - 30% of the time: 40% more expensive
+                                  #  - 10% of the time: 2x more expensive
+                                  #  - 1% of the time: 25x more expensive
+                                  #I.e. possible scenarios for a given FUNC_INSTANCE
+                                  #  - high-utilization: cheaper
+                                  #  - low-utilization: high fixed cost, in exchange for high latency
+
+/TMP ==>                          #1$ per 3e7 seconds (~1 year) with EphemeralStorage.Size 1GB
+                                  #I.e. when MemorySize === EphemeralStorage.Size, /tmp is 4000 times cheaper than RAM
+                                  #Free: none
+
+DATA TRANSFER ==>                 #Same as EC2
 
 
                                              /=+===============================+=\
@@ -589,7 +599,7 @@ FUNC_VERSION.Environment          #'VAL'. Environment variable.
 
 FUNC_VERSION.KMSKeyArn            #AWS KMS key ARN. Encrypt environment variables
                                   #Also encrypts SNAP_START's snapshot, if any
-                                  #Def: automatically created
+                                  #Def: automatically created, named 'aws/lambda'
 ENCRYPTION IN TRANSIT ==>         #Can encrypt each environment variable not only when persisted, but also its value runtime
                                   #Must be done through UI
 
@@ -1411,6 +1421,7 @@ ES MODULES ==>                    #Normal Node.js behavior, i.e. can use *.mjs|c
 
 AUTOMATICALLY INCLUDED ==>        #  - npm (from Node.js version)
                                   #  - aws-sdk
+                                  #  - @types/aws-lambda: Handler, Context, REQs for different triggers
 
 index.[m]js                       #Default main FILE
 
