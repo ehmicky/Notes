@@ -15,6 +15,8 @@ VERSION ==>                   #2023-03-21
                                              \=+===============================+=/
 
 
+NAME ==>                      #Identity and Access Management
+
 PAGINATION ==>                #Request variable: Marker STR, MaxItems STR (def|max: 1e4)
                               #Res: IsTruncated BOOL, Marker STR
 
@@ -197,7 +199,6 @@ DeleteRole()                  #Req: ROLE
 
 ROLE                          #Like a group, but with temporary assigned USERs.
                               #Credentials: STS only
-                              #By default everyone can sts:AssumeRole, i.e. must create a POLICY for it
                               #Max 1000 (up to 5000 on request) (SUMMARY_MAP.Roles[Quota])
 ROLE.Arn                      #ROLE_ARN. 'arn:aws:iam::ACCOUNT_ID:role[/PATH]/NAME'
 ROLE.RoleId                   #ROLE_MID
@@ -210,8 +211,12 @@ ROLE_LAST_USED.Region         #'REGION'
 ROLE.Description              #STR
 ROLE.AssumeRolePolicyDocument #POLICY_DOC. "Trust policy"
                               #Must specify:
-                              #  - sts:SERVICE_ACTION
                               #  - Principal
+                              #  - sts:SERVICE_ACTION
+                              #  - iam:PassRole, if Principal is 'SERVICE_DOMAIN'
+                              #Def: allow all
+                              #  - which is not secure
+                              #Root is never allowed to sts:*
                               #Max 2KB (up to 4KB on request) (SUMMARY_MAP.AssumeRolePolicySizeQuota)
 ROLE.MaxSessionDuration       #NUM (in secs). Max value of STS DurationSeconds
                               #Min|def 1h, max 12h
@@ -464,7 +469,7 @@ DeactivateMFADevice()         #Req: MFA_DEVICE
 
 MFA_DEVICE                    #MFA hardware device used to authenticate a USER
                               #Max 1 per user
-MFA_DEVICE.SerialNumber       #'MFA_DEVICE'
+MFA_DEVICE.SerialNumber       #MFA_DEVICE_MID
 MFA_DEVICE.UserName           #'USER'
 MFA_DEVICE.EnableDate         #'DATE'
 MFA_DEVICE.AuthenticationCode1#STR. First code from MFA device on creation.
@@ -1284,6 +1289,7 @@ ORG_JOB.SortKey               #'{TYPE}_ASCENDING|DESCENDING' with TYPE being 'SE
 ORG_REPORT                    #List of all accesses in a given ORG
                               #Only last 400 days
                               #Does not include anonymous accesses (e.g. S3)
+                              #Include failed accesses
 ORG_REPORT.JobCreationDate    #'DATE'
 ORG_REPORT.JobCompletionDate  #'DATE'. null if JobStatus 'IN_PROGRESS'
 ORG_REPORT.JobStatus          #'IN_PROGRESS' or 'COMPLETED|FAILED'
@@ -1298,14 +1304,14 @@ ORG_ERROR.Code|Message        #STR. Error retrieving ORG_ACCESS
 
 ORG_REPORT.AccessDetails      #ORG_ACCESS_ARR
 ORG_ACCESS                    #Single access in a given ORG
-ORG_ACCESS.EntityPath         #'ORG_ID/ORG_ROOT_ID/PARENT_OU_ID/ACCOUNT_ID' of the accessor
-ORG_ACCESS
-  .TotalAuthenticatedEntities #NUM of ACCOUNTs within accessing ORG that tried to access
-ORG_ACCESS
- .LastAuthenticatedTime       #'DATE' of most recent access
 ORG_ACCESS.Region             #'REGION' being accessed
 ORG_ACCESS.ServiceNamespace   #'SERVICE' being accessed
 ORG_ACCESS.ServiceName        #'SERVICE' being accessed, human-friendly
+ORG_ACCESS
+ .LastAuthenticatedTime       #'DATE' of most recent access
+ORG_ACCESS.EntityPath         #'ORG_ID/ORG_ROOT_ID/PARENT_OU_ID/ACCOUNT_ID' of the accessor
+ORG_ACCESS
+  .TotalAuthenticatedEntities #NUM of ACCOUNTs within accessing ORG that tried to access
 
 
                                              /=+===============================+=\
@@ -1318,24 +1324,116 @@ ORG_ACCESS.ServiceName        #'SERVICE' being accessed, human-friendly
 GenerateServiceLastAccessed   #Req: SERVICE_REQ
  Details()                    #Res: SERVICE_JOB
                               #  - no ServiceNamespace
-GetServiceLastAccessed        #Req: SERVICE_JOB
- Details()                    #  - no ServiceNamespace
-                              #Res: SERVICE_REPORT
-GetServiceLastAccessed        #Req: SERVICE_JOB
- DetailsWithEntities()        #Res: SERVICE_ENTITIES_REPORT
-
+SERVICE_REQ                   #Requests SERVICE_REPORT|SERVICE_ENTITIES_REPORT
+                              #Only last 400 days
+                              #Include failed accesses
 SERVICE_REQ.Arn               #USER|GROUP|ROLE|POLICY_ARN
-SERVICE_REQ.Granularity       #Whether to include action data: 'ACTION_LEVEL' (yes) or 'SERVICE_LEVEL' (no, def)
+SERVICE_REQ.Granularity       #Whether to include ACTION_ACCESSes: 'ACTION_LEVEL' (yes) or 'SERVICE_LEVEL' (no, def)
 
 SERVICE_JOB.JobId             #STR
 SERVICE_JOB.ServiceNamespace  #'SERVICE'
 
+GetServiceLastAccessed        #Req: SERVICE_JOB
+ Details()                    #  - no ServiceNamespace
+                              #Res: SERVICE_REPORT
+SERVICE_REPORT                #List of accesses for all SERVICEs
+SERVICE_REPORT.JobCreationDate#'DATE'
 SERVICE_REPORT
+ .JobCompletionDate           #'DATE'
+SERVICE_REPORT.JobStatus      #'IN_PROGRESS' or 'COMPLETED|FAILED'
+SERVICE_REPORT
+ .Error.Code|Message          #STR, when JobStatus 'FAILED'
+SERVICE_REPORT.JobType        #SERVICE_REQ.Granularity
 
+SERVICE_REPORT
+ .ServiceLastAccessed         #SERVICE_ACCESS_ARR
+SERVICE_ACCESS                #List of accesses for one SERVICE
+SERVICE_ACCESS
+ .ServiceNamespace            #'SERVICE' being accessed
+SERVICE_ACCESS.ServiceName    #'SERVICE' being accessed, human-friendly
+SERVICE_ACCESS
+ .LastAuthenticated           #'DATE' of most recent access
+SERVICE_ACCESS
+ .LastAuthenticatedEntity     #USER|ROLE_ARN of accessor
+SERVICE_ACCESS
+ .LastAuthenticatedRegion     #'REGION' of the accessor
+SERVICE_ACCESS
+ .TotalAuthenticatedEntities  #NUM of USER|ROLEs that tried to access
+SERVICE_ACCESS
+ .TrackedActionsLastAccessed  #ACTION_ACCESS_ARR
+
+ACTION_ACCESS                 #List of accesses for one AWS_ACTION
+ACTION_ACCESS.ActionName      #'SERVICE_ACTION'
+ACTION_ACCESS.LastAccessedTime#'DATE' of most recent access
+ACTION_ACCESS
+ .LastAccessedEntity          #USER|ROLE_ARN of most recent accessor
+ACTION_ACCESS
+ .LastAccessedRegion          #'REGION' of most recent accessor
+
+GetServiceLastAccessed        #Req: SERVICE_JOB
+ DetailsWithEntities()        #Res: SERVICE_ENTITIES_REPORT
+SERVICE_ENTITIES_REPORT       #List of accesses for one SERVICE
 SERVICE_ENTITIES_REPORT
+ .JobCreationDate
+ |JobCompletionDate|JobStatus
+ |Error                       #Like SERVICE_REPORT.*
+SERVICE_ENTITIES_REPORT
+ .EntityDetailsList           #ENTITY_ACCESS_ARR
 
-TODO ==>
-GetAccountAuthorizationDetails()
+ENTITY_ACCESS                 #List of accesses for one SERVICE and one UGROLE
+ENTITY_ACCESS
+ .LastAuthenticated           #'DATE' of most recent access
+ENTITY_ACCESS.EntityInfo      #ENTITY_INFO
+ENTITY_INFO.Arn               #UGROLE_ARN
+ENTITY_INFO.Id                #UGROLE_MID
+ENTITY_INFO.Name              #'UGROLE'
+ENTITY_INFO.Path              #ARN_PATH
+ENTITY_INFO.Type              #'USER|GROUP|ROLE'
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:            SUMMARY            :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+GetAccountAuthorization       #Req: SUMMARY_REQ
+ Details()                    #Res: SUMMARY
+
+SUMMARY_REQ                   #
+SUMMARY_REQ.Filter            #'User|Role|Group|LocalManagedPolicy|AWSManagedPolicy'_ARR
+                              #Exclude specific types from SUMMARY.*
+SUMMARY                       #All of ACCOUNT's current UGROLEs, POLICYs, POLICY_VERSIONs, MPOLICYs, IPOLICYs, PERM_BOUNDARYs and INSTANCE_PROFILEs
+
+SUMMARY.UserDetailList        #USER_INFO_ARR
+USER_INFO                     #Like USER but without PasswordLastUsed
+
+SUMMARY.GroupDetailList       #GROUP_INFO_ARR
+GROUP_INFO                    #Like GROUP
+USER_INFO.GroupList           #'GROUP_ARR'
+
+SUMMARY.RoleDetailList        #ROLE_INFO_ARR
+ROLE_INFO                     #Like ROLE but no Description, MaxSessionDuration
+
+SUMMARY.Policies              #POLICY_INFO_ARR
+POLICY_INFO                   #Like POLICY but no Tags
+POLICY_INFO.PolicyVersionList #POLICY_VERSION_ARR, without PolicyArn
+
+USER_INFO|GROUP_INFO|ROLE_INFO
+ .AttachedManagedPolicies     #MPOLICY_INFO_ARR
+MPOLICY_INFO                  #Like MPOLICY but without UGROLEName
+
+USER_INFO.UserPolicyList
+GROUP_INFO.GroupPolicyList
+ROLE_INFO.RolePolicyList      #IPOLICY_INFO_ARR
+IPOLICY_INFO                  #Like IPOLICY but without UGROLEName
+
+USER_INFO|ROLE_INFO
+ .PermissionsBoundary         #ATTACHED_PERM_BOUNDARY
+
+ROLE_INFO.InstanceProfileList #INSTANCE_PROFILE_ARR
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -1344,72 +1442,95 @@ GetAccountAuthorizationDetails()
                                              \=+===============================+=/
 
 
-STS ==>                       #Security Token Service.
-                              #One-time passwords
-                              #Used with user|roles
-                              #Only option if client-side
-                              #  - in order to keep user's access key secret
-                              #  - including mobile app
-                              #  - usually through login options
-                              #Not with CloudHSM, Beanstalk, FPS, FWS, Marketplace Management Portal, Mechanical Turk, WorkSpaces
+NAME ==>                      #Security Token Service.
 
-ROLES ==>                     #Sets of policies, that temp tokens requesters "assume".
+TEMP_CREDS                    #Temporary credentials
+                              #Allows:
+                              #  - expiration
+                              #  - not revealing access key secret
+                              #  - session policy, i.e. further restrictions than current user
+TEMP_CREDS.AccessKeyId        #ACCESS_KEY_ID
+TEMP_CREDS.SecretAccessKey    #SECRET_ACCESS_KEY
+TEMP_CREDS.SessionToken       #SESSION_TOKEN.
+                              #To include as part of authentication.
+TEMP_CREDS.Expiration         #'DATE'
+                              #Computed by *_REQ.DurationSeconds NUM
+                              #Min: 15m
+                              #With Get*Token(), unless root:
+                              #  - def: 12h, max: 36h
+                              #Otherwise:
+                              #  - def|max: 1h
+                              #  - with AssumeRole*(): max can be changed with ROLE.MaxSessionDuration
 
-CREATING TEMP TOKENS ==>      #Uses API calls:
-                              #  - Role-based:
-                              #     - AssumeRole: AWS account-based or AWS service-based roles
-                              #     - AssumeRoleWithWebIdentity: other logins-based roles
-                              #     - AssumeRoleWithSAML: SAML-based roles
-                              #  - Same permissions as another user:
-                              #     - GetSessionToken: normal users.
-                              #     - GetFederationToken: proxy-based roles
+getSessionToken()             #Req: MFA_REQ
+                              #Res: Credentials TEMP_CREDS
+
+MFA_REQ                       #Request a TEMP_CREDS using a [VIRTUAL_]MFA_DEVICE
                               #Permissions:
-                              #  - anyone (except root) can assume a ROLE, so policy sts:* with Condition must be set
-                              #    (usually in AssumeRolePolicyDocument)
-                              #     - exception: to use ec2:RunInstances() with instance profile, USER must also have
-                              #       permission iam:PassRole on ROLE_ARN
-                              #     - It is also good idea to give user iam:ListInstanceProfiles permission
-                              #  - get policies of ROLE, including default POLICY (AssumeRolePolicyDocument)
-                              #  - Permission is sts:AssumeRole for all except sts:GetFederationToken
-                              #Credentials are temp and include a SessionToken, to include with other credentials in calls.
+                              #  - same as [VIRTUAL_]MFA_DEVICE's owner
+                              #  - sts:* -> can only sts:AssumeRole|GetCallerIdentity
+                              #  - iam:* -> must include MFA information
+                              #  - cannot signin to UI with SSO
+MFA_REQ.DurationSeconds       #NUM
+MFA_REQ.SerialNumber          #[VIRTUAL_]MFA_DEVICE.SerialNumber
+MFA_REQ.TokenCode             #STR. Token shown by MFA device
 
-getSessionToken()             #Req:
-                              #  - DurationSeconds NUM
-                              #  - SerialNumber STR, TokenCode STR
-                              #Res:
-                              #  - Credentials CREDENTIALS (temp):
-                              #     - AccessKeyId ACCESS_KEY_ID
-                              #     - SecretAccessKey SECRET_ACCESS_KEY
-                              #     - SessionToken SESSION_TOKEN
-                              #     - Expiration 'DATE'
-GetFederationToken()          #Req:
-                              #  - DurationSeconds NUM
-                              #  - Name STR
-                              #  - Policy POLICY
-                              #Res:
-                              #  - Credentials CREDENTIALS (temp):
-                              #  - FederatedUser:
-                              #     - Arn FEDERATED_USER_ARN, 'arn:aws:sts::ACCOUNT_ID:federated-user/NAME'
-                              #     - FederatedUserId STR
-                              #  - PackedPolicySize NUM
+GetFederationToken()          #Req: FEDERATED_REQ
+                              #Res: FEDERATED_CREDS
 
-AssumeRole()                  #Req:
-                              #  - RoleArn ROLE_ARN: ROLE to assume
-                              #  - RoleSessionName NAME: temporary session NAME
-                              #  - DurationSeconds NUM:
-                              #     - min. 15 min, max 36h (def: 12h) for GetSession|FederationToken (except if root)
-                              #     - min. 15 min, max. 1h (def) for others
-                              #  - ExternalId STR
-                              #     - becomes POLICY_VAR sts:ExternalId, shared secret for further restrictions (policy must
-                              #       use Condition to check it)
-                              #  - Policy POLICY_DOC: optional extra policy (only to restrict more)
-                              #  - SerialNumber STR, TokenCode STR: if MFA
-                              #Res:
-                              #  - AssumedRoleUser ASSUMED_ROLE_USER:
-                              #     - Arn ROLE_ARN/NAME
-                              #     - AssumedRoleId
-                              #  - Credentials CREDENTIALS
-                              #  - PackedPolicySize NUM: percentage of allowed max. size
+FEDERATED_REQ                 #Request a FEDERATED_CREDS
+FEDERATED_REQ.DurationSeconds #NUM
+FEDERATED_REQ.Name            #'FEDERATED_USER'
+FEDERATED_REQ.Policy          #POLICY_DOC.
+                              #"Session policy" restricting the credentials' permissions.
+                              #Def: allow nothing
+                              #Resource-based policies have higher priority then session policy
+                              #  - i.e. they can allow an action on a given resource, even if session policy does not allow it
+FEDERATED_REQ.PolicyArns      #Same but as POLICY_ARN_ARR
+                              #Max length 10
+FEDERATED_REQ.Tags            #AWS TAGS
+
+FEDERATED_CREDS               #TEMP_CREDS delegated by current user to a new role with lower permissions
+                              #Permissions:
+                              #  - same as current USER
+                              #  - sts:* -> can only sts:GetCallerIdentity
+                              #  - iam:* -> must use UI (not CLI|API)
+                              #  - cannot signin to UI with SSO
+FEDERATED_CREDS.Credentials   #TEMP_CREDS
+FEDERATED_CREDS.FederatedUser #FEDERATED_USER. Temporary user using a FEDERATED_CREDS
+FEDERATED_USER.Arn            #FEDERATED_USER_ARN. 'arn:aws:sts::ACCOUNT_ID:federated-user/FEDERATED_USER'
+FEDERATED_USER.FederatedUserId#FEDERATED_USER_MID
+FEDERATED_CREDS
+ .PackedPolicySize            #0-1 percentage of FEDERATED_CREDS size / max size
+
+AssumeRole()                  #Req: ASSUMED_ROLE_REQ
+                              #Res: ASSUMED_ROLE
+
+ASSUMED_ROLE_REQ              #Request an ASSUMED_ROLE
+ASSUMED_ROLE_REQ.RoleArn      #ROLE_ARN to assume
+ASSUMED_ROLE_REQ
+ .RoleSessionName             #'ASSUMED_ROLE'
+ASSUMED_ROLE_REQ
+ .DurationSeconds             #NUM
+ASSUMED_ROLE_REQ.SerialNumber
+ASSUMED_ROLE_REQ.TokenCode    #Like MFA_REQ.*
+ASSUMED_ROLE_REQ.Policy       #POLICY_DOC, like FEDERATED_REQ.Policy
+ASSUMED_ROLE_REQ.ExternalId   #STR
+                              #Becomes POLICY_VAR sts:ExternalId
+                              #Shared secret for further restrictions (policy must use Condition to check it)
+
+ASSUMED_ROLE                  #TEMP_CREDS based on a ROLE.
+                              #ROLE.AssumeRolePolicyDocument decides whether permitted.
+                              #Permissions:
+                              #  - same as ROLE
+                              #  - sts:* -> can only sts:Get*Token
+ASSUMED_ROLE.Credentials      #TEMP_CREDS
+ASSUMED_ROLE.AssumedRoleUser  #ASSUMED_ROLE_USER
+ASSUMED_ROLE_USER.Arn         #ASSUMED_ROLE_ARN. 'arn:aws:sts::ACCOUNT_ID:assumed-role/ASSUMED_ROLE'
+ASSUMED_ROLE_USER
+ .AssumedRoleId               #ASSUMED_ROLE_MID
+ASSUMED_ROLE.PackedPolicySize #Like FEDERATED_CREDS.PackedPolicySize
+
 AssumeRoleWithSAML()          #Req:
                               #  - RoleArn
                               #  - DurationSeconds NUM
@@ -1418,7 +1539,7 @@ AssumeRoleWithSAML()          #Req:
                               #  - SAMLAssertion 'BASE64'
                               #Res:
                               #  - AssumedRoleUser ASSUMED_ROLE_USER
-                              #  - Credentials CREDENTIALS
+                              #  - Credentials TEMP_CREDS
                               #  - PackedPolicySize NUM
                               #  - Audience|Issuer STR
                               #  - Subject STR
@@ -1433,7 +1554,7 @@ AssumeRoleWithWebIdentity()   #Req:
                               #  - WebIdentityToken 'OAUTH2_TOKEN'
                               #Res:
                               #  - AssumedRoleUser ASSUMED_ROLE_USER
-                              #  - Credentials CREDENTIALS
+                              #  - Credentials TEMP_CREDS
                               #  - PackedPolicySize NUM
                               #  - Audience STR
                               #  - Provider STR
@@ -1444,10 +1565,12 @@ DecodeAuthorizationMessage()  #Permission error sometimes gives an "encoded auth
                               #Req: EncodedMessage STR
                               #Res: DecodedMessage STR
 
-ASSUMED_ROLE_ARN              #'arn:aws:sts::ACCOUNT_ID:assumed-role/NAME'
-
 SUMMARY_MAP
  .GlobalEndpointTokenVersion  #1|2. STS token version
 SetSecurityTokenServicePreferences()    #IAM method
+
+GetCallerIdentity()
+
+GetAccessKeyInfo()
 
 See https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_iam-quotas.html#reference_iam-quotas-entity-length "role session *" and "SAML *"
