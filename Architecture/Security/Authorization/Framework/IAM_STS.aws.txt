@@ -18,28 +18,21 @@ VERSION ==>                   #2023-03-21
 PAGINATION ==>                #Request variable: Marker STR, MaxItems STR (def|max: 1e4)
                               #Response body: IsTruncated BOOL, Marker STR
 
-LIMITS ==>                    #???
-
 PRICING ==>                   #Free
+
+REGION ==>                    #Not REGION-specific
 
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:         ACCOUNT ALIAS         :==(
+                                            )==:            LIMITS             :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
-CreateAccountAlias()          #Request parameters: AccountAlias 'ACCOUNT_ALIAS'
-                              #Response body: empty
-ListAccountAliases()          #Request parameters: empty
-                              #Response body: AccountAliases 'ACCOUNT_ALIAS'_ARR
-DeleteAccountAlias()          #Request parameters: AccountAlias 'ACCOUNT_ALIAS'
-                              #Response body: empty
-
-ACCOUNT_ALIAS                 #STR. Alias for ACCOUNT_ID
-                              #Must be [[:alnum:]-] (hyphen only in middle)
-                              #Max 1 per ACCOUNT_ID
+GetAccountSummary()           #Response body: SUMMARY_MAP
+SUMMARY_MAP                   #IAM limits ("Quota") and usage.
+                              #Documented as OBJ, but actually an OBJ_ARR: key STR, value NUM
 
 
                                              /=+===============================+=\
@@ -67,6 +60,7 @@ PRINCIPAL                     #Who is being permitted.
                               #  - OPENID_PROVIDER_ARN
                               #  - SAML_PROVIDER_ARN
                               #     - should use Condition to test saml:aud and saml:iss, and maybe others
+                              #Can also use MID instead of ARN
 
 UROLE                         #USER|ROLE
 UGROLE                        #USER|GROUP|ROLE
@@ -99,9 +93,9 @@ DeleteUser()                  #Request parameters: USER
 
 USER                          #Real person.
                               #Not AWS service.
-                              #Max 5000
+                              #Max 5000 (SUMMARY_MAP.Users[Quota])
 USER.Arn                      #USER_ARN. 'arn:aws:iam::ACCOUNT_ID:user[/PATH]/NAME'
-USER.UserId                   #USER_ID
+USER.UserId                   #USER_MID
 USER.UserName                 #'USER'
 USER.Path                     #ARN_PATH
 USER.CreateDate               #'DATE'
@@ -150,11 +144,12 @@ DeleteGroup()                 #Request parameters: GROUP
 GROUP                         #Sets of users
                               #Allow managing permissions of multiple users.
                               #User can belong to 0, 1 or several GROUPs.
-                              #Max 100 total, 10 per user
+                              #Max 300 (up to 500 on request) (SUMMARY_MAP.Groups[Quota])
+                              #Max 10 per user (SUMMARY_MAP.GroupsPerUserQuota)
 ADMIN GROUP ==>               #Recommended instead of using root
                               #Can do everything: Action '*', Resource '*'
 GROUP.Arn                     #GROUP_ARN. 'arn:aws:iam::ACCOUNT_ID:group[/PATH]/NAME'
-GROUP.GroupId                 #GROUP_ID
+GROUP.GroupId                 #GROUP_MID
 GROUP.GroupName               #'GROUP'
 GROUP.Path                    #ARN_PATH
 GROUP.CreateDate              #'DATE'
@@ -198,9 +193,9 @@ DeleteRole()                  #Request parameters: ROLE
 ROLE                          #Like a group, but with temporary assigned USERs.
                               #Credentials: STS only
                               #By default everyone can sts:AssumeRole, i.e. must create a POLICY for it
-                              #Max 250 total, 1 per instance profile
+                              #Max 1000 (up to 5000 on request) (SUMMARY_MAP.Roles[Quota])
 ROLE.Arn                      #ROLE_ARN. 'arn:aws:iam::ACCOUNT_ID:role[/PATH]/NAME'
-ROLE.RoleId                   #ROLE_ID
+ROLE.RoleId                   #ROLE_MID
 ROLE.RoleName                 #'ROLE'
 ROLE.Path                     #ARN_PATH
 ROLE.CreateDate               #'DATE'
@@ -212,6 +207,7 @@ ROLE.AssumeRolePolicyDocument #POLICY_DOC. "Trust policy"
                               #Must specify:
                               #  - sts:SERVICE_ACTION
                               #  - Principal
+                              #Max 2KB (up to 4KB on request) (SUMMARY_MAP.AssumeRolePolicySizeQuota)
 ROLE.MaxSessionDuration       #NUM (in secs). Max value of STS DurationSeconds
                               #Min|def 1h, max 12h
 TagRole()
@@ -241,10 +237,10 @@ DeleteInstanceProfile()       #Request parameters: INSTANCE_PROFILE
                               #Response body: empty
 
 INSTANCE_PROFILE              #Container for a ROLE
-                              #Max 100
+                              #Max 1000 (up to 5000 on request) (SUMMARY_MAP.InstanceProfiles[Quota])
 INSTANCE_PROFILE.Arn          #INSTANCE_PROFILE_ARN. 'arn:aws:iam::ACCOUNT_ID:instance-profile[/PATH]/NAME'
 INSTANCE_PROFILE
- .InstanceProfileId           #INSTANCE_PROFILE_ID. Like InstanceProfileName, but machine-friendly, generated by AWS
+ .InstanceProfileId           #INSTANCE_PROFILE_MID
 INSTANCE_PROFILE
  .InstanceProfileName         #'INSTANCE_PROFILE'
 INSTANCE_PROFILE.Path         #ARN_PATH
@@ -280,6 +276,7 @@ CREDENTIALS                   #One of: LOGIN_PROFILE [+ [VIRTUAL_]MFA_DEVICE], A
                               #SAML_PROVIDER, OPENID_PROVIDER, SIGNING_CERTIFICATE or ASYM_KEY_PAIR
                               #New users have no credentials.
 ASYM_KEY_PAIR                 #Only for EC2 and CloudFront
+                              #Max 5 per USER
 
 GenerateCredentialReport()    #Request parameters: empty
                               #Response body: CREDENTIAL_REQ
@@ -441,7 +438,7 @@ DeleteVirtualMFADevice()      #Request parameters: VIRTUAL_MFA_DEVICE
                               #Response body: empty
 
 VIRTUAL_MFA_DEVICE            #MFA device used to authenticate a USER, as a mobile app
-                              #Max 1 per user
+                              #Max 1 per user (SUMMARY_MAP.AccountMFAEnabled|MFADevices[InUse])
 VIRTUAL_MFA_DEVICE
  .SerialNumber                #VIRTUAL_MFA_DEVICE_ARN. 'arn:aws:iam::ACCOUNT_ID:mfa[/PATH]/NAME'
 VIRTUAL_MFA_DEVICE
@@ -491,7 +488,7 @@ DeleteAccessKey()             #Request parameters: ACCESS_KEY
 ACCESS_KEY                    #Programmatic credentials
                               #Can be temp and accompanied by a SESSION_TOKEN (see STS)
                               #Avoid with root (prefer LOGIN_PROFILE)
-                              #Max 2 per user
+                              #Max 2 per user|root (SUMMARY_MAP.AccountAccessKeysPresent|AccessKeysPerUserQuota)
 ACCESS_KEY.AccessKeyId        #ACCESS_KEY_ID, i.e. public part of the key
                               #20 chars
 ACCESS_KEY.SecretAccessKey    #SECRET_ACCESS_KEY, i.e. private part of the key
@@ -529,6 +526,8 @@ CREDENTIAL_CONTENT
                                              \=+===============================+=/
 
 
+IDENTITY PROVIDER ==>         #SAML_PROVIDER|OPENID_PROVIDER
+
 CreateSAMLProvider()          #Request parameters: SAML_PROVIDER
                               #  - no SAMLProviderArn, CreateDate, ValidUntil
                               #Response body: SAML_PROVIDER
@@ -550,7 +549,7 @@ DeleteSAMLProvider()          #Request parameters: SAML_PROVIDER
                               #Response body: empty
 
 SAML_PROVIDER                 #Create a SAML 2.0 identity provider
-                              #Max 100
+                              #Max 100 (SUMMARY_MAP.Providers)
                               #Max 10 keys per SAML_PROVIDER
 SAML_PROVIDER.SAMLProviderArn #SAML_PROVIDER_ARN. 'arn:aws:iam::ACCOUNT_ID:saml-provider/NAME'
 SAML_PROVIDER.Name            #'SAML_PROVIDER'
@@ -598,6 +597,7 @@ DeleteOpenIDConnectProvider() #Request parameters: OPENID_PROVIDER
 
 OPENID_PROVIDER               #Create an OpenID Connect provider
                               #Google, Facebook and AWS Cognito are built-in, i.e. no need to create a OPENID_PROVIDER
+                              #Max 100 (SUMMARY_MAP.Providers)
 OPENID_PROVIDER
  .OpenIDConnectProviderArn    #OPENID_PROVIDER_ARN. 'arn:aws:iam::ACCOUNT_ID:oidc-provider/NAME'
 OPENID_PROVIDER.CreateDate    #'DATE'
@@ -637,7 +637,7 @@ DeleteSigningCertificate()    #Request parameters: SIGNING_CERTIFICATE
                               #Response body: empty
 
 SIGNING_CERTIFICATE           #X.509 client certificate for a USER to login
-                              #Max 2 per user
+                              #Max 2 per user (SUMMARY_MAP.AccountSigningCertificatesPresent|SigningCertificatesPerUserQuota)
 SIGNING_CERTIFICATE
  .CertificateId               #'SIGNING_CERTIFICATE'
 SIGNING_CERTIFICATE.UploadDate#'DATE'
@@ -693,8 +693,9 @@ DeletePolicy()                #Request parameters: POLICY
 
 POLICY                        #Set of permissions.
                               #One principal|resource can have multiple POLICYs (that are and'd).
+                              #Max 1500 (up to 5000 on request) (SUMMARY_MAP.Policies[Quota])
 POLICY.Arn                    #POLICY_ARN. 'arn:aws:iam::ACCOUNT_ID:policy[/PATH]/POLICY'
-POLICY.PolicyId               #POLICY_ID. Like PolicyName, but machine-friendly, generated by AWS
+POLICY.PolicyId               #POLICY_MID
 POLICY.PolicyName             #'POLICY'
 POLICY.Path                   #ARN_PATH
 POLICY.CreateDate             #'DATE'
@@ -738,6 +739,8 @@ DeletePolicyVersion()         #Request parameters: POLICY_VERSION
 
 POLICY_VERSION                #Specific state of a given POLICY.
                               #Each POLICY update creates a new POLICY_VERSION
+                              #Max 1e4 (SUMMARY_MAP.PolicyVersionsInUse[Quota])
+                              #Max 5 per POLICY (SUMMARY_MAP.VersionsPerPolicyQuota)
 POLICY_VERSION.VersionId      #POLICY_VERSION_ID. 'vNUM[.*]'
 POLICY_VERSION.PolicyArn      #POLICY_ARN
 POLICY_VERSION.CreateDate     #'DATE'
@@ -771,6 +774,7 @@ IPOLICY                       #POLICY without an ARN, attached to a single UGROL
 IPOLICY.PolicyName            #'POLICY'
 IPOLICY.UGROLEName            #STR
 IPOLICY.PolicyDocument        #POLICY_DOC
+                              #Max 2KB for USER, 5KB for GROUP, 10KB for ROLE (SUMMARY_MAP.GUROLEPolicySizeQuota)
 
 
                                              /=+===============================+=\
@@ -805,6 +809,8 @@ MPOLICY                       #POLICY with its own ARN, attached to 0-n UGROLEs
                               #Either:
                               #  - AWS managed policy: created by AWS
                               #  - customer managed policy: created by users
+                              #Max 10 per UGROLE (up to 20 on request) (SUMMARY_MAP.AttachedPoliciesPerGUROLEQuota)
+                              #Max 6KB (SUMMARY_MAP.PolicySizeQuota)
 MPOLICY.PolicyArn             #POLICY_ARN
 MPOLICY.PolicyName            #'POLICY'
 MPOLICY.UGROLEName            #STR
@@ -937,14 +943,14 @@ aws:PrincipalType             #Whether principal is:
                               #     - aws:userid === ACCOUNT_ID
                               #  - "User":
                               #     - Principal USER_ARN|GROUP_ARN|ROLE_ARN
-                              #     - aws:username|userid defined
+                              #     - aws:username === 'USER', aws:userid === USER.UserId
                               #  - "FederatedUser":
                               #     - Principal FEDERATED_USER_ARN, 'SERVICE.amazonaws.com' or 'DOMAIN'
                               #  - "Anonymous":
                               #     - Principal '*'
                               #  - "AssumedRole":
                               #     - Principal INSTANCE_PROFILE_ARN|ASSUMED_ROLE_ARN or SAML_PROVIDER_ARN
-                              #     - aws:userid === 'ROLE_ID:CALLER' (not if SAML)
+                              #     - aws:userid === 'ROLE_MID:CALLER' (not if SAML)
 aws:username                  #STR
 aws:userid                    #STR
 aws:CurrentTime               #"YYYY-MM-DDTHH:MM:SSZ"
@@ -1089,10 +1095,10 @@ DeleteServerCertificate()     #Request parameters: SERVER_CERTIFICATE
 SERVER_CERTIFICATE            #X.509 server certificate.
                               #Must fist create X.509 certificates manually.
                               #  - prefer using AWS Certificate Manager instead
-                              #Max 20
+                              #Max 20 (up to 1000 on request) (SUMMARY_MAP.ServerCertificates[Quota])
 SERVER_CERTIFICATE.Arn        #SERVER_CERTIFICATE_ARN. 'arn:aws:iam::ACCOUNT_ID:server-certificate[/PATH]/NAME'
 SERVER_CERTIFICATE
- .ServerCertificateId         #SERVER_CERTIFICATE_ID. Like ServerCertificateName, but machine-friendly, generated by AWS
+ .ServerCertificateId         #SERVER_CERTIFICATE_MID
 SERVER_CERTIFICATE
  .ServerCertificateName       #'SERVER_CERTIFICATE'
 SERVER_CERTIFICATE.Path       #ARN_PATH
@@ -1112,15 +1118,70 @@ SERVER_CERTIFICATE.Tags       #RESOURCE_NAME: ServerCertificateName 'SERVER_CERT
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:          ORG REPORT           :==(
+                                            )==:         ACCOUNT ALIAS         :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
-Generate
- OrganizationsAccessReport()  #
-Get
- OrganizationsAccessReport()  #
+CreateAccountAlias()          #Request parameters: AccountAlias 'ACCOUNT_ALIAS'
+                              #Response body: empty
+ListAccountAliases()          #Request parameters: empty
+                              #Response body: AccountAliases 'ACCOUNT_ALIAS'_ARR
+DeleteAccountAlias()          #Request parameters: AccountAlias 'ACCOUNT_ALIAS'
+                              #Response body: empty
+
+ACCOUNT_ALIAS                 #STR. Alias for ACCOUNT_ID
+                              #Must be [[:alnum:]-] (hyphen only in middle)
+                              #Max 1 per ACCOUNT_ID
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:           ACCESSES            :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+Generate                      #Request parameters: ORG_REQ_PARAMS
+ OrganizationsAccessReport()  #Response body: ORG_REQ
+Get                           #Request parameters: ORG_REPORT_PARAMS
+ OrganizationsAccessReport()  #Response body: ORG_REPORT
+
+ORG_REQ_PARAMS.EntityPath     #'ORG_ID/ORG_ROOT_ID/PARENT_OU_ID/ACCOUNT_ID'
+ORG_REQ_PARAMS
+ .OrganizationsPolicyId       #ORG's POLICY (SCP) ID
+
+ORG_REQ.JobId                 #STR. ORG_REPORT_PARAMS.JobId
+
+ORG_REPORT_PARAMS.JobId       #STR
+ORG_REPORT_PARAMS.SortKey     #'{TYPE}_ASCENDING|DESCENDING' with TYPE being 'SERVICE_NAMESPACE|LAST_AUTHENTICATED_TIME'
+
+ORG_REPORT                    #List of all accesses in a given ORG
+                              #Only last 400 days
+                              #Does not include anonymous accesses (e.g. S3)
+ORG_REPORT.JobCreationDate    #'DATE'
+ORG_REPORT.JobCompletionDate  #'DATE'. null if JobStatus 'IN_PROGRESS'
+ORG_REPORT.JobStatus          #'IN_PROGRESS' or 'COMPLETED|FAILED'
+
+ORG_REPORT
+ .NumberOfServicesAccessible  #NUM of SERVICEs that can be accessed with the given ORG's POLICY (SCP)
+ORG_REPORT
+ .NumberOfServicesNotAccessed #NUM of SERVICEs that can be accessed, but were not accessed
+
+ORG_REPORT.ErrorDetails       #ORG_ERROR_ARR
+ORG_ERROR.Code|Message        #STR. Error retrieving ORG_ACCESS
+
+ORG_REPORT.AccessDetails      #ORG_ACCESS_ARR
+ORG_ACCESS                    #Single access in a given ORG
+ORG_ACCESS.EntityPath         #'ORG_ID/ORG_ROOT_ID/PARENT_OU_ID/ACCOUNT_ID' of the accessor
+ORG_ACCESS
+  .TotalAuthenticatedEntities #NUM of ACCOUNTs within accessing ORG that tried to access
+ORG_ACCESS
+ .LastAuthenticatedTime       #'DATE' of most recent access
+ORG_ACCESS.Region             #'REGION' being accessed
+ORG_ACCESS.ServiceNamespace   #'SERVICE' being accessed
+ORG_ACCESS.ServiceName        #'SERVICE' being accessed, human-friendly
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -1129,21 +1190,6 @@ Get
                                              \=+===============================+=/
 
 
-GetAccountSummary()           #Response body: SummaryMap:
-                              #  - AccessKeysPerUserQuota NUM
-                              #  - AccountMFAEnabled NUM
-                              #  - AssumeRolePolicySizeQuota NUM
-                              #  - GroupPolicySizeQuota NUM
-                              #  - Groups[Quota] NUM
-                              #  - GroupsPerUserQuota NUM
-                              #  - InstanceProfiles[Quota] NUM
-                              #  - MFADevices[InUse] NUM
-                              #  - RolePolicySizeQuota NUM
-                              #  - Roles[Quota] NUM
-                              #  - ServerCertificates[Quota] NUM
-                              #  - SigningCertificatesPerUserQuota NUM
-                              #  - UserPolicySizeQuota NUM
-                              #  - Users[Quota] NUM
 
 
                                              /=+===============================+=\
@@ -1198,7 +1244,7 @@ GetFederationToken()          #Request parameters:
                               #Response body:
                               #  - Credentials CREDENTIALS (temp):
                               #  - FederatedUser:
-                              #     - Arn FEDERATED_USER_ARN, 'arn:aws:iam::ACCOUNT_ID:federated-user/NAME'
+                              #     - Arn FEDERATED_USER_ARN, 'arn:aws:sts::ACCOUNT_ID:federated-user/NAME'
                               #     - FederatedUserId STR
                               #  - PackedPolicySize NUM
 
@@ -1253,4 +1299,9 @@ DecodeAuthorizationMessage()  #Permission error sometimes gives an "encoded auth
                               #Request parameters: EncodedMessage STR
                               #Response body: DecodedMessage STR
 
-ASSUMED_ROLE_ARN              #'arn:aws:iam::ACCOUNT_ID:assumed-role/NAME'
+ASSUMED_ROLE_ARN              #'arn:aws:sts::ACCOUNT_ID:assumed-role/NAME'
+
+SUMMARY_MAP
+ .GlobalEndpointTokenVersion  #1|2. STS token version
+
+See https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_iam-quotas.html#reference_iam-quotas-entity-length "role session *" and "SAML *"
