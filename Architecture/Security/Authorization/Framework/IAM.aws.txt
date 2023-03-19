@@ -8,6 +8,7 @@
 TODO ==>
   - https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_tagging.html
   - https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_aws-services-that-work-with-iam.html
+  - https://docs.aws.amazon.com/service-authorization/latest/reference/reference_policies_actions-resources-contextkeys.html
 
 VERSION ==>                   #2022-11-16
 
@@ -56,34 +57,20 @@ SUMMARY_MAP                   #IAM limits ("Quota") and usage.
 ROOT ==>                      #1 per AWS account
 ROOT_ARN                      #'arn:aws:iam::ACCOUNT_ID:root'
 
-OBJ:
-  - AWS STR[_ARR] among:
-     - ROOT_ARN|ACCOUNT_ID
-     - USER_ARN|FEDERATED_USER_ARN
-     - [ASSUMED_]ROLE_ARN
-     - '*'
-        - principals must also have identity-based permissions, if in a different account
-  - CanonicalUser CANONICAL_ACCOUNT_ID[_ARR]
-  - Federated SAML_PROVIDER_ARN|'DOMAIN'[_ARR]
-  - Service 'SERVICE_DOMAIN'[_ARR]
-'*': like AWS '*'
-NotPrincipal:
-  - should include ASSUMED_ROLE -> ROLE -> USER -> ROOT
-     - e.g. if ROLE, should include USER|ROOT too
-
 PRINCIPAL                     #Who is being permitted.
                               #Can be:
-                              #  - ROOT_ARN, or alternatively:
+                              #  - "Account": ROOT, or alternatively:
                               #     - ACCOUNT_ID
                               #     - CANONICAL_ACCOUNT_ID: only for S3
-                              #  - USER_ARN
-                              #     - including as FEDERATED_USER_ARN
-                              #  - [ASSUMED_]ROLE_ARN
-                              #     - including through SAML|OpenID
-                              #        - either as [ASSUMED_]ROLE_ARN, or as SAML_PROVIDER_ARN|'DOMAIN'
-                              #     - including for 'SERVICE_DOMAIN'
-                              #  - INSTANCE_PROFILE_ARN
-                              #Can also use MID instead of ARN
+                              #  - "User": USER
+                              #  - "FederatedUser": FEDERATED_USER
+                              #  - "AssumedRole": [ASSUMED_]ROLE, including through:
+                              #     - 'SERVICE_DOMAIN'
+                              #     - INSTANCE_PROFILE
+                              #     - SAML|OpenID
+                              #        - either as [ASSUMED_]ROLE, or as SAML_PROVIDER|'DOMAIN'
+                              #  - "Anonymous"
+                              #     - only for S3, SNS, SQS
 
 UROLE                         #USER|ROLE
 UGROLE                        #USER|GROUP|ROLE
@@ -813,10 +800,26 @@ STATEMENT.Resource            #Resource ARN[_ARR]
                               #Can use wildcard *
 STATEMENT.Principal           #PRINCIPAL
                               #POLICY must be attached to a resource: "resource-based policy"
+                              #OBJ:
+                              #  - AWS STR among:
+                              #     - ROOT_ARN|ACCOUNT_ID
+                              #     - USER_ARN
+                              #     - FEDERATED_USER_ARN
+                              #     - [ASSUMED_]ROLE_ARN
+                              #     - '*'
+                              #  - CanonicalUser CANONICAL_ACCOUNT_ID
+                              #  - Federated SAML_PROVIDER_ARN|'DOMAIN'
+                              #  - Service 'SERVICE_DOMAIN'
+                              #'*': shortcut for AWS '*'
+                              #Every value can optionally be an ARR
+                              #Can also use MID instead of ARN
+                              #When using '*', PRINCIPALs must also have identity-based permissions, if in a different account
 
-STATEMENT.NotAction
-STATEMENT.NotResource         #Like STATEMENT.Action|Resource|Principal but using inverted list.
-STATEMENT.NotPrincipal        #Cannot use both STATEMENT.* and STATEMENT.Not*
+STATEMENT.NotAction           #Like STATEMENT.Action|Resource|Principal but using inverted list.
+STATEMENT.NotResource         #Cannot use both STATEMENT.* and STATEMENT.Not*
+STATEMENT.NotPrincipal        #With NotPrincipal:
+                              #  - should include ASSUMED_ROLE -> ROLE -> USER -> ROOT
+                              #  - e.g. if ROLE, should include USER|ROOT too
 
 
                                              /=+===============================+=\
@@ -827,30 +830,42 @@ STATEMENT.NotPrincipal        #Cannot use both STATEMENT.* and STATEMENT.Not*
 
 
 STATEMENT.Condition           #VAL[_ARR]
- .CONDITION_TEST.POLICY_VAR   #Applies STATEMENT only if CONDITION_TEST(POLICYVAR, VAL[_ARR]) is true
+ .CONDITION_OP.POLICY_VAR     #Applies STATEMENT only if CONDITION_OP(POLICYVAR, VAL[_ARR]) is true
 
-CONDITION_TEST                #Any of the following
-ForAnyValue:CONDITION_TEST
- (VAL_ARR, VAL2)              #CONDITION_TEST(VAL, VAL2) || ...
-ForAllValue:CONDITION_TEST
- (VAL_ARR, VAL2)              #CONDITION_TEST(VAL, VAL2) && ...
-CONDITION_TESTIfExists
+CONDITION_OP                  #"Condition operator". Any of the following.
+
+GLOB                          #Can only use: * ?
+BOOL                          #"true|false", not true|false
+
+ForAnyValue:CONDITION_OP
+ (VAL_ARR, VAL2)              #CONDITION_OP(VAL, VAL2) || ...
+ForAllValue:CONDITION_OP
+ (VAL_ARR, VAL2)              #CONDITION_OP(VAL, VAL2) && ...
+
+CONDITION_OPIfExists
  (VAL, VAL2)                  #Adds: VAL !== undefined
 Null(VAL, BOOL)               #VAL ===|!== undefined
+
 Bool(BOOL, BOOL2)             #BOOL === BOOL2
+
 String[Not]Equals[IgnoreCase]
  (STR, STR2)                  #STR ===|!== STR2
 String[Not]Like(STR, 'GLOB')  #STR =~|!=~ 'GLOB'
+
 Numeric[Not]Equals(NUM, NUM2) #NUM ===|!== NUM2
 NumericLess|GreaterThan
  [Equals](NUM, NUM2)          #NUM <|<=|>|>= NUM2
+
 Date[Not]Equals
- ('DATE', 'DATE2')            #DATE ===|!== DATE2
+ ('DATE', 'DATE2')            #'DATE' ===|!== 'DATE2'
 DateLess|GreaterThan
- [Equals]('DATE', 'DATE2')    #DATE <|<=|>|>= DATE2
+ [Equals]('DATE', 'DATE2')    #'DATE' <|<=|>|>= 'DATE2'
+
 BinaryEquals(BUFFER, 'BASE64')#BUFFER === 'BASE64'
+
 Arn[Not]Equals('ARN', 'ARN2') #'ARN' ===|!== 'ARN2'
 Arn[Not]Like('ARN', 'GLOB')   #'ARN' =~|!=~ 'GLOB'
+
 [Not]IpAddress('IP', 'IP2')   #'IP' =~ 'IP2' (can use mask)
 
 
@@ -861,30 +876,23 @@ Arn[Not]Like('ARN', 'GLOB')   #'ARN' =~|!=~ 'GLOB'
                                              \=+===============================+=/
 
 
-POLICY_VAR                    #Can be used in:
-                              #  - CONDITION_TEST.POLICY_VAR key
-                              #  - CONDITION_TEST.POLICY_VAR value, as ${POLICYVAR}
+POLICY_VAR                    #"Condition key". Can be used in:
+                              #  - CONDITION_OP.POLICY_VAR key
+                              #  - CONDITION_OP.POLICY_VAR value, as ${POLICYVAR}
                               #  - POLICY_DOC, as ${POLICY_VAR}
                               #If ${POLICY_VAR}, can preprend|append STR.
-                              #Can be any of the following values.
-                              #Some AWS services define their own too.
+                              #Name is case-insensitive
+                              #Can be any of the following values ("global").
+                              #Some AWS services define their own too ("service-specific").
 
-aws:PrincipalType             #Whether PRINCIPAL is:
-                              #  - "Account":
-                              #     - Principal ACCOUNT_ID|ROOT_ARN
-                              #     - aws:userid === ACCOUNT_ID
-                              #  - "User":
-                              #     - Principal USER_ARN|GROUP_ARN|ROLE_ARN
-                              #     - aws:username === 'USER', aws:userid === USER.UserId
-                              #  - "Anonymous":
-                              #     - Principal '*'
-                              #  - "FederatedUser":
-                              #     - Principal FEDERATED_USER_ARN, 'SERVICE_DOMAIN' or 'DOMAIN'
-                              #  - "AssumedRole":
-                              #     - Principal ASSUMED_ROLE_ARN|INSTANCE_PROFILE_ARN or SAML_PROVIDER_ARN|OPENID_PROVIDER_ARN
-                              #     - aws:userid === 'ROLE_MID:CALLER' (not if SAML)
-aws:username                  #STR
-aws:userid                    #STR
+aws:PrincipalType             #"Account|User|FederatedUser|AssumedRole|Anonymous"
+aws:username                  #'USER' if PrincipalType 'User'. Absent otherwise.
+aws:userid                    #Depending on PrincipalType:
+                              #  - "Account": ACCOUNT_ID
+                              #  - "User": USER_MID
+                              #  - "FederatedUser": 'ACCOUNT_ID:FEDERATED_USER'
+                              #  - "AssumedRole": 'ROLE_MID:ASSUMED_ROLE|INSTANCE_PROFILE_MID'
+                              #  - "Anonymous": 'anonymous'
 
 aws:CurrentTime               #"YYYY-MM-DDTHH:MM:SSZ"
 aws:EpochTime                 #NUM
