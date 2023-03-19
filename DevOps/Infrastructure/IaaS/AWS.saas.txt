@@ -265,17 +265,16 @@ DOMAIN ==>                    #SERVICE[.REGION].amazonaws.com
 HTTP METHOD ==>               #Either GET|POST, for any ACTION
 
 Content-Type [C|S]            #Depending on SERVICE:
+                              #  - none: query variables (REQ only)
                               #  - application/x-www-form-urlencoded
                               #  - XML
                               #VAL_ARR:
                               #  - query variable: VAR.NUM. (1-based)
-                              #  - JSON: ARR
+                              #  - urlencoded: VAR.NUM. (1-based)
                               #  - XML: <KEYSet|KEYList><VAR></VAR>...</KEYSet|KEYList>
 Content-Length [C|S]          #
-Content-MD5 [C]               #Only for S3
 
 REQ                           #Request parameters
-                              #Instead of request body, can also use query variables
 
 REQ.Action                    #AWS_ACTION
 REQ.Version                   #'YYYY-MM-DD'. Service API version
@@ -328,6 +327,10 @@ X-Amz-HEADER [C|S]            #Use HEADER [C|S] instead
 
 RES.Errors                    #OBJ_ARR: Code STR, Message STR, Resource STR, RequestId STR
 
+ONLY FOR S3 ==>               #
+Content-MD5 [C]               #
+REQ.X-Amz-Content-SHA256      #'SHA256' hash of request body
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -338,34 +341,55 @@ RES.Errors                    #OBJ_ARR: Code STR, Message STR, Resource STR, Req
 
 VERSION 4 SIGNATURE A ==>     #
 REQ.X-Amz-Algorithm           #'AWS4-HMAC-SHA256'
-REQ.X-Amz-Credential          #'RANDOM/DATE/REGION/SERVICE/aws4_request'
-REQ.X-Amz-SignedHeaders       #'HEADER'_ARR
-REQ.X-Amz-Signature           #HASH
-REQ.X-Amz-Content-SHA256      #
-REQ.[X-Amz-]Date              #'DATE'
+REQ.X-Amz-Credential          #'ACCESS_KEY_ID/YYYYMMDD/REGION/SERVICE/aws4_request'
+REQ.X-Amz-SignedHeaders       #'HEADER'_ARR among: Host|X-Amz-Date
+REQ.X-Amz-Signature           #'HMAC_SHA256':
+                              #  - of:
+                              #     - 'AWS4-HMAC-SHA256'
+                              #     - 'DATE'
+                              #     - 'YYYYMMDD/REGION/SERVICE/aws4_request'
+                              #     - 'SHA256' of:
+                              #        - HTTP method
+                              #        - URI path
+                              #           - URI encoded unless S3
+                              #        - query string
+                              #        - all headers, sorted, name + values
+                              #        - only signed headers, sorted, only names
+                              #        - 'SHA256' of request body
+                              #  - signed with 'HMAC_SHA256'
+                              #     - of:
+                              #        - 'YYYYMMDD'
+                              #        - 'REGION'
+                              #        - 'SERVICE'
+                              #        - 'aws4_request'
+                              #     - signed with 'AWS4' + SECRET_ACCESS_KEY
+REQ.X-Amz-SecurityToken       #STS 'SESSION_TOKEN'
+REQ.X-Amz-Date                #'DATE'
 
 VERSION 4 SIGNATURE B ==>     #Alternative
 Authorization:
- AWS4-HMAC-SHA256 [C]         #Of AUTH_VAR=VAL,...
-AUTH_VAR Credential           #'RANDOM/DATE/REGION/SERVICE/aws4_request'
-AUTH_VAR SignedHeaders        #'HEADER,...'
-AUTH_VAR Signature            #HASH
-X-Amz-Date [C]                #'DATE'
+ AWS4-HMAC-SHA256
+ AUTH_VAR=VAL,... [C]         #
+AUTH_VAR Credential
+AUTH_VAR SignedHeaders
+AUTH_VAR Signature
+AUTH_VAR SecurityToken
+X-Amz-Date [C]                #Same as above
 
 VERSION 2 SIGNATURE ==>       #Only for SimpleDB
 REQ.AWSAccessKeyId            #ACCESS_KEY_ID
 REQ.SignatureVersion          #2
 REQ.SignatureMethod           #'HmacSHA256'
-REQ.Signature                 #HMAC_SHA256() of:
-                              #  - HTTP method
-                              #  - URI
-                              #  - Host [C]
-                              #  - all request parameters
-                              #     - including AWSAccessKkeyId, Action, SignatureMethod, SignatureVersion, Timestamp
-                              #Signed with SECRET_ACCESS_KEY.
+REQ.Signature                 #'HMAC_SHA256':
+                              #  - of:
+                              #     - HTTP method
+                              #     - 'SERVICE_DOMAIN'
+                              #     - URI path
+                              #     - all request parameters, sorted
+                              #        - including AWSAccessKkeyId, Action, SignatureMethod, SignatureVersion, Timestamp
+                              #  - signed with SECRET_ACCESS_KEY
+REQ.SecurityToken             #STS 'SESSION_TOKEN'
 REQ.Timestamp                 #'DATE'
-
-REQ.X-Amz-SecurityToken       #STS 'SESSION_TOKEN' or DevPay token
 
 
                                              /=+===============================+=\
@@ -377,6 +401,57 @@ REQ.X-Amz-SecurityToken       #STS 'SESSION_TOKEN' or DevPay token
 
 
 AWS CONSOLE ==>               #Web UI client
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:              CLI              :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+CLI ==>                       #  - Python, not Node.js, so must use pip to install|upgrade
+                              #  - AWSCONFIG:
+                              #     - cannot use AWS.* but can use the rest
+                              #     - also ~/.aws/config, like ~/.aws/credentials (or ENVVAR AWS_CONFIG_FILE) but CLI-specific
+                              #       and use [profile PROFILE] instead of [PROFILE], and should not store credentials
+                              #     - also interactive with aws configure [--profile PROFILE] or:
+                              #        - aws configure list [--profile PROFILE]
+                              #        - aws configure get [PROFILE.]VAR [--profile PROFILE]
+                              #        - aws configure set [PROFILE.]VAR VAL [--profile PROFILE]
+                              #     - use aws ... --VAR VAL
+                              #     - extra members:
+                              #        - output: json (def), text, table
+                              #  - SERVICE not supported yet: Glacier, CloudHSM, AppStream, Mobile Analytics
+                              #  - SERVICE required to put AWSCONFIG.SERVICE (lowercased) true in PROFILE "preview": cloudfront
+                              #  - SERVICE with normal + higher-level API:
+                              #     - S3: s3api (normal), s3 (higher-level)
+                              #     - route53: route53 (unusual REST API), route53domains (usual REST API)
+                              #     - cloudsearch: cloudsearch (usual REST API), cloudsearchdomains (unusual REST API)
+                              #  - autocompletion: complete -C /usr/local/bin/aws_completer aws
+aws [[SERVICE] ACTION] help   #
+aws SERVICE ACTION            #  - ACTION|REQ_VAR: lowercase dashes instead of camelcase
+[--REQ_VAR VAL... ...]        #  - REQ_VAR:
+                              #     - if VAL is OBJ:
+                              #        - must use JSON_FILE|URL|STR
+                              #        - if not OBJ|ARR_OBJ, can use shortcut syntax:
+                              #           - if VAL is OBJ -> "VAR2=VAL2[_ARR],...", where VAL2_ARR is VAL2,...
+                              #              - e.g. "Numbers=One,Two,Letter=B"
+                              #           - if VAL is ARR -> --REQ_VAR VAL VAL2 ...
+                              #     - if VAL is BOOL: --[no-]REQ_VAR
+                              #     - --body uses FILE
+--query VAR                   #Only gets a submember of the response. VAR can be:
+                              #  - VAR.VAR2
+                              #  - VAR[NUM]
+                              #  - VAR[*]: all members (for array)
+                              #  - VAR.{NEWVAR2:OLDVAR2,...}:
+                              #     - only gets VAR.OLDVAR2..., but modifies output key names
+                              #     - OLDVAR2 can be VAR2.VAR3, VAR2[NUM], etc.
+                              #  - VAR.[VAR2...]: same but as ARR (no key names)
+--debug                       #
+--endpoint-url STR            #
+--no-paginate                 #
+--no-verify-ssl               #
 
 
                                              /=+===============================+=\
@@ -518,57 +593,6 @@ JAVASCRIPT BROWSER SDK ==>    #Like Node.js but:
                               #  - only has SERVICE: S3, SNS, STS, SQS, Kinesis, CloudWatch, DynamoDB
                               #  - to create own SDK, must git clone, then node dist-tools/browser-builder SERVICE,...,
                               #    optionally with ENVVAR MINIMY=1
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:              CLI              :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-CLI ==>                       #  - Python, not Node.js, so must use pip to install|upgrade
-                              #  - AWSCONFIG:
-                              #     - cannot use AWS.* but can use the rest
-                              #     - also ~/.aws/config, like ~/.aws/credentials (or ENVVAR AWS_CONFIG_FILE) but CLI-specific
-                              #       and use [profile PROFILE] instead of [PROFILE], and should not store credentials
-                              #     - also interactive with aws configure [--profile PROFILE] or:
-                              #        - aws configure list [--profile PROFILE]
-                              #        - aws configure get [PROFILE.]VAR [--profile PROFILE]
-                              #        - aws configure set [PROFILE.]VAR VAL [--profile PROFILE]
-                              #     - use aws ... --VAR VAL
-                              #     - extra members:
-                              #        - output: json (def), text, table
-                              #  - SERVICE not supported yet: Glacier, CloudHSM, AppStream, Mobile Analytics
-                              #  - SERVICE required to put AWSCONFIG.SERVICE (lowercased) true in PROFILE "preview": cloudfront
-                              #  - SERVICE with normal + higher-level API:
-                              #     - S3: s3api (normal), s3 (higher-level)
-                              #     - route53: route53 (unusual REST API), route53domains (usual REST API)
-                              #     - cloudsearch: cloudsearch (usual REST API), cloudsearchdomains (unusual REST API)
-                              #  - autocompletion: complete -C /usr/local/bin/aws_completer aws
-aws [[SERVICE] ACTION] help   #
-aws SERVICE ACTION            #  - ACTION|REQ_VAR: lowercase dashes instead of camelcase
-[--REQ_VAR VAL... ...]        #  - REQ_VAR:
-                              #     - if VAL is OBJ:
-                              #        - must use JSON_FILE|URL|STR
-                              #        - if not OBJ|ARR_OBJ, can use shortcut syntax:
-                              #           - if VAL is OBJ -> "VAR2=VAL2[_ARR],...", where VAL2_ARR is VAL2,...
-                              #              - e.g. "Numbers=One,Two,Letter=B"
-                              #           - if VAL is ARR -> --REQ_VAR VAL VAL2 ...
-                              #     - if VAL is BOOL: --[no-]REQ_VAR
-                              #     - --body uses FILE
---query VAR                   #Only gets a submember of the response. VAR can be:
-                              #  - VAR.VAR2
-                              #  - VAR[NUM]
-                              #  - VAR[*]: all members (for array)
-                              #  - VAR.{NEWVAR2:OLDVAR2,...}:
-                              #     - only gets VAR.OLDVAR2..., but modifies output key names
-                              #     - OLDVAR2 can be VAR2.VAR3, VAR2[NUM], etc.
-                              #  - VAR.[VAR2...]: same but as ARR (no key names)
---debug                       #
---endpoint-url STR            #
---no-paginate                 #
---no-verify-ssl               #
 
 
                                              /=+===============================+=\
