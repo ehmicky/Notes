@@ -6,12 +6,210 @@
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:              STS              :==(
+                                            )==:              API              :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
-NAME ==>                      #Security Token Service.
+NAME ==>                      #Security Token Service
+
+IAM ==>                       #The following are actually part of IAM: ROLE, INSTANCE_PROFILE, SERVICE_LINKED_ROLE
+
+PAGINATION ==>                #Request variable: Marker STR, MaxItems STR (def|max: 1e4)
+                              #Res: IsTruncated BOOL, Marker STR
+
+PRICING ==>                   #Free
+
+REGION ==>                    #Not REGION-specific
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:          CREDENTIALS          :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+TEMP_CREDS                    #Temporary credentials
+                              #Allows:
+                              #  - expiration
+                              #  - not revealing access key secret
+                              #  - session policy, i.e. further restrictions than current user
+TEMP_CREDS.AccessKeyId        #ACCESS_KEY_ID
+TEMP_CREDS.SecretAccessKey    #SECRET_ACCESS_KEY
+TEMP_CREDS.SessionToken       #SESSION_TOKEN.
+                              #To include as part of authentication.
+TEMP_CREDS.Expiration         #'DATE'
+                              #Computed by *_REQ.DurationSeconds NUM
+                              #Min: 15m
+                              #With Get*Token(), unless root:
+                              #  - def: 12h, max: 36h
+                              #Otherwise:
+                              #  - def|max: 1h
+                              #  - with AssumeRole*(): max can be changed with ROLE.MaxSessionDuration
+
+getSessionToken()             #Req: MFA_REQ
+                              #Res: Credentials TEMP_CREDS
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:              MFA              :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+MFA_REQ                       #Request a TEMP_CREDS using a [VIRTUAL_]MFA_DEVICE
+                              #Permissions:
+                              #  - same as [VIRTUAL_]MFA_DEVICE's owner
+                              #  - sts:* -> only sts:AssumeRole|GetCallerIdentity
+                              #  - iam:* -> must include MFA information
+                              #  - cannot signin to UI with SSO
+MFA_REQ.DurationSeconds       #NUM
+MFA_REQ.SerialNumber          #[VIRTUAL_]MFA_DEVICE.SerialNumber
+MFA_REQ.TokenCode             #STR. Token shown by MFA device
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:        FEDERATED USER         :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+GetFederationToken()          #Req: FEDERATED_REQ
+                              #Res: FEDERATED_CREDS
+
+FEDERATED_REQ                 #Request a FEDERATED_CREDS
+FEDERATED_REQ.DurationSeconds #NUM
+FEDERATED_REQ.Name            #'FEDERATED_USER'
+FEDERATED_REQ.Policy          #POLICY_DOC.
+                              #"Session policy" restricting the credentials' permissions.
+                              #Def: allow nothing
+                              #Resource-based policies have higher priority then session policy
+                              #  - i.e. they can allow an action on a given resource, even if session policy does not allow it
+FEDERATED_REQ.PolicyArns      #Same but as POLICY_ARN_ARR
+                              #Max length 10
+FEDERATED_REQ.Tags            #AWS TAGS
+
+FEDERATED_CREDS               #TEMP_CREDS based on current user.
+                              #I.e. superuser delegating permissions to temporary users.
+                              #Permissions:
+                              #  - same as current USER, but can be restricted by session policy
+                              #  - sts:* -> only sts:GetCallerIdentity
+                              #  - iam:* -> must use UI (not CLI|API)
+                              #  - cannot signin to UI with SSO
+FEDERATED_CREDS.Credentials   #TEMP_CREDS
+FEDERATED_CREDS.FederatedUser #FEDERATED_USER. Temporary user using a FEDERATED_CREDS
+FEDERATED_USER.Arn            #FEDERATED_USER_ARN. 'arn:aws:sts::ACCOUNT_ID:federated-user/FEDERATED_USER'
+FEDERATED_USER.FederatedUserId#FEDERATED_USER_MID
+FEDERATED_CREDS
+ .PackedPolicySize            #0-1 percentage of FEDERATED_CREDS size / max size
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:          ASSUME ROLE          :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+AssumeRole()                  #Req: ASSUMED_ROLE_REQ
+                              #Res: ASSUMED_ROLE
+
+ASSUMED_ROLE_REQ              #Request an ASSUMED_ROLE
+ASSUMED_ROLE_REQ.RoleArn      #ROLE_ARN to assume
+ASSUMED_ROLE_REQ
+ .RoleSessionName             #'ASSUMED_ROLE'
+ASSUMED_ROLE_REQ
+ .DurationSeconds             #NUM
+ASSUMED_ROLE_REQ.Policy
+FEDERATED_REQ.PolicyArns      #Like FEEDRATED_REQ.*
+ASSUMED_ROLE_REQ.SerialNumber #Like MFA_REQ.*
+ASSUMED_ROLE_REQ.TokenCode    #Optional. Meant when ROLE.AssumeRolePolicyDocument uses POLICYVAR aws:MultiFactorAuthPresent
+ASSUMED_ROLE_REQ              #STR
+ .SourceIdentity              #Becomes POLICY_VAR sts:SourceIdentity
+                              #Meant as an optional user id for authorization purpose.
+                              #Max length 64
+ASSUMED_ROLE_REQ.ExternalId   #STR
+                              #Becomes POLICY_VAR sts:ExternalId
+                              #Meant as an optional user id for authorization purpose.
+                              #Max length 1224
+ASSUMED_ROLE_REQ.Tags         #AWS TAGS
+ASSUMED_ROLE_REQ
+ .TransitiveTagKeys           #'TAG'
+
+ASSUMED_ROLE                  #TEMP_CREDS based on a POLICY (ROLE.AssumeRolePolicyDocument).
+                              #Permissions:
+                              #  - same as ROLE
+                              #  - sts:* -> no sts:Get*Token
+ASSUMED_ROLE.Credentials      #TEMP_CREDS
+ASSUMED_ROLE.AssumedRoleUser  #ASSUMED_ROLE_USER
+ASSUMED_ROLE_USER.Arn         #ASSUMED_ROLE_ARN. 'arn:aws:sts::ACCOUNT_ID:assumed-role/ASSUMED_ROLE'
+ASSUMED_ROLE_USER
+ .AssumedRoleId               #ASSUMED_ROLE_MID
+ASSUMED_ROLE.PackedPolicySize #Like FEDERATED_CREDS.PackedPolicySize
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:             SAML              :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+AssumeRoleWithSAML()          #Req:
+                              #  - RoleArn
+                              #  - DurationSeconds NUM
+                              #  - Policy POLICY_DOC
+                              #  - PrincipalArn SAML_PROVIDER_ARN
+                              #  - SAMLAssertion 'BASE64'
+                              #Res:
+                              #  - AssumedRoleUser ASSUMED_ROLE_USER
+                              #  - Credentials TEMP_CREDS
+                              #  - PackedPolicySize NUM
+                              #  - Audience|Issuer STR
+                              #  - Subject STR
+                              #  - SubjectType STR
+                              #  - NameQualifier STR: Hash(Issuer, ACCOUNT_ID, SAML_PROVIDER_ARN), identifying a user
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:         WEB IDENTITY          :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+AssumeRoleWithWebIdentity()   #Req:
+                              #  - RoleArn
+                              #  - RoleSessionName
+                              #  - DurationSeconds NUM
+                              #  - Policy POLICY_DOC
+                              #  - ProviderId DOMAIN
+                              #  - WebIdentityToken 'OAUTH2_TOKEN'
+                              #Res:
+                              #  - AssumedRoleUser ASSUMED_ROLE_USER
+                              #  - Credentials TEMP_CREDS
+                              #  - PackedPolicySize NUM
+                              #  - Audience STR
+                              #  - Provider STR
+                              #  - SubjectFromWebIdentity STR: identifying a user
+
+DecodeAuthorizationMessage()  #Permission error sometimes gives an "encoded authorization failure message" token,
+                              #that needs to be decoded.
+                              #Req: EncodedMessage STR
+                              #Res: DecodedMessage STR
+
+SUMMARY_MAP
+ .GlobalEndpointTokenVersion  #1|2. STS token version
+SetSecurityTokenServicePreferences()    #IAM method
+
+GetCallerIdentity()
+
+GetAccessKeyInfo()
+
+See https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_iam-quotas.html#reference_iam-quotas-entity-length "role session *" and "SAML *"
 
 
                                              /=+===============================+=\
@@ -42,7 +240,7 @@ DeleteRole()                  #Req: ROLE
                               #Res: empty
 
 ROLE                          #Like a group, but with temporary assigned USERs.
-                              #Credentials: STS only
+                              #Must authenticate using AssumeRole*()
                               #Max 1000 (up to 5000 on request) (SUMMARY_MAP.Roles[Quota])
 ROLE.Arn                      #ROLE_ARN. 'arn:aws:iam::ACCOUNT_ID:role[/PATH]/NAME'
 ROLE.RoleId                   #ROLE_MID
@@ -53,6 +251,13 @@ ROLE.RoleLastUsed             #ROLE_LAST_USED
 ROLE_LAST_USED.LastUsedDate   #'DATE'. null if not used in last 400 days
 ROLE_LAST_USED.Region         #'REGION'
 ROLE.Description              #STR
+ROLE.MaxSessionDuration       #NUM (in secs). Max value of ASSUME_*_REQ.DurationSeconds
+                              #Min|def 1h, max 12h
+TagRole()
+ListRoleTags()
+UntagRole()                   #AWS TAGS
+ROLE.Tags                     #RESOURCE_NAME: RoleName 'ROLE'
+
 ROLE.AssumeRolePolicyDocument #POLICY_DOC. "Trust policy"
                               #Only for sts:* + Principal
                               #  - i.e. conditions to authenticate as this ROLE
@@ -62,13 +267,9 @@ ROLE.AssumeRolePolicyDocument #POLICY_DOC. "Trust policy"
                               #Def: allow all
                               #  - which is not secure
                               #Root is never allowed to sts:*
+                              #Principal must also has have a separate identity-based POLICY allowing it to sts:*
+                              #  - but only if it is in a different ACCOUNT
                               #Max 2KB (up to 4KB on request) (SUMMARY_MAP.AssumeRolePolicySizeQuota)
-ROLE.MaxSessionDuration       #NUM (in secs). Max value of ASSUME_*_REQ.DurationSeconds
-                              #Min|def 1h, max 12h
-TagRole()
-ListRoleTags()
-UntagRole()                   #AWS TAGS
-ROLE.Tags                     #RESOURCE_NAME: RoleName 'ROLE'
 
 
                                              /=+===============================+=\
@@ -160,141 +361,3 @@ RESOURCE_ERROR                #Resource using the SERVICE_LINKED_ROLE, prevening
 RESOURCE_ERROR.Region         #'REGION'
 RESOURCE_ERROR.Resources      #STR_ARR. Resource names
 
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:          CREDENTIALS          :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-TEMP_CREDS                    #Temporary credentials
-                              #Allows:
-                              #  - expiration
-                              #  - not revealing access key secret
-                              #  - session policy, i.e. further restrictions than current user
-TEMP_CREDS.AccessKeyId        #ACCESS_KEY_ID
-TEMP_CREDS.SecretAccessKey    #SECRET_ACCESS_KEY
-TEMP_CREDS.SessionToken       #SESSION_TOKEN.
-                              #To include as part of authentication.
-TEMP_CREDS.Expiration         #'DATE'
-                              #Computed by *_REQ.DurationSeconds NUM
-                              #Min: 15m
-                              #With Get*Token(), unless root:
-                              #  - def: 12h, max: 36h
-                              #Otherwise:
-                              #  - def|max: 1h
-                              #  - with AssumeRole*(): max can be changed with ROLE.MaxSessionDuration
-
-getSessionToken()             #Req: MFA_REQ
-                              #Res: Credentials TEMP_CREDS
-
-MFA_REQ                       #Request a TEMP_CREDS using a [VIRTUAL_]MFA_DEVICE
-                              #Permissions:
-                              #  - same as [VIRTUAL_]MFA_DEVICE's owner
-                              #  - sts:* -> only sts:AssumeRole|GetCallerIdentity
-                              #  - iam:* -> must include MFA information
-                              #  - cannot signin to UI with SSO
-MFA_REQ.DurationSeconds       #NUM
-MFA_REQ.SerialNumber          #[VIRTUAL_]MFA_DEVICE.SerialNumber
-MFA_REQ.TokenCode             #STR. Token shown by MFA device
-
-GetFederationToken()          #Req: FEDERATED_REQ
-                              #Res: FEDERATED_CREDS
-
-FEDERATED_REQ                 #Request a FEDERATED_CREDS
-FEDERATED_REQ.DurationSeconds #NUM
-FEDERATED_REQ.Name            #'FEDERATED_USER'
-FEDERATED_REQ.Policy          #POLICY_DOC.
-                              #"Session policy" restricting the credentials' permissions.
-                              #Def: allow nothing
-                              #Resource-based policies have higher priority then session policy
-                              #  - i.e. they can allow an action on a given resource, even if session policy does not allow it
-FEDERATED_REQ.PolicyArns      #Same but as POLICY_ARN_ARR
-                              #Max length 10
-FEDERATED_REQ.Tags            #AWS TAGS
-
-FEDERATED_CREDS               #TEMP_CREDS based on current user.
-                              #I.e. superuser delegating permissions to temporary users.
-                              #Permissions:
-                              #  - same as current USER, but can be restricted by session policy
-                              #  - sts:* -> only sts:GetCallerIdentity
-                              #  - iam:* -> must use UI (not CLI|API)
-                              #  - cannot signin to UI with SSO
-FEDERATED_CREDS.Credentials   #TEMP_CREDS
-FEDERATED_CREDS.FederatedUser #FEDERATED_USER. Temporary user using a FEDERATED_CREDS
-FEDERATED_USER.Arn            #FEDERATED_USER_ARN. 'arn:aws:sts::ACCOUNT_ID:federated-user/FEDERATED_USER'
-FEDERATED_USER.FederatedUserId#FEDERATED_USER_MID
-FEDERATED_CREDS
- .PackedPolicySize            #0-1 percentage of FEDERATED_CREDS size / max size
-
-AssumeRole()                  #Req: ASSUMED_ROLE_REQ
-                              #Res: ASSUMED_ROLE
-
-ASSUMED_ROLE_REQ              #Request an ASSUMED_ROLE
-ASSUMED_ROLE_REQ.RoleArn      #ROLE_ARN to assume
-ASSUMED_ROLE_REQ
- .RoleSessionName             #'ASSUMED_ROLE'
-ASSUMED_ROLE_REQ
- .DurationSeconds             #NUM
-ASSUMED_ROLE_REQ.SerialNumber
-ASSUMED_ROLE_REQ.TokenCode    #Like MFA_REQ.*
-ASSUMED_ROLE_REQ.Policy       #POLICY_DOC, like FEDERATED_REQ.Policy
-ASSUMED_ROLE_REQ.ExternalId   #STR
-                              #Becomes POLICY_VAR sts:ExternalId
-                              #Shared secret for further restrictions (policy must use Condition to check it)
-
-ASSUMED_ROLE                  #TEMP_CREDS based on a POLICY (ROLE.AssumeRolePolicyDocument).
-                              #Permissions:
-                              #  - same as ROLE
-                              #  - sts:* -> no sts:Get*Token
-ASSUMED_ROLE.Credentials      #TEMP_CREDS
-ASSUMED_ROLE.AssumedRoleUser  #ASSUMED_ROLE_USER
-ASSUMED_ROLE_USER.Arn         #ASSUMED_ROLE_ARN. 'arn:aws:sts::ACCOUNT_ID:assumed-role/ASSUMED_ROLE'
-ASSUMED_ROLE_USER
- .AssumedRoleId               #ASSUMED_ROLE_MID
-ASSUMED_ROLE.PackedPolicySize #Like FEDERATED_CREDS.PackedPolicySize
-
-AssumeRoleWithSAML()          #Req:
-                              #  - RoleArn
-                              #  - DurationSeconds NUM
-                              #  - Policy POLICY_DOC
-                              #  - PrincipalArn SAML_PROVIDER_ARN
-                              #  - SAMLAssertion 'BASE64'
-                              #Res:
-                              #  - AssumedRoleUser ASSUMED_ROLE_USER
-                              #  - Credentials TEMP_CREDS
-                              #  - PackedPolicySize NUM
-                              #  - Audience|Issuer STR
-                              #  - Subject STR
-                              #  - SubjectType STR
-                              #  - NameQualifier STR: Hash(Issuer, ACCOUNT_ID, SAML_PROVIDER_ARN), identifying a user
-AssumeRoleWithWebIdentity()   #Req:
-                              #  - RoleArn
-                              #  - RoleSessionName
-                              #  - DurationSeconds NUM
-                              #  - Policy POLICY_DOC
-                              #  - ProviderId DOMAIN
-                              #  - WebIdentityToken 'OAUTH2_TOKEN'
-                              #Res:
-                              #  - AssumedRoleUser ASSUMED_ROLE_USER
-                              #  - Credentials TEMP_CREDS
-                              #  - PackedPolicySize NUM
-                              #  - Audience STR
-                              #  - Provider STR
-                              #  - SubjectFromWebIdentity STR: identifying a user
-
-DecodeAuthorizationMessage()  #Permission error sometimes gives an "encoded authorization failure message" token,
-                              #that needs to be decoded.
-                              #Req: EncodedMessage STR
-                              #Res: DecodedMessage STR
-
-SUMMARY_MAP
- .GlobalEndpointTokenVersion  #1|2. STS token version
-SetSecurityTokenServicePreferences()    #IAM method
-
-GetCallerIdentity()
-
-GetAccessKeyInfo()
-
-See https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_iam-quotas.html#reference_iam-quotas-entity-length "role session *" and "SAML *"
