@@ -82,12 +82,47 @@ TEMP_CREDS.SessionToken       #'SESSION_TOKEN'.
 TEMP_CREDS.Expiration         #'DATE'
                               #Computed by *_REQ.DurationSeconds NUM
                               #Min: 15m
-                              #With Get*Token(), unless root:
-                              #  - def: 12h, max: 36h
-                              #Otherwise:
-                              #  - def|max: 1h
-                              #  - with AssumeRole*(): max can be changed with ROLE.MaxSessionDuration
+                              #With:
+                              #  - SERVICE_ROLE: none
+                              #  - Get*Token(), unless root:
+                              #     - def: 12h, max: 36h
+                              #  - UI login:
+                              #     - def: 1h, max: 12h
+                              #  - otherwise:
+                              #     - def|max: 1h
+                              #     - with AssumeRole*(): max can be changed with ROLE.MaxSessionDuration
 aws:TokenIssueTime            #'DATE' CONDITION_KEY. TEMP_CREDS creation time.
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:           UI LOGIN            :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+STS_LOGIN_URL                 #https://[REGION.]signin.aws.amazon.com/federation
+GET STS_LOGIN_URL             #Retrieves OBJ: SigningToken 'BASE64'
+ ?Action=getSigningToken      #Query params:
+                              #  - Session 'URLENCODED_JSON' of TEMP_CREDS: sessionId|sessionKey|sessionToken
+                              #     - TEMP_CREDS must have been acquired first with STS programmatically
+                              #  - SessionDuration NUM
+                              #     - not if GetFederationToken() was used
+                              #     - def: same as TEMP_CREDS
+GET STS_LOGIN_URL             #Login
+ ?Action=login                #Query params:
+                              #  - SigninToken "BASE64"
+                              #  - Destination 'URLENCODED_JSON': URL to redirect to
+                              #  - Issuer 'URLENCODED_JSON': URL that did the authentication
+
+SAML ==>                      #Uses a different flow, see online foc
+
+STS_SWITCH_URL                #https://signin.aws.amazon.com/switchrole
+GET STS_SWITCH_URL            #Like STS_LOGIN_URL, but first login then switches role
+                              #Query params:
+                              #  - roleName 'ROLE'
+                              #  - account 'ACCOUNT_ID'
+                              #  - displayName STR (def: 'ROLE@ACCOUNT_ID'): UI name for ROLE
 
 
                                              /=+===============================+=\
@@ -169,7 +204,11 @@ AssumeRole()                  #Req: ASSUMED_ROLE_REQ
 ASSUMED_ROLE_REQ              #Request an ASSUMED_ROLE
 
 ASSUMED_ROLE                  #TEMP_CREDS based on a POLICY (ROLE.AssumeRolePolicyDocument).
-                              #Permissions: same as ROLE
+                              #Permissions: same as ROLE ("delegation")
+                              #Can be done from the UI ("switch role"), unless either:
+                              #  - root
+                              #  - ASSUMED_ROLE_REQ.externalId
+                              #  - 'ROLE' more than 64 chars
 ASSUMED_ROLE.Credentials      #TEMP_CREDS
 ASSUMED_ROLE.AssumedRoleUser  #ASSUMED_ROLE_USER
 
@@ -368,11 +407,19 @@ STANDARD_SERVICE_ROLE         #SERVICE_ROLE that is (unlike SERVICE_LINKED_ROLE)
                               #  - optional
                               #  - managed by user
                               #  - usually meant to allow only a few specific ACTIONs
-iam:PassRole                  #PACTION to allow an IDENTITY to assign a SERVICE_ROLE to a SERVICE
-                              #Should restrict using STATEMENT.Resource
+iam:PassRole                  #PACTION to allow an IDENTITY to associate a SERVICE with a SERVICE_ROLE
+                              #  - usually when creating|updating a resource of that SERVICE
+                              #Not needed for SERVICE_LINKED_ROLE
+                              #SERVICE must be in same ACCOUNT as IDENTITY
+                              #Reason:
+                              #  - SERVICE_ROLE might have higher permissions than IDENTITY
+                              #  - and IDENTITY might access those permissions through using SERVICE
+                              #  - i.e. SERVICE_ROLE can be used to escalate privileges ("confused deputy problem")
+                              #I.e. should restrict how it is performed using STATEMENT.Resource and following CONDITION_KEYs
 iam:PassedToService           #'SERVICE_DOMAIN' CONDITION_KEY of the SERVICE assuming a SERVICE_ROLE
                               #Only with PACTION 'iam:PassRole'
 iam:AssociatedResourceArn     #ARN CONDITION_KEY of the resource assuming a SERVICE_ROLE
+                              #As opposed to STATEMENT.Resource, which targets the SERVICE_ROLE itself
                               #Only with PACTION 'iam:PassRole'
 
 
@@ -463,6 +510,11 @@ DeleteSAMLProvider()          #Req: SAML_PROVIDER
                               #Res: empty
 
 SAML_PROVIDER                 #Create a SAML 2.0 identity provider
+                              #See online doc for setup for:
+                              #  - Azure AD, Microsoft AD FS, Google Workspace, IBM
+                              #  - Auth0, Okta, Salesforce
+                              #  - Centrify, CyberArk, ForgeRock, JumpCloud, Matrix42, MiniOrange, OneLogin, Ping identity,
+                              #    RadiantLogic, RSA, SecureAuth, Shibboleth
                               #Max 100 (SUMMARY_MAP.Providers)
                               #Max 10 keys per SAML_PROVIDER
 SAML_PROVIDER.SAMLProviderArn #SAML_PROVIDER_ARN. 'arn:aws:iam::ACCOUNT_ID:saml-provider/NAME'
