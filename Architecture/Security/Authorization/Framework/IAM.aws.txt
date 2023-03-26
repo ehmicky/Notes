@@ -124,6 +124,7 @@ ListUsers()                   #Req: USER
 DeleteUser()                  #Req: USER
                               #  - only UserName
                               #Res: empty
+                              #To deactivate without deleting: attach POLICY denying all PACTIONs
 
 USER                          #Real person.
                               #Prefer using ROLEs when possible, because their credentials is short-lived
@@ -218,6 +219,9 @@ CREDENTIALS                   #One of:
                               #  - SSH_PUBLIC_KEY
                               #New users have no credentials.
                               #"Long-term", as opposed to short-term TEMP_CREDS
+                              #  - prefer TEMP_CREDS
+                              #  - should be rotated
+                              #  - should be deleted when not used anymore
                               #Some services have additional authentication methods, e.g. EC2 asymmetric key pair
 
 GenerateCredentialReport()    #Req: empty
@@ -229,6 +233,7 @@ CREDENTIAL_REQ.Description    #STR
 CREDENTIAL_REQ.State          #'STARTED', 'INPROGRESS' or 'COMPLETE'
 
 CREDENTIAL_REPORT             #All CREDENTIALs of current ACCOUNT
+                              #Throttled once per 4h
 CREDENTIAL_REPORT
  .GeneratedTime               #'DATE'
 CREDENTIAL_REPORT.ReportFormat#'text/csv'
@@ -265,7 +270,7 @@ DeleteLoginProfile()          #Req: LOGIN_PROFILE
                               #  - only UserName
                               #Res: empty
 
-LOGIN_PROFILE                 #Web app password of a user.
+LOGIN_PROFILE                 #Password of a user to login to web console UI
                               #Max 1 per user
 LOGIN_PROFILE.UserName        #'USER'
 LOGIN_PROFILE.CreateDate      #'DATE'
@@ -274,9 +279,12 @@ LOGIN_PROFILE.Password        #STR
 LOGIN_PROFILE
  .PasswordResetRequired       #BOOL (def: false). Set to true to require resetting password.
 
-ROOT_PASSWORD                 #LOGIN_PROFILE does not apply to root, which:
-                              #  - identify with email address, not username
-                              #  - sign-in at https://signin.aws.amazon.com/signin, not https://ACCOUNT_ID.signin.aws.amazon.com/console
+ROOT_PASSWORD                 #Unlike non-root:
+                              #  - no LOGIN_PROFILE
+                              #  - use email address, not username
+                              #  - can be reset via email
+                              #     - if MFA, require also phone number
+                              #  - [VIRTUAL_]MFA_DEVICE can only be managed in UI
 PASSWORD                      #LOGIN_PROFILE|ROOT_PASSWORD
 
 CREDENTIAL_CONTENT            #'TRUE|FALSE'. Whether there is a LOGIN_PROFILE.
@@ -285,6 +293,10 @@ CREDENTIAL_CONTENT            #'DATE' of last PASSWORD login
  .password_last_used          #Can be 'no_information' (never used) or 'N/A' (no PASSWORD)
 CREDENTIAL_CONTENT            #'DATE' of last LOGIN_PROFILE.Password change
  .password_last_changed       #Can be 'not_supported' (root) or 'N/A' (not done)
+
+SIGN-IN URLS ==>              #Root: https://console.aws.amazon.com/console
+                              #User: https://ACCOUNT_ID|USER.signin.aws.amazon.com/console
+                              #Query params: ?region=REGION
 
 
                                              /=+===============================+=\
@@ -297,8 +309,11 @@ CREDENTIAL_CONTENT            #'DATE' of last LOGIN_PROFILE.Password change
 UpdateAccountPasswordPolicy() #Req: PASSWORD_POLICY
                               #  - no ExpirePasswords
                               #Res: empty
+                              #Does not apply to existing passwords, except MaxPasswordAge
 GetAccountPasswordPolicy()    #Req: empty
                               #Res: PasswordPolicy PASSWORD_POLICY
+                              #Should be granted as PACTION when granting GetPassword PACTION
+                              #  - so users can see password policy when changing it, especially in UI
 DeleteAccountPasswordPolicy() #Req: empty
                               #Res: empty
 
@@ -308,6 +323,7 @@ PASSWORD_POLICY
  .AllowUsersToChangePassword  #BOOL (def: false)
 
 PASSWORD_POLICY.MaxPasswordAge#NUM. Require resetting password after NUM days.
+                              #Warning in UI when 2 weeks before expiration
                               #Max 3 years
 PASSWORD_POLICY
  .ExpirePasswords             #BOOL. True when MaxPasswordAge defined
@@ -319,13 +335,16 @@ PASSWORD_POLICY
  .PasswordReusePrevention     #NUM. If set, remembers last NUM passwords and do not allow re-using them.
 
 PASSWORD_POLICY
- .MinimumPasswordLength       #NUM (def: 6)
+ .MinimumPasswordLength       #NUM (def: 8)
+PASSWORD_POLICY.Require*      #Default:
+                              #  - false for each
+                              #  - but 3 out of 4 must be true
 PASSWORD_POLICY
- .RequireLowercaseCharacters  #BOOL (def: false)
+ .RequireLowercaseCharacters  #BOOL
 PASSWORD_POLICY
- .RequireUppercaseCharacters  #BOOL (def: false)
-PASSWORD_POLICY.RequireNumbers#BOOL (def: false)
-PASSWORD_POLICY.RequireSymbols#BOOL (def: false)
+ .RequireUppercaseCharacters  #BOOL
+PASSWORD_POLICY.RequireNumbers#BOOL
+PASSWORD_POLICY.RequireSymbols#BOOL
 
 
                                              /=+===============================+=\
@@ -343,6 +362,7 @@ ResyncMFADevice()             #Req: MFA_DEVICE
                               #Res: empty
                               #Re-enable MFA_DEVICE.
                               #Needed for example when took too much time to enther MFA_DEVICE.AuthenticationCode1|2
+                              #Not needed with FIDO_KEY
 ListMFADevices()              #Req: MFA_DEVICE
                               #  - only UserName
                               #Res: MFADevices MFA_DEVICE_ARR
@@ -351,20 +371,17 @@ DeactivateMFADevice()         #Req: MFA_DEVICE
                               #  - only SerialNumber, UserName
                               #Res: empty
 
-MFA_DEVICE                    #MFA hardware device used to authenticate a USER
+MFA_DEVICE                    #MFA hardware device to use with LOGIN_PROFILE
                               #Max 1 per user
 MFA_DEVICE.SerialNumber       #MFA_DEVICE_MID
 MFA_DEVICE.UserName           #'USER'
 MFA_DEVICE.EnableDate         #'DATE'
 MFA_DEVICE.AuthenticationCode1#STR. First code from MFA device on creation.
-MFA_DEVICE.AuthenticationCode2#STR. Second code from MFA device on creation.
+MFA_DEVICE.AuthenticationCode2#STR. Second code from MFA device on creation, i.e. must enter 2 back-to-back
 
-aws:MultiFactorAuthAge        #NUM (in secs) CONDITION_KEY. How long ago was MFA authentication.
-                              #For both MFA through STS, and [VIRTUAL_]MFA_DEVICE
-                              #undefined if no MFA authentication
-aws:MultiFactorAuthPresent    #BOOL CONDITION_KEY.
-                              #Whether MFA authenticated.
-                              #undefined unless using MFA through STS
+FIDO_KEY                      #MFA_DEVICE with stronger protection
+                              #Cannot be used with STS
+                              #Can only be managed in the UI
 
 
                                              /=+===============================+=\
@@ -386,7 +403,7 @@ DeleteVirtualMFADevice()      #Req: VIRTUAL_MFA_DEVICE
                               #  - only SerialNumber
                               #Res: empty
 
-VIRTUAL_MFA_DEVICE            #MFA device used to authenticate a USER, as a mobile app
+VIRTUAL_MFA_DEVICE            #MFA mobile app to use with LOGIN_PROFILE
                               #Max 1 per user (SUMMARY_MAP.AccountMFAEnabled|MFADevices[InUse])
 VIRTUAL_MFA_DEVICE
  .SerialNumber                #VIRTUAL_MFA_DEVICE_ARN. 'arn:aws:iam::ACCOUNT_ID:mfa[/PATH]/NAME'
@@ -436,6 +453,10 @@ DeleteAccessKey()             #Req: ACCESS_KEY
 
 ACCESS_KEY                    #Programmatic credentials
                               #Avoid with root (prefer LOGIN_PROFILE)
+                              #Rotation best practices:
+                              #  - keep old one while updating consumers to use new one
+                              #  - wait a few days and check for LastUsedDate to ensure not used anymore
+                              #  - put as Status 'Inactive' for a few days before deleting
                               #Max 2 per user|root (SUMMARY_MAP.AccountAccessKeysPresent|AccessKeysPerUserQuota)
 ACCESS_KEY.AccessKeyId        #ACCESS_KEY_ID, i.e. public part of the key
                               #20 chars
@@ -1176,8 +1197,9 @@ DeleteServerCertificate()     #Req: SERVER_CERTIFICATE
                               #Res: empty
 
 SERVER_CERTIFICATE            #X.509 server certificate.
-                              #Must fist create X.509 certificates manually.
+                              #Must first create X.509 certificates manually.
                               #  - prefer using AWS Certificate Manager instead
+                              #Meant for HTTPS servers
                               #Max 20 (up to 1000 on request) (SUMMARY_MAP.ServerCertificates[Quota])
 SERVER_CERTIFICATE.Arn        #SERVER_CERTIFICATE_ARN. 'arn:aws:iam::ACCOUNT_ID:server-certificate[/PATH]/NAME'
 SERVER_CERTIFICATE
