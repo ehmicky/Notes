@@ -80,8 +80,8 @@ ENTITY                        #Who is being permitted, from an authorization sta
                               #E.g. includes GROUPs, unlike IDENTITY.
 
 ROOT ==>                      #1 per AWS account
-                              #Always has full permissions, regardless of POLICYs
-                              #  - except for ORG POLICYs
+                              #Cannot have identity-based POLICY, PERM_BOUNDARY, session policy
+                              #  - but can have resource-based POLICY, ACL, ORG POLICY
 ROOT_ARN                      #'arn:aws:iam::ACCOUNT_ID:root'
 
 UROLE                         #USER|ROLE
@@ -735,7 +735,7 @@ DeleteUGROLEPolicy()          #Req: IPOLICY
                               #  - only PolicyName, UGROLEName
                               #Res: empty
 
-IPOLICY                       #Identity-based POLICY without an ARN, attached to a single UGROLE
+IPOLICY                       #Identity-based POLICY without an ARN, "embedded" to a single UGROLE
 IPOLICY.PolicyName            #'POLICY'
 IPOLICY.UGROLEName            #STR
 IPOLICY.PolicyDocument        #POLICY_DOC
@@ -770,7 +770,7 @@ DetachUGROLEPolicy()          #Req: MPOLICY
                               #  - only PolicyArn, UGROLEName
                               #Res: empty
 
-MPOLICY                       #Identity-based POLICY with its own ARN, attached to 0-n UGROLEs
+MPOLICY                       #Identity-based POLICY with its own ARN, "attached" to 0-n UGROLEs
                               #Max 10 per UGROLE (up to 20 on request) (SUMMARY_MAP.AttachedPoliciesPerGUROLEQuota)
                               #Max 6KB (SUMMARY_MAP.PolicySizeQuota)
 MPOLICY.PolicyArn             #POLICY_ARN
@@ -800,6 +800,10 @@ AWS MANAGED POLICY ==>        #MPOLICY created by AWS.
                               #  - standard: common policies for ENTITYs|resources using a given SERVICE
                               #  - SERVICE_LINKED_ROLE
                               #  - STANDARD_SERVICE_ROLE
+                              #Common suffixes:
+                              #  - *FullAccess: all PACTIONs
+                              #  - *PowerUser: all PACTIONs except permission management
+                              #  - *WriteOnlyAccess|ReadOnlyAccess
 
 AdministratorAccess           #Allow all ACTIONs on all resources
 PowerUserAccess               #Allow all ACTIONs on all resources except for most of IAM|ORG|ACCOUNT
@@ -868,13 +872,30 @@ POLICY.PermissionsBoundary
 
 
 POLICY TYPES ==>              #  - resource-based: see STATEMENT.Principal
+                              #  - ACL
                               #  - identity-based: see STATEMENT.Resource and IPOLICY|MPOLICY
                               #  - PERM_BOUNDARY
                               #  - session: see STS *_REQ.Policy
                               #  - organization SCP
 
+IDENTITY-BASED POLICY ==>     #POLICY attached to a PRINCIPAL
+                              #As IPOLICY|MPOLICY, using Put|AttachUGROLEPolicy()
+
+RESOURCE-BASED POLICY ==>     #POLICY attached to a resource
+                              #Using resource-specific ACTIONs
+                              #  - only some resources have such ACTIONs
+
+ACL ==>                       #"Access Control List"
+                              #Like permission-based POLICY but:
+                              #  - SERVICE-specific
+                              #     - e.g. S3, VPC and WAF
+                              #  - does not use POLICY_DOC but specific syntax
+                              #  - only for PRINCIPALs in other ACCOUNTs
+
 POLICY TYPES INTERACTION ==>  #Usually, allow action if matches either:
-                              #  - resource-based (required)
+                              #  - all of:
+                              #     - resource-based (required)
+                              #     - ACL (optional)
                               #  - all of:
                               #     - identity-based (required)
                               #     - PERM_BOUNDARY (optional)
@@ -888,7 +909,7 @@ POLICY TYPES INTERACTION ==>  #Usually, allow action if matches either:
 POLICY TYPES MATCH ==>        #If 0 STATEMENT.Effect 'Allow' matches, deny that policy type (not others)
                               #If 1 STATEMENT.Effect 'Deny' matches, deny all policy types
 
-MULTIPLE POLICY_DOCS ==>      #Some policy types can have multiple POLICY_DOCs: resource-based, identity-based, organization SCP
+MULTIPLE POLICY_DOCS ==>      #Some policy types can have multiple POLICY_DOCs: resource-based, ACL, identity-based, organization SCP
                               #They are and'd, as if their STATEMENTs were concatenated to a single POLICY_DOC
 
 BEST PRACTICES ==>            #Grant least privilege
@@ -932,19 +953,14 @@ STATEMENT.Action              #PACTION[_ARR]
                               #  - i.e. require permissions for those too
 
 STATEMENT.Resource            #Resource ARN[_ARR]
-                              #"Identity-based policy"
-                              #POLICY must be attached to a PRINCIPAL
-                              #  - as IPOLICY|MPOLICY, i.e. using Put|AttachUGROLEPolicy()
+                              #Mostly meant for identity-based POLICYs
+                              #Can use in resource-based POLICYs, but default to current resource
                               #Can use wildcard *
                               #'Resource-level permissions':
-                              #  - not using '*' at the end of ARN
-                              #     - i.e. for [RESOURCE_TYPE:][ARN_PATH/]NAME
+                              #  - not using '*' for [RESOURCE_TYPE:][ARN_PATH/]NAME
                               #  - not possible with some resources|SERVICEs
 STATEMENT.Principal           #PRINCIPAL
-                              #"Resource-based policy".
-                              #POLICY must be attached to a resource
-                              #  - using resource-specific ACTIONs
-                              #  - only some resources have such ACTIONs
+                              #Only for resource-based POLICYs
                               #OBJ:
                               #  - AWS STR among:
                               #     - ROOT_ARN|ACCOUNT_ID
@@ -1275,9 +1291,14 @@ ORG_JOB.JobId                 #STR
 ORG_JOB.SortKey               #'{TYPE}_ASCENDING|DESCENDING' with TYPE being 'SERVICE_NAMESPACE|LAST_AUTHENTICATED_TIME'
 
 ORG_REPORT                    #List of all accesses in a given ORG
+                              #Meant to find unused permissions or POLICYs
+                              #  - for actual logging, use CloudTrail
                               #Only last 400 days
-                              #Does not include anonymous accesses (e.g. S3)
-                              #Include failed accesses
+                              #Does not include:
+                              #  - anonymous accesses (e.g. S3)
+                              #  - iam:PassRole
+                              #Includes failed accesses
+                              #4-hours throttled
 ORG_REPORT_ARN                #'arn:aws:iam::ACCOUNT_ID:access-report/ENTITY_PATH'
 ORG_REPORT.JobCreationDate    #'DATE'
 ORG_REPORT.JobCompletionDate  #'DATE'. null if JobStatus 'IN_PROGRESS'
@@ -1314,8 +1335,6 @@ GenerateServiceLastAccessed   #Req: SERVICE_REQ
  Details()                    #Res: SERVICE_JOB
                               #  - no ServiceNamespace
 SERVICE_REQ                   #Requests SERVICE_REPORT|SERVICE_ENTITIES_REPORT
-                              #Only last 400 days
-                              #Include failed accesses
 SERVICE_REQ.Arn               #USER|GROUP|ROLE|POLICY_ARN
 SERVICE_REQ.Granularity       #Whether to include ACTION_ACCESSes: 'ACTION_LEVEL' (yes) or 'SERVICE_LEVEL' (no, def)
 
@@ -1327,6 +1346,7 @@ GetServiceLastAccessed        #Req: SERVICE_JOB
                               #Res: SERVICE_REPORT
 SERVICE_REPORT                #List of accesses for all SERVICEs
                               #"IAM access advisor"
+                              #Same throttling and restrictions as ORG_REPORT
 IAMAccessAdvisorReadOnly      #AWS managed POLICY. Permissions used by SERVICE_REQ
 
 SERVICE_REPORT.JobCreationDate#'DATE'
