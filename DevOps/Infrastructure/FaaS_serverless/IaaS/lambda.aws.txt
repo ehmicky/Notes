@@ -17,7 +17,7 @@ SUMMARY ==>                       #Functions: versions|aliases, alias routing
                                   #Additional code: layer, internal|external extension
                                   #Runtimes: versions|upgrades, custom, options
                                   #Environment: CPU, memory, envvar, /tmp, EFS, VPC
-                                  #Invoke: instance, sync|async, dry, URL, logs, destination
+                                  #Invoke: instance, sync|async, dry, streaming, URL, logs, destination
                                   #Event source: batch size|duration, filters, concurrency
                                   #Errors: timeout, retries, dead letter, tracing
                                   #Concurrency: total, reserved, provisioned
@@ -108,7 +108,9 @@ PROVISIONED CONCURRENCY ==>       #9$ per month, per provisioned CONCURRENCY, wi
                                   #I.e. when MemorySize === EphemeralStorage.Size, /tmp is 4000 times cheaper than RAM
                                   #Free: none
 
-DATA TRANSFER ==>                 #Same as EC2
+STREAMING DATA TRANSFER ==>       #1$/125GB. Free: 6MB
+
+OTHER DATA TRANSFER ==>           #Same as EC2
 
 
                                              /=+===============================+=\
@@ -876,7 +878,7 @@ Invoke()                          #Req: INVOCATION_REQ
                                   #  - status code: StatusCode
                                   #  - X-Amz-* [S] headers: ExecutedVersion|LogResult|FunctionError
                                   #  - body: ResponseBody
-InvokeFunction                    #PACTION for Invoke()
+InvokeFunction                    #PACTION for Invoke*()
 AWSLambdaRole                     #AWS managed POLICY to allow InvokeFunction
 
 INVOCATION_REQ                    #Request of an INVOCATION
@@ -935,6 +937,48 @@ TEST EVENTS ==>                   #INVOCATION_REQs saved for test purpose
 
                                              /=+===============================+=\
                                             /  :                               :  \
+                                            )==:           STREAMING           :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+InvokeWithResponseStream()        #Req: INVOCATION_REQ
+                                  #  - InvocationType cannot be 'Event'
+                                  #Res: INVOCATION_RES
+                                  #  - ResponseBody -> EventStream
+                                  #  - FunctionError|LogResult -> INVOCATION_RES_END.*
+
+INVOCATION_RES.EventStream        #Like INVOCATION_RES.ResponseBody but streamed:
+                                  #  - each payload is a INVOCATION_RES_CHUNK
+                                  #  - one INVOCATION_RES_END sent at end
+                                  #Uses HTTP 1.1 chunked transfer encoding
+                                  #Only with Node runtime
+                                  #Total max size: 20MB
+                                  #Max bandwidth: 2MB/s
+
+INVOCATION_RES_EVENT.PayloadChunk #INVOCATION_RES_CHUNK
+INVOCATION_RES_CHUNK.Payload      #'BASE64'
+INVOCATION_RES
+ .ResponseStreamContentType       #'MIME' of each INVOCATION_RES_CHUNK
+
+INVOCATION_RES_EVENT
+ .InvokeComplete                  #INVOCATION_RES_END
+INVOCATION_RES_END.LogResult      #STR
+INVOCATION_RES_END.ErrorCode      #STR
+INVOCATION_RES_END.ErrorDetails   #STR
+
+FUNC_URL.InvokeMode               #Either:
+                                  #  - 'BUFFERED' (def): use Invoke()
+                                  #  - 'RESPONSE_STREAM': use InvokeWithResponseStream()
+
+awslambda.streamifyResponse
+ (FUNC(REQ, OSTREAM, CONTEXT)     #Must use this Node.js HANDLER
+  ->PROMISE)                      #Must write STR chunks to OSTREAM, then call OSTREAM.end()
+OSTREAM.setContentType('MIME')    #Sets INVOCATION_RES.ResponseStreamContentType
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
                                             )==:              URL              :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -960,6 +1004,7 @@ DeleteFunctionUrlConfig()         #Req: FUNC_URL
 
 FUNC_URL                          #HTTP[S] URL to invoke a FUNCTION directly
                                   #Public by default
+                                  #IPv4|6
 FUNC_URL.FunctionArn              #SHORT_FUNC_ARN
 FUNC_URL.CreationTime             #'DATE'
 FUNC_URL.LastModifiedTime         #'DATE'
