@@ -7,6 +7,7 @@
 
 TODO:
   - stopped Auth at https://supabase.com/docs/guides/auth/auth-mfa
+  - Storage API: https://supabase.github.io/storage-api/#/
 
 VERSION ==>                       #31-03-2023
 
@@ -265,6 +266,7 @@ JWT TIMEOUT ==>                   #Def: 1h
 
 PG POLICY ==>                     #Row-level security
                                   #Does not apply to "service_level" ROLE
+                                  #Applies to STORAGE too
 
 API DOCS ==>                      #Automatically generated
 
@@ -306,11 +308,15 @@ CLIENT.range(NUM, NUM2)->CLIENT   #Only include from item NUM to NUM2
 
 ?VAR=eq.VAL
 CLIENT.eq('COL', VAL)->CLIENT     #=
-CLIENT.neq('COL', VAL)->CLIENT    #<>
+?VAR=neq.VAL
+CLIENT.neq('COL', VAL)->CLIENT    #!=
 CLIENT.is('COL', null)->CLIENT    #is null
+?VAR=gt[e].VAL
 CLIENT.gt[e]('COL', VAL)->CLIENT  #> >=
+?VAR=lt[e].VAL
 CLIENT.lt[e]('COL', VAL)->CLIENT  #< <=
 CLIENT.[i]like('COL', STR)->CLIENT#[i]like
+?VAR=in.(VAL,...)
 CLIENT.in('COL', ARR)->CLIENT     #in
 CLIENT.cs('COL', ARR)->CLIENT     #@>
 CLIENT.cd('COL', ARR)->CLIENT     #<@
@@ -331,11 +337,23 @@ query.TABLECollection.edges       #OBJ_ARR:
 REALTIME ==>                      #Repository "supabase/realtime"
 
 CHANNEL                           #Namespace for events
+                                  #Max CHANNELs: 500 for all CLIENTs, 100 per CLIENT
+                                  #Number of CLIENTs (with >=1 CHANNEL):
+                                  #  - max: 200 (free), unlim (pro)
+                                  #  - 0$: first 200 (free), first 500 (pro)
+                                  #  - .01$ per CLIENT
 EVENT_TYPE                        #'broadcast|postgres_changes|presence'
 EVENT                             #Sub-type of EVENT_TYPE
-PAYLOAD                           #Event payload VAL
+PAYLOAD                           #Event payload OBJ
+                                  #Properties must be BOOL|NUM|STR|null|undefined
+                                  #Max:
+                                  #  - size: 250KB (free), 3MB (pro)
+                                  #  - count: 2e6/month (free), unlim (pro)
+                                  #Pricing:
+                                  #  - 0$: first 2e6 (free), first 5e6 (pro)
+                                  #  - 2.5$ afterwards
 
-CLIENT.channel('CHANNEL')->CHANNEL#
+CLIENT.channel('CHANNEL')->CHANNEL#Max 500 per sec, for all CLIENTs
 CHANNEL.on('EVENT_TYPE',          #Add listener
  OPTS, FUNC(PAYLOAD))->CHANNEL    #OPTS:
                                   #  - event '*|EVENT'
@@ -382,24 +400,99 @@ COPTS.config.presence.key         #CLIENT-specific 'ID'
                                   #Def: random UUID
 PRESENCE_STATE                    #OBJ, with keys being 'ID' and values being each CLIENT-specific VAL
 CHANNEL.track(VAL)->PROMISE_STR   #Mark VAL as the value to sync for current CLIENT
-                                  #STR is 'ok'
+                                  #STR is 'ok|error'
 CHANNEL.untrack()->PROMISE_STR    #Undo
 CHANNEL.presenceState()
  ->PRESENCE_STATE                 #
 
-COPTS.realtime.params
- .eventsPerSecond                 #NUM (def: 10). Rate limit
+COPTS.realtime.params             #NUM (def: 10, max: 1000). Rate limit.
+ .eventsPerSecond                 #10 times lower for EVENT_TYPE 'presence'
+COPTS.realtime.headers|params     #API_KEY. Def: current one
+ .apikey                          #Must set on both headers|params
 
-WEBSOCKET BROADCASTING ==>        #
+REALTIME LOGS ==>                 #
 
-STATE SYNCING ==>                 #
-
-FILE STORAGE ==>                  #
+FILE STORAGE ==>                  #For big files
                                   #Not included in backups
                                   #Uses PG private SCHEMA 'storage'
                                   #Repository "supabase/storage-api"
 
-CDN ==>                           #
+BUCKET                            #Main directory
+SQL_BUCKET                        #Row in storage.buckets TABLE
+SQL_BUCKET.id|name                #'NAME'
+SQL_BUCKET.created|updated_at     #TIMESTAMPTZ
+SQL_BUCKET.public                 #BOOL (def: true)
+                                  #If false, can still download, but not create URL
+SQL_BUCKET.avif_autodetection     #BOOL (def: false)
+SQL_BUCKET.file_size_limit        #BIGINT (def: null)
+SQL_BUCKET.allowed_mime_types     #STR_ARR (def: null)
+
+FOLDER                            #Sub-directory
+                                  #Actually just prefix in OBJECT's name
+FNAME                             #'[FOLDER/]NAME'
+
+OBJECT                            #Single file
+OBJECT_CONTENT                    #BLOB|FILE|FORMDATA|ARRBUFFER
+SQL_OBJECT                        #Row in storage.objects TABLE
+SQL_OBJECT.id                     #'UUID'
+SQL_OBJECT.bucket_id              #SQL_BUCKET.id
+SQL_OBJECT.name                   #'FNAME'
+storage.filename('FNAME')         #SQL FUNC to return 'NAME.EXT'
+storage.extension('FNAME')        #SQL FUNC to return 'EXT'
+SQL_OBJECT.path_tokens            #[...FOLDER, 'NAME']
+storage.foldername('FNAME')       #SQL FUNC to return [...FOLDER]
+SQL_OBJECT.created|updated_at     #TIMESTAMPTZ
+SQL_OBJECT.last_accessed_at       #TIMESTAMPTZ
+SQL_OBJECT.metadata               #JSONB of OBJ:
+                                  #  - size NUM
+                                  #  - contentLength NUM
+                                  #  - eTag STR
+                                  #  - mimetype 'MIME'
+                                  #  - cacheControl STR: HTTP Cache-Control [S]
+                                  #  - lastModified 'DATE'
+                                  #  - httpStatusCode NUM
+
+STORAGE_DOMAIN                    #'PROJECT_DOMAIN/storage/v1'
+CLIENT.storage                    #STORAGE
+
+STORAGE.from('BUCKET')->STORAGE   #
+
+STORAGE.upload                    #Add an OBJECT
+ ('FNAME', OBJECT_CONTENT[, OPTS])#OPTS:
+ ->RES                            #  - cacheControl STR
+                                  #     - def: 'max-age=3600'
+                                  #     - can use query params for cache busting
+                                  #  - contentType STR (def: 'text/plain;charset=UTF-8' for ARRBUFFER, guessed otherwise)
+                                  #  - upsert BOOL (def: false)
+STORAGE.update
+ ('FNAME', OBJECT_CONTENT[, OPTS])#Replace an OBJECT
+ ->RES                            #Same OPTS as upload()
+
+STORAGE.download('FNAME'[, OPTS]) #Get an OBJECT
+ ->RES                            #OPTS:
+                                  #  - transform OBJ:
+                                  #     - height|width 1-2500
+                                  #     - resize 'cover|contain|fill'
+                                  #     - format: unless set to 'origin', automatically convert to a better format,
+                                  #       e.g. to WebP if client supports it
+                                  #     - for PNG|JPEG|WebP|AVIF|GIF|ICO|SVG|HEIC|BMP|TIFF
+                                  #     - max 25MB
+                                  #     - max 50 megapixels
+
+STORAGE.getPublicUrl              #Returns 'STORAGE_DOMAIN/object/public/BUCKET/FNAME', to get an OBJECT
+ ('FNAME'[, OPTS])->RES           #Only if BUCKET is public
+                                  #OPTS:
+                                  #  - download BOOL|'FILENAME' (def: false): set HTTP headers to make it download
+                                  #  - transform OBJ
+STORAGE.createSignedUrl           #Same for a private BUCKET.
+ ('FNAME', NUM[, OPTS])->RES      #Includes a temporary private key.
+                                  #  - included in cache key, i.e. poorer caching
+                                  #NUM is expiration in secs
+STORAGE.createSignedUrls
+ ('FNAME'_ARR, NUM[, OPTS])->RES  #Same for multiple URLs
+
+CDN ==>                           #Cloudflare
+SMART CDN CACHING ==>             #Automatically re-cache changed OBJECT on CDN
 
 IMAGE TRANSFORMATION ==>          #
 
