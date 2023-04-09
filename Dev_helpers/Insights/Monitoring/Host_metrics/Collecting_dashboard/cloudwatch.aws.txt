@@ -33,9 +33,8 @@ FORMAT ==>                    #Request: query parameter, with ?Action and ?Versi
 
 PAGINATION ==>                #Req:
                               #  - NextToken STR
-                              #  - Max*:
-                              #     - with GetMetricData(): MaxDatapoints NUM (def: 1e5)
-                              #     - otherwise: MaxResults NUM (def: 100, max: 500)
+                              #  - MaxResults NUM (def: 100, max: 500)
+                              #     - except GetMetricData(): MaxDatapoints NUM (def: 1e5), based on METRIC_DATA_RES.Values length
                               #Res: NextToken STR
 
 PRICING ==>                   #METRIC:
@@ -126,26 +125,23 @@ SERVICE_QUOTA(ARR)            #METRIC_MATH function, returning ARR2. Quotas for 
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:     METRIC CROSS-ACCOUNT      :==(
+                                            )==:          AGGREGATION          :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
-LINKING ACCOUNTS ==>          #From one (monitoring) to another (source)
-                              #Done from the UI?
+STAT                          #Minimum, Maximum, Sum or SampleCount (length)
+                              #Used by METRIC_DATUM.StatisticValues
+ASTAT                         #STAT or Average
+                              #Used by METRIC_AGGR
+ESTAT                         #'pNUM' (percentile). NUM can have up to 10 decimal digits
+ISTAT                         #MIN|MAX|AVG|SUM|COUNT
+                              #Used by METRIC_INSIGHT
 
-METRIC_LIST_REQ
- .IncludeLinkedAccounts       #BOOL (def: false). Include METRICs from source ACCOUNTs
-
-METRIC_LIST_REQ.OwningAccount
-METRIC_DATA_REQ.AccountId     #ACCOUNT_ID of the source ACCOUNT
-METRIC_LIST.OwningAccounts    #ACCOUNT_ID_ARR of each source ACCOUNT for each METRIC
-
-METRIC_MATH                   #When cross-account, cannot use: INSIGHT_RULE_METRIC|ANOMALY_DETECTION_BAND|SERVICE_QUOTA()
-:aws.AccountId                #Can be used as SEARCH() TYPE
-                              #  - ACCOUNT_ID when cross-account
-                              #  - value can be "LOCAL" (current ACCOUNT_ID)
-
+TODO: which one for ???
+  - METRIC_STAT.Stat
+  - ${PROP('Stat')}
+  - SEARCH()
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -160,25 +156,22 @@ PutMetricData()               #Req: METRIC_DATA
 METRIC_DATA.MetricData        #METRIC_DATUM_ARR
                               #Max 1e3
                               #Max 1MB
-METRIC_DATUM                  #Single datapoint on a METRIC.
+METRIC_DATUM                  #1|n datapoints
                               #If METRIC does not exist, creates it.
-                              #Kept for 2 weeks
+                              #Kept for 15 months
+DATAPOINT                     #Single value of a METRIC
+                              #1 datapoint with METRIC_DATUM.Value, multiple with METRIC_DATUM.Values|StatisticalValues
+                              #To minimize number of requests, prefer the later, on a regular PERIOD
 
 METRIC_DATUM.MetricName
 METRIC_DATA.Namespace
 METRIC_DATUM.Dimensions       #METRIC.*
 
-METRIC_DATUM.Value            #NUM. Discrete, individual value
-                              #To minimize number of requests, prefer:
-                              #  - METRIC_DATUM.Values|StatisticValues
-                              #  - on a regular PERIOD
-METRIC_DATUM.Values|Counts    #NUM_ARR. Histogram value
+METRIC_DATUM.Value            #NUM. Single DATAPOINT
+METRIC_DATUM.Values|Counts    #NUM_ARR. Multiple DATAPOINTs, as histogram
                               #Max 150
-
-METRIC_DATUM.StatisticValues  #STAT_SET. Aggregated value
-STAT_SET.Minimum|Maximum      #NUM
-STAT_SET.Sum                  #NUM
-STAT_SET.SampleCount          #NUM of underlying individual values
+METRIC_DATUM.StatisticValues  #STAT_SET. Multiple DATAPOINTs, as aggregation
+STAT_SET.STAT                 #NUM
 
 METRIC_DATUM.Unit             #One of:
                               #  - "[Micro|Milli]Seconds"
@@ -188,11 +181,12 @@ METRIC_DATUM.Unit             #One of:
                               #  - "None"
 
 METRIC_DATUM.Timestamp        #DATE_NUM (def: now)
+                              #If >3h|24h ago, can take 2h|48h to show up
                               #Min: 2 weeks earlier, max: 2h later
-                              #  - if >3h|24h ago, can take 2h|48h to show up
 METRIC_DATUM.StorageResolution#NUM of secs to round Timestamp.
                               #Either 1s ("high") or 1m (def, "regular")
-RESOLUTION                    #In addition to StorageResolution, Timestamp rounding degrades with time:
+RESOLUTION                    #Timestamp rounding degrades with time:
+                              #  - before 3h: StorageResolution
                               #  - after 3h: 1m
                               #  - after 15d: 5m
                               #  - after 63d: 1h
@@ -213,28 +207,33 @@ METRIC_DATA_REQS              #METRIC_DATA_REQ_ARR
 
 METRIC_DATA_RESS
  .MetricDataResults           #METRIC_DATA_RES_ARR
+METRIC_DATA_RES               #1 METRIC_DATA_REQ -> 1|n METRIC_DATA_RES depending on METRIC_STAT|METRIC_INSIGHT|METRIC_MATH
 METRIC_DATA_RES.StatusCode    #One of:
                               #  - 'Complete': ok
                               #  - 'PartialData': paginated
                               #  - 'InternalError': error, but can retry
                               #  - 'Forbidden': auth error
 
-METRIC_STAT[_REQ].Period      #PERIOD. NUM (in secs).
-                              #Granularity of result: each PERIOD returns a single aggregated value.
+METRIC_STAT[_REQ].Period      #PERIOD. NUM (in secs) (def: 1m).
+                              #Granularity of result: each PERIOD returns a single value aggregating multiple DATAPOINTs
                               #Must be a multiple of RESOLUTION
                               #  - if RESOLUTION 1s, must be 1|5|10|30
 METRIC_DATA_REQS.StartTime    #Matching METRIC_DATUM.Timestamp. Inclusive.
                               #Rounded by PERIOD
-METRIC_DATA_REQS.EndTime      #Same for end. Exclusive
+                              #Must be within last 3h if there is a METRIC_INSIGHT
+METRIC_DATA_REQS.EndTime      #Matching METRIC_DATUM.Timestamp. Exclusive.
+                              #Rounded by PERIOD
 METRIC_DATA_REQS.ScanBy       #'TimestampDescending|TimestampAscending'. Sorting order
 
 METRIC_DATA_REQ.MetricStat    #METRIC_STAT. Simple query
+                              #Returns a single METRIC_DATA_RES
 METRIC_STAT.Metric            #METRIC
-METRIC_STAT.Stat              #'STAT' applied on each PERIOD
+METRIC_STAT.Stat              #STAT applied on each PERIOD
 METRIC_STAT.Unit              #Filter by METRIC_DATUM.Unit. Does not try to convert
 
 METRIC_DATA_REQ.Expression    #'METRIC_INSIGHT' or 'METRIC_MATH'. Advanced query
                               #Cannot be used together with METRIC_DATA_REQ.MetricStat
+                              #Max 1 METRIC_INSIGHT per METRIC_DATA_REQS
 
 METRIC_DATA_REQ|RES.Id        #'MVAR'
                               #Either lowercase_underscored or camelCase
@@ -242,12 +241,47 @@ METRIC_DATA_RES.Values        #NUM_ARR. Each response value
 METRIC_DATA_RES.Timestamps    #DATE_NUM_ARR. Same length as Values
 METRIC_DATA_REQ.ReturnData    #BOOL (def: true).
                               #If false, METRIC_DATA_RES.Values|Timestamps only include METRIC_DATA_REQ values,
-                              #not individual values???
+                              #not individual DATAPOINTs???
 
 METRIC_DATA_RES[S].Messages   #MESSAGE_DATA_ARR
 MESSAGE_DATA                  #Error message
 MESSAGE_DATA.Code             #STR
 MESSAGE_DATA.Value            #'MESSAGE'
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:         METRIC STATS          :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+GetMetricStatistics()         #Req: METRIC_AGGR_REQ
+                              #Res: METRIC_AGGR
+
+METRIC_AGGR_REQ.MetricName
+METRIC_AGGR_REQ.Namespace
+METRIC_AGGR_REQ.Dimensions    #METRIC.*
+METRIC_AGGR_REQ.Period        #Like METRIC_STAT_REQ.*
+METRIC_AGGR_REQ
+ .StartTime|EndTime           #Like METRIC_STAT_REQS.*
+METRIC_AGGR_REQ.Unit          #Like METRIC_STAT.*
+METRIC_AGGR_REQ.Statistics    #'ASTAT'_ARR to populate in AGGR_DATAPOINT.*
+METRIC_AGGR_REQ               #'ESTAT'_ARR to populate in AGGR_DATAPOINT.ExtendedStatistics.*
+ .ExtendedStatistics          #Cannot be used together with Statistics
+                              #Max 10
+
+METRIC_AGGR                   #
+METRIC_AGGR.Label             #STR
+
+METRIC_AGGR.Datapoints        #AGGR_DATAPOINT_ARR
+                              #Max 1440, otherwise error
+AGGR_DATAPOINT                #
+AGGR_DATAPOINT.Timestamp      #'DATE'
+AGGR_DATAPOINT.Unit           #METRIC_DATUM.Unit
+AGGR_DATAPOINT.ASTAT          #NUM
+AGGR_DATAPOINT
+ .ExtendedStatistics          #
 
 
                                              /=+===============================+=\
@@ -258,44 +292,44 @@ MESSAGE_DATA.Value            #'MESSAGE'
 
 
 METRIC_DATA_REQ|RES.Label     #STR. Description
-                              #Def: automatically generated
+                              #Def: '${LABEL}'
 
-METRIC_DATA_REQS
- .LabelOptions.Timezone       #
+METRIC_DATA_REQS              #'+|-NNNN'. Timezone to use in ${*TIME*}
+ .LabelOptions.Timezone       #Def: UTC
 
 ${...}                        #"Dynamic label"
                               #Can be added to METRIC_DATA_REQ.Label
-                              #Computed based in each METRIC_DATA_RES, based on its Values|Timestamps
+                              #Computed in each METRIC_DATA_RES, based on its Values|Timestamps ARR
                               #Max 5 per Label
 
-${AVG}                        #The average of the values in the time range currently shown in the graph.
-${DATAPOINT_COUNT}            #The number of data points in the time range that is currently shown in the graph.
-${FIRST}                      #The oldest of the metric values in the time range that is currently shown in the graph.
-${FIRST_LAST_RANGE}           #The difference between the metric values of the oldest and newest data points that are currently shown in the graph.
-${FIRST_LAST_TIME_RANGE}      #The absolute time range between the oldest and newest data points that are currently shown in the graph.
-${FIRST_TIME}                 #The timestamp of the oldest data point in the time range that is currently shown in the graph.
-${FIRST_TIME_RELATIVE}        #The absolute time difference between now and the timestamp of the oldest data point in the time range that is currently shown in the graph.
-${LABEL}                      #The representation of the default label for a metric.
-${LAST}                       #The most recent of the metric values in the time range that is currently shown in the graph.
-${LAST_TIME}                  #The timestamp of the newest data point in the time range that is currently shown in the graph.
-${LAST_TIME_RELATIVE}         #The absolute time difference between now and the timestamp of the newest data point in the time range that is currently shown in the graph.
-${MAX}                        #The maximum of the values in the time range currently shown in the graph.
-${MAX_TIME}                   #The timestamp of the data point that has the highest metric value, of the data points that are currently shown in the graph.
-${MAX_TIME_RELATIVE}          #The absolute time difference between now and the timestamp of the data point with the highest value, of those data points that are currently shown in the graph.
-${MIN}                        #The minimum of the values in the time range currently shown in the graph.
-${MIN_MAX_RANGE}              #The difference in metric values between the data points with the highest and lowest metric values, of those data points that are currently shown in the graph.
-${MIN_MAX_TIME_RANGE}         #The absolute time range between the data points with the highest and lowest metric values, of those data points that are currently shown in the graph.
-${MIN_TIME}                   #The timestamp of the data point that has the lowest metric value, of the data points that are currently shown in the graph.
-${MIN_TIME_RELATIVE}          #The absolute time difference between now and the timestamp of the data point with the lowest value, of those data points that are currently shown in the graph.
-${PROP('AccountId')}          #The AWS account ID of the metric.
-${PROP('AccountLabel')}       #The label specified for the source account that owns this metric, in CloudWatch cross-account observabiility.
-${PROP('Dim.dimension_name')} #The value of the specified dimension. Replace dimension_name with the case-sensitive name of your dimension.
-${PROP('MetricName')}         #The name of the metric.
-${PROP('Namespace')}          #The namespace of the metric.
-${PROP('Period')}             #The period of the metric, in seconds.
-${PROP('Region')}             #The AWS Region where the metric is published.
-${PROP('Stat')}               #The metric statistic that is being graphed.
-${SUM}                        #The sum of the values in the time range currently shown in the graph.
+${LABEL}                      #Concatenates METRIC.Namespace|MetricName and DVAR|DVALs
+
+${FIRST|LAST}                 #First|last value
+
+${MIN|MAX}                    #
+${SUM}                        #
+${AVG}                        #
+${DATAPOINT_COUNT}            #Length
+
+${FIRST_LAST_RANGE}           #LAST - FIRST
+${MIN_MAX_RANGE}              #MAX - MIN
+
+${FIRST|LAST_TIME}
+${MIN|MAX_TIME}
+${FIRST_LAST_TIME_RANGE}
+${MIN|MAX_TIME_RANGE}         #Same but with timestamps
+
+${FIRST|LAST_TIME_RELATIVE}
+${MIN|MAX_TIME_RELATIVE}      #Same but with duration since timestamps
+
+${PROP('Region')}             #REGION
+
+${PROP('MetricName')}         #'METRIC'
+${PROP('Namespace')}          #NAMESPACE
+${PROP('Dim.DVAR')}           #DVAL
+
+${PROP('Period')}             #PERIOD
+${PROP('Stat')}               #Current STAT
 
 
                                              /=+===============================+=\
@@ -307,21 +341,20 @@ ${SUM}                        #The sum of the values in the time range currently
 
 METRIC_INSIGHT                #SQL-like expression to compute a query on METRIC_DATUMs
                               #Syntax follows
+                              #Returns ARR|ARR_ARR (one|multiple METRIC_DATA_RESs) depending on whether GROUP BY is used
 
-SELECT STAT(NAME)             #Use METRIC with MetricName NAME and Namespace NAMESPACE
-FROM NAMESPACE                #Aggregate each PERIOD according to STAT
+SELECT ISTAT(NAME)            #Use METRIC with MetricName NAME and Namespace NAMESPACE
+FROM NAMESPACE                #Aggregate each PERIOD according to ISTAT
                               #NAMESPACE can also be SCHEMA(NAMESPACE[, DVAR, ...])
                               #  - same as NAMESPACE, but only for METRICs with exact same DVAR
                               #  - must also have same Dimension count, including 0
 WHERE DVAR [!]= DVAL [AND ...]#Filter by DVAL
 GROUP BY DVAR[, ...]          #Splits into multiple ARRs grouped by DVAR
                               #Missing DVAR are named "Other"
-ORDER BY STAT() [DESC|ASC]    #Sort ARRs created by GROUP BY
+ORDER BY ISTAT() [DESC|ASC]   #Sort ARRs created by GROUP BY
                               #Def: ASC
 LIMIT NUM                     #Only first NUM values
                               #Def|max NUM: 500
-
-STAT                          #MIN|MAX|AVG|SUM|COUNT
 
 QUOTING ==>                   #'-quote: around DVAL
                               #"-quote:
@@ -339,7 +372,7 @@ QUOTING ==>                   #'-quote: around DVAL
 
 METRIC_MATH                   #DSL to compute a query on METRIC_DATUMs
                               #While METRIC_INSIGHT is more focused on filtering|grouping|sorting|slicing,
-                              #METRIC_MATH is more focused on transforming and combining multiple METRICs
+                              #METRIC_MATH is more focused on transforming and combining multiple METRICs|METRIC_INSIGHT
                               #Return value must be either:
                               #  - ARR: one METRIC_DATA_RES
                               #  - ARR_ARR: multiple METRIC_DATA_RESs
@@ -432,7 +465,7 @@ SEARCH('QUERY', 'STAT')       #METRIC_MATH function returning ARR_ARR: METRICs m
                               #  - NAMESPACE: only METRICs with that Namespace
                               #  - DVAR:
                               #     - group METRICs by DVAL
-                              #     - 'STAT' is Average|Min|... applied on those groups
+                              #     - STAT is applied on those groups
                               #     - ignore METRICs without that DVAR
                               #TERMS: list of TERM separated by:
                               #  - space: same as AND
@@ -459,37 +492,28 @@ SEARCH('QUERY', 'STAT')       #METRIC_MATH function returning ARR_ARR: METRICs m
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:         METRIC STATS          :==(
+                                            )==:     METRIC CROSS-ACCOUNT      :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
-GetMetricStatistics()         #Req: METRIC_AGGR_REQ
-                              #Res: METRIC_AGGR
+LINKING ACCOUNTS ==>          #From one (monitoring) to another (source)
+                              #Done from the UI?
 
-METRIC_AGGR_REQ.MetricName
-METRIC_AGGR_REQ.Namespace
-METRIC_AGGR_REQ.Dimensions    #METRIC.*
-METRIC_AGGR_REQ
- .StartTime|EndTime           #'DATE' (def: last hour)
-METRIC_AGGR_REQ.Period        #NUM (in secs, def: 60, must be multiple of 60)
-                              #On which periods the Statistics in applied (e.g. averages of every 10 mins)
-METRIC_AGGR_REQ.Statistics    #STR_ARR
-METRIC_AGGR_REQ
- .ExtendedStatistics          #
-METRIC_AGGR_REQ.Unit          #METRIC_DATUM.Unit
+METRIC_LIST_REQ
+ .IncludeLinkedAccounts       #BOOL (def: false). Include METRICs from source ACCOUNTs
 
-METRIC_AGGR                   #
-METRIC_AGGR.Label             #STR
+METRIC_LIST_REQ.OwningAccount
+METRIC_DATA_REQ.AccountId     #ACCOUNT_ID of the source ACCOUNT
+METRIC_LIST.OwningAccounts    #ACCOUNT_ID_ARR of each source ACCOUNT for each METRIC
 
-METRIC_AGGR.Datapoints        #DATAPOINT_ARR
-DATAPOINT                     #
-DATAPOINT.Minimum|Maximum|
- Sum|SampleCount              #Like STAT_SET.*
-DATAPOINT.Average             #NUM
-DATAPOINT.Timestamp           #'DATE'
-DATAPOINT.Unit                #METRIC_DATUM.Unit
-DATAPOINT.ExtendedStatistics  #
+METRIC_MATH                   #When cross-account, cannot use: INSIGHT_RULE_METRIC|ANOMALY_DETECTION_BAND|SERVICE_QUOTA()
+:aws.AccountId                #Can be used as SEARCH() TYPE
+                              #  - ACCOUNT_ID when cross-account
+                              #  - value can be "LOCAL" (current ACCOUNT_ID)
+
+${PROP('AccountId')}          #Dynamic label. Source ACCOUNT_ID
+${PROP('AccountLabel')}       #Dynamic label. Source ACCOUNT label
 
 
                                              /=+===============================+=\
@@ -647,6 +671,7 @@ ALL_ALARMS.CompositeAlarms    #COMPOSITE_ALARM_ARR
                                             )==:         ALARM METRIC          :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
+
 
 PutMetricAlarm()              #Req: METRIC_ALARM
                               #  - no AlarmArn,  AlarmConfigurationUpdatedTimestamp, *State*
