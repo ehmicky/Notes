@@ -5,11 +5,6 @@
 
 
 
-TO DOCUMENT:
-  - RDS proxy: https://docs.aws.amazon.com/lambda/latest/dg/configuration-database.html
-  - AWS signer: https://docs.aws.amazon.com/lambda/latest/dg/configuration-codesigning.html
-  - X-Ray: https://docs.aws.amazon.com/lambda/latest/dg/nodejs-tracing.html
-
 VERSION ==>                       #2023-04-06
 
 SUMMARY ==>                       #Functions: versions|aliases, alias routing
@@ -1224,6 +1219,8 @@ EVENT_SOURCE.StartingPosition     #STR. Position where to start reading stream s
                                   #Only with MSK|Kinesis|DynamoDB
 EVENT_SOURCE
  .StartingPositionTimestamp       #DATE_NUM when EVENT_SOURCE 'AT_TIMESTAMP'
+AWS/Lambda/IteratorAge            #CloudWatch METRIC with NUM of ms for stream records to be read.
+                                  #I.e. average age of starting position record
 
 EVENT_SOURCE                      #NUM (in secs). Processing window duration.
  .TumblingWindowInSeconds         #Max: 900
@@ -1263,6 +1260,8 @@ EVENT_SOURCE
  .SelfManagedEventSource
  .Endpoints
  .KAFKA_BOOTSTRAP_SERVERS         #Self-managed Kafka source 'HOST:PORT'_ARR
+AWS/Lambda/OffsetLag              #CloudWatch METRIC with NUM of ms for Kafka records to be picked up
+                                  #I.e. duration between last record write to a topic, and last record read
 
 AWSLambdaMSKExecutionRole
 AWSLambdaKinesisExecutionRole
@@ -1281,7 +1280,10 @@ lambda:FunctionArn                #FUNC_VERSION_ARN CONDITION_KEY
                                              \=+===============================+=/
 
 
-INVOCATION ERROR ==>              #Error unrelated to the FUNCTION's code: permissions, limits, throttling|concurrency
+INVOCATION ERROR ==>              #Error unrelated to the FUNCTION's code:
+                                  #  - permissions
+                                  #  - quotas, throttling, concurrency
+                                  #  - max EVENT_INVOKE retries
 FUNCTION ERROR ==>                #Error related to the FUNCTION's code:
                                   #  - Runtime: process exit, timeout, invalid payload
                                   #  - Function: error response, exception
@@ -1362,6 +1364,11 @@ FUNC_VERSION.DeadLetterConfig     #SQS|SNS_ARN (not FIFO) where to send INVOCATI
                                   #Only if InvocationType 'Event'
 AWS/Lambda/DeadLetterErrors       #CloudWatch METRIC with NUM of DeadLetterConfig that failed to send
 
+AWS/Lambda/AsyncEventsReceived    #CloudWatch METRIC with NUM of started INVOCATIONs that are async,
+                                  #i.e. either InvocationType 'Event', or EVENT_SOURCE
+AWS/Lambda/AsyncEventsDropped     #CloudWatch METRIC with NUM of async INVOCATIONs that failed due to final error
+AWS/Lambda/AsyncEventsReceived    #CloudWatch METRIC with NUM of secs to process async INVOCATIONs
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -1417,6 +1424,9 @@ ACCOUNT_LIMIT                     #NUM. Like ACCOUNT_LIMIT.ConcurrentExecutions,
  .UnreservedConcurrentExecutions  #each FUNCTION's max(CONCURRENCY, PCONCURRENCY)
                                   #Must be at least 100
 
+AWS/Lambda/ConcurrentExecutions   #CloudWatch METRIC with NUM of ongoing FUNC_INSTANCEs
+AWS/Lambda/
+ UnreservedConcurrentExecutions   #CloudWatch METRIC with NUM of ongoing FUNC_INSTANCEs using neither reserved CONCURRENCY nor PCONCURRENCY
 AWS/Lambda/Throttles              #CloudWatch METRIC with NUM of failed INVOCATIONs due to concurrency
 
 PutFunctionConcurrency()          #Req: CONCURRENCY
@@ -1483,14 +1493,18 @@ PCONCURRENCY.Allocated
  ProvisionedConcurrentExecutions  #NUM
 
 ENVVAR                            #Can be:
- AWS_LAMBDA_INITIALIZATION_TYPE   #  - 'provisioned-concurrency': if part of PCONCURRENCY
-                                  #  - 'snap-start': if part of SNAP_START
+ AWS_LAMBDA_INITIALIZATION_TYPE   #  - 'provisioned-concurrency': if using PCONCURRENCY
+                                  #  - 'snap-start': if using SNAP_START
                                   #  - 'on-demand': otherwise
                                   #Useful to run slower initialization logic (e.g. preemptive caching) only when not 'on-demand'
 AWS/Lambda/ProvisionedConcurrency
- Invocations                      #CloudWatch METRIC with NUM of INVOCATIONs started as part of PCONCURRENCY
+ Invocations                      #CloudWatch METRIC with NUM of INVOCATIONs using PCONCURRENCY
 AWS/Lambda/ProvisionedConcurrency
- SpilloverInvocations             #CloudWatch METRIC with NUM of INVOCATIONs started as part of normal concurrency because PCONCURRENCY is full
+ SpilloverInvocations             #CloudWatch METRIC with NUM of INVOCATIONs using normal concurrency because PCONCURRENCY is full
+AWS/Lambda/
+ ProvisionedConcurrentExecutions  #CloudWatch METRIC with NUM of ongoing FUNC_INSTANCEs using PCONCURRENCY
+AWS/Lambda/
+ ProvisionedConcurrentUtilization #Like AWS/Lambda/ProvisionedConcurrentExecutions, but divided by allocated PCONCURRENCY
 
 
                                              /=+===============================+=\
@@ -1606,3 +1620,13 @@ ENVVAR PYTHON_PATH                #LAMBDA_RUNTIME_DIR
 /opt/python                       #
 /opt/python/lib/pythonVERSION
  /site-packages                   #Preferred location for LAYERs packages
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:           INSIGHTS            :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+
