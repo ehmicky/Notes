@@ -6,6 +6,7 @@
 
 
 TODO ==>
+  - all "???"
   - Lambda + CloudWatch:
      - ENVVAR AWS_LAMBDA_LOG_GROUP_NAME, AWS_LAMBDA_LOG_STREAM_NAME
      - https://docs.aws.amazon.com/lambda/latest/dg/urls-monitoring.html
@@ -28,7 +29,7 @@ SUMMARY ==>                   #???
 SERVICE_DOMAIN                #'monitoring.amazonaws.com'
 
 FORMAT ==>                    #Request: query parameter, with ?Action and ?Version, and ARR.members.NUM
-                              #Response: JSON
+                              #Response: XML
                               #Request ID: RES.ResponseMetadata.RequestId
 
 PAGINATION ==>                #Req:
@@ -130,13 +131,39 @@ SERVICE_QUOTA(ARR)            #METRIC_MATH function, returning ARR2. Quotas for 
                                              \=+===============================+=/
 
 
-STAT                          #Minimum, Maximum, Sum or SampleCount (length)
-                              #Used by METRIC_DATUM.StatisticValues
-ASTAT                         #STAT or Average
-                              #Used by METRIC_AGGR
-ESTAT                         #'pNUM' (percentile). NUM can have up to 10 decimal digits
 ISTAT                         #MIN|MAX|AVG|SUM|COUNT
                               #Used by METRIC_INSIGHT
+STAT                          #Minimum, Maximum, Sum or SampleCount (count)
+                              #Used by METRIC_DATUM.StatisticValues
+ASTAT                         #STAT or Average
+                              #Used by METRIC_AGGR_REQ.Statistics
+ESTAT                         #'pNUM' (percentile)
+                              #Used by METRIC_AGGR_REQ.ExtendedStatistics
+XSTAT                         #ASTAT, ESTAT or one of:
+                              #  - 'pNUM': percentile
+                              #  - TM(RANGE):
+                              #     - like Average but without outliers outside RANGE
+                              #     - "trimmed mean"
+                              #  - IQM:
+                              #     - same as TM(25%:75%)
+                              #     - "inter-quartile mean"
+                              #  - WM(RANGE):
+                              #     - like Average but outliers outside RANGE are clamped to min|max non-outliers
+                              #     - "Winsorized mean"
+                              #  - TC(RANGE):
+                              #     - like SampleCount but without outliers outside RANGE
+                              #     - "trimmed count"
+                              #  - TS(RANGE):
+                              #     - like Sum but without outliers outside RANGE
+                              #     - "trimmed sum"
+                              #  - PR(RANGE):
+                              #     - percentage of values within RANGE
+                              #     - "percentile rank"
+                              #  - tm|vm|tc|ts|prNUM: same as TM|VM|TC|TS|PR(:NUM%)
+                              #Used by METRIC_STREAM AdditionalStatistics
+RANGE                         #[NUM[%]]:[NUM2[%]]
+                              #Targets only values >NUM (def: min) and <=NUM2 (def: max)
+                              #If %, use percentiles instead
 
 TODO: which one for ???
   - METRIC_STAT.Stat
@@ -251,37 +278,42 @@ MESSAGE_DATA.Value            #'MESSAGE'
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:         METRIC STATS          :==(
+                                            )==:      METRIC AGGREGATION       :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
 GetMetricStatistics()         #Req: METRIC_AGGR_REQ
-                              #Res: METRIC_AGGR
+                              #Res: METRIC_AGGR_RESS
+
+METRIC_AGGR_REQ               #Similar to METRIC_DATA_REQ using MetricStat, but simpler and can use ESTAT
+METRIC_AGGR_RESS.Datapoints   #METRIC_AGGR_RES_ARR
+                              #Max 1440, otherwise error
 
 METRIC_AGGR_REQ.MetricName
 METRIC_AGGR_REQ.Namespace
 METRIC_AGGR_REQ.Dimensions    #METRIC.*
+
+METRIC_AGGR_REQ|RES.Unit      #Like METRIC_STAT.*
+
 METRIC_AGGR_REQ.Period        #Like METRIC_STAT_REQ.*
+                              #Each METRIC_STAT_RES aggregates multiple DATAPOINTs in a single PERIOD
 METRIC_AGGR_REQ
  .StartTime|EndTime           #Like METRIC_STAT_REQS.*
-METRIC_AGGR_REQ.Unit          #Like METRIC_STAT.*
-METRIC_AGGR_REQ.Statistics    #'ASTAT'_ARR to populate in AGGR_DATAPOINT.*
-METRIC_AGGR_REQ               #'ESTAT'_ARR to populate in AGGR_DATAPOINT.ExtendedStatistics.*
- .ExtendedStatistics          #Cannot be used together with Statistics
+METRIC_AGGR_RES.Timestamp     #'DATE'
+
+METRIC_AGGR_REQ.Statistics    #'ASTAT'_ARR to populate in METRIC_AGGR_RES.*
+METRIC_AGGR_RES.ASTAT         #NUM
+METRIC_AGGR_REQ               #'ESTAT'_ARR to populate in METRIC_AGGR_RES.ExtendedStatistics.*
+ .ExtendedStatistics          #Cannot be used with:
+                              #  - METRIC_AGGR_REQ.Statistics
+                              #  - negative DATAPOINTs
+                              #  - METRIC_DATUM.Values|StatisticValues
                               #Max 10
+METRIC_AGGR_RES
+ .ExtendedStatistics.ESTAT    #NUM
 
-METRIC_AGGR                   #
-METRIC_AGGR.Label             #STR
-
-METRIC_AGGR.Datapoints        #AGGR_DATAPOINT_ARR
-                              #Max 1440, otherwise error
-AGGR_DATAPOINT                #
-AGGR_DATAPOINT.Timestamp      #'DATE'
-AGGR_DATAPOINT.Unit           #METRIC_DATUM.Unit
-AGGR_DATAPOINT.ASTAT          #NUM
-AGGR_DATAPOINT
- .ExtendedStatistics          #
+METRIC_AGGR_RESS.Label        #STR
 
 
                                              /=+===============================+=\
@@ -502,6 +534,8 @@ LINKING ACCOUNTS ==>          #From one (monitoring) to another (source)
 
 METRIC_LIST_REQ
  .IncludeLinkedAccounts       #BOOL (def: false). Include METRICs from source ACCOUNTs
+METRIC_STREAM
+ .IncludeLinkedAccountsMetrics#Same
 
 METRIC_LIST_REQ.OwningAccount
 METRIC_DATA_REQ.AccountId     #ACCOUNT_ID of the source ACCOUNT
@@ -523,77 +557,63 @@ ${PROP('AccountLabel')}       #Dynamic label. Source ACCOUNT label
                                              \=+===============================+=/
 
 
-PutMetricStream()             #Req: METRIC_STREAM_ENTRY
+PutMetricStream()             #Req: METRIC_STREAM
                               #  - no Arn, CreationDate, LastUpdateDate, State
                               #  - RoleName -> RoleArn
-                              #Res: METRIC_STREAM_ENTRY
+                              #Res: METRIC_STREAM
                               #  - only Arn
-StartMetricStreams()          #Req: METRIC_STREAM_ENTRY
+StartMetricStreams()          #Req: METRIC_STREAM
                               #  - only Name -> Names
                               #Res: empty
-StopMetricStreams()           #Req: METRIC_STREAM_ENTRY
+                              #Set METRIC_STREAM.State 'running'
+StopMetricStreams()           #Req: METRIC_STREAM
                               #  - only Name -> Names
                               #Res: empty
-GetMetricStream()             #Req: METRIC_STREAM_ENTRY
+                              #Set METRIC_STREAM.State 'stopped'
+GetMetricStream()             #Req: METRIC_STREAM
                               #  - only Name
-                              #Res: METRIC_STREAM_ENTRY
-                              #  - no Tags
+                              #Res: METRIC_STREAM
 ListMetricStreams()           #Req: empty
-                              #Res: Entries METRIC_STREAM_ENTRY_ARR
-                              #  - no ExcludeFilters, IncludeFilters, IncludeLinkedAccountsMetrics, RoleName, StatisticsConfigurations, Tags
-DeleteMetricStream()          #Req: METRIC_STREAM_ENTRY
+                              #Res: Entries METRIC_STREAM_ARR
+                              #  - no Include|ExcludeFilters, IncludeLinkedAccountsMetrics, RoleName, StatisticsConfigurations
+DeleteMetricStream()          #Req: METRIC_STREAM
                               #  - only Name
                               #Res: empty
 
-METRIC_STREAM_ENTRY           #
-METRIC_STREAM_ENTRY.Arn       #
-METRIC_STREAM_ENTRY
- .CreationDate                #
-METRIC_STREAM_ENTRY
- .FirehoseArn                 #
-METRIC_STREAM_ENTRY
- .IncludeLinkedAccountsMetrics#
-METRIC_STREAM_ENTRY
- .LastUpdateDate              #
-METRIC_STREAM_ENTRY.Name      #
-METRIC_STREAM_ENTRY
- .OutputFormat                #
-METRIC_STREAM_ENTRY.RoleName  #
-METRIC_STREAM_ENTRY.State     #
-METRIC_STREAM_ENTRY.Tags      #
+METRIC_STREAM                 #Redirect all of an ACCOUNT's METRIC_DATUMs to a Kinesis FIREHOSE
+METRIC_STREAM.Arn             #METRIC_STREAM_ARN
+METRIC_STREAM.Name            #'METRIC_STREAM'
+METRIC_STREAM.CreationDate    #'DATE'
+METRIC_STREAM.LastUpdateDate  #'DATE'
 
-METRIC_STREAM_ENTRY
+METRIC_STREAM.FirehoseArn     #FIREHOSE_ARN
+METRIC_STREAM.RoleName        #'ROLE' assumed by FIREHOSE
+                              #Must allow firehose:PutRecord[Batch] PACTIONs
+                              #Current PRINCIPAL must have iam:PassRole PACTION
+
+METRIC_STREAM.OutputFormat    #'json' or 'opentelemetry0.7'
+
+METRIC_STREAM.State           #'running' (def) or 'stopped'
+
+METRIC_STREAM
  .Include|ExcludeFilters      #METRIC_STREAM_FILTER_ARR
-METRIC_STREAM_FILTER          #
-METRIC_STREAM_FILTER.Namespace#STR
+METRIC_STREAM_FILTER          #Include|exclude METRICs with a given NAMESPACE
+METRIC_STREAM_FILTER.Namespace#NAMESPACE
 
-METRIC_STREAM_ENTRY
- .StatisticsConfigurations    #METRIC_STAT_ARR
-METRIC_STAT                   #
-METRIC_STAT
- .AdditionalStatistics        #STR_ARR
-
-METRIC_STAT.IncludeMetrics    #METRIC_STAT_METRIC_ARR
-METRIC_STAT_METRIC            #
-METRIC_STAT_METRIC.MetricName #STR
-METRIC_STAT_METRIC.Namespace  #STR
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:            WIDGET             :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-GetMetricWidgetImage()        #Req: WIDGET_IMAGE_REQ
-                              #Res: WIDGET_IMAGE
-
-WIDGET_IMAGE_REQ.MetricWidget #
-WIDGET_IMAGE_REQ.OutputFormat #
-
-WIDGET_IMAGE                  #
-WIDGET_IMAGE.MetricWidgetImage#
+METRIC_STREAM
+ .StatisticsConfigurations    #METRIC_STREAM_STAT_ARR
+METRIC_STREAM_STAT            #Specify XSTATs to compute for specific METRICs
+METRIC_STREAM_STAT            #'XSTAT'_ARR
+ .AdditionalStatistics        #If OutputFormat 'opentelemetry0.7', can only use 'pNUM'
+                              #Always included: Min|Max|Sum|SampleCount
+                              #Max 20
+METRIC_STREAM_STAT            #METRIC_STREAM_METRIC_ARR
+ .IncludeMetrics              #Max 100
+METRIC_STREAM_METRIC          #Specific METRIC targetted by METRIC_STREAM_STAT
+METRIC_STREAM_METRIC
+ .MetricName                  #'METRIC'
+METRIC_STREAM_METRIC
+ .Namespace                   #NAMESPACE
 
 
                                              /=+===============================+=\
@@ -615,9 +635,8 @@ DisableAlarmActions()         #Req: ALARM
 
 ALARM                         #
                               #Max 5000
+ALARM.AlarmArn                #ALARM_ARN
 ALARM.ActionsEnabled          #BOOL (def: true). To disable ALARM
-ALARM.AlarmActions            #
-ALARM.AlarmArn                #
 ALARM.AlarmConfiguration
  UpdatedTimestamp             #
 ALARM.AlarmDescription        #STR
@@ -632,11 +651,13 @@ ALARM.StateValue              #One of:
                               #  - "INSUFFICIENT_DATA": pending feedback
                               #  - "ALARM": feedback
                               #Can be manually set, for testing.
-ALARM                         #ARN_ARR. Trigger action when StateValue changes.
- .OK|InsufficientDataActions  #ARN can be:
+
+ALARM.AlarmActions            #ARN_ARR. Trigger action when StateValue becomes 'ALARM'
+                              #ARN can be:
                               #  - SNS_TOPIC_ARN
                               #  - "arn:aws:automate:REGION:ec2:stop|terminate"
-ALARM.Tags                    #
+ALARM.InsufficientDataActions #Same for StateValue 'INSUFICIENT_DATA'
+ALARM.OKDataActions           #Same for StateValue 'OK'
 
 
                                              /=+===============================+=\
@@ -661,9 +682,7 @@ ALL_ALARMS_REQ
 ALL_ALARMS_REQ.StateValue     #
 
 ALL_ALARMS.MetricAlarms       #METRIC_ALARM_ARR
-                              #  - no Tags
 ALL_ALARMS.CompositeAlarms    #COMPOSITE_ALARM_ARR
-                              #  - no Tags
 
 
                                              /=+===============================+=\
@@ -812,7 +831,6 @@ ANOMALY_DETECTION_BAND in METRIC_MATH
 
 PutInsightRule()              #Req: IRULE
                               #  - only Definition|Name|State -> RuleDefinition|RuleName|RuleState
-                              #  - only Tags
                               #Res: empty
 EnableInsightRules()          #Req: IRULE
                               #  - only Name -> RuleNames ARR
@@ -822,7 +840,6 @@ DisableInsightRules()         #Req: IRULE
                               #Res: Failures FAILURE_ARR
 DescribeInsightRules()        #Req: empty
                               #Res: InsightRules IRULE_ARR
-                              #  - no Tags
 DeleteInsightRules()          #Req: IRULE
                               #  - only Name -> RuleNames ARR
                               #Res: Failures IFAILURE_ARR
@@ -833,7 +850,6 @@ IRULE.ManagedRule             #
 IRULE.Name                    #
 IRULE.Schema                  #
 IRULE.State                   #
-IRULE.Tags                    #
 
 IFAILURE                      #
 IFAILURE.ExceptionType        #
@@ -956,6 +972,28 @@ DASHBOARD_FAILURE.Message     #
 
                                              /=+===============================+=\
                                             /  :                               :  \
+                                            )==:            WIDGET             :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+GetMetricWidgetImage()        #Req: WIDGET_IMAGE_REQ
+                              #Res: WIDGET_IMAGE
+
+WIDGET_IMAGE_REQ.MetricWidget #'WIDGET'
+WIDGET_IMAGE_REQ.OutputFormat #Either:
+                              #  - 'png' (def): response is normal XML, with WIDGET_IMAGE
+                              #  - 'image/png': response is PNG directly
+
+WIDGET_IMAGE.MetricWidgetImage#'PNG_BASE64'. Image of the graph
+
+WIDGET                        #JSON defining a graph for specific METRICs
+
+TODO: https://docs.aws.amazon.com/AmazonCloudWatch/latest/APIReference/CloudWatch-Metric-Widget-Structure.html
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
                                             )==:             TAGS              :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -972,5 +1010,7 @@ ListTagsForResource()         #Req: ANY_TAGS
                               #  - no ResourceARN
 
 ANY_TAGS                      #
-ANY_TAGS.ResourceARN          #
+ANY_TAGS.ResourceARN          #RESOURCE_ARN, among METRIC_STREAM|ALARM|IRULE
 ANY_TAGS.Tags                 #
+
+RESOURCE.Tags                 #Can be specified in PutRESOURCE() request but not returned in any responses
