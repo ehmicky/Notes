@@ -6,16 +6,16 @@
 
 
 TODO ==>
-  - https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/aws-services-cloudwatch-metrics.html
-  - Container and Lambda Insights
-     - https://docs.aws.amazon.com/aws-managed-policy/latest/reference/CloudWatchLambdaInsightsExecutionRolePolicy.html
-  - all "???"
   - user guide
-  - Lambda + CloudWatch:
+  - Lambda:
      - ENVVAR AWS_LAMBDA_LOG_GROUP_NAME, AWS_LAMBDA_LOG_STREAM_NAME
      - https://docs.aws.amazon.com/lambda/latest/dg/urls-monitoring.html
      - https://docs.aws.amazon.com/lambda/latest/dg/nodejs-logging.html
      - https://docs.aws.amazon.com/lambda/latest/dg/lambda-monitoring.html
+     - Lambda Insights
+        - https://docs.aws.amazon.com/aws-managed-policy/latest/reference/CloudWatchLambdaInsightsExecutionRolePolicy.html
+  - ECS|EKS: container insights
+     - https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/ContainerInsights.html
   - Systems Manager:
      - SERVICE_LINKED_ROLEs:
         - https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/using-service-linked-roles.html#service-linked-role-permissions-opsitem
@@ -51,6 +51,9 @@ PAGINATION ==>                #Req:
                               #  - MaxResults NUM (def: 100, max: 500)
                               #     - except GetMetricData(): MaxDatapoints NUM (def: 1e5), based on METRIC_DATA_RES.Values length
                               #Res: NextToken STR
+
+THROTTLING ==>                #GetMetricData: 50/s (flexible)
+                              #  - 10s if INSIGHT_QUERY
 
 PRICING ==>                   #METRIC:
                               #  - 1$/month per 3.33 custom METRICs
@@ -120,7 +123,7 @@ AWS/SERVICE                   #Namespace for most managed METRICs
 
 AWS/Usage                     #Namespace for managed METRICs related to resource usage when limited by a quota
                               #High timestamp resolution
-SERVICE_QUOTA(ARR)            #METRIC_MATH function returning ARR2. Quotas for a given resource.
+SERVICE_QUOTA(ARR)            #MATH_QUERY function returning ARR2. Quotas for a given resource.
                               #ARR must be from a AWS/Usage/* METRIC
 AWS/Usage/CallCount           #METRIC with resource usage
                               #DVARs:
@@ -138,13 +141,13 @@ AWS/Usage/CallCount           #METRIC with resource usage
 
 
 ISTAT                         #MIN|MAX|AVG|SUM|COUNT
-                              #Used by METRIC_INSIGHT and DEXPLORER.aggregateBy
+                              #Used by INSIGHT_QUERY and DEXPLORER.aggregateBy
 STAT                          #Minimum, Maximum, Sum or SampleCount (count)
                               #Used by METRIC_DATUM.StatisticValues
 ASTAT                         #STAT or Average
-                              #Used by METRIC_AGGR_REQ|METRIC_ALARM.Statistics
+                              #Used by AGGR_QUERY_REQ|METRIC_ALARM.Statistics, SIMPLE_QUERY.Stat
 ESTAT                         #'pNUM' (percentile)
-                              #Used by METRIC_AGGR_REQ|METRIC_ALARM.ExtendedStatistics
+                              #Used by AGGR_QUERY_REQ|METRIC_ALARM.ExtendedStatistics
 XSTAT                         #ASTAT, ESTAT or one of:
                               #  - 'pNUM': percentile
                               #  - TM(RANGE):
@@ -166,15 +169,11 @@ XSTAT                         #ASTAT, ESTAT or one of:
                               #     - percentage of values within RANGE
                               #     - "percentile rank"
                               #  - tm|vm|tc|ts|prNUM: same as TM|VM|TC|TS|PR(:NUM%)
-                              #Used by METRIC_STREAM AdditionalStatistics, ANOMALY_DETECTOR.SingleMetricAnomalyDetector, DEXPLORER, WIDGET
+                              #Used by METRIC_STREAM AdditionalStatistics, ${PROP('Stat')}, SEARCH(),
+                              #ANOMALY_DETECTOR.SingleMetricAnomalyDetector, DEXPLORER, WIDGET
 RANGE                         #[NUM[%]]:[NUM2[%]]
                               #Targets only values >NUM (def: min) and <=NUM2 (def: max)
                               #If %, use percentiles instead
-
-TODO: which one for ???
-  - METRIC_STAT.Stat
-  - ${PROP('Stat')}
-  - SEARCH()
 
 
                                              /=+===============================+=\
@@ -243,33 +242,33 @@ METRIC_DATA_REQS              #METRIC_DATA_REQ_ARR
 
 METRIC_DATA_RESS
  .MetricDataResults           #METRIC_DATA_RES_ARR
-METRIC_DATA_RES               #1 METRIC_DATA_REQ -> 1|n METRIC_DATA_RES depending on METRIC_STAT|METRIC_INSIGHT|METRIC_MATH
+METRIC_DATA_RES               #1 METRIC_DATA_REQ -> 1|n METRIC_DATA_RES depending on SIMPLE_QUERY|INSIGHT_QUERY|MATH_QUERY
 METRIC_DATA_RES.StatusCode    #One of:
                               #  - 'Complete': ok
                               #  - 'PartialData': paginated
                               #  - 'InternalError': error, but can retry
                               #  - 'Forbidden': auth error
 
-METRIC_STAT[_REQ].Period      #PERIOD. NUM (in secs) (def: 1m).
-                              #Granularity of result: each PERIOD returns a single value aggregating multiple DATAPOINTs
+METRIC_DATA_REQ|SIMPLE_QUERY  #PERIOD. NUM (in secs) (def: 1m).
+ .Period                      #Granularity of result: each PERIOD returns a single value aggregating multiple DATAPOINTs
                               #Must be a multiple of RESOLUTION
                               #  - if RESOLUTION 1s, must be 1|5|10|30
 METRIC_DATA_REQS.StartTime    #Matching METRIC_DATUM.Timestamp. Inclusive.
                               #Rounded by PERIOD
-                              #Must be within last 3h if there is a METRIC_INSIGHT
+                              #Must be within last 3h if there is a INSIGHT_QUERY
 METRIC_DATA_REQS.EndTime      #Matching METRIC_DATUM.Timestamp. Exclusive.
                               #Rounded by PERIOD
 METRIC_DATA_REQS.ScanBy       #'TimestampDescending|TimestampAscending'. Sorting order
 
-METRIC_DATA_REQ.MetricStat    #METRIC_STAT. Simple query
-                              #Returns a single METRIC_DATA_RES
-METRIC_STAT.Metric            #METRIC
-METRIC_STAT.Stat              #STAT applied on each PERIOD
-METRIC_STAT.Unit              #Filter by METRIC_DATUM.Unit. Does not try to convert
+METRIC_DATA_REQ.MetricStat     #SIMPLE_QUERY
+                               #Returns a single METRIC_DATA_RES
+SIMPLE_QUERY.Metric            #METRIC
+SIMPLE_QUERY.Stat              #ASTAT applied on each PERIOD
+SIMPLE_QUERY.Unit              #Filter by METRIC_DATUM.Unit. Does not try to convert
 
-METRIC_DATA_REQ.Expression    #'METRIC_INSIGHT' or 'METRIC_MATH'. Advanced query
+METRIC_DATA_REQ.Expression    #'INSIGHT_QUERY|MATH_QUERY'. Advanced query
                               #Cannot be used together with METRIC_DATA_REQ.MetricStat
-                              #Max 1 METRIC_INSIGHT per METRIC_DATA_REQS
+                              #Max 1 INSIGHT_QUERY per METRIC_DATA_REQS
 
 METRIC_DATA_REQ|RES.Id        #'MVAR'
                               #Either lowercase_underscored or camelCase
@@ -291,37 +290,37 @@ MESSAGE_DATA.Value            #'MESSAGE'
                                              \=+===============================+=/
 
 
-GetMetricStatistics()         #Req: METRIC_AGGR_REQ
-                              #Res: METRIC_AGGR_RESS
+GetMetricStatistics()         #Req: AGGR_QUERY_REQ
+                              #Res: AGGR_QUERY_RESS
 
-METRIC_AGGR_REQ               #Similar to METRIC_DATA_REQ using MetricStat, but simpler and can use ESTAT
-METRIC_AGGR_RESS.Datapoints   #METRIC_AGGR_RES_ARR
+AGGR_QUERY_REQ                #Similar to METRIC_DATA_REQ using MetricStat, but simpler and can use ESTAT
+AGGR_QUERY_RESS.Datapoints    #AGGR_QUERY_RES_ARR
                               #Max 1440, otherwise error
 
-METRIC_AGGR_REQ.MetricName
-METRIC_AGGR_REQ.Namespace
-METRIC_AGGR_REQ.Dimensions    #METRIC.*
+AGGR_QUERY_REQ.MetricName
+AGGR_QUERY_REQ.Namespace
+AGGR_QUERY_REQ.Dimensions     #METRIC.*
 
-METRIC_AGGR_REQ|RES.Unit      #Like METRIC_STAT.*
+AGGR_QUERY_REQ|RES.Unit       #Like SIMPLE_QUERY.*
 
-METRIC_AGGR_REQ.Period        #Like METRIC_STAT_REQ.*
-                              #Each METRIC_STAT_RES aggregates multiple DATAPOINTs in a single PERIOD
-METRIC_AGGR_REQ
- .StartTime|EndTime           #Like METRIC_STAT_REQS.*
-METRIC_AGGR_RES.Timestamp     #'DATE'
+AGGR_QUERY_REQ.Period         #Like METRIC_DATA_REQ.*
+                              #Each METRIC_DATA_RES aggregates multiple DATAPOINTs in a single PERIOD
+AGGR_QUERY_REQ
+ .StartTime|EndTime           #Like METRIC_DATA_REQS.*
+AGGR_QUERY_RES.Timestamp      #'DATE'
 
-METRIC_AGGR_REQ.Statistics    #'ASTAT'_ARR to populate in METRIC_AGGR_RES.*
-METRIC_AGGR_RES.ASTAT         #NUM
-METRIC_AGGR_REQ               #'ESTAT'_ARR to populate in METRIC_AGGR_RES.ExtendedStatistics.*
+AGGR_QUERY_REQ.Statistics     #'ASTAT'_ARR to populate in AGGR_QUERY_RES.*
+AGGR_QUERY_RES.ASTAT          #NUM
+AGGR_QUERY_REQ                #'ESTAT'_ARR to populate in AGGR_QUERY_RES.ExtendedStatistics.*
  .ExtendedStatistics          #Cannot be used with:
-                              #  - METRIC_AGGR_REQ.Statistics
+                              #  - AGGR_QUERY_REQ.Statistics
                               #  - negative DATAPOINTs
                               #  - METRIC_DATUM.Values|StatisticValues
                               #Max 10
-METRIC_AGGR_RES
+AGGR_QUERY_RES
  .ExtendedStatistics.ESTAT    #NUM
 
-METRIC_AGGR_RESS.Label        #STR
+AGGR_QUERY_RESS.Label         #STR
 
 
                                              /=+===============================+=\
@@ -369,7 +368,7 @@ ${PROP('Namespace')}          #NAMESPACE
 ${PROP('Dim.DVAR')}           #DVAL
 
 ${PROP('Period')}             #PERIOD
-${PROP('Stat')}               #Current STAT
+${PROP('Stat')}               #Current 'XSTAT'
 
 
                                              /=+===============================+=\
@@ -379,7 +378,7 @@ ${PROP('Stat')}               #Current STAT
                                              \=+===============================+=/
 
 
-METRIC_INSIGHT                #SQL-like expression to compute a query on METRIC_DATUMs
+INSIGHT_QUERY                 #SQL-like expression to compute a query on METRIC_DATUMs
                               #Syntax follows
                               #Returns ARR|ARR_ARR (one|multiple METRIC_DATA_RESs) depending on whether GROUP BY is used
 
@@ -410,9 +409,9 @@ QUOTING ==>                   #'-quote: around DVAL
                                              \=+===============================+=/
 
 
-METRIC_MATH                   #DSL to compute a query on METRIC_DATUMs
-                              #While METRIC_INSIGHT is more focused on filtering|grouping|sorting|slicing,
-                              #METRIC_MATH is more focused on transforming and combining multiple METRICs|METRIC_INSIGHT
+MATH_QUERY                    #DSL to compute a query on METRIC_DATUMs
+                              #While INSIGHT_QUERY is more focused on filtering|grouping|sorting|slicing,
+                              #MATH_QUERY is more focused on transforming and combining multiple METRICs|INSIGHT_QUERY
                               #Return value must be either:
                               #  - ARR: one METRIC_DATA_RES
                               #  - ARR_ARR: multiple METRIC_DATA_RESs
@@ -420,7 +419,7 @@ METRIC_MATH                   #DSL to compute a query on METRIC_DATUMs
 MVAR                          #ARR. METRIC_DATA_RES with matching Id
 mNUM                          #ARR. METRIC_DATA_RES number NUM
 
-METRICS([STR])                #ARR_ARR. All METRIC_DATA_RESs, except ones using METRIC_MATH
+METRICS([STR])                #ARR_ARR. All METRIC_DATA_RESs, except ones using MATH_QUERY
                               #If STR, only ones with MVAR including STR
 METRIC_COUNT(ARR_ARR)         #NUM. ARR_ARR.length
 
@@ -499,7 +498,7 @@ IF(BOOL[_ARR],                #ARR3 with each element:
                                              \=+===============================+=/
 
 
-SEARCH('QUERY', 'STAT')       #METRIC_MATH function returning ARR_ARR: METRICs mathing QUERY
+SEARCH('QUERY', 'XSTAT')      #MATH_QUERY function returning ARR_ARR: METRICs mathing QUERY
                               #QUERY: '[FILTERS] [TERMS]'
                               #FILTERS: {NAMESPACE[, DVAR, ...]}
                               #  - NAMESPACE: only METRICs with that Namespace
