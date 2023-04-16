@@ -71,9 +71,9 @@ ALARM.ActionsEnabled          #BOOL (def: true). To disable ALARM
 
 ALARM.StateValue              #One of:
                               #  - "OK": no feedback
-                              #  - "INSUFFICIENT_DATA":
-                              #     - pending feedback
+                              #  - "INSUFFICIENT_DATA": pending feedback due to either:
                               #     - initial state when creating an ALARM
+                              #     - METRIC paginated or not available
                               #  - "ALARM": feedback
                               #Can be manually set, for testing.
 ALARM.StateReason             #STR. Description of StateValue
@@ -95,6 +95,13 @@ ALARM.AlarmActions            #ARN_ARR. Trigger action when StateValue becomes '
                               #     - "arn:aws:sns:REGION:ACCOUNT_ID:TOPIC:autoScalingGroupName/AUTO_SCALING_GROUP:policyName/POLICY"
                               #     - "arn:aws:ssm-incidents::ACCOUNT_ID:responseplan/RESPONSE_PLAN"
                               #Autoscaling actions are repeated once per minute
+                              #Should allow:
+                              #  - PACTION (e.g. "SNS:Publish")
+                              #  - to Principal.Service "cloudwatch.amazonaws.com"
+                              #  - restrict to:
+                              #     - specific Resource (e.g. TOPIC_ARN)
+                              #     - aws:SourceArn ALARM_ARN
+                              #     - aws:SourceAccount
 ALARM.InsufficientDataActions #Same for StateValue 'INSUFICIENT_DATA'
 ALARM.OKDataActions           #Same for StateValue 'OK'
 cloudwatch:AlarmActions       #STR_ARR CONDITION_KEY with ALARM.*Actions
@@ -182,19 +189,23 @@ METRIC_ALARM.Threshold        #NUM. Change StateValue based on VAL OP Threshold
                               #  - VAL is each METRIC response values (after PERIOD aggregation)
                               #  - OP is ComparisonOperator
 
-METRIC_ALARM.EvaluationPeriods#NUM of periods with same evaluation before changing StateValue
-                              #Def: 1
+METRIC_ALARM.EvaluationPeriods#NUM of PERIODs with same evaluation before changing StateValue
                               #Max total time: 1 day
-METRIC_ALARM.DatapointsToAlarm#NUM of DATAPOINTs with same evaluation before changing StateValue
-                              #Def: 1
-METRIC_ALARM.Evaluate         #Do not change StateValue if there are not enough DATAPOINTs to be statistically significant.
+METRIC_ALARM.DatapointsToAlarm#NUM2. When combined with EvaluationPeriods NUM, means StateValue changes if either:
+                              #  - at least NUM2 out of NUM last PERIODs with same evaluation
+                              #  - NUM2 last PERIODs are undefined, and most recent defined PERIOD evaluates to false ("premature alarm")
+                              #Def: same value as EvaluationPeriods
+METRIC_ALARM.Evaluate         #Do not change StateValue if there are not enough PERIODs to be statistically significant.
  LowSampleCountPercentile     #Only with ESTAT
                               #Either 'evaluate' (false, def) or 'ignore' (true)
-METRIC_ALARM.TreatMissingData #How undefined values are handled among:
-                              #  - 'missing' (def)
-                              #  - 'ignore': filter out
-                              #  - 'breaching': always 'ALARM'
-                              #  - 'notBreaching': always 'OK'
+METRIC_ALARM.TreatMissingData #EvaluationPeriods is NUM of non-undefined PERIODs
+                              #  - i.e. if a PERIOD is undefined, it is ignored and an additional earlier PERIOD is used instead
+                              #However, this is done up to a limit ("evaluation range").
+                              #When reached, undefined PERIODs are added to fill EvaluationPeriods. Those are:
+                              #  - 'missing' (def): ignored. If all PERIODs are undefined, keep current StateValue.
+                              #  - 'ignore': ignored. If all PERIODs are undefined, StateValue 'INSUFFICIENT_DATA'
+                              #  - 'breaching': StateValue 'ALARM'
+                              #  - 'notBreaching': StateValue 'OK'
 
 METRIC_ALARM.EvaluationState  #'PARTIAL_DATA' when METRIC response values truncated due to matching >1e4 METRICs
 
@@ -227,10 +238,13 @@ COMPOSITE_ALARM.AlarmRule     #STR. Compute StateValue based on underlying ALARM
 
 COMPOSITE_ALARM               #'ALARM'|ALARM_ARN.
  .ActionsSuppressor           #If that ALARM StateValue is 'ALARM', do not trigger COMPOSITE_ALARM.*Actions
+                              #Goal: reduce noise, avoiding both COMPOSITE_ALARM and suppressor ALARM to trigger when they are corrolated
 COMPOSITE_ALARM               #NUM (in secs, def: 0)
- .ActionsSuppressorWaitPeriod #Duration for ActionsSuppressor to suppress *Actions, when its StateValue is not 'ALARM'
+ .ActionsSuppressorWaitPeriod #Duration for ActionsSuppressor to suppress *Actions, when COMPOSITE_ALARM StateValue becomes 'ALARM'
+                              #Goal: give enough time for suppressor ALARM to change its own StateValue
 COMPOSITE_ALARM.Actions       #NUM (in secs, def: 0)
- SuppressorExtensionPeriod    #Additional duration for ActionsSuppressor to suppress *Actions, once its StateValue is not 'ALARM' anymore
+ SuppressorExtensionPeriod    #Duration for ActionsSuppressor to suppress *Actions, when suppressor ALARM StateValue stops being 'ALARM'
+                              #Goal: give enough time for COMPOSITE_ALARM to change its own StateValue
 COMPOSITE_ALARM               #When ActionsSuppressor is active, the main reason:
  .ActionsSuppressedBy         #  - 'Alarm': normal
                               #  - 'WaitPeriod': ActionsSuppressorWaitPeriod
