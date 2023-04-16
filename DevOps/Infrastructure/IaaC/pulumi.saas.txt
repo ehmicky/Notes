@@ -1285,7 +1285,7 @@ pulumi state delete URN           #Delete a REZ from the STACK
 
 [NC]ROPTS.retainOnDelete          #BOOL (def: false). If true, when REZ is deleted from the STACK, it is removed from
                                   #Pulumi STATE, but not actually unprovisioned by the PROV.
-                                  #This includes deletion due to replacement.
+                                  #This includes deletion due to `replace`.
 
 [N]ROPTS.protect                  #BOOL (def: false). If true, prevent deleting REZ
 XREZ.protected                    #BOOL
@@ -1352,7 +1352,7 @@ UPDATE VS REPLACE ==>             #Modification of a REZ without|by re-creating 
 
 SOPTS.replace                     #STR_ARR
 pulumi preview|up ...
---replace                         #Like --target, but for replacements
+--replace                         #Like --target, but for `replace`
 --target-replace                  #Combine --target + --replace
 
 [NC]ROPTS.deleteBeforeReplace     #BOOL. When replacing a REZ, whether to delete old REZ before|after creating the new one.
@@ -1366,7 +1366,7 @@ pulumi preview|up ...
 
 pulumi destroy|preview|refresh
  |up|watch
---show-replacement-steps          #Show replacement as two steps (creation then deletion) instead of one
+--show-replacement-steps          #Show `replace` as two steps (creation then deletion) instead of one
 
 
                                              /=+===============================+=\
@@ -1591,50 +1591,68 @@ PROV_CONFIG_VAR pulumi:
                                              \=+===============================+=/
 
 
-new N.dynamic.Resource
- (...NVREZ_ARGS)                  #NVREZ. Child of NCREZ
+STANDARD RESOURCE PROVIDER ==>    #PROV maintained by Pulumi
+
+new N.dynamic.Resource            #NVREZ. Child of NCREZ
+ (...NVREZ_ARGS)                  #"Dynamic resource provider". Custom PROV not meant to be shared
 NVREZ_ARGS[0]                     #NVPROV
 NVREZ_ARGS[4]                     #'MODULE'
 
-NVPROV.create                     #FUNC({OBJ})->>OBJ2:
+IOBJ                              #NRPROPS
+OOBJ                              #NRPROPS + OUTPUTs
+
+NVPROV.create                     #FUNC(IOBJ)->>OBJ:
                                   #  - id 'REZ_ID'
-                                  #  - outs }OBJ{: REZ properties
-                                  #Creates a REZ.
+                                  #  - outs OOBJ
+                                  #Called on REZ creation.
                                   #If fails, must not have been provisioned, i.e. must potentially rollback
-NVPROV.read                       #FUNC('REZ_ID', [, }VAL{])->>OBJ:
+NVPROV.read                       #FUNC('REZ_ID', [, OOBJ])->>OBJ:
                                   #  - id 'REZ_ID'
-                                  #  - props }VAL{
-NVPROV.update                     #FUNC('REZ_ID', }VAL{, {VAL})->>OBJ:
-                                  #  - outs }VAL{
-NVPROV.delete                     #FUNC('REZ_ID', }VAL{)->>
+                                  #  - props OOBJ
+                                  #Called on REZ read.
+                                  #OOBJ in argument can be partial, but must be full in return value
+NVPROV.update                     #FUNC('REZ_ID', OLD_OOBJ, NEW_IOBJ)->>OBJ:
+                                  #  - outs OOBJ
+                                  #Called on REZ update (not replace).
+NVPROV.delete                     #FUNC('REZ_ID', OOBJ)->>
+                                  #Called on REZ delete
 
-NVPROV.check                      #FUNC({{OBJ}}, {{OBJ2}})->>OBJ3:
-                                  #  - inputs {{OBJ4}}
+NVPROV.check                      #FUNC(OLD_IOBJ, NEW_IOBJ)->>OBJ:
+                                  #  - inputs NEW_IOBJ
                                   #  - failures NFAILURE_ARR
-NVPROV.diff                       #FUNC('REZ_ID', }VAL{, {VAL})->>OBJ:
-                                  #  - changes BOOL
-                                  #  - deleteBeforeReplace BOOL
-                                  #  - replaces STR_ARR
-                                  #  - stables STR_ARR
+                                  #Validates when changing NRPROPS
+NFAILURE.property                 #'RPROP'
+NFAILURE.reason                   #'MESSAGE'
 
-NVDPROV                           #Same as NVPROV except:
+NVPROV.diff                       #FUNC('REZ_ID', OLD_OOBJ, NEW_IOBJ)->>OBJ:
+                                  #  - changes BOOL: true if something changed
+                                  #  - deleteBeforeReplace BOOL: override NCROPTS.deleteBeforeReplace
+                                  #  - replaces 'NRPROP'_ARR: that changed and require a `replace`
+                                  #  - stables 'NRPROP'_ARR: that are always readonly
+                                  #Computes diff when changing NRPROPS
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:        PROVIDER PLUGIN        :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+NVDPROV                           #"Plugin resource provider". Custom PROV meant to be shared through a PLUGIN
+                                  #Same as NVPROV except:
                                   #  - some additional members
                                   #  - additional 'URN' argument after 'REZ_ID' (if none, at beginning)
-                                  #  - {I_*} -> I_*
-                                  #  - }O_*{ -> O_*
 N.provider.main
  (NVDPROV, STR_ARR)->>            #
 
-NVDPROV.construct                 #FUNC(STR, 'RTYPE', {{NRPROPS}}, NKROPTS)->>OBJ:
+NVDPROV.construct                 #FUNC('REZ', 'RTYPE', {{IOBJ}}, NKROPTS)->>OBJ:
                                   #  - urn {'URN'}
-                                  #  - state {{OBJ}}
-NVDPROV.call                      #FUNC('TOKEN', {{NRPROPS}})->>OBJ:
-                                  #  - outputs VAL
+                                  #  - state {{IOBJ}}
+NVDPROV.call                      #FUNC('TOKEN', {{IOBJ}})->>OBJ:
+                                  #  - outputs }}OOBJ{{
                                   #  - failures NFAILURE_ARR
-NVDPROV.invoke                    #FUNC('TOKEN', VAL)->>OBJ (same return value as call())
-
-NFAILURE.property                 #STR
-NFAILURE.reason                   #STR
+NVDPROV.invoke                    #FUNC('TOKEN', {{IOBJ}})->>OBJ (same return value as call())
 
 NVDPROV.schema                    #'JSON'
 NVDPROV.version                   #'VERSION'
