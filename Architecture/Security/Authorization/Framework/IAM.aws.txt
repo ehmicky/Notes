@@ -102,6 +102,7 @@ UGROLE                        #USER|GROUP|ROLE
 
 GetCallerIdentity()           #Req: empty
                               #Res: CURRENT_PRINCIPAL
+                             ##With Pulumi, this is at CW.getCallerIdentity(), not in IAM MODULE
 
 CALLER_IDENTITY               #Currently authenticated PRINCIPAL
 CALLER_IDENTITY.Account       #ACCOUNT_ID
@@ -134,13 +135,15 @@ DeleteUser()                  #Req: USER
                               #  - only UserName
                               #Res: empty
                               #To deactivate without deleting: attach POLICY denying all PACTIONs
-                             ##With Pulumi, must use RPROPS.forceDestroy true if USER has ACCESS_KEY|LOGIN_PROFILE|MFA_DEVICE
 
 USER                          #Real person.
                               #Prefer using ROLEs when possible, because their credentials is short-lived
                               #  - e.g. by using an identity provider like AWS Identity Center
                               #Max 5000 (SUMMARY_MAP.Users[Quota])
                               #WAIT (GetUser()) UserExists: when it exists
+                             ##With Pulumi, delete|replace fails unless RPROPS.forceDestroy true if USER has either:
+                             ##  - ACCESS_KEY|LOGIN_PROFILE|MFA_DEVICE not managed by PROV
+                             ##  - a POLICY through PolicyAttachment (not UserPolicy[Attachment])
 USER.Arn                      #USER_ARN. 'arn:aws:iam::ACCOUNT_ID:user[/PATH]/NAME'
 USER.UserId                   #USER_MID
 USER.UserName                 #'USER'
@@ -207,6 +210,9 @@ GROUP.Path                    #ARN_PATH
 GROUP.CreateDate              #'DATE'
 
 FGROUP                        #GROUP, including the list of USERs
+                             ##With Pulumi, either:
+                             ##  - 1 GroupMembership per GROUP (GROUP + USER_ARR)
+                             ##  - 1 UserGroupMembership per USER (GROUP_ARR + USER)
 FGROUP.Users                  #USER_ARR
 FGROUP.Group                  #GROUP
 
@@ -290,8 +296,8 @@ LOGIN_PROFILE.CreateDate      #'DATE'
 LOGIN_PROFILE.Password        #STR
                               #ASCII only
                              ##With Pulumi:
-                             ##  - use RPROPS.PasswordLength NUM instead
-                             ##  - OUTPUTS.password|encryptedPassword: plain|encrypted
+                             ##  - use RPROPS.PasswordLength NUM (def: 20) instead
+                             ##  - OUTPUTS.password|encryptedPassword: plain or encrypted (base64)
 LOGIN_PROFILE
  .PasswordResetRequired       #BOOL (def: false). Set to true to require resetting password.
 
@@ -447,6 +453,8 @@ VIRTUAL_MFA_DEVICE.Tags       #RESOURCE_NAME: SerialNumber VIRTUAL_MFA_DEVICE_AR
 
 CREDENTIAL_CONTENT.mfa_active #'TRUE|FALSE'. Whether there is a MFA_DEVICE
 
+iamMfaEnabledForConsoleAccess##Pulumi POLICY that checks that every USER has 1 [VIRTUAL_]MFA_DEVICE
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -518,6 +526,9 @@ ACCESS_KEY_REQ.AccessKeyId    #ACCESS_KEY_ID
 
 ACCESS_KEY_INFO               #
 ACCESS_KEY_INFO.Account       #ACCOUNT_ID
+
+iamAccessKeysRotated         ##Pulumi POLICY that checks that every ACCESS_KEY is rotated,
+                             ##i.e.CreateDate is at most PPCONF.maxKeyAge days old (def: 90).
 
 
                                              /=+===============================+=\
@@ -756,6 +767,7 @@ DeleteUGROLEPolicy()          #Req: IPOLICY
                               #Res: empty
 
 IPOLICY                       #Identity-based POLICY without an ARN, "embedded" to a single UGROLE
+                             ##With Pulumi, this is called User|Group|RolePolicy
 IPOLICY.PolicyName            #'POLICY'
 IPOLICY.UGROLEName            #STR
 IPOLICY.PolicyDocument        #POLICY_DOC
@@ -793,6 +805,11 @@ DetachUGROLEPolicy()          #Req: MPOLICY
 MPOLICY                       #Identity-based POLICY with its own ARN, "attached" to 0-n UGROLEs
                               #Max 10 per UGROLE (flexible to 20) (SUMMARY_MAP.AttachedPoliciesPerGUROLEQuota)
                               #Max 6KB (SUMMARY_MAP.PolicySizeQuota)
+                             ##With Pulumi:
+                             ##  - this is called User|Group|RolePolicyAttachment, to attach 1 POLICY to 1 USER|GROUP|ROLE
+                             ##     - non-exclusive: can attach that POLICY to other USER|GROUP|ROLEs
+                             ##  - can also use PolicyAttachment, to attach 1 POLICY to n USER|GROUP|ROLEs
+                             ##     - exclusive: cannot attach that POLICY to other USER|GROUP|ROLEs
 MPOLICY.PolicyArn             #POLICY_ARN
 iam:PolicyARN                 #POLICY_ARN CONDITION_KEY when calling Attach|DetachUGROLEPolicy()
 MPOLICY.PolicyName            #'POLICY'
@@ -993,6 +1010,7 @@ STATEMENT.Principal           #PRINCIPAL
                               #  - CanonicalUser CANONICAL_ACCOUNT_ID
                               #  - Federated SAML_PROVIDER_ARN|'WEB_ID_DOMAIN'
                               #  - Service 'SERVICE_DOMAIN'
+                             ##     - With Pulumi, can use CW.iam.Principals.SERVICEPrincipal.Service 'SERVICE_DOMAIN'
                               #'*': shortcut for AWS '*'
                               #Every value can optionally be an ARR
                               #Can also use MID instead of ARN
