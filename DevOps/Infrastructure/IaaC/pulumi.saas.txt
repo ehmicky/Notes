@@ -7,12 +7,11 @@
 
 TODO:
   - go back through reference again
-     - https://www.pulumi.com/docs/reference/cloud-rest-api/
-     - https://www.pulumi.com/docs/reference/yaml/
      - https://www.pulumi.com/docs/reference/pkg/nodejs/pulumi/pulumi/
   - go through this doc again
   - https://www.pulumi.com/docs/reference/pkg/nodejs/pulumi/pulumi/runtime
   - https://www.pulumi.com/docs/intro/deployments/
+     - remote workspace
   - POLICY_PACKs
      - https://www.pulumi.com/docs/reference/pkg/nodejs/pulumi/policy/
      - https://www.pulumi.com/docs/guides/crossguard/
@@ -326,10 +325,13 @@ CLASS.isInstance(VAL)->BOOL       #Like VAL instanceof CLASS, but cross-realm
 OUTPUTS ==>                       #Async|dynamic value, similar to a PROMISE, as a return value
                                   #Resolved when provisioning a STACK
                                   #Related to specific REZs
-STABLE OUTPUTS ==>                #OUTPUTs are not resolved during a preview.
+STABLE OUTPUTS ==>                #OUTPUTs are not resolved during a preview, i.e. they are "unknown".
                                   #Unless they are marked as "stable", i.e. their value is both:
                                   #  - already available, e.g. RPROPs of an already existing REZ
                                   #  - readonly after creation
+UNWRAPPING ==>                    #Resolving }VAL{ to VAL
+LIFTING ==>                       #Turning VAL to }VAL}
+
 INPUTS ==>                        #Async|dynamic value, similar to a PROMISE, as a function argument
                                   #Resolved when provisioning a STACK
 
@@ -662,12 +664,11 @@ pulumi config
 HARGS[2]
 SOPTS.showSecrets                 #BOOL. If false (def), secrets are not printed
 
+NSTACK_SETTINGS.encryptedKey
 ENVVAR PULUMI_CONFIG_PASSPHRASE   #'SECRET', with SECRETS_PROV 'passphrase'
 ENVVAR
  PULUMI_CONFIG_PASSPHRASE_FILE    #Like PULUMI_CONFIG_PASSPHRASE but as 'PATH'
-
-NSTACK_SETTINGS.encryptedKey      #STR. Secret key.
-NSTACK_SETTINGS.encryptionSalt    #STR
+NSTACK_SETTINGS.encryptionSalt    #STR, with SECRETS_PROV 'passphrase'
 
 
                                              /=+===============================+=\
@@ -777,8 +778,10 @@ NQOPTS.workDir                    #Same. Not with NQOPTS.projectName|program
 
 NWOPTS|NWORKSPACE.envVars         #OBJ of ENVVARs passed to PROGRAMs
 
-NWORKSPACE.postCommandCallback    #FUNC('STACK')->>
 NWORKSPACE.serializeArgsForOp     #FUNC('STACK')->>STR_ARR
+                                  #Pass additional CLI args to every command (including under the hood)
+NWORKSPACE.postCommandCallback    #FUNC('STACK')->>
+                                  #Run after every CLI command (including under the hood)
 
 
                                              /=+===============================+=\
@@ -863,9 +866,9 @@ pulumi:description
 [N]PROJECT.description            #STR
 pulumi new --description|-d       #PROJECT.description (def: prompted)
 
-NPROJECT.author                   #STR
-NPROJECT.license                  #STR
-NPROJECT.website                  #STR
+[N]PROJECT.author                 #STR
+[N]PROJECT.license                #STR
+[N]PROJECT.website                #'URL'
 
 
                                              /=+===============================+=\
@@ -897,8 +900,8 @@ AUTHORING TEMPLATE ==>            #Create files to scaffold as is
 [N]PROJECT.template               #[N]TEMPLATE
                                   #Settings when authoring a TEMPLATE
 [N]TEMPLATE.description           #STR. Description of the TEMPLATE itself, not the created PROJECT
-NTEMPLATE.important               #BOOL
-NTEMPLATE.quickstart              #STR
+NTEMPLATE.quickstart              #STR. Shown on template creation
+NTEMPLATE.important               #BOOL (def: false). List TEMPLATE by default
 
 [N]TEMPLATE.config                #[N]TCONFIG. PCONFIG created by the TEMPLATE
                                   #Prompted on creation
@@ -1271,7 +1274,7 @@ NR.registerStackTransformation
  (NTRANSFORM)                     #Add a NTRANSFORM to the rootStackResource, i.e. inherited by all REZs
 
 mergeOptions(N*ROPTS, N*ROPTS2)
- ->N*ROPTS3                       #
+ ->N*ROPTS3                       #Deep. ARRs are concatenated
 
 
                                              /=+===============================+=\
@@ -1318,12 +1321,6 @@ NREZ_ARGS[6]
 NCREZ_ARGS[4]
 NPROV_ARGS[4]                     #BOOL (def: false). If true, synthetic REZ used internally for dependency tracking.
 
-new N.DependencyResource('URN')   #Child of NCREZ
-                                  #Manual dependency to a REZ2, specified by URN
-
-new N.DependencyProviderResource
- (STR)                            #Child of NPROV
-
 pulumi stack graph [PATH]         #Visualize STACK dependencies|parents as a DOT graph
                                   #Def PATH: stdout
 --short-node-name                 #Label each node with its 'REZ'
@@ -1369,11 +1366,11 @@ new N.ComponentResource           #NKREZ. Child of NREZ
                                   #Can also be a single child NREZ, but with specific options|methods|etc.
 
 COMPONENT PROTECTED METHODS ==>   #Following methods are `protected`, i.e. meant to be used during class declaration
-NKREZ.initialize({{OBJ}})->>OBJ   #Set custom data
-NKREZ.getData()->>OBJ             #Get custom data
-
 NKREZ.registerOutputs             #Set OUTPUTs. To do once in end of constructor.
  ([}VAL{|[>]VAL])                 #VAL is {{OBJ}}
+
+NKREZ.initialize({{OBJ}})->>OBJ   #Set custom data
+NKREZ.getData()->>OBJ             #Get custom data
 
 
                                              /=+===============================+=\
@@ -1394,6 +1391,12 @@ REZ.get.id                        #'REZ_ID'
 REZ.get.state                     #{{NCROPTS}}
 
 pulumi up --show-reads            #Show REZs being read as external or import
+
+new N.DependencyResource('URN')   #Child of NCREZ
+                                  #Represent an external REZ
+new N.DependencyProviderResource
+ ('URN::REZ_ID')                  #Child of NPROV
+                                  #Represent an external REZ that is a PROV
 
 
                                              /=+===============================+=\
@@ -1561,8 +1564,6 @@ pulumi destroy|import|preview
 PARALLEL UPDATES ==>              #Serial if free plan
                                   #Max 5 parallel unless enterprise plan
 
-SOPTS.onEvent                     #FUNC(ENGINE_EVENT)
-
 SOPTS.userAgent                   #STR
 
 
@@ -1726,9 +1727,24 @@ GET UPDATES_URL/UPDATE_ID         #Req: empty
 GET UPDATES_URL/UPDATE_ID/events  #Req: empty
                                   #Res: events XEVENT_ARR
 
-XEVENT.timestamp                  #DATE_NUM
-XEVENT.type                       #'EVENT_TYPE'
-XEVENT.EVENT_TYPE                 #OBJ
+SOPTS.onEvent                     #FUNC(NEVENT)
+
+N|XEVENT                          #General event: STACK|REZ up, cancel, logs, POLICY_PACK violation
+N|XEVENT.timestamp                #DATE_NUM
+N|XEVENT.sequence                 #Sequential NUM
+
+N|XEVENT.type                     #'EVENT_TYPE' among:
+                                  #  - preludeEvent: start of `up`
+                                  #  - summaryEvent: end of `up`
+                                  #  - cancelEvent: `cancel`
+                                  #  - resourcePreEvent: start of REZ modification
+                                  #  - resOutputsEvent: end of successful REZ modification
+                                  #  - resOpFailedEvent: end of failed REZ modification
+                                  #  - stdoutEngineEvent: logs from CLI itself
+                                  #  - diagnosticEvent: logs from PROV
+                                  #  - policyEvent: POLICY_PACK violation
+N|XEVENT.EVENT_TYPE               #OBJ
+                                  #Not fully documented yet
 
 
                                              /=+===============================+=\
@@ -1818,7 +1834,7 @@ NREZ.getProvider('PACKAGE')->NPROV#
 N|XDREZ.provider
 XREZ.provider.urn                 #'PROV_URN'
 
-NPROV.defaultProvider             #BOOL (def: false). Use as default PROV
+[N]PROV.defaultProvider           #BOOL (def: false). Use as default PROV
 PROV_CONFIG_VAR pulumi:
  disable-default-providers[NUM]   #'PROV|*' to disable as default PROV
 
@@ -2249,8 +2265,8 @@ PSENUM.deprecationMessage         #Like PSPROP.*
 PSCHEMA.language.RUNTIME          #[NODE|DOTNET|GO|PYTHON|JAVA_]PSRUNTIME
 
 PSRUNTIME.respectSchemaVersion    #BOOL (def: false). Use package.json 'version' field
-PSRUNTIME
- .liftSingleValueMethodReturns    #BOOL
+PSRUNTIME                         #BOOL (def: false). Turn PFUNC() return VAL into }VAL{ instead
+ .liftSingleValueMethodReturns    #Recommended.
 
 NODE_PSRUNTIME
  .[dev|peer]dependencies.PKG
@@ -2710,11 +2726,12 @@ XREZ_INFO.resources               #XREZ_ARR
                                   #Max 2e3 length unless enterprise plan
 
 XSEARCH_REZ_REQ.facet             #'VARR'_ARR
+                                  #Group by 'VARR'
 XREZ_INFO.aggregations            #XAGGR
-XAGGR.results                     #XAGGR_RESULT_ARR
-XAGGR_RESULT.name                 #STR
-XAGGR_RESULT.count                #NUM
-XAGGR.others                      #NUM
+XAGGR.results                     #XAGGR_RESULT_ARR. Only top 5 with highest count
+XAGGR_RESULT.name                 #STR. Value of VARR
+XAGGR_RESULT.count                #NUM of REZs
+XAGGR.others                      #NUM of REZs not in top 5
 
 XREZ.created                      #'DATE'
 XREZ.modified                     #'DATE'
