@@ -369,13 +369,13 @@ deno bench|compile|install|repl
 --allow-env[=ENVVAR,...]          #Allow reading|writing ENVVARs (Deno.env) and accessing environment information
 --allow-sys[=FUNC,...]            #Allow access to OS information
                                   #FUNC is Deno.FUNC() among 'loadavg|hostname|systemMemoryInfo|networkInterfaces|osRelease|osUptime|uid|gid'
---allow-run[=BINARY|URL,...]      #Allow subprocesses
+--allow-run[=BINARY|URL,...]      #Allow subprocesses (Deno.Command|kill)
                                   #Subprocesses might not use Deno, i.e. can escape --allow-*
 --allow-ffi[=UPATH,...]          !#Allow Deno.dlopen()
 --allow-hrtime                    #Whether time resolution is ns or ms (for timing attacks and fingerprinting)
 
 --allow-all|-A                    #Allow all permissions
-NOTATION ==>             [CHAR...]#Notation RWNESUFH to mean require --allow-read|write|net|env|sys|run|ffi|hrtime
+NOTATION ==>              RWNESUFH#Notation to mean require --allow-read|write|net|env|sys|run|ffi|hrtime
                                   #--allow-read|net often means depends if URL|PATH is used
 
 ENVVAR DENO_NO_PROMPT
@@ -582,12 +582,12 @@ FFUNCTION.nonblocking             #BOOL (def: false)
 FFUNCTION.callback                #BOOL (def: false)
                                   #Allow being used as parameter itself
 
+FDLIB                             #Inherits CLOSER
+                                  #Ref'd by the process
 FDLIB.symbols.NAME                #One of:
                                   #  - NUM|BIGINT|BOOL|DPOINTER: for FSTATIC
                                   #  - (...)->[>]...: for FFUNCTION
                                   #  - null: only if optional
-FDLIB.close()                     #Cleanup. Cannot use FBLIB.* anymore
-                                  #Unref's the process
 
 FNTYPE                            #One of:
                                   #  - 'u|i8|16|32' -> NUM
@@ -626,7 +626,6 @@ Deno.UnsafePointerView.*          #FNPOINTER manipulation. Not documented yet
 
 
 TODO:
-  - File system
   - Sub process
   - Network
   - HTTP
@@ -655,11 +654,11 @@ Response
 Headers
 FormData                          #Like DOM
 
-REQQ.client                      !#HTTP_CLIENT
+REQQ.client                       #HTTP_CLIENT
 Deno.createHttpClient([HCOPTS])
- ->HTTP_CLIENT                   !#Customize HTTP request option
+ ->HTTP_CLIENT                    #Customize HTTP request option
+HTTP_CLIENT                      !#Inherits CLOSER
 HTTP_CLIENT.rid                   #RID
-HTTP_CLIENT.close()               #
 
 structuredClone(VAL[, OPTS])->VAL #Like DOM
 
@@ -837,7 +836,7 @@ Deno.metrics()->METRICS           #Returns number of OPs (also called "bindings"
                                   #  - most Deno.* corresponds to an OP
 METRICS.opsDispatched             #NUM of ops started
 METRICS.opsDispatchedSync         #Same but split between sync|async
- |Async[Unref]                    #Async is when it ref's the process, AsyncUnref when it does not
+ |Async[Unref]                    #Async is when it is ref'd by the process, AsyncUnref when it is not
 METRICS.opsCompleted*             #Like opsDispatched, but finished
 METRICS.bytesSentControl          #NUM of bytes sent for metadata
 METRICS.bytesSentData             #NUM of bytes sent for data
@@ -862,13 +861,11 @@ Deno.uid|gid()->NUM|null         S#Process UID|GID. null on Windows
 
 Deno.hostname()->STR             S#System hostname
 
-Deno.add|removeSignalListener
- ('SIG*', FUNC())                 #On Windows, only 'SIGINT|SIGBREAK' supported
-
 Deno.chdir(UPATH)                R#Change cwd
 Deno.cwd()->'PATH'               R#Can throw NotFound
 
 RESOURCE                          #Abstraction of a file, including socket, etc.
+                                  #Usually ref'd by the process
 RID                               #RESOURCE ID NUM. Abstraction of a file descriptor.
 
 CLOSER|READER|WRITER|SEEKER       #Abstract class to implement
@@ -930,6 +927,7 @@ Deno.stdout|stderr.rid            #RID
 Deno.stdout|stderr.writable       #WSTREAM
 
 new Deno.FsFile(RID)              #FILE. Inherits CLOSER|READER[_SYNC]|WRITER[_SYNC]
+                                  #Ref'd by the process
 FILE.rid                          #RID
 FILE.readable                     #RSTREAM
 FILE.writable                     #WSTREAM
@@ -953,10 +951,19 @@ Deno.open(UPATH[, OPTS])->>FILE   #Open a FILE.
                                   #     - not on Windows
                                   #Follows symlinks.
 
-Deno.readFile(UPATH[, OPTS])     R#Read FILE contents.
- ->>UINT8ARR                      #OPTS:
+Deno.readFile                    R#Read FILE contents.
+ (UPATH[, OPTS])->>UINT8ARR       #OPTS:
                                   #  - signal ABORT_SIGNAL
                                   #If DIR, returns empty UINT8ARR
+Deno.writeFile(UPATH,            W#Write FILE contents.
+ UINT8ARR|RSTREAM[, OPTS])->>     #OPTS:
+                                  #  - signal ABORT_SIGNAL
+                                  #  - create BOOL (def: true): like Deno.open()
+                                  #  - append|createNew|mode: like Deno.open()
+Deno.readTextFile
+ (UPATH[, OPTS])->>STR
+Deno.writeTextFile
+ (UPATH, STR|RSTREAM[, OPTS])->>  #Same with STR (UTF-8) instead of UINT8ARR
 Deno.copyFile(UPATH, UPATH2)->> RW#Copy contents.
                                   #Creates UPATH2 if does not exist.
 
@@ -975,6 +982,9 @@ FILE_INFO.mode                   !#Or'd NUM with permissions and file type. null
 FILE_INFO.isFile|Directory|Symlink#BOOL. Mutually exclusive. Cross-OS
                                   #Can be all false, e.g. for block|character device, including stdin|stdout|stderr
 
+Deno.umask([NUM])->NUM2          !#Set process umask to NUM (def: same).
+                                  #Return umask before being set.
+                                  #Throws on Windows
 Deno.chmod(UPATH, NUM)->>        W#Change file permission. Throws on Windows
 Deno.chown(UPATH, UID, GID)->>   W#Change UID|GID NUM or null (no change). Throws on Windows
 Deno.utime(UPATH,
@@ -983,23 +993,30 @@ Deno.utime(UPATH,
 Deno.create(UPATH)->>FILE       RW#Creates file. If already exists, truncates it
 FILE.truncate([NUM])->>           #
 Deno.truncate(UPATH[, NUM])->>   W#Truncate file to NUM (def: 0) bytes. If larger, filled with \0
+Deno.rename(UPATH, UPATH2)->>   RW#Rename file|DIR
+Deno.remove(UPATH[, OPTS])->>    W#Delete file|DIR.
+                                  #Throws if does not exist.
+                                  #OPTS:
+                                  #  - recursive BOOL (def: false)
+                                  #     - when non-empty DIR, whether to delete recursively, or throw
 
+Deno.link
+ (OLD_UPATH, NEW_UPATH)->>      RW#Create hard link
 Deno.symlink(OLD_UPATH,         RW#Create symlink
  NEW_UPATH[, OPTS])->>            #OPTS:
                                   #  - type 'file' (def) or 'dir' (Windows only)
-Deno.link
- (OLD_UPATH, NEW_UPATH)->>      RW#Create hard link
-
-Deno.readDir(DIR_UPATH)
- ->DIR_ENTRY_ASYNC_ITERABLE      R#List DIR files
-DIR_ENTRY.name                    #'FILENAME'
-DIR_ENTRY.isFile|Directory|Symlink#Like FILE_INFO.*
+Deno.readLink(UPATH)->>'PATH'    R#Return symlink destination. Throw if not symlink
+Deno.realPath(UPATH)->>'PATH'    R#Normalize PATH: follow symlinks, absolute path
 
 Deno.mkdir(UPATH[, OPTS])->>     W#Create a DIR. OPTS:
                                   #  - mode NUM (def: 0o777 + umask): chmod. Ignored on Windows.
                                   #  - recursive BOOL (def: false):
                                   #     - create intermediary DIRs
                                   #     - if false, throws if DIR already exists
+Deno.readDir(DIR_UPATH)
+ ->DIR_ENTRY_ASYNC_ITERABLE      R#List DIR files
+DIR_ENTRY.name                    #'FILENAME'
+DIR_ENTRY.isFile|Directory|Symlink#Like FILE_INFO.*
 
 Deno.makeTempFile([OPTS])        W#Create a temp file.
  ->>'PATH'                        #Filename is 8 random hex chars.
@@ -1009,6 +1026,27 @@ Deno.makeTempFile([OPTS])        W#Create a temp file.
                                   #     - return 'PATH' is relative or absolute (def) depending on whether 'DIR' is
                                   #  - prefix|suffix STR (def: ''): to the filename
 Deno.makeTempDir([OPTS])->>'PATH'W#Same with a temp DIR
+
+Deno.watchFs                     R#Watch for file|DIR changes.
+ ('PATH'[_ARR][, OPTS])->WATCHER  #OPTS:
+                                  #  - recursive BOOL (def: true)
+                                  #Cross-OS
+WATCHER                           #FS_EVENT_ASYNC_ITERABLE
+                                  #Inherits CLOSER
+WATCHER.rid                       #RID
+FS_EVENT.paths                    #'PATH'_ARR
+FS_EVENT.kind                     #One of:
+                                  #  - 'access': read regular file contents|inode (does not seem to work properly)
+                                  #  - 'modify': write file|DIR contents|inode
+                                  #  - 'create': new file|DIR
+                                  #  - 'remove': delete file|DIR
+                                  #  - 'other': change in filesystem
+                                  #  - 'any'
+                                  #Watches newly created DIRs
+                                  #Sometimes duplicate FS_EVENTs are created
+FS_EVENT.flag                     #With kind 'other', is 'rescan':
+                                  #  - when some events or filesystem changes might have not been reported
+                                  #  - i.e. might need to refresh list of directories manually
 
 Deno.flock(RID[, BOOL])->>       !#Acquire lock on RID.
                                   #BOOL (def: false) is whether lock is exclusive, as opposed to shared, to a single process.
@@ -1024,3 +1062,34 @@ Deno.fstat|ftruncate|futime       #Like Deno.stat|truncate|utime(UPATH, ...) but
 
 FILE|Deno.*Sync(...)              #Same but sync
                                   #For all but: umask|watchFs
+
+SIGNAL                            #'SIG*'. OS-dependent.
+                                  #On Windows, only 'SIGINT|SIGBREAK' supported
+Deno.add|removeSignalListener
+ (SIGNAL, FUNC())                 #
+Deno.kill(PID_NUM[, SIGNAL])     U#Send SIGNAL (def: 'SIGTERM') to a process
+                                  #If PID_NUM negative, send to progress group instead
+                                  #  - throws on Windows
+CHILD_PROCESS.kill([SIGNAL])      #Send SIGNAL (def: 'SIGTERM') to CHILD_PROCESS
+
+new Deno.Command
+ ('COMMAND'|UPATH[, OPTS])        #COMMAND, i.e. configuration for CHILD_PROCESSs
+OPTS.???
+
+COMMAND.spawn()->CHILD_PROCESS   U#
+CHILD_PROCESS.pid                 #NUM
+CHILD_PROCESS.stdin               #RSTREAM
+CHILD_PROCESS.stdout|stderr       #WSTREAM
+CHILD_PROCESS.[un]ref()           #Set whether ref'd by the current process
+
+CHILD_PROCESS.status              #>COMMAND_STATUS
+COMMAND_STATUS.code               #Exit code NUM
+COMMAND_STATUS.signal             #SIGNAL|null terminating the process
+COMMAND_STATUS.success            #BOOL. true if exit code non-0
+
+COMMAND|CHILD_PROCESS.output()
+ ->>COMMAND_OUTPUT
+COMMAND.outputSync()
+ ->COMMAND_OUTPUT                U#
+COMMAND_OUTPUT                    #Inherits from COMMAND_STATUS
+COMMAND_OUTPUT.stdout|stderr      #UINT8ARR
