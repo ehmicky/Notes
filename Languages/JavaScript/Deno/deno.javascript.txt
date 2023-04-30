@@ -366,7 +366,8 @@ deno bench|compile|install|repl
                                   #If DIR, recursive
                                   #Not necessary for stdin|stdout|stderr
 --allow-net[=HOST|IP[:PORT],...]  #Allow opening|connecting to sockets:
-                                  #  - TCP (except Unix socket): Deno.connect()
+                                  #  - TCP|UDP (except Unix socket): Deno.connect|listen|start*()
+                                  #  - DNS: Deno.resolve*()
                                   #  - HTTP: fetch()
                                   #  - WebSocket
 --allow-env[=ENVVAR,...]          #Allow reading|writing ENVVARs (Deno.env) and accessing environment information
@@ -520,19 +521,44 @@ deno doc UPATH VARR               #Show documentation for a module
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:             HTTP              :==(
+                                            )==:              TCP              :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
-ENVVAR HTTP_PROXY                 #Proxy address for HTTP requests (module downloads, fetch)
-ENVVAR HTTPS_PROXY                #Proxy address for HTTPS requests (module downloads, fetch)
-ENVVAR NO_PROXY                   #Comma-separated list of hosts which do not use a proxy (module downloads, fetch)
+Deno.connect(TCP_OPTS)->>CONN    !#Connect to TCP socket
+Deno.listen(STCP_OPTS)->>LISTENER!#Open TCP socket
 
-HCOPTS.proxy                      #HTTP_PROXY
-HTTP_PROXY.url                    #'URL'
-HTTP_PROXY.basicAuth
- .username|password               #STR
+[S]TCP_OPTS|ADDR.transport        #Either:
+                                 N#  - 'tcp': normal TCP socket
+                              [W]R#  - 'unix': Unix TCP socket
+[S]TCP_OPTS|ADDR.hostname         #'HOSTNAME'. Not with Unix socket
+                                  #Def: '127.0.0.1' (Deno.connect()) or '0.0.0.0' (Deno.listen())
+[S]TCP_OPTS|ADDR.port             #NUM. Not with Unix socket
+[S]TCP_OPTS|ADDR.path             #'PATH'. Only with Unix socket
+STCP_OPTS.reusePort               #BOOL (def: false). If true, allows multiple processes to listen on same port,
+                                  #distributing new connections among them.
+                                  #Uses SO_REUSEPORT, Linux only.
+
+LISTENER                          #CONN_ASYNC_ITERABLE. Inherits CLOSER
+LISTENER.rid                      #RID
+LISTENER.[un]ref()                #Set whether ref'd by the current process
+LISTENER.addr                     #ADDR of source
+LISTENER.accept()->>CONN          #Like LISTENER.next()
+
+CONN                              #Inherits CLOSER|READER|WRITER
+CONN.rid                          #RID
+CONN.[un]ref()                    #Set whether ref'd by the current process
+CONN.localAddr|remoteAddr         #ADDR of source|destination
+CONN.readable                     #RSTREAM
+CONN.writable                     #WSTREAM
+Deno.shutdown(CONN.rid)
+CONN.closeWrite()                 #Stops sending, but not receiving.
+CONN.setNoDelay([BOOL])           #BOOL. If true (def), disable Nagle's algorithm
+                                  #Only with tranport 'tcp'
+CONN.setKeepAlive([BOOL])         #BOOL. If true (def), enable TCP keepalive
+                                  #Only with tranport 'tcp'
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -540,6 +566,16 @@ HTTP_PROXY.basicAuth
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
+
+Deno.connectTls(TLS_OPTS)
+ ->>CONN                         !#Connect to TLS socket
+Deno.listenTls(STLS_OPTS)
+ ->>LISTENER                     !#Open TLS socket
+Deno.startTls(CONN[, NTLS_OPTS])
+ ->>CONN2                        !#Turn TCP socket into TLS
+
+[S]TLS_OPTS                       #Inherits from [S]TCP_OPTS, except no Unix socket
+NTLS_OPTS                         #Only inherits TCP_OPTS.hostname. No Unix socket
 
 deno bench|compile|install|repl
  |run|test
@@ -553,9 +589,66 @@ deno bench|cache|check|compile
  |test|upgrade|vendor
 --cert                            #'PEM' to CA authority
 
-HCOPTS.caCerts                    #'PEM'_ARR of root certificates
-HCOPTS.certChain                  #STR of certificate chain
-HCOPTS.privateKey                 #'PEM' (RSA|PKCS8) of client certificate
+[N]TLS_OPTS|HCOPTS.caCerts        #'PEM'_ARR of root certificates
+TLS_OPTS|HCOPTS.certChain
+STLS_OPTS.cert                    #'PEM' of certificate chain
+TLS_OPTS|HCOPTS.privateKey        #'PEM' (RSA|PKCS8) of client certificate
+STLS_OPTS.key                     #'PEM' of server certificate
+
+[S|N]TLS_OPTS.alpnProtocols       #'PROTOCOL'_ARR (def: [])
+CONN.handshake()->>OBJ            #OBJ: alpnProtocol 'PROTOCOL'|null
+                                  #Only with TLS
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:              UDP              :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+Deno.listenDatagran(UDP_OPTS)
+ ->>DCONN                        !#Open UDP socket
+
+UDP_OPTS                          #Inherits STCP_OPTS except:
+                                  #  - no reusePort
+                                  #  - transport 'tcp|unix' -> 'udp|unixpacket'
+UDP_OPTS.reuseAddress             #BOOL (def: false). If true and another process listens on same port, steals it.
+
+DCONN                             #ASYNC_ITERABLE of [UINT8ARR, ADDR] (data + sender)
+                                  #Inherits CLOSER
+DCONN.addr                        #ADDR of source
+DCONN.send(UINT8ARR, ADDR)->>NUM  #Returns NUM bytes sent
+DCONN.receive([UINT8ARR])
+ ->>[UINT8ARR, ADDR]              #Can pass UINT8ARR to reuse the same one, to avoid re-allocating memory
+
+DCONN.joinMulticastv4
+ ('HOST', 'NETWORK_INTERFACE')
+ ->>MEMBERSHIP
+DCONN.joinMulticastv6
+ ('HOST', NETWORK_INTERFACE_NUM)
+ ->>MEMBERSHIP                    #Join multicast group
+MEMBERSHIP.leave()->>             #Leave multicast group
+UDP_OPTS.loopback
+MEMBERSHIP.setLoopback(BOOL)->>   #BOOL (def: false). Send multicast packets to localhost
+MEMBERSHIP.setTTL(NUM)->>         #Set multicast packets TTL. Only with IPv4
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:             HTTP              :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+ENVVAR HTTP_PROXY                 #Proxy address for HTTP requests (module downloads, fetch)
+ENVVAR HTTPS_PROXY                #Proxy address for HTTPS requests (module downloads, fetch)
+ENVVAR NO_PROXY                   #Comma-separated list of hosts which do not use a proxy (module downloads, fetch)
+
+HCOPTS.proxy                      #HTTP_PROXY
+HTTP_PROXY.url                    #'URL'
+HTTP_PROXY.basicAuth
+ .username|password               #STR
 
 
                                              /=+===============================+=\
@@ -1113,11 +1206,21 @@ CHILD_PROCESS.stdin               #WSTREAM
 CHILD_PROCESS.stdout|stderr       #RSTREAM
 COMMAND_OUTPUT.stdout|stderr      #UINT8ARR
 
-Deno.connect(OPTS)->>CONN        R#Connect to TCP socket.
-OPTS.transport                    #Either:
-                                 N#  - 'tcp': normal socket
-                                  #  - 'unix': Unix socket
-OPTS.hostname                     #'HOSTNAME' (def: '127.0.0.1'). Only with transport 'tcp'
-OPTS.port                         #NUM. Only with transport 'tcp'
-OPTS.path                         #'PATH'. Only with transport 'unix'
-CONN.setNoDelay([BOOL])           #
+Deno.networkInterfaces()
+ ->NETWORK_INTERFACE_ARR         S#
+NETWORK_INTERFACE.name            #STR, e.g. 'lo', 'wlp113s0', etc.
+NETWORK_INTERFACE.family          #'IPv4|6'
+NETWORK_INTERFACE.address         #'IP'
+NETWORK_INTERFACE.netmask         #STR
+NETWORK_INTERFACE.scopeid         #NUM or (if IPv4) null
+NETWORK_INTERFACE.cidr            #'IP/NUM'
+NETWORK_INTERFACE.mac             #STR. MAC address
+
+Deno.resolveDns                  N#DNS resolution query.
+ (STR, 'TYPE'[, OPTS])->ARR       #Return type depends on 'TYPE':
+                                  #  - 'A|AAAA|ANAME|CNAME|NS|PTR|TXT': STR_ARR
+                                  #  - 'CAA'
+                                  #  - 'MX'
+                                  #  - 'NAPTR'
+                                  #  - 'SOA'
+                                  #  - 'SRV'
