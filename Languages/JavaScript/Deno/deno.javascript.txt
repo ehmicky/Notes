@@ -6,8 +6,11 @@
 
 
 TODO:
-  - KV
   - Testing
+  - Benchmark
+
+deno test                         #See its own doc
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -460,29 +463,6 @@ deno bench|compile|eval|info
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:             TEST              :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-deno test [UPATH|DIR...]          #Run tests
- [-- ARG...]                      #Evaluate the given modules, run all tests declared with 'Deno.test()' and report results to standard output.
-                                  #Directory arguments are expanded to all contained files matching the glob {*_,*.,}test.{js,mjs,ts,mts,jsx,tsx}
---trace-ops                       #Enable tracing of async ops. Useful when debugging leaking ops in test, but impacts test execution time.
---doc                             #Type-check code blocks in JSDoc and Markdown
---fail-fast[=NUM]                 #Stop after N errors. Defaults to stopping after first failure.
---allow-none                      #Don't return error code if no test files are found
---shuffle[=NUM]                   #Shuffle the order in which the tests are run
---parallel                        #Run test modules in parallel. Parallelism defaults to the number of available CPUs or the value in the DENO_JOBS environment variable.
-ENVVAR DENO_JOBS                  #Number of parallel workers used for the --parallel flag with the test subcommand. Defaults to number of available CPUs.
-
-deno bench|test
---no-run                          #Cache modules, but don't run files
---filter GLOB                     #Run files with this string or pattern in the bench name
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
                                             )==:           BENCHMARK           :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -496,7 +476,8 @@ PerformanceMeasure                #Like DOM, but no PerformanceObserver, Perform
 deno bench [UPATH|DIR...]         #Run benchmarks
  [-- ARG...]                      #Evaluate the given modules, run all benches declared with 'Deno.bench()' and report results to standard output.
                                   #DIR is expanded to all contained files matching the glob {*_,*.,}bench.{js,mjs,ts,mts,jsx,tsx}:
-
+--no-run
+--filter GLOB                     #Like deno test
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -1091,75 +1072,113 @@ sessionStorage                    #Like DOM
 DENO_DIR/FILE_HASHID/local_storage#Where localStorage is saved
                                   #Uses SQLite database
 
-Deno.openKv(['PATH'])->>KV     WR!#Local key-value store, using SQLite
-                                  #'PATH' is where it is persisted
+Deno.openKv(['PATH'])->>KV     WR!#Key-value store.
+                                  #Persisted locally, using SQLite, to 'PATH'
                                   #  - def: DENO_DIR/FILE_HASHID/kv.sqlite3
-KV.close()->>                     #
+                                  #Rich types for key|value.
+                                  #Atomic updates.
+KV.close()->>                     #Graceful: wait for ongoing updates
 
-KV.set(KVKEY, KVVAL)->>RESULT     #
-KV.delete(KVKEY)->>               #
-KV.get(KVKEY[, KVOPTS])->>KVENTRY #
-KV.getMany(KVKEY_ARR[, KVOPTS])
- ->>KVENTRY_ARR                   #
-
-KV.list(SELECTOR, LOPTS)->KVLIST  #
-SELECTOR.prefix                   #KVKEY
-SELECTOR.start|end                #KVKEY. If both specified: cannot use prefix.
-                                  #Otherwise, must use prefix.
-LOPTS.limit                       #NUM
-LOPTS.cursor                      #STR
-LOPTS.reverse                     #BOOL
-LOPTS.batchSize                   #NUM
-
-KV.atomic()->ATOMIC               #
-ATOMIC.commit()->>ATOMIC_RESULT   #
-
+KV.set(KVKEY, KVVAL)->>RESULT
 ATOMIC.set(KVKEY, KVVAL)->ATOMIC  #
-ATOMIC.delete(KVKEY)->ATOMIC      #
-ATOMIC.sum(KVKEY, BIGINT)->ATOMIC #
-ATOMIC.min|max(KVKEY, BIGINT)
- ->ATOMIC                         #
 
-ATOMIC.check(ATOMIC_CHECK...)
- ->ATOMIC                         #
+KV.delete(KVKEY)->>
+ATOMIC.delete(KVKEY)->ATOMIC      #If KVKEY does not exist, noop
+
+KV.get(KVKEY[, GOPTS])->>KVENTRY  #If KVKEY does not exist, return but with VERSIONSTAMP null (and KVVAL null)
+KV.getMany(KVKEY_ARR[, GOPTS])
+ ->>KVENTRY_ARR                   #Same for multiple KVKEYs. Provide with in-batch consistency like KV.list()
+
+KV.list(SELECTOR[, LOPTS])->KVLIST#
+SELECTOR.prefix                   #KVKEY. Filter only KVKEYs with:
+                                  #  - initial KVKEY_PARTs exactly matching KVKEY's
+                                  #  - same|longer KVKEY.length
+                                  #Can be empty ARR to match all.
+                                  #Cannot be used with both start|end.
+                                  #Must be used if only either start|end used, or neither.
+SELECTOR.start|end                #KVKEY. Filter from start (included) to end KVKEY (excluded), in the KV sorting order.
+                                  #KVKEY does not have to exist.
+LOPTS.limit                       #NUM (def: all). Only return first NUM KVENTRYs.
+LOPTS.reverse                     #BOOL (def: false). Whether sorting order is ascending (false) or descending (true).
+KVLIST.cursor                     #STR. Opaque KVENTRY identifying position of last iterated KVKEY.
+                                  #Is actually serialized KVKEY, base64'd.
+                                  #Throws if KVLIST not iterated yet.
+LOPTS.cursor                      #STR. Start iteration at that position.
+                                  #If undefined (def), from beginning.
+LOPTS.batchSize                   #NUM. How many KVENTRYs to retrieve at once.
+                                  #Smaller values require more fetches, i.e. slower
+                                  #Values are consistent inside each batch, but not between:
+                                  #  - i.e. they represent a snapshot at a given time
+                                  #  - smaller batches benefit less from in-batch consistency
+                                  #  - larger batches are more likely to deviate from latest state of the data
+                                  #Def: LOPTS.limit or (if not set) 100. Max: 500.
+
+ATOMIC.sum(KVKEY, BIGINT)->ATOMIC #Increments KVVAL by BIGINT.
+                                  #KVVAL must either:
+                                  #  - be a KVU64 (not BIGINT|NUM)
+                                  #  - not exist, defaulting to 0
+                                  #BIGINT must be positive
+ATOMIC.min|max(KVKEY, BIGINT)     #Set KVVAL to min|max(KVVAL, BIGINT)
+ ->ATOMIC                         #KVVAL has same constraint as sum()
+                                  #  - except if KVVAL does not exist, it is ignored instead
+
+KV.atomic()->ATOMIC               #Perform multiple updates atomically
+ATOMIC.commit()->>RESULT          #
+RESULT.ok                         #BOOL. Whether ATOMIC.check() failed. Always true otherwise.
+RESULT.versionstamp               #'VERSIONSTAMP' or (if RESULT.ok false) undefined
+
+ATOMIC.check(ATOMIC_CHECK...)     #Make ATOMIC fail if a given KVKEY (depending on versionstamp):
+ ->ATOMIC                         #  - 'VERSIONSTAMP': has a different 'VERSIONSTAMP', or does not exist
+                                  #  - null: exists
+                                  #If multiple ATOMIC_CHECKs, and'd
+                                  #Performed first in the ATOMIC.* chain
+                                  #Allows transaction without locking (optimistic update):
+                                  #  - [re]try an update assuming the entry did not get updated
 ATOMIC_CHECK.key                  #KVKEY
+ATOMIC_CHECK.versionstamp         #'VERSIONSTAMP'|null
 
 ATOMIC.mutate(ATOMIC_MUTATE...)
- ->ATOMIC                         #
-ATOMIC_MUTATE.key                 #KVKEY
+ ->ATOMIC                         #Same as ATOMIC.*
 ATOMIC_MUTATE.type                #'set|delete|sum|min|max'
+ATOMIC_MUTATE.key                 #KVKEY
 ATOMIC_MUTATE.value               #Depending on type: KVVAL (set), nothing (delete), KVU64 (sum|min|max)
 
-RESULT.ok                         #BOOL
-
 KVLIST                            #KVENTRY_ASYNC_ITERABLE
-KVLIST.cursor                     #STR
 
-KVENTRY                           #
+KVENTRY                           #Single item (key + value)
 KVENTRY.key                       #KVKEY
 KVENTRY.value                     #KVVAL or null
+KVENTRY.versionstamp              #'VERSIONSTAMP' or (if KVENTRY is missing) null
 
-KVKEY                             #ARR of UINT8ARR|STR|NUM|BIGINT|BOOL
-                                  #KV is sorted automatically by KVKEY when inserting new ones
-                                  #  - order: by type, then by value
+KVKEY                             #KVKEY_PART_ARR. Item key.
+                                  #The whole ARR is the identifier. Only KV.list() allows matching only part of it.
                                   #Max length 2KB serialized
-KVVAL                             #v8-serializable value.
-                                  #Same types as structuredClone()
-                                  #null represents both:
-                                  #  - a missing KVENTRY
-                                  #  - a KVENTRY with value null
-                                  #  - can differentiate by checking for versionstamp
-new Deno.KvU64(BIGINT)            #64-bit UINT. Serialized like a BIGINT.
-                                  #Additional possible type for KVVAL
+KVKEY_PART                        #UINT8ARR|STR|NUM|BIGINT|BOOL
+SORTING ==>                       #KV is sorted by KVKEY:
+                                  #  - by KVKEY[0], then by KVKEY[1], etc.
+                                  #  - for a given KVKEY_PART:
+                                  #     - by type
+                                  #        - undefined first, i.e. shorter KVKEY first
+                                  #     - then by value
+                                  #Done automatically when inserting new KVKEYs
+
+KVVAL                             #Item value.
+                                  #v8-serialized: same types as structuredClone()
+                                  #  - including null
+                                  #Max length 64KB serialized
+new Deno.KvU64(BIGINT)            #Represents a 64-bit UINT. Additional possible type for KVVAL.
+                                  #Serialized as a BIGINT, but distinct type from it.
                                   #Cannot be nested in an OBJ|ARR
 KVU64.value                       #BIGINT
 
-KVENTRY.versionstamp              #STR or (if missing) null
-                                  #20 hex chars
-ATOMIC_CHECK.versionstamp         #STR or null
-RESULT.versionstamp               #STR or (if RESULT.ok false) undefined
+VERSIONSTAMP                      #20 hex chars.
+                                  #Represents a NUM incremented after each update, even if KVVAL is same.
 
-KVOPTS|LOPTS.consistency          #'strong' or 'eventual'
+GOPTS|LOPTS.consistency           #Read consistency:
+                                  #  - 'strong' (def):
+                                  #     - if value has been updated, wait for that update to be set first
+                                  #     - also ensure in-batch consistency
+                                  #  - 'eventual': opposite, faster
 
 
                                              /=+===============================+=\
