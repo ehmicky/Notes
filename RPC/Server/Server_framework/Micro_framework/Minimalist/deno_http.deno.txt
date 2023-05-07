@@ -7,6 +7,13 @@
 
 VERSION ==>                       #See deno doc
 
+HTTP/2 ==>                        #Fallback to HTTP/1.1
+                                  #With Deno.serve[Http](), std serveListener(), but not std serve()
+                                  #Only with TLS, including:
+                                  #  - cert and key
+                                  #  - alpnProtocols ['h2', 'http/1.1']
+                                  #     - automatically done with Deno.serve()
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -16,7 +23,7 @@ VERSION ==>                       #See deno doc
 
 
 Deno.serveHttp(TCP_CONN)
- ->HTTP_CONN                      #Handle a TCP connection as HTTP/2 (fallback to HTTP 1.1)
+ ->HTTP_CONN                      #Handle a TCP connection as HTTP
 
 HTTP_CONN                         #REQ_EVENT_ASYNC_ITERABLE
 HTTP_CONN.nextRequest()
@@ -35,21 +42,82 @@ HTTP_CONN.close()                 #Like TCP_CONN.*
                                              \=+===============================+=/
 
 
-Deno.serve([OPTS][, FUNC])->>   N!#Start HTTP/2 server (fallback to HTTP 1.1)
+Deno.serve([OPTS][, FUNC])->>   N!#Start HTTP server
                                   #FUNC is OPTS.handler
+                                  #Higher-level than Deno.serveHttp(), but not based on top of it directly
                                   #Calls Deno.listen[Tls]() under the hood
-                                  #  - with alpnProtocols ['h2', 'http/1.1']
 
 OPTS.port|hostname|reusePort|     #Like STLS.*
  cert|key                         #Def port: 9000 (TLS) or 8000 (not TLS)
 OPTS.onListen                     #FUNC(ADDR) called on server start
                                   #Def: console.log('Listening on http://HOSTNAME:PORT/')
 
-OPTS.handler                      #FUNC(REQ, OBJ)->>RES called on request
-                                  #OBJ: remoteAddr ADDR
-
-OPTS.signal                       #ABORT_SIGNAL
+OPTS.handler                      #FUNC(REQ, TCP_CONN)->>RES called on request
+                                  #TCP_CONN: only remoteAddr ADDR
 OPTS.onError                      #FUNC(VAL)->>RES called on exception inside OPTS.handler
+                                  #Should not throw itself
                                   #Def:
                                   #  - console.error(VAL)
-                                  #  - return new Response('Internal Server Error')
+                                  #  - return new Response('Internal Server Error', { status: 500 })
+
+OPTS.signal                       #ABORT_SIGNAL
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:            HANDLER            :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+std/http/server.ts
+serve[Tls](FUNC[, SSOPTS])->>     #Like new Server(SSOPTS).listenAndServe[Tls]()
+                                  #FUNC is SOPTS.handler
+                                  #Similar to Deno.serve() but based on Deno.serveHttp()
+serveListener                     #Like new Server(SSOPTS).serve(TCP_LISTENER)
+ (TCP_LISTENER, FUNC[, SSOPTS])->>#FUNC is SOPTS.handler. SSOPTS: no hostname|port|onListen|cert*|key*
+
+new Server(SOPTS)                 #
+SERVER.listenAndServe()->>       N#Deno.listen() + SERVER.serve()
+SERVER.listenAndServeTls         N#Deno.listenTls() + SERVER.serve()
+ (STR, STR2)->>                   #STR is OPTS.certFile, STR2 is OPTS.keyFile
+SERVER.serve(TCP_LISTENER)->>    N#Start server and handle new connections and requests
+                                  #Loop:
+                                  #  - TCP_LISTENER.accept()->>TCP_CONN
+                                  #  - Deno.serveHttp(TCP_CONN)->HTTP_CONN
+                                  #  - until HTTP_CONN closed, loop:
+                                  #     - HTTP_CONN.nextRequest()->>REQ_EVENT
+                                  #     - SOPTS.handler(REQ_EVENT.request, ...)->[>]RES
+                                  #     - REQ_EVENT.respondWith(RES)
+                                  #Resolves only on SERVER.close()
+                                  #Exceptions during:
+                                  #  - TCP_LISTENER.accept():
+                                  #     - for common network errors, retried with an increasing backoff
+                                  #     - otherwise, propagated
+                                  #  - Deno.serveHttp(), HTTP_CONN.nextRequest(), SOPTS.handler, REQ_EVENT.respondWith(): handled
+                                  #  - SOPTS.onError: propagated
+                                  #On propagated errors, automatically calls SERVER.close()
+
+[S]SOPTS.hostname                 #Like TCP_OPTS.hostname
+SOPTS.port                        #Like TCP_OPTS.port but def 80|443
+SSOPTS.port                       #Like TCP_OPTS.port but def 8000|8443
+SERVER.addrs                      #ADDR_ARR
+SSOPTS.onListen                   #FUNC(ADDR) on server start
+                                  #Def: console.log('Listening on http[s]://HOSTNAME:PORT/')
+
+SSOPTS.cert|key                   #Like STLS_OPTS.cert|key
+                                  #Only with *Tls
+SSOPTS.cert|keyFile               #Same but as 'PATH'
+
+SOPTS.handler                     #FUNC(REQ, TCP_CONN)->>RES called on request
+                                  #TCP_CONN: only localAddr|remoteAddr ADDR
+[S]SOPTS.onError                  #FUNC(VAL)->>RES called on exception inside SOPTS.handler
+                                  #Should not throw itself
+                                  #Def:
+                                  #  - console.error(VAL)
+                                  #  - return new Response('Internal Server Error', { status: 500 })
+
+SSOPTS.signal                     #ABORT_SIGNAL, calling SERVER.close() on abort
+SERVER.close()                    #Ends ongoing connections (HTTP_CONN.close())
+                                  #Do not accept new ones (TCP_LISTENER.close())
+SERVER.closed                     #BOOL
