@@ -25,15 +25,15 @@ std/types.d.ts                    #Has Closer|Reader[Sync]|Writer[Sync] types
 
 CLOSER.close()                    #Close underlying RESOURCE
 
-READER.read(UINT8ARR)->>NUM|null  #Reads available bytes from underlying RESOURCE and sets them into UINT8ARR.
+READER.read(UINT8ARR)->>NUM|null  #Reads available bytes from underlying RESOURCE and writes them into UINT8ARR.
                                   #Usually does not wait i.e. might read:
                                   #  - 0 bytes
                                   #  - less than UINT8ARR.length
                                   #     - rest of UINT8ARR might be used for internal purposes though
                                   #Only read up to UINT8ARR.length bytes.
-                                  #Returns NUM of bytes read, or null if no more bytes to read.
+                                  #Returns NUM of bytes read, or null if EOF
 
-WRITER.write(UINT8ARR)->>NUM      #Reads all of UINT8ARR and sets it to underlying RESOURCE.
+WRITER.write(UINT8ARR)->>NUM      #Reads all of UINT8ARR and writes it to underlying RESOURCE.
                                   #Returns UINT8ARR.length
 
 SEEKER.seek(NUM|BIGINT, ENUM)     #Changes position used by READER.read() and WRITER.write()
@@ -170,25 +170,71 @@ BUFFER.readFromSync(READERSYNC)
  ->NUM                            #Same but sync
 
 
-new BufReader(READER[, NUM])      #READER with a buffer, i.e. an UINT8ARR buffering each READER.read()
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:          BUF_READER           :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+new BufReader(READER[, NUM])      #READER with a buffer, i.e. an UINT8ARR buffering bytes returned by READER.read()
                                   #NUM is buffer size (def: 4096, min: 16)
-BUF_READER.size()->NUM            #Buffer NUM of bytes read|unread
-BUF_READER.buffered()->NUM        #Buffer NUM of bytes unread
+BufReader.create(READER[, NUM])
+ ->BUF_READER                     #Like new BufReader(...) except return READER as is if it is already a BUF_READER
+
+BUF_READER.size()->NUM            #Buffer total size
+BUF_READER.buffered()->NUM        #Buffer's bytes left to read
 BUF_READER.reset(READER)          #Changes READER
 
 BUF_READER.readByte()->>NUM|null  #Reads from the buffer 1 byte
-                                  #Returns null if no bytes available
+                                  #Returns null if EOF
+                                  #If the buffer has no more bytes to read, first fills it with exactly one READER.read()
 BUF_READER.read(UINT8ARR)         #Inherited from READER
- ->>NUM|null                      #Reads from the buffer at most UINT8ARR.length bytes
-                                  #Returns null if no bytes available
-                                  #If the buffer has no more bytes to read, first fill it with one READER.read()
-                                  #If UINT8ARR is larger than buffer, skip buffer and only do one READER.read()
-BUF_READER.readFull(UINT8ARR)     #Reads exactly UINT8ARR.length bytes
+ ->>NUM|null                      #Same but with at most UINT8ARR.length bytes
+                                  #If UINT8ARR is larger than buffer, skip buffer and do exactly one READER.read()
+BUF_READER.readFull(UINT8ARR)     #Same but with exactly UINT8ARR.length bytes
  ->>UINT8ARR|null                 #Does so with multiple BUF_READER.read(UINT8ARR)
-                                  #Returns null if READER has 0 bytes available
-                                  #Throws PartialReadError
-                                  #  - if either:
-                                  #     - READER has >= 1 bytes available but less than UINT8ARR.length
-                                  #     - READER.read() throws
-                                  #  - PARTIAL_READ_ERROR.partial UINT8ARR2 contains bytes read so far
+                                  #Throws PartialReadError if READER is not EOF but has < UINT8ARR.length bytes available
                                   #Returned UINT8ARR is same as argument
+
+BUF_READER.peek(NUM)              #Reads from the buffer until either:
+ ->>UINT8ARR|null                 #  - NUM bytes read
+                                  #  - EOF after reading some bytes
+                                  #Returns null if EOF (before reading any bytes)
+                                  #Unlike other methods, does not move the read offset
+                                  #If the buffer needs more bytes to read, fills it with exactly one READER.read()
+                                  #Throws BufferFullError if NUM > BUF_READER.size()
+
+BUF_READER.readSlice(NUM)         #Reads from the buffer until either:
+ ->>UINT8ARR|null                 #  - byte with value NUM is found
+                                  #  - EOF after reading some bytes
+                                  #Returns null if EOF (before reading any bytes)
+                                  #If the buffer needs more bytes to read, fills it with exactly one READER.read()
+                                  #Throws BufferFullError if could not find byte NUM nor EOF in the next BUF_READER.size() bytes
+BUF_READER.readString('CHAR')
+ ->>STR|null                      #Like BUF_READER.readSlice() but using a 'CHAR' and returning a UTF8 STR
+BUF_READER.readLine()->>OBJ|null  #Like BUF_READER.readSlice() except:
+                                  #  - use LF|CRLF
+                                  #     - stripped from return value
+                                  #  - returns OBJ.more true instead of throwing BufferFullError
+                                  #Returned OBJ: line UINT8ARR, more BOOL
+
+PARTIAL_READ_ERROR
+ |BUFFER_FULL_ERROR.partial       #UINT8ARR2 with bytes read so far
+
+new BufWriter(WRITER[, NUM])      #WRITER with a buffer, i.e. a UINT8ARR buffering bytes to pass to WRITER.write()
+                                  #NUM is buffer size (def: 4096, min: 1)
+BufWriter.create(WRITER[, NUM])
+ ->BUF_WRITER                     #Like new BufWriter(...) except return WRITER as is if it is already a BUF_WRITER
+
+BUF_WRITER.size()->NUM            #Buffer total size
+BUF_WRITER.buffered()->NUM        #Buffer's bytes not written yet
+BUF_WRITER.available()->NUM       #Buffer's bytes, excluding bytes not written yet
+BUF_WRITER.reset(WRITER)          #Changes WRITER
+
+BUF_WRITER.write(UINT8ARR)->>NUM  #Inherited from WRITER
+                                  #Writes all of UINT8ARR to the buffer
+                                  #If buffer is full, call BUF_WRITER.flush()
+                                  #Returns UINT8ARR.length
+BUF_WRITER.flush()->>             #Writes the buffer to WRITER using multiple WRITER.write()
+                                  #Resets the buffer
