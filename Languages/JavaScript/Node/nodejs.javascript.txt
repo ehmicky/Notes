@@ -25,6 +25,8 @@ PURPOSE ==>                                     #Execute JavaScript code server-
 TO DOCUMENT:
   - --allow-*
   - --experimental-sea-config
+     - https://nodejs.org/dist/latest-v20.x/docs/api/single-executable-applications.html
+  - --prof, --prof-process
 
 VERSION ==>                                     #19.9.0 (current), 18.15.0 (active LTS) 16.19.1 (maintenance), 14.21.3 (maintenance)
                                                 #Branches:
@@ -225,10 +227,8 @@ EVENTEMITTER_ASYNC_RESOURCE
 --no-force-async-hooks-checks                   #Do not do extra runtime checks related to async hooks
 
 new AsyncLocalStorage([OPTS])                   #Create STOREs, i.e. objects available inside a specific function and its closures (including async)
-                                        18.13.0*#OPTS:
-                                        18.13.0*#  - onPropagate()->BOOL:
-                                        18.13.0*#     - called when a new async context is created
-                                        18.13.0*#     - if false, parent async context do not get STOREs
+OPTS.onPropagate()->BOOL                18.13.0*#Called when a new async context is created
+                                        18.13.0*#If false, parent async context do not get STOREs
 ASYNC_LOCAL_STORAGE.run(STORE, FUNC())          #Creates a STORE that only exists within the current async context.
                                                 #An async context is the current function and its closures including async ones (promise or callback).
                                                 #Creates a new async context
@@ -377,8 +377,11 @@ EVENTEMITTER.listenerCount                      #Slightly faster than EVENTEMITT
  (EVENT[, FUNC])->NUM                    19.8.0*#Can filter for a specific listener FUNC only
 EVENTEMITTER.eventNames()->'EVENT'_ARR          #
 EVENTEMITTER.setMaxListeners(NUM)->EVENTEMITTER #0 for unlim. Beyond max, does not stops adding listeners, only print warning.
-setMaxListeners(NUM, EVENT_EMITTER...)   15.4.0*#Same
+setMaxListeners
+ (NUM, EVENT_EMITTER|EVENT_TARGET...)    15.4.0*#Same
 EVENTEMITTER.getMaxListeners()->NUM             #
+getMaxListeners(EVENT_EMITTER|EVENT_TARGET...)
+ ->NUM                                   19.9.0*#Same
 EVENTEMITTER.defaultMaxListeners                #10
 EVENTEMITTER.on                                 #Event when a new event handler is added or removed.
  ("new|removeListener", FUNC(EVENT, FUNC2))     #Added|removed FUNC2 might still [not] be in EVENTEMITTER.listeners(EVENT)
@@ -422,17 +425,40 @@ CustomEvent                             16.17.0*#Like DOM
 CHANNEL_NAME                            14.17.0*#STR|SYM
                                         14.17.0*#Should be namespaced since this is global
 
-channel(CHANNEL_NAME)->CHANNEL          14.17.0*#Like EVENT_EMITTER except:
-                                        14.17.0*#  - fewer methods
-                                        14.17.0*#  - consumer interacts with it by its name instead of by using the object iself
-                                        14.17.0*#  - meant for debugging information
-CHANNEL.publish(MESSAGE)                14.17.0*#
+channel('CHANNEL_NAME')->CHANNEL        14.17.0*#Global EVENT_EMITTER-like meant for debugging information
+CHANNEL.publish(MESSAGE)                14.17.0*#MESSAGE can be any VAL
 CHANNEL.hasSubscribers                  14.17.0*#BOOL
 
-subscribe(CHANNEL_NAME,
- FUNC(MESSAGE, CHANNEL_NAME))           16.17.0*#
-unsubscribe(CHANNEL_NAME, FUNC)->BOOL   16.17.0*#BOOL is whether FUNC was subscribed to
-hasSubscribers(CHANNEL_NAME)->BOOL      14.17.0*#
+subscribe('CHANNEL_NAME',
+ FUNC(MESSAGE, 'CHANNEL_NAME'))         16.17.0*#
+unsubscribe('CHANNEL_NAME', FUNC)->BOOL 16.17.0*#BOOL is whether FUNC was subscribed to
+hasSubscribers('CHANNEL_NAME')->BOOL    14.17.0*#
+
+CHANNEL.runStores
+ (MESSAGE, FUNC(...ARGS)->VAL
+ [, CONTEXT[, ...ARGS]])->VAL            19.9.0*#Call CHANNEL.publish(MESSAGE), then run FUNC() with MESSAGE set as STORE
+CHANNEL.bindStore(ASYNC_LOCAL_STORAGE    19.9.0*#Associate a CHANNEL with an ASYNC_LOCAL_STORAGE inside runStores() FUNC
+ [, FUNC(STORE)->STORE])                 19.9.0*#FUNC transforms STORE on runStores()
+CHANNEL.unbindStore(ASYNC_LOCAL_STORAGE)
+ ->BOOL                                  19.9.0*#Returns false if not present
+
+TRACING_CHANNEL                          19.9.0*#Collection of 5 CHANNELs gathering different MOMENTs of each event
+                                         19.9.0*#MOMENT is [async]start|end or 'error'
+tracing:TRACING_CHANNEL_NAME:MOMENT      19.9.0*#CHANNEL_NAME of a TRACING_CHANNEL
+TRACING_CHANNEL_MESSAGE.result           19.9.0*#Set on MOMENT [async]end
+TRACING_CHANNEL_MESSAGE.error            19.9.0*#Set on MOMENT [async]end|error
+
+tracingChannel('TRACING_CHANNEL_NAME'|
+ { MOMENT: CHANNEL, ... })
+ ->TRACING_CHANNEL                       19.9.0*#
+TRACING_CHANNEL.subscribe
+ ({ MOMENT(MESSAGE), ... })              19.9.0*#
+TRACING_CHANNEL.unsubscribe
+ ({ MOMENT(MESSAGE), ... })->BOOL        19.9.0*#
+
+TRACING_CHANNEL.traceSync(...)           19.9.0*#Like CHANNEL.runStores() but publishes start and (if no exception) end or (if exception) error MOMENTs
+TRACING_CHANNEL.tracePromise(...)        19.9.0*#Same but with an async FUNC and asyncStart|End and error MOMENTs
+TRACING_CHANNEL.traceCallback(...)       19.9.0*#Same but with a callback FUNC
 
 
                                              /=+===============================+=\
@@ -442,26 +468,35 @@ hasSubscribers(CHANNEL_NAME)->BOOL      14.17.0*#
                                              \=+===============================+=/
 
 
-createTracing(OPTS)->TRACING                    #
+createTracing([OPTS])->TRACING
+--trace-events-enabled                          #Output tracing to a TRACE_FILE
 
-TRACING.categories                              #'CATEGORY'_ARR
+TRACING|OPTS.categories                         #'CATEGORY'_ARR
 --trace-event-categories=CATEGORY,...           #Pick tracing CATEGORYs
                                                 #Def: v8,node,node.async_hooks
+                                                #Also calls --trace-events-enabled
+TRACING.getEnabledCategories()->'CATEGORY,...'  #
 
 TRACING.enable|disable()                        #Whether to show trace events
                                                 #Those are shown in chrome://tracing
+TRACING.enabled                                 #BOOL
+
+--trace-event-file-pattern=PATH                 #Output trace events to PATH
+                                                #Can include ${rotation} and ${pid}
+                                                #Def: 'node_trace.${rotation}.log'
 
 AVAILABLE CATEGORIES ==>                        #
 v8                                              #V8 GC, compiling and execution
 node                                            #
-node.bootstrap                                  #Node.js startup
-node.environment                                #Node. environment setup
-node.console                                    #console.time|count()
+node.bootstrap                                  #Node startup
+node.environment                                #Node environment setup
+node.realm                                      #Node global object
+node.console                                    #console
 node.perf                                       #Performance.*
 node.perf.usertiming                            #Performance 'mark|measure'resource'
 node.perf.timerify                              #Performance.timerify()
 node.promises.rejections                        #PROMISEs unhandled or handled too late
-node.async_hooks                                #ASYNC_HOOKS
+node.async_hooks                                #ASYNC_HOOKS (PROMISE, etc.)
 node.threadpoolwork.[a]sync                     #Blob|ZLIB|CRYPTO|node_api
 node.fs.[a]sync                                 #FS except 'DIR'
 node.fs_dir.[a]sync                             #FS for 'DIR'
@@ -469,6 +504,34 @@ node.net.native                                 #TCP
 node.http                                       #HTTP
 node.dns.native                                 #DNS
 node.vm.script                                  #VM
+
+TRACE_FILE                                      #v8 tracing file
+                                                #Can be visualized with chrome://tracing or ui.perfetto.dev
+TRACE_FILE.traceEvents                          #TRACE_EVENT_ARR
+TRACE_EVENT.ph                                  #Event type among:
+                                                #  - duration: 'B' (begin), 'E' (end)
+                                                #  - complete: 'X'
+                                                #  - instant: 'i'
+                                                #  - counter: 'C'
+                                                #  - async: 'b' (start), 'e' (end), 'n' (instant)
+                                                #  - flow: 's' (start), 'f' (end), 't' (step)
+                                                #  - sample: 'P'
+                                                #  - object: 'N' (create), 'D' (delete), 'O' (snapshot)
+                                                #  - metadata: 'M'
+                                                #  - memory dump: 'V' (global), 'v' (process)
+                                                #  - mark: 'R'
+                                                #  - clock sync: 'c'
+                                                #  - context: ','
+TRACE_EVENT.name                                #Event name
+TRACE_EVENT.cat                                 #'CATEGORY,...' tagging an event
+TRACE_EVENT.dur                                 #NUMms duration
+TRACE_EVENT.tdur                                #NUMms duration, including thread open|end
+TRACE_EVENT.ts                                  #DATE_NUM. Start time, global
+TRACE_EVENT.tts                                 #DATE_NUM. Start time, within the thread
+TRACE_EVENT.pid                                 #Process ID
+TRACE_EVENT.tid                                 #Thread ID
+TRACE_EVENT.id                                  #Event-type specific ID
+TRACE_EVENT.args                                #Event-type specific arguments
 
 
                                              /=+===============================+=\
@@ -1005,14 +1068,17 @@ OBJECT MODE ==>                                 #SVAL is any VAL (except null):
                                                 #  - encoding is ignored
                                                 #  - both ISTREAM and OSTREAM must be in objectMode
                                                 #  - ISTREAM.read() NUM argument is ignored (always 1)
-                                                #  - highWaterMark is per-SVAL and defaults to 16
+                                                #  - highWaterMark is per-SVAL
+
+getDefaultHighWaterMark(BOOL)            19.9.0*#Get default highWaterMark. BOOL is objectMode. Def: 16 in objectMode, 16KB otherwise.
+setDefaultHighWaterMark(BOOL, NUM)       19.9.0*#
 
 ISTREAM ==>                                     #Input stream. Actually called Readable
 new Readable([OBJ])                             #OBJ:
                                                 #  - encoding 'ENCODING' (def: null, i.e. uses BUFFER)
                                                 #  - objectMode BOOL: see above
                                                 #  - highWaterMark NUM:
-                                                #     - buffer size (def: 16KB)
+                                                #     - buffer size
                                                 #     - on ISTREAM: data available for read but not read yet
                                                 #     - on OSTREAM: data not flushed yet
                                                 #     - if buffer full, waits
@@ -3358,6 +3424,7 @@ global.*                                        #In worker, like in parent excep
                                                 #  - exit() affects current thread not current process
                                                 #  - no abort|chdir|initgroups|set*|umask(VAL)|on('SIGNAL')
                                                 #  - env|title are read-only
+                                                #  - cannot use TRACE_EVENTS
                                                 #Worker and parent's global|process.* are distinct.
                                                 #Unlike DOM, no concept of WORKERGLOBAL nor "self".
 
@@ -3533,8 +3600,8 @@ new Script(STR[, RUN_OPTS])                     #Returns a SCRIPT, i.e. a compil
                                                 #  - others are specified during new Script()
 SCRIPT.runIn[New|This]Context(...)              #Same as run*(STR, ...)
 
+--experimental-vm-modules                       #Must be used for VMMODULE
 VMMODULE                                        #Same as SCRIPT but for ES module
-                                                #Must use --experimental-vm-modules
                                                 #Creates by new SourceTextModule() and new SyntheticModule()
 VMMODULE.link                                   #Specifies the function to resolve SPECIFIERs,
  (FUNC('SPECIFIER', PARENT_VMMODULE))           #I.e. when using import { SPECIFIER } from VMMODULE
