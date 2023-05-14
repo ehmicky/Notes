@@ -1499,6 +1499,7 @@ SCALAR                            #Opposite of SET
 
 SCALAR_FUNC(SET)->SET             #Iterates over SET items
 SCALAR_FUNC(SET, SCALAR)->SET     #Same but repeats SCALAR
+                                  #If SCALAR is returned by a FUNC(), re-evaluate it each time
 SCALAR_FUNC(SET, SET2)->SET       #Same but fills smaller SET with nulls
 
 SET_FUNC(SCALAR)                  #Fails
@@ -1519,7 +1520,7 @@ select SET, SET2 ...              #`select VAL,...` behaves like SCALAR_FUNC
                                              \=+===============================+=/
 
 
-SUBQUERY                          #ROW_SET that is the result of a select|table|values|execute statement
+SUBQUERY                          #ROW_SET that is the result of a select, values, table or execute statement
                                   #I.e. not returned by a FUNC()
 SSUBQUERY                         #SUBQUERY with a single COL
 
@@ -1974,7 +1975,7 @@ alter sequence "SEQUENCE" ...     #Same syntax as create sequence ...
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:              DML              :==(
+                                            )==:            SELECT             :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
@@ -1987,11 +1988,12 @@ VAL [[as] COL_ALIAS],...
 [where BOOL]
 [group by COL
 [having BOOL]]
+[union|intersection|except ...]...
 [order by COL,...
 [asc|desc|using OP]
 [nulls first|last]]
-[offset UINT]
-[fetch first UINT2 rows only]     #
+[offset UINT]                     #Order: from, where, select non-AFUNC, group by, having, select AFUNC,
+[fetch first UINT2 rows only]     #distinct, union|intersection|except, order, offset, limit
 
 select VAL[_SET],...              #Evaluates VALs and returns them as a ROW_SET
                                   #Each VAL[_SET] is returned as a different COL
@@ -2002,29 +2004,40 @@ select VAL[_SET]                  #"COL_ALIAS" is COL name in:
                                   #  - distinct, order by, group by
                                   #     - can use 1-based index UINT too
                                   #Def (in priority):
+                                  #  - "FCOL_ALIAS"
                                   #  - "COL" name
                                   #  - "FUNC" name
                                   #  - "?column?"
-select (SUBQUERY) ...             #Uses SUBQUERY as a SCALAR, i.e.:
-                                  #  - only if it returns both:
-                                  #     - one COL
-                                  #     - one ROW
-                                  #  - evaluated once for all ROWs
+select (SUBQUERY) ...             #Uses SUBQUERY as a SCALAR, i.e. only if it returns both:
+                                  #  - one COL
+                                  #  - one ROW
+                                  #Evaluated once for all ROWs
+                                  #  - as opposed to a FUNC()->SCALAR
 
-select ... from ROW_SET           #Evaluates once per ROW, i.e. as a cartesian product for:
-                                  #  - select VAL[_SET]
+select ... from ROW_SET           #Evaluates once per ROW:
+                                  #  - select VAL,...
                                   #  - where BOOL
+                                  #If select VAL,... results in a SET itself, do cartesian product
 select ... from SET               #Converts non-ROWs to single-COL ROWs
                                   #By default, COL name is same as "ROW_ALIAS"
-select ... from (SUBQUERY)        #Uses SUBQUERY's ROW_SET return value
-                                  #Only evaluated once
+select ...                        #Uses SUBQUERY's ROW_SET return value
+ from [lateral] (SUBQUERY)        #Only evaluated once
+                                  #  - unless SUBQUERY uses a "ROW_ALIAS" from a previous FROM
 select ... from "TABLE"           #Same as as `from (table "TABLE") as "TABLE"`
 
-select ... from FROM              #Name of each ROW to use in `select VALs` or `where BOOL`
- [[as] "ROW_ALIAS",...]           #Def: FUNC(...) name
+select ... from FROM              #Name of each ROW to use in:
+ [[as] "ROW_ALIAS",...]           #  - `select VALs`
+                                  #  - `where BOOL`
+                                  #  - `on BOOL`, `using(...)` (joins)
+                                  #  - any next `from FROM`
+                                  #(SUBQUERY) can use "ROW_ALIAS" defined by a previous FROM, but:
+                                  #   - only in `select VALs` and `where BOOL`
+                                  #   - must specify `lateral`
+                                  #Parent query cannot use "ROW_ALIAS" defined by a (SUBQUERY)
+                                  #Def: FUNC(...) name
                                   #Required with `from (SUBQUERY)`
 ["ROW_ALIAS".]"COL"               #COL
-                                  #"ROW_ALIAS" can be omitted if there is a single FROM
+                                  #"ROW_ALIAS" can be omitted if there is a single "COL" named like this among all FROMs
 ["ROW_ALIAS".]*                   #Same as ["ROW_ALIAS".]"COL", ["ROW_ALIAS".]"COL2", ...
                                   #Only in `select VALs`
 
@@ -2042,22 +2055,9 @@ select distinct ...               #Ignores any ROW if any previous ROW2 is =
                                   #If `order by "COL_ALIAS",...`, must match the lestmost ones
 
 select ...
- group by "COL_ALIAS",...         #
-                                  #Group ROWs that are equal by all of "COL_ALIAS",...
-                                  #  - cannot target an AFUNC()
-                                  #Each ROW_SET group is reduced to a single ROW
-                                  #  - if a COL uses AFUNC(), it reduces ROW_SET into a SCALAR
-                                  #Any other COLs
-                                  #  - i.e. not targetted by `group by`, nor AFUNC()
-                                  #  - split into a separate ROW_SET, combined with a single cartesian product
-                                  #  - can only use "ROW_ALIAS" used by COLs targetted by `group by`
-
- [having BOOL]                    #
-                                  #  - like where BOOL, but on the groups created by group by
-                                  #  - must use scalar values, typically though a AFUNC()
-
-select ...
  order by "COL_ALIAS",...         #Sort ROWs
+                                  #Unless used, ROWs are unordered
+                                  #  - including union|intersect|except result
  [asc|desc|using OP]              #Sorting order (def: asc)
                                   #Can be a comparator OP, e.g. < is like asc, > is like desc
  [nulls first|last]               #Def: nulls first for desc, nulls last for asc
@@ -2072,24 +2072,31 @@ select ...                        #Returns any following ROW if:
                                   #  - are = than the previous ROW
 select ... fetch next ...         #Same as: select ... fetch first ...
 
-select ...
-union|intersect|except            #Both select ... must have same COL... with same types.
-[all] select ...                  #If not "all", removes duplicates afterwards.
-[order by ...]                    #order by must be a NUM or a "COL", not a COL
+select ... union SUBQUERY         #Merge ROWs of `select ...` and SUBQUERY
+                                  #They must have the same ROW TYPEs
+                                  #SUBQUERY "COL" names are not used
+                                  #order by, offset, limit:
+                                  #  - applied on the merged result
+                                  #  - to apply on only SUBQUERY, use parenthesis around it
+select ... intersect SUBQUERY     #Same as union, but only keeps ROWs that are = between `select ...` and SUBQUERY
+select ... except SUBQUERY        #Same as union, but only removes ROWs that are = between `select ...` and SUBQUERY
+select ...                        #Can be done multiple times
+ [union|intersect|except ...]...  #Processed left-to-right, except intersect which have priority
+select ... union|intersect|except
+ distinct|all SUBQUERY            #If "distinct" (def), removes duplicate rows on merged result
 
-(select ...)                      #Subquery, returning a TABLE. If in select VAL, must have a "ROW_ALIAS"[("FCOL_ALIAS"...)]
-(values ...)                      #() are needed only when there might be confusion. Otherwise useless.
-                                  #TABLE (and ROW_ALIAS) are visible from superqueries to subqueries (but not inverse):
-                                  #  - in a from ... clause:
-                                  #     - only if preceded by lateral
-                                  #        - ex: select * from "TABLE", lateral (select "TABLE"."COL", "TABLE2"."COL" from "TABLE2")
-                                  #     - for a FUNC("TABLE"), must be after "TABLE" in the from ... clause
-                                  #        - ex: select * from "TABLE", FUNC("TABLE")
-                                  #  - otherwise: makes a crossjoin ("correlated subquery")
+values (VAL,...),...              #Evaluates VALs and returns them as a ROW_SET
+                                  #Each (VAL,...) is a ROW
+                                  #All ROWs must have same TYPE, including number of COLs
+                                  #"COL" name: "columnNUM"
+                                  #VAL cannot be a SET
+ [order by ...]
+ [asc|desc|using OP]
+ [limit ...]
+ [offset ...]
+ [fetch ...]                      #Same as select ...
 
-values (VAL...)...
-order by ...                      #Produce a TABLE with constant VAL...
-offset ... fetch ...              #Arguments: see select
+table "TABLE"                     #Same as select * from "TABLE"
 
 
                                              /=+===============================+=\
@@ -2099,23 +2106,24 @@ offset ... fetch ...              #Arguments: see select
                                              \=+===============================+=/
 
 
-TABLE [QUAL] join TABLE2          #Produces a TABLE from two TABLE, for a select ... from TABLE2:
-[on BOOL|using("COL"...)]         #  - can use all TABLE in the other clauses. Should qualify all COL by using "TABLE"."COL"
-                                  #Conditions are impossible for cross join, necessary for others:
-                                  #  - on BOOL: filter according to BOOL
-                                  #  - using(COL...) and natural: avoid them (can do same with on BOOL)
-                                  #QUAL can be :
-                                  #  - cross:
-                                  #     - uses the cartesian product of the TABLE...:
-                                  #        - all combinations of values, starting from first TABLE
-                                  #        - i.e. a TABLE with length = product of lengths of all TABLE
-                                  #     - can also be written TABLE, TABLE2
-                                  #  - inner (def): same (but can use on BOOL)
-                                  #  - left:
-                                  #     - same but instead of filtering, fill TABLE2 with null, and remove duplicate rows that have been filled this way.
-                                  #     - i.e. every TABLE value will be present, with unfiltered TABLE2 combinations, null if none
-                                  #  - right: same but fill with null in TABLE
-                                  #  - full: left outer + right outer
+select ... from FROM, FROM2
+select ... from FROM              #Concatenates COLs of FROM and FROM2
+ cross join FROM2                 #ROWs are cartesian product of FROM and FROM2
+select ... from FROM
+ [inner] join FROM2 on BOOL       #Like `cross join` but ignores ROWs where BOOL is false
+
+select ... from FROM              #Concatenates COLs of FROM and FROM2
+ left join FROM2 on BOOL          #If BOOL false, FROM2's COLs are filled with null
+                                  #Does not do a cartesian product. It does ???
+select ... from FROM
+ right join FROM2 on BOOL         #Same but filled FROM's COLS with null instead
+select ... from FROM
+ full join FROM2 on BOOL          #Like `left join` + `right join` ???
+
+select ... from FROM
+ [inner|left|right|full] join FROM2 using(...) ??? avoid?
+select ... from FROM
+ [inner|left|right|full] join FROM2 natural ??? avoid?
 
 SELF JOIN ==>                     #Are used to output twice the same column.
                                   #Must use ALIAS to produce virtual copies of the same TABLE.
@@ -2245,10 +2253,30 @@ from|to ...                       #Copy TABLE to is also possible
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:           FUNCTIONS           :==(
+                                            )==:           AGGREGATE           :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
+
+select ...                        #Group ROWs that are equal by all of "COL_ALIAS",... ("target COL")
+ group by "COL_ALIAS",...         #  - cannot target an AFUNC()
+                                  #Each ROW_SET group is reduced to a single ROW
+                                  #  - if a COL uses AFUNC(), it reduces ROW_SET into a SCALAR
+                                  #Some COLs cannot be reduced:
+                                  #  - if none of:
+                                  #     - target COL
+                                  #     - uses AFUNC()
+                                  #     - each ROW_SET group contains duplicate values, all equal to a target COL
+                                  #     - uses an expression that is same|superset of a target COL
+                                  #        - e.g. target COL is `a * 2` and other COL is `a * 2 + 1`
+                                  #  - then:
+                                  #     - cannot use any "ROW_ALIAS"[."COL"]
+                                  #     - all those COLs are computed in a single separate ROW_SET, combined with a cartesian product
+                                  #If no `group by`, AFUNC() operates on all ROWs as a single group
+
+select ... having BOOL            #Like `where BOOL` except:
+                                  #  - after `group by`
+                                  #  - can use AFUNC()
 
 AGGREGATE FUNCTION ==>            #Transform a COL to a scalar VAL.
                                   #If AFUNC(VAL), VAL is converted to COL.
@@ -2279,6 +2307,24 @@ regr_sxx|syy|sxy                  #In order:
 (VAL|TABLE, VAL|TABLE2)           #  - sxx: sum(VAL^2) - sum(VAL)^2/regr_count(VAL, VAL2)
                                   #  - syy: sum(VAL2^2) - sum(VAL2)^2/regr_count(VAL, VAL2)
                                   #  - sxy: sum(VAL*VAL2) - sum(VAL)*sum(VAL2)/regr_count(VAL, VAL2)
+
+create aggregate AFUNC            #Creates an AFUNC(COL,...):
+(TYPE...) (sfunc = FUNC,          #  - TYPE are type of each COL.
+stype = TYPE2                     #  - each VAL... of each COL is passed inside successive FUNC(VAL2, VAL...)
+[, finalfunc = FUNC2]             #     - VAL2 is the return value of the last FUNC(), and its type is TYPE2
+[, initcond = STR]                #     - its value in the first FUNC() is TYPE2 STR (typecasting from STR) (def: null)
+)                                 #  - last FUNC can be different if FUNC2(VAL2) is defined: takes only one ARG, and can return any type.
+                                  #  - last VAL2 is returned
+                                  #  - by convention, null should be ignored in FUNC, unless there are only null, where null should be
+                                  #    returned
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:            WINDOW             :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
 
 AFUNC (COL) over                  #Window function WFUNC:
 ([partition by "COL"]             #  - the whole expression returns a COL of length n (not 1)
@@ -2313,15 +2359,13 @@ percent_rank()                    #Same but from 0 to 1
 ntile(UINT)                       #Returns 1..UINT, starting from lower to upper value, with equal (if possible) number of values in
                                   #each 1..UINT (buckets)
 
-create aggregate AFUNC            #Creates an AFUNC(COL,...):
-(TYPE...) (sfunc = FUNC,          #  - TYPE are type of each COL.
-stype = TYPE2                     #  - each VAL... of each COL is passed inside successive FUNC(VAL2, VAL...)
-[, finalfunc = FUNC2]             #     - VAL2 is the return value of the last FUNC(), and its type is TYPE2
-[, initcond = STR]                #     - its value in the first FUNC() is TYPE2 STR (typecasting from STR) (def: null)
-)                                 #  - last FUNC can be different if FUNC2(VAL2) is defined: takes only one ARG, and can return any type.
-                                  #  - last VAL2 is returned
-                                  #  - by convention, null should be ignored in FUNC, unless there are only null, where null should be
-                                  #    returned
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:           FUNCTIONS           :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
 
 create [or replace]               #Creates a user-defined function, that can used anywhere.
 function FUNC([[VAR]              #  - or replace: if already existing, will be overwritten (fails if different types)
