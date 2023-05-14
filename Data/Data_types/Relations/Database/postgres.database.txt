@@ -211,13 +211,14 @@ VAR                               #Any identifier
                                   #[[:alnum:]_]+
                                   #Max 63 chars
 "VAR"                             #Allows keywords, and case-sensitive
+                                  #"" to escape "
 "..."                             #Means a VAR
                                   #Including "TABLE", "COL", etc.
                                   #Quoting is optional
 
 '...'                             #Means a STR
                                   #Including 'TABLE', 'COL', etc.
-'STR'                             #Means a lteral STR value
+'STR'                             #Means a literal STR value
 
 TABLE                             #TABLE value
                                   #Conceptually like an OBJ_ARR
@@ -409,10 +410,21 @@ generate_series(NUM, NUM2[, NUM3])
 width_bucket
  (NUM, NUM2, NUM3, INT)->INT2     #Bucket index INT2 of value NUM in an histogram from NUM2 to NUM3 with INT buckets.
 
+to_hex(NUM)->STR                  #Hexadecimal, lowercase, without 0x prefix
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:            RANDOM             :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
 random()->FLOAT                   #From 0 to 1
                                   #Cycle of 3e14 numbers
                                   #PRNG not crypto-secure
 setseed(FLOAT)                    #FLOAT is from 0 to 1
+
 normal_rand(INT, FLOAT, FLOAT2)  ##INT random variables following N(FLOAT, FLOAT2)
  ->TABLE                         ##Postgres extension 'tablefunc'
 
@@ -434,13 +446,16 @@ varchar(NUM)                      #TYPE. STR with NUM max chars
 char(NUM)                         #TYPE. Like varchar, but pads with spaces (slower and takes more space)
 text                              #TYPE. Like varchar, but unlimited length
 
-'...'                             #UNKNOWN, but can be transtyped to STR
+'...'                             #UNKNOWN, but can be cast to STR
                                   #'' to escape a '
                                   #Otherwise can include any character, including \, newlines and Unicode codepoints.
 $[TAG]$...$[TAG]$                 #Like '...' but can include '
 U&'...'                           #Like '...' but can also include \NNNN or \+NNNNNN codepoint
 E'...'                            #Like '...' but can use backslash escape sequences
                                   #\b, \f, \n, \r, \t, \NNN, \xNN, \uNNNN, \UNNNNNNNN
+
+ascii('CHAR')->UINT               #Unicode codepoint
+chr(UINT)->'CHAR'                 #Inverse
 
 [char_]length(STR)->INT           #In Unicode codepoints
 bit|octet_length(STR)->INT        #In UTF-8 bits|bytes
@@ -450,6 +465,8 @@ position(STR in STR2)->UINT       #Index of STR inside STR2. 0 if not found.
 left|right(STR, UINT)->STR2       #UINT first|last characters
 substring
  (STR from UINT [for UINT2])->STR2#UINT2 characters (def: all) from index UINT
+overlay(STR placing STR2
+ from UINT [for UINT2])->STR3     #Replace substring(STR from UINT [for UINT2]) by STR2
 
 STR || STR2                       #Concatenation
 concat(STR,...)->STR2             #Same as STR || ... but ignores nulls
@@ -458,11 +475,12 @@ concat_ws(STR, STR2...)           #Same but with separator STR
 repeat(STR, UINT)->STR2           #
 reverse(STR)->STR2                #
 
-overlay(STR placing STR2
- from UINT [for UINT2])->STR3     #Replace substring(STR from UINT [for UINT2]) by STR2
+replace(STR, STR2, STR3)->STR4    #Replace each occurence of STR2 by STR3 in STR
 translate
  (STR, 'CHAR...', 'CHAR2...')
  ->STR2                           #Replace each CHAR in STR by CHAR2
+split_part(STR, STR2, UINT)
+ ->STR3|null                      #Split STR by delimiter STR2 and returns item number UINT
 
 lower|upper(STR)->STR2            #
 initcap(STR)->STR2                #Titleize. upper() to first character, and characters after a non-letter|digit
@@ -472,6 +490,24 @@ trim([trailing|leading|both]
  [STR from] STR2)->STR3           #Remove (def: both) characters among STR (def: ' ') from STR2
 l|rpad(STR, UINT[, STR2])->STR3   #Pads STR with STR2 (def: ' ') to length UINT.
                                   #If lower length, truncates.
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:           ESCAPING            :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+quote_ident(STR)->STR             #Wrap in "" if contains keywords. Escape "
+quote_literal(VAL)->STR           #Wrap in ''. Escape ' \
+                                  #If not STR, stringify
+quote_nullable(VAL)->STR          #Same as quote_literal(VAL), but if VAL is null, returns 'NULL', not null
+
+format(STR, VAL...)->STR2         #Similar to sprintf(). Can use:
+                                  #  - %I: quote_ident()
+                                  #  - %s: quote_literal() without the outside ''
+                                  #  - %L: quote_nullable()
 
 
                                              /=+===============================+=\
@@ -491,13 +527,12 @@ STR [not] [i]like 'GLOB'          #BOOL. True if matches
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:           PATTERNS            :==(
+                                            )==:            REGEXP             :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
-REGEXP ==>                        #Also with some different syntaxes:
-                                  #  - ? is same as *
+'REGEXP'                          #Also with some different syntaxes:
                                   #  - \< \> -> \m \M
                                   #  - \b \B -> \y \Y
                                   #Also does not have:
@@ -512,68 +547,77 @@ REGEXP ==>                        #Also with some different syntaxes:
 STR [!]~[*] 'REGEXP'              #BOOL. True if matches
                                   #* if case-insensitive
 
-substring(STR, STR2)              #Returns the part of STR that matches the regexp STR2, or null if no match.
-                                  #If regexp contains parenthesis, only returns the part in the first outer set of parenthesis.
-regexp_matches(STR, STR2[, STR3]) #Same except:
-                                  #  - returns as a TABLE, containing ARR for each match for a set of parenthesis
-                                  #    (if no parenthesis, the whole match)
-                                  #  - if several matches and flag 'g', returns several rows.
-                                  #  - If no match, returns no row. So output rows don't always match input rows, unless it is a
-                                  #    subquery crossjoined and no flag 'g', e.g. select "COL", (select regexp_matches("COL2", STR2))
-regexp_replace                    #Same as sed 's/STR2/STR3/[STR4]' <<<STR
- (STR, STR2, STR3[, STR4])        #STR3 can contain \1, \&, etc.
-replace(STR, STR2, STR3)          #Same but without regexps (faster)
-regexp_split_to_array             #Returns the split of STR, using delim STR2, with flags STR3, as an ARR.
- (STR, STR2[, STR3])              #If delim not to be found, returns only STR in ARR.
-regexp_split_to_table()           #Same but returns as a TABLE, with one row for each element.
-                                  #Same thing as regexp_matches() for the crossjoin.
-split_part(STR, STR2, INT)        #Same but without regexps, and returns the field number INT.
+substring(STR, 'REGEXP')          #Returns first match
+ ->STR2|null                      #If there is an outer set of parenthesis, return that part only
+regexp_matches                    #Returns first match (or all if FLAG 'g')
+ (STR, STR2[, 'FLAGS'])->TABLE    #TABLE is single COL
+                                  #Each COL value is an ARR for parenthesis matches (if none, single item)
+                                  #If no match, no ROWs
 
-quote_ident(VAL)                  #Returns as STR with extra "" to escape when needed (for COL or VAL), when constructing SQL commands as STR.
-quote_literal(VAL)                #Same as quote_ident(VAL) but using ''
-quote_nullable(VAL)               #Same as quote_literal(VAL), but if VAL is null, returns 'NULL', not null
-format(STR, ...)                  #Similar to sprintf() in C
-                                  #Types can be %I (quote_ident), %L (quote_nullable) or %s (quote_literal without the extra '')
+regexp_replace
+ (STR, 'REGEXP', STR2[, 'FLAGS'])
+ ->STR3                           #Replace matches by STR2
 
-ascii(STR)
-chr(UINT)                         #Conversion from|to a single character and Unicode codepoint.
-to_hex(NUM)                       #Returns as STR hexadecimal representation
-
-md5(STR)                          #
+regexp_split_to_array
+ (STR, 'REGEXP'[, 'FLAGS'])       #Split STR using REGEXP delimiter.
+ ->STR_ARR                        #If delimiter not found, returns {STR}
+regexp_split_to_table(...)->TABLE #Same but as a TABLE
 
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:            BINARY             :==(
+                                            )==:             BITS              :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
-bit [varying]([NUM])              #TYPE. BSTR, i.e. like STR, but bit-wise
-                                  #Def NUM: unlim
+bit[(NUM)]                        #TYPE. BSTR, i.e. like STR, but bit-wise
+                                  #Def NUM: 1
+                                  #Indices are 0-based
+bit varying[(NUM)]                #Same but def NUM is unlimited
+
 B'...'                            #BSTR with 0|1s
 X'...'                            #BSTR with hex chars
 
-bytea                             #TYPE. BSTR that is byte-wise
-E'\\xNNNN...'                     #
+BSTR & | # << >> BSTR2            #
+~BSTR                             #
 
-encode(BYTEA, STR)                #Returns BYTEA as a textual form, according to STR among "base64" or "hex"
-decode(STR, STR2)                 #Inverse
-trim(...)
-md5(...)                          #Same as STR, but for BYTEA
+get_bit(BSTR|BYTEA, UINT)->0|1    #
+set_bit(BSTR|BYTEA, UINT, 0|1)
+ ->BSTR|BYTEA                     #
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:             BYTES             :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+bytea                             #TYPE. BSTR that is byte-wise
+                                  #Indices are 0-based
+'...'                             #STR can be cast to BYTEA
+'\x...'                           #If starting with \x, ... is hex only
+
+encode(BYTEA, STR)->STR2          #Converts to format STR:
+                                  #  - 'hex': hex only
+                                  #  - 'escape': octal \NNN only if not [[:print:]]
+                                  #  - 'base64'
+decode(STR, STR2)->BYTEA          #Inverse
+
+get_byte(BYTEA, UINT)->0-255      #
+set_byte(BYTEA, UINT, 0-255)
+ ->BYTEA                          #
+
+trim(...)                         #Same as STR, but for BYTEA
+
+md5(STR|BYTEA)->STR2              #
 
 BYTEA|BSTR || BYTEA|BSTR
 bit|octet_length(...)
 overlay(...)
 position(...)
-substring(...)                    #Same as STR, but for BYTEA and BSTR
-get_byte(BYTEA, UINT)             #
-set_byte(BYTEA, UINT, UINT2)      #
-get_bit(BYTEA|BSTR, UINT)         #
-set_bit(BYTEA|BSTR, UINT, UINT2)  #
-
-BSTR & | # << >> BSTR2            #
-~ BSTR                            #
+substring(...)                    #Same as STR, but for BYTEA|BSTR
 
 
                                              /=+===============================+=\
@@ -649,14 +693,24 @@ pg_sleep(DOUBLE)                  #Sleeps DOUBLE seconds (10ms resolution)
                                              \=+===============================+=/
 
 
-ENUM                              #TYPE. Values are STR.
-create type ENUM as enum(STR...)  #Ordering in STR... is used for < <= >= >
-alter type ENUM add value
- [if not exists] STR
- [before|after STR2]              #
+ENUM                              #Each ENUM has its own TYPE
+ENUM_VAL                          #STR
 
-enum_first|last(ENUM)             #Returns first|last ENUM elem
-enum_range(ENUM[, ENUM2])         #Returns ENUM_ARR ranging from ENUM to ENUM2, included (def: last one)
+create type ENUM
+ as enum(ENUM_VAL...)             #Arguments list decides ordering
+
+alter type ENUM add value
+ [if not exists] ENUM_VAL
+ [before|after ENUM_VAL2]         #
+
+ENUM_VAL < <= > >= ENUM_VAL2      #BOOL. Using ordering
+
+enum_first|last(ENUM_VAL)         #First|last ENUM_VAL of the same type
+ ->ENUM_VAL2                      #null::ENUM can be used as argument
+enum_range(ENUM_VAL)              #All ENUM_VALs of the same type
+ ->ENUM_VAL_ARR                   #null::ENUM can be used as argument
+enum_range(ENUM_VAL, ENUM_VAL2)   #From ENUM_VAL to ENUM_VAL2
+ ->ENUM_VAL_ARR                   #null::ENUM can be used to represent start|end
 
 
                                              /=+===============================+=\
@@ -734,6 +788,7 @@ trunc(MAC)                        #Put second half as 00
 
 
 xml                               #TYPE. Not documented yet
+
 xmlparse(document|content STR)    #Must be well-formed.
  ->XML                            #content: for fragments
 xmlserialize(document|content XML
@@ -863,12 +918,9 @@ lca(LTREE_ARR|LTREE...)          ##Number of VAR matching at beginning of each L
 
 uuid                             ##TYPE
                                  ##Postgres extension 'uuid-ossp'
-'nnnnnnnnnnnnnnnnnnnn
- nnnnnnnnnnnn'
-'nnnnnnnn-nnnn-nnnn-nnnn-
- nnnnnnnnnnnn'
 'nnnn-nnnn-nnnn-nnnn-nnnn-
- nnnn-nnnn-nnnn'                 ##UUID
+ nnnn-nnnn-nnnn'                 ##UUID. Dashes all optional
+
 uuid_generate_v1[mc]()->UUID     ##UUID v1
                                  ##If mc, uses a random multicast MAC address
 uuid_generate_v3|5               ##UUID v3|5
@@ -885,17 +937,25 @@ uuid_generate_v4()->UUID         ##UUID v4
 
 oid                               #TYPE
                                   #ID of a VAR.
-                                  #32 bits, so can't be use reliably for uniqueness with more than 1000 ("TABLE".oid are TABLE-specific), so deprecated.
                                   #Can be cast to UINT.
-                                  #Other system types include tid, xid and cid (tuple, transaction and command).
-regproc (FUNC)
-regprocedure (FUNC(...))
-regoper (+)
-regoperator (+(...))
-regclass ("TABLE")
-regtype (TYPE)
-regconfig (REGCONF)
-regdictionary                     #OID aliases but for semantic purposes include (can all be casted to OID)
+                                  #32 bits, i.e. only use for uniqueness if:
+                                  #  - TABLE-scoped
+                                  #  - either:
+                                  #     - random on <2e3 items
+                                  #     - serial on <2e9 items
+
+regproc                           #TYPE alias to OID. ID of a FUNC name
+regprocedure                      #TYPE alias to OID. ID of a FUNC implementation
+regoper                           #Like regproc but for OP
+regoperator                       #Like regprocedure but for OP
+regclass                          #TYPE alias to OID. ID of a "TABLE".
+regtype                           #TYPE alias to OID. ID of a TYPE.
+regconfig                         #TYPE alias to OID. ID of a REGCONF.
+regdictionary                     #TYPE alias to OID. ID of a DICTIONARY.
+
+tid                               #TYPE. ID of a ROW
+xid                               #TYPE. ID of a transaction
+cid                               #TYPE. ID of a command
 
 
                                              /=+===============================+=\
