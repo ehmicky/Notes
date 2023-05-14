@@ -227,12 +227,20 @@ TYPE => TYPE2                     #Means can do assignment casting
 TYPE ~> TYPE2                     #Means can do explicit casting
 TYPE <=-> TYPE2                   #Means TYPE2 => TYPE, TYPE -> TYPE2
 
+VARIABLE LENGTH TYPES ==>         #One of:
+                                  #  - numeric(NUM, NUM2)
+                                  #  - varchar|bpchar|bit|varbit(NUM): max NUM 1e7 -> move it there ???
+                                  #  - text actually unlimited ??? other unlimited length types ???
+                                  #  - time[stamp][tz]|interval
+                                  #Max length for any TYPE: 1GB
 SIZING CAST ==>                   #Type cast to same type
-                                  #Used to enforce size of size-dependent TYPE(NUM):
+                                  #Used to enforce size of variable length TYPEs
                                   #  - failing if too large
-                                  #  - padding or truncating (e.g. with char(NUM))
+                                  #  - padding or truncating
                                   #Usually implicit casting
-                                  #Available for: NUMERIC, VARCHAR|BPCHAR, [VAR]BIT, TIME[STAMP][TZ], INTERVAL
+
+large variable length TYPE values:
+  - internally broken down into several parts ("TOAST") ???
 
 pg_cast                           #TABLE with implicit|explicit type casting
 pg_cast.oid                       #OID
@@ -301,16 +309,17 @@ end                               #Def LVAL is true, i.e. can use TVAL BOOLs, li
 
 
 unknown                           #Unknown TYPE
-                                  #No operator except the common ones (= > etc.)
-                                  #Used for the literal value of all TYPEs, meant to be cast
-                                  #  - except null, BOOL, NUM
-                                  #  - noted as TYPE_UNKNOWN, meaning UNKNOWN that can be cast to TYPE
-                                  #  - type casting is TYPE-specific, and not specified in pg_cast
-                                  #Internally encoded as UTF-8
+                                  #Has no operators, but is usually implicitly transtyped based on operators
+unknown -> VAL                    #Possible with any TYPE
+VAL ~> unknown                    #Never possible, except with unknown itself
 
 '...'                             #UNKNOWN
                                   #'' to escape a '
                                   #Otherwise can include any character, including \, newlines and Unicode codepoints.
+                                  #Internally encoded as UTF-8
+                                  #Used for the literal value of all TYPEs, meant to be cast
+                                  #  - noted as TYPE_UNKNOWN, meaning UNKNOWN that can be cast to TYPE
+                                  #  - type casting is TYPE-specific, and not specified in pg_cast
 $[TAG]$...$[TAG]$                 #Like '...' but can include '
 U&'...'                           #Like '...' but can also include \NNNN or \+NNNNNN codepoint
 E'...'                            #Like '...' but can use backslash escape sequences
@@ -325,7 +334,7 @@ E'...'                            #Like '...' but can use backslash escape seque
 
 
 null                              #Missing data
-                                  #TYPE unknown, i.e. can be cast to any TYPE
+                                  #Can be any TYPE (def: unknown)
                                   #Often avoided
                                   #  - e.g. with not null CONSTRAINTs
 
@@ -415,7 +424,10 @@ float8
 double precision                  #TYPE. 8 bytes float
 
 numeric[(NUM[, NUM2])]            #TYPE. Fixed precision integer with NUM digits including NUM2 decimals
-decimal[(NUM[, NUM2])]            #Def NUM,NUM2: no limits. Def NUM2: 0
+decimal[(NUM[, NUM2])]            #NUM2 can be negative: NUM2 last integer digits are zeros
+                                  #Def NUM,NUM2: no limits. Def NUM2: 0
+                                  #Max NUM[2]: 1e3
+                                  #Min NUM2: -1e3
                                   #Rounded nearest, then towards [-]Infinity
 
 INT2 <=-> INT4 <=-> INT8
@@ -513,6 +525,9 @@ char(NUM)                         #TYPE. Like varchar, but pads with spaces (slo
 text                              #TYPE. Like varchar, but unlimited length
 
 BPCHAR -> VARCHAR|TEXT            #Type cast removes padded spaces
+VAL -> STR                        #For all TYPEs
+                                  #Usually looks like '...' TYPE_UNKNOWN
+                                  #  - e.g. row(VAL,...) -> '(VAL,...)'
 
 '...'                             #STR_UNKNOWN
 
@@ -1389,6 +1404,7 @@ array                             #TYPE2 with 0-n values of same TYPE
 TYPE[]                            #Dimensions are defined at write-time.
                                   #Underlying TYPE can be another ARR for multidimensional ARRs.
                                   #1-based indices
+                                  #Max length 1.3e8
 
 array[VAL...]                     #ARR literal value.
 '{VAL,...}'                       #ARR_UNKNOWN
@@ -1459,6 +1475,12 @@ array_replace(ARR, VAL, VAL2)->ARR#Same but replace with VAL2
 
 ROW_TYPE                          #Conceptually like an OBJ
                                   #Also called "composed type" or "ctype"
+                                  #Max 1600 COLs
+                                  #Max size:
+                                  #  - after TOAST: 400GB
+                                  #  - before TOAST: 8KB, i.e. with variable length TYPEs taking:
+                                  #     - if big: 18 bytes in total
+                                  #     - if small: 1|4 additional bytes
 record                            #TYPE of any ROW_TYPE
 
 ROW                               #ROW_TYPE value
@@ -1674,6 +1696,9 @@ drop ENTITY                       #Delete an ENTITY
 
 
 TABLE                             #ROW_SET with a known ROW_TYPE, that is persisted
+                                  #Max 32TB total
+                                  #Unlimited ROWs
+                                  #Max 1e9 per DATABASE
 
 "TABLE"                           #Can be used as ROW_TYPE value
                                   #  - CONSTRAINTs are stripped
@@ -2394,6 +2419,7 @@ copy "TABLE"[("COL",...)]         #SOURCE can be:
                                   #  - program 'PROGRAM'
                                   #     - piped to stdin
                                   #     - use current shell
+                                  #Only export data, not schema (including TYPEs)
                                   #"TABLE" cannot be "VIEW", but TABLE can be (table "VIEW")
  [where BOOL_REXPR]               #Filter ROWs to export
 
@@ -2413,9 +2439,14 @@ ZOPTS.format                      #Can be:
                                   #     - EOF is line can be '\.'
                                   #     - can use \b \f \n \r \t \v \\ \NNN \xNN \DELIM \NULL
                                   #  - 'csv'
-                                  #  - 'binary'
-                                  #     - Postgres-specific format
-                                  #     - preserve TYPEs
+                                  #  - 'binary': Postgres-specific binary format
+                                  #TYPEs:
+                                  #  - text|csv: serialize to STR
+                                  #     - except BOOL, serialized to t|f
+                                  #  - binary:
+                                  #     - preserve most TYPEs
+                                  #     - but cast some TYPEs close to each other, e.g. money|int8 or bpchar|varchar|text
+
 ZOPTS.encoding                    #'ENCODING' (def: client_encoding)
 ZOPTS.freeze                      #BOOL (def: false). Do a `vacuum freeze` first
 
@@ -2441,8 +2472,6 @@ ZOPTS.force_null ("COL",...)      #Never cast nulls as STR, even if quoted, in s
 ENVVAR DateStyle                  #Should be set to 'ISO'
 ENVVAR IntervalStyle              #Should not be set to 'sql_standard'
 
-CSV: serialize to STR
-name unknown boolean int2|4|8 float4|8 numeric money varchar bpchar text char ENUM bit varbit bytea date time[tz] timestamp[tz] interval oid reg* tid* uuid json[b] xml hstore ltree lquery ltxtquery inet cidr macaddr[8] point line lseg box path polygon circle cube *range *multirange array TYPE[] record ROW_TYPE CUSTOM_TYPE query_int
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -3476,6 +3505,7 @@ on "TABLE"(COL,...                #Can't create two INDEX with same names, even 
                                   #  - is mostly efficient if the query is selective (chooses few rows) on a big table.
                                   #  - to know when to use an INDEX, check with explain if INDEX is chosen by the planner for most-used
                                   #    queries or skipped in favor of a sequential scan.
+                                  #Max 32 COLs
 
 create table ...
  exclude|unique|primary key ...   #Those CONSTRAINTs create an underlying INDEX
@@ -4091,6 +4121,18 @@ LOCALES ==>                       #Use ENVVAR lc_*, that are usually set at clus
                                   #  - to_char()
                                   #C locale is faster and the only one that can use INDEX on like operator.
 
+convert(STR, STR2, STR3)          #Encoding conversion. STR is string to convert.
+convert_to|from(STR, STR2)        #Same, but assumes the dest|original encoding to be the current system's encoding
+pg_client_encoding()              #Current encoding
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:           COLLATION           :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
 COLLATION ==>                     #Combination of lc_collate and lc_ctype, specified as "lang_LANG[.ENCODING]":
                                   #  - are used by doing:
                                   #     - VAL collate "..." (e.g. "fr_FR")
@@ -4109,9 +4151,11 @@ create collation
 
 collation for (STR)               #Returns COLLATION
 
-convert(STR, STR2, STR3)          #Encoding conversion. STR is string to convert.
-convert_to|from(STR, STR2)        #Same, but assumes the dest|original encoding to be the current system's encoding
-pg_client_encoding()              #Current encoding
+create table "TABLE"
+ ("COL" TYPE collate COLLATION)   #
+create table ...
+ partition by ... ("COL"|(REXPR)
+ collate COLLATION ...)           #
 
 
                                              /=+===============================+=\
@@ -4380,6 +4424,7 @@ MAIN STRUCTURE ==>                #  - Cluster: set of DATABASEs, managed by a s
                                   #         - LANGUAGE
                                   #         - system catalogs on cluster-specific objects
                                   #  - Database: set of SCHEMAs. A client can connect only to one DATABASE at once.
+                                  #     - max 4e9
                                   #  - Schema: set of SQL objects (TABLE, FUNC, etc.)
                                   #  - Session: client connection to the server for a specific database, e.g. interactive prompt session.
                                   #  - Transaction: set of statements that should executed all-or-nothing (concurrency)
