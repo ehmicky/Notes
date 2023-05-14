@@ -163,19 +163,20 @@ U&"VAR2"                          #Make VAR case-sensitive
 
 pg_typeof(VAL)->'TYPE'            #TYPE as a STR
 
-unknown                           #Unknown TYPE. Represented as a STR, but coerced to another TYPE when needed
-                                  #Most TYPEs use UNKNOWNs as literal input values.
-
-TYPE CASTING ==>                  #When passing values to a FUNC|COL
+TYPE CASTING ==>                  #When:
+                                  #  - passing arguments to a FUNC
+                                  #  - insert value in a COL ("assignment cast")
 
 IMPLICIT CASTING ==>              #Listed in this doc for the specific types
 
 cast(VAL as TYPE)
 VAL::TYPE                         #Explicit casting
-TYPE '...'                        #Same but UNKNOWN '...' only
+TYPE '...'                        #Explicit casting, but UNKNOWN '...' only
 
 SIZING CAST ==>                   #Type cast to same type
-                                  #Used for size checking or padding
+                                  #Used to enforce size:
+                                  #  - failing if too large
+                                  #  - padding or truncating (e.g. with char(NUM))
 
 pg_cast                           #TABLE with implicit|explicit type casting
 pg_cast.oid                       #OID
@@ -186,8 +187,8 @@ pg_cast.castfunc                  #pg_proc.OID of FUNC used for conversion
                                   #  - BOOL is true if explicit cast
 pg_cast.castcontext               #When to allow implicit cast, among:
                                   #  - 'e': never
-                                  #  - 'a': only when casting to COL TYPE
-                                  #  - 'i': always
+                                  #  - 'a': when casting to COL TYPE
+                                  #  - 'i': when casting to COL TYPE, or passing arguments to a FUNC
 pg_cast.castmethod                #How to cast, among:
                                   #  - 'f': castfunc
                                   #  - 'i': C-level I/O functions
@@ -199,6 +200,37 @@ create cast (TYPE as TYPE2)
 create cast ... with inout ...
 create cast ...
  without function ...             #Same but with a 'i|b' castmethod (def: 'f')
+
+self-casting:
+  - implicit: BSTR, BPCHAR
+
+BOOL -> STR (semi-implicit)
+BOOL -> INT4 (explicit)
+
+BPCHAR -> STR (implicit)
+BPCHAR <-> CHAR (semi-implicit)
+BPCHAR -> "NAME" (implicit)
+CHAR -> VARCHAR (semi-implicit)
+CHAR -> TEXT (implicit)
+CHAR -> INT4 (explicit)
+
+BSTR -> INT4|8 (explicit)
+
+DATE -> TIMESTAMP[TZ] (implicit)
+
+STR -> HSTORE (explicit)
+
+CIDR -> STR (semi-implicit)
+
+BOX <-> CIRCLE (explicit)
+BOX -> LSEG (explicit)
+BOX -> POINT (explicit)
+BOX -> POLYGON (semi-implicit)
+CIRCLE -> POINT (explicit)
+CIRCLE -> POLYGON (explicit)
+
+BPCHAR -> XML (explicit)
+
 
 
                                              /=+===============================+=\
@@ -249,8 +281,9 @@ VAL                               #Every value is a COL.
 operator([SCHEMA.]OP)             #Another way to write OP
                                   #Default SCHEMA: pg_catalog
 
-OPERATORS ==>                     #Operators shared by all TYPEs
-                                  #  - exception: geometry, json, xml (must cast to STR)
+OPERATORS ==>                     #Operators shared by all TYPEs, except:
+                                  #  - geometry, json, xml
+                                  #  - but can cast to STR
 
 (VAL)                             #Parenthesis to override operator order
 
@@ -263,6 +296,28 @@ VAL between [symmetric]           #BOOL. Same as VAL >= VAL2 and VAL <= VAL3
                                   #  - if symmetric: swap them
                                   #  - otherwise: returns false
 greatest|least(VAL...)->BOOL      #Using > <
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:            UNKNOWN            :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+unknown                           #Unknown TYPE
+                                  #No operator except the common ones (= > etc.)
+                                  #Used for the literal value of all TYPEs, meant to be cast.
+                                  #  - except null, BOOL, NUM
+                                  #  - noted as TYPE_UNKNOWN, meaning UNKNOWN that can be cast to TYPE
+
+'...'                             #UNKNOWN
+                                  #'' to escape a '
+                                  #Otherwise can include any character, including \, newlines and Unicode codepoints.
+$[TAG]$...$[TAG]$                 #Like '...' but can include '
+U&'...'                           #Like '...' but can also include \NNNN or \+NNNNNN codepoint
+E'...'                            #Like '...' but can use backslash escape sequences
+                                  #\b, \f, \n, \r, \t, \NNN, \xNN, \uNNNN, \UNNNNNNNN
 
 
                                              /=+===============================+=\
@@ -343,11 +398,16 @@ NUM                               #INT|FLOAT
 INT                               #smallint|integer|bigint
 FLOAT                             #real|double precision|numeric|decimal|money
 
+int2
 smallint                          #TYPE. Signed 2 bytes integer
+int4
 integer                           #TYPE. Signed 4 bytes integer
+int8
 bigint                            #TYPE. Signed 8 bytes integer
 
+float4
 real                              #TYPE. 4 bytes float
+float8
 double precision                  #TYPE. 8 bytes float
 
 numeric(NUM, NUM2)                #TYPE. Fixed precision integer with NUM digits including NUM2 decimals
@@ -424,7 +484,7 @@ to_char(NUM, STR)->STR2           #Use format STR, e.g. '999D9' (3 integer digit
                                              \=+===============================+=/
 
 
-STR                               #[var]char|text
+STR                               #[var]char|text (not char|name)
                                   #Unless specified otherwise, operations are done Unicode codepoint-wise (including astral)
                                   #Unicode-aware, e.g. case
                                   #Internally encoded as UTF-8
@@ -432,15 +492,13 @@ STR                               #[var]char|text
 
 varchar(NUM)                      #TYPE. STR with NUM max chars
 char(NUM)                         #TYPE. Like varchar, but pads with spaces (slower and takes more space)
+                                  #Also named "bpchar"
 text                              #TYPE. Like varchar, but unlimited length
 
-'...'                             #STR
-                                  #'' to escape a '
-                                  #Otherwise can include any character, including \, newlines and Unicode codepoints.
-$[TAG]$...$[TAG]$                 #Like '...' but can include '
-U&'...'                           #Like '...' but can also include \NNNN or \+NNNNNN codepoint
-E'...'                            #Like '...' but can use backslash escape sequences
-                                  #\b, \f, \n, \r, \t, \NNN, \xNN, \uNNNN, \UNNNNNNNN
+char                              #TYPE. Like char(1)
+name                              #TYPE. 64 bytes STR used internally to store "VARs"
+
+'...'                             #Any UNKNOWN can be cast to STR
 
 ascii('CHAR')->UINT               #Unicode codepoint
 chr(UINT)->'CHAR'                 #Inverse
@@ -609,7 +667,7 @@ set_bit(BSTR|BYTEA, UINT, 0|1)
                                              \=+===============================+=/
 
 
-bytea                             #TYPE. BSTR that is byte-wise
+bytea                             #TYPE. Like BSTR but byte-wise
                                   #Indices are 0-based
 '...'                             #STR can be cast to BYTEA, using UTF-8 endoding
 '\x...'                           #If starting with \x, ... is hex only
@@ -920,7 +978,7 @@ hstore                           ##TYPE. OBJ where keys are identifiers
                                  ##Postgres extension 'hstore'
 VAL                              ##'VAL'|null
 
-'KEY=>VAL,...'                   ##HSTORE
+'KEY=>VAL,...'                   ##HSTORE_UNKNOWN
                                  ##"" to escape KEY|VAL for whitespace , = >
 hstore(['KEY', VAL]_ARR)->HSTORE ##
 hstore(['KEY', VAL, ...])->HSTORE##
@@ -1152,11 +1210,11 @@ GEOMETRY OPERATORS ==>            #Many operators for shift, rotation, scaling, 
 
 RANGE ==>                         #Like an ARR of size 2 indicating start and end.
 
-int4range                         #RANGE TYPE of integer
-int8range                         #RANGE TYPE of bigint
-numrange                          #RANGE TYPE of FLOATs
-daterange                         #RANGE TYPE of date
-ts[tz]range                       #RANGE TYPE of timestamp[tz]
+int4range                         #RANGE TYPE of INT4
+int8range                         #RANGE TYPE of INT8
+numrange                          #RANGE TYPE of NUMERIC
+daterange                         #RANGE TYPE of DATE
+ts[tz]range                       #RANGE TYPE of TIMESTAMP[TZ]
 
 create type TYPE as range         #New RANGE TYPE.
  (OPT = VAL)                      #
@@ -1198,6 +1256,16 @@ RANGE - RANGE2                    #[RANGE.begin, RANGE2.begin]
                                   #  - if RANGE2.end > RANGE.end, returns [RANGE.begin, RANGE.end]
                                   #  - otherwise returns empty
 RANGE * RANGE2                    #RANGE3. Intersection. Empty if none.
+
+MULTIRANGE ==>                    #Like a RANGE_ARR
+
+int4multirange
+int8multirange
+nummultirange
+datemultirange
+ts[tz]multirange                  #MULTIRANGE TYPEs
+
+'{RANGE,...}'                     #MULTIRANGE_UNKNOWN
 
 
                                              /=+===============================+=\
