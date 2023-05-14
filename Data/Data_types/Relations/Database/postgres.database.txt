@@ -164,6 +164,7 @@ U&"VAR2"                          #Make VAR case-sensitive
 pg_typeof(VAL)->'TYPE'            #TYPE as a STR
 
 unknown                           #Unknown TYPE. Represented as a STR, but coerced to another TYPE when needed
+                                  #Most TYPEs use UNKNOWNs as literal input values.
 
 TYPE CASTING ==>                  #When passing values to a FUNC|COL
 
@@ -171,7 +172,7 @@ IMPLICIT CASTING ==>              #Listed in this doc for the specific types
 
 cast(VAL as TYPE)
 VAL::TYPE                         #Explicit casting
-TYPE STR                          #Same but with VAL serialized as STR
+TYPE '...'                        #Same but UNKNOWN '...' only
 
 SIZING CAST ==>                   #Type cast to same type
                                   #Used for size checking or padding
@@ -272,7 +273,7 @@ greatest|least(VAL...)->BOOL      #Using > <
 
 
 null                              #Missing data
-                                  #TYPE unknown, until typecast to an actual TYPE
+                                  #TYPE unknown, i.e. can be cast to any TYPE
                                   #Often avoided
                                   #  - e.g. with not null CONSTRAINTs
 
@@ -412,6 +413,9 @@ width_bucket
 
 to_hex(NUM)->STR                  #Hexadecimal, lowercase, without 0x prefix
 
+to_char(NUM, STR)->STR2           #Use format STR, e.g. '999D9' (3 integer digits, 1 decimal digit)
+                                  #Not documented yet
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -436,7 +440,7 @@ normal_rand(INT, FLOAT, FLOAT2)  ##INT random variables following N(FLOAT, FLOAT
                                              \=+===============================+=/
 
 
-STR                               #[var]char|text|unknown
+STR                               #[var]char|text
                                   #Unless specified otherwise, operations are done Unicode codepoint-wise (including astral)
                                   #Unicode-aware, e.g. case
                                   #Internally encoded as UTF-8
@@ -446,7 +450,7 @@ varchar(NUM)                      #TYPE. STR with NUM max chars
 char(NUM)                         #TYPE. Like varchar, but pads with spaces (slower and takes more space)
 text                              #TYPE. Like varchar, but unlimited length
 
-'...'                             #UNKNOWN, but can be cast to STR
+'...'                             #STR
                                   #'' to escape a '
                                   #Otherwise can include any character, including \, newlines and Unicode codepoints.
 $[TAG]$...$[TAG]$                 #Like '...' but can include '
@@ -596,7 +600,7 @@ set_bit(BSTR|BYTEA, UINT, 0|1)
 
 bytea                             #TYPE. BSTR that is byte-wise
                                   #Indices are 0-based
-'...'                             #STR can be cast to BYTEA
+'...'                             #STR can be cast to BYTEA, using UTF-8 endoding
 '\x...'                           #If starting with \x, ... is hex only
 
 encode(BYTEA, STR)->STR2          #Converts to format STR:
@@ -633,57 +637,107 @@ date                              #TYPE
 time                              #TYPE
 'HH:MM:SS[.SSSSSS]'               #TIME
 
-timetz                            #TYPE
-'TIME[TZ]'                        #TZ is -NUM, GMT+NUM, etc.
+timestamp                         #TYPE
+'DATE TIME'                       #TIMESTAMP
 
-timestamp[tz]                     #TYPE
-'DATE TIME[TZ]'                   #TIMESTAMP[TZ]
-
-interval ...                      #TYPE
-'[YYYY-][MM-][DD] [HH:[MM:]...]'  #INTERVAL
-                                  #... can restrict which fields to use: year, month, ... [to year, month, ..., second]
-                                  #Two identical INTERVALs might be printed differently (e.g. 24 hours and 1 day)
-ENVVAR intervalstyle              #INTERVAL format among: 'postgres' (def), 'sql_standard' or 'ISO_8601'
-
-epoch
-[-]infinity                       #DATE|TIMESTAMP
-today
-tomorrow
-yesterday                         #DATE|TIMESTAMP (midnight)
-allballs                          #TIME (midnight)
-now                               #DATE|TIME|TIMESTAMP
-
-TZ                                #Use either of the following ones
-pg_timezone_names                 #TABLE with zone names (e.g. 'America/New_York')
-pg_timezone_abbrevs               #TABLE with zone abbreviations (e.g. 'PST')
-ENVVAR timezone                   #
-
-to_char(TIMESTAMP|INTERVAL, TEXT) #Prints TIMESTAMP as TEXT according to format (cf online doc), e.g. "HH24:MI:SS"
-                                  #Use locales.
-to_date(TEXT, TEXT2)              #Inverse, but with DATE
 ENVVAR DateStyle                  #When reading ambiguous DATE (day is from 1 to 12), how to read it: "DMY" (def), "MDY" or "YMD"
-to_timestamp(DOUBLE)              #DOUBLE is seconds since epoch.
-to_char(NUM, TEXT)
-to_number(TEXT, TEXT)             #Same but for NUM
 
-DATETIME + - DATETIME2            #
--INTERVAL                         #
-INTERVAL / * NUM                  #
-current_time[stamp]|date
-local_time[stamp]                 #From beginning of transaction
-transaction_timestamp()           #Same as current_timestamp, but from beginning of this statement
-TIME[STAMP][TZ] at time zone STR  #
+[-]infinity'                      #DATE|TIMESTAMP
+isfinite(DATE|TIMESTAMP|INTERVAL)
+ ->BOOL                           #Whether [-]Infinity
+
+'epoch'                           #DATE|TIMESTAMP
+
+'yesterday|today|tomorrow'        #DATE|TIMESTAMP (midnight)
+'allballs'                        #TIME (midnight)
+
+'now'                             #DATE|TIME|TIMESTAMP
+current_time[stamp]|date          #Same but directly DATE|TIMETZ|TIMESTAMPTZ instead of UNKNOWN
+local_time[stamp]|date            #Same but using current TZ
+statement_timestamp()
+ ->TIMESTAMPTZ
+transaction_timestamp()
+ ->TIMESTAMPTZ                    #Beginning of statement|transaction
+
+DATE + - NUM                      #DATE
+DATE - DATE2                      #NUM
+
+DATE + - TIME                     #TIMESTAMP
+
 extract
- (WORD from INTERVAL|TIME[STAMP]) #WORD can be millenium, century, decade, [iso]year, quarter, month, week, day, [iso]dow (day of week),
- ->UINT                           #doy, epoch, hour, minute, [micro|milli]seconds, timezone[_hour|minute]
-date_trunc(STR, TIMESTAMP|INTERVL)#STR is same as WORD in extract() (for most of it). Truncates the date until STR.
-isfinite(DATE|TIMESTAMP|INTERVAL) #
-justify_days|hours|interval
- (INTERVAL)                       #Adjust an INTERVAL so that extra hours become days, extra days become months, or both
+ (PERIOD from TIME[STAMP]|INTERVL)#PERIOD: millenium, century, decade, [iso]year, quarter, month, week, day, [iso]dow (day of week),
+ ->UINT                           #doy, hour, minute, [micro|milli]seconds, timezone[_hour|minute], epoch
+date_trunc('PERIOD',
+ TIMESTAMP|INTERVAL[, 'TZ'])
+ ->TIMESTAMP|INTERVAL             #Truncates until PERIOD
+
+to_char(TIMESTAMP|INTERVAL, STR)  #Use format STR, e.g. 'HH24:MI:SS'
+ ->STR2                           #Not documented yet
+to_timestamp(STR, STR2)
+ ->TIMESTAMPTZ
+to_date(STR, STR2)->DATE
+to_number(STR, STR2)->FLOAT       #Inverse
+
 generate_series
  (TIMESTAMP, TIMESTAMP2, INTERVAL)
  ->TABLE                          #From TIMESTAMP to TIMESTAMP2, with step INTERVAL
-pg_sleep(DOUBLE)                  #Sleeps DOUBLE seconds (10ms resolution)
+
+pg_sleep(FLOAT)                   #Sleeps FLOATS seconds
+                                  #Time resolution is OS-specific, often 10ms
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:          TIME ZONES           :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+LOCALES ==>                       #Used, including current timezone, unless specified otherwise
+
+timetz                            #TYPE
+'TIME[TZ]'                        #TZ is [GMT]-|+NUM
+
+timestamptz                       #TYPE
+'TIMESTAMP[TZ]'                   #TIMESTAMPTZ
+
+TZ                                #Use either of the following ones
+pg_timezone_names                 #TABLE with TZs by names (e.g. 'America/New_York') with offset and DST
+pg_timezone_abbrevs               #Same but by abbreviation (e.g. 'PST')
+ENVVAR timezone                   #Def: system one
+
+TIME[STAMP][TZ] at time zone 'TZ' #TIME[STAMP]TZ
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:           INTERVAL            :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+interval [PERIOD [to PERIOD2]]    #TYPE
+                                  #PERIOD is year|month|day|hour|minute|second (def: any)
+
+'SS[.SSSSSS]'
+'[YYYY-[MM-[DD]]]
+ [HH:[MM:[SS[.SSSSS]]]]'          #INTERVAL
+ENVVAR intervalstyle              #INTERVAL format among:
+                                  #  - 'postgres' (def)
+                                  #  - 'sql_standard'
+                                  #  - 'ISO_8601'
+
+DATE + - INTERVAL                 #TIMESTAMP
+TIME[STAMP]|INTERVAL + - INTERVAL #TIME[STAMP]|INTERVAL
+TIME[STAMP] - TIME[STAMP]2        #INTERVAL
+
+INTERVAL * / NUM                  #
+-INTERVAL                         #
+
+justify_days(INTERVAL)->INTERVAL  #Modulo on days, e.g. 35 days -> 1 month 5 days
+justify_hours(INTERVAL)->INTERVAL #Modulo on hours, e.g. 30 hours -> 1 day 6 hours
+justify_interval
+ (INTERVAL)->INTERVAL             #justify_days() + justify_hours()
 
 
                                              /=+===============================+=\
@@ -724,11 +778,14 @@ point                             #TYPE
 '(NUM,NUM2)'                      #POINT
 
 line                              #TYPE. Infinite LINE
-lseg                              #TYPE. Segment LINE
 '((NUM,NUM2),(NUM3,NUM4))'        #LINE
+'{NUM,NUM2,NUM3}'                 #LINE as NUMx + NUM2y + NUM3
 
-box                               #TYPE. Rectangle. Same notation as LINE (diagonal)
-(BOX;...)                         #BOX_ARR
+lseg                              #TYPE. Segment LINE
+'((NUM,NUM2),(NUM3,NUM4))'        #LSEG
+
+box                               #TYPE. Rectangle.
+'((NUM,NUM2),(NUM3,NUM4))'        #BOX (diagonal)
 
 path                              #TYPE
 polygon                           #TYPE. Like closed PATH
@@ -754,9 +811,6 @@ GEOMETRY OPERATORS ==>            #Many operators for shift, rotation, scaling, 
                                              \=+===============================+=/
 
 
-macaddr                           #TYPE
-'NN:NN:NN:NN:NN:NN'               #MACADDR
-
 inet                              #TYPE
 'IPv4|6'                          #INET
 
@@ -764,20 +818,43 @@ cidr                              #TYPE
 'CIDR'                            #
 
 INET >> >>= << <<= INET2          #Containing|contained within [or equal]
-INET|MAC | & INET2|MAC            #
-~INET|MAC                         #Bitwise operations
+
+INET | & INET2
+~INET                             #Bitwise operations
+
 INET + - INET|UINT                #From last to first field.
-abbrev(INET|CIDR)                 #Show as STR
-text(INET)                        #Same but longer version
-broadcast(INET)                   #
-host(INET)                        #IP address without mask
-hostmask(INET)                    #Only part of IP addres with mask
-netmask(INET)                     #Mask as INET
-masklen(INET)                     #Mask as NUM
-set_masklen(INET|CIDR, UINT)      #Modifies mask
-network(INET)                     #Part of IP without last number
-family(INET)                      #4|6 for ipv4|6
-trunc(MAC)                        #Put second half as 00
+
+family(INET)->4|6                 #
+
+network(INET)->CIDR               #
+host(INET)->'INET'                #Remove CIDR mask
+
+masklen(INET)->UINT               #NUM of bits of network mask
+set_masklen(INET|CIDR, UINT)
+ ->INET|CIRD                      #Sets network mask
+netmask(INET)->INET2              #Subnet mask
+hostmask(INET)->INET2             #Cisco wildcard
+
+broadcast(INET)->INET2            #Broadcast IP
+
+text(INET)->STR                   #Serialize in a long way
+abbrev(INET|CIDR)->STR            #Serialize in a short way
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:              MAC              :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+macaddr                           #TYPE
+'NN:NN:NN:NN:NN:NN'               #MACADDR
+
+MAC | & MAC2
+~MAC                              #Bitwise operations
+
+trunc(MAC)->MAC                   #Put second half as 00
 
 
                                              /=+===============================+=\
@@ -793,6 +870,8 @@ xmlparse(document|content STR)    #Must be well-formed.
  ->XML                            #content: for fragments
 xmlserialize(document|content XML
  as [var]char|text)->STR          #
+enum_first|last(ENUM_VAL)         #First|last ENUM_VAL of the same type
+ ->ENUM_VAL2                      #null::ENUM can be used as argument
 
 
                                              /=+===============================+=\
@@ -812,16 +891,24 @@ JSON#>ARR
 JSON#>>ARR                        #Same but with several successive indexes
 
 to_json(VAL)                      #If a cast function exists, return cast(VAL as json), otherwise, converts VAL to STR first.
+
 array_to_json(ARR)                #Returns ARR as JSON {ARR}
+
 json_array_length(JSON)           #Length of ARR in JSON {ARR}
+
 row_to_json(ROW)                  #Returns ROW as JSON {"f1": ..., "f2": ... ...}
+
 json_each[_text](JSON)            #Returns JSON as a TABLE (each first dimension VAR is a row, and its VAL the second column)
                                   #text convert to STR after.
+
 json_object_keys(JSON)            #Same but with only the first column (the VARs)
+
 json_populate_record              #Same as json_each(), but horizontal, and only keeps VAR that have a matching COL in TABLE.
  (null::TABLE, JSON[, BOOL])      #If true (def: false), will convert to false too.
+
 json_populate_recordset
  (null::TABLE, JSON[, BOOL])      #Same but from a JSON array, and do one row for each OBJ of the array.
+
 json_array_elements(JSON)         #Returns a JSON array as a TABLE with one column, and a row for each VAL.
 
 
