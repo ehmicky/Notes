@@ -121,6 +121,8 @@ ARCHITECTURE ==>                  #RDBMS with focus on standard compliance and e
 
 LIMITS ==>                        #  - database size: unlim
                                   #  - table size: 32TB
+on conflict
+ on constraint "CONSTRAINT" ...   #
                                   #  - cols count: 250-1600 depending on TYPE
                                   #  - rows count: unlim
                                   #  - cell size: 1GB
@@ -166,6 +168,10 @@ DCL                               #"Data Control Language"
 TCL                               #"Transaction Control Language"
                                   #Statements operating on transactions
                                   #E.g. commit, rollback, savepoint, etc.
+
+OUTPUT ==>                        #Some statements return the NUM of ROWs manipulated.
+                                  #This is separate from the ROW_SET returned by a SUBQUERY, and is not printed by default
+                                  #For: select|insert|update|delete|merge|move|fetch|copy|create table as
 
 
                                              /=+===============================+=\
@@ -1460,7 +1466,7 @@ create type "ROW"
 
 alter type "ROW"
  add attribute "COL" TYPE
- [restrict|cascade]               #cascade or restrict (def): when ROW is a TABLE, whether to modify the TABLE too
+ [restrict|cascade]               #cascade or restrict (def): when "ROW" is a "TABLE", whether to modify the "TABLE" too
 alter type "ROW"
  drop attribute
  [if exists] "COL" TYPE
@@ -1522,8 +1528,15 @@ select SET, SET2 ...              #`select VAL,...` behaves like SCALAR_FUNC
 
 SUBQUERY                          #ROW_SET that is the result of a select, values, table or execute statement
                                   #I.e. not returned by a FUNC()
-                                  #Can only be used as ROW_SET when explicitly documented as such
-SSUBQUERY                         #SUBQUERY with a single COL
+                                  #Can only be used when explicitly documented as such
+SSUBQUERY                         #SUBQUERY returning a single COL
+ZSUBQUERY                         #SUBQUERY returning a single COL + ROW
+
+REXPR                             #Expression which:
+                                  #  - is evaluated once per ROW
+                                  #     - except if it does not reference the ROW
+                                  #  - can refer to the ROW
+                                  #Can also use any (ZSUBQUERY), with same ROW behavior
 
 exists(SUBQUERY)->BOOL            #Whether SUBQUERY has at least one ROW
                                   #Since SUBQUERY values are not used, `select 1 ...` is often used
@@ -1875,6 +1888,8 @@ create view "VIEW"
                                   #  - using explain query plans, time of queries, etc.
                                   #  - e.g. to infer size of hidden rows
 
+create recursive view ...         #Allows recursion like in `with recursive ...` CTE
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -1969,7 +1984,7 @@ create sequence "SEQUENCE"
  [owned by "TABLE"."COL"]         #Make dropping COL also drop SEQUENCE
 
 alter sequence "SEQUENCE" ...     #Same syntax as create sequence ...
-[restart [with] INT]              #Like setval()
+ [restart [with] INT]             #Like setval()
 
 "COL" [small|big]serial           #COL_ARG with:
  COL_CONSTRAINT...                #  - TYPE int2|4|8
@@ -2003,40 +2018,35 @@ VAL,...
 [from ...]
 [where ...]
 [group by ... [having ...]]
-[union|intersection|except ...]...
+[union|intersect|except ...]...
 [order by ... [asc|desc|using OP]
 [nulls first|last]]
 [limit ...]
 [offset ...]                      #Order: from, where, select non-AFUNC, group by, having, select AFUNC,
-[fetch ...]                       #distinct, union|intersection|except, order, offset, limit|fetch
+[fetch ...]                       #distinct, union|intersect|except, order, offset, limit|fetch
 
 select VAL[_SET],...              #Evaluates VALs and returns them as a ROW_SET
                                   #Each VAL[_SET] is returned as a different COL
                                   #  - select VAL,...: multiple COLs
                                   #  - select ROW: single COL with a ROW TYPE
+select REXPR,...                  #Can be used
 
 select VAL[_SET]                  #"COL_ALIAS" is COL name in:
  [[as] "COL_ALIAS"],...           #  - return value
-                                  #  - distinct, order by, group by
-                                  #     - can use 1-based index UINT too
-                                  #     - can use COL_EXPR too, i.e. VAL using "COL_ALIAS"
+                                  #  - REXPR
+                                  #     - can also use 1-based index UINT
                                   #Def (in priority):
                                   #  - "FCOL_ALIAS"
                                   #  - "COL" name
                                   #  - "FUNC" name
                                   #  - "?column?"
 
-select (SUBQUERY) ...             #Uses SUBQUERY as a SCALAR, i.e. only if it returns both:
-                                  #  - one COL
-                                  #  - one ROW
-                                  #Evaluated once for all ROWs
-                                  #  - as opposed to a FUNC()->SCALAR
-
 values (VAL,...),...              #Evaluates VALs and returns them as a ROW_SET
                                   #Each (VAL,...) is a ROW
                                   #All ROWs must have same TYPE, including number of COLs
                                   #"COL" name: "columnNUM"
                                   #VAL cannot be a SET
+                                  #VAL can use (ZSUBQUERY)s
  [order by ...]
  [asc|desc|using OP]
  [limit ...]
@@ -2073,13 +2083,12 @@ select ...                        #Uses SUBQUERY's ROW_SET return value
 select ... from "TABLE"           #Same as as `from (table "TABLE") as "TABLE"`
 
 select ... from FROM              #Name of each ROW to use in:
- [[as] "ROW_ALIAS",...]           #  - `select VALs`
-                                  #  - `where BOOL`
-                                  #  - `on BOOL`, `using(...)` (joins)
+ [[as] "ROW_ALIAS",...]           #  - REXPR
                                   #  - any next `from FROM`
                                   #(SUBQUERY) can use "ROW_ALIAS" defined by a previous FROM, but:
-                                  #   - only in `select VALs` and `where BOOL`
-                                  #   - must specify `lateral`
+                                  #  - not in its own `from ...`
+                                  #  - must specify `lateral`
+                                  #  - i.e. will behave as a REXPR
                                   #Parent query cannot use "ROW_ALIAS" defined by a (SUBQUERY)
                                   #Def: FUNC(...) name
                                   #Required with `from (SUBQUERY)`
@@ -2112,14 +2121,13 @@ select ... from rows from(...)    #Concatenates a COL named "ordinality"
                                              \=+===============================+=/
 
 
-select ... where BOOL             #Returns no ROWs if BOOL is false
-                                  #Usually done ROW-wise with `from ...`
+select ... where BOOL_REXPR       #Returns no ROWs if BOOL is false
                                   #Conceptually like select ..., BOOL where:
                                   #  - BOOL COL is not returned
                                   #  - ROWs with BOOL false are not returned
 
 select all|distinct ...           #If `distinct`, ignores any ROW if any previous ROW2 is =
- [on (COL_EXPR,...)]              #Pick|transform the COLs used to compare
+ [on (REXPR,...)]                 #Computes the values used to compare (e.g. "COL")
 
 select ... from "TABLE"
  tablesample SAMPLE_METHOD(...)   #Removes ROWs randomly
@@ -2138,7 +2146,8 @@ select ... from "TABLE"
                                              \=+===============================+=/
 
 
-select ... order by COL_EXPR,...  #Sort ROWs
+select ... order by REXPR,...     #Sort ROWs
+                                  #REXPR is the sort value (e.g. "COL")
                                   #Unless used, ROWs are unordered
                                   #  - including union|intersect|except result
  [asc|desc|using OP]              #Sorting order (def: asc)
@@ -2166,7 +2175,7 @@ select ... fetch next ...         #Same as: select ... fetch first ...
 select ... union SUBQUERY         #Concatenates ROWs of `select ...` and SUBQUERY
                                   #They must have the same ROW TYPEs
                                   #SUBQUERY "COL" names are not used
-                                                                              #order by, offset, limit:
+                                  #order by, offset, limit:
                                   #  - applied on the merged result
                                   #  - to apply on only SUBQUERY, use parenthesis around it
 
@@ -2195,15 +2204,18 @@ select ... from FROM, FROM2
 select ... from FROM              #Concatenates COLs of FROM and FROM2
  cross join FROM2                 #ROWs are cartesian product of FROM and FROM2
 select ... from FROM
- [inner] join FROM2 on BOOL       #Like `cross join` but ignores ROWs where BOOL is false
+ [inner] join FROM2
+ on BOOL_REXPR                    #Like `cross join` but ignores ROWs where BOOL is false
 
 select ... from FROM              #Like `cross join` but:
- left [outer] join FROM2 on BOOL  #  - if a FROM ROW has BOOL false with every FROM2 ROW
-                                  #  - it is kept as a single ROW, with nulls in FROM2 COLs
+ left [outer] join FROM2          #  - if a FROM ROW has BOOL false with every FROM2 ROW
+ on BOOL_REXPR                    #  - it is kept as a single ROW, with nulls in FROM2 COLs
 select ... from FROM
- right [outer] join FROM2 on BOOL #Like `left join` but with FROM2 ROWs instead
+ right [outer] join FROM2
+ on BOOL_REXPR                    #Like `left join` but with FROM2 ROWs instead
 select ... from FROM
- full [outer] join FROM2 on BOOL  #Like `left join` + `right join`
+ full [outer] join FROM2
+ on BOOL_REXPR                    #Like `left join` + `right join`
 
 select ... from FROM              #Same as: on "ROW_ALIAS"."COL" = "ROW_ALIAS2"."COL" [and ...]
  [...] join FROM2 using("COL",...)#Also merges "ROW_ALIAS"[2]."COL" to a single COL
@@ -2235,21 +2247,24 @@ insert into "TABLE" default values#Single ROW with (default,...)
 insert into "TABLE"               #Name of each ROW to use in other parts of insert ..., except SUBQUERY
  [as "ROW_ALIAS"] ...             #Def: "TABLE"
 
-insert ... on conflict ... ???
-on conflict do nothing
+insert ... on conflict ...        #Configure behavior when inserted VAL fails an unique or exclude() CONSTRAINT
+insert ... on conflict do nothing #Ignore ROW, instead of failing
+insert ...                        #Updates current ROW instead of inserting a new one
+ on conflict do update set ARG,...#ARG is same syntax as update ... set ARG,...
+                                  #Can be used to upsert
+                                  #If new VALs still fail, do not repeat
+                                  #Can use `excluded` as a "ROW_ALIAS" for the VALs being inserted
+                                  #Only with unique CONSTRAINT, not `exclude()`
+insert ...
+ on conflict do update set ...
+ where BOOL_REXPR                 #If false, ignore ROW instead
 
-on conflict do update set THAT,...
-"COL" = VAL
-                                  #VAL can be `default`
-("COL",...) = [row](VAL,...)
-("COL",...) = (SUBQUERY)
-
-on conflict do update set ... where BOOL
-
-on conflict on constraint "CONSTRAINT" ...
-on conflict (ARG,...) [where BOOL]
-"INDEX_COL"|(INDEX_EXPR) [collate COLLATION] [OPCLASS]
-
+on conflict                       #Only apply for a specific unique|exclude CONSTRAINT
+ on constraint "CONSTRAINT" ...   #Required when using `on conflict do update set`
+on conflict ("COL",...)           #Same as `on constraint` but targeting CONSTRAINT through its COLs
+on conflict (...)                 #Same as `on constraint` but targeting CONSTRAINT through its underlying INDEX
+                                  #(...) is same `create index "INDEX"(...)`
+                                  #  - including `(...) where BOOL` for partial INDEXs
 
 
                                              /=+===============================+=\
@@ -2259,16 +2274,29 @@ on conflict (ARG,...) [where BOOL]
                                              \=+===============================+=/
 
 
-update "TABLE"                    #Assign VAL... to COL... records (filtered by BOOL)
-[[as] TABLE_ALIAS]                #To reference other TABLE, either:
-set ... [from ...]                #  - use with ...
-[where BOOL]                      #  - use from ... (same as select ... from ..., makes a cross join)  (try to avoid it)
-                                  #  - use a subquery in BOOL, e.g. where COL in (select ... from "TABLE2" where BOOL2)
-                                  #set ... can be either:
-                                  #  - set "COL" = VAL ...
-                                  #  - set ("COL"...) = (VAL...) ...
-                                  #VAL can be default
-                                  #TABLE is implicit in the query. "TABLE"."COL" should not be used, but COL.
+update "TABLE" set                #Set values of current ROWs
+ "COL" = VAL,...                  #Other COLs are kept as is
+                                  #VAL can be `default`
+                                  #VAL is evaludated once per ROW
+ ("COL",...) = [row](VAL,...),... #`row` is required if only one COL
+ ("COL",...) = (SUBQUERY),...     #SUBQUERY must return either:
+                                  #  - a single ROW
+                                  #  - no ROWs: converted to a ROW filled with nulls
+
+update "TABLE" [as] "ROW_ALIAS"   #Name of each current ROW
+ ...                              #To use in other parts of `update ...`, including in (SUBQUERY)
+                                  #Def: "TABLE"
+["ROW_ALIAS".]"COL"               #Like `select ...`
+
+update ... from FROM,...          #Allows using FROMs inside other parts of update ...
+                                  #Same syntax as `select ... from FROM,...`
+                                  #`where BOOL` is called with cross-join, i.e. each TABLE_ROW + FROMS_ROW
+                                  #For any given TABLE_ROW, if `where BOOL` filters in:
+                                  #  - 0 ROW: no update is done
+                                  #  - 1 ROW: `set ...` can use filtered FROMS_ROW
+                                  #  - >1 ROWs: `set ...` uses an unspecified filtered FROMS_ROW (to avoid)
+
+update ... where BOOL_REXPR       #Only sets values on ROWs with BOOL true
 
 
                                              /=+===============================+=\
@@ -2279,9 +2307,9 @@ set ... [from ...]                #  - use with ...
 
 
 delete from "TABLE"
-[[as] TABLE_ALIAS]
-[using ...]                       #Erases records of "TABLE" according to BOOL (by default all records)
-[where BOOL]                      #using ...: same as from ... in update.
+[[as] "ROW_ALIAS"]
+[using FROM,...]                  #Same as `update ...` but deleting ROWs instead
+[where BOOL_REXPR]                #Def BOOL_REXPR: true, i.e. delete all ROWs
 
 
                                              /=+===============================+=\
@@ -2291,10 +2319,11 @@ delete from "TABLE"
                                              \=+===============================+=/
 
 
-truncate table "TABLE"...         #Like delete from "TABLE" with no BOOL (but faster and more vacuum-friendly)
-[restart identity]                #  - restart identity: sequences are set to start_value
-[restrict|cascade|                #  - cascade: truncates "TABLE2"... depending on "TABLE" too
-                                  #Is not concurrency-safe.
+truncate table "TABLE",...        #Delete all ROWs
+                                  #Faster and more vacuum-friendly than `delete from` with no `where BOOL_REXPR`
+[restart|continue identity]       #If `restart` (def: `continue`): call `alter sequence "SEQUENCE" restart`
+[restrict|cascade]                #If `cascade` (def: `restrict`): truncates any "TABLE2" depending on "TABLE" too
+                                  #  - e.g. due to foreign keys
 
 
                                              /=+===============================+=\
@@ -2304,25 +2333,24 @@ truncate table "TABLE"...         #Like delete from "TABLE" with no BOOL (but fa
                                              \=+===============================+=/
 
 
-See again `select ...` documentation for full syntax???
+with                              #"CTE". Same as: ... from (MSUBQUERY) as "ROW_ALIAS"[("FCOL_ALIAS",...)]
+ "ROW_ALIAS"[("FCOL_ALIAS",...)]  #Except:
+ as (MSUBQUERY)                   #  - MSUBQUERY, not just SUBQUERY
+ ... from "ROW_ALIAS" ...         #  - evaluates MSUBQUERY once when used multiple times
+                                  #  - simpler to read
+                                  #The main COMMAND can be select|table|values, insert|update|delete or merge
+                                  #MSUBQUERY can use `with ...` itself, but only with `select` sub-MSUBQUERYs
 
-with [recursive] "TABLE"          #Makes it possible to refer to the TABLE returned by MSUBQUERY inside COMMAND2 or inside further TABLE as (MSUBQUERY).
- [("COL"...)]                     #Is a prettier shortcut that avoids nesting subqueries (CTE, "Common Table Expressions"), similar to assigning subqueries to variables
- as (MSUBQUERY),...               #MSUBQUERY is done before COMMAND2, and is executed only once, even if COMMAND2 references it several times.
- COMMAND2                         #If MSUBQUERY is not a select, COMMAND2 needs to be top-level (not a subquery), but subqueries can see TABLE from superqueries anyway.
-                                  #"COL"... define new column name for the return TABLE.
-                                  #MSUBQUERY|COMMAND2 must be select|insert|update|delete. COMMAND2 can also be merge
-                                  #If recursive, TABLE can be used inside MSUBQUERY:
-                                  #  - usually this is a:
-                                  #      select VAL union select ... from "TABLE" ... where BOOL (recursion stops when BOOL is false)
-                                  #  - it usually also use ("COL"...) so the calling recursion can select the columns of the last recursion (which is just select VAL).
-                                  #  - only select ... will be possible (with possible union, etc.) in MSUBQUERY
+with "ROW_ALIAS" ... as (...),    #Can use multiple ones
+  "ROW_ALIAS2" ... as (...), ...  #"ROW_ALIAS" can be used inside the next MSUBQUERYs
 
-create ... recursive view "VIEW"  #Same as:
- ... as SUBQUERY                  #  create view "VIEW" as
-                                  #  with recursive "VIEW"
-                                  #  as (SUBQUERY)
-                                  #  table "VIEW"
+with recursive ...                #Allow using "ROW_ALIAS" inside its own MSUBQUERY.
+                                  #MSUBQUERY must be:
+                                  #  select ... union select ... from "ROW_ALIAS" ... where BOOL_REXPR
+                                  #Recursion happens bottom-up:
+                                  #  - first recursion skips `union ...`
+                                  #  - next recursions are repeated until `union ...` returns no ROWs
+                                  #     - usually when BOOL_REXPR false for all ROWs
 
 
                                              /=+===============================+=\
@@ -2332,26 +2360,40 @@ create ... recursive view "VIEW"  #Same as:
                                              \=+===============================+=/
 
 
-copy "TABLE"[("COL"...)]          #Append "TABLE" to a 'FILE' or from a 'FILE', for COL...
-from|to ...                       #Copy TABLE to is also possible
-[with OPTIONS...]                 #VIEW is only possible through copy (select * from VIEW)
-                                  #... can be:
-                                  #  - 'FILE' (must use absolute path)
-                                  #  - stdin|stdout
-                                  #  - program STR, which use input|output piping to shell command STR
-                                  #OPTIONS are space-separated and can be:
-                                  #  - text(def)|csv|binary
-                                  #  - oids: copies OIDS too
-                                  #  - delimiter STR (def in text '\t', in csv ',')
-                                  #  - null STR (def in text '\N', in csv ''): STR used to represent null
-                                  #  - header (only in csv): first CSV row === field names
-                                  #  - quote STR (def '"')
-                                  #  - escape STR (only in csv, def: '\')
-                                  #  - force quote("COL"...)|* (only in csv, and copy to): quote all values, except null
-                                  #  - force not null("COL"...) (only in csv, and copy from)
-                                  #  - encoding STR (def: client_encoding)
-                                  #  - freeze: force a vacuum freeze first
-                                  #For portability, ENVVAR DateStyle should be 'ISO' for copy to, and IntervalStyle should not be 'sql_standard'
+copy TABLE to SOURCE              #Append TABLE to a SOURCE
+copy "TABLE"[("COL",...)]         #SOURCE can be:
+ to SOURCE                        #  - 'ABSOLUTE_PATH'
+                                  #  - stdout
+                                  #  - program 'PROGRAM', piped to stdin
+                                  #"TABLE" cannot be "VIEW", but TABLE can be (table "VIEW")
+
+copy "TABLE"[("COL",...)]         #Append SOURCE to a TABLE
+ from SOURCE                      #SOURCE can be:
+                                  #  - 'RELATIVE|ABSOLUTE_PATH'
+                                  #  - stdin
+                                  #  - program 'PROGRAM', using its stdout
+
+copy ... with OPTS                #
+OPTS.text|csv|binary              #Def: text
+OPTS.oids                         #Copies OIDS too
+OPTS.delimiter                    #STR. COL delimiter
+                                  #Def: '\t' (text) or ',' (csv)
+OPTS.null                         #STR used for null values
+                                  #Def: '\N' (text) or '' (csv)
+OPTS.quote                        #STR (def '"')
+OPTS.encoding                     #STR (def: client_encoding)
+OPTS.freeze                       #Force a vacuum freeze first
+
+CSV ONLY ==>                      #
+OPTS.header                       #Make first CSV row the COL names
+OPTS.escape                       #STR (def: '\')
+OPTS.force quote ("COL",...)|*    #Force quoting specific COLs (unless null)
+                                  #Only with `copy to`
+OPTS.force not null("COL",...)    #Fail if specific COLs are null
+                                  #Only with `copy from`
+
+ENVVAR DateStyle                  #Should be set to 'ISO'
+ENVVAR IntervalStyle              #Should be set to 'sql_standard'
 
 
                                              /=+===============================+=\
@@ -2363,22 +2405,22 @@ from|to ...                       #Copy TABLE to is also possible
 
 grouping sets, cube, rollup???
 
-select ... group by COL_EXPR,...  #Group ROWs that are equal by all of COL_EXPR,...
+select ... group by REXPR,...     #Group ROWs that are equal by all of REXPR,... (e.g. "COL")
                                   #Each ROW_SET group is reduced to a single ROW
                                   #If a COL uses AFUNC(), it:
                                   #  - reduces ROW_SET into a SCALAR
-                                  #  - cannot be targeted by a COL_EXPR
+                                  #  - cannot be targeted by a REXPR
                                   #Some COLs cannot be reduced:
                                   #  - if uses neither:
-                                  #     - COL_EXPR, or a superset of it
-                                  #        - e.g. if COL_EXPR is `a * 2`, using `a * 2 + 1`
+                                  #     - REXPR, or a superset of it
+                                  #        - e.g. if REXPR is `a * 2`, using `a * 2 + 1`
                                   #     - AFUNC()
                                   #  - then:
                                   #     - cannot use any "ROW_ALIAS"[."COL"]
                                   #     - all those COLs are computed in a single separate ROW_SET, combined with a cartesian product
                                   #If no `group by`, AFUNC() operates on all ROWs as a single group
 
-select ... having BOOL            #Like `where BOOL` except:
+select ... having BOOL_REXPR      #Like `where BOOL` except:
                                   #  - after `group by`
                                   #  - can use AFUNC()
 
@@ -3162,8 +3204,7 @@ pg_catalog                        #SCHEMA for all pg_* tables and builtins funct
 
 current_schema()                  #
 current_schemas([BOOL])           #If true, include implicit ones (e.g. pg_catalog)
-pg_is_other_temp_schema
-(OID)                             #Is it a temporary schema
+pg_is_other_temp_schema(OID)      #Is it a temporary schema
 pg_my_temp_schema()               #Temp SCHEMA OID, 0 if none.
 pg_TYPE_is_visible(OID)           #Checks if an object is accessible through current SCHEMA path.
 
