@@ -5,10 +5,6 @@
 
 
 
-TODO:
-  - document all implicit typecasts:
-      select pg_type.typname as source, pg_type2.typname as target, pg_proc.proname, pg_cast.castcontext, pg_cast.castmethod from pg_cast join pg_type on pg_type.oid = pg_cast.castsource join pg_type as pg_type2 on pg_type2.oid = pg_cast.casttarget join pg_proc on pg_proc.oid = pg_cast.castfunc order by source, target;
-
 Relationships:
   - can be 0, 0|1, many or 0|many on each side
   - 1-to-1: foreign key
@@ -156,6 +152,28 @@ U&"VAR2"                          #Make VAR case-sensitive
 
                                              /=+===============================+=\
                                             /  :                               :  \
+                                            )==:             NAME              :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+name                              #TYPE of a "VAR", used internally. 64 bytes string.
+
+VAR                               #Any identifier
+                                  #[[:alnum:]_]+
+                                  #Max 63 chars
+"VAR"                             #Allows keywords, and case-sensitive
+                                  #"" to escape "
+
+"..."                             #Notation to means a VAR (with|without quoting)
+                                  #Including "TABLE", "COL", etc.
+
+TEXT <-> NAME
+VARCHAR|BPCHAR <=-> NAME          #Type casting
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
                                             )==:         TYPE CASTING          :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -163,20 +181,27 @@ U&"VAR2"                          #Make VAR case-sensitive
 
 pg_typeof(VAL)->'TYPE'            #TYPE as a STR
 
-TYPE CASTING ==>                  #When:
-                                  #  - passing arguments to a FUNC
-                                  #  - insert value in a COL ("assignment cast")
-
-IMPLICIT CASTING ==>              #Listed in this doc for the specific types
-
 cast(VAL as TYPE)
 VAL::TYPE                         #Explicit casting
 TYPE '...'                        #Explicit casting, but UNKNOWN '...' only
 
+ASSIGNMENT CASTING ==>            #Automatic casting when insert value in a COL
+                                  #Always implies explicit casting too
+
+IMPLICIT CASTING ==>              #Automatic casting when passing arguments to a FUNC
+                                  #Always implies explicit + assignment casting too
+
+TYPE -> TYPE2                     #Means can do implicit casting
+TYPE => TYPE2                     #Means can do assignment casting
+TYPE ~> TYPE2                     #Means can do explicit casting
+TYPE <=-> TYPE2                   #Means TYPE2 => TYPE, TYPE -> TYPE2
+
 SIZING CAST ==>                   #Type cast to same type
-                                  #Used to enforce size:
+                                  #Used to enforce size of size-dependent TYPE(NUM):
                                   #  - failing if too large
                                   #  - padding or truncating (e.g. with char(NUM))
+                                  #Usually implicit casting
+                                  #Available for: NUMERIC, VARCHAR|BPCHAR, [VAR]BIT, TIME[STAMP][TZ], INTERVAL
 
 pg_cast                           #TABLE with implicit|explicit type casting
 pg_cast.oid                       #OID
@@ -185,10 +210,10 @@ pg_cast.castfunc                  #pg_proc.OID of FUNC used for conversion
                                   #FUNC(TYPE1_VAL[, INT[, BOOL]])->TYPE2_VAL
                                   #  - INT is the pg_attribute.ATTTYPEMOD
                                   #  - BOOL is true if explicit cast
-pg_cast.castcontext               #When to allow implicit cast, among:
-                                  #  - 'e': never
-                                  #  - 'a': when casting to COL TYPE
-                                  #  - 'i': when casting to COL TYPE, or passing arguments to a FUNC
+pg_cast.castcontext               #Casting:
+                                  #  - 'e': explicit
+                                  #  - 'a': assignment
+                                  #  - 'i': implicit
 pg_cast.castmethod                #How to cast, among:
                                   #  - 'f': castfunc
                                   #  - 'i': C-level I/O functions
@@ -200,75 +225,6 @@ create cast (TYPE as TYPE2)
 create cast ... with inout ...
 create cast ...
  without function ...             #Same but with a 'i|b' castmethod (def: 'f')
-
-self-casting:
-  - implicit: BSTR, BPCHAR
-
-BOOL -> STR (semi-implicit)
-BOOL -> INT4 (explicit)
-
-BPCHAR -> STR (implicit)
-BPCHAR <-> CHAR (semi-implicit)
-BPCHAR -> "NAME" (implicit)
-CHAR -> VARCHAR (semi-implicit)
-CHAR -> TEXT (implicit)
-CHAR -> INT4 (explicit)
-
-BSTR -> INT4|8 (explicit)
-
-DATE -> TIMESTAMP[TZ] (implicit)
-
-STR -> HSTORE (explicit)
-
-CIDR -> STR (semi-implicit)
-
-BOX <-> CIRCLE (explicit)
-BOX -> LSEG (explicit)
-BOX -> POINT (explicit)
-BOX -> POLYGON (semi-implicit)
-CIRCLE -> POINT (explicit)
-CIRCLE -> POLYGON (explicit)
-
-BPCHAR -> XML (explicit)
-
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:          MAIN TYPES           :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-VAR                               #Any identifier
-                                  #[[:alnum:]_]+
-                                  #Max 63 chars
-"VAR"                             #Allows keywords, and case-sensitive
-                                  #"" to escape "
-"..."                             #Means a VAR
-                                  #Including "TABLE", "COL", etc.
-                                  #Quoting is optional
-
-'...'                             #Means a STR
-                                  #Including 'TABLE', 'COL', etc.
-'STR'                             #Means a literal STR value
-
-TABLE                             #TABLE value
-                                  #Conceptually like an OBJ_ARR
-                                  #Includes subqueries.
-
-COL                               #COL value
-                                  #Conceptually like a PROP inside OBJ_ARR, i.e. a VAL_ARR
-"TABLE"."COL"                     #Optionally specify "TABLE" of a "COL"
-"COL"("TABLE")                    #Otherwise, use current TABLE as default
-
-ROW                               #ROW value
-                                  #Conceptually like an OBJ
-
-VAL                               #Every value is a COL.
-                                  #Scalars are handled like a COL of size 1
-                                  #If needed, operations are repeated over each item
-                                  #When VAL OP VAL2 have different sizes, the smaller one is being repeated.
 
 
                                              /=+===============================+=\
@@ -307,9 +263,11 @@ greatest|least(VAL...)->BOOL      #Using > <
 
 unknown                           #Unknown TYPE
                                   #No operator except the common ones (= > etc.)
-                                  #Used for the literal value of all TYPEs, meant to be cast.
+                                  #Used for the literal value of all TYPEs, meant to be cast
                                   #  - except null, BOOL, NUM
                                   #  - noted as TYPE_UNKNOWN, meaning UNKNOWN that can be cast to TYPE
+                                  #  - type casting is TYPE-specific, and not specified in pg_cast
+                                  #Internally encoded as UTF-8
 
 '...'                             #UNKNOWN
                                   #'' to escape a '
@@ -378,6 +336,9 @@ match simple|full                 #For multicolumn foreign keys, whether to matc
 
 boolean                           #TYPE
 
+BOOL => STR                       #Cast as 'true|false'
+BOOL <~> INT4                     #Cast as 0|1
+
 true|false|null                   #BOOL
 
 BOOL or BOOL2                     #
@@ -394,9 +355,9 @@ BOOL > >= < <= BOOL2              #true > false
                                              \=+===============================+=/
 
 
-NUM                               #INT|FLOAT
-INT                               #smallint|integer|bigint
-FLOAT                             #real|double precision|numeric|decimal|money
+NUM                               #INT|FLOAT|money
+INT                               #int2|4|8
+FLOAT                             #float4|8|numeric
 
 int2
 smallint                          #TYPE. Signed 2 bytes integer
@@ -410,9 +371,17 @@ real                              #TYPE. 4 bytes float
 float8
 double precision                  #TYPE. 8 bytes float
 
-numeric(NUM, NUM2)                #TYPE. Fixed precision integer with NUM digits including NUM2 decimals
-decimal(NUM, NUM2)                #Rounded nearest, then towards [-]Infinity
-money                             #TYPE. Like decimal(Infinity, 2)
+numeric[(NUM[, NUM2])]            #TYPE. Fixed precision integer with NUM digits including NUM2 decimals
+decimal[(NUM[, NUM2])]            #Def NUM,NUM2: no limits. Def NUM2: 0
+                                  #Rounded nearest, then towards [-]Infinity
+
+INT2 <=-> INT4 <=-> INT8
+ <=-> NUMERIC                     #When cast as smaller TYPE, fails if beyond max size.
+ <=-> FLOAT4 <=-> FLOAT8          #When cast from FLOAT to INT, rounds nearest, then towards 0
+
+money                             #TYPE. Like numeric(Infinity, 2)
+MONEY <=> NUMERIC
+INT4|8 => MONEY                   #Type cast
 
 NUM                               #Literal NUM
 NUMe...                           #TYPE:
@@ -422,7 +391,7 @@ NUMe...                           #TYPE:
 -0                                #Same as +0
 
 'NaN'
-'[-]Infinity'                     #STR implicitly typecast to FLOAT
+'[-]Infinity'                     #FLOAT_UNKNOWN
 
 NUM + - / * NUM2                  #
 -NUM                              #
@@ -485,20 +454,24 @@ to_char(NUM, STR)->STR2           #Use format STR, e.g. '999D9' (3 integer digit
 
 
 STR                               #[var]char|text (not char|name)
-                                  #Unless specified otherwise, operations are done Unicode codepoint-wise (including astral)
-                                  #Unicode-aware, e.g. case
-                                  #Internally encoded as UTF-8
-                                  #Indices are 1-based
+'...'                             #Personal notation meaning a STR
+                                  #Including 'TABLE', 'COL', etc.
+'STR'                             #Notation meaning a literal STR value
 
-varchar(NUM)                      #TYPE. STR with NUM max chars
+STRINGS ==>                       #Unless specified otherwise, operations are done Unicode codepoint-wise
+                                  #  - including astral
+                                  #  - "character" usually means "Unicode codepoint"
+                                  #Unicode-aware, e.g. case
+                                  #1-based indices
+
+varchar[(NUM)]                    #TYPE. STR with NUM max Unicode codepoints (def: unlim)
+bpchar[(NUM)]
 char(NUM)                         #TYPE. Like varchar, but pads with spaces (slower and takes more space)
-                                  #Also named "bpchar"
 text                              #TYPE. Like varchar, but unlimited length
 
-char                              #TYPE. Like char(1)
-name                              #TYPE. 64 bytes STR used internally to store "VARs"
+BPCHAR -> VARCHAR|TEXT            #Type cast removes padded spaces
 
-'...'                             #Any UNKNOWN can be cast to STR
+'...'                             #STR_UNKNOWN
 
 ascii('CHAR')->UINT               #Unicode codepoint
 chr(UINT)->'CHAR'                 #Inverse
@@ -540,13 +513,31 @@ l|rpad(STR, UINT[, STR2])->STR3   #Pads STR with STR2 (def: ' ') to length UINT.
 
                                              /=+===============================+=\
                                             /  :                               :  \
+                                            )==:             CHAR              :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+char                              #TYPE. Like char(1)
+
+'CHAR'                            #CHAR_UNKNOWN
+
+CHAR <~> INT4                     #Type cast from first digit, e.g. '2' <~> 2
+CHAR <=-> TEXT
+CHAR <=> VARCHAR|BPCHAR           #Type cast. Truncate first Unicode codepoint
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
                                             )==:           ESCAPING            :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
-quote_ident(STR)->STR             #Wrap in "" if contains keywords. Escape "
-quote_literal(VAL)->STR           #Wrap in ''. Escape ' \
+quote_ident(STR)->STR             #Escape STR to use as SQL "VAR"
+                                  #Wrap in "" if needed, and escape "
+quote_literal(VAL)->STR           #Escape STR to use as SQL STR
+                                  #Wrap in '', and escape ' \
                                   #If not STR, stringify
 quote_nullable(VAL)->STR          #Same as quote_literal(VAL), but if VAL is null, returns 'NULL', not null
 
@@ -617,24 +608,25 @@ regexp_split_to_table(...)->TABLE #Same but as a TABLE
                                              \=+===============================+=/
 
 
-ENUM                              #Each ENUM has its own TYPE
-ENUM_VAL                          #STR
+ENUM_TYPE                         #Each enum has its own TYPE
 
-create type ENUM
+'...'                             #ENUM_VAL_UNKNOWN
+
+create type ENUM_TYPE
  as enum(ENUM_VAL...)             #Arguments list decides ordering
 
-alter type ENUM add value
+alter type ENUM_TYPE add value
  [if not exists] ENUM_VAL
  [before|after ENUM_VAL2]         #
 
 ENUM_VAL < <= > >= ENUM_VAL2      #BOOL. Using ordering
 
 enum_first|last(ENUM_VAL)         #First|last ENUM_VAL of the same type
- ->ENUM_VAL2                      #null::ENUM can be used as argument
+ ->ENUM_VAL2                      #null::ENUM_TYPE can be used as argument
 enum_range(ENUM_VAL)              #All ENUM_VALs of the same type
- ->ENUM_VAL_ARR                   #null::ENUM can be used as argument
+ ->ENUM_VAL_ARR                   #null::ENUM_TYPE can be used as argument
 enum_range(ENUM_VAL, ENUM_VAL2)   #From ENUM_VAL to ENUM_VAL2
- ->ENUM_VAL_ARR                   #null::ENUM can be used to represent start|end
+ ->ENUM_VAL_ARR                   #null::ENUM_TYPE can be used to represent start|end
 
 
                                              /=+===============================+=\
@@ -644,13 +636,19 @@ enum_range(ENUM_VAL, ENUM_VAL2)   #From ENUM_VAL to ENUM_VAL2
                                              \=+===============================+=/
 
 
-bit[(NUM)]                        #TYPE. BSTR, i.e. like STR, but bit-wise
-                                  #Def NUM: 1
-                                  #Indices are 0-based
-bit varying[(NUM)]                #Same but def NUM is unlimited
+BSTR                              #BIT|VARBIT
 
-B'...'                            #BSTR with 0|1s
-X'...'                            #BSTR with hex chars
+bit[(NUM)]                        #TYPE. BIT, i.e. like STR, but bit-wise
+                                  #Def NUM: 1
+                                  #0-based indices
+varbit[(NUM)]
+bit varying[(NUM)]                #TYPE. VARBIT, i.e. same but def NUM is unlimited
+
+BIT <-> VARBIT                    #Type cast. Truncates last bits if needed.
+BIT <~> INT4|8                    #Type cast. Fails if larger than max INT
+
+B'...'                            #BIT with 0|1s
+X'...'                            #BIT with hex chars
 
 BSTR & | # << >> BSTR2            #
 ~BSTR                             #
@@ -668,8 +666,9 @@ set_bit(BSTR|BYTEA, UINT, 0|1)
 
 
 bytea                             #TYPE. Like BSTR but byte-wise
-                                  #Indices are 0-based
-'...'                             #STR can be cast to BYTEA, using UTF-8 endoding
+                                  #0-based indices
+
+'...'                             #BYTEA_UNKNOWN, using UTF-8 endoding
 '\x...'                           #If starting with \x, ... is hex only
 
 encode(BYTEA, STR)->STR2          #Converts to format STR:
@@ -738,26 +737,29 @@ uniq(INT_ARR)->INT_ARR           ##Remove duplicates. Must be first sorted
 
 
 date                              #TYPE
-'YYYY-MM-DD'                      #DATE
+'YYYY-MM-DD'                      #DATE_UNKNOWN
 
 time                              #TYPE
-'HH:MM:SS[.SSSSSS]'               #TIME
+'HH:MM:SS[.SSSSSS]'               #TIME_UNKNOWN
 
 timestamp                         #TYPE
-'DATE TIME'                       #TIMESTAMP
+'DATE TIME'                       #TIMESTAMP_UNKNOWN
+
+TIME[TZ] <= TIMESTAMP[TZ]         #Type cast, removing DATE
+DATE <=-> TIMESTAMP[TZ]           #Type cast, removing TIME or filling it with midnight
 
 ENVVAR DateStyle                  #When reading ambiguous DATE (day is from 1 to 12), how to read it: "DMY" (def), "MDY" or "YMD"
 
-[-]infinity'                      #DATE|TIMESTAMP
+'[-]infinity'                     #DATE|TIMESTAMP_UNKNOWN
 isfinite(DATE|TIMESTAMP|INTERVAL)
  ->BOOL                           #Whether [-]Infinity
 
-'epoch'                           #DATE|TIMESTAMP
+'epoch'                           #DATE|TIMESTAMP_UNKNOWN
 
-'yesterday|today|tomorrow'        #DATE|TIMESTAMP (midnight)
-'allballs'                        #TIME (midnight)
+'yesterday|today|tomorrow'        #DATE|TIMESTAMP_UNKNOWN (midnight)
+'allballs'                        #TIME_UNKNOWN (midnight)
 
-'now'                             #DATE|TIME|TIMESTAMP
+'now'                             #DATE|TIME|TIMESTAMP_UNKNOWN
 current_time[stamp]|date          #Same but directly DATE|TIMETZ|TIMESTAMPTZ instead of UNKNOWN
 local_time[stamp]|date            #Same but using current TZ
 statement_timestamp()
@@ -802,10 +804,13 @@ pg_sleep(FLOAT)                   #Sleeps FLOATS seconds
 LOCALES ==>                       #Used, including current timezone, unless specified otherwise
 
 timetz                            #TYPE
-'TIME[TZ]'                        #TZ is [GMT]-|+NUM
+'TIME[TZ]'                        #TIMETZ_UNKNOWN. TZ is [GMT]-|+NUM
 
 timestamptz                       #TYPE
-'TIMESTAMP[TZ]'                   #TIMESTAMPTZ
+'TIMESTAMP[TZ]'                   #TIMESTAMPTZ_UNKNOWN
+
+TIME <=-> TIMETZ
+TIMESTAMP <=-> TIMESTAMPTZ        #Type cast, using local TZ
 
 TZ                                #Use either of the following ones
 pg_timezone_names                 #TABLE with TZs by names (e.g. 'America/New_York') with offset and DST
@@ -825,9 +830,11 @@ TIME[STAMP][TZ] at time zone 'TZ' #TIME[STAMP]TZ
 interval [PERIOD [to PERIOD2]]    #TYPE
                                   #PERIOD is year|month|day|hour|minute|second (def: any)
 
+TIME <=-> INTERVAL                #Type cast
+
 'SS[.SSSSSS]'
 '[YYYY-[MM-[DD]]]
- [HH:[MM:[SS[.SSSSS]]]]'          #INTERVAL
+ [HH:[MM:[SS[.SSSSS]]]]'          #INTERVAL_UNKNOWN
 ENVVAR intervalstyle              #INTERVAL format among:
                                   #  - 'postgres' (def)
                                   #  - 'sql_standard'
@@ -853,9 +860,8 @@ justify_interval
                                              \=+===============================+=/
 
 
-oid                               #TYPE
-                                  #ID of a VAR.
-                                  #Can be cast to UINT.
+oid                               #TYPE for an ID of a VAR.
+                                  #Internally like an int4
                                   #32 bits, i.e. only use for uniqueness if:
                                   #  - TABLE-scoped
                                   #  - either:
@@ -866,14 +872,25 @@ regproc                           #TYPE alias to OID. ID of a FUNC name
 regprocedure                      #TYPE alias to OID. ID of a FUNC implementation
 regoper                           #Like regproc but for OP
 regoperator                       #Like regprocedure but for OP
-regclass                          #TYPE alias to OID. ID of a "TABLE".
 regtype                           #TYPE alias to OID. ID of a TYPE.
 regconfig                         #TYPE alias to OID. ID of a REGCONF.
 regdictionary                     #TYPE alias to OID. ID of a DICTIONARY.
+regcollation                      #TYPE alias to OID. ID of a COLLATION.
+regnamespace                      #TYPE alias to OID. ID of a NAMESPACE.
+regrole                           #TYPE alias to OID. ID of a ROLE.
+
+INT8 <=-> OID|REG*
+INT2 -> OID|REG*                  #Type cast
+
+regclass                          #TYPE alias to OID. ID of a "TABLE".
+VARCHAR|TEXT -> REGCLASS          #Type cast
 
 tid                               #TYPE. ID of a ROW
-xid                               #TYPE. ID of a transaction
+xid                               #TYPE. ID of a transaction, 4 bytes
+xid8                              #TYPE. ID of a transaction, 8 bytes
 cid                               #TYPE. ID of a command
+
+XID8 ~> XID                       #Type cast
 
 
                                              /=+===============================+=\
@@ -902,7 +919,7 @@ normal_rand(INT, FLOAT, FLOAT2)  ##INT random variables following N(FLOAT, FLOAT
 uuid                             ##TYPE
                                  ##Postgres extension 'uuid-ossp'
 'nnnn-nnnn-nnnn-nnnn-nnnn-
- nnnn-nnnn-nnnn'                 ##UUID. Dashes all optional
+ nnnn-nnnn-nnnn'                 ##UUID_UNKNOWN. Dashes all optional
 
 uuid_generate_v1[mc]()->UUID     ##UUID v1
                                  ##If mc, uses a random multicast MAC address
@@ -918,13 +935,16 @@ uuid_generate_v4()->UUID         ##UUID v4
                                              \=+===============================+=/
 
 
-json                              #TYPE
-'JSON'                            #JSON, including scalar types
+json                              #TYPE. Including scalar types.
                                   #Must be well-formed.
+
+'JSON'                            #JSON_UNKNOWN
                                   #When converting from|to TABLE:
                                   #  - each ARR item is a ROW
                                   #  - each OBJ key is a COL
 KEY                               #UINT|STR
+
+JSONB ~> BOOL|NUM|STR             #Type cast. Fail if top-level value is not BOOL|NUM|STR|null
 
 JSON->KEY                         #OBJ[KEY] as JSON2
 JSON->>KEY                        #OBJ[KEY] as 'JSON2'
@@ -959,12 +979,16 @@ json_object_keys(OBJ_JSON)->TABLE #Same but only the "key" column
 
 xml                               #TYPE. Not documented yet
 
+STR ~> XML                        #Type cast
+
+'XML'                             #XML_UNKNOWN
+
 xmlparse(document|content STR)    #Must be well-formed.
  ->XML                            #content: for fragments
 xmlserialize(document|content XML
  as [var]char|text)->STR          #
 enum_first|last(ENUM_VAL)         #First|last ENUM_VAL of the same type
- ->ENUM_VAL2                      #null::ENUM can be used as argument
+ ->ENUM_VAL2                      #null::ENUM_TYPE can be used as argument
 
 
                                              /=+===============================+=\
@@ -977,6 +1001,8 @@ enum_first|last(ENUM_VAL)         #First|last ENUM_VAL of the same type
 hstore                           ##TYPE. OBJ where keys are identifiers
                                  ##Postgres extension 'hstore'
 VAL                              ##'VAL'|null
+
+STR ~> HSTORE                    ##Type cast, using 'KEY=>VAL,...'
 
 'KEY=>VAL,...'                   ##HSTORE_UNKNOWN
                                  ##"" to escape KEY|VAL for whitespace , = >
@@ -1014,6 +1040,7 @@ skeys(HSTORE)->TABLE
 svals(HSTORE)->TABLE             ##Same as akeys|avals() but returning a single-COL TABLE
 each(HSTORE)->TABLE              ##TABLE has two COLs: key STR, value STR
 
+HSTORE ~> JSON[B]                ##Type cast, similar to hstore_to_json()
 hstore_to_json(HSTORE)->OBJ_JSON ##OBJ values are all STR|null
 hstore_to_json_loose(HSTORE)
  ->OBJ_JSON                      ##Same but OBJ values can also be NUM or BOOL (with VAL 't|f')
@@ -1027,10 +1054,10 @@ hstore_to_json_loose(HSTORE)
 
 
 ltree                            ##TYPE. Array of VAR representing a reference
-                                 ##Indices are 0-based
+                                 ##0-based indices
                                  ##Postgres extension 'ltree'
 
-'VAR.VAR2....'                   ##LTREE
+'VAR.VAR2....'                   ##LTREE_UNKNOWN
                                  ##VAR is [[:alpha:]_], max 256 characters.
                                  ##Can be empty ''
 
@@ -1071,7 +1098,8 @@ lca(LTREE...)->LTREE2            ##Common prefix ('' if none)
 
 lquery                           ##TYPE. Globbing-like query against a LTREE (full match)
 
-LQUERY                           ##Same syntax as LTREE with following additional one.
+'VAR.VAR2...'                    ##LQUERY_UNKNOWN.
+                                 ##Same syntax as LTREE with following additional one.
 *                                ##Any multiple VARs
 *{[NUM],[NUM2]}                  ##NUM (def: 0) to NUM2 (def: any) multiple VARs
 VAR*                             ##Any suffix
@@ -1097,7 +1125,8 @@ LTREE_ARR ?~ LQUERY              ##LTREE|null. First LTREE that ~ LQUERY
 
 ltxtquery                        ##TYPE. Like lquery but partial match
 
-LTXTQUERY                        ##Single VAR. Also following syntax
+'...'                            ##LTXTQUERY_UNKNOWN
+                                 ##Single VAR. Also following syntax.
 VAR*
 VAR%
 VAR@
@@ -1119,10 +1148,13 @@ LTREE_ARR ?@ LTXTQUERY           ##LTREE|null. First LTREE that @ LTXTQUERY
 
 
 inet                              #TYPE
-'IPv4|6'                          #INET
+'IPv4|6'                          #INET_UNKNOWN
 
 cidr                              #TYPE
-'CIDR'                            #
+'CIDR'                            #CIDR_UNKNOWN
+
+INET|CIDR => STR                  #Type cast
+INET => CIDR                      #Type cast
 
 INET >> >>= << <<= INET2          #Containing|contained within [or equal]
 
@@ -1156,12 +1188,17 @@ abbrev(INET|CIDR)->STR            #Serialize in a short way
 
 
 macaddr                           #TYPE
-'NN:NN:NN:NN:NN:NN'               #MACADDR
+'NN:NN:NN:NN:NN:NN'               #MACADDR_UNKNOWN
 
-MAC | & MAC2
-~MAC                              #Bitwise operations
+macaddr8                          #TYPE
+'NN:NN:NN:NN:NN:NN:NN:NN'         #MACADDR8_UNKNOWN
 
-trunc(MAC)->MAC                   #Put second half as 00
+MACADDR <-> MACADDR8              #Type cast
+
+MACADDR[8] | & MACADDR[8]2
+~MACADDR[8]                       #Bitwise operations
+
+trunc(MACADDR[8])->MACADDR[8]     #Put second half as 00
 
 
                                              /=+===============================+=\
@@ -1172,29 +1209,35 @@ trunc(MAC)->MAC                   #Put second half as 00
 
 
 point                             #TYPE
-'(NUM,NUM2)'                      #POINT
+'(NUM,NUM2)'                      #POINT_UNKNOWN
 
 line                              #TYPE. Infinite LINE
-'((NUM,NUM2),(NUM3,NUM4))'        #LINE
-'{NUM,NUM2,NUM3}'                 #LINE as NUMx + NUM2y + NUM3
+'((NUM,NUM2),(NUM3,NUM4))'        #LINE_UNKNOWN
+'{NUM,NUM2,NUM3}'                 #LINE_UNKNOWN as NUMx + NUM2y + NUM3
 
 lseg                              #TYPE. Segment LINE
-'((NUM,NUM2),(NUM3,NUM4))'        #LSEG
+'((NUM,NUM2),(NUM3,NUM4))'        #LSEG_UNKNOWN
 
 box                               #TYPE. Rectangle.
-'((NUM,NUM2),(NUM3,NUM4))'        #BOX (diagonal)
+'((NUM,NUM2),(NUM3,NUM4))'        #BOX_UNKNOWN (diagonal)
 
 path                              #TYPE
 polygon                           #TYPE. Like closed PATH
-'((NUM,NUM2)...)'                 #Closed PATH
-'[(NUM,NUM2)...]'                 #Open PATH
+'((NUM,NUM2)...)'                 #Closed PATH_UNKNOWN
+'[(NUM,NUM2)...]'                 #Open PATH_UNKNOWN
 
 circle                            #TYPE
-'<(NUM,NUM2),NUM3>'               #CIRCLE
+'<(NUM,NUM2),NUM3>'               #CIRCLE_UNKNOWN
+
+POINT <~ LSEG <~ BOX
+ <~> CIRCLE <~> POLYGON           #Type casts
+POINT => BOX
+BOX => POLYGON
+PATH <=> POLYGON                  #Type casts
 
 cube                             ##TYPE. N-dimensional cube
                                  ##Postgres extension 'cube'
-'(NUM...), (NUM2...)'            ##CUBE diagonal
+'(NUM...), (NUM2...)'            ##CUBE_UNKNOWN diagonal
 
 GEOMETRY OPERATORS ==>            #Many operators for shift, rotation, scaling, getting points|distance like center, positions, etc. exist
                                   #Including for cube
@@ -1223,9 +1266,11 @@ OPTS.subtypediff                  #FUNC(VAL, VAL2)->UINT, computing distance
 OPTS.canonical                    #FUNC2(VAL)->VAL (def: noop) transforming each VAL
 OPTS.subtype_opclass              #OPCLASS
 OPTS.collation                    #COLLATION
+OPTS.multirange_type_name         #'TYPE' of MULTIRANGE
+                                  #Def: replace 'range' by 'multirange', or append '_multirange'
 
 '[VAL, VAL2]'
-'[VAL, VAL2)'                     #RANGE. Square brackets include, parenthesis exclude.
+'[VAL, VAL2)'                     #RANGE_UNKNOWN. Square brackets include, parenthesis exclude.
 '(VAL, VAL2]'                     #Def VAL[2]: null
 '(VAL, VAL2)'                     #If TYPE is discrete, VAL2] is normalized to VAL2+1)
 RANGE_TYPE(VAL, VAL2[, STR])
@@ -1251,13 +1296,24 @@ RANGE &> RANGE2                   #Same as RANGE2 &< RANGE
 RANGE -|- RANGE2                  #BOOL. Whether RANGE end adjacent to RANGE2
 
 RANGE + RANGE2                    #RANGE3. Union. Must overlap or be contiguous.
+range_merge(RANGE, RANGE2)->RANGE3#Union. If does not overlap nor contiguous, fill the gap.
 RANGE - RANGE2                    #[RANGE.begin, RANGE2.begin]
                                   #If RANGE2.begin < RANGE.begin:
                                   #  - if RANGE2.end > RANGE.end, returns [RANGE.begin, RANGE.end]
                                   #  - otherwise returns empty
 RANGE * RANGE2                    #RANGE3. Intersection. Empty if none.
 
-MULTIRANGE ==>                    #Like a RANGE_ARR
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:          MULTIRANGE           :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+MULTIRANGE ==>                    #Combination of multiple RANGEs
+                                  #Behaves like a RANGE with potential gaps
+                                  #If RANGEs overlapped, normalized by being merged
 
 int4multirange
 int8multirange
@@ -1265,7 +1321,19 @@ nummultirange
 datemultirange
 ts[tz]multirange                  #MULTIRANGE TYPEs
 
+RANGE ~> MULTIRANGE               #Type cast
+
 '{RANGE,...}'                     #MULTIRANGE_UNKNOWN
+MULTIRANGE_TYPE([RANGE,...])
+ ->MULTIRANGE                     #Same
+
+OPERATORS ==>                     #All FUNCs and operators for RANGE work with MULTIRANGE too
+                                  #Can mix RANGE and MULTIRANGE arguments, except for + - *
+
+range_merge(MULTIRANGE)->RANGE    #Convert to single RANGE, filling any gap
+multirange(RANGE)->MULTIRANGE     #Inverse
+
+unnest(MULTIRANGE)->TABLE         #Single-COL RANGE where each ROW is a RANGE
 
 
                                              /=+===============================+=\
@@ -1275,19 +1343,22 @@ ts[tz]multirange                  #MULTIRANGE TYPEs
                                              \=+===============================+=/
 
 
-array                             #Array TYPE. Can be used with any underlying TYPE.
-                                  #Dimensions are defined at write-time.
-                                  #Underlying type can be another ARR for multidimensional arrays.
-TYPE[]                            #Array for a specific TYPE.
+array                             #TYPE2 with 0-n values of same TYPE
+TYPE[]                            #Dimensions are defined at write-time.
+                                  #Underlying TYPE can be another ARR for multidimensional ARRs.
+                                  #1-based indices
 
 array[VAL...]                     #ARR literal value.
-'{VAL,...}'                       #STR implicitly typecasted to ARR
-'[INT1:INT2]...={VAL,...}'        #Same but with specified lower bounds.
-                                  #One [INT1:INT2] per dimension
+'{VAL,...}'                       #ARR_UNKNOWN
+'[UINT[:UINT2]]...={VAL,...}'     #Same but with specific:
+                                  #  - lower bound UINT (included)
+                                  #     - def: 0
+                                  #  - upper bound UINT2 (included)
+                                  #     - def: UINT
+                                  #     - must be UINT + ARR.length - 1, i.e. cannot truncate|extend
+                                  #One [...] per dimension
 
-array(TABLE)->ARR                 #TABLE must have only one COL
-                                  #TABLE must not be the result of a FUNC()
-                                  #  - however subquery works (e.g. select FUNC())
+array(SUBQUERY)->ARR              #TABLE must have only one COL
 
 ARR[UINT]...                      #Accessing ARR. Index starts at 1. Returns null if any index is out-of-bound.
 ARR[UINT1:UINT2]...               #Accessing slices of ARR.
@@ -1329,32 +1400,63 @@ unnest(ARR)                       #Flattens ARR, and returns it as a TABLE with 
                                              \=+===============================+=/
 
 
+ROW_TYPE                          #Conceptually like an OBJ
+                                  #Also called "composed type" or "ctype"
+
+ROW                               #ROW_TYPE value
+COL                               #"Column", i.e. ROW property
+
 create type "ROW"
- as (VAR TYPE,...)                #"composed type", i.e. TYPE of a ROW
+ as ("COL" TYPE,...)              #Create a new ROW_TYPE
 
 alter type "ROW"
- add attribute VAR TYPE
+ add attribute "COL" TYPE
  cascade|restrict                 #cascade or restrict (def): when ROW is a TABLE, whether to modify the TABLE too
 alter type "ROW"
  drop attribute
- [if exists] VAR TYPE
+ [if exists] "COL" TYPE
  cascade|restrict                 #
 alter type "ROW"
- alter attribute VAR type TYPE
+ alter attribute "COL" type TYPE
  cascade|restrict                 #
 alter type "ROW"
- rename attribute VAR to VAR2
+ rename attribute "COL" to "COL2"
  cascade|restrict                 #
 
 [row](VAL,...)                    #ROW
                                   #COL names: fNUM
                                   #"row" is necessary only if only one VAL
+'(VAL,...)'                       #Same as ROW_UNKNOWN
 
 (ROW)."COL"                       #VAL
 "COL"(ROW)                        #Additional pathensis sometimes needed
 
 ROW = <> ROW2                     #BOOL
-ROW < <= > >= ROW2                #BOOL, with first items compared first, etc.
+ROW < <= > >= ROW2                #BOOL, with first COL compared first, etc.
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:              SET              :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+TODO ==> go through all mentions of TABLE
+
+SET                               #Like ARR except operations|FUNCs automatically iterate over each item
+                                  #Always top-level
+SCALAR                            #Opposite of SET
+
+SCALAR_OP SET
+SCALAR_FUNC(SET)                  #Returns SET2, iterating over SET items
+SET SCALAR_OP SCALAR
+SCALAR_FUNC(SET, SCALAR)          #Same but repeats SCALAR
+SET SCALAR_OP SET2
+SCALAR_FUNC(SET, SET2)            #Same but fills smaller SET with nulls
+
+SET_OP SCALAR
+SET_FUNC(SCALAR)                  #Fails
 
 
                                              /=+===============================+=\
@@ -1364,13 +1466,19 @@ ROW < <= > >= ROW2                #BOOL, with first items compared first, etc.
                                              \=+===============================+=/
 
 
-TODO ==> Create concept of "setof":
-  - tables are just setof rows
-  - most operations iterate over setofs
+TABLE                             #ROW_SET that is named, either:
+                                  #  - persisted ("create table")
+                                  #  - TABLE_ALIAS
+
+SUBQUERY                          #Result of a SELECT statement
+                                  #I.e. TABLE but not returned by a FUNC()
 
 "TABLE"                           #Can be used as ROW TYPE
                                   #  - CONSTRAINTs are stripped
                                   #But not as "ROW" identifier nor ROW value.
+
+["TABLE".]"COL"
+"COL"[("TABLE")]                  #Inside a query, can omit current "TABLE" when retrieving a COL
 
 exists(TABLE)->BOOL               #Whether TABLE has at least one ROW
                                   #Since TABLE rows do not matter, if TABLE is a subquery, often use: select 1 ...
@@ -1381,6 +1489,7 @@ exists(TABLE)->BOOL               #Whether TABLE has at least one ROW
 ROW [not] in TABLE                #Same as ROW =|<> any TABLE
 ROW OP any|all TABLE              #Returns true if any|all of the rows of TABLE OP ROW
                                   #Often used row-wise in a where clause.
+
 
 
                                              /=+===============================+=\
@@ -3587,7 +3696,7 @@ pg_rules                          #Same, but more for user-defined RULE
 pg_type                           #All TYPE, including:
                                   #  - typispreffered BOOL: if true, is used as the TYPE for the whole typecategory with
                                   #    overloading functions (def: text for STR, and real for numeric)
-pg_enum                           #All ENUM
+pg_enum                           #All ENUM_TYPEs
 pg_range                          #All RANGE
 is.domains                        #All DOMAIN
 
@@ -5354,8 +5463,8 @@ index_is_type(['SCHEMA',]
  ['TABLE', ]'INDEX', 'TYPE')     ##'TYPE' is 'btree', 'hash', etc.
 domain_type_is[nt](['SCHEMA',]
  'DOMAIN', ['SCHEMA2', ]'TYPE')  ##'TYPE' is 'btree', 'hash', etc.
-enum_has_labels
- (['SCHEMA', ]'ENUM', 'VAL'_ARR) ##
+enum_has_labels(['SCHEMA', ]
+ 'ENUM_TYPE', 'VAL'_ARR)         ##
 
 FUNCTIONS ==>                    ##
 can(['SCHEMA', ]'FUNC'_ARR)      ##Same as has_function, but without 'ARGSTYPE'_ARR, and with FUNC_ARR
