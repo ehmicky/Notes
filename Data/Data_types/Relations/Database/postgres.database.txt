@@ -1507,6 +1507,9 @@ SCALAR_OP SET
 SET SCALAR_OP SCALAR
 SET SCALAR_OP SET2
 SET_OP SCALAR                     #Same with operators
+select SET ...
+select SET, SCALAR ...
+select SET, SET2 ...              #`select VAL,...` behaves like SCALAR_FUNC
 
 
                                              /=+===============================+=\
@@ -1982,103 +1985,101 @@ VAL [[as] COL_ALIAS],...
 [from TABLE]
 [[as] TABLE_ALIAS],...
 [where BOOL]
+[group by COL
+[having BOOL]]
 [order by COL,...
 [asc|desc|using OP]
 [nulls first|last]]
-[group by COL
-[having BOOL]]
 [offset UINT]
 [fetch first UINT2 rows only]     #
 
-select VAL[_SET]                  #Evaluates VALs and returns them as a ROW_SET
- [[as] "COL_ALIAS"],...           #"COL_ALIAS" are ROW COL names
-                                  #  - def is guessed, e.g.:
-                                  #     - "COL" name
-                                  #     - FUNC(...) name
-                                  #     - '?column?'
-                                  #Difference between: select ROW, and select ROW.COL, ... ???
-                                  #VAL_SET cannot be (SUBQUERY) ???
-                                  #  - unless one item, one column
-                                  #     - even select ROW???
-                                  #  - evaluated once per ROW???
-                                  #  - but can be ROW_SET, or use `from`
+select VAL[_SET],...              #Evaluates VALs and returns them as a ROW_SET
+                                  #Each VAL[_SET] is returned as a different COL
+                                  #  - select VAL,...: multiple COLs
+                                  #  - select ROW: single COL with a ROW TYPE
+select VAL[_SET]                  #"COL_ALIAS" is COL name in:
+ [[as] "COL_ALIAS"],...           #  - return value
+                                  #  - distinct, order by, group by
+                                  #     - can use 1-based index UINT too
+                                  #Def (in priority):
+                                  #  - "COL" name
+                                  #  - "FUNC" name
+                                  #  - "?column?"
+select (SUBQUERY) ...             #Uses SUBQUERY as a SCALAR, i.e.:
+                                  #  - only if it returns both:
+                                  #     - one COL
+                                  #     - one ROW
+                                  #  - evaluated once for all ROWs
 
-select ... from (SUBQUERY)        #Evaluates once per SUBQUERY's ROW, i.e. as a cartesian product:
- [as] "TABLE_ALIAS",...           #  - select VALs
+select ... from ROW_SET           #Evaluates once per ROW, i.e. as a cartesian product for:
+                                  #  - select VAL[_SET]
                                   #  - where BOOL
-select ... from "TABLE"
- [[as] "TABLE_ALIAS"],...         #Same as as `from (table "TABLE") as "TABLE"`
+select ... from SET               #Converts non-ROWs to single-COL ROWs
+                                  #By default, COL name is same as "ROW_ALIAS"
+select ... from (SUBQUERY)        #Uses SUBQUERY's ROW_SET return value
+                                  #Only evaluated once
+select ... from "TABLE"           #Same as as `from (table "TABLE") as "TABLE"`
 
-"TABLE_ALIAS"                     #Each SUBQUERY's ROW. Can be used in `select VALs` or `where BOOL`
-["TABLE_ALIAS".]"COL"             #ROW."COL".
-                                  #"TABLE_ALIAS" can be omitted if there is a single SUBQUERY
-["TABLE_ALIAS".]*                 #Same as ["TABLE_ALIAS".]"COL", ["TABLE_ALIAS".]"COL2", ...
+select ... from FROM              #Name of each ROW to use in `select VALs` or `where BOOL`
+ [[as] "ROW_ALIAS",...]           #Def: FUNC(...) name
+                                  #Required with `from (SUBQUERY)`
+["ROW_ALIAS".]"COL"               #COL
+                                  #"ROW_ALIAS" can be omitted if there is a single FROM
+["ROW_ALIAS".]*                   #Same as ["ROW_ALIAS".]"COL", ["ROW_ALIAS".]"COL2", ...
+                                  #Only in `select VALs`
+
+select ... [as]                   #Rename "ROW_ALIAS"."COL"
+ "ROW_ALIAS"("FCOL_ALIAS",...)    #Omitted ones are not renamed
 
 select ... where BOOL             #Returns no ROWs if BOOL is false
                                   #Usually done ROW-wise with `from ...`
+                                  #Conceptually like select ..., BOOL where:
+                                  #  - BOOL COL is not returned
+                                  #  - ROWs with BOOL false are not returned
 
-select distinct [on (COL,...)] ...#
-
-select ... order by COL,...       #
- [asc|desc|using OP]              #
- [nulls first|last]               #
-
-select ... group by COL           #
- [having BOOL]                    #
-
-select ... offset UINT            #
+select distinct ...               #Ignores any ROW if any previous ROW2 is =
+ [on ("COL_ALIAS",...)]           #Only compares those "COL"s
+                                  #If `order by "COL_ALIAS",...`, must match the lestmost ones
 
 select ...
- fetch first UINT2 rows only      #
+ group by "COL_ALIAS",...         #
+                                  #Group ROWs that are equal by all of "COL_ALIAS",...
+                                  #  - cannot target an AFUNC()
+                                  #Each ROW_SET group is reduced to a single ROW
+                                  #  - if a COL uses AFUNC(), it reduces ROW_SET into a SCALAR
+                                  #Any other COLs
+                                  #  - i.e. not targetted by `group by`, nor AFUNC()
+                                  #  - split into a separate ROW_SET, combined with a single cartesian product
+                                  #  - can only use "ROW_ALIAS" used by COLs targetted by `group by`
 
-select ...                        #VAL can be [TABLE.]* to mean all columns
-                                  #ALIAS:
-                                  #  - goal:
-                                  #     - shorter version
-                                  #     - can give name to temporary VAL (e.g. AFUNC(COL) or COL + VAL)
-                                  #     - necessary for subqueries
-                                  #  - can be:
-                                  #     - TABLE_ALIAS: TABLE_ALIAS[(COL_ALIAS...)]
-                                  #     - COL_ALIAS
-                                  #  - ALIAS is the new name (former VAR will not be usable anymore in current query)
-                                  #  - "as" is recommended
-                                  #VAL... can be:
-                                  #  - COL
-                                  #  - any VAL (e.g. select NUM;)
-                                  #  - FUNC()
-                                  #from TABLE:
-                                  #  - can use ... join (see below)
-                                  #  - can use a FUNC() returning a TABLE
-                                  #    In standard SQL, from FUNC(...) -> from lateral (select FUNC(...)) ALIAS
-                                  #  - can be ommitted, e.g. select VAL;
-                                  #distinct:
-                                  #  - remove rows will all entries duplicate.
-                                  #  - on (COL...): only targets COL..., which must be among the leftmost COL... in order by ...
-                                  #where BOOL:
-                                  #  - filter rows according to BOOL
-                                  #group by COL:
-                                  #  - all VAL... in select ... (except "COL" if group by "COL") must be scalar values, typically through a AFUNC()
-                                  #  - can also be NUM like order by
-                                  #  - only non-duplicate entries of COL are selected, and COL2 are aggregated according to groups of duplicate COL, using AFUNC() if provided.
-                                  #having BOOL:
+ [having BOOL]                    #
                                   #  - like where BOOL, but on the groups created by group by
                                   #  - must use scalar values, typically though a AFUNC()
-                                  #order by:
-                                  #  - sort according to COL... (def: asc, and nulls first for desc, nulls last for asc)
-                                  #  - using OP: using < is like asc, etc.
-                                  #  - can also be NUM, to be the VAL... number NUM
-                                  #offset and fetch:
-                                  #  - select only the first UINT2 rows, or according to an offset UINT
-                                  #  - order by should also be used to be consistent
+
+select ...
+ order by "COL_ALIAS",...         #Sort ROWs
+ [asc|desc|using OP]              #Sorting order (def: asc)
+                                  #Can be a comparator OP, e.g. < is like asc, > is like desc
+ [nulls first|last]               #Def: nulls first for desc, nulls last for asc
+
+select ... offset UINT [row[s]]   #Ignores first UINT rows
+
+select ... limit UINT|all
+select ...                        #Only returns first UINT rows, after `offset` applied
+ fetch first [UINT] row[s] only   #Def UINT: 1
+select ...                        #Returns any following ROW if:
+ fetch ... row[s] with ties       #  - its COLs targeted by `order by`
+                                  #  - are = than the previous ROW
+select ... fetch next ...         #Same as: select ... fetch first ...
 
 select ...
 union|intersect|except            #Both select ... must have same COL... with same types.
 [all] select ...                  #If not "all", removes duplicates afterwards.
 [order by ...]                    #order by must be a NUM or a "COL", not a COL
 
-(select ...)                      #Subquery, returning a TABLE. If in select VAL, must have a "TABLE_ALIAS"[("COL_ALIAS"...)]
+(select ...)                      #Subquery, returning a TABLE. If in select VAL, must have a "ROW_ALIAS"[("FCOL_ALIAS"...)]
 (values ...)                      #() are needed only when there might be confusion. Otherwise useless.
-                                  #TABLE (and TABLE_ALIAS) are visible from superqueries to subqueries (but not inverse):
+                                  #TABLE (and ROW_ALIAS) are visible from superqueries to subqueries (but not inverse):
                                   #  - in a from ... clause:
                                   #     - only if preceded by lateral
                                   #        - ex: select * from "TABLE", lateral (select "TABLE"."COL", "TABLE2"."COL" from "TABLE2")
