@@ -5,6 +5,10 @@
 
 
 
+TO DOCUMENT:
+  - CTE documentation in SELECT reference
+  - partition of|by in CREATE TABLE reference
+
 Relationships:
   - can be 0, 0|1, many or 0|many on each side
   - 1-to-1: foreign key
@@ -155,6 +159,7 @@ U&"VAR2"                          #Make VAR case-sensitive
                                   #VAL is only optional if either:
                                   #  - it has a default value
                                   #  - it has no value, i.e. it is implicitly a BOOL
+(VAR [VAL], ...)                  #ZOPTS. Same without = sign
 
 DDL                               #"Data Definition Language"
                                   #Statements operating on entities themselves
@@ -186,8 +191,10 @@ name                              #TYPE of a "VAR", used internally. 64 bytes st
 VAR                               #Any identifier
                                   #[[:alnum:]_]+
                                   #Max 63 chars
-"VAR"                             #Allows keywords, and case-sensitive
+"VAR"                             #Allows reserved keywords, and case-sensitive
                                   #"" to escape "
+as VAR                            #Some COMMANDs allows optional `as`.
+                                  #This allows reserved keywords, but remains case-insensitive unless quoted
 
 "..."                             #Notation to means a VAR (with|without quoting)
                                   #Including "TABLE", "COL", etc.
@@ -350,8 +357,8 @@ null = null                       #Is BOOL for clauses about duplicates (except 
                                   #  - distinct
                                   #Is also BOOL inside ARR (but not ROW)
                                   #  - null ARR item is distinct from missing item
-where BOOL                        #null -> false
-check (BOOL)                      #null -> true
+where BOOL_REXPR                  #null -> false
+check (BOOL_REXPR)                #null -> true
 
 references "TABLE2"("COL2")       #null ROWs are ignored in both COL and COL2
 match simple|full                 #For multicolumn foreign keys:
@@ -1555,7 +1562,7 @@ ROW [not] in SUBQUERY             #Same as ROW =|<> any SUBQUERY
 create domain TYPE as TYPE2       #Creates a user-defined TYPE, interchangeable with TYPE2, but with following.
  [default VAL]                    #Default VAL (def: null) (can be: default)
  [not null]                       #
- [check(BOOL)]                    #
+ [check(BOOL_REXPR)]              #
  [constraint "CONSTRAINT"]        #"CONSTRAINT" is name only.
                                   #BOOL_CONSTRAINT can use "value", which refers to the values used.
 
@@ -1564,7 +1571,7 @@ alter domain TYPE
  set|drop not null                #
 alter domain TYPE add
  [not null]
- [check(BOOL)]
+ [check(BOOL_REXPR)]
  [constraint "CONSTRAINT"]        #
  [not valid]                      #Like alter table ... not valid
 alter domain TYPE drop constraint
@@ -1702,8 +1709,12 @@ create table ...                  #Populates values with SUBQUERY
                                   #Cannot use:
                                   #  - of "ROW_TYPE"
                                   #  - inherits
+                                  #  - partition by
                                   #  - if not exists
  [with [no] data]                 #Whether to copy values (def) or only ROW_TYPE
+
+select VALS,...                   #Same as `select ...` but creates "TABLE" instead of returning ROW_SET
+ into [table] "TABLE" ...         #Prefer `create table as SUBQUERY` as it has more features and is more standard
 
 
                                              /=+===============================+=\
@@ -1734,21 +1745,13 @@ alter table "TABLE"
  drop [column] [if exists] "COL"
  [restrict|cascade]               #
 
-check(BOOL) ...
+check(BOOL_REXPR) ...
 unique("COL",...) ...
 primary key("COL",...) ...
 foreign key("COL",...) references
  "TABLE"("COL2",...) ...          #COL_ARG. Multicolumn CONSTRAINTs
 
-exclude ("COL" with OP,...)       #COL_ARG
-                                  #Ignore new ROW if ROW."COL" OP ANY_CURRENT_ROW2."COL"
-                                  #OP must be commutative
-                                  #Creates a CONSTRAINT "TABLE_COL_excl"
- [where BOOL]                     #Do not ignore new ROW if BOOL is true
-                                  #Same syntax as select ... where BOOL
-
-check(BOOL)                       #COL_CONSTRAINT. Fails if BOOL false.
-                                  #Same syntax as select ... where BOOL
+check(BOOL_REXPR)                 #COL_CONSTRAINT. Fails if BOOL false.
                                   #Def "CONSTRAINT" name: "TABLE_COL_check"
 
 [not] null                        #COL_CONSTRAINT
@@ -1757,13 +1760,22 @@ alter table "TABLE"
  alter [column] "COL"
  set|drop not null                #
 
-unique                            #COL_CONSTRAINT. Fails if any duplicate value.
-                                  #Def "CONSTRAINT" name: "TABLE_COL_key"
+exclude                           #COL_ARG
+ ("COL"|(REXPR) with OP,...)      #Fails if NEW_ROW."COL" OP ANY_CURRENT_ROW2."COL"
+                                  #Can also use REXPR
+                                  #OP must be commutative
+                                  #Creates a CONSTRAINT "TABLE_COL_excl"
                                   #Creates a btree INDEX
                                   #  - with same name as "CONSTRAINT"
+ [where (BOOL_REXPR)]             #Do not fail new ROW if BOOL false
+
+unique                            #COL_CONSTRAINT. Same as exclude("COL" with =)
+                                  #I.e. fails if any duplicate value.
+                                  #Def "CONSTRAINT" name: "TABLE_COL_key"
 
 primary key                       #COL_CONSTRAINT.
-                                  #Same as not null + unique but: only one per TABLE
+                                  #Same as unique + not null
+                                  #Only one per TABLE
                                   #Def "CONSTRAINT" name: "TABLE_pkey"
 
 references "TABLE2"[("COL2")]     #COL_CONSTRAINT. "Foreign key"
@@ -1817,11 +1829,11 @@ alter table "TABLE"
 
 like "TABLE|ROW_TYPE"             #COL_ARG. Copy (not inherit) the ROW_TYPE as COLs.
                                   #Always copied: COL TYPE, not null
-                                  #Never copied: references, where BOOL
+                                  #Never copied: references, where BOOL_REXPR
  [including COL_INFO]...          #Also copy COL_INFO:
                                   #  - defaults: default VAL
                                   #  - indexes: INDEX, primary key, unique, exclude
-                                  #  - constraints: check(BOOL)
+                                  #  - constraints: check(BOOL_REXPR)
                                   #  - storage: with (OPTS)
                                   #  - generated: generated COL
                                   #  - identity: identity COL
@@ -1840,8 +1852,8 @@ create table ...                  #Any "PARENT_TABLE" targets also children
                                   #  - COLs of PARENT_TABLE
                                   #     - but keeps its own COLs
                                   #  - not null
-                                  #  - check(BOOL)
-                                  #     - unless using: check(BOOL) no inherit
+                                  #  - check(BOOL_REXPR)
+                                  #     - unless using: check(BOOL_REXPR) no inherit
                                   #Does not inherit:
                                   #  - unique
                                   #  - primary key
@@ -1883,7 +1895,7 @@ alter view "VIEW"
 
 create view "VIEW"
  [with (OPTS)] ...                #
- [with (security_barrier)]        #Ensure ROWs are not securely hidden when using `where BOOL`
+ [with (security_barrier)]        #Ensure ROWs are not securely hidden when using `where BOOL_REXPR`
                                   #Cover channel attacks are still possible
                                   #  - using explain query plans, time of queries, etc.
                                   #  - e.g. to infer size of hidden rows
@@ -1938,7 +1950,8 @@ alter materialized view "TABLE"
 
 
 create temp[orary] table ...      #Drop TABLE at end of session
-                                  #No autovacuum, but can manually run analyze
+select ...                        #No autovacuum, but can manually run analyze
+ into temp[orary] [table] ...     #SCHEMA will be `pg_temp_NUM`
  [on commit ACTION]               #At the end of each successful transaction:
                                   #  - preserve rows (def): nothing
                                   #  - delete rows: truncate TABLE
@@ -2014,13 +2027,13 @@ insert into ...(...)
 
 select
 [distinct ...]
-VAL,...
+[VAL,...]
 [from ...]
 [where ...]
-[group by ... [having ...]]
+[group by ...]
+[having ...]
 [union|intersect|except ...]...
-[order by ... [asc|desc|using OP]
-[nulls first|last]]
+[order by ...]
 [limit ...]
 [offset ...]                      #Order: from, where, select non-AFUNC, group by, having, select AFUNC,
 [fetch ...]                       #distinct, union|intersect|except, order, offset, limit|fetch
@@ -2030,16 +2043,19 @@ select VAL[_SET],...              #Evaluates VALs and returns them as a ROW_SET
                                   #  - select VAL,...: multiple COLs
                                   #  - select ROW: single COL with a ROW TYPE
 select REXPR,...                  #Can be used
+select                            #If no VAL[_SET],..., returned ROWs have 0 COLs
+                                  #Does not change how many ROWs are returned
 
 select VAL[_SET]                  #"COL_ALIAS" is COL name in:
  [[as] "COL_ALIAS"],...           #  - return value
                                   #  - REXPR
-                                  #     - can also use 1-based index UINT
                                   #Def (in priority):
                                   #  - "FCOL_ALIAS"
                                   #  - "COL" name
                                   #  - "FUNC" name
                                   #  - "?column?"
+COL_REXPR                         #REXPR which is often just "COL"
+                                  #Can use 1-based COL_INDEX UINT too
 
 values (VAL,...),...              #Evaluates VALs and returns them as a ROW_SET
                                   #Each (VAL,...) is a ROW
@@ -2069,7 +2085,7 @@ MSUBQUERY                         #Means either a SUBQUERY or a `... returning V
 
 select ... from ROW_SET           #Evaluates once per ROW:
                                   #  - select VAL,...
-                                  #  - where BOOL
+                                  #  - REXPR
                                   #If select VAL,... results in a SET itself, do cartesian product
                                   #ROW_SET must be returned by a FUNC()
 select ... from NON_SET           #Converts non-SETs to single-ROW SETs
@@ -2127,7 +2143,7 @@ select ... where BOOL_REXPR       #Returns no ROWs if BOOL is false
                                   #  - ROWs with BOOL false are not returned
 
 select all|distinct ...           #If `distinct`, ignores any ROW if any previous ROW2 is =
- [on (REXPR,...)]                 #Computes the values used to compare (e.g. "COL")
+ [on (COL_REXPR,...)]             #Computes the values used to compare
 
 select ... from "TABLE"
  tablesample SAMPLE_METHOD(...)   #Removes ROWs randomly
@@ -2141,18 +2157,29 @@ select ... from "TABLE"
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:          SORT/SLICE           :==(
+                                            )==:             SORT              :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
-select ... order by REXPR,...     #Sort ROWs
-                                  #REXPR is the sort value (e.g. "COL")
+select ... order by COL_REXPR     #Sort ROWs
+                                  #COL_REXPR is the sort value
+                                  #  - if union|intersect|except used, can only be "COL"|COL_INDEX
                                   #Unless used, ROWs are unordered
                                   #  - including union|intersect|except result
  [asc|desc|using OP]              #Sorting order (def: asc)
                                   #Can be a comparator OP, e.g. < is like asc, > is like desc
  [nulls first|last]               #Def: nulls first for desc, nulls last for asc
+
+select ... order by ...,...       #Multiple sort values
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:             SLICE             :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
 
 select ... offset UINT [row[s]]   #Ignores first UINT rows
 
@@ -2264,7 +2291,7 @@ on conflict                       #Only apply for a specific unique|exclude CONS
 on conflict ("COL",...)           #Same as `on constraint` but targeting CONSTRAINT through its COLs
 on conflict (...)                 #Same as `on constraint` but targeting CONSTRAINT through its underlying INDEX
                                   #(...) is same `create index "INDEX"(...)`
-                                  #  - including `(...) where BOOL` for partial INDEXs
+                                  #  - including `(...) where BOOL_REXPR` for partial INDEXs
 
 
                                              /=+===============================+=\
@@ -2290,8 +2317,8 @@ update "TABLE" [as] "ROW_ALIAS"   #Name of each current ROW
 
 update ... from FROM,...          #Allows using FROMs inside other parts of update ...
                                   #Same syntax as `select ... from FROM,...`
-                                  #`where BOOL` is called with cross-join, i.e. each TABLE_ROW + FROMS_ROW
-                                  #For any given TABLE_ROW, if `where BOOL` filters in:
+                                  #`where BOOL_REXPR` is called with cross-join, i.e. each TABLE_ROW + FROMS_ROW
+                                  #For any given TABLE_ROW, if `where BOOL_REXPR` filters in:
                                   #  - 0 ROW: no update is done
                                   #  - 1 ROW: `set ...` can use filtered FROMS_ROW
                                   #  - >1 ROWs: `set ...` uses an unspecified filtered FROMS_ROW (to avoid)
@@ -2373,23 +2400,24 @@ copy "TABLE"[("COL",...)]         #Append SOURCE to a TABLE
                                   #  - stdin
                                   #  - program 'PROGRAM', using its stdout
 
-copy ... with OPTS                #
-OPTS.text|csv|binary              #Def: text
-OPTS.oids                         #Copies OIDS too
-OPTS.delimiter                    #STR. COL delimiter
+copy ... with ZOPTS               #
+ZOPTS.format                      #'text' (def), 'csv' or 'binary'
+ZOPTS.encoding                    #'ENCODING' (def: client_encoding)
+ZOPTS.freeze                      #Force a vacuum freeze first
+
+TEXT|CSV ONLY ==>
+ZOPTS.delimiter                   #STR. COL delimiter
                                   #Def: '\t' (text) or ',' (csv)
-OPTS.null                         #STR used for null values
+ZOPTS.null                        #STR used for null values
                                   #Def: '\N' (text) or '' (csv)
-OPTS.quote                        #STR (def '"')
-OPTS.encoding                     #STR (def: client_encoding)
-OPTS.freeze                       #Force a vacuum freeze first
 
 CSV ONLY ==>                      #
-OPTS.header                       #Make first CSV row the COL names
-OPTS.escape                       #STR (def: '\')
-OPTS.force quote ("COL",...)|*    #Force quoting specific COLs (unless null)
+ZOPTS.header                      #Make first CSV row the COL names
+ZOPTS.quote                       #STR (def '"')
+ZOPTS.escape                      #STR (def: '\')
+ZOPTS.force_quote ("COL",...)|*   #Force quoting specific COLs (except null)
                                   #Only with `copy to`
-OPTS.force not null("COL",...)    #Fail if specific COLs are null
+ZOPTS.force[_not]_null ("COL",...)#Fail if specific COLs are [not] null
                                   #Only with `copy from`
 
 ENVVAR DateStyle                  #Should be set to 'ISO'
@@ -2403,26 +2431,31 @@ ENVVAR IntervalStyle              #Should be set to 'sql_standard'
                                              \=+===============================+=/
 
 
-grouping sets, cube, rollup???
-
-select ... group by REXPR,...     #Group ROWs that are equal by all of REXPR,... (e.g. "COL")
+select ... group by COL_REXPR,... #Group ROWs that are equal by all of COL_REXPR,...
                                   #Each ROW_SET group is reduced to a single ROW
                                   #If a COL uses AFUNC(), it:
                                   #  - reduces ROW_SET into a SCALAR
-                                  #  - cannot be targeted by a REXPR
+                                  #  - cannot be targeted by a COL_REXPR
                                   #Some COLs cannot be reduced:
-                                  #  - if uses neither:
-                                  #     - REXPR, or a superset of it
-                                  #        - e.g. if REXPR is `a * 2`, using `a * 2 + 1`
-                                  #     - AFUNC()
+                                  #  - if neither:
+                                  #     - uses COL_REXPR, or a superset of it
+                                  #        - e.g. if COL_REXPR is `a * 2`, using `a * 2 + 1`
+                                  #     - uses AFUNC()
+                                  #     - "functional dependency", i.e. a COL_REXPR:
+                                  #        - is a "COL"
+                                  #        - that is a primary key
+                                  #        - of the same "TABLE"
                                   #  - then:
                                   #     - cannot use any "ROW_ALIAS"[."COL"]
                                   #     - all those COLs are computed in a single separate ROW_SET, combined with a cartesian product
                                   #If no `group by`, AFUNC() operates on all ROWs as a single group
 
-select ... having BOOL_REXPR      #Like `where BOOL` except:
+select ... having BOOL_REXPR      #Like `where BOOL_REXPR` except:
                                   #  - after `group by`
                                   #  - can use AFUNC()
+
+grouping sets, cube, rollup???
+See SELECT reference ???
 
 AGGREGATE FUNCTION ==>            #Transform a COL to a scalar VAL.
                                   #If AFUNC(VAL), VAL is converted to COL.
@@ -3424,10 +3457,18 @@ on "TABLE"(COL,...                #Can't create two INDEX with same names, even 
                                   #  - to know when to use an INDEX, check with explain if INDEX is chosen by the planner for most-used
                                   #    queries or skipped in favor of a sequential scan.
 
-exclude
+create table ...
+ exclude|unique|primary key ...   #Those CONSTRAINTs create an underlying INDEX
+ [include("COL",...)]
+ [with (OPTS)]                    #Configure underlying INDEX
+
+create table ... exclude
  [using INDEX_METHOD]
- ("COL" [OPCLASS] [asc|desc]      #COL_ARG. Define options of INDEX underlying exclude CONSTRAINT
- [nulls first|last] ...) ...      #INDEX_METHOD cannot be gin
+ ("COL"|(REXPR)
+  [OPCLASS]
+  [asc|desc]
+  [nulls first|last]              #COL_ARG. Configure underlying INDEX
+ ,...) ...                        #INDEX_METHOD cannot be gin
 
 INDEX_METHOD ==>                  #"Index accessor method"
                                   #Structure in which indexes are conceptually stored (because in the end they are TABLE), and
@@ -3462,6 +3503,9 @@ create operator
 class|family ...                  #Create user-defined OPCLASS|OPFAMILY. Need C functions (see doc online)
 alter operator
 family ...                        #
+
+create table ...
+ using ACCESS_METHOD              #
 
 drop index concurrently ...       #Like create index concurrently ...
                                   #Needs to be outside of a transaction, restrict and only one INDEX
@@ -3611,8 +3655,9 @@ create index ...
 create database
 [with] tablespace [=] "TABLESPACE"#Set ENTITY TABLESPACE on creation
 
-create table ... CONSTRAINT ...   #Set ENTITY's INDEX TABLESPACE
- using index tablespace "TABLSPAC"#For CONSTRAINT: unique, primary key, exclude
+create table ...
+ exclude|unique|primary key ...
+ using index tablespace "TABLSPAC"#Set TABLESPACE of CONSTRAINT's INDEX
 
 alter ENTITY "ENTITY" ...         #Set TABLESPACE of one ENTITY. Moves the data files.
  set tablespace "TABLESPACE"      #For ENTITY: table, materialized view, index, database
@@ -5453,7 +5498,7 @@ pg_resetxlog                      #To use when WAL is corrupted. Look at online 
 pg_controldata DATADIR            #Show debug info for WAL
 
 create unlogged table|sequence ...#TABLE|SEQUENCE is not written to WAL
-                                  #Faster, but not crash-safe
+select ... into unlogged table ...#Faster, but truncated on unclean shutdown
                                   #Also, cannot use replication to standby servers
 
 SEQUENCE.log_cnt                  #0-32 (def: 0). Decrements at each setval|nextval() then cycles to 32.
