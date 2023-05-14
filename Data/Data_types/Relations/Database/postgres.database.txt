@@ -149,6 +149,19 @@ U&"VAR2"                          #Make VAR case-sensitive
 --COMMENT ...
 /* COMMENT */                     #
 
+DDL                               #"Data Definition Language"
+                                  #Statements operating on entities themselves
+                                  #E.g. create, alter, drop, truncate, comment, etc.
+DML                               #"Data Manipulation Language"
+                                  #Statements operating on entities contents
+                                  #E.g. select, insert, update, delete, explain, etc.
+DCL                               #"Data Control Language"
+                                  #Statements operating on authorization
+                                  #E.g. grant, revoke, etc.
+TCL                               #"Transaction Control Language"
+                                  #Statements operating on transactions
+                                  #E.g. commit, rollback, savepoint, etc.
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -253,6 +266,14 @@ VAL between [symmetric]           #BOOL. Same as VAL >= VAL2 and VAL <= VAL3
                                   #  - otherwise: returns false
 greatest|least(VAL...)->BOOL      #Using > <
 
+VAL [not] in (VAL2,...)           #BOOL. Whether VAL = <> any VAL2
+
+case [LVAL]
+  when TVAL then RVAL
+  [...]
+  [else RVAL]                     #Switch statement. Substitutes to RVAL where LVAL = TVAL
+end                               #Def LVAL is true, i.e. can use TVAL BOOLs, like an if statement
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -293,8 +314,9 @@ null                              #Missing data
 VAL OP null                       #Always return null, except statements below
 FUNC(..., null, ...)              #Includes:
                                   #  - null = <> < <= > >= null
-                                  #  - case VAL when null
-                                  #  - exists(), ROW in TABLE, etc.
+                                  #  - case null ..., case VAL when null
+                                  #  - ROW = <> ROW2
+                                  #  - exists(SUBQUERY)
 
 null or false                     #null
 null and true                     #null
@@ -306,6 +328,8 @@ null = null                       #Is BOOL for clauses about duplicates (except 
                                   #  - partition by
                                   #  - union|intersect|except [all]
                                   #  - distinct
+                                  #Is also BOOL inside ARR (but not ROW)
+                                  #  - null ARR item is distinct from missing item
 where BOOL                        #null -> false
 check (BOOL)                      #null -> true
 
@@ -435,7 +459,7 @@ degrees|radians(NUM)->FLOAT       #Conversion
 pi()->FLOAT                       #
 
 generate_series(NUM, NUM2[, NUM3])
- ->TABLE                          #From NUM to NUM2, with step NUM3 (def: 1)
+ ->NUM4_SET                       #From NUM to NUM2, with step NUM3 (def: 1)
 
 width_bucket
  (NUM, NUM2, NUM3, INT)->INT2     #Bucket index INT2 of value NUM in an histogram from NUM2 to NUM3 with INT buckets.
@@ -587,9 +611,8 @@ STR [!]~[*] 'REGEXP'              #BOOL. True if matches
 substring(STR, 'REGEXP')          #Returns first match
  ->STR2|null                      #If there is an outer set of parenthesis, return that part only
 regexp_matches                    #Returns first match (or all if FLAG 'g')
- (STR, STR2[, 'FLAGS'])->TABLE    #TABLE is single COL
-                                  #Each COL value is an ARR for parenthesis matches (if none, single item)
-                                  #If no match, no ROWs
+ (STR, STR2[, 'FLAGS'])->ARR_SET  #If no match, empty SET
+                                  #ARR are parenthesis matches (if none, single item)
 
 regexp_replace
  (STR, 'REGEXP', STR2[, 'FLAGS'])
@@ -598,7 +621,8 @@ regexp_replace
 regexp_split_to_array
  (STR, 'REGEXP'[, 'FLAGS'])       #Split STR using REGEXP delimiter.
  ->STR_ARR                        #If delimiter not found, returns {STR}
-regexp_split_to_table(...)->TABLE #Same but as a TABLE
+regexp_split_to_table(...)
+ ->STR_SET                        #Same but as a SET
 
 
                                              /=+===============================+=\
@@ -788,7 +812,7 @@ to_number(STR, STR2)->FLOAT       #Inverse
 
 generate_series
  (TIMESTAMP, TIMESTAMP2, INTERVAL)
- ->TABLE                          #From TIMESTAMP to TIMESTAMP2, with step INTERVAL
+ ->TIMESTAMP_SET                  #From TIMESTAMP to TIMESTAMP2, with step INTERVAL
 
 pg_sleep(FLOAT)                   #Sleeps FLOATS seconds
                                   #Time resolution is OS-specific, often 10ms
@@ -906,7 +930,7 @@ random()->FLOAT                   #From 0 to 1
 setseed(FLOAT)                    #FLOAT is from 0 to 1
 
 normal_rand(INT, FLOAT, FLOAT2)  ##INT random variables following N(FLOAT, FLOAT2)
- ->TABLE                         ##Postgres extension 'tablefunc'
+ ->INT_SET                       ##Postgres extension 'tablefunc'
 
 
                                              /=+===============================+=\
@@ -939,9 +963,6 @@ json                              #TYPE. Including scalar types.
                                   #Must be well-formed.
 
 'JSON'                            #JSON_UNKNOWN
-                                  #When converting from|to TABLE:
-                                  #  - each ARR item is a ROW
-                                  #  - each OBJ key is a COL
 KEY                               #UINT|STR
 
 JSONB ~> BOOL|NUM|STR             #Type cast. Fail if top-level value is not BOOL|NUM|STR|null
@@ -951,23 +972,26 @@ JSON->>KEY                        #OBJ[KEY] as 'JSON2'
 JSON#>KEY_ARR
 JSON#>>KEY_ARR                    #Same but with multiple successive KEYs
 
+CONVERSION ==>                    #ARR item <-> SET element
+                                  #OBJ <-> ROW
+                                  #OBJ key <-> COL
+
 to_json(VAL)->JSON                #
 array_to_json(ARR)->ARR_JSON      #
 row_to_json(ROW)->OBJ_JSON        #
 
-json_array_elements(ARR_JSON)
- ->TABLE                          #Converts ARR_JSON to TABLE
+json_array_elements(ARR_JSON)->SET#Converts ARR_JSON to SET
 json_array_length(ARR_JSON)->UINT #ARR.length
-json_populate_record              #Converts OBJ_JSON to single-ROW TABLE
- (null::ROW_TYPE, OBJ_JSON)->TABLE#OBJ keys not in ROW_TYPE are omitted
+json_populate_record              #Converts OBJ_JSON to ROW
+ (null::ROW_TYPE, OBJ_JSON)->ROW  #OBJ keys not in ROW_TYPE are omitted
 json_populate_recordset
  (null::ROW_TYPE, OBJ_ARR_JSON)
- ->TABLE                          #Converts OBJ_ARR_JSON to multiple-ROWs TABLE
+ ->ROW_SET                        #Converts OBJ_ARR_JSON to ROW_SET
 
-json_each(OBJ_JSON)->TABLE        #Iterate over OBJ entries, one ROW per entry.
-                                  #TABLE has two columns: key STR, value JSON
-json_each_text(OBJ_JSON)->TABLE   #Same but "value" column is STR
-json_object_keys(OBJ_JSON)->TABLE #Same but only the "key" column
+json_each(OBJ_JSON)->ROW_SET      #Each OBJ entry -> ROW with COLs: key STR, value JSON
+json_each_text(OBJ_JSON)->ROW_SET #Same but value COL is STR
+json_object_keys(OBJ_JSON)
+ ->STR_SET                        #Each OBJ key -> STR
 
 
                                              /=+===============================+=\
@@ -1036,9 +1060,9 @@ slice(HSTORE, 'KEY'_ARR)->HSTORE2##Pick.
 hstore(ROW)->HSTORE              ##Using COL names as KEYs
 ROW #= HSTORE                    ##ROW2. Set ROW values using HSTORE
 
-skeys(HSTORE)->TABLE
-svals(HSTORE)->TABLE             ##Same as akeys|avals() but returning a single-COL TABLE
-each(HSTORE)->TABLE              ##TABLE has two COLs: key STR, value STR
+skeys(HSTORE)->'KEY'_SET
+svals(HSTORE)->VAL_SET           ##Same as akeys|avals() but as SET
+each(HSTORE)->ROW_SET            ##With COLs: key STR, value STR
 
 HSTORE ~> JSON[B]                ##Type cast, similar to hstore_to_json()
 hstore_to_json(HSTORE)->OBJ_JSON ##OBJ values are all STR|null
@@ -1259,8 +1283,7 @@ numrange                          #RANGE TYPE of NUMERIC
 daterange                         #RANGE TYPE of DATE
 ts[tz]range                       #RANGE TYPE of TIMESTAMP[TZ]
 
-create type TYPE as range         #New RANGE TYPE.
- (OPT = VAL)                      #
+create type TYPE as range(OPTS)   #New RANGE TYPE.
 OPTS.subtype                      #TYPE of start|end
 OPTS.subtypediff                  #FUNC(VAL, VAL2)->UINT, computing distance
 OPTS.canonical                    #FUNC2(VAL)->VAL (def: noop) transforming each VAL
@@ -1333,7 +1356,7 @@ OPERATORS ==>                     #All FUNCs and operators for RANGE work with M
 range_merge(MULTIRANGE)->RANGE    #Convert to single RANGE, filling any gap
 multirange(RANGE)->MULTIRANGE     #Inverse
 
-unnest(MULTIRANGE)->TABLE         #Single-COL RANGE where each ROW is a RANGE
+unnest(MULTIRANGE)->RANGE_SET     #
 
 
                                              /=+===============================+=\
@@ -1358,39 +1381,54 @@ array[VAL...]                     #ARR literal value.
                                   #     - must be UINT + ARR.length - 1, i.e. cannot truncate|extend
                                   #One [...] per dimension
 
-array(SUBQUERY)->ARR              #TABLE must have only one COL
+ARR[UINT]                         #VAL. null if out-of-bound.
+ARR[UINT:UINT2]                   #ARR2, from UINT (included) to UINT2 (included)
+                                  #Uses max(UINT2, ARR.length)
+                                  #Empty if UINT2 < UINT, or if UINT > ARR.length
+ARR[UINT:]                        #Same as ARR[UINT:ARR.length]
+ARR[:UINT2]                       #Same as ARR[0:UINT2]
 
-ARR[UINT]...                      #Accessing ARR. Index starts at 1. Returns null if any index is out-of-bound.
-ARR[UINT1:UINT2]...               #Accessing slices of ARR.
-                                  #Subsequent dimensions must use slices too (but can take a single element of the slice).
-                                  #Returns null if one index is out-of-bound, and empty ARR if both are out-of-bound.
+ARR = <> ARR2                     #BOOL. Done deeply
+                                  #null can be compared, and is different from missing item
+ARR < <= > >= ARR2                #BOOL, with first item compared first, etc.
+                                  #Missing item < present item < null
 
-VAL [not] in (VAL2,...)           #BOOL. Whether VAL = <> any VAL2
 VAL OP any|all (ARR)              #BOOL. Whether VAL OP any|all ARR item
 
-array_ndims(ARR)                  #Returns number of dimensions as UINT
-array_dims(ARR)                   #Returns number of dimensions as STR, e.g. '[1:3][1:4]'
-array_lower|upper(ARR, UINT)      #Returns the lower and upper bound of dimension UINT, as UINT2.
-array_length(ARR, UINT)           #Same as array_upper - array_lower
-generate_subscripts(ARR, UINT)    #Returns the indexes of dimension UINT, as a TABLE
+ARR @> ARR2                       #BOOL. Is superset|equal
+ARR <@ ARR2                       #BOOL. Is subset|equal
+ARR && ARR2                       #BOOL. Overlaps, i.e. at least one item equal
 
-ARR = ARR_LIT                     #Any expression can be used to write an ARR or part of it. If index is out-of-bound and only one
-ARR[...]=VAL|ARR_LIT              #dimension, size of ARR is extended (if less than 0, modifies lower bound).
-VAL|ARR || ARR2
-ARR2 || VAL|ARR                   #If VAL|ARR has dimension n-1 and ARR2 dimension n, appends|prepends. If same dimension, concatenate
-array_append|cat(ARR, VAL|ARR2)   #Same as ||, but throw error if not VAL|ARR2
-ARR @> ARR2                       #True if ARR2 is contained within ARR (all elements of ARR are in ARR2)
-ARR <@ ARR2                       #Inverse
-ARR && ARR2                       #True if ARR overlaps ARR2 (any element of ARR is in ARR2)
-any(ARR) OP VAL                   #Same as ARR[1] OP VAL or ARR[2] OP VAL or ... Must be on the right operand.
-and(ARR) OP VAL                   #Same with and
+array_ndims(ARR)->UINT|null       #NUM of dimensions. null if empty ARR
+array_dims(ARR)->'[UINT:UINT2]...'#Each dimensions lower|upper bound
+generate_subscripts(ARR, UINT3)
+ ->[UINT, UINT2]_SET              #Dimension UINT3 lower|upper bound
+array_lower(ARR, UINT3)->UINT     #Dimension UINT3 lower bound
+array_upper(ARR, UINT3)->UINT2    #Dimension UINT3 upper bound
+array_length(ARR, UINT3)->UINT    #array_upper - array_lower
 
-array_fill(VAL, ARR[, ARR2])->ARR3#ARR3 filled with VAL, of dimensions ARR and lower bound ARR2 (def: {1...})
-array_remove(ARR, VAL)->ARR2      #One-dimensional ARR2 without any element = VAL
-array_replace(ARR, VAL, VAL2)     #Same but replace with VAL2
-array_to_string(ARR, STR2[, STR3])#Returns concatenation of ARR as STR, with STR2 as delim, and STR3 replacing null values (def: removes them)
-string_to_array(STR, STR2[, STR3])#Inverse. If delim is null, each character is separated with next one. If "", returns whole STR as one element ARR
-unnest(ARR)                       #Flattens ARR, and returns it as a TABLE with one column and one row for each VAL.
+ARR || VAL
+VAL || ARR
+array_append(ARR, VAL)->ARR       #Append
+ARR || ARR2
+array_cat(ARR, ARR2)->ARR         #Concatenates
+
+array(SSUBQUERY)->ARR             #
+unnest(ARR)->SET                  #Flattens ARR and returns as SET
+
+array_to_string                   #Cast each ARR item to STR, then join with 'DELIM'.
+ (ARR[, 'DELIM'[, 'NULL']])->STR  #If 'NULL' specified, nulls are transformed to it. Otherwise, they are ignored.
+string_to_array                   #Inverse
+ (STR, 'DELIM'|null[, 'NULL'])    #If DELIM is null, split each character.
+ ->ARR                            #If DELIM is '', returns STR as ARR with single item
+
+array_fill                        #ARR where all values are VAL
+ (VAL, UINT_ARR[, UINT_ARR2])->ARR#Number of dimensions is UINT_ARR[2].length
+                                  #UINT_ARR are upper bounds, UINT_ARR2 lower bounds (def: {1,...})
+
+array_remove(ARR, VAL)->ARR       #Filter out any element = VAL
+                                  #ARR must be one-dimensional
+array_replace(ARR, VAL, VAL2)->ARR#Same but replace with VAL2
 
 
                                              /=+===============================+=\
@@ -1402,9 +1440,14 @@ unnest(ARR)                       #Flattens ARR, and returns it as a TABLE with 
 
 ROW_TYPE                          #Conceptually like an OBJ
                                   #Also called "composed type" or "ctype"
+record                            #TYPE of any ROW_TYPE
 
 ROW                               #ROW_TYPE value
 COL                               #"Column", i.e. ROW property
+                                  #Ordered
+                                  #Named. Can have duplicate names
+                                  #  - e.g. select 1 as a, 2 as a;
+                                  #  - but (ROW)."COL" fails
 
 create type "ROW"
  as ("COL" TYPE,...)              #Create a new ROW_TYPE
@@ -1427,11 +1470,13 @@ alter type "ROW"
                                   #COL names: fNUM
                                   #"row" is necessary only if only one VAL
 '(VAL,...)'                       #Same as ROW_UNKNOWN
+                                  #Can cast to ROW_TYPE but not to record
 
-(ROW)."COL"                       #VAL
-"COL"(ROW)                        #Additional pathensis sometimes needed
+(ROW)."COL"
+"COL"(ROW)                        #VAL
 
-ROW = <> ROW2                     #BOOL
+ROW = <> ROW2                     #BOOL. Done deeply
+                                  #Must have same amount of COLs, but names do not need to match
 ROW < <= > >= ROW2                #BOOL, with first COL compared first, etc.
 
 
@@ -1442,21 +1487,38 @@ ROW < <= > >= ROW2                #BOOL, with first COL compared first, etc.
                                              \=+===============================+=/
 
 
-TODO ==> go through all mentions of TABLE
-
 SET                               #Like ARR except operations|FUNCs automatically iterate over each item
                                   #Always top-level
 SCALAR                            #Opposite of SET
 
-SCALAR_OP SET
-SCALAR_FUNC(SET)                  #Returns SET2, iterating over SET items
-SET SCALAR_OP SCALAR
-SCALAR_FUNC(SET, SCALAR)          #Same but repeats SCALAR
-SET SCALAR_OP SET2
-SCALAR_FUNC(SET, SET2)            #Same but fills smaller SET with nulls
+SCALAR_FUNC(SET)->SET             #Iterates over SET items
+SCALAR_FUNC(SET, SCALAR)->SET     #Same but repeats SCALAR
+SCALAR_FUNC(SET, SET2)->SET       #Same but fills smaller SET with nulls
 
-SET_OP SCALAR
 SET_FUNC(SCALAR)                  #Fails
+
+SCALAR_OP SET
+SET SCALAR_OP SCALAR
+SET SCALAR_OP SET2
+SET_OP SCALAR                     #Same with operators
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:           SUBQUERY            :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+SUBQUERY                          #ROW_SET that is the result of a SELECT statement (or equivalent)
+                                  #I.e. not returned by a FUNC()
+SSUBQUERY                         #SUBQUERY with a single COL
+
+exists(SUBQUERY)->BOOL            #Whether SUBQUERY has at least one ROW
+                                  #Since SUBQUERY values are not used, `select 1 ...` is often used
+
+ROW OP any|all SUBQUERY           #BOOL. Whether ROW OP any|all SUBQUERY_ROW
+ROW [not] in SUBQUERY             #Same as ROW =|<> any SUBQUERY
 
 
                                              /=+===============================+=\
@@ -1466,30 +1528,14 @@ SET_FUNC(SCALAR)                  #Fails
                                              \=+===============================+=/
 
 
-TABLE                             #ROW_SET that is named, either:
-                                  #  - persisted ("create table")
-                                  #  - TABLE_ALIAS
+TABLE                             #ROW_SET with a known ROW_TYPE, that is persisted
 
-SUBQUERY                          #Result of a SELECT statement
-                                  #I.e. TABLE but not returned by a FUNC()
-
-"TABLE"                           #Can be used as ROW TYPE
+"TABLE"                           #Can be used as ROW_TYPE
                                   #  - CONSTRAINTs are stripped
-                                  #But not as "ROW" identifier nor ROW value.
+                                  #But not as a ROW[_SET] value.
 
 ["TABLE".]"COL"
 "COL"[("TABLE")]                  #Inside a query, can omit current "TABLE" when retrieving a COL
-
-exists(TABLE)->BOOL               #Whether TABLE has at least one ROW
-                                  #Since TABLE rows do not matter, if TABLE is a subquery, often use: select 1 ...
-                                  #Example:
-                                  #  select "COL" from "TABLE" where exists
-                                  #  (select 1 from "TABLE2" where "TABLE2"."COL2" = "TABLE"."COL")
-
-ROW [not] in TABLE                #Same as ROW =|<> any TABLE
-ROW OP any|all TABLE              #Returns true if any|all of the rows of TABLE OP ROW
-                                  #Often used row-wise in a where clause.
-
 
 
                                              /=+===============================+=\
@@ -1499,47 +1545,80 @@ ROW OP any|all TABLE              #Returns true if any|all of the rows of TABLE 
                                              \=+===============================+=/
 
 
-create domain TYPE as TYPE2       #Creates a user-defined TYPE, interchangeable with TYPE2, but with following
- [default VAL]                    #Default VAL (def: null, can be default)
- [constraint CONSTRAINT]          #Constraint: BOOL can use "value", which refers to the values used.
-                                  #CONSTRAINT just specify the name.
-                                  #Ex: email adresses
- [not null|check(BOOL)]           #
+create domain TYPE as TYPE2       #Creates a user-defined TYPE, interchangeable with TYPE2, but with following.
+ [default VAL]                    #Default VAL (def: null) (can be: default)
+ [not null]                       #
+ [check(BOOL)]                    #
+ [constraint "CONSTRAINT"]        #"CONSTRAINT" is name only.
+                                  #BOOL_CONSTRAINT can use "value", which refers to the values used.
 
 alter domain TYPE set default VAL #
 alter domain TYPE
  set|drop not null                #
 alter domain TYPE add
- [constraint CONSTRAINT]
- [not null|check(BOOL)]
- [not valid]                      #not valid: like alter table ... not valid
+ [not null]
+ [check(BOOL)]
+ [constraint "CONSTRAINT"]        #
+ [not valid]                      #Like alter table ... not valid
 alter domain TYPE drop constraint
- [if exists]
- CONSTRAINT restrict|cascade      #
+ [if exists] "CONSTRAINT"
+ restrict|cascade                 #
 alter domain TYPE
  rename constraint
- CONSTRAINT to CONSTRAINT2        #
+ "CONSTRAINT" to "CONSTRAINT2"    #
 
-create type TYPE
- (input = FUNC,
-  output = FUNC2, ...)            #Creates user-defined TYPE, based on C functions (see online doc)
+create type TYPE(OPTS)            #Creates user-defined TYPE, based on C functions
+                                  #Not documented yet
+OPTS.input                        #FUNC
+OPTS.ouput                        #FUNC2
 
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:           STRUCTURE           :==(
+                                            )==:             DROP              :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
-case [VAL]
-  when VAL2a then
-    VAL2b
-  [when VAL3a then
-    VAL4b]...
-  [else                           #Switch statement. Substitutes to VAL|VAL2|VAL3
-    VAL4]                         #Def VAL is true, i.e. if VAL*a are BOOL, is like an if statement
-end                               #Use =, e.g. VAL = VAL2a, so can't compare to null (should use "case when VAL is null" if can be null)
+drop WORD ...                     #All create WORD ... have a related drop WORD ...
+ [if exists]                      #Unless set, fails if exists
+
+ VAR,...                          #For most WORDs
+ VAR                              #For access method, collation, conversion, database, event trigger, language,
+                                  #subscription, tablespace, text search *
+ VAR(...)                         #For aggregate, function, procedure, routine
+ VAR(TYPE|none, TYPE2|none)       #For operator
+ (TYPE as TYPE2)                  #For cast
+ VAR on "TABLE"                   #For policy, trigger, rule
+ VAR using INDEXMETHOD            #For operator class|family
+ for TYPE language LANG           #For transform
+ for ROLE server SERVER           #For user mapping
+                                  #ROLE can be user, current_role, current_user, public
+
+ [restrict|cascade]               #If there are dependent objects
+                                  #  - 'restrict' (def): fail
+                                  #  - 'cascade':
+                                  #     - drop them, recursively
+                                  #     - not allowed for database|tablespace|role|user mapping
+                                  #Dependent objects removed even with 'restrict':
+                                  #  - database: pg_catalog.* entries
+                                  #  - extension: pg_catalog.* entries, routine, table column
+                                  #  - table: constraint, index, rule, trigger
+                                  #  - role: role membership
+                                  #  - operator family: operator class
+                                  #Dependent objects removed with 'cascade':
+                                  #  - schema: objects in the SCHEMA
+                                  #  - table: foreign key constraint
+                                  #  - aggregate, [foreign] table, operator, [materialized] view: [materialized] view
+                                  #  - access method, operator class|family, text search configuration: index
+                                  #  - type, domain: table column
+                                  #  - type, language: function, operator
+                                  #  - function: operator, trigger
+                                  #  - access method: operator class|family
+                                  #  - foreign data wrapper: foreign table, server
+                                  #  - server: user mapping
+                                  #  - text search dictionary|parser: text search configuration
+                                  #  - text search template: text search dictionary
 
 
                                              /=+===============================+=\
@@ -1549,39 +1628,16 @@ end                               #Use =, e.g. VAL = VAL2a, so can't compare to 
                                              \=+===============================+=/
 
 
-PGMODELER ==>                     #GUI modelling tool:
-                                  #  - goal is to create/modify the DDL of a database, using a GUI.
-                                  #     - can import DDL from existing database (of objects the user has permissions to query).
-                                  #  - outputs SQL commands (or send to a database) or PNG image.
-                                  #  - can validate DDL and issue warnings (requires connection to a database)
-                                  #  - most DDL is available except foreign wrapper, etc., materialized views, event triggers,
-                                  #    dictionaries, unlogged|temp tables, reference to VIEW COL
-                                  #  - relationships: generalization is inherits, copy is create table like, others are foreign keys (with proper uniqueness)
-                                  #  - there is a tree to go through object on the right panel
+alter WORD ... VARDEF ...         #All create WORD ... have a related alter WORD ...
+                                  #This changes options after creation
+                                  #VARDEF has same syntax as drop WORD VARDEF
+                                  #Not for WORD: cast
 
-drop WORD [concurrently]          #All create WORD have a related drop WORD.
- [if exists] ...                  #  - if exists (all): no error if not existing
- [on "TABLE"]                     #  - cascade|restrict:
- cascade|restrict                 #     - drop also objects that depend on it (cascade) or not restrict (def, should always be mentioned)
-                                  #     - doesn't work for database and tablespace: need to remove all objects manually first
-                                  #  - concurrently (index):
-                                  #     - like create index concurrently ...
-                                  #     - needs to be outside a transaction, restrict and only one INDEX
-                                  #... is VAR except:
-                                  #  - VAR... (domain|table|sequence|[materialized] view|schema|extension|index|foreign table|type)
-                                  #  - VAR(...) (aggregate, function)
-                                  #  - VAR(none|TYPE, none|TYPE2) (operator)
-                                  #  - VAR on "TABLE" (trigger, rule)
-                                  #  - (TYPE as TYPE2) (cast)
-                                  #  - VAR using INDEXMETHOD (operator class|family)
-                                  #  - for ROLE|current_user server SERVER (user mapping)
-                                  #drop table ... cascade|restrict also remove related INDEX, RULE, TFUNC and CONSTRAINT
+alter WORD ... rename to "VAR"    #Rename an entity.
+                                  #For all TYPE but extension, large object, operator, user mapping
 
-alter TYPE VAR                    #Every create TYPE VAR (except cast) has a corresponding alter TYPE VAR ... to change options after creation
+alter TYPE VAR
  [if exists] ...                  #if exists is available if create ... if not exists is available.
-                                  #Other alter ... are documented in this doc
-alter TYPE VAR ...
-rename to VAR2                    #For all TYPE but extension, operator
 
 create [temp|unlogged]            #Creates a TABLE containing ARG columns, which can be:
 table [if not exists]             # - "COL" TYPE [constraint CONSTRAINT] ... [initially deferred|immediate] [[not] deferrable]:
@@ -2954,6 +3010,9 @@ class|family ...                  #Create user-defined OPCLASS|OPFAMILY. Need C 
 alter operator
 family ...                        #
 
+drop index concurrently ...       #Like create index concurrently ...
+                                  #Needs to be outside of a transaction, restrict and only one INDEX
+
 reindex index|table|              #Rebuild INDEX... of the target (system is like database but only include system catalogs)
 database|system                   #Needed to reclaim space when an INDEX has shrink size a lot.
 INDEX|"TABLE"|DATABASE            #Also needed if an INDEX is corrupted due to software bug.
@@ -3084,6 +3143,8 @@ location STR                      #  - owned by ROLE (def: current ROLE)
                                   #Symlinks to DIR of user-created TABLESPACE can be found in DATADIR/pg_tblspc
 alter TYPE VAR ...
  set tablespace TABLESPACE        #For all TYPE that can have a TABLESPACE
+
+drop tablespace ...               #Can only be done if empty
 
 WRITING ==>                       #Best way to write a big amount of data fast:
                                   #  - put in only one transaction/statement
@@ -3222,6 +3283,7 @@ cascade|restrict                  #revoke privileges given to ROLE.
 reassign owned
 by ROL... to ROLE2                #Change ownership.
 
+drop role ...                     #Can only be done if not used by any DATABASE
 
 set [local] role ROLE             #Same syntax as set, but here change current ROLE
                                   #If not superuser, must be a ROLE that the session_user is member of (but not inverse, not other
@@ -3345,8 +3407,7 @@ from ROLE...                      #Revoke privileges granted to others by ROLE2 
 cascade|restrict                  #ROLE can only revoke ROLE2 for PRIVILEGE it previously personnally granted the other or a ROLE the
                                   #other is member of.
 
-alter default
-privileges                        #Change default PRIVILEGE for ROLE2 (in ...) of all VAR (write TYPEs, not TYPE VAR) that will be
+alter default privileges          #Change default PRIVILEGE for ROLE2 (in ...) of all VAR (write TYPEs, not TYPE VAR) that will be
 [for ROLE...]                     #created in the future by ROLE (must be current user (def) or a ROLE3 that ROLE is member of), in
 [in schema SCHEMA]                #SCHEMA (if specified)
 grant|revoke...                   #Only for TABLE, SEQUENCE, FUNC or TYPE.
@@ -3789,6 +3850,9 @@ create database DATABAS           #Create a DATABASE
                                   #Cannot be inside a transaction.
 alter database DATABASE
 connection limit INT              #
+
+drop database ...                 #Cannot be done if currently connected to it
+ [with force]                     #Terminate ongoing connections. Fail if could not
 
 
                                              /=+===============================+=\
@@ -5762,3 +5826,21 @@ PG.connect(OBJ, FUNC)             #Like new PG.CLIENT(OBJ, FUNC).connect() but u
 PG.on
  ("error", FUNC(ERROR, CLIENT))   #
 PG.end()                          #Close all CLIENT, even if currently querying.
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:           PGMODELER           :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+PGMODELER ==>                     #GUI modelling tool:
+                                  #  - goal is to create/modify the DDL of a database, using a GUI.
+                                  #     - can import DDL from existing database (of objects the user has permissions to query).
+                                  #  - outputs SQL commands (or send to a database) or PNG image.
+                                  #  - can validate DDL and issue warnings (requires connection to a database)
+                                  #  - most DDL is available except foreign wrapper, etc., materialized views, event triggers,
+                                  #    dictionaries, unlogged|temp tables, reference to VIEW COL
+                                  #  - relationships: generalization is inherits, copy is create table like, others are foreign keys (with proper uniqueness)
+                                  #  - there is a tree to go through object on the right panel
