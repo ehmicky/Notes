@@ -13,11 +13,14 @@ TO DOCUMENT:
      - chapter 15
      - create|alter table ... with (parallel_workers)
         - see also impact on `create index` (see SQL command reference)
+     - ENVVAR parallel_setup|tuple_cost, min_parallel_table|index_scan_size
   - transform
      - pg_transform
   - logical replication:
      - pg_publication, pg_publication_namespace, pg_publication_rel, pg_publication_tables
      - pg_subscription, pg_subscription_rel, pg_stat_subscription, pg_stat_subscription_stats
+  - JIT:
+     - https://www.postgresql.org/docs/15/jit.html
   - security labels:
      - pg_[sh]seclabel, pg_seclabels
   - all `???`
@@ -338,9 +341,17 @@ SIZING CAST ==>                   #Type cast to same type
                                   #  - padding or truncating
                                   #Usually implicit casting
 
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:             TOAST             :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
 TOAST ==>                         #Large variable length TYPE values are split them in several ~2KB chunks
                                   #Goals:
-                                  #  - fit in a single 8KB page, so that computation can happen in-memory only, which is faster
+                                  #  - fit in a single 8KB heap page, so that computation can happen in-memory only, which is faster
                                   #  - compression, to save space
 IN-LINE TOAST ==>                 #Keeps data as is but possibly compress it
                                   #Requires 1|4 additional bytes
@@ -2018,10 +2029,6 @@ TABLE                             #ROW_SET with a known ROW_TYPE, that is persis
                                   #  - "ROW_TYPE" variable
                                   #  - ROW[_SET] value
 
-HEAP ==>                          #Memory storing TABLEs (as opposed to INDEXs)
-HEAP PAGE ==>                     #8KB memory page containing 1-n TABLE ROWs
-                                  #Also called "blocks"
-
 create
  [temp|unlogged]
  table "TABLE"
@@ -2363,7 +2370,8 @@ PARTITION METHOD ==>              #One of: list, range, hash
 NUMBER OF PARTITIONS ==>          #If too high: slower due to bookeeping and query analyzing time
                                   #If too low: slower due to bigger TABLEs slower
 
-ENVVAR enable_partition_pruning   #If 'on', queries skip child TABLEs if `where BOOL_REXPR` does not match its `for values ...`
+ENVVAR enable_partition_pruning   #"Partition pruning".
+                                  #Queries skip child TABLEs if `where BOOL_REXPR` does not match its `for values ...`
                                   #Only with declarative partitioning
                                   #Compared to ENVVAR constraint_exclusion: faster, and works on more complex `where BOOL_REXPR`
 
@@ -2778,6 +2786,17 @@ select ... order by COL_REXPR     #Sort ROWs
 
 select ... order by ...,...       #Multiple sort values
 
+ENVVAR enable_sort                #"Explicit sort"
+ENVVAR enable_incremental_sort    #"Incremental sort".
+                                  #When using order by COL,..., query planner sometimes sort COL-by-COL instead of all COLs at once
+                                  #This allows next COLs to sort groups of ROWs instead of all ROWs at once.
+                                  #Pros:
+                                  #  - with limit NUM, allows them to skip some ROWs
+                                  #  - lower memory
+                                  #  - more paralellism
+                                  #Con: cost of splitting + iteration
+                                  #  - small groups of ROWs are often grouped together to reduce this
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -2857,20 +2876,28 @@ select ... from FROM
 
 SELF JOIN ==>                     #Using twice the same FROM
 
-NESTED LOOP JOIN ==>              #Read both ROW_SET sequentially as outer|inner loops
+ENVVAR enable_nestloop            #"Nested loop join".
+                                  #Read both ROW_SET sequentially as outer|inner loops
                                   #Left ROW_SET is the outer loop
                                   #  - i.e. only the inner loop can use INDEXs on the join condition
                                   #O(n^2) but efficient if outer loop is small
-HASH JOIN ==>                     #Build hash tables for each ROW_SET, where the key is a hash of the join condition
+ENVVAR enable_hashjoin            #"Hash join".
+                                  #Build hash tables for each ROW_SET, where the key is a hash of the join condition
                                   #Read sequentially one of the hash table, looking up the other
                                   #O(n) but cost of hash computation
                                   #Only with OP =
-MERGE JOIN ==>                    #Sort each ROW_SET on the join condition, then do a merge join
+ENVVAR enable_mergejoin           #"Merge join".
+                                  #Sort each ROW_SET on the join condition, then do a merge join
                                   #O(n log n) but reduced to O(n) when can skip sorting thanks to one of:
                                   #  - an `order by` on the same value as the join condition is used
                                   #  - ROW_SETs can use ordered scans
                                   #  - another merge join sorted the left ROW_SET
                                   #Only with OP =
+
+ENVVAR enable_material            #"Materialization".
+                                  #When creating intermediate ROW_SETs (e.g. during joins),
+                                  #persist it fully in-memory, as opposed to processing it ROW by ROW.
+                                  #Sometimes faster, but requires memory.
 
 
                                              /=+===============================+=\
@@ -4218,16 +4245,16 @@ create index "INDEX"              #Create an INDEX
                                   #Its contents cannot be directly read|write
                                   #REXPR must be purely functional
 
-SEQUENTIAL SCAN ==>               #Query that reads ROWs sequentially, without an INDEX
+ENVVAR enable_seqscan             #"Sequential scan". Query that reads ROWs sequentially, without an INDEX
                                   #Chosen if either
                                   #  - an INDEX cannot be used
                                   #  - the planner considers an INDEX would be slower
-INDEX SCAN ==>                    #Query using an INDEX
+ENVVAR enable_indexscan           #"Index scan". Query using an INDEX
                                   #INDEX returns TIDs, which are then used to fetch TABLE ROWs
                                   #Not efficient if:
                                   #  - query selects most ROWs
                                   #  - small TABLE
-BITMAP SCAN ==>                   #Alternative to index scan.
+ENVVAR enable_bitmapscan          #"Bitmap scan". Alternative to index scan.
                                   #Instead of returning TIDs, the INDEX creates a bitmap ("bitmap index scan")
                                   #  - with 0|1 for each heap page (i.e. sets of ROWs)
                                   #  - initially only 0s, each ROW match sets 1 to its heap page ("bitmap populating")
@@ -4266,7 +4293,11 @@ alter table "TABLE" add           #Add the CONSTRAINT using an existing INDEX
 ORDERED SCAN ==>                  #Some ACCESS_METHODs automatically sort
                                   #This allows `order by "COL"|(REXPR)` or merge joins to use the INDEX
                                   #asc|desc and nulls first|last must match
-                                  #(REXPR) can only be used if an "ordering operator" exists for the ACCESS_METHOD
+                                  #Comparison:
+                                  #  - sequential scan + sort: CPU cost of additional sort step, but uses few sequential I/O
+                                  #  - ordered scan: I/O cost of using multiple random I/O calls
+                                  #  - i.e. ordered scan can be slower on large amount of ROWs
+                                  #  - i.e. useful for `order by` + `limit`
 BACKWARD SCAN ==>                 #Some ACCESS_METHODs can query in backward order
                                   #This allows ordered scan to be either asc|desc except:
                                   #  - on multi-COLs with different asc|desc
@@ -4278,6 +4309,7 @@ create table ...
  [nulls first|last],...) ...      #Specifies sorting order for ordered scans.
 
 create index ... where BOOL_REXPR #"Partial INDEX". Only indexes ROWs with BOOL_REXPR true
+                                  #INDEX only used if BOOL_REXPR matches the one used by the query
                                   #BOOL_REXPR can refer to any "COL" from TABLE, not just the indexed ones
                                   #Goal: faster writes when:
                                   #  - only few ROWs are usually read
@@ -4290,13 +4322,20 @@ create table ...
  exclude|unique|primary key ...
  with (IOPTS)                     #"INDEX storage options". Different from TOPTS.
 
-INDEX-ONLY SCAN ==>               #Query that uses only the INDEX without visiting the TABLE, i.e. faster
-                                  #Must not use REXPRs
+ENVVAR enable_indexonlyscan       #"Index-only scan".
+                                  #Query that uses only the INDEX without visiting the TABLE, i.e. faster
+                                  #Only if query uses only the "COL"|(REXPR) can are indexed
+                                  #Not efficient with REXPRs
+                                  #Only some ACCESS_METHODs can do it
 create index ...
- include ("COL",...)
+ include ("COL",...)              #"Covering INDEX"
 create table ...                  #Stores "COL" in INDEX, but do not use it in query planning, nor uniqueness ("non-key COLs")
  exclude|unique|primary key ...   #I.e. only used to increase probability of index-only scans
  include("COL",...)               #Some ACCESS_METHODs do not support it
+
+VISIBILITY MAP ==>                #Checked before doing index-only scans:
+                                  #  - if heap page has ongoing transactions, cannot do index-only scan
+                                  #  - i.e. index-only scans less frequent on write-heavy TABLEs
 
 PARALLEL INDEX BUILD ==>          #Some ACCESS_METHODs can use multiple worker processes with `create index`
 
@@ -4424,23 +4463,21 @@ OPERATIONS ==>                    #Many operations use ACCESS_METHODs
                                   #Operations:
                                   #  - where|having|on|check VAL OP VAL2
                                   #  - is [not] null
-                                  #  - order by "COL"|COL_REXPR
-                                  #  - order by VAL OP VAL2 ("ordering OP")
-                                  #  - distinct|grouping
-                                  #     - for distinct, union|intersect|except distinct, AFUNC(distinct), group by, over (partition by)
-                                  #  - ARR = <> ARR2
+                                  #  - order by "COL"|COL_REXPR (ordered scan, including backward)
+                                  #  - order by VAL OP VAL2 (ordering OP)
+                                  #  - distinct|grouping: distinct, union|intersect|except distinct, AFUNC(distinct), group by, over (partition by)
                                   #  - exclude CONSTRAINT
                                   #  - unique: unique CONSTRAINT, create unique ...
                                   #  - over (range NUM preceding|following)
-                                  #  - hash join|aggregation
+                                  #  - optimized hash join
+                                  #  - optimized hash aggregation
                                   #  - partition by range|list
                                   #  - partition by hash
-                                  #  - ordered scan, including backward
+                                  #Can also support:
+                                  #  - multi-COL
+                                  #  - index-only scan
                                   #  - parallel scan
                                   #  - predicate lock
-                                  #Can also support:
-                                  #  - no constraint on first COL
-                                  #  - multi-COL
                                   #  - parallel index build
 
 INDEX STORAGE ==>                 #ACCESS_METHODs can support:
@@ -4482,6 +4519,149 @@ pg_am.oid                         #OID
 pg_am.amname                      #"ACCESS_METHOD" name
 pg_am.amtype                      #'t' (TABLE) or 'i' (INDEX)
 pg_am.amhandler                   #REGPROC of handler
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:        OPERATOR FAMILY        :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+OPFAMILY                          #"Operator family", i.e. group of OPCLASSs (or "loose" ones) that can be
+                                  #simplified when used together in a single expression
+                                  #E.g. >(NUM, NUM2) and <(NUM, NUM2) in `where NUM > NUM2 and NUM < NUM3`
+                                  #Usually:
+                                  #  - named "TYPE_ops"
+                                  #  - an OPCLASS defines all OP(TYPE, TYPE) for a given TYPE + ACCESS_METHOD
+                                  #  - if there are easily castable TYPEs:
+                                  #     - such as: INT2|4|8, FLOAT4|8, BPCHAR|VARCHAR|TEXT, DATE|TIMESTAMP[TZ], CIDR|INET
+                                  #     - then OPFAMILY has one OPCLASS for each
+                                  #     - also it defines loose OPs for each OP(TYPE, TYPE2) combination ("cross-type OP")
+                                  #  - otherwise, OPFAMILY contains a single OPCLASS, often with same name
+
+create operator family "OPFAMILY" #Creates an OPFAMILY
+ using "ACCESS_METHOD"            #Must be a superuser
+
+alter operator family "OPFAMILY"  #Like `create operator class using "ACCESS_METHOD" add operator|function ...` but "loose"
+ using "ACCESS_METHOD"            #OPs and support FUNCs can either be in OPCLASSs, or not (loose)
+ add operator|function ...        #  - can be deleted without deleting the OPCLASS
+                                  #     - i.e. not critical for OPFAMILY to work properly
+                                  #  - can use different TYPEs for OP left|right argument
+                                  #Otherwise, no differences
+alter operator family ...
+ drop operator UINT
+ "OP"(TYPE, TYPE2)
+alter operator family ...
+ drop function UINT(TYPE,...)     #
+
+pg_opfamily                       #TABLE with all OPFAMILYs
+pg_opfamily.oid                   #OID
+pg_opfamily.opfmethod             #pg_am.oid of ACCESS_METHOD
+pg_opfamily.opfname               #"OPFAMILY" name
+pg_opfamily.opfnamespace          #REGNAMESPACE of SCHEMA
+pg_opfamily.opfowner              #REGROLE of owner
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:        OPERATOR CLASS         :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+OPCLASS                           #"Operator class", i.e. OP and helper FUNCs that an INDEX ACCESS_METHOD can use
+                                  #ACCESS_METHOD-specific, including its "OPCLASS" name
+                                  #Usually named "TYPE_ops"
+
+create operator class "OPCLASS"
+ for type TYPE
+ using "ACCESS_METHOD"
+ as ...                           #
+
+create operator class "OPCLASS"   #Make it default for the given TYPE
+ default for type ...             #If false, must be explicitly specified when creating INDEX|TABLE
+
+create operator class ...
+ family "OPFAMILY" as ...         #Def: creates one with same name as "OPCLASS"
+
+create operator class ...         #Add an OP(TYPE, TYPE2) for the INDEX ACCESS_METHOD to use
+ as operator UINT OP[(TYPE,TYPE2)]#INDEX ACCESS_METHODs define each OP they expect:
+                                  #  - in an abstract, TYPE-agnostic way
+                                  #  - assigning a strategy number UINT for each
+                                  #  - OP symbol is unspecified, although usually the same symbol is used by all OPCLASSs
+                                  #OPCLASSs implement those OPs for specific TYPEs
+                                  #Some ACCESS_METHOD's OPs are optional:
+                                  #  - including having no required OPs
+                                  #TYPE2 can be none for single-argument OPs
+                                  #Def TYPE[2]: same as `for type TYPE`
+
+create operator class ...         #Mark as "search operator" (def)
+ as operator ...                  #  - OP returns BOOL
+ for search                       #  - used in where|having|on|check (VAL OP VAL2)
+
+create operator class ...         #Mark as "ordering operator":
+ as operator ...                  #  - OP returns NUM: distance between arguments
+ for order by OPFAMILY2           #  - used in order by VAL OP VAL2
+                                  #OPFAMILY2 is used to sort the return values
+                                  #  - must use a b-tree ACCESS_METHOD
+
+create operator class ...         #Add a "support function"
+ as function UINT [(TYPE, ...)]   #Similar to OPs, except:
+ "FUNC"(TYPE3,...)                #  - not directly used in clauses (like `where`, etc.)
+                                  #  - but still used by ACCESS_METHOD internally
+                                  #E.g. hash computation with `hash` ACCESS_METHOD
+                                  #Def (TYPE,...): same as (TYPE3,...)
+
+create operator class ...         #TYPE used to store the values in the INDEX.
+ storage TYPE                     #By default, same as the ones used in query.
+                                  #Can differ, e.g. when value can be reduced for the purpose of the INDEX logic
+                                  #  - e.g. a polygon reduced to an approximative rectangle
+
+LOSSY OPERATOR ==>                #OP that can return some false positive:
+                                  #  - with a fast approximate logic
+                                  #  - underlying FUNC must return a "recheck" flag
+                                  #OP is then called again, but with the slower exact logic
+
+pg_opclass                        #TABLE with all OPCLASSs
+pg_opclass.oid                    #OID
+pg_opclass.opcname                #"OPCLASS" name
+pg_opclass.opcnamespace           #REGNAMESPACE of SCHEMA
+pg_opclass.opcowner               #REGROLE of owner
+pg_opclass.opcmethod              #pg_am.oid of ACCESS_METHOD
+pg_opclass.opcfamily              #pg_opfamily.oid of OPFAMILY
+pg_opclass.opcintype              #REGTYPE of FUNC arguments
+pg_opclass.opcdefault             #BOOL. True if default OPCLASS for the given TYPE
+pg_opclass.opckeytype             #REGTYPE of values when stored in INDEX. 0 if same as FUNC arguments TYPE
+
+pg_amop                           #TABLE with all OPFAMILYs OPs
+pg_amop.oid                       #OID
+pg_amop.amopfamily                #pg_opfamily.oid of OPFAMILY
+pg_amop.amopstrategy              #UINT. Strategy number
+pg_amop.amopopr                   #REGOPERATOR of OP
+pg_amop.amopmethod                #pg_am.oid of ACCESS_METHOD
+pg_amop.amoppurpose               #Either 's' (search) or 'o' (ordering)
+pg_amop.amopsortfamily            #pg_opfamily.oid of OPFAMILY used for sorting, if ordering
+                                  #0 if search
+
+pg_amproc                         #TABLE with all OPFAMILYs support FUNCs
+pg_amproc.oid                     #OID
+pg_amproc.amprocfamily            #pg_opfamily.oid of OPFAMILY
+pg_amproc.amprocnum               #UINT. Function number
+pg_amproc.amproc                  #REGPROC of OP
+pg_amproc.amprocleft|righttype    #REGTYPE of OP left|right argument
+
+create index "INDEX" on "TABLE"   #OPCLASS used by an INDEX "COL"|REGEXP
+ (... OPCLASS[(OOPTS)],...) ...   #OOPTS are OPCLASS-specific
+
+create table ... exclude
+ ("COL"|(REXPR) OPCLASS,...) ...  #OPCLASS used by `exclude` (def: use underlying INDEX's ACCESS_METHOD)
+create table ... partition by ...
+ ("COL"|(COL_REXPR) OPCLASS)      #Same for `partition by`
+create type "RANGE_TYPE" as
+ range(subtype_opclass = OPCLASS) #Same for RANGE OPs
+
+... order by ARG using OP         #Changes OP used by `order by` (def: < or >)
 
 
                                              /=+===============================+=\
@@ -4709,217 +4889,135 @@ record_image_ops: ???
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:        OPERATOR FAMILY        :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-OPFAMILY                          #"Operator family", i.e. group of OPCLASSs (or "loose" ones) that can be
-                                  #simplified when used together in a single expression
-                                  #E.g. >(NUM, NUM2) and <(NUM, NUM2) in `where NUM > NUM2 and NUM < NUM3`
-                                  #Usually:
-                                  #  - named "TYPE_ops"
-                                  #  - an OPCLASS defines all OP(TYPE, TYPE) for a given TYPE + ACCESS_METHOD
-                                  #  - if there are easily castable TYPEs:
-                                  #     - such as: INT2|4|8, FLOAT4|8, BPCHAR|VARCHAR|TEXT, DATE|TIMESTAMP[TZ], CIDR|INET
-                                  #     - then OPFAMILY has one OPCLASS for each
-                                  #     - also it defines loose OPs for each OP(TYPE, TYPE2) combination ("cross-type OP")
-                                  #  - otherwise, OPFAMILY contains a single OPCLASS, often with same name
-
-create operator family "OPFAMILY" #Creates an OPFAMILY
- using "ACCESS_METHOD"            #Must be a superuser
-
-alter operator family "OPFAMILY"  #Like `create operator class using "ACCESS_METHOD" add operator|function ...` but "loose"
- using "ACCESS_METHOD"            #OPs and support FUNCs can either be in OPCLASSs, or not (loose)
- add operator|function ...        #  - can be deleted without deleting the OPCLASS
-                                  #     - i.e. not critical for OPFAMILY to work properly
-                                  #  - can use different TYPEs for OP left|right argument
-                                  #Otherwise, no differences
-alter operator family ...
- drop operator UINT
- "OP"(TYPE, TYPE2)
-alter operator family ...
- drop function UINT(TYPE,...)     #
-
-pg_opfamily                       #TABLE with all OPFAMILYs
-pg_opfamily.oid                   #OID
-pg_opfamily.opfmethod             #pg_am.oid of ACCESS_METHOD
-pg_opfamily.opfname               #"OPFAMILY" name
-pg_opfamily.opfnamespace          #REGNAMESPACE of SCHEMA
-pg_opfamily.opfowner              #REGROLE of owner
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:        OPERATOR CLASS         :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-OPCLASS                           #"Operator class", i.e. OP and helper FUNCs that an INDEX ACCESS_METHOD can use
-                                  #ACCESS_METHOD-specific, including its "OPCLASS" name
-                                  #Usually named "TYPE_ops"
-
-create operator class "OPCLASS"
- for type TYPE
- using "ACCESS_METHOD"
- as ...                           #
-
-create operator class "OPCLASS"   #Make it default for the given TYPE
- default for type ...             #If false, must be explicitly specified when creating INDEX|TABLE
-
-create operator class ...
- family "OPFAMILY" as ...         #Def: creates one with same name as "OPCLASS"
-
-create operator class ...         #Add an OP(TYPE, TYPE2) for the INDEX ACCESS_METHOD to use
- as operator UINT OP[(TYPE,TYPE2)]#INDEX ACCESS_METHODs define each OP they expect:
-                                  #  - in an abstract, TYPE-agnostic way
-                                  #  - assigning a strategy number UINT for each
-                                  #  - OP symbol is unspecified, although usually the same symbol is used by all OPCLASSs
-                                  #OPCLASSs implement those OPs for specific TYPEs
-                                  #Some ACCESS_METHOD's OPs are optional:
-                                  #  - including having no required OPs
-                                  #TYPE2 can be none for single-argument OPs
-                                  #Def TYPE[2]: same as `for type TYPE`
-
-create operator class ...         #Mark as "search operator" (def)
- as operator ...                  #  - OP returns BOOL
- for search                       #  - used in where|having|on|check (VAL OP VAL2)
-
-create operator class ...         #Mark as "ordering operator":
- as operator ...                  #  - OP returns NUM: distance between arguments
- for order by OPFAMILY2           #  - used in order by VAL OP VAL2
-                                  #OPFAMILY2 is used to sort the return values
-                                  #  - must use a b-tree ACCESS_METHOD
-
-create operator class ...         #Add a "support function"
- as function UINT [(TYPE, ...)]   #Similar to OPs, except:
- "FUNC"(TYPE3,...)                #  - not directly used in clauses (like `where`, etc.)
-                                  #  - but still used by ACCESS_METHOD internally
-                                  #E.g. hash computation with `hash` ACCESS_METHOD
-                                  #Def (TYPE,...): same as (TYPE3,...)
-
-create operator class ...         #TYPE used to store the values in the INDEX.
- storage TYPE                     #By default, same as the ones used in query.
-                                  #Can differ, e.g. when value can be reduced for the purpose of the INDEX logic
-                                  #  - e.g. a polygon reduced to an approximative rectangle
-
-LOSSY OPERATOR ==>                #OP that can return some false positive:
-                                  #  - with a fast approximate logic
-                                  #  - underlying FUNC must return a "recheck" flag
-                                  #OP is then called again, but with the slower exact logic
-
-pg_opclass                        #TABLE with all OPCLASSs
-pg_opclass.oid                    #OID
-pg_opclass.opcname                #"OPCLASS" name
-pg_opclass.opcnamespace           #REGNAMESPACE of SCHEMA
-pg_opclass.opcowner               #REGROLE of owner
-pg_opclass.opcmethod              #pg_am.oid of ACCESS_METHOD
-pg_opclass.opcfamily              #pg_opfamily.oid of OPFAMILY
-pg_opclass.opcintype              #REGTYPE of FUNC arguments
-pg_opclass.opcdefault             #BOOL. True if default OPCLASS for the given TYPE
-pg_opclass.opckeytype             #REGTYPE of values when stored in INDEX. 0 if same as FUNC arguments TYPE
-
-pg_amop                           #TABLE with all OPFAMILYs OPs
-pg_amop.oid                       #OID
-pg_amop.amopfamily                #pg_opfamily.oid of OPFAMILY
-pg_amop.amopstrategy              #UINT. Strategy number
-pg_amop.amopopr                   #REGOPERATOR of OP
-pg_amop.amopmethod                #pg_am.oid of ACCESS_METHOD
-pg_amop.amoppurpose               #Either 's' (search) or 'o' (ordering)
-pg_amop.amopsortfamily            #pg_opfamily.oid of OPFAMILY used for sorting, if ordering
-                                  #0 if search
-
-pg_amproc                         #TABLE with all OPFAMILYs support FUNCs
-pg_amproc.oid                     #OID
-pg_amproc.amprocfamily            #pg_opfamily.oid of OPFAMILY
-pg_amproc.amprocnum               #UINT. Function number
-pg_amproc.amproc                  #REGPROC of OP
-pg_amproc.amprocleft|righttype    #REGTYPE of OP left|right argument
-
-create index "INDEX" on "TABLE"   #OPCLASS used by an INDEX "COL"|REGEXP
- (... OPCLASS[(OOPTS)],...) ...   #OOPTS are OPCLASS-specific
-
-create table ... exclude
- ("COL"|(REXPR) OPCLASS,...) ...  #OPCLASS used by `exclude` (def: use underlying INDEX's ACCESS_METHOD)
-create table ... partition by ...
- ("COL"|(COL_REXPR) OPCLASS)      #Same for `partition by`
-create type "RANGE_TYPE" as
- range(subtype_opclass = OPCLASS) #Same for RANGE OPs
-
-... order by ARG using OP         #Changes OP used by `order by` (def: < or >)
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
                                             )==:            EXPLAIN            :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
 explain [(ZOPTS)] COMMAND         #Show the execution plan of COMMAND
-                                  #Advice: ???
-                                  #  - use real data close to real environment, not test ones.
-                                  #  - run analyze first if lot of change since last time autovacuum did (because based on pg_statistic)
+                                  #COMMAND can be select|table|values|execute, create table|materialized view as, insert|update|delete|merge, declare
+                                  #Should prefer real data close to production, if possible
 
-explain verbose ...
-ZOPTS.verbose                     #BOOL (def: false)
+explain verbose ...               #BOOL (def: false)
+ZOPTS.verbose                     #Whether to print more fields
 
 explain analyze ...               #BOOL (def: false)
-ZOPTS.analyze                     #Print the  ???
-                                  #show the actual time (unless timing false is used) and memory consumed
-                                  #    Actually execute the COMMAND (otherwise, it is not) (can put in a transaction with rollback if
-                                  #    don't want the execution to persist)
-
-ZOPTS.buffers                     #BOOL (def: false)
-                                  #Show info about buffer hits, which shows which parts are I/O intensive ???
-
-ZOPTS.timing                      #BOOL (def: true)
-
-ZOPTS.costs                       #BOOL (def: true) ???
-                                  #Show the resources taken by node + children, in a cost-based approach according to ENVVAR:
-                                  #  - seq_page_cost (def: 1): sequential disk page fetch (used in sequential scan)
-                                  #  - random_page_cost (def: 4): non-sequential disk page fetch (used in INDEX retrieval)
-                                  #    Put at 2-3 if fast disks.
-                                  #  - cpu_tuple_cost (def: 0.01): CPU cost for processing a row
-                                  #  - cpu_index_tuple_cost (def: 0.005): CPU cost for processing a row in an INDEX
-                                  #  - cpu_operator_cost (def: 0.0025): CPU cost for processing a FUNC
-                                  #Values are:
-                                  #  - cost: first is initial cost, second is final cost
-                                  #  - rows: number of rows manipulated
-                                  #  - width: average size (in bytes) of a row
-
-ZOPTS.settings                    #BOOL (def: false)
-
-ZOPTS.wal                         #BOOL (def: false)
-
-ZOPTS.summary                     #BOOL (def: false)
+ZOPTS.analyze                     #Executes the COMMAND, allowing to print fields related to actual execution
+                                  #Can use transaction + rollback to avoid side effects
 
 ZOPTS.format                      #text (def) or json|yaml|xml
+                                  #text does not show values that are 0
 
-TREE ==>                          #Output is a tree with following nodes
+ZOPTS.costs                       #BOOL (def: true)
+                                  #Whether to print (costs|rows|width ...)
 
-Sort                              #order by
+ZOPTS.timing                      #BOOL (def: true)
+                                  #Whether to print (actual time ...)
+                                  #Requires ZOPTS.analyze true
+
+ZOPTS.summary                     #BOOL (def: true)
+                                  #Whether to print Planning|Execution Time
+
+ZOPTS.buffers                     #BOOL (def: false)
+                                  #Whether to print Buffers ...
+
+ZOPTS.wal                         #BOOL (def: false)
+                                  #Whether to print WAL ...
+                                  #Requires ZOPTS.analyze true
+
+ZOPTS.settings                    #BOOL (def: false)
+                                  #Whether to print relevant ENVVARs which value was changed
+
+TREE ==>                          #Output is a tree with following nodes.
+                                  #Each node results include its children.
+                                  #Children are executed before parents.
+
+Sort                              #order by (normal sort)
+Incremental Sort                  #order by VAL, VAL2 with VAL using ordered scan and VAL2 using normal sort
+Sort Key                          #order by's argument (normal sort)
+Presorted Key                     #order by's argument (ordered scan)
+
 Limit                             #offset|fetch
 Aggregate                         #AFUNC
 GroupAggregate                    #group by
 HashAggregate                     #some AFUNC ???
 WindowAgg                         #WFUNC
+
 Filter                            #where|having
+Rows Removed by Filter            #NUM of ROWs not returned by Filter
 
 Join                              #
-Nested loop + Join Filter         #Nest loop join
-Hash + Hash Cond                  #Hash join
-Merge join                        #
+
+Nested Loop                       #Nested loop join
+Join Filter                       #Nested loop join condition (where|on)
+
+Hash Join                         #
+Hash Cond                         #Hash join condition (where|on)
+Hash                              #Creation of hash table for a ROW_SET during a hash join
+
+Merge Join                        #
+Merge Cond                        #Merge join condition (where|on)
+
+Materialize                       #Materialization of a ROW_SET
 
 Sequential Scan                   #
+
 Index Scan                        #
+
 Bitmap Heap Scan                  #
 Bitmap Index Scan                 #
-BitmapAnd                         #... and ...
-BitmapOr                          #... or ...
-Index Only Scan                   #
+BitmapAnd                         #... and ... (bitmap scan combination)
+BitmapOr                          #... or ... (bitmap scan combination)
+
 Values Scan                       #values(...)
+
+Index Only Scan                   #
+Heap Fetches                      #UINT. Number of times TABLEs were fetched, with Index Only Scan
+
+Result                            #COMMAND return value
+Output                            #COMMAND return value contents
+
+(costs=NUM..NUM2)                 #Cost. Decides between different strategies
+                                  #NUM is "startup cost" (initialization logic), NUM2 is "total cost"
+                                  #Can be multiplied by factors set in ENVVARs
+ENVVAR random_page_cost           #NUM (def: 4). Cost of random I/O read of a heap page
+ENVVAR seq_page_cost              #NUM (def: 1). Cost of sequential I/O read of a heap page
+ENVVAR cpu_tuple_cost             #NUM (def: 0.01). Cost of CPU processing of a TABLE ROW
+ENVVAR cpu_index_tuple_cost       #NUM (def: 0.005). Cost of CPU processing of an INDEX ROW
+ENVVAR cpu_operator_cost          #NUM (def: 0.0025). Cost of CPU execution of a FUNC
+
+ENVVAR effective_cache_size       #STR (def: '4GB'). Hints how much RAM is available.
+                                  #RAM is mostly used by the OS to cache I/O by keeping files in-memory.
+                                  #I.e. more RAM makes the cost of I/O cheaper.
+                                  #Does not change actual cache size.
+                                  #Should be 50-75% of the available RAM.
+
+(actual time=NUM..NUM2)           #NUM[2] (in ms) initialization|total time spent
+Planning Time                     #Time to plan the query
+Execution Time                    #Time to execute the query
+
+(rows=UINT)                       #Number of ROWs returned|written expected
+(actual rows=UINT)                #Number of ROWs returned|written
+(width=UINT)                      #Mean size (in bytes) of a ROW
+
+(actual loops=UINT2)              #Number of scans performed
+
+Buffers: shared hit|read=NUM      #Heap pages hit|misses
+Buffers: shared dirtied=NUM       #Heap pages dirtied
+Buffers: shared written=NUM       #Heap pages written
+Buffers: local ...                #Same for local heap pages
+Buffers: temp ...                 #Same for temporary heap pages
+
+WAL: fpi=UINT                     #Number of full heap pages added to WAL
+WAL: records=UINT                 #Number of ROWs added to WAL
+WAL: bytes=UINT                   #Number of bytes added to WAL
+
+ENVVAR enable_*                   #Whether specific query optimizations are enabled
+                                  #All BOOL with true by default, except enable_partitionwise_*
+                                  #Can set to false to set alternative plans considered by `explain`
+                                  #Some cannot be completely disabled
+                                  #  - i.e. false only discourages it
+                                  #  - for: enable_seqscan|sort|nestloop|material
 
 alter table "TABLE" set
  alter [column] "COL"
@@ -4937,6 +5035,7 @@ analyze [verbose]                 #Fill in pg_statistic.
  ["TABLE"[("COL"...)]]            #Parameters are like for vacuum.
                                   #Requires only an access share lock.
                                   #FOREIGNTABLE are analyzed only when explicitly specified, and not always supported.
+                                  #Should be run before `explain` if lot of change since last time autovacuum did (because based on pg_statistic)
 
 pg_stat_progress_analyze          #TABLE with ongoing `analyze` statements. ???
 
@@ -5032,6 +5131,22 @@ TOPTS.vacuum_index_cleanup        #VAL
 TOPTS.vacuum_truncate             #BOOL
 
 pg_stat_progress_vacuum           #TABLE with ongoing `vacuum` statements. ???
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:          VISIBILITY           :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+VISIBILITY MAP ==>                #Bitmap of all heap pages of a TABLE
+                                  #  - 0 if no ongoing transactions, i.e. latest data visible to all current|future transactions
+                                  #Fast to access
+                                  #  - bitmap, i.e. small
+                                  #  - usually kept in-memory
+https://www.postgresql.org/docs/current/storage-vm.html
+pg_visibility ???
 
 
                                              /=+===============================+=\
@@ -5279,6 +5394,30 @@ XID8 ~> XID                       #Type cast
 
                                              /=+===============================+=\
                                             /  :                               :  \
+                                            )==:             HEAP              :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+HEAP ==>                          #Memory storing TABLEs (as opposed to INDEXs)
+
+HEAP PAGE ==>                     #8KB memory page containing 1-n TABLE ROWs
+                                  #Also called "blocks"
+
+HEAP PAGE TYPES ==>               #Heap pages can be:
+                                  #  - "shared": non-temp TABLE|INDEXs
+                                  #  - "local": temp TABLE|INDEXs
+                                  #  - "temporary": short-term ROW_SET, e.g. during sorts, joins, etc.
+HEAP PAGE CACHING ==>             #Heap pages can be cached
+                                  #  - "hit": when uses cache
+                                  #  - "read": when not used
+                                  #Heap pages with writes are marked "dirtied"
+                                  #  - "write": when a dirtied heap page is evicted from cache
+                                  #Temporary heap pages are never cached
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
                                             )==:          TABLESPACE           :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -5373,10 +5512,6 @@ PERFORMANCE TUNING ==>            #ENVVAR:
                                   #    Average total memory taken will be average_number_of_hash/sort_operations_by_command *
                                   #    number_of_connections * work_mem. Should not be more than RAM taken by:
                                   #      kernel + other applications + shared_buffers + let memory for kernel buffer
-                                  #  - maintenance_work_mem (def: 16MB): max memory used by vacuum, create index and add foreign key.
-                                  #    Usually not a lot of those operations are run concurrently, so can be set higher (256MB is good)
-                                  #  - effective_cache_size (def: '128MB'): hint of the amount of cache available for queries
-                                  #    (doesn't change the actual cache size). Should be 50-75% of the available free+cached HDD memory
                                   #  - wal_buffers (def: -1, which auto-select a value): memory used for caching WAL, i.e. number of
                                   #    WAL segments (16MB) that can be cached for all sessions before flushing them.
                                   #    If high number of transactions, might consider increasing for better performance.
