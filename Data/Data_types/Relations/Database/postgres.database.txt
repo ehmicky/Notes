@@ -4213,7 +4213,6 @@ on "TABLE"(COL,...)               #Can't create two INDEX with same names, even 
                                   #    to complete for each row. Slower but will not lock the "TABLE".
                                   #    Can fail: then drop INDEX and recreate it.
                                   #  - with (VAR = VAL...): see create table ...
-                                  #An "index-only scan" is a query that can use only the INDEX without even visiting the TABLE (faster).
                                   #A query using "... and|or ..." can use each ... INDEX separately, then combine the result.
                                   #INDEX performances:
                                   #  - makes read faster, but write slower (needs to maintain the INDEX)
@@ -4221,6 +4220,10 @@ on "TABLE"(COL,...)               #Can't create two INDEX with same names, even 
                                   #  - to know when to use an INDEX, check with explain if INDEX is chosen by the planner for most-used
                                   #    queries or skipped in favor of a sequential scan.
                                   #Max 32 COLs
+
+SEQUENTIAL SCAN ==>               #Query that reads ROWs sequentially, without an INDEX
+INDEX SCAN ==>                    #Query using an INDEX
+INDEX-ONLY SCAN ==>               #Query that uses only the INDEX without visiting the TABLE, i.e. faster
 
 create table ...
  exclude|unique|primary key ...   #Those CONSTRAINTs create an underlying INDEX
@@ -4313,15 +4316,20 @@ pg_stat_progress_cluster
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:        OPERATOR CLASS         :==(
+                                            )==:         ACCESS METHOD         :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
-
 
 
 create                            #Create an "index access method"
  access method "ACCESS_METHOD"    #How a TABLE|INDEX is physically read|written, i.e. its data structure and operators.
                                   #Must be superuser
+
+NON-SCAN PURPOSES ==>             #Some specific INDEX ACCESS_METHODs (btree|hash) are also used for features beyond TABLE|INDEX read|write:
+                                  #  - uniqueness|grouping
+                                  #  - order by
+                                  #  - over (range NUM preceding|following)
+                                  #  - hash join|aggregation
 
 CAPABILITIES ==>                  #For INDEX, can support following capabilities:
                                   #  - order by "COL"
@@ -4332,7 +4340,7 @@ CAPABILITIES ==>                  #For INDEX, can support following capabilities
                                   #  - no constraint on first COL
                                   #  - multi-COL
                                   #  - ARR items indexing
-                                  #  - stores values with a different TYPE than OP TYPEs
+                                  #  - storage TYPE
                                   #  - cluster
                                   #  - predicate lock
                                   #  - parallel scan
@@ -4350,6 +4358,7 @@ create access method ...          #Whether this is meant for:
 create access method ...          #Main FUNC of ACCESS_METHOD
  handler "FUNC"                   #Returns:
                                   #  - capabilities
+                                  #  - expectations about OPs and helper FUNCs
                                   #  - methods: create|delete TABLE|INDEX, CRUD on ROWs, validation of OP(TYPE, TYPE2), vacuum, etc.
 
 ENVVAR default_table_access_method#Def ACCESS_METHOD for TABLEs
@@ -4378,6 +4387,19 @@ btree                             #Default ACCESS_METHOD for INDEXs
                                   #Only ACCESS_METHOD that support:
                                   #  - ordered scans
                                   #  - parallel scans
+                                  #Also used for:
+                                  #  - uniqueness|grouping:
+                                  #     - i.e. distinct, union|intersect|except distinct, AFUNC(distinct), group by, over (partition by)
+                                  #     - also used by ARR = <> ARR2
+                                  #     - using = OP
+                                  #  - order by:
+                                  #     - using < OP
+                                  #     - can override with `order by ... using OP`
+                                  #  - over (range NUM preceding|following)
+                                  #     - using support FUNC "in_range"
+                                  #Cannot use:
+                                  #  - ordering OPCLASS
+                                  #  - storage TYPE
 
 gin                               #ACCESS_METHOD
                                   #For VAL = one of VAL...
@@ -4392,6 +4414,7 @@ gin                               #ACCESS_METHOD
                                   #  - exclude()
                                   #  - include
                                   #  - fillfactor
+                                  #  - ordering OPCLASS
 
 gist                              #ACCESS_METHOD
                                   #Generic search tree
@@ -4412,15 +4435,24 @@ spgist                            #ACCESS_METHOD
                                   #  - multi-COL
 
 hash                              #ACCESS_METHOD
+                                  #Also used for:
+                                  #  - hash join|aggregation
+                                  #     - using = OP
+                                  #  - uniqueness|grouping:
+                                  #     - only if btree = OP not available
+                                  #     - using = OP
                                   #Cannot use:
                                   #  - include
                                   #  - fillfactor
                                   #  - multi-COL
+                                  #  - ordering OPCLASS
+                                  #  - storage TYPE
 
 brin                              #ACCESS_METHOD
                                   #Cannot:
                                   #  - include
                                   #  - fillfactor
+                                  #  - ordering OPCLASS
 
 bloom                            ##ACCESS_METHOD
                                  ##Trusted Postgres extension 'bloom'
@@ -4436,34 +4468,24 @@ heap                              #ACCESS_METHOD
                                              \=+===============================+=/
 
 
-OPFAMILY                          #"Operator family", i.e. group of OPs that an index ACCESS_METHOD can use
-                                  #OPs can either be in OPCLASSs, or not ("loose")
-                                  #  - unlike OPCLASSs, not critical for OPFAMILY to work properly
-                                  #  - e.g. can be dropped
-                                  #  - usually for cross-TYPEs OPs, as opposed to single-TYPE OPs
+OPFAMILY                          #"Operator family", i.e. group of OPCLASSs (or "loose" ones) that can be
+                                  #used together in a single expression
+                                  #E.g. in `where VAL OP VAL2 and VAL3 OP2 VAL4`
 
-create operator family "OPFAMILY" #Create OPFAMILY
+create operator family "OPFAMILY" #Creates an OPFAMILY
  using "ACCESS_METHOD"            #Must be a superuser
 
-alter operator family "OPFAMILY"
- using "ACCESS_METHOD"
- add operator UINT
- "OP"(TYPE, TYPE2)
+alter operator family "OPFAMILY"  #Like `create operator class using "ACCESS_METHOD" add operator|function ...` but "loose"
+ using "ACCESS_METHOD"            #OPs and support FUNCs can either be in OPCLASSs, or not (loose)
+ add operator|function ...        #  - can be deleted without deleted the OPCLASS
+                                  #     - i.e. not critical for OPFAMILY to work properly
+                                  #  - can use different TYPEs for OP left|right argument
+                                  #Otherwise, no differences
 alter operator family ...
  drop operator UINT
  "OP"(TYPE, TYPE2)
 alter operator family ...
- add operator ...
- for search
-alter operator family ...
- add operator ...
- for order by OPFAMILY2           #Like ... operator class ... but for a loose OP
-
-alter operator family ...
- add function UINT [(TYPE, ...)]
- "FUNC"(TYPE3,...)
-alter operator family ...
- drop function UINT (TYPE,...)    #Like ... operator class ... but for a loose support function
+ drop function UINT(TYPE,...)     #
 
 pg_opfamily                       #TABLE with all OPFAMILYs
 pg_opfamily.oid                   #OID
@@ -4480,37 +4502,57 @@ pg_opfamily.opfowner              #REGROLE of owner
                                              \=+===============================+=/
 
 
-OPCLASS                           #"Operator class", i.e. OP(TYPE, TYPE2) for a given ACCESS_METHOD, through an OPFAMILY
+OPCLASS                           #"Operator class", i.e. OP and helper FUNCs that an INDEX ACCESS_METHOD can use
+                                  #ACCESS_METHOD-specific, including its "OPCLASS" name
 
 create operator class "OPCLASS"
  for type TYPE
- using ACCESS_METHOD
- as ...
+ using "ACCESS_METHOD"
+ as ...                           #
 
 create operator class "OPCLASS"   #Make it default for the given TYPE
- default for type ...
+ default for type ...             #I.e. some OPCLASSs can be opt-in only
 
 create operator class ...
- family "OPFAMILY" as ...         #
+ family "OPFAMILY" as ...         #Def: creates one with same name as "OPCLASS"
 
-create operator class ...
- as operator UINT OP[(TYPE,TYPE2)]
+create operator class ...         #Add an OP(TYPE, TYPE2) for the INDEX ACCESS_METHOD to use
+ as operator UINT OP[(TYPE,TYPE2)]#INDEX ACCESS_METHODs define each OP they expect:
+                                  #  - in an abstract, TYPE-agnostic way
+                                  #  - assigning a strategy number UINT for each
+                                  #  - OP symbol is unspecified, although usually the same symbol is used by all OPCLASSs
+                                  #OPCLASSs implement those OPs for specific TYPEs
+                                  #Some ACCESS_METHOD's OPs are optional:
+                                  #  - including having no required OPs
                                   #TYPE2 can be none for single-argument OPs
-                                  #UINT is "strategy number", i.e. id specific to a given OPFAMILY + (TYPE, TYPE2)
+                                  #Def TYPE[2]: same as `for type TYPE`
 
-create operator class ...
- as operator ...
- for search                       #Mark as "search operator" (def)
-create operator class ...
- as operator ...                  #Mark as "ordering operator"
- for order by OPFAMILY2           #OPFAMILY2 must use a b-tree ACCESS_METHOD
+create operator class ...         #Mark as "search operator" (def)
+ as operator ...                  #  - OP returns BOOL
+ for search                       #  - used in where|having|on|check (VAL OP VAL2)
+
+create operator class ...         #Mark as "ordering operator":
+ as operator ...                  #  - OP returns NUM: distance between arguments
+ for order by OPFAMILY2           #  - used in order by VAL OP VAL2
+                                  #OPFAMILY2 is used to sort the return values
+                                  #  - must use a b-tree ACCESS_METHOD
 
 create operator class ...         #Add a "support function"
- as function UINT [(TYPE, ...)]   #Def (TYPE,...): same as (TYPE3,...)
- "FUNC"(TYPE3,...)                #UINT is the "function number", i.e. id specific to a given OPFAMILY + (TYPE,...)
+ as function UINT [(TYPE, ...)]   #Similar to OPs, except:
+ "FUNC"(TYPE3,...)                #  - not directly used in clauses (like `where`, etc.)
+                                  #  - but still used by ACCESS_METHOD internally
+                                  #E.g. hash computation with `hash` ACCESS_METHOD
+                                  #Def (TYPE,...): same as (TYPE3,...)
 
-create operator class ...
- storage TYPE                     #
+create operator class ...         #TYPE used to store the values in the INDEX.
+ storage TYPE                     #By default, same as the ones used in query.
+                                  #Can differ, e.g. when value can be reduced for the purpose of the INDEX logic
+                                  #  - e.g. a polygon reduced to an approximative rectangle
+
+LOSSY OPERATOR ==>                #OP that can return some false positive:
+                                  #  - with a fast approximate logic
+                                  #  - ACCESS_METHOD sets a "recheck" flag
+                                  #OP is then called again, but with the slower exact logic
 
 pg_opclass                        #TABLE with all OPCLASSs
 pg_opclass.oid                    #OID
@@ -4541,7 +4583,7 @@ pg_amproc.amproc                  #REGPROC of OP
 pg_amproc.amprocleft|righttype    #REGTYPE of left|right argument
 
 create table ... exclude
- ("COL"|(REXPR) OPCLASS,...) ...  #COL_ARG. Configure underlying INDEX
+ ("COL"|(REXPR) OPCLASS,...) ...  #Specify OPCLASS to use for underlying INDEX's comparison
 
 create table ... partition by ...
  ("COL"|(COL_REXPR) OPCLASS)      #
