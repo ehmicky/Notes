@@ -125,8 +125,6 @@ ARCHITECTURE ==>                  #RDBMS with focus on standard compliance and e
 
 LIMITS ==>                        #  - database size: unlim
                                   #  - table size: 32TB
-on conflict
- on constraint "CONSTRAINT" ...   #
                                   #  - cols count: 250-1600 depending on TYPE
                                   #  - rows count: unlim
                                   #  - cell size: 1GB
@@ -350,9 +348,9 @@ VAL [not] in (VAL2,...)           #BOOL. Whether VAL = <> any VAL2
 
 case [LVAL]
   when TVAL then RVAL
-  [...]
-  [else RVAL]                     #Switch statement. Substitutes to RVAL where LVAL = TVAL
-end                               #Def LVAL is true, i.e. can use TVAL BOOLs, like an if statement
+  [...]                           #Switch statement. Substitutes to RVAL where LVAL = TVAL
+  [else RVAL]                     #Def LVAL is true, i.e. can use TVAL BOOLs, like an if statement
+end                               #Def RVAL: null
 
 
                                              /=+===============================+=\
@@ -392,43 +390,66 @@ null                              #Missing data
                                   #Often avoided
                                   #  - e.g. with not null CONSTRAINTs
 
-VAL OP null                       #Always return null, except statements below
-FUNC(..., null, ...)              #Includes:
-                                  #  - null = <> < <= > >= null
-                                  #  - case null ..., case VAL when null
-                                  #  - ROW = <> ROW2
-                                  #  - exists(SUBQUERY)
+VAL OP null
+FUNC(..., null, ...)              #Always return null, except statements below
+
+null = <> < <= > >= null          #null
+null [not] in (null)              #null
+VAL is [not] distinct from VAL2   #Like VAL = <> VAL2 but null = null
+VAL is [not] null                 #Same as VAL is [not] distinct from null
+BOOL is [not] BOOL2               #Same as BOOL is [not] distinct from BOOL2
 
 null or false                     #null
 null and true                     #null
 null or true                      #true
 null and false                    #false
+not null                          #null
 
-VAL is [not] distinct from VAL2   #Like VAL = <> VAL2 but handles null as any other value.
-VAL is [not] null                 #Same as VAL is [not] distinct from null
-BOOL is [not] BOOL2               #Same as BOOL is [not] distinct from BOOL2
+case null when null else VAL end  #VAL
 
-nullif(VAL, VAL2)->VAL|null       #VAL if <> VAL2, otherwise null
+nullif(VAL, VAL2)->VAL|null       #null if VAL = VAL2. Otherwise VAL
 coalesce(VAL,...)->VAL            #First VAL not null
 
 concat(STR,...)->STR2             #See below
+quote_nullable(VAL)->STR          #See below
 
-null = null                       #Is BOOL for clauses about duplicates (except unique)
-                                  #  - group by
-                                  #  - partition by
-                                  #  - union|intersect|except [all]
-                                  #  - distinct
-                                  #Is also BOOL inside ARR (but not ROW)
-                                  #  - null ARR item is distinct from missing item
-where BOOL_REXPR                  #null -> false
-check (BOOL_REXPR)                #null -> true
+ARR = <> ARR2                     #null = null, i.e. can be compared
+                                  #null is also distinct from missing item
+ARR < <= > >= ARR2                #Missing item < present item < null
+ARR @> <@ && ARR2                 #Fail if contains null
+
+ROW = <> < <= > >= ROW2           #null if contains any null
+
+[not] null                        #COL_CONSTRAINT. See below
+
+unique nulls [not] distinct       #If `nulls distinct` (def), ignore nulls
+                                  #I.e. can have multiple nulls
+exclude()                         #Ignore nulls
 
 references "TABLE2"("COL2")       #null ROWs are ignored in both COL and COL2
-match simple|full                 #For multicolumn foreign keys:
+ match simple|full                #For multicolumn foreign keys:
                                   #  - match simple (def): ignore ROW if at least one COL null
                                   #  - match full:
                                   #     - ignore ROW if all COLs null
                                   #     - fail if some COLs null but not others
+
+check (BOOL_REXPR)                #null -> true
+
+where BOOL_REXPR                  #null -> false
+                                  #For: select, insert on conflict, update, delete, exclude, copy, AFUNC filter, etc.
+having BOOL_REXPR                 #null -> false
+join ... on BOOL_REXPR            #null -> false
+                                  #I.e. ROWs with nulls are usually:
+                                  #  - ignored by inner join
+                                  #  - kept as single ROWs by outer join
+
+distinct
+union|intersect|except distinct
+AFUNC(distinct)                   #null = null
+group by
+over (partition by)               #null = null
+
+order by ... nulls first|last     #Def: nulls first for desc, nulls last for asc
 
 AFUNC(...)                        #Ignores nulls
                                   #  - except: *agg(...), count(*), *rank(), cume_dist()
@@ -504,8 +525,8 @@ INT4|8 => MONEY                   #Type cast
 NUM                               #Literal NUM
 NUMe...                           #TYPE:
                                   #  - numeric: decimals or NUMe...
-                                  #  - bigint: >= 2**31
-                                  #  - integer: otherwise
+                                  #  - int8: >= 2**31
+                                  #  - int4: otherwise
 -0                                #Same as +0
 
 'NaN'
@@ -1420,14 +1441,14 @@ OPTS.collation                    #COLLATION
 OPTS.multirange_type_name         #'TYPE' of MULTIRANGE
                                   #Def: replace 'range' by 'multirange', or append '_multirange'
 
-'[VAL, VAL2]'
-'[VAL, VAL2)'                     #RANGE_UNKNOWN. Square brackets include, parenthesis exclude.
-'(VAL, VAL2]'                     #Def VAL[2]: null
+'[VAL, VAL2]'                     #RANGE_UNKNOWN. Square brackets include, parenthesis exclude.
+'[VAL, VAL2)'                     #Def VAL[2]: null
+'(VAL, VAL2]'                     #  - noted as empty, not `null`
 '(VAL, VAL2)'                     #If TYPE is discrete, VAL2] is normalized to VAL2+1)
 RANGE_TYPE(VAL, VAL2[, STR])
  ->RANGE                          #Same. STR is e.g. '[)' (def) or '()'
 
-null                              #Like [-]Infinity
+null                              #As VAL[2]: like [-]Infinity
 lower|upper_inf(RANGE)->BOOL      #Whether null
 
 'empty'                           #Empty RANGE. VAL[2] are both null, but not handled like Infinity
@@ -1525,9 +1546,7 @@ ARR[UINT:]                        #Same as ARR[UINT:ARR.length]
 ARR[:UINT2]                       #Same as ARR[0:UINT2]
 
 ARR = <> ARR2                     #BOOL. Done deeply
-                                  #null can be compared, and is different from missing item
 ARR < <= > >= ARR2                #BOOL, with first item compared first, etc.
-                                  #Missing item < present item < null
 
 VAL OP any|all (ARR)              #BOOL. Whether VAL OP any|all ARR item
 
@@ -1553,7 +1572,7 @@ array(SSUBQUERY)->ARR             #
 unnest(ARR)->SET                  #Flattens ARR and returns as SET
 
 array_to_string                   #Cast each ARR item to STR, then join with 'DELIM'.
- (ARR[, 'DELIM'[, 'NULL']])->STR  #If 'NULL' specified, nulls are transformed to it. Otherwise, they are ignored.
+ (ARR, 'DELIM'[, 'NULL'])->STR    #If 'NULL' specified, nulls are transformed to it. Otherwise, they are ignored.
 string_to_array                   #Inverse
  (STR, 'DELIM'|null[, 'NULL'])    #If DELIM is null, split each character.
  ->ARR                            #If DELIM is '', returns STR as ARR with single item
@@ -1886,8 +1905,9 @@ foreign key("COL",...) references
 check(BOOL_REXPR)                 #COL_CONSTRAINT. Fails if BOOL false.
                                   #Def "CONSTRAINT" name: "TABLE_COL_check"
 
-[not] null                        #COL_CONSTRAINT
-                                  #Same as check("COL" [is] not null)
+not null                          #COL_CONSTRAINT
+                                  #Same as check("COL" is not null)
+null                              #COL_CONSTRAINT. Not having `not null` constraint (def)
 alter table "TABLE"
  alter [column] "COL"
  set|drop not null                #
@@ -1901,7 +1921,7 @@ exclude                           #COL_ARG
                                   #  - with same name as "CONSTRAINT"
  [where (BOOL_REXPR)]             #Do not fail new ROW if BOOL false
 
-unique                            #COL_CONSTRAINT. Same as exclude("COL" with =)
+unique                            #COL_CONSTRAINT. Same as exclude("COL" with =) but faster
                                   #I.e. fails if any duplicate value.
                                   #Def "CONSTRAINT" name: "TABLE_COL_key"
 
@@ -1913,7 +1933,7 @@ primary key                       #COL_CONSTRAINT.
 references "TABLE2"[("COL2")]     #COL_CONSTRAINT. "Foreign key"
                                   #Ensure every COL value references a COL2 value (but not inverse)
                                   #On added|removed|updated values. On both COL|COL2.
-                                  #COL2 must be `unique`
+                                  #COL2 must be `unique` or `primary key`
                                   #Def COL2: TABLE2 primary key
                                   #Def "CONSTRAINT" name: "TABLE_COL_fkey"
  [match full|simple]              #See null section
@@ -2068,7 +2088,11 @@ VIEW PARTITIONING ==>             #Partitioning using a VIEW:
 INHERITANCE PARTITIONING ==>      #Partitioning using `create table ... inherits`:
                                   #Same as view partioning but with `inherits` and an empty parent TABLE
 
-FULL PARTITIONING ==>             #Partitioning using `create table ... partition of`
+ENVVAR constraint_exclusion       #If 'on', queries skip child TABLEs if `where BOOL_REXPR` does not match its check() CONSTRAINT
+                                  #If 'partition' (def, usually best): only when appears to be a child TABLE
+                                  #using inheritance partitioning
+
+DECLARATIVE PARTITIONING ==>      #Partitioning using `create table ... partition of`
                                   #Uses inheritance partitioning under the hood
                                   #  - i.e. behaves similarly, except for notes below
                                   #Automatically managed:
@@ -2089,6 +2113,17 @@ FULL PARTITIONING ==>             #Partitioning using `create table ... partitio
 PARTITION KEY ==>                 #COL_REXPRs used to decide which child TABLE to use
                                   #Max 32 COL_REXPRs
                                   #Must be included in any unique or primary key CONSTRAINT
+                                  #COL_REXPRs should match the `where BOOL_REXPR` expected in queries
+PARTITION METHOD ==>              #One of: list, range, hash
+                                  #Should use the best one to:
+                                  #  - spread ROWs evenly
+                                  #  - make queries target as few TABLEs at once as possible
+NUMBER OF PARTITIONS ==>          #If too high: slower due to bookeeping and query analyzing time
+                                  #If too low: slower due to bigger TABLEs slower
+
+ENVVAR enable_partition_pruning   #If 'on', queries skip child TABLEs if `where BOOL_REXPR` does not match its `for values ...`
+                                  #Only with declarative partitioning
+                                  #Compared to ENVVAR constraint_exclusion: faster, and works on more complex `where BOOL_REXPR`
 
 create table "PARENT_TABLE"
  partition by METHOD
@@ -2432,7 +2467,6 @@ select ... order by COL_REXPR     #Sort ROWs
                                   #  - including union|intersect|except result
  [asc|desc|using OP]              #Sorting order (def: asc)
                                   #Can be a comparator OP, e.g. < is like asc, > is like desc
- [nulls first|last]               #Def: nulls first for desc, nulls last for asc
 
 select ... order by ...,...       #Multiple sort values
 
@@ -3676,7 +3710,8 @@ alter ENTITY                      #Set TABLESPACE2 of all ENTITYs in a given TAB
 
 create table ...                  #Keep 1-INT% additional free space on the page storing TABLE
  with (fillfactor = 10-100)       #Def: 100, i.e. none
-                                  #Goal: faster memory allocation if lots of updates
+                                  #Memory allocation happens on `insert`
+                                  #Goal: faster memory allocation if lots of `update`
 
 WRITING ==>                       #Best way to write a big amount of data fast:
                                   #  - put in only one transaction/statement
@@ -5770,9 +5805,19 @@ AUTOVACUUM ==>                    #Daemon automatically doing vacuum [analyze] o
                                   #     - autovacuum_naptime INT: min. time (def: '1min') * number of databases before two launches
                                   #     - autovacuum_max_workers: numbers of DATABASEs that can be vacuumed at same time (def: 3)
                                   #  - doesn't vacuum TEMP
-                                  #Can set autovacuum_* at the TABLE-level with create table ... with (autovacuum_* = VAL)
-create table ...
- with (autovacuum_* = VAL)        #Set ENVVAR autovacuum_* for this TABLE
+create table ...                  #Set ENVVAR *autovacuum* for this TABLE
+ with (*autovacuum* = VAL)        #Not for: autovacuum_max_workers, autovacuum_naptime
+                                  #Different names:
+                                  #  - autovacuum -> autovacuum_enabled
+                                  #  - vacuum_freeze_table_age -> autovacuum_freeze_table_age
+                                  #  - vacuum_multixact_freeze_min_age -> autovacuum_multixact_freeze_min_age
+create table ...                  #Same but only for pg_toast_OID TABLE
+ with (toast.*autovacuum* = VAL)  #Def: same value
+                                  #Not for: autovacuum_analyze*
+create table
+ with (vacuum_index_cleanup = VAL)#
+create table
+ with (vacuum_truncate = BOOL)    #
 
 analyze [verbose]                 #Fill in pg_statistic.
  ["TABLE"[("COL"...)]]            #Parameters are like for vacuum.
