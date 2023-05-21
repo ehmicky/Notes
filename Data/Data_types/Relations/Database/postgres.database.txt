@@ -227,22 +227,6 @@ TYPE => TYPE2                     #Means can do assignment casting
 TYPE ~> TYPE2                     #Means can do explicit casting
 TYPE <=-> TYPE2                   #Means TYPE2 => TYPE, TYPE -> TYPE2
 
-VARIABLE LENGTH TYPES ==>         #One of:
-                                  #  - text
-                                  #Max length for any TYPE: 1GB
-FIXED LENGTH TYPES ==>            #One of:
-                                  #  - numeric
-                                  #  - varchar|bpchar
-                                  #  - time[stamp][tz]|interval
-SIZING CAST ==>                   #Type cast to same type
-                                  #Used to enforce size of fixed length TYPEs
-                                  #  - failing if too large
-                                  #  - padding or truncating
-                                  #Usually implicit casting
-
-large variable|fixed length TYPE values:
-  - internally broken down into several parts ("TOAST") ???
-
 pg_cast                           #TABLE with implicit|explicit type casting
 pg_cast.oid                       #OID
 pg_cast.castsource|casttarget     #pg_type.OID of source|target TYPE
@@ -265,6 +249,73 @@ create cast (TYPE as TYPE2)
 create cast ... with inout ...
 create cast ...
  without function ...             #Same but with a 'i|b' castmethod (def: 'f')
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:          LARGE TYPES          :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+VARIABLE BOUNDED LENGTH TYPES     #One of:
+ ==>                              #  - numeric(...)
+                                  #  - varchar|bpchar
+                                  #  - bit(...)
+                                  #  - time[stamp][tz]|interval
+VARIABLE UNBOUNDED LENGTH TYPES   #One of:
+ ==>                              #  - numeric
+                                  #  - text
+                                  #  - bit varying, bytea
+                                  #  - json, xml, hstore
+                                  #Max length: 1GB
+
+SIZING CAST ==>                   #Type cast to same type
+                                  #Used to enforce size of variable bounded length TYPEs
+                                  #  - failing if too large
+                                  #  - padding or truncating
+                                  #Usually implicit casting
+
+TOAST ==>                         #Large variable length TYPE values are split them in several ~2KB chunks
+                                  #Goals:
+                                  #  - fit in a single 8KB page, so that computation can happen in-memory only, which is faster
+                                  #  - compression, to save space
+IN-LINE TOAST ==>                 #Keeps data as is but possibly compress it
+                                  #Requires 1|4 additional bytes
+                                  #If <127 bytes
+OUT-OF-LINE TOAST ==>             #Replace data with 18 bytes pointer to pg_toast_OID TABLE
+                                  #If >127 bytes
+pg_class.reltoastrelid            #pg_class.oid of the pg_toast_OID "TABLE"
+pg_toast.pg_toast_OID             #"TABLE" with TOAST out-of-line data
+pg_toast.pg_toast_OID.chunk_id    #Data ID
+pg_toast.pg_toast_OID.chunk_seq   #Data chunk serial NUM
+pg_toast.pg_toast_OID.chunk_data  #BYTEA with the data
+
+ENVVAR default_toast_compression  #Compress TOASTed values (in-line or out-of-line) among:
+                                  #  - 'pglz' (def): Postgres-specific LZMA-like, optimized for speed (not space)
+                                  #  - 'lz4': optimized for space
+                                  #     - requires compiling with --with-lz4 (is the case with Ubuntu)
+create table "TABLE"
+ ("COL" TYPE compression ENUM,...)
+alter table "TABLE"
+ alter [column] "COL"
+ set compression ENUM             #Sets compression, like ENVVAR default_toast_compression
+
+alter table "TABLE"               #Sets TOAST behavior among:
+ alter [column] "COL"             #  - plain
+ set storage ENUM                 #     - no out-of-line nor compression
+                                  #     - only possible value for non-variable length TYPEs
+                                  #  - extended:
+                                  #     - both out-of-line and compression
+                                  #     - def for variable length TYPEs
+                                  #  - external:
+                                  #     - out-of-line but not compression
+                                  #     - i.e. faster computation but more space
+                                  #  - main:
+                                  #     - no out-of-line but compression
+
+create table "TABLE"              #Do not use out-of-line nor compression for values < UINT bytes
+ set (toast_tuple_target = UINT)  #Min: 128, max: 8160, def: 2040 (which is usually good)
 
 
                                              /=+===============================+=\
@@ -377,7 +428,7 @@ match simple|full                 #For multicolumn foreign keys:
                                   #     - ignore ROW if all COLs null
                                   #     - fail if some COLs null but not others
 
-AFUNC(...)                        #Removes nulls first, except count(*)
+AFUNC(...)                        #Ignores nulls, except a few ones
 
 
                                              /=+===============================+=\
@@ -528,7 +579,6 @@ varchar[(NUM)]                    #TYPE. STR with NUM max Unicode codepoints (de
 bpchar[(NUM)]
 char(NUM)                         #TYPE. Like varchar, but pads with spaces (slower and takes more space)
 text                              #TYPE. Like varchar, but variable length
-                                  #Max length: 1e9
 
 BPCHAR -> VARCHAR|TEXT            #Type cast removes padded spaces
 VAL -> STR                        #For all TYPEs
@@ -708,7 +758,6 @@ bit[(NUM)]                        #TYPE. BIT, i.e. like STR, but bit-wise
                                   #0-based indices
 varbit[(NUM)]
 bit varying[(NUM)]                #TYPE. VARBIT, i.e. same but variable length (unless NUM)
-                                  #Max NUM: 1e8
 
 BIT <-> VARBIT                    #Type cast. Truncates last bits if needed.
 BIT <~> INT4|8                    #Type cast. Fails if larger than max INT
@@ -1125,6 +1174,7 @@ ltree                            ##TYPE. Array of VAR representing a reference
 
 'VAR.VAR2....'                   ##LTREE_UNKNOWN
                                  ##VAR is [[:alpha:]_], max 256 characters.
+                                 ##Max 65e3 VARs
                                  ##Can be empty ''
 
 LTREE < <= >= > LTREE2           ##Compare first VAR, then second, etc.
@@ -1486,9 +1536,7 @@ ROW_TYPE                          #Conceptually like an OBJ
                                   #Max 1600 COLs
                                   #Max size:
                                   #  - after TOAST: 400GB
-                                  #  - before TOAST: 8KB, i.e. with fixed|variable length TYPEs taking:
-                                  #     - if big: 18 bytes in total
-                                  #     - if small: 1|4 additional bytes
+                                  #  - before TOAST: 8KB
 record                            #TYPE of any ROW_TYPE
 
 ROW                               #ROW_TYPE value
@@ -1748,6 +1796,9 @@ create table ...                  #Populates values with SUBQUERY
 
 select VALS,...                   #Same as `select ...` but creates "TABLE" instead of returning ROW_SET
  into [table] "TABLE" ...         #Prefer `create table as SUBQUERY` as it has more features and is more standard
+
+create table ... with (OPTS)
+alter table ... set (OPTS)        #Same OPTS
 
 
                                              /=+===============================+=\
@@ -2514,22 +2565,42 @@ select ... having BOOL_REXPR      #Like `where BOOL_REXPR` except:
 grouping sets, cube, rollup???
 See SELECT reference ???
 
-AGGREGATE FUNCTION ==>            #Transform a COL to a scalar VAL.
-                                  #If AFUNC(VAL), VAL is converted to COL.
-                                  #WFUNC are performed after AFUNC, and AFUNC after all the later clauses (e.g. BOOL).
-                                  #To include a former in a later, use a command substitution, e.g. instead of AFUNC(COL):
-                                  #  (select AFUNC(COL) [from COL])
-AFUNC([distinct] ...              #For all AFUNC. Same semantic as select ...
-[order by ...])                   #Nulls are ignored
-sum(COL)
-count(COL)                        #Can do count(*)
-avg(COL)
-min|max(COL)
-bit_and|or(COL)                   #Bitwise and|or on all values
-bool_and|or(COL)                  #Boolean and|or on all values
-exists(COL)                       #Returns false if COL has length 0
-array|json_agg(COL)               #Returns as an ARR or JSON array.
-string_agg(COL, STR)              #Returns as a STR delimited by STR
+AFUNC(SET, ...)->SCALAR           #"Aggregate function". Reduce a SET to a SCALAR
+                                  #If SCALAR is passed as argument, it is handled like a SET with a single item.
+                                  #Must be used inside a REXPR.
+                                  #Unless specified, ignore nulls
+
+AFUNC(distinct ...)               #Ignore duplicate SET values
+AFUNC(... order by ...)           #Sort SET. Same syntax as `select ...`
+
+*_agg(...)                        #Does not ignore nulls
+array_agg(SET)->ARR               #AFUNC. Converts to ARR
+json[b]_agg(SET)->ARR_JSON[B]     #AFUNC. Converts to ARR_JSON[B]
+json[b]_object_agg
+ ('KEY'_SET, VAL_SET)->OBJ_JSON[B]#AFUNC. Converts to OBJ_JSON[B]
+xml_agg(SET)->XML                 #AFUNC. Converts to XML
+string_agg
+ (STR_SET, DELIM_STR|BYTEA)
+ ->STR|BYTEA                      #AFUNC. Converts to STR|BYTEA
+
+count(SET)->UINT                  #AFUNC. Number of values, excluding nulls
+count(*)->UINT                    #AFUNC. Number of values, including nulls
+
+min|max(SET)->VAL                 #AFUNC
+sum(NUM|INTERVAL_SET)
+ ->NUM|INTERVAL                   #AFUNC
+avg(NUM|INTERVAL_SET)
+ ->NUM|INTERVAL                   #AFUNC
+
+bit_and|or|xor(INT|BIT_SET)
+ ->INT|BIT                        #AFUNC. Bitwise and|or|xor
+bool_or(BOOL_SET)->BOOL           #AFUNC. BOOL or
+bool_and|every(BOOL_SET)->BOOL    #AFUNC. BOOL and
+
+range_agg
+ ([MULTI]RANGE_SET)->[MULTI]RANGE #AFUNC. Union
+range_intersect_agg
+ ([MULTI]RANGE_SET)->[MULTI]RANGE #AFUNC. Intersection
 
 corr(COL, COL)                    #r
 regr_r2(COL, COL2)                #r₂
@@ -2581,6 +2652,9 @@ AFUNC (COL) over                  #Window function WFUNC:
                                   #        - if range: for each VAL, the first one for WORD, and the last one for WORD2
                                   #        - if rows: for each VAL, that VAL
                                   #  - the output is sorted by COL2, inside each group
+                                  #WFUNC are performed after AFUNC, and AFUNC after all the later clauses (e.g. BOOL).
+                                  #To include a former in a later, use a command substitution, e.g. instead of AFUNC(COL):
+                                  #  (select AFUNC(COL) [from COL])
 AFUNC([COL]) over WINDOW,         #If multiple AFUNCs in a statement use the same WINDOW, it can use an alias WINDOW, then put a later
 AFUNC2([TABLE2]) over WINDOW ...  #clause, as: window WINDOW as (...)
 
@@ -4822,8 +4896,7 @@ END OF LINE ==>                   #The seven following commands should be put at
 \setenv VAR [VAL]                 #Sets shell environment variables
 
 \d...[S][+] [SREGEXP]             #Show info about VAR specified in ... (S for also system ones, + for more info) among:
-                                  #  - nothing (all table-like), t (table), v (view), i (index), m (materialized view),
-                                  #    s (sequence)
+                                  #  - nothing (all table-like), t (table), v (view), i (index), m (materialized view), s (sequence)
                                   #  - u (ROLE), dp (default user privilege), p (all table-like with privileges)
                                   #  - d (constraint, operator*, rule, trigger)
                                   #  - n (SCHEMA)
