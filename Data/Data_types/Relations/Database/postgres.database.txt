@@ -2768,8 +2768,7 @@ select ... order by COL_REXPR     #Sort ROWs
                                   #  - if union|intersect|except used, can only be "COL"|COL_INDEX
                                   #Unless used, ROWs are unordered
                                   #  - including union|intersect|except result
- [asc|desc|using OP]              #Sorting order (def: asc)
-                                  #Can be a comparator OP, e.g. < is like asc, > is like desc
+ [asc|desc]                       #Sorting order (def: asc)
 
 select ... order by ...,...       #Multiple sort values
 
@@ -4325,25 +4324,48 @@ create                            #Create an "index access method"
  access method "ACCESS_METHOD"    #How a TABLE|INDEX is physically read|written, i.e. its data structure and operators.
                                   #Must be superuser
 
-NON-SCAN PURPOSES ==>             #Some specific INDEX ACCESS_METHODs (btree|hash) are also used for features beyond TABLE|INDEX read|write:
+OPERATIONS ==>                    #Many operations use ACCESS_METHODs
+                                  #  - if an INDEX on the COLs|COL_REXPR exist, use its OPCLASS
+                                  #     - faster can re-use INDEX optimized physical structure
+                                  #  - otherwise, the default ACCESS_METHOD for that operation + TYPE is used
+                                  #Most of those operations are only available with specific ACCESS_METHODs
+                                  #Operations:
+                                  #  - filter
+                                  #     - for:
+                                  #        - where|having|on|check VAL OP VAL2
+                                  #        - is [not] null
+                                  #        - partition by range|list
+                                  #     - using OPs = < <= > >=
+                                  #     - "search OP"
+                                  #  - sorting
+                                  #     - order by "COL"|COL_REXPR
+                                  #        - using OP < (by default)
+                                  #     - order by VAL OP VAL2
+                                  #        - "ordering OP"
+                                  #     - RANGE OPs
+                                  #        - using OP < (by default)
                                   #  - uniqueness|grouping
-                                  #  - order by
+                                  #     - for:
+                                  #        - distinct, union|intersect|except distinct, AFUNC(distinct), group by, over (partition by)
+                                  #        - ARR = <> ARR2
+                                  #        - exclude|unique CONSTRAINT
+                                  #     - using OP = (by default)
                                   #  - over (range NUM preceding|following)
+                                  #     - using support FUNC "in_range"
                                   #  - hash join|aggregation
-
-CAPABILITIES ==>                  #For INDEX, can support following capabilities:
-                                  #  - order by "COL"
-                                  #  - order by COL_REXPR
-                                  #  - backward scanning
-                                  #  - unique
-                                  #  - is [not] null
+                                  #     - also partition by hash
+                                  #     - using OP =
+                                  #  - ordered scan
+                                  #  - backward scan
+                                  #  - parallel scan
+                                  #  - predicate lock
+                                  #Can support:
                                   #  - no constraint on first COL
                                   #  - multi-COL
-                                  #  - ARR items indexing
+
+INDEX STORAGE ==>                 #ACCESS_METHODs can support:
                                   #  - storage TYPE
                                   #  - cluster
-                                  #  - predicate lock
-                                  #  - parallel scan
                                   #  - `include`
                                   #  - ENVVAR maintenance_work_mem
                                   #with (OPTS) of TABLE|INDEX are ACCESS_METHOD-specific
@@ -4384,20 +4406,15 @@ btree                             #Default ACCESS_METHOD for INDEXs
                                   #For:
                                   #  - any TYPE with < <= = >= > <>
                                   #Faster if first COLs use =
-                                  #Only ACCESS_METHOD that support:
+                                  #Supports:
                                   #  - ordered scans
                                   #  - parallel scans
-                                  #Also used for:
-                                  #  - uniqueness|grouping:
-                                  #     - i.e. distinct, union|intersect|except distinct, AFUNC(distinct), group by, over (partition by)
-                                  #     - also used by ARR = <> ARR2
-                                  #     - using = OP
-                                  #  - order by:
-                                  #     - using < OP
-                                  #     - can override with `order by ... using OP`
+                                  #  - uniqueness|grouping
+                                  #  - order by
                                   #  - over (range NUM preceding|following)
-                                  #     - using support FUNC "in_range"
-                                  #Cannot use:
+                                  #  - partition by range|list
+                                  #  - RANGE OPs
+                                  #Does not support:
                                   #  - ordering OPCLASS
                                   #  - storage TYPE
 
@@ -4410,7 +4427,7 @@ gin                               #ACCESS_METHOD
                                  ##  - HSTORE with @> <@ ? ?& ?|
                                  ##For INT_ARR, use special OPCLASS gin|gist__int[big]_ops
                                  ##  - big_ops: prefer if big dataset
-                                  #Cannot use:
+                                  #Does not support:
                                   #  - exclude()
                                   #  - include
                                   #  - fillfactor
@@ -4431,28 +4448,26 @@ spgist                            #ACCESS_METHOD
                                   #  - POINT
                                   #  - RANGE
                                   #  - STR with < <= >= = > <>
-                                  #Cannot use:
+                                  #Does not support:
                                   #  - multi-COL
 
 hash                              #ACCESS_METHOD
-                                  #Also used for:
+                                  #Supports:
                                   #  - hash join|aggregation
-                                  #     - using = OP
-                                  #  - uniqueness|grouping:
-                                  #     - only if btree = OP not available
-                                  #     - using = OP
-                                  #Cannot use:
+                                  #  - partition by hash
+                                  #  - uniqueness|grouping: only if btree = OP not available
+                                  #Does not support:
                                   #  - include
                                   #  - fillfactor
                                   #  - multi-COL
-                                  #  - ordering OPCLASS
+                                  #  - ordering OP
                                   #  - storage TYPE
 
 brin                              #ACCESS_METHOD
-                                  #Cannot:
+                                  #Does not support:
                                   #  - include
                                   #  - fillfactor
-                                  #  - ordering OPCLASS
+                                  #  - ordering OP
 
 bloom                            ##ACCESS_METHOD
                                  ##Trusted Postgres extension 'bloom'
@@ -4582,16 +4597,17 @@ pg_amproc.amprocnum               #UINT. Function number
 pg_amproc.amproc                  #REGPROC of OP
 pg_amproc.amprocleft|righttype    #REGTYPE of left|right argument
 
+create index "INDEX" on "TABLE"   #OPCLASS used by an INDEX "COL"|COL_REGEXP
+ (... OPCLASS[(OPTS)],...) ...    #OPTS are OPCLASS options ???
+
 create table ... exclude
- ("COL"|(REXPR) OPCLASS,...) ...  #Specify OPCLASS to use for underlying INDEX's comparison
-
+ ("COL"|(REXPR) OPCLASS,...) ...  #OPCLASS used by `exclude` (def: use underlying INDEX's ACCESS_METHOD)
 create table ... partition by ...
- ("COL"|(COL_REXPR) OPCLASS)      #
+ ("COL"|(COL_REXPR) OPCLASS)      #Same for `partition by`
 create type "RANGE_TYPE" as
- range(subtype_opclass = OPCLASS) #
+ range(subtype_opclass = OPCLASS) #Same for RANGE OPs
 
-create index "INDEX" on "TABLE"
- (... OPCLASS[(OPTS)],...) ...    #
+... order by ARG using OP         #Changes OP used by `order by` (def: < or >)
 
 
                                              /=+===============================+=\
