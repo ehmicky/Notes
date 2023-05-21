@@ -404,6 +404,9 @@ create table "TABLE"              #Do not use out-of-line nor compression for va
 
 LARGEOBJ                          #VAL that is persisted as its own file
                                   #Meant for large values
+                                  #  - always on-file, not in-memory
+                                  #  - conceptually like a file path or file descriptor
+                                  #  - i.e. low memory but slow read|write
                                   #Split into 2KB chunks
 LARGE OBJECT                      #"ENTITY" name
 
@@ -1929,6 +1932,11 @@ for ROLE server SERVER            #For user mapping
 
 alter ENTITY ... "ENTITY" ...     #Sets ENTITY options after creation
                                   #Not for ENTITY: access method, cast, transform
+                                  #Several ENTITYs allow combining several `alter ...` into a single statement
+                                  #  - faster than doing individual statements serially
+                                  #  - for most actions of:
+                                  #     - alter [foreign] table, materialized view, type "ROW"
+                                  #     - alter function, routine, procedure
 
 alter ENTITY "ENTITY"             #Rename an ENTITY.
  rename to "VAR"                  #Not for ENTITY: extension, operator, user mapping
@@ -2077,14 +2085,14 @@ CONSTRAINT                        #Condition validating udpates, and making them
 COL_CONSTRAINT                    #Single-COL CONSTRAINT
 
 alter table "TABLE" add COL_ARG   #
- [not valid]                      #Perform CONSTRAINT:
-                                  #  - only on insert|update
-                                  #  - or on all ROWs using: alter table ... validate constraint ...
-                                  #  - not on all ROWs at CONSTRAINT creation time
+ [not valid]                      #Perform CONSTRAINTs:
+                                  #  - not at creation time
+                                  #  - but when using: alter table ... validate constraint ...
                                   #Goal: speed up time to perform this statement
-                                  #Only for check() and foreign key
+                                  #Still perform those CONSTRAINTs on insert|update
+                                  #Only for check() and foreign key CONSTRAINTs
 alter table "TABLE"
- validate constraint "CONSTRAINT" #
+ validate constraint "CONSTRAINT" #Noop after being used at least once
 
 "COL" TYPE [COL_CONSTRAINT...]    #COL_ARG. Define a new COL
 alter table "TABLE"
@@ -2448,35 +2456,39 @@ pg_views.viewowner                #pg_authid.rolname NAME of owner
                                              \=+===============================+=/
 
 
-create materialized view "TABLE"  #Readonly TABLE that is populated on-demand via a SUBQUERY
+create materialized view "MVIEW"  #Readonly TABLE that is populated on-demand via a SUBQUERY
  [("COL",...)]                    #Like create view ...
  [with (OPTS)]                    #Like create table ...
  as SUBQUERY                      #
 
-refresh materialized view "TABLE" #Re-populates TABLE
+refresh materialized view "MVIEW" #Re-populates TABLE
 
 create|refresh
- materialized view "TABLE"
+ materialized view "MVIEW"
  [with [no] data]                 #with data (def): populate at creation time
                                   #with no data: truncate and cannot query until next refresh materialized view
 
-alter materialized view "TABLE"
+alter materialized view "MVIEW"
  rename [column] "COL" to "COL2"
-alter materialized view "TABLE"
+alter materialized view "MVIEW"
  alter [column] "COL" set
  statistics|storage|compression
  ...
-alter materialized view "TABLE"
+alter materialized view "MVIEW"
  [alter [column] "COL"]
  set (...)
-alter materialized view "TABLE"
+alter materialized view "MVIEW"
  [alter [column] "COL"]
  reset (...)
-alter materialized view "TABLE"
+alter materialized view "MVIEW"
+ set (...)
+alter materialized view "MVIEW"
+ reset (...)
+alter materialized view "MVIEW"
  cluster on "INDEX"
-alter materialized view "TABLE"
+alter materialized view "MVIEW"
  set without cluster
-alter materialized view "TABLE"
+alter materialized view "MVIEW"
  set access method ...            #Same as alter table ...
 
 pg_matviews                       #TABLE with all MVIEWs
@@ -3997,11 +4009,11 @@ deferred|immediate                #CONSTRAINT can be declared (including during 
 alter table "TABLE"
  alter constraint "CONSTRAINT"
  [[not] deferrable]
- [initially deferred|immediate]
+ [initially deferred|immediate]   #Same for foreign key CONSTRAINT
 alter table "TABLE"
  add unique|primary key ...
  [[not] deferrable]
- [initially deferred|immediate]   #Same for a specific CONSTRAINT
+ [initially deferred|immediate]   #Same for unique|primary key CONSTRAINT
 create ... trigger ...
  on "TABLE"|VIEW [from TABLE2]
  [[not] deferrable]
@@ -5044,6 +5056,9 @@ EXTENSION                         #TABLESPACE, for a specific DATABASE.
                                   #    alter extension update
 alter extension EXTNSIN
 add|drop TYPE VAR                 #
+
+alter ENTITY "ENTITY" [no] depends#Mark as dependency, for `drop ... cascade`
+ on extension "EXTENSION"         #For ENTITY: function, routine, procedure, trigger, materialized view
 
 load STR                          #Loads a shared library located at STR, in order:
                                   #  - an absolute path
