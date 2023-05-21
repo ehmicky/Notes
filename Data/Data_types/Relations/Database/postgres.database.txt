@@ -2838,6 +2838,13 @@ select ... order by ...,...       #Multiple sort values
 ENVVAR enable_sort                #"Explicit sort"
                                   #Normal sort when using order COL,...
                                   #As opposed to incremental sort and ordered scans
+QUICKSORT ==>                     #Explicit sort method
+                                  #Faster in most cases
+TOP-N HEAPSORT ==>                #Explicit sort method
+                                  #Faster when using `order by` + `limit`
+EXTERNAL MERGE SORT ==>           #Explicit sort method
+                                  #Slower but preferred when ROW_SET is too large to fit in-memory (according to ENVVAR work_mem)
+
 ENVVAR enable_incremental_sort    #"Incremental sort".
                                   #When using order by COL,..., query planner sometimes sorts COL-by-COL instead of all COLs at once
                                   #This allows next COLs to sort groups of ROWs instead of all ROWs at once.
@@ -2945,16 +2952,31 @@ select ... from FROM
 
 SELF JOIN ==>                     #Using twice the same FROM
 
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:         JOIN METHODS          :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
 ENVVAR enable_nestloop            #"Nested loop join".
                                   #Read both ROW_SET sequentially as outer|inner loops
                                   #Left ROW_SET is the outer loop
                                   #  - i.e. only the inner loop can use INDEXs on the join condition
                                   #O(n^2) but efficient if outer loop is small
+
 ENVVAR enable_hashjoin            #"Hash join".
                                   #Build hash tables for each ROW_SET, where the key is a hash of the join condition
                                   #Read sequentially one of the hash table, looking up the other
-                                  #O(n) but cost of hash computation
+                                  #Hash table size (number of "buckets")
+                                  #  - guessed automatically
+                                  #  - if too large, done in several rounds, persisting data on-disk
+                                  #O(n) but cost of:
+                                  #  - hash computation
+                                  #  - on-disk memory + I/O, if hash table too large due to too many ROWs
                                   #Only with OP =
+
 ENVVAR enable_mergejoin           #"Merge join".
                                   #Sort each ROW_SET on the join condition, then do a merge join
                                   #O(n log n) but reduced to O(n) when can skip sorting thanks to one of:
@@ -2967,6 +2989,25 @@ ENVVAR enable_material            #"Materialization".
                                   #When creating intermediate ROW_SETs (e.g. during joins),
                                   #persist it fully in-memory, as opposed to processing it ROW by ROW.
                                   #Sometimes faster, but requires memory.
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:         JOIN STRATEGY         :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+JOIN STRATEGY ==>                 #When joining multiple ROW_SETs decides:
+                                  #  - in which order to join each pair
+                                  #  - when to apply each `where|on` condition
+
+JOIN EXHAUSTIVE SEARCH ==>        #Join strategy comparing the cost of each possible solution
+                                  #Best execution time, but high planning time if many ROW_SETs
+
+ENVVAR geqo                       #BOOL (def: true)
+                                  #Enables the "GEneric Query Optimizer"
+                                  #
 
 
                                              /=+===============================+=\
@@ -4654,10 +4695,8 @@ create operator class ...         #TYPE used to store the values in the INDEX.
                                   #Can differ, e.g. when value can be reduced for the purpose of the INDEX logic
                                   #  - e.g. a polygon reduced to an approximative rectangle
 
-LOSSY OPERATOR ==>                #OP that can return some false positive:
-                                  #  - with a fast approximate logic
-                                  #  - underlying FUNC must return a "recheck" flag
-                                  #OP is then called again, but with the slower exact logic
+LOSSY OPERATOR ==>                #OP that can return some false positive, with a fast approximate logic
+                                  #OP is then called again on the returned values, but with the slower exact logic ("index recheck")
 
 pg_opclass                        #TABLE with all OPCLASSs
 pg_opclass.oid                    #OID
@@ -4930,7 +4969,9 @@ record_image_ops: ???
                                              \=+===============================+=/
 
 
-explain [(ZOPTS)] COMMAND         #Show the execution plan of COMMAND
+QUERY PLANNER ==>                 #Internal logic deciding best way to execute COMMANDs
+
+explain [(ZOPTS)] COMMAND         #Show the query plan of COMMAND
                                   #COMMAND can be select|table|values|execute, create table|materialized view as, insert|update|delete|merge, declare
                                   #Should prefer real data close to production, if possible
 
@@ -4968,46 +5009,15 @@ TREE ==>                          #Output is a tree with following nodes.
                                   #Each node results include its children.
                                   #Children are executed before parents.
 
-Sort                              #order by (normal sort)
-Incremental Sort                  #order by VAL, VAL2 with VAL using ordered scan and VAL2 using normal sort
-Sort Key                          #order by's argument (normal sort)
-Presorted Key                     #order by's argument (ordered scan)
+Update on TABLE                   #`update`
 
-Sort Method                       #One of:
-                                  #  - top-N heapsort Memory: NUM
-                                  #  - quicksort Memory: NUM
-                                  #  - external merge Disk: NUM
-QUICKSORT ==>                     #Explicit sort method. Faster in most cases.
-TOP-N HEAPSORT ==>                #Explicit sort method. Faster when using `order by` + `limit`
-EXTERNAL MERGE SORT ==>           #Explicit sort method.
-                                  #Slower but preferred when ROW_SET is too large to fit in-memory (according to ENVVAR work_mem)
-
-Limit                             #offset|fetch
-Aggregate                         #AFUNC
-GroupAggregate                    #group by
-HashAggregate                     #some AFUNC ???
-WindowAgg                         #WFUNC
-
-Filter                            #where|having
-Rows Removed by Filter            #NUM of ROWs not returned by Filter
-
-Join                              #
-
-Nested Loop                       #Nested loop join
-Join Filter                       #Nested loop join condition (where|on)
-
-Hash Join                         #
-Hash Cond                         #Hash join condition (where|on)
-Hash                              #Creation of hash table for a ROW_SET during a hash join
-
-Merge Join                        #
-Merge Cond                        #Merge join condition (where|on)
-
-Materialize                       #Materialization of a ROW_SET
+Update on CHILD_TABLE PARENT_TABLE#Inheritance
 
 Sequential Scan                   #
 
 Index Scan                        #
+Index Cond: STR                   #Query "COL"|(REXPR) matching the INDEX's
+Rows Removed by Index Recheck: NUM#ROWs excluded by lossy operator recheck
 
 Bitmap Heap Scan                  #
 Bitmap Index Scan                 #
@@ -5021,6 +5031,45 @@ Heap Fetches                      #UINT. Number of times TABLEs were fetched, wi
 
 Result                            #COMMAND return value
 Output                            #COMMAND return value contents
+
+Filter                            #where|having
+Rows Removed by Filter: NUM       #ROWs excluded by Filter
+
+Sort                              #Explicit sort
+Sort Key                          #Explicit sort argument
+Sort Method:
+ quicksort Memory: NUM
+Sort Method:
+ top-N heapsort Memory: NUM
+Sort Method:
+ external merge Disk: NUM         #Explicit sort methods
+
+Incremental Sort                  #
+Presorted Key                     #Incremental sort argument that is sorted
+
+Join                              #
+Materialize                       #Materialization of a ROW_SET
+
+Nested Loop                       #Nested loop join
+Join Filter                       #Nested loop join condition (where|on)
+
+Hash Join                         #
+Hash Cond: STR                    #Hash join condition (where|on)
+Hash                              #Creation of hash table for a ROW_SET during a hash join
+Buckets: NUM                      #Hash table size
+Memory Usage: STR                 #Hash table creation peak memory
+Batches: NUM                      #Number of rounds to create hash table
+Disk Usage: STR                   #To persist data in-between hash table batches
+
+Merge Join                        #
+Merge Cond: STR                   #Merge join condition (where|on)
+
+Limit                             #offset|fetch
+
+Aggregate                         #AFUNC
+GroupAggregate                    #group by
+HashAggregate                     #some AFUNC ???
+WindowAgg                         #WFUNC
 
 (costs=NUM..NUM2)                 #Cost. Decides between different strategies
                                   #NUM is "startup cost" (initialization logic), NUM2 is "total cost"
@@ -5041,12 +5090,13 @@ ENVVAR effective_cache_size       #STR (def: '4GB'). Hints how much RAM is avail
 
 (actual time=NUM..NUM2)           #NUM[2] (in ms) initialization|total time spent, per inner node loop
 Planning Time                     #Time to plan the query
-Execution Time                    #Time to execute the query
+Execution Time                    #Time to execute the query, excluding Planning Time
 
 (rows=UINT)                       #Number of ROWs returned|written expected, per inner node loop
 (actual rows=UINT)                #Same but actual number, after query performed
 (width=UINT)                      #Mean size (in bytes) of a ROW
 
+Buffers: ...                      #Used to debug both I/O caching, and amount of I/O
 Buffers: shared hit|read=NUM      #Heap pages hit|misses
 Buffers: shared dirtied=NUM       #Heap pages dirtied
 Buffers: shared written=NUM       #Heap pages written
