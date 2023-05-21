@@ -344,6 +344,8 @@ VAL between [symmetric]           #BOOL. Same as VAL >= VAL2 and VAL <= VAL3
                                   #  - otherwise: returns false
 greatest|least(VAL...)->BOOL      #Using > <
 
+min|max(SET)->VAL                 #AFUNC
+
 VAL [not] in (VAL2,...)           #BOOL. Whether VAL = <> any VAL2
 
 case [LVAL]
@@ -428,7 +430,10 @@ match simple|full                 #For multicolumn foreign keys:
                                   #     - ignore ROW if all COLs null
                                   #     - fail if some COLs null but not others
 
-AFUNC(...)                        #Ignores nulls, except a few ones
+AFUNC(...)                        #Ignores nulls
+                                  #  - except: *agg(...), count(*), *rank(), cume_dist()
+                                  #Returns null if empty SET
+                                  #  - except: count()
 
 
                                              /=+===============================+=\
@@ -448,6 +453,9 @@ true|false|null                   #BOOL
 BOOL or BOOL2                     #
 BOOL and BOOL2                    #
 not BOOL                          #
+
+bool_or(BOOL_SET)->BOOL           #AFUNC. BOOL or
+bool_and|every(BOOL_SET)->BOOL    #AFUNC. BOOL and
 
 BOOL > >= < <= BOOL2              #true > false
 
@@ -505,6 +513,9 @@ NUMe...                           #TYPE:
 
 NUM + - / * NUM2                  #
 -NUM                              #
+
+sum(NUM_SET)->NUM                 #AFUNC
+avg(NUM_SET)->NUM                 #AFUNC
 
 INT & | # << >> INT2
 ~INT                              #Bitwise operations
@@ -586,6 +597,8 @@ VAL -> STR                        #For all TYPEs
                                   #  - e.g. row(VAL,...) -> '(VAL,...)'
 
 '...'                             #STR_UNKNOWN
+
+string_agg(STR_SET, 'DELIM')->STR #AFUNC. Converts to STR
 
 ascii('CHAR')->UINT               #Unicode codepoint
 chr(UINT)->'CHAR'                 #Inverse
@@ -768,6 +781,9 @@ X'...'                            #BIT with hex chars
 BSTR & | # << >> BSTR2            #
 ~BSTR                             #
 
+bit_and|or|xor(INT|BIT_SET)
+ ->INT|BIT                        #AFUNC. Bitwise and|or|xor
+
 get_bit(BSTR|BYTEA, UINT)->0|1    #
 set_bit(BSTR|BYTEA, UINT, 0|1)
  ->BSTR|BYTEA                     #
@@ -791,6 +807,9 @@ encode(BYTEA, STR)->STR2          #Converts to format STR:
                                   #  - 'escape': octal \NNN only if not [[:print:]]
                                   #  - 'base64'
 decode(STR, STR2)->BYTEA          #Inverse
+
+string_agg
+ (BYTEA_SET, DELIM_BYTEA)->BYTEA  #AFUNC. Converts to BYTEA
 
 get_byte(BYTEA, UINT)->0-255      #
 set_byte(BYTEA, UINT, 0-255)
@@ -962,6 +981,8 @@ TIME[STAMP] - TIME[STAMP]2        #INTERVAL
 INTERVAL * / NUM                  #
 -INTERVAL                         #
 
+sum|avg(INTERVAL_SET)->INTERVAL   #AFUNC
+
 justify_days(INTERVAL)->INTERVAL  #Modulo on days, e.g. 35 days -> 1 month 5 days
 justify_hours(INTERVAL)->INTERVAL #Modulo on hours, e.g. 30 hours -> 1 day 6 hours
 justify_interval
@@ -1071,6 +1092,10 @@ to_json(VAL)->JSON                #
 array_to_json(ARR)->ARR_JSON      #
 row_to_json(ROW)->OBJ_JSON        #
 
+json[b]_agg(SET)->ARR_JSON[B]     #AFUNC. Converts to ARR_JSON[B]
+json[b]_object_agg
+ ('KEY'_SET, VAL_SET)->OBJ_JSON[B]#AFUNC. Converts to OBJ_JSON[B]
+
 json_array_elements(ARR_JSON)->SET#Converts ARR_JSON to SET
 json_array_length(ARR_JSON)->UINT #ARR.length
 json_populate_record              #Converts OBJ_JSON to ROW
@@ -1104,6 +1129,8 @@ xmlserialize(document|content XML
  as [var]char|text)->STR          #
 enum_first|last(ENUM_VAL)         #First|last ENUM_VAL of the same type
  ->ENUM_VAL2                      #null::ENUM_TYPE can be used as argument
+
+xml_agg(SET)->XML                 #AFUNC. Converts to XML
 
 
                                              /=+===============================+=\
@@ -1418,6 +1445,11 @@ RANGE - RANGE2                    #[RANGE.begin, RANGE2.begin]
                                   #  - otherwise returns empty
 RANGE * RANGE2                    #RANGE3. Intersection. Empty if none.
 
+range_agg
+ ([MULTI]RANGE_SET)->[MULTI]RANGE #AFUNC. Union
+range_intersect_agg
+ ([MULTI]RANGE_SET)->[MULTI]RANGE #AFUNC. Intersection
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -1473,6 +1505,8 @@ array[VAL...]                     #ARR literal value.
                                   #     - def: UINT
                                   #     - must be UINT + ARR.length - 1, i.e. cannot truncate|extend
                                   #One [...] per dimension
+
+array_agg(SET)->ARR               #AFUNC. Converts to ARR
 
 ARR[UINT]                         #VAL. null if out-of-bound.
 ARR[UINT:UINT2]                   #ARR2, from UINT (included) to UINT2 (included)
@@ -2534,7 +2568,7 @@ ENVVAR IntervalStyle              #Should not be set to 'sql_standard'
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:           AGGREGATE           :==(
+                                            )==:             GROUP             :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
@@ -2562,58 +2596,92 @@ select ... having BOOL_REXPR      #Like `where BOOL_REXPR` except:
                                   #  - after `group by`
                                   #  - can use AFUNC()
 
-grouping sets, cube, rollup???
-See SELECT reference ???
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:           AGGREGATE           :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
 
 AFUNC(SET, ...)->SCALAR           #"Aggregate function". Reduce a SET to a SCALAR
                                   #If SCALAR is passed as argument, it is handled like a SET with a single item.
                                   #Must be used inside a REXPR.
-                                  #Unless specified, ignore nulls
 
-AFUNC(distinct ...)               #Ignore duplicate SET values
+AFUNC(...)
+ filter (where BOOL_REXPR)        #Filter SET values passed to AFUNC()
+
+AFUNC(distinct|all ...)           #If `distinct`, ignore duplicate SET values
+
 AFUNC(... order by ...)           #Sort SET. Same syntax as `select ...`
+AFUNC(...)                        #Similar to AFUNC(ARG..., ...) except ARG... are sorted ("ordered-set AFUNC")
+ within group (order by ARG,...)  #ARG... are "aggregated arguments" (evaluated once per ROW)
+                                  #and ... are "direct arguments" (evaluated once for all ROWs)
+                                  #`order by`: same syntax as `select ...`
+ZSET                              #Notation that means this AFUNC() argument must be in `within group (order by ZSET)`
 
-*_agg(...)                        #Does not ignore nulls
-array_agg(SET)->ARR               #AFUNC. Converts to ARR
-json[b]_agg(SET)->ARR_JSON[B]     #AFUNC. Converts to ARR_JSON[B]
-json[b]_object_agg
- ('KEY'_SET, VAL_SET)->OBJ_JSON[B]#AFUNC. Converts to OBJ_JSON[B]
-xml_agg(SET)->XML                 #AFUNC. Converts to XML
-string_agg
- (STR_SET, DELIM_STR|BYTEA)
- ->STR|BYTEA                      #AFUNC. Converts to STR|BYTEA
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:             RANK              :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
 
 count(SET)->UINT                  #AFUNC. Number of values, excluding nulls
 count(*)->UINT                    #AFUNC. Number of values, including nulls
 
-min|max(SET)->VAL                 #AFUNC
-sum(NUM|INTERVAL_SET)
- ->NUM|INTERVAL                   #AFUNC
-avg(NUM|INTERVAL_SET)
- ->NUM|INTERVAL                   #AFUNC
+rank(ZSET, VAL)->UINT             #AFUNC. 1-based index of VAL in sorted ZSET
+                                  #If equal value, VAL is considered lower
+dense_rank(ZSET, VAL)->UINT       #Same but remove duplicates first
+percent_rank(ZSET, VAL)->FLOAT    #Same but returns as 0-1 percentage
+cume_dist(ZSET, VAL)->FLOAT       #AFUNC. Cumulative distribution, i.e. rank() / count()
 
-bit_and|or|xor(INT|BIT_SET)
- ->INT|BIT                        #AFUNC. Bitwise and|or|xor
-bool_or(BOOL_SET)->BOOL           #AFUNC. BOOL or
-bool_and|every(BOOL_SET)->BOOL    #AFUNC. BOOL and
+mode(ZSET)->VAL                   #AFUNC. Mode
 
-range_agg
- ([MULTI]RANGE_SET)->[MULTI]RANGE #AFUNC. Union
-range_intersect_agg
- ([MULTI]RANGE_SET)->[MULTI]RANGE #AFUNC. Intersection
+percentile_cont(ZSET, FLOAT[_ARR])#AFUNC. Percentile value[s], with interpolation
+ ->VAL[_ARR]                      #AFUNC. FLOAT is 0-1 percentage
+percentile_disc(...)              #AFUNC. Percentile value[s], without interpolation
 
-corr(COL, COL)                    #r
-regr_r2(COL, COL2)                #r₂
-stddev|var|covar_pop_samp
- (COL, COL2)                      #Standard deviation, variance, covariance, / (n-1) or /n
-regr_count(COL, COL2)             #Exclude row with one null
-regr_avgx|y(COL, COL2)            #sum(VAL[2]/regr_count(VAL, VAL2))
-regr_intercept|slope
-(VAL|TABLE, VAL|TABLE2)           #
-regr_sxx|syy|sxy                  #In order:
-(VAL|TABLE, VAL|TABLE2)           #  - sxx: sum(VAL^2) - sum(VAL)^2/regr_count(VAL, VAL2)
-                                  #  - syy: sum(VAL2^2) - sum(VAL2)^2/regr_count(VAL, VAL2)
-                                  #  - sxy: sum(VAL*VAL2) - sum(VAL)*sum(VAL2)/regr_count(VAL, VAL2)
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:          STATISTICS           :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+variance|var_samp(NUM_SET)->NUM   #AFUNC. Variance using n-1
+var_pop(NUM_SET)->NUM             #AFUNC. Variance using n
+stddev[_samp](NUM_SET)->NUM
+stddev_pop(NUM_SET)               #AFUNC. Standard deviation
+covar_samp(NUM_SET)->NUM
+covar_pop(NUM_SET)                #AFUNC. Covariance
+
+corr(FLOAT_SET, FLOAT_SET2)->FLOAT#AFUNC. r
+regr_r2
+ (FLOAT_SET, FLOAT_SET2)->FLOAT   #AFUNC. r₂
+
+regr_*(...)                       #AFUNC. Linear regression. Not documented yet
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:      AGGREGATION TO SORT      :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+grouping sets, cube, rollup???
+  - including https://www.postgresql.org/docs/current/functions-aggregate.html#FUNCTIONS-GROUPING-TABLE
+See SELECT reference ???
+
+PARTIAL AGGREGATION ==>           #AFUNC which can compute its result in parallel divide-and-conquer
+                                  #I.e. has a combine function to merge intermediary results
+                                  #  - using the same initcond
+                                  #Cannot rely on SET items order
+                                  #Must be marked `parallel safe`
+                                  #Most builtin AFUNCs allow partial aggregation, except for *agg, mode|percentile*, *rank, cume_dist
 
 create aggregate AFUNC            #Creates an AFUNC(COL,...):
 (TYPE...) (sfunc = FUNC,          #  - TYPE are type of each COL.
