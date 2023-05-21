@@ -6,8 +6,21 @@
 
 
 TO DOCUMENT:
-  - CTE documentation in SELECT reference
-  - partition of|by in CREATE TABLE reference
+  - row-level security
+     - alter table ... row level security
+     - pg_policies, pg_policy
+  - parallel queries:
+     - chapter 15
+     - create table ... with (parallel_workers)
+  - transform
+     - pg_transform
+  - logical replication:
+     - pg_publication, pg_publication_namespace, pg_publication_rel, pg_publication_tables
+     - pg_subscription, pg_subscription_rel, pg_stat_subscription, pg_stat_subscription_stats
+  - security labels:
+     - pg_[sh]seclabel, pg_seclabels
+  - all `???`
+  - information_schema
 
 Relationships:
   - can be 0, 0|1, many or 0|many on each side
@@ -203,6 +216,64 @@ VARCHAR|BPCHAR <=-> NAME          #Type casting
 
                                              /=+===============================+=\
                                             /  :                               :  \
+                                            )==:            SCHEMA             :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+create schema "SCHEMA"            #Creates a SCHEMA, i.e. namespace inside a DATABASE
+
+create schema "SCHEMA"            #Combine create schema + create ENTITYs within that SCHEMA
+ create ENTITY ... [,...]         #ENTITY: table, view, index, sequence, trigger
+                                  #Can also use `grant ...` instead of `create ENTITY`
+alter ENTITY "ENTITY"
+ set schema "SCHEMA"              #For all ENTITYs that can have a SCHEMA
+
+[SCHEMA.]"NAME"                   #"NAME"s are namespaced by SCHEMA
+
+ENVVAR search_path                #'SCHEMA,...' used as default. Leftmost has priority.
+                                  #Def: '"$user", public'
+current_schemas(BOOL)             #Show search_path
+ ->'SCHEMA'_ARR                   #If false, do not include pg_catalog and pg_temp*
+
+DEFAULT CREATE SCHEMA ==>         #When creating a new ENTITY, use the leftmost SCHEMA of search_path, except "$user"
+current_schema
+current_schema()->'SCHEMA'        #Default write schema. null if none
+
+pg_ENTITY_is_visible(OID)->BOOL   #True if ENTITY's SCHEMA is within ENVVAR search_path
+
+"$user"                           #Can be used in ENVVAR search_path, replaced by current "ROLE" name
+                                  #This SCHEMA must be manually created
+                                  #Meant for user-specific data
+
+public                            #SCHEMA automatically created, initially empty
+                                  #Meant for non-user-specific data
+
+pg_catalog                        #SCHEMA for system data. "System catalogs"
+                                  #Contains all pg_* TABLE|VIEWs and builtins FUNC|TYPEs
+                                  #Prepended to ENVVAR search_path
+                                  #  - can be explicitly added to ENVVAR search_path to override priority order
+                                  #Sometimes readonly. Should avoid modifying.
+                                  #DATABASE-specific unless on cluster-specific ENTITY
+
+PG_NODE_TREE                      #Internal serialized information, specific to pg_catalog.*
+pg_get_expr(PG_NODE_TREE,         #Converts PG_NODE_TREE to STR
+ TABLE.oid[, BOOL])->STR          #BOOL (def: false) is prettify
+
+information_schema                #SCHEMA for system data
+                                  #Unlike pg_catalog, is standard SQL
+                                  #Does not contain Postgres-specific information
+                                  #Are all VIEWs over pg_catalog.*
+
+pg_namespace                      #TABLE with all SCHEMAs
+pg_namespace.oid                  #OID
+pg_namespace.nspname              #NAME of "SCHEMA"
+pg_namespace.pg_nspowner          #pg_authid.oid of owner
+pg_namespace.aclitem              #ACLITEM_ARR
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
                                             )==:         TYPE CASTING          :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -248,6 +319,11 @@ create cast ... with inout ...
 create cast ...
  without function ...             #Same but with a 'i|b' castmethod (def: 'f')
 
+pg_type                           #All TYPE, including:
+                                  #  - typispreffered BOOL: if true, is used as the TYPE for the whole typecategory with
+                                  #    overloading functions (def: text for STR, and real for numeric)
+                                  #???
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -284,10 +360,13 @@ IN-LINE TOAST ==>                 #Keeps data as is but possibly compress it
 OUT-OF-LINE TOAST ==>             #Replace data with 18 bytes pointer to pg_toast_OID TABLE
                                   #If >127 bytes
 pg_class.reltoastrelid            #pg_class.oid of the pg_toast_OID "TABLE"
+pg_toast.*                        #SCHEMA with out-of-line data
 pg_toast.pg_toast_OID             #"TABLE" with TOAST out-of-line data
 pg_toast.pg_toast_OID.chunk_id    #Data ID
 pg_toast.pg_toast_OID.chunk_seq   #Data chunk serial NUM
 pg_toast.pg_toast_OID.chunk_data  #BYTEA with the data
+pg_toast_temp_NUM.*               #Same with TEMP TABLEs
+                                  #Same special behavior as pg_temp_NUM
 
 ENVVAR default_toast_compression  #Compress TOASTed values (in-line or out-of-line) among:
                                   #  - 'pglz' (def): Postgres-specific LZMA-like, optimized for speed (not space)
@@ -314,6 +393,63 @@ alter table "TABLE"               #Sets TOAST behavior among:
 
 create table "TABLE"              #Do not use out-of-line nor compression for values < UINT bytes
  set (toast_tuple_target = UINT)  #Min: 128, max: 8160, def: 2040 (which is usually good)
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:         LARGE OBJECTS         :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+LARGEOBJ                          #VAL that is persisted as its own file
+                                  #Meant for large values
+                                  #Split into 2KB chunks
+LARGE OBJECT                      #"ENTITY" name
+
+OID                               #When specifying as argument of LARGEOBJ creation, allows specifying its OID
+                                  #Can be 0|-1 to ask for a new one
+
+lo_import('PATH'[, OID])->OID     #Creates a LARGEOBJ from a file
+lo_export(OID, 'PATH')            #Creates a file from a LARGEOBJ
+
+lo_creat(OID)->OID                #Creates an empty LARGEOBJ
+lo_from_bytea(OID, BYTEA)->OID    #Creates a LARGEOBJ from BYTEA
+lo_unlink(OID)                    #Delete LARGEOBJ from database. Must be done after use
+                                  #Does not remove from files, if imported from files
+
+lo_get(OID[, INT8, INT4])->BYTEA  #Reads LARGEOBJ
+                                  #If INT8, only from that byte, with a length of INT4 bytes
+lo_put(OID, INT8, BYTEA)          #Writes LARGEOBJ
+
+pg_largeobject_metadata           #TABLE with all LARGEOBJ metadata
+pg_largeobject_metadata.oid       #OID of LARGEOBJ
+pg_largeobject_metadata.lomowner  #pg_authid.oid of owner
+pg_largeobject_metadata.lomacl    #ACLITEM_ARR
+
+pg_largeobject                    #TABLE with all LARGEOBJ data
+                                  #Must be superuser
+pg_largeobject.loid               #pg_largeobject_metadata.oid of LARGEOBJ
+pg_largeobject.data               #BYTEA with contents
+pg_largeobject.pageno             #INT 0-based index, if BYTEA split into several chunks
+
+log_manage("COL")                ##Calls lo_unlink() on all LARGEOBJ OIDs that have been removed|changed since last call
+                                 ##Should be done as a TFUNC: before update or delete, for each row
+                                 ##Must `delete * from TABLE` before `drop|truncate table` to ensure TFUNC is called
+                                 ##Postgres extension 'lo'
+
+lo                               ##TYPE that abstracts LARGEOBJ
+                                 ##Must be used as log_manage() "COL" TYPE
+
+vacuumlo DATABASE...             ##CLI. Remove LARGEOBJs which OIDs does not exist in DATABASE anymore
+--limit|-l NUM                   ##Max of LARGEOBJs to remove (def: 1000). Meant for performance
+                                 ##Can be 0
+--dry-run|-n                     ##
+--host|-h HOST
+--port|-p PORT
+--username|-U USER
+--no-password|-w
+--password|-W                    ##
 
 
                                              /=+===============================+=\
@@ -793,6 +929,12 @@ enum_range(ENUM_VAL)              #All ENUM_VALs of the same type
 enum_range(ENUM_VAL, ENUM_VAL2)   #From ENUM_VAL to ENUM_VAL2
  ->ENUM_VAL_ARR                   #null::ENUM_TYPE can be used to represent start|end
 
+pg_enum                           #TABLE with all ENUM_VALs
+pg_enum.oid                       #OID
+pg_enum.enumlabel                 #NAME of ENUM_VAL
+pg_enum.enumsortorder             #UINT. Sort position
+pg_enum.enumtypid                 #pg_type.oid of ENUM_TYPE
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -986,9 +1128,18 @@ TIME <=-> TIMETZ
 TIMESTAMP <=-> TIMESTAMPTZ        #Type cast, using local TZ
 
 TZ                                #Use either of the following ones
-pg_timezone_names                 #TABLE with TZs by names (e.g. 'America/New_York') with offset and DST
-pg_timezone_abbrevs               #Same but by abbreviation (e.g. 'PST')
 ENVVAR timezone                   #Def: system one
+
+pg_timezone_names                 #TABLE with TZs by names
+pg_timezone_names.name            #STR, e.g. 'America/New_York'
+pg_timezone_names.abbrev          #STR, e.g. 'PST'
+pg_timezone_names.utc_offset      #INTERVAL
+pg_timezone_names.is_dst          #BOOL. Daylight saving time
+
+pg_timezone_abbrevs               #TABLE with TZs by abbreviation
+pg_timezone_abbrevs.abbrev
+pg_timezone_abbrevs.utc_offset
+pg_timezone_abbrevs.is_dst        #
 
 TIME[STAMP][TZ] at time zone 'TZ' #TIME[STAMP]TZ
 
@@ -1494,6 +1645,15 @@ range_agg
 range_intersect_agg
  ([MULTI]RANGE_SET)->[MULTI]RANGE #AFUNC. Intersection
 
+pg_range                          #TABLE with all RANGEs
+pg_range.rngtypid                 #pg_type.oid of RANGE_TYPE
+pg_range.rngsubtype               #pg_type.oid of OPTS.subtype
+pg_range.rngmultitypid            #pg_type.oid of MULTIRANGE TYPE
+pg_range.rngcollation             #pg_collation.oid of OPTS.collation. 0 if none
+pg_range.rngsubopc                #pg_opclass.oid of OPTS.subtype_opclass
+pg_range.rngcanonical             #pg_proc.oid of OPTS.canonical. 0 if none
+pg_range.rngsubdiff               #pg_proc.oid of OPTS.subtypediff. 0 if none
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -1690,7 +1850,7 @@ select SET, SET2 ...              #`select VAL,...` behaves like SCALAR_FUNC
                                              \=+===============================+=/
 
 
-SUBQUERY                          #ROW_SET that is the result of a select, values, table or execute statement
+SUBQUERY                          #ROW_SET that is the result of select, values, table or execute
                                   #I.e. not returned by a FUNC()
                                   #Can only be used when explicitly documented as such
 SSUBQUERY                         #SUBQUERY returning a single COL
@@ -1822,6 +1982,9 @@ drop ENTITY                       #Delete an ENTITY
                                   #  - text search dictionary|parser: text search configuration
                                   #  - text search template: text search dictionary
 
+pg_[sh]depend                     #TABLE with dependencies between [cluster-wide] objects
+                                  #???
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -1846,7 +2009,7 @@ create
  table "TABLE"
  [of "ROW_TYPE"]
  [partition of ...]
- (COL_ARG,...)
+ ([COL_ARG,...])
  [for values ...]
  [inherits ...]
  [partition by ...]
@@ -1864,8 +2027,8 @@ create table ... of "ROW_TYPE"    #ROW_TYPE of (COL_ARG,...)
                                   #"COL" TYPE ... -> "COL" [with options] ...
                                   #  - with options: noop
                                   #Cannot use: inherits, like "TABLE|ROW_TYPE", compression, collate
-alter table "TABLE"
- [not] of "ROW_TYPE"              #
+alter table "TABLE" of "ROW_TYPE" #
+alter table "TABLE" not of        #
 
 create table ...                  #Populates values with SUBQUERY
  as SUBQUERY                      #(COL_ARG,...):
@@ -1884,6 +2047,24 @@ select VALS,...                   #Same as `select ...` but creates "TABLE" inst
 create table ... with (OPTS)
 alter table ... set (OPTS)        #Same OPTS
 
+pg_class                          #All TABLE-like elements: TABLE, VIEW, INDEX, SEQUENCE, MVIEW and ROW
+                                  #???
+pg_class.relishared               #BOOL. Whether cluster-wide
+pg_class.relhasindexes            #BOOL. Whether has INDEXs
+pg_class.relhasrules              #BOOL. Whether has RULEs
+pg_class.relhastriggers           #BOOL. Whether has TFUNCs
+pg_class.relrowsecurity           #BOOL. Whether has row-level security
+
+pg_tables                         #TABLE with all TABLEs
+pg_tables.tablename               #pg_class.relname NAME of TABLE
+pg_tables.schemaname              #pg_namespace.nspname NAME of NAMESPACE
+pg_tables.tablespace              #pg_tablespace.spcname NAME of TABLESPACE
+pg_tables.tableowner              #pg_authid.rolname NAME of owner
+pg_tables.hasindexes
+pg_tables.hasrules
+pg_tables.hastriggers
+pg_tables.rowsecurity             #pg_class.rel*
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -1896,13 +2077,18 @@ CONSTRAINT                        #Condition validating udpates, and making them
 COL_CONSTRAINT                    #Single-COL CONSTRAINT
 
 alter table "TABLE" add COL_ARG   #
- [not valid]                      #Validate CONSTRAINT only on-demand when calling: alter table ... validate constraint ...
+ [not valid]                      #Perform CONSTRAINT:
+                                  #  - only on insert|update
+                                  #  - or on all ROWs using: alter table ... validate constraint ...
+                                  #  - not on all ROWs at CONSTRAINT creation time
+                                  #Goal: speed up time to perform this statement
+                                  #Only for check() and foreign key
 alter table "TABLE"
  validate constraint "CONSTRAINT" #
 
 "COL" TYPE [COL_CONSTRAINT...]    #COL_ARG. Define a new COL
 alter table "TABLE"
- add column "COL" TYPE ...        #
+ add [column] "COL" TYPE [...]    #
 alter table "TABLE"
  rename [column] "COL" to "COL2"  #
 alter table "TABLE"
@@ -1978,6 +2164,9 @@ generated always as (VAL) stored  #COL_CONSTRAINT. "Generated COL". Value on ins
                                   #VAL is evaluated at insertion time.
                                   #Can refer to other non-generated "COL"s of same "TABLE"
                                   #VAL must be purely functional
+alter table "TABLE"
+ alter [column] "COL"
+ drop expression [if exists]      #Remove generated COL_CONSTRAINT, not COL itself
 
 constraint "CONSTRAINT" COL_ARG   #Assign "CONSTRAINT" name
                                   #Not with: like "TABLE|ROW_TYPE"
@@ -1987,6 +2176,19 @@ alter table "TABLE"
 alter table "TABLE"
  drop constraint [if exists]
  "CONSTRAINT" [restrict|cascade]  #
+
+pg_attrdef                        #TABLE with COL default values
+pg_attrdef.oid                    #OID
+pg_attrdef.adbin                  #PG_NODE_TREE with default value
+pg_attrdef.adnum                  #pg_attribute.attnum of COL
+pg_attrdef.adrelid                #pg_class.oid of TABLE
+
+pg_attribute                      #All COL, including:
+                                  #  - attisdropped BOOL: dropped COL but physically kept
+                                  #???
+
+pg_constraint                     #All CONSTRAINT
+                                  #???
 
 
                                              /=+===============================+=\
@@ -2076,6 +2278,12 @@ CHILD DOES NOT INHERIT ==>        #  - unique, primary key, exclude
 
 alter table "CHILD_TABLE"
  [no] inherit "PARENT_TABLE"      #
+
+pg_inherits                       #TABLE with all `inherits`
+pg_inherits.inhrelid              #pg_class.oid of "CHILD_TABLE"
+pg_inherits.inhparent             #pg_class.oid of "PARENT_TABLE"
+pg_inherits.inhseqno              #INT4. Order of parent, if multiple parents
+pg_inherits.inhdetachpending      #BOOL. True if child is about to be detached
 
 
                                              /=+===============================+=\
@@ -2179,6 +2387,16 @@ create table ... for values with  #Can then multiple UINT by 2 to increase numbe
  (modulus UINT, remainder UINT2)  #  - can do it one child TABLE at a time
                                   #  - should detach child TABLE, split its data, then re-attach it as two child TABLEs
 
+pg_partitioned_table              #TABLE with declared partioning
+pg_partitioned_table.partrelid    #pg_class.oid of "CHILD_TABLE"
+pg_partitioned_table.partdefid    #pg_class.oid of default "CHILD_TABLE". 0 if none
+pg_partitioned_table.partstrat    #Strategy among 'l' (list), 'r' (range) or 'h' (hash)
+pg_partitioned_table.partnatts    #NUM of COLs in partition key
+pg_partitioned_table.partattrs    #INT2_ARR. Partition key "COL" indices. 0 if COL_REXPR instead
+pg_partitioned_table.partexprs    #PG_NODE_TREE. Partition key COL_REXPR values. 0 if "COL" instead
+pg_partitioned_table.partclass    #ARR of pg_opclass.oid. Partition key COL OPCLASSs
+pg_partitioned_table.partcollation#ARR of pg_collation.oid. Partition key COL COLLATION
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -2215,6 +2433,12 @@ create view "VIEW"
                                   #  - e.g. to infer size of hidden rows
 
 create recursive view ...         #Allows recursion like in `with recursive ...` CTE
+
+pg_views                          #TABLE with all VIEWs
+pg_views.definition               #'SUBQUERY'
+pg_views.viewname                 #pg_class.relname NAME of VIEW
+pg_views.schemaname               #pg_namespace.nspname NAME of SCHEMA
+pg_views.viewowner                #pg_authid.rolname NAME of owner
 
 
                                              /=+===============================+=\
@@ -2255,6 +2479,16 @@ alter materialized view "TABLE"
 alter materialized view "TABLE"
  set access method ...            #Same as alter table ...
 
+pg_matviews                       #TABLE with all MVIEWs
+pg_matviews.definition            #'SUBQUERY'
+pg_matviews.matviewname           #pg_class.relname NAME of MVIEW
+pg_matviews.schemaname            #pg_namespace.nspname NAME of SCHEMA
+pg_matviews.tablespace            #pg_tablespace.spcname NAME of TABLESPACE
+pg_matviews.matviewowner          #pg_authid.rolname NAME of owner
+pg_matviews.hasindexes            #BOOL. Like pg_class.rel*
+pg_class.relispopulated
+pg_matviews.ispopulated           #BOOL. Whether truncated. True if not MVIEW
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -2263,9 +2497,9 @@ alter materialized view "TABLE"
                                              \=+===============================+=/
 
 
-create temp[orary] table ...      #Drop TABLE at end of session
-select ...                        #No autovacuum, but can manually run analyze
- into temp[orary] [table] ...     #SCHEMA will be `pg_temp_NUM`
+create temp[orary] table ...
+select ...                        #Drop TABLE at end of session
+ into temp[orary] [table] ...     #No autovacuum, but can manually run analyze
  [on commit ACTION]               #At the end of each successful transaction:
                                   #  - preserve rows (def): nothing
                                   #  - delete rows: truncate TABLE
@@ -2276,6 +2510,14 @@ create temp[orary] view ...       #Drop VIEW at end of session
 
 create temp[orary] sequence ...   #Drop SEQUENCE at end of session
                                   #Can't use any SCHEMA
+
+pg_temp_NUM                       #SCHEMA with user-defined temporary TABLE|VIEW|SEQUENCEs
+                                  #Always prepended to ENVVAR search_path
+                                  #  - can explicitly add it to override priority order
+pg_temp                           #Alias to pg_temp_NUM of current session
+pg_my_temp_schema()->OID          #pg_namespace.oid of pg_temp_NUM of current session
+                                  #0 if none
+pg_is_other_temp_schema(OID)->BOOL#Whether is pg_namespace.oid of pg_temp_NUM of another session
 
 
                                              /=+===============================+=\
@@ -2325,11 +2567,45 @@ generated always|by default       #COL_CONSTRAINT. "Identity COL". Same as "COL"
                                   #  - `by default`: as default VAL
                                   #  - `always`: as `generated` VAL, i.e. readonly except when setting `default`
  [(...)]                          #Passed to `create sequence "SEQUENCE" ...`
+alter table "TABLE"
+ alter [column] "COL"
+ add generated always|by default
+ as identity
+alter table "TABLE"
+ alter [column] "COL"
+ set generated always|by default
+alter table "TABLE"
+ alter [column] "COL"
+ drop identity [if exists]        #Modify|remove identity COL_CONSTRAINT, not COL itself
+alter table "TABLE"
+ alter [column] "COL" set ...
+alter table "TABLE"
+ alter [column] "COL" restart ... #Passed to `alter sequence "SEQUENCE" ...`
 
 insert into ...(...)
  overriding system value          #Make `generated always` behave like `generated by default` instead
  overriding user value            #Make `generated by default` behave like `generated always` instead
                                   #Except: inserted VALs are ignored instead of failing
+
+pg_sequence                       #Lower-level TABLE with all SEQUENCEs
+pg_sequences                      #Higher-level VIEW with all SEQUENCEs
+pg_sequence.seqrelid              #pg_class.oid of SEQUENCE
+pg_sequences.schemaname           #pg_namespace.nspname NAME of SCHEMA
+pg_sequences.sequencename         #pg_class.relname NAME of SEQUENCE
+pg_sequences.sequenceowner        #pg_authid.rolname NAME of owner
+pg_sequence.seqtypid              #pg_class.oid of INT2|4|8 value
+pg_sequences.data_type            #pg_type.oid of INT2|4|8 value
+pg_sequences.last_value           #INT8. Last value
+pg_sequences.increment_by
+pg_sequence.seqincrement          #INT8. Increment
+pg_sequences.start_value
+pg_sequence.seqstart              #INT8. First value
+pg_sequences.min|max_value
+pg_sequence.seqmin|max            #INT8. Min|max value
+pg_sequences.cache_size
+pg_sequence.seqcache              #INT8. Cache size
+pg_sequences.cycle
+pg_sequence.seqcycle              #BOOL. Whether `cycle`
 
 
                                              /=+===============================+=\
@@ -2761,6 +3037,21 @@ ZOPTS.force_null ("COL",...)      #Never cast nulls as STR, even if quoted, in s
 ENVVAR DateStyle                  #Should be set to 'ISO'
 ENVVAR IntervalStyle              #Should not be set to 'sql_standard'
 
+pg_stat_progress_copy             #TABLE with ongoing `copy` statements
+pg_stat_progress_copy.command     #'COPY FROM|TO'
+pg_stat_progress_copy.type        #'PIPE|FILE|PROGRAM' or 'CALLBACK' (used in logical replication)
+pg_stat_progress_copy.relid       #pg_class.oid of TABLE
+pg_stat_progress_copy.datid       #pg_database.oid of DATABASE
+pg_stat_progress_copy.datname     #NAME of "DATABASE"
+pg_stat_progress_copy.pid         #INT4. PID of server
+pg_stat_progress_copy
+ .bytes_processed                 #INT8
+pg_stat_progress_copy.bytes_total #INT8
+pg_stat_progress_copy
+ .tuples_processed                #INT8. Rows processed
+pg_stat_progress_copy
+ .tuples_excluded                 #INT8. Rows excluded by `where BOOL_REXPR` so far
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -3020,23 +3311,35 @@ regr_*(...)                       #AFUNC. Linear regression. Not documented yet
                                              \=+===============================+=/
 
 
-prepare PREP[(TYPE,...)]          #Save COMMAND as PREP
- as COMMAND                       #COMMAND must be select|values or insert|update|delete|merge
+prepare PREP as COMMAND           #Save COMMAND as PREP
+                                  #COMMAND must be select|values or insert|update|delete|merge
                                   #Pre-parse it
                                   #  - i.e. faster to execute
                                   #  - re-parsed on changes, such as:
-                                  #     - used "TABLE" changed TYPEs
+                                  #     - DDL impacting COMMAND
+                                  #     - planner statistics changed
                                   #     - search_path changed
-                                  #TYPEs are parameters
-                                  #  - which can be used in COMMAND as $1, etc.
-                                  #  - optional:
-                                  #     - arguments can be passed even without a corresponding parameter TYPE
-                                  #     - they are cast as unknown
+prepare PREP(TYPE, ...)           #TYPEs are parameters
+ as COMMAND                       #They can be used in COMMAND as $1, etc.
+                                  #Optional:
+                                  #  - arguments can be passed even without a corresponding parameter TYPE
+                                  #  - they are cast as unknown
 
 execute PREP[(VAL,...)]           #Execute COMMAND from PREP
 
 deallocate PREP|all               #Delete a PREP
                                   #Automatically done at end of each session
+
+ENVVAR plan_cache_mode            #Whether to use:
+                                  #  - a generic plan: ignore TYPEs
+                                  #     - faster planning time
+                                  #  - a custom plan: take TYPEs into account
+                                  #     - potentially faster execution time
+                                  #Def: 'auto'
+                                  #  - first 5 `execute` use a custom plan
+                                  #  - a generic plan is used based on them
+                                  #  - next `execute` use the generic plan unless it seems like a custom plan is better
+                                  #Can also be 'force_generic|custom_plan'
 
 pg_prepared_statements            #TABLE with all PREPs
 pg_prepared_statements.name       #'PREP'
@@ -3048,9 +3351,7 @@ pg_prepared_statements.from_sql   #BOOL. Whether COMMAND is SQL
 pg_prepared_statements
  .prepare_time                    #TIMESTAMPTZ of creation
 pg_prepared_statements
- .generic_plans                   #UINT. Number of `execute` which used a generic plan
-pg_prepared_statements
- .custom_plans                    #UINT. Number of `execute` which used a custom plan
+ .generic|custom_plans            #UINT. Number of `execute` which used a generic|custom plan
 
 
                                              /=+===============================+=\
@@ -3060,50 +3361,60 @@ pg_prepared_statements
                                              \=+===============================+=/
 
 
-CURSORS ==>                       #Row iterators over a specific query (executed once when opening the cursor)
-declare CURSOR                    #Creates and open a CURSOR for query TABLE (any that would also work in a from ... clause)
-[scroll] cursor                   #Is closed at end of transaction (if no transaction, is immediately closed), unless with hold is used.
-[with hold]                       #Using select for update|share:
-for TABLE                         #  - is not compatible with with hold or scroll
-                                  #  - is recommended if using a ... where current of ... to make sure rows are the same
-                                  #If scroll, fetch can work backward.
-                                  #Starting position is before the first row. After the last row is the end.
-fetch [WORD]                      #Return rows of CURSOR according to position specified by WORD, and move it too:
-from CURSOR                       #  - forward|backward [NUM|all] (def: forward): retrieves several rows if NUM
-                                  #  - relative NUM: 0 for current row
-                                  #  - absolute NUM (if negative, from the end): 0 for before first row, more than number of rows for
-                                  #    after last row
-move [WORD] from CURSOR           #Same but only moves cursor, doesn't return anything.
-close CURSOR|all                  #Close a CURSOR (or all). Automatically done at end of transaction for a CURSOR without "with hold"
-update|delete ... where           #Same as update|delete ... where BOOL, with BOOL being current position of CURSOR.
-current of CURSOR                 #Grouping cannot be used in the TABLE of CURSOR.
+declare "CURSOR" cursor           #Create a CURSOR, i.e. streams a SUBQUERY
+ for SUBQUERY                     #Query is executed once during CURSOR creation
+                                  #Iterates over that result, i.e. ignores writes
+close "CURSOR"|all                #Delete a CURSOR (or all)
 
+declare "CURSOR" ...              #If scroll (def: no scroll), allow backward iteration
+ [no] scroll cursor ...           #  - this can sometimes be slower
 
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:            SCHEMAS            :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
+START POSITION ==>                #Index 0. Before first ROW.
+END POSITION ==>                  #Index -1. After last ROW.
+START|END POSITION ==>            #Have no ROWs: return empty ROW_SET
+                                  #Boundaries: cannot go further
+                                  #Does not close, can still move forward|backward
+move ... [from|in] "CURSOR"       #Move CURSOR
 
+RELATIVE MOVES ==>                #
+move INT ...                      #Move CURSOR by INT
+move [next] ...                   #Move CURSOR by 1
+move prior ...                    #Move CURSOR by -1
+move 0 ...                        #Does not move CURSOR
+move all ..                       #Move CURSOR to start|end position
+move forward ...                  #Same as move ...
+move backward ...                 #Same but backward relative moves
 
-create schema SCHEMA              #Creates a SCHEMA (namespace inside a DATABASE).
-[authorization USER]              #USER is the owner (def: current_user).
+ABSOLUTE MOVES ==>                #Following ones.
+                                  #Still traverse each ROW, i.e. O(n), except for absolute 0|-1 which is O(1)
+move absolute UINT ...            #Move CURSOR to index UINT
+move first|last ...               #Move CURSOR to first|last ROW
+move relative ...                 #Same as move ...
 
-alter ENTITY "ENTITY"
- set schema SCHEMA                #For all ENTITYs that can have a SCHEMA
+fetch ... from "CURSOR"           #Does move ... from "CURSOR"
+                                  #Returns ROW_SET with ROWs from last one (excluded) to current one (included)
+                                  #If absolute move, only return current ROW
 
-[SCHEMA.]VAR                      #Access/write a VAR (usually "TABLE" but can be any VAR) for a specific SCHEMA.
-                                  #If not specified, use the ENVVAR_ARR search_path, by def. {USER, public}. Searched from left to
-                                  #right. If nothing found and writing operation, use the leftest SCHEMA (except USER)
+declare "CURSOR" ...              #If `without hold` (def):
+ cursor with[out] hold ...        #  - `declare "CURSOR"` must be in a transaction
+                                  #  - `close "CURSOR"` automatically done at end of transaction
+declare "CURSOR" cursor           #Cannot be used with `scroll` or `with hold`
+ for ... select for update|share  #Should use `for update` if `where current of`:
+                                  #  - this ensures ROWs remain the same
+                                  #  - this is required if SUBQUERY uses group by, order by or joins
 
-pg_catalog                        #SCHEMA for all pg_* tables and builtins functions and types. It's implicit in the search path.
-                                  #To override those builtins, put pg_catalog at the end of the search path
+declare "CURSOR" binary ...       #Make fetch ... return ROW_SET in Postgres-specific binary format
 
-current_schema()                  #
-current_schemas([BOOL])           #If true, include implicit ones (e.g. pg_catalog)
-pg_is_other_temp_schema(OID)      #Is it a temporary schema
-pg_my_temp_schema()               #Temp SCHEMA OID, 0 if none.
-pg_TYPE_is_visible(OID)           #Checks if an object is accessible through current SCHEMA path.
+update|delete ...                 #Perform `update|delete` on current "CURSOR" ROW.
+ where current of "CURSOR"        #Does not move CURSOR
+
+pg_cursors                        #TABLE with all CURSOR
+pg_cursors.name                   #'CURSOR'
+pg_cursors.statement              #'SUBQUERY'
+pg_cursors.is_scrollable          #BOOL
+pg_cursors.is_holdable            #BOOL
+pg_cursors.is_binary              #BOOL
+pg_cursors.creation_time          #TIMESTAMPTZ
 
 
                                              /=+===============================+=\
@@ -3216,6 +3527,8 @@ configuration REGCONF             #  - add|alter mapping for TOKEN... with DICTI
                                   #     - simple DICTIONARY for all
                                   #     - pg_catalog.default PARSER
 
+pg_ts_config[_map]                #All REGCONF. ???
+
 create text search                #Create a DICTIONARY, which is a TEMPLATE but with args filled in ... (as VAR = VAL)
 dictionary DICTIONARY             #Available ones:
 (template = TEMPLATE, ...)        #  - LANG_stem:
@@ -3242,6 +3555,8 @@ dictionary DICTIONARY             #Available ones:
                                  ##    - Postgres extension 'dict_xsyn'
 alter text search
 dictionary DICTIONARY(...)        #
+
+pg_ts_dict                        #All DICTIONARY. ???
 
 create text search                #Creates a TEMPLATE. Must be superuser ROLE.
 template TEMPLATE                 #A TEMPLATE:
@@ -3293,12 +3608,16 @@ template TEMPLATE                 #A TEMPLATE:
                                   #     - arguments: stopwords FILE, language WORD
                                   #     - like ispell, but simpler and never return null (so should be placed in the end)
 
+pg_ts_template                    #All TEMPLATE. ???
+
 create text search
 parser PARSER
 (start = FUNC, gettoken = FUNC2,
 end = FUNC3,                      #Creates a PARSER. Must be superuser ROLE.
 lextypes = FUNC4                  #Available ones:
 [, headline = FUNC5])             #   - 'pg_catalog.default' (def). Notion of a "letter" depends on locales.
+
+pg_ts_parser                      #All PARSER. ???
 
                                  ##Following functions can be used to test similarities between STR.
                                  ##Postgres extension 'fuzzystrmatch'
@@ -3409,8 +3728,16 @@ class|family ...                  #Create user-defined OPCLASS|OPFAMILY. Need C 
 alter operator
 family ...                        #
 
+pg_am                             #TABLE with INDEX_METHODs. ???
+
 create table ...
  using ACCESS_METHOD              #
+alter table "TABLE"
+ set access method "ACCESS_METHOD"#
+
+alter table "TABLE"
+ add [constraint "CONSTRAINT"]
+ unique|primary key using "INDEX" #
 
 drop index concurrently ...       #Like create index concurrently ...
                                   #Needs to be outside of a transaction, restrict and only one INDEX
@@ -3427,10 +3754,12 @@ cluster [verbose]                 #Makes the physical layout of TABLE rows simil
                                   #Is one-time operation (new rows are not clustered). Acquires an exclusive lock.
                                   #Good idea to run analyze afterwards.
                                   #INDEX_METHOD can be ommitted the second time, because remember it. Memory can be altered with:
-                                  #  - alter table "TABLE" cluster on INDEX
+                                  #  - alter table "TABLE" cluster on "INDEX"
                                   #  - alter table "TABLE" set without cluster
                                   #  - same for materialized views
                                   #"TABLE" can be omitted to specify all "TABLE" having used cluster.
+
+pg_stat_progress_cluster          #TABLE with ongoing `cluster` and `vacuum full` statements. ???
 
 create table ...                  #Cache ROW inserts, for speed
  with (buffering = on|off|auto)   #If auto (def): when INDEX size > ENVVAR effective_cache_size
@@ -3438,6 +3767,10 @@ create table ...                  #Cache ROW inserts, for speed
 
 create table ...                  #If on (def), faster writes, but slower reads
  with (fastupdate = on|off)       #For gin INDEX only
+
+pg_index                          #All INDEX. ???
+pg_indexes                        #Same but with other infos, like the query that created it. ???
+pg_stat_progress_create_index     #TABLE with ongoing `create index` and `reindex` statements. ???
 
 
                                              /=+===============================+=\
@@ -3493,6 +3826,12 @@ explain([verbose,]                #Display the query tree of COMMAND:
                                   #  - use real data close to real environment, not test ones.
                                   #  - run analyze first if lot of change since last time autovacuum did (because based on pg_statistic)
 
+alter table "TABLE" set
+ alter [column] "COL"
+ set(n_distinct[_inherited] = NUM)
+alter table "TABLE" set
+ alter [column] "COL"
+ reset(n_distinct[_inherited])    #???
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -3610,6 +3949,8 @@ prepare transaction STR           #Do a two-phase commit:
                                   #ENVVAR max_prepared_transactions (def: 0, so disabled) is available. Is set, should be
                                   #max_connections * number of prepared_transactions per connection
 
+pg_prepared_xacts                 #All "prepare transaction STR". ???
+
 lock "TABLE" ...                  #Put a blocking lock on "TABLE"... among several mode WORD, and release at end of current transaction:
 [in WORD mode] [nowait]           #  - should do it at beginning of transaction if repeatable read or serializable.
                                   #  - locks goal is to conflict with each other
@@ -3631,6 +3972,8 @@ select ... for update             #Gets an access exclusive lock on the rows in 
 select ... for share
 [of "TABLE"...] [nowait]          #Same for share row exclusive
 
+pg_locks                          #All currently held locks. ???
+
 pg_[try_]advisory_                #Gets a lock linked to a ID BIGINT:
 [xact_]lock[_shared]              #  - can be "_shared" or not (block lock() attempts, but not lock_shared() attempts)
 (BIGINT)                          #  - session-level (stops at unlock() or at end of session)
@@ -3649,12 +3992,16 @@ deferred|immediate                #CONSTRAINT can be declared (including during 
                                   #  - not deferrable (def: deferrable): cannot be initially deferred.
                                   #Includes previous statements (retroactively), so can fire at specific point in transaction.
 "COL" TYPE ...
- [initially deferred|immediate]
- [[not] deferrable]               #Same for a specific COL_ARG (including multicolumn)
+ [[not] deferrable]
+ [initially deferred|immediate]   #Same for a specific COL_ARG (including multicolumn)
 alter table "TABLE"
  alter constraint "CONSTRAINT"
+ [[not] deferrable]
  [initially deferred|immediate]
- [[not] deferrable]               #Same for a specific CONSTRAINT
+alter table "TABLE"
+ add unique|primary key ...
+ [[not] deferrable]
+ [initially deferred|immediate]   #Same for a specific CONSTRAINT
 create ... trigger ...
  on "TABLE"|VIEW [from TABLE2]
  [[not] deferrable]
@@ -3662,26 +4009,6 @@ create ... trigger ...
 
 alter table ... detach partition
  ... [concurrently|finalize]      #
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:         LARGE OBJECTS         :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-LARGEOBJECT ==>                   #Efficient way to manipulate big VAL (based on a file):
-                                  #  - can manipulate only through OID
-                                  #  - can read/write/seek (see online doc) like in C
-lo_import(STR)                    #Creates a LARGEOBJECT from file at path STR, and returns its OID
-lo_export(OID, STR)               #Creates a file at path STR with LARGEOBJECT with OID
-lo_unlink(OID)                    #Needs to unlink LARGEOBJECT after use
-                                 ##Instead of unlinking manually, could create a TFUNC executing lo_manage(COL_OID) on TABLE containing
-                                 ##LARGEOBJECT as OID, before update or delete, for each row. Should delete * from table before dropping
-                                 ##a TABLE to keep the trigger.
-                                 ##Postgres extension 'lo'
-                                 ##Command-line vacuumlo DATABASE (with connection options) can also be used.
 
 
                                              /=+===============================+=\
@@ -3734,6 +4061,9 @@ alter ENTITY                      #Set TABLESPACE2 of all ENTITYs in a given TAB
  set tablespace "TABLESPACE2"
  [nowait]                         #All ENTITYs are locked.
                                   #If nowait, uses lock ... nowait, i.e. fail if cannot lock right away
+
+pg_tablespace                     #All TABLESPACE
+                                  #???
 
 
                                              /=+===============================+=\
@@ -3896,6 +4226,9 @@ drop routine VAR(...),...         #Like drop function ... except works also on A
 do [language LANGUAGE]
 STR                               #Execute an anonymous function STR (body of function), from LANGUAGE (def: plpgsql)
 
+pg_proc                           #All FUNC. ???
+pg_event_trigger                  #All EFUNC. ???
+
 create [constraint]               #Execute a FUNC for a specific EVENT on "TABLE" or VIEW.
 trigger TFUNC                     #Multiple TFUNC are fired alphabetically.
 before|after|instead              #  - EVENT can be insert|delete|truncate, or update [of "COL"...]
@@ -3957,16 +4290,18 @@ execute procedure FUNC()          #  - sql_drop: same but only for drop
                                   #FUNC must return have an event_trigger return type, and takes no arguments.
                                   #Must be superuser.
 alter event trigger
-disable|enable
-[replica|always]                  #
+ disable|enable
+ [replica|always]                 #
 alter table "TABLE"               #all|user:
-enable|disable                    #  - not for RULE
-[replica|always]                  #  - same but all include system TRIGGER (enforcing CONSTRAINT), not user
-rule|trigger                      #replica|always:
-RULE|TRIGGER|all|user             #  - def: affects only non-replication sessions (ENVVAR session_replication_role "origin" (def) or
+ enable|disable                   #  - not for RULE
+ [replica|always]                 #  - same but all include system TRIGGER (enforcing CONSTRAINT), not user
+ rule|trigger                     #replica|always:
+ RULE|TRIGGER|all|user            #  - def: affects only non-replication sessions (ENVVAR session_replication_role "origin" (def) or
                                   #    "local")
                                   #  - replica: affects only replication sessions (session_replication_role "replica")
                                   #  - always: affects all sessions
+
+pg_trigger                        #All TFUNC. ???
 
 create [or replace]               #Creates a macro that modifies a command matching EVENT into COMMANDS (add or replace according to
 rule RULE as on EVENT             #"instead"), for "TABLE", when BOOL:
@@ -3988,6 +4323,9 @@ do [instead] COMMANDS             #     - select|insert|update|delete
                                   #  - rules are similar to TFUNC, often faster but harder and less flexible.
                                   #    Prefer triggers unless performance is critical, in which case check if actually faster.
 
+pg_rewrite                        #All RULE. ???
+pg_rules                          #Same, but more for user-defined RULE. ???
+
 create operator OP                #Creates an OP, i.e. a FUNC using a sign. Can have one or two arguments.
 (left|rightarg = TYPE,            #Can be an already existing OP, with different TYPE (overloading)
 procedure = FUNC                  #OP is [+-*/<>=~!##%^&|`?]+
@@ -4008,6 +4346,12 @@ procedure = FUNC                  #OP is [+-*/<>=~!##%^&|`?]+
                                   #      - contjoinsel: like <@ @>
                                   #  - hashes: VAL OP VAL2 is true if hash(VAL) = hash(VAL2)
 
+pg_operator                       #All OPERATOR. ???
+pg_opclass                        #All OPCLASS. ???
+pg_opfamily                       #All OPFAMILY. ???
+pg_amop                           #OPERATOR used by OPFAMILY. ???
+pg_amproc                         #FUNC used by OPFAMILY. ???
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -4015,6 +4359,11 @@ procedure = FUNC                  #OP is [+-*/<>=~!##%^&|`?]+
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
+
+pg_language                       #All activated LANGUAGE, including:
+                                  #  - lanpltrusted BOOL: can not access filesystem (so non-superuser can create function)
+                                  #    Is false for C, R and SH but true to SQL and PL/PGSQL
+                                  #???
 
 SQL FUNCTIONS ==>                 #  - execute SQL statements, returns the last one:
                                   #    - a MSUBQUERY
@@ -4261,6 +4610,8 @@ stype = TYPE2                     #  - each VAL... of each COL is passed inside 
                                   #  - by convention, null should be ignored in FUNC, unless there are only null, where null should be
                                   #    returned
 
+pg_aggregate                      #All AFUNC. ???
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -4325,6 +4676,10 @@ by ROL... to ROLE2                #Change ownership.
 
 drop role ...                     #Can only be done if not used by any DATABASE
 
+create schema ["SCHEMA"]          #Set SCHEMA's owner. Def: current_user
+ authorization ROLE               #Same ROLE as `alter ... owner to ROLE`
+                                  #Def "SCHEMA": ROLE
+
 set [local] role ROLE             #Same syntax as set, but here change current ROLE
                                   #If not superuser, must be a ROLE that the session_user is member of (but not inverse, not other
                                   #members of same ROLE), directly or indirectly.
@@ -4342,6 +4697,17 @@ set [local] session               #Same but:
 authorization ROLE                #  - for both session_user and current_user
                                   #  - must be superuser
                                   #  - use default to reset to initial session_user
+
+pg_authid|roles                   #All ROLE, including:
+                                  #  - rolcatupdate BOOL (def: false): if false, all ROLE, including superuser ROLE, cannot write on
+                                  #    system catalogs.
+                                  #pg_roles blanks out the password
+                                  #???
+pg_auth_members                   #ROLE memberships, including:
+                                  #  - roleid|member|grantor OID: means ROLE2 is a member of ROLE, which has been granted by ROLE3.
+                                  #    Refer to pg_authid.oid
+                                  #???
+pg_user                           #TABLE with users. ???
 
 grant PRIVILEGE...                #Gives permissions PRIVILEGE... on VAR... to ROLE...:
 on [TYPE] VAR...                  #  - TYPE:
@@ -4467,6 +4833,10 @@ has_TYPE_privilege                #TYPE can also be:
 pg_has_role
  ([ROLE, ]ROLE2, PRIVILEGE)       #With membership
 
+pg_default_acl                    #All default privileges. ???
+pg_init_privs                     #TABLE with initial privileges. ???
+pg_parameter_acl                  #TABLE with privileges. ???
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -4552,6 +4922,11 @@ pg_hba.conf                       #File under a cluster DATADIR controlling:
 requirekeeper                     #LIBPQ variable: OS_USER behind the server process must match STR.
                                   #Avoid another OS_USER starting the server while legit one is rebooting it.
 
+pg_hba_file_rules                 #TABLE with pg_gba.conf contents. ???
+pg_ident_file_mappings            #TABLE with pg_ident.conf contents. ???
+pg_stat_ssl                       #???
+pg_stat_gssapi                    #???
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -4564,11 +4939,12 @@ ENCODING ==>                      #Sets within a cluster with initdb -E STR, whi
                                   #  - can be many, among 'LATIN1', 'UTF8' and 'SQL_ASCII'
                                   #  - Def. is locale (UTF8 in Linux) or SQL_ASCII if no locale.
                                   #If client has different encoding, a conversion is performed according to pg_conversion
-                                  #(see online doc).
                                   #Available conversions from UTF8 should be enough. Otherwise can do:
                                   #  - create conversion CONVERSION for STR to STR2 from FUNC
                                   #Encoding is sometimes specified as INT: use pg_encoding_to_char(INT) to get it as a STR
                                   #server_encoding ENVVAR is available
+
+pg_conversion                     #TABLE with all CONVERSIONs
 
 LOCALES ==>                       #Use ENVVAR lc_*, that are usually set at cluster creation with initdb --lc-*=LOCALE.
                                   #lc_collate|ctype (unless using COLLATION) and encoding can't be changed after database creation
@@ -4609,10 +4985,19 @@ create collation COLLATION
 create collation
  COLLATION from COLLATION2        #
 
+pg_collation                      #TABLE with All COLLATIONs
+
 collation for (STR)               #Returns COLLATION
 
 create table "TABLE"
  ("COL" TYPE collate COLLATION)   #
+alter table "TABLE"
+ add [column] "COL" TYPE
+ collate COLLATION                #
+alter table "TABLE"
+ alter [column] "COL" type TYPE
+ collate COLLATION                #
+
 create table ... partition by ...
  ("COL"|(COL_REXPR)
  collate COLLATION ...)           #
@@ -4670,6 +5055,13 @@ load STR                          #Loads a shared library located at STR, in ord
                                   #Not useful if only functions definitions because they are loaded automatically with create function...
                                   #Can also use ENVVAR shared_preload_libraries (comma-separated list), without the extension .so
 
+pg_extension                      #Activated EXTENSION
+                                  #???
+pg_available_extensions           #Possible EXTENSION for their current version
+                                  #???
+pg_available_extension_versions   #Possible EXTENSION for all versions
+                                  #???
+
 create foreign data               #Creates a FDW, i.e. functions that permits using another DBMS inside PostgreSQL.
 wrapper FDW                       #Can be slow and not optimized.
 [handler FUNC]                    #Based on a standard implemented by other DBMS, including noSQL.
@@ -4701,6 +5093,8 @@ alter foreign data wrapper FDW
 options
  ([add|set|drop] VAR VAL ...)     #
 
+pg_foreign_data_wrapper           #All FDW. ???
+
 create server FSERVER [type STR]
 [version STR2]                    #Creates a FSERVER, i.e. a connection to a specific DATABASE using a FDW.
 foreign data wrapper FDW          #STR are all FDW-dependent options. They usually specify the connection details
@@ -4710,12 +5104,17 @@ alter server FSERVER
 [options
  ([add|set|drop] VAR STR2...)]    #
 
+pg_foreign_server                 #All FSERVER. ???
+
 create user mapping
 for ROLE|current_user
 server FSERVER                    #Specify authentication details on FSERVER for ROLE.
 [options (VAR STR ...)]           #STR are all FDW-dependent options.
 alter user mapping ...
 [options ([add|set|drop] ... )]   #
+
+pg_user_mapping[s]                #All USERMAPPING. With s, leaves out the option field when user should not see it
+                                  #???
 
 create foreign table "FTABLE"
  ("COL" TYPE
@@ -4746,6 +5145,8 @@ alter foreign table "FTABLE"
  [alter "COL"] options
  ([add|set|drop] VAR VAL ...)     #
 
+pg_foreign_table                  #All FTABLE. ???
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -4761,8 +5162,8 @@ SYSTEM COLS ==>                   #Hidden COL... defined for every TABLE
                                   #Table-specific: cross join with tableoid to have real IDs.
                                   #Creation:
                                   #  - ENVVAR default_with_oids = true (def: false)
-                                  #  - create table ... with[out] oids
-                                  #  - alter table TABLE set with[out] oids
+                                  #  - create table ... without oids
+                                  #  - alter table TABLE set without oids
                                   #Is actually a cycling number incrementing from 1, database-wise.
 "TABLE".ctid                      #Same but change avec committed update or insert
                                   #Is actually a cycling number incrementing from 1, table-wise.
@@ -4770,101 +5171,6 @@ SYSTEM COLS ==>                   #Hidden COL... defined for every TABLE
                                   #Is actually the numero of the statement inside the transaction.
 "TABLE".xmin                      #ID of the transaction inserting (table-wise, not client-wise)
 "TABLE".xmax                      #ID of the transaction deleting or updating this row by another non committed transaction.
-
-SYSTEM CATALOGS ==>               #TABLE used by the system. Can also be VIEW (system views)
-                                  #Are sometimes readonly. Anyway, should not modify them directly unless good reasons (e.g. creating a
-                                  #new INDEX_METHOD).
-                                  #Are database-specific unless on cluster-specific VAR
-INFORMATION SCHEMA ==>            #Same but is SQL standard: more portable but does not contain all information.
-                                  #Is in SCHEMA information_schema.*, written is_* below
-                                  #Most of them not written here, look at online doc if needed
-
-pg_database                       #All DATABASE, including:
-                                  #  - datistemplate BOOL: can be used in create database template DATABASE
-                                  #  - datallowconn BOOL: if false, no one can connect to it
-
-pg_class                          #All TABLE-like elements: TABLE, VIEW, INDEX, SEQUENCE, MVIEW and ROW, including:
-                                  #  - relisshared BOOL: if cluster-wide
-pg_tables                         #All TABLE
-pg_views                          #All VIEW
-pg_matviews                       #All MVIEW
-pg_index                          #All INDEX
-pg_indexes                        #Same but with other infos, like the query that created it.
-is.sequences                      #All SEQUENCE
-pg_attribute                      #All COL, including:
-                                  #  - attisdropped BOOL: dropped COL but physically kept
-pg_attrdef                        #Default values for COL that have some
-pg_constraint                     #All CONSTRAINT
-pg_inherits                       #Inheritance between TABLE
-
-pg_[sh]depend                     #Relations between [cluster-wide] objects, to avoid conflicts when dropping an object.
-pg_locks                          #All currently held locks
-
-pg_proc                           #All FUNC
-pg_aggregate                      #All AFUNC
-pg_trigger                        #All TFUNC
-pg_event_trigger                  #All EFUNC
-pg_operator                       #All OPERATOR
-pg_rewrite                        #All RULE
-pg_rules                          #Same, but more for user-defined RULE
-
-pg_type                           #All TYPE, including:
-                                  #  - typispreffered BOOL: if true, is used as the TYPE for the whole typecategory with
-                                  #    overloading functions (def: text for STR, and real for numeric)
-pg_enum                           #All ENUM_TYPEs
-pg_range                          #All RANGE
-is.domains                        #All DOMAIN
-
-pg_authid|roles                   #All ROLE, including:
-                                  #  - rolcatupdate BOOL (def: false): if false, all ROLE, including superuser ROLE, cannot write on
-                                  #    system catalogs.
-                                  #pg_roles blanks out the password
-pg_auth_members                   #ROLE memberships, including:
-                                  #  - roleid|member|grantor OID: means ROLE2 is a member of ROLE, which has been granted by ROLE3.
-                                  #    Refer to pg_authid.oid
-pg_default_acl                    #All default privileges.
-
-pg_namespace                      #All SCHEMA
-pg_tablespace                     #All TABLESPACE
-
-pg_extension                      #Activated EXTENSION
-pg_available_extensions           #Possible EXTENSION for their current version
-pg_available_extension_
-versions                          #Possible EXTENSION for all versions
-pg_language                       #All activated LANGUAGE, including:
-                                  #  - lanpltrusted BOOL: can not access filesystem (so non-superuser can create function)
-                                  #    Is false for C, R and SH but true to SQL and PL/PGSQL
-pg_pltemplate                     #All LANGUAGE
-
-pg_ts_config[_map]                #All REGCONF
-pg_ts_dict                        #All DICTIONARY
-pg_ts_template                    #All TEMPLATE
-pg_ts_parser                      #All PARSER
-
-pg_collation                      #All COLLATION
-pg_conversion                     #All CONVERSION
-
-pg_cursors                        #All CURSOR
-pg_prepared_xacts                 #All "prepare transaction STR"
-
-pg_foreign_data_wrapper           #All FDW
-pg_foreign_server                 #All FSERVER
-pg_foreign_table                  #All FTABLE
-pg_user_mapping[s]                #All USERMAPPING. With s, leaves out the option field when user should not see it
-
-pg_am                             #All INDEX_METHOD: what they support (e.g. in create index ...) and the FUNC they use
-pg_opclass                        #All OPCLASS
-pg_opfamily                       #All OPFAMILY
-pg_amop                           #OPERATOR used by OPFAMILY
-pg_amproc                         #FUNC used by OPFAMILY
-
-pg_largeobject
-[_metadata]                       #All LARGEOBJECT
-
-pg_[sh]description                #All COMMENT [on cluster-wide objects]
-
-pg_settings                       #All ENVVAR, with also when is readonly, type, min|max value, unit
-pg_db_role_setting                #All role and/or database-specific ENVVAR
 
 
                                              /=+===============================+=\
@@ -4908,6 +5214,11 @@ connection limit INT              #
 drop database ...                 #Cannot be done if currently connected to it
  [with force]                     #Terminate ongoing connections. Fail if could not
 
+pg_database                       #All DATABASE, including:
+                                  #  - datistemplate BOOL: can be used in create database template DATABASE
+                                  #  - datallowconn BOOL: if false, no one can connect to it
+                                  #???
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -4920,7 +5231,6 @@ INSTALLATION ==>                  #  - Server: postgresql
                                   #  - Client: postgresql-client, pgadmin3
                                   #  - Extensions: postgresql-contrib, postgresql-EXTENSION
                                   #  - Extension building: postgresql-server-dev
-pg_config                         #Show compilation-time conf
 --bin|doc|html|include|
 pkginclude|lib|pkglib|            #Print DIR. By default, useful DIR (so without headers, docs, etc.) are:
 locale|man|share|                 #  - /usr/lib/postgresql/VERSION/: bin and lib
@@ -4930,6 +5240,8 @@ sysconfdir                        #  - /usr/share/postgresql{,-common}/VERSION/
 --cc|cppflags|
 cflags[_sl]|
 ldflags[_ex|sl]|libs              #Print makefile variables
+
+pg_config                         #TABLE with compile-time config. ???
 
 REGRESSION ==>                    #Running the regression tests (to unsure installation is fine):
                                   #  - download source, configure and build it
@@ -5024,8 +5336,8 @@ connect_timeout                   #In seconds. Def: 0 (unlim). Should not be <2.
 client_encoding                   #Def: "auto" (defaults OS locales). Def: PGCLIENT_ENCODING
 options                           #Set postgres flags at runtime, client-side. Def: PGOPTIONS
                                   #Can use -c ENVVAR=VAL to set ENVVAR.
-[fallback_]                       #Name of the application (psql, pg_dump, etc.)
-application_name                  #Used in logs (title of the client connection). Can be env. variable PGAPPNAME too.
+[fallback_]application_name       #Name of the application (psql, pg_dump, etc.)
+                                  #Used in logs (title of the client connection). Can be env. variable PGAPPNAME too.
                                   #If application_name or PGAPPNAME is blank, defaults to fallback_* (let users override it)
 keepalives                        #1 to enable it (def). If connection seems lost, sends packet to check it actually is.
 keepalives_                       #Send max *count packets, every *interval seconds. Start sending after non-activity from server for
@@ -5133,18 +5445,22 @@ alter TYPE VAR ... set ENVVAR
 alter TYPE VAR ...
  reset ENVVAR|all                 #For database, function or role
 
+pg_settings                       #All ENVVAR, with also when is readonly, type, min|max value, unit
+                                  #???
+pg_db_role_setting                #All role and/or database-specific ENVVAR
+                                  #???
+pg_file_settings                  #TABLE with config ENVVARs. ???
+
 discard plans|temp|all            #Remove session-specific information:
                                   #  - plans: cached explain plans
                                   #  - temp: TEMP
                                   #  - all: cached explain plans, TEMP, session-specific ENVVAR, PREP, CURSOR, unlisten *,
                                   #    pg_advisory_unlock_all(), put session_user and current_user to default
 
-pg_postmaster_start_
-time()                            #
+pg_postmaster_start_time()        #
 current_database()                #Can also use information_schema.information_schema_catalog_name.catalog_name
 current_query()                   #Current executing statement
-inet_client|server_
-addr|port()                       #
+inet_client|server_addr|port()    #
 
 statement_timeout                 #ENVVAR (in ms) after which client requests fail (def: 0).
 
@@ -5748,29 +6064,30 @@ DETAILED MONITORING ==>           #Usually not needed, because there are higher-
 
 pg_stat_activity                  #Server processes, with names, usernames, start|last time, addresses and command activity.
 pg_stat_bgwriter                  #Background writer process's activity, e.g. for checkpoints.
-pg_stat_replication               #WAL sender processes.
 pg_stat_database                  #DATABASE, with number of servers/clients, transactions, temp files, tuples manipulated
                                   #(fetch|select|insert|update|delete), blocks read|hits, time spent on I/O read|write, deadlocks.
-pg_stat_database_
-conflicts                         #DATABASE, with query cancelled due to recovery on standby servers.
-pg_stat[io]_[xact_]               #TABLE, with:
-all|sys|user_tables               #  - not io: number of sequential|indexed scans (and tuples they fetched), tuples manipulated
+pg_stat[_xact|io]                 #TABLE, with:
+ all|sys|user_tables              #  - not io: number of sequential|indexed scans (and tuples they fetched), tuples manipulated
                                   #    (insert|update|delete), number of rows (live|dead), [auto]vacuum|analyze activity
                                   #  - io: disk read|hits for all, index-only, TOAST and TOAST index
                                   #Can be for only system catalogs (sys) or not (user).
                                   #If xact_, take the current transaction into account.
-pg_stat[io]_                      #INDEX, with:
-all|sys|user_indexes              #  - not io: number of scan (with tuples fetched: bitmap + simple index scan, or simple index scan
+pg_stat[io]_all|sys|user_indexes  #INDEX, with:
+                                  #  - not io: number of scan (with tuples fetched: bitmap + simple index scan, or simple index scan
                                   #    only)
                                   #  - io: index blocks read|hits (efficient if low read/hits %)
-pg_statio_all_sequences           #SEQUENCE, with number of blocks read|hits
-pg_stat_[xact_]user_              #FUNC, with number of calls and total time (only FUNC, or FUNC called by it too).
-functions                         #ENVVAR track_functions must be on.
+pg_statio_all|sys|user_sequences  #SEQUENCE, with number of blocks read|hits
+pg_stat[_xact]_user_functions     #FUNC, with number of calls and total time (only FUNC, or FUNC called by it too).
+                                  #ENVVAR track_functions must be on.
 
-pg_stat_statements                #VIEW for all queries (query, time, number of rows, I/O).
-                                  #Must put pg_stat_statements in ENVVAR shared_preload_libraries and use EXTENSION pg_stat_statements.
-                                  #Can be reset with pg_stat_statements_reset().
-                                  #Can use ENVVAR pg_stat_statementsmax (def: 1000)
+pg_backend_memory_contexts
+pg_shmem_allocations
+pg_stat_slru                      #???
+
+pg_stat_statements               ##VIEW for all queries (query, time, number of rows, I/O).
+                                 ##Can be reset with pg_stat_statements_reset().
+                                 ##Can use ENVVAR pg_stat_statementsmax (def: 1000)
+                                 ##Must put pg_stat_statements in ENVVAR shared_preload_libraries and use EXTENSION pg_stat_statements.
 
 OBJECT SIZES ==>                  #Can also look at pg_class.relpages (a page is 8KB)
 pg_column_size(VAL)               #
@@ -5849,16 +6166,21 @@ create table
 create table
  with (vacuum_truncate = BOOL)    #
 
+pg_stat_progress_vacuum           #TABLE with ongoing `vacuum` statements. ???
+
 analyze [verbose]                 #Fill in pg_statistic.
  ["TABLE"[("COL"...)]]            #Parameters are like for vacuum.
                                   #Requires only an access share lock.
                                   #FOREIGNTABLE are analyzed only when explicitly specified, and not always supported.
 
+pg_stat_progress_analyze          #TABLE with ongoing `analyze` statements. ???
+
 pg_statistic                      #Stats used by the planner to optimize queries (only indexed COL).
                                   #Not exact stats, because only a random sample of the rows is chosen for efficiency purpose.
                                   #Example of statistics: number of entries, distinct entries, histograms, size (number of disk blocks)
                                   #ENVVAR default_statistics_target (def: 100, from 0 to 10000) decides the sample size.
-                                  #Can be set column-wise with alter table "TABLE" alter "COL" set statistics INT (-1 means default)
+                                  #Can be set column-wise with:
+                                  #  alter table "TABLE" alter "COL" set statistics INT (-1 means default)
                                   #(same for FTABLE and materialized views).
                                   #  - starelid OID: of the TABLE. Refers to pg_class.oid
                                   #  - staatnum UINT: COL index. Refers to pg_attribute.attnum.
@@ -5875,6 +6197,10 @@ pg_statistic                      #Stats used by the planner to optimize queries
                                   #     - stavaluesNUM ARR: stats as the same type as the COL
 pg_stats                          #User-friendly version of pg_statistic
 
+pg_statistic_ext
+pg_statistic_ext_data
+pg_stats_ext
+pg_stats_ext_exprs                #???
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -6031,8 +6357,8 @@ pg_resetxlog                      #To use when WAL is corrupted. Look at online 
 pg_controldata DATADIR            #Show debug info for WAL
 
 create unlogged table|sequence ...#TABLE|SEQUENCE is not written to WAL
-select ... into unlogged table ...#Faster, but truncated on unclean shutdown
-                                  #Also, cannot use replication to standby servers
+alter table "TABLE" set [un]logged#Faster, but truncated on unclean shutdown
+select ... into unlogged table ...#Also, cannot use replication to standby servers
 
 SEQUENCE.log_cnt                  #0-32 (def: 0). Decrements at each setval|nextval() then cycles to 32.
                                   #When at 0, writes SEQUENCE to WAL.
@@ -6152,6 +6478,12 @@ ONLINE BACKUP ==>                 #     - "continuous archiving". Just need to a
                                   #        - by default, recover to the timeline that was used during the base backup, but can specify
                                   #          recovery_target_timeline STR with "latest" in recovery.conf, or with the specified
                                   #          timeline ID
+
+pg_stat_archiver                  #???
+pg_stat_recovery_prefetch         #???
+pg_stat_progress_basebackup       #TABLE with ongoing base backups. ???
+pg_stat_wal                       #???
+pg_stat_wal_receiver              #???
 
 HIGH AVAILABILITY ==>             #Can use:
                                   #  - log shipping: master ships WAL to a DIR, then standby gets it from DIR
@@ -6287,6 +6619,18 @@ repmgrd                           #Daemon doing automatic failover.
                                   #Needs to do all the standby register first.
 -f DIR                            #
 
+create table ...
+ with (user_catalog_table = BOOL) #???
+
+alter table "TABLE"
+ replica identity ...             #???
+
+pg_replication_origin             #???
+pg_replication_origin_status      #???
+pg_replication_slots              #???
+pg_stat_replication               #WAL sender processes.
+pg_stat_replication_slots         #???
+pg_stat_database_conflicts        #DATABASE, with query cancelled due to recovery on standby servers.
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -6752,7 +7096,7 @@ datafiller.py [FILE]              #Script printing commands filling randomly som
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:            OTHERS             :==(
+                                            )==:            COMMENT            :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
@@ -6766,6 +7110,16 @@ comment on ... is STR             #Add a comment STR, that can be read with:
                                   #TYPE can be any object that can be used with create TYPE ...
                                   #If STR is null, remove the comment.
                                   #To write must be owner or superuser
+
+pg_[sh]description                #All COMMENT [on cluster-wide objects]. ???
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:            OTHERS             :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
 
 TO DO ==>                         #In online doc:
                                   #  - Clients all rely on a backend protocol.
