@@ -4187,7 +4187,7 @@ bpchar|varchar|text_pattern_ops   #Non-default OPCLASS for BPCHAR|VARCHAR|TEXT t
 
 
 create index "INDEX"              #Create an INDEX
- on "TABLE"("COL"|(REXPR))        #Data structure storing the value COL|(REXPR) for each ROW in an optimized data structure
+ on "TABLE"("COL"|(REXPR))        #Data structure storing the value "COL"|(REXPR) for each ROW in an optimized data structure
                                   #Used by the planner to automatically speedup read queries
                                   #  - at the expense of write speed, since each write must update INDEX
                                   #Only used by queries:
@@ -4197,18 +4197,23 @@ create index "INDEX"              #Create an INDEX
                                   #Its contents cannot be directly read|write
 
 create index ...                  #"Multicolumn INDEX"
- on "TABLE"("COL"|(REXPR),...)    #
-                                  #     - should be used only if COL... are almost always queried together
-                                  #     - for btree|gist, only faster when using query using COL... in the same order and connected
-                                  #       with and (up to the last OP)
-                                  #     - for gist, quite slow if first COL has few distinct values
+ on "TABLE"("COL"|(REXPR),...)    #Stores multiple "COL"|(REXPR), i.e. faster when those are queried together
+                                  #Behavior is ACCESS_METHOD-specific
 
 create unique index ...           #
+                                  #Only supported by btree ACCESS_METHOD
 
 create index concurrently ...     #
 
-create index ... ("COL"|(REXPR)
-[asc|desc] [nulls first|last],...)#
+create index ... ("COL"|(REXPR)   #"Sorted INDEX"
+ asc|desc [nulls first|last],...) #Stores "COL"|(REXPR) in sorted order.
+                                  #This speeds up `order by "COL"|(REXPR)`
+                                  #Behavior is ACCESS_METHOD-specific:
+                                  #  - some automatically sort
+                                  #     - i.e. only needed when using sorted multicolumn INDEXs
+                                  #  - some allow backward scans
+                                  #     - i.e. only needed when using asc nulls first or desc nulls last
+                                  #(REXPR) can only be used if an "ordering operator" exists for the ACCESS_METHOD
 
 create index ...
  include ("COL",...)              #
@@ -4216,20 +4221,16 @@ create index ...
 create index ...
  nulls [not] distinct             #
 
-create index ... with (IOPTS)     #"Index storage options". Different from TOPTS.
-
-create index ... where BOOL_REXPR #"Partial index". Only indexes ROWs with BOOL_REXPR true
+create index ... where BOOL_REXPR #"Partial INDEX". Only indexes ROWs with BOOL_REXPR true
                                   #Goal: faster writes when:
                                   #  - only few ROWs are usually read
                                   #  - other ROWs are write-heavy
 
-                                  #  - [asc|desc] [nulls first|last]:
-                                  #     - "sorted index", faster when querying using order by ...
-                                  #     - for btree, useless (except with desc nulls last or asc nulls first, or with multiple COL...
-                                  #       with different sort order) since it can scan in both directions and automatically sort.
+create index ... with (IOPTS)     #"INDEX storage options". Different from TOPTS.
+
+
                                   #Others:
                                   #  - unique:
-                                  #     - only for btree
                                   #     - use it if COL... can't have duplicate records (faster)
                                   #     - as opposed to usual unique CONSTRAINT, can be done on COL (not only "COL")
                                   #  - concurrently: instead of asking for an exclusive lock, wait for possible conflicting transactions
@@ -4362,12 +4363,14 @@ OPERATIONS ==>                    #Many operations use ACCESS_METHODs
                                   #        - "ordering OP"
                                   #     - RANGE OPs
                                   #        - using OP < (by default)
-                                  #  - uniqueness|grouping
+                                  #  - distinct|grouping
                                   #     - for:
                                   #        - distinct, union|intersect|except distinct, AFUNC(distinct), group by, over (partition by)
                                   #        - ARR = <> ARR2
-                                  #        - exclude|unique CONSTRAINT
+                                  #        - exclude CONSTRAINT
                                   #     - using OP = (by default)
+                                  #  - unique:
+                                  #     - unique CONSTRAINT, create unique ...
                                   #  - over (range NUM preceding|following)
                                   #     - using support FUNC "in_range"
                                   #  - hash join|aggregation
