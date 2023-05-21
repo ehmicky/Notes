@@ -152,7 +152,7 @@ CASE-SENSITIVITY ==>              #Case-insensitive for:
 "VAR"
 U&"VAR2"                          #Make VAR case-sensitive
 
---COMMENT ...
+-- COMMENT ...
 /* COMMENT */                     #
 
 (VAR [= VAL], ...)                #OPTS. Used in many SQL statements for named parameters.
@@ -511,6 +511,25 @@ NUMe...                           #TYPE:
 'NaN'
 '[-]Infinity'                     #FLOAT_UNKNOWN
 
+generate_series(NUM, NUM2[, NUM3])
+ ->NUM4_SET                       #From NUM to NUM2, with step NUM3 (def: 1)
+
+width_bucket
+ (NUM, NUM2, NUM3, INT)->INT2     #Bucket index INT2 of value NUM in an histogram from NUM2 to NUM3 with INT buckets.
+
+to_hex(NUM)->STR                  #Hexadecimal, lowercase, without 0x prefix
+
+to_char(NUM, STR)->STR2           #Use format STR, e.g. '999D9' (3 integer digits, 1 decimal digit)
+                                  #Not documented yet
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:             MATH              :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
 NUM + - / * NUM2                  #
 -NUM                              #
 
@@ -554,17 +573,6 @@ cot(NUM)->FLOAT                   #
 atan2(NUM, NUM2)->FLOAT           #
 degrees|radians(NUM)->FLOAT       #Conversion
 pi()->FLOAT                       #
-
-generate_series(NUM, NUM2[, NUM3])
- ->NUM4_SET                       #From NUM to NUM2, with step NUM3 (def: 1)
-
-width_bucket
- (NUM, NUM2, NUM3, INT)->INT2     #Bucket index INT2 of value NUM in an histogram from NUM2 to NUM3 with INT buckets.
-
-to_hex(NUM)->STR                  #Hexadecimal, lowercase, without 0x prefix
-
-to_char(NUM, STR)->STR2           #Use format STR, e.g. '999D9' (3 integer digits, 1 decimal digit)
-                                  #Not documented yet
 
 
                                              /=+===============================+=\
@@ -1019,6 +1027,7 @@ INT8 <=-> OID|REG*
 INT2 -> OID|REG*                  #Type cast
 
 regclass                          #TYPE alias to OID. "TABLE" name.
+tableoid -> REGCLASS              #Type cast OID to "TABLE" name
 VARCHAR|TEXT -> REGCLASS          #Type cast
 
 tid                               #TYPE. ID of a ROW
@@ -1764,7 +1773,7 @@ drop ENTITY                       #Delete an ENTITY
                                   #  - operator family: operator class
                                   #Dependent objects removed with 'cascade':
                                   #  - schema: objects in the SCHEMA
-                                  #  - table: foreign key constraint
+                                  #  - table: foreign key constraint, inherited child TABLE
                                   #  - aggregate, [foreign] table, operator, [materialized] view: [materialized] view
                                   #  - access method, operator class|family, text search configuration: index
                                   #  - type, domain: table column
@@ -1796,15 +1805,20 @@ TABLE                             #ROW_SET with a known ROW_TYPE, that is persis
                                   #  - "ROW_TYPE" variable
                                   #  - ROW[_SET] value
 
-create [temp|unlogged]
+create
+ [temp|unlogged]
  table "TABLE"
  [of "ROW_TYPE"]
+ [partition of ...]
  (COL_ARG,...)
- [inherits ("PARENT_TABLE",...)]
+ [for values ...]
+ [inherits ...]
+ [partition by ...]
+ [using ...]
  [with (OPTS)]
- [on commit ACTION]
- [tablespace TABLESPACE]
- [as SUBQUERY [with [no] data]]   #Creates a TABLE
+ [on commit ...]
+ [tablespace ...]
+ [as SUBQUERY ...]                #Creates a TABLE
 
 exclude ... with (OPTS)
 unique ... with (OPTS)
@@ -1940,7 +1954,7 @@ alter table "TABLE"
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:          INHERITANCE          :==(
+                                            )==:         COLUMNS COPY          :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
@@ -1961,27 +1975,157 @@ like "TABLE|ROW_TYPE"             #COL_ARG. Copy (not inherit) the ROW_TYPE as C
                                   #  - all: of the above
  [excluding COL_INFO]...          #Do not copy COL_INFO. Only useful when using: including all
 
-create table ...                  #Any "PARENT_TABLE" targets also children
- inherits ("PARENT_TABLE",...)    #  - unless `only "PARENT_TABLE"` is used
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:          INHERITANCE          :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+create table ...                  #"CHILD_TABLE" inherits from "PARENT_TABLE"
+ inherits ("PARENT_TABLE",...)    #Can be deep inheritance
+                                  #Can have multiple parents
+
+READING ROWS ==>                  #Reading parent ROWs also reads child ROWs, but not vice-versa
+                                  #  - including `select`
+WRITING ROWS ==>                  #Writing parent|child ROWs only writes parent|child ROWs
+                                  #  - including `insert`
+                                  #  - can use rule to redirect parent inserts to child, if it has same COLs
+UPDATING|DELETING ROWS ==>        #Updating|deleting:
+                                  #  - on parent:
+                                  #     - can read child ROWs, i.e. can update|delete them
+                                  #     - however the write happens on the child only
+                                  #  - on child:
+                                  #     - the write happens on the child only
+                                  #     - but parent can see result since it can read child ROWs
+
+INHERITANCE STATEMENTS ==>        #This only applies to statements related to data
+                                  #  - for: select|table, update|delete|truncate|merge and most of alter table
+                                  #  - also: `lock` parent applies to child too, but not vice-versa
+                                  #  - unless `only "PARENT_TABLE"` is used
                                   #     - can use "PARENT_TABLE*" to do the opposite, but it is default behavior
-                                  #  - for most commands using "TABLE", except reindex, vacuum, etc.
-                                  #  - can use "TABLE".tableoid to distinguish parent vs child
-                                  #TABLE inherits:
-                                  #  - COLs of PARENT_TABLE
-                                  #     - but keeps its own COLs
+                                  #  - not for vacuum|analyze: i.e. must be done on each child TABLE
+
+CHILD INHERITS AND CANNOT CHANGE  #  - COL TYPE
+ ==>                              #  - generated COL
+                                  #  - temp
+                                  #  - compression
+                                  #  - collate
+
+CHILD INHERITS BUT CAN APPEND ==> #  - COLs
+                                  #  - check()
+                                  #     - unless check(BOOL_REXPR) no inherit
                                   #  - not null
-                                  #  - check(BOOL_REXPR)
-                                  #     - unless using: check(BOOL_REXPR) no inherit
-                                  #Does not inherit:
-                                  #  - unique
-                                  #  - primary key
-                                  #  - foreign key
-                                  #     - references "TABLE" implicitly means "only (TABLE)"
-                                  #  - indexes
+                                  #  - grant and row security policies
+                                  #     - when reading parent ROWs, not writing
+
+CHILD INHERITS BUT CAN OVERRIDE
+ ==>                              #Only: default
+
+CHILD DOES NOT INHERIT ==>        #  - unique, primary key, exclude
+                                  #     - constraint on parent|child only applies to that TABLE
+                                  #  - foreign key, as a:
+                                  #     - source
+                                  #     - target, i.e. references "CHILD_TABLE" implicitly means "only (CHILD_TABLE)"
+                                  #  - INDEX
+                                  #  - identity COL
                                   #  - rules, triggers
-                                  #I.e. this is mostly not useful
-alter table "TABLE"
+                                  #  - unlogged
+                                  #  - create table ... with (OPTS)
+                                  #  - comments
+
+"ROW_ALIAS".tableoid              #Can be used to distinguish parent|child
+
+alter table "CHILD_TABLE"
  [no] inherit "PARENT_TABLE"      #
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:           PARTITION           :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+PARTITIONING ==>                  #Split a TABLE ROWs into multiple child TABLEs ("partitions")
+                                  #Child TABLEs ROWs should:
+                                  #  - not overlap other children
+                                  #  - while still cover all of it
+                                  #Child TABLEs should have same COLs
+                                  #Goals:
+                                  #  - faster read|write, by only targeting one smaller child TABLE
+                                  #  - faster bulk delete, by detaching then deleting child TABLE
+                                  #Not goals: splitting data across multiple machines
+                                  #Only worth on very large tables, at least larger than RAM
+
+VIEW PARTITIONING ==>             #Partitioning using a VIEW:
+                                  #  - parent VIEW uses `union all` to concatenate all child TABLEs
+                                  #  - child TABLEs restrict ROWs with a check()
+                                  #     - with an INDEX on the underlying CONSTRAINT
+                                  #  - rule|trigger that redirects parent ROWs writes to the right child
+
+INHERITANCE PARTITIONING ==>      #Partitioning using `create table ... inherits`:
+                                  #Same as view partioning but with `inherits` and an empty parent TABLE
+
+FULL PARTITIONING ==>             #Partitioning using `create table ... partition of`
+                                  #Uses inheritance partitioning under the hood
+                                  #  - i.e. behaves similarly, except for notes below
+                                  #Automatically managed:
+                                  #  - check() for the partition key, and underlying INDEX
+                                  #  - rule to redirect writes to children
+                                  #Child TABLEs clone PARENT_TABLE's:
+                                  #  - unique, primary key, foreign key
+                                  #     - can only use normal expression, not REXPR
+                                  #     - have the same issues as with `inherits` (see above)
+                                  #  - INDEXs
+                                  #  - triggers
+                                  #Parent TABLE cannot use:
+                                  #  - exclude()
+                                  #  - check(...) no inherit
+                                  #  - with (OPTS)
+                                  #Child TABLE cannot override:
+                                  #  - not null
+PARTITION KEY ==>                 #COL_REXPRs used to decide which child TABLE to use
+                                  #Max 32 COL_REXPRs
+                                  #Must be included in any unique or primary key CONSTRAINT
+
+create table "PARENT_TABLE"
+ partition by METHOD
+ ("COL"|(COL_REXPR),...)          #Declare parent TABLE's partition keys
+
+create table "CHILD_TABLE"
+ partition of "PARENT_TABLE"      #Declare ROWs owned by child TABLE
+ [(COL_ARG,...)]                  #COL_ARGS,...: same syntax as `of "ROW_TYPE"`
+ for values ...                   #Values are evaluated once at TABLE creation time
+
+create table ... partition of ... #Child TABLE will own any ROWs not owned by other child TABLEs
+ default                          #Not with `partition by hash`
+
+alter table "PARENT_TABLE"
+ attach partition "CHILD_TABLE"
+ for values ...
+alter table "PARENT_TABLE"
+ attach partition "CHILD_TABLE"
+ default                          #Mark a TABLE as a new child
+alter table "PARENT_TABLE"
+ detach partition "CHILD_TABLE"   #Unmark a TABLE as a child
+
+create table ...
+ partition by list ...            #Child TABLE owns ROWs where partition key's value is among VAL,...
+create table ... for values       #Partition key must have only 1 COL_REXPR
+ in (VAL,...)                     #VAL can be null, but only in one child TABLE
+
+create table ...                  #Child TABLE owns ROWs where partition key's value is between VAL (included) and VAL2 (excluded)
+ partition by range ...           #If partition key has multiple COL_REXPRs, there are multiple VAL[2],...
+create table ... for values       #VAL[2] can be minvalue|maxvalue
+ from (VAL,...) to (VAL2,...)     #  - following COL_REXPRs must then also be minvalue|maxvalue
+
+create table ...                  #Child TABLE owns ROWs where partition key's value % UINT = UINT2
+ partition by hash ...            #Usually UINT is number of child TABLEs and UINT2 is index of child TABLE
+create table ... for values with  #Can then multiple UINT by 2 to increase number of child TABLEs
+ (modulus UINT, remainder UINT2)  #  - can do it one child TABLE at a time
+                                  #  - should detach child TABLE, split its data, then re-attach it as two child TABLEs
 
 
                                              /=+===============================+=\
@@ -2150,10 +2294,11 @@ select
 [where ...]
 [group by ...]
 [having ...]
+[window ...]
 [union|intersect|except ...]...
 [order by ...]
 [limit ...]
-[offset ...]                      #Order: from, where, select non-AFUNC, group by, having, select AFUNC,
+[offset ...]                      #Order: from, where, select non-AFUNC, group by, having, window, select AFUNC,
 [fetch ...]                       #distinct, union|intersect|except, order, offset, limit|fetch
 
 select VAL[_SET],...              #Evaluates VALs and returns them as a ROW_SET
@@ -2600,6 +2745,58 @@ select ... having BOOL_REXPR      #Like `where BOOL_REXPR` except:
 
                                              /=+===============================+=\
                                             /  :                               :  \
+                                            )==:         GROUPING SETS         :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+select ... group by grouping sets #Same as `select ... group by COL_REXPR` union all `select ... group by COL_REXPR2` ...
+ (COL_REXPR,...)                  #I.e. COL_REXPRs:
+                                  #  - are independent from each other
+                                  #  - produce different ROWs merged with `union all`
+                                  #In `select VALs`, each COL_REXPR is null in the other grouping sets
+                                  #  - including if COL_REXPR is a sub-expression within `select VAL`
+                                  #  - examples:
+                                  #     - select a, b ... group by grouping sets(a, b):
+                                  #        - first ROWs: `select a, null`
+                                  #        - second ROWs: `select null, b`
+                                  #     - select coalesce(a, VAL) ... group by grouping sets(a, b):
+                                  #        - first ROWs: `select a`
+                                  #        - second ROWs: `select VAL`
+select ... group by grouping sets #Can use a (...) list.
+ ((...),...)                      #I.e. like `select ... group by (...)` union all ...
+                                  #It can be an empty (), i.e. like `select ... group by ()`
+
+select ... group by               #Same as single grouping sets (...) with cartesian product
+ grouping sets (...),             #Example:
+ grouping sets (...)              #  select ... group by grouping sets((a, b), (c, d)), grouping sets((e, f), (g, h))
+                                  #  -> grouping sets((a, b, e, f), (a, b, g, h), (c, d, e, f), (c, d, g, h))
+select ... group by COL_REXPR,    #COL_REXPR is like grouping sets (COL_REXPR)
+ grouping sets (...)              #Example:
+                                  #  select ... group by a, grouping sets((b, c), (d, e))
+                                  #  -> grouping sets((a, b, c), (a, d, e))
+select ... group by distinct ...  #Ignore duplicate grouping sets produced by the cartesian product
+
+select ... group by grouping sets
+ (grouping sets(...), ...)        #Same as grouping sets(..., ...)
+
+rollup(COL_REXPR,...)             #Same as: grouping sets ((COL_REXPR1, COL_REXPR2,...), ..., (COL_REXPR1, COL_REXPR2), (COL_REXPR1), ())
+                                  #With each grouping set having one less COL_REXPR
+                                  #Meant when a series of groups that are subsets of each other
+cube(COL_REXPR,...)               #Same as: grouping sets ((COL_REXPR,...), ..., ())
+                                  #With all possible combinations of COL_REXPR,... including all|none of them
+rollup|cube((...),...)            #If using a (...) list, it is kept as as a list when translating to `grouping sets`,
+                                  #then it is flattened.
+                                  #E.g. `cube((a, b), (c, d))` -> `grouping sets((a, b, c, d), (a, b), (c, d), ())`
+
+grouping(COL_REXPR,...)->UINT     #AFUNC. UINT indicates the COL_REXPRs used by the current ROW
+                                  #UINT is a or'd bitwise flag:
+                                  #  - 1 for last COL_REXPR, 2 for previous one, etc.
+                                  #  - absence of bit means COL_REXPR is used
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
                                             )==:           AGGREGATE           :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -2607,7 +2804,7 @@ select ... having BOOL_REXPR      #Like `where BOOL_REXPR` except:
 
 AFUNC(SET, ...)->SCALAR           #"Aggregate function". Reduce a SET to a SCALAR
                                   #If SCALAR is passed as argument, it is handled like a SET with a single item.
-                                  #Must be used inside a REXPR.
+                                  #Must be used inside a REXPR: select, distinct, order by
 
 AFUNC(...)
  filter (where BOOL_REXPR)        #Filter SET values passed to AFUNC()
@@ -2615,11 +2812,87 @@ AFUNC(...)
 AFUNC(distinct|all ...)           #If `distinct`, ignore duplicate SET values
 
 AFUNC(... order by ...)           #Sort SET. Same syntax as `select ...`
+
 AFUNC(...)                        #Similar to AFUNC(ARG..., ...) except ARG... are sorted ("ordered-set AFUNC")
  within group (order by ARG,...)  #ARG... are "aggregated arguments" (evaluated once per ROW)
                                   #and ... are "direct arguments" (evaluated once for all ROWs)
                                   #`order by`: same syntax as `select ...`
 ZSET                              #Notation that means this AFUNC() argument must be in `within group (order by ZSET)`
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:            WINDOW             :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+AFUNC(SET, ...)->SCALAR over (...)#WFUNC, "Window function"
+                                  #Alternative to `group by`. Like `group by`:
+                                  #  - specifies the ROW_SET group ("window") passed to AFUNC()
+                                  #Unlike `group by`:
+                                  #  - window is computed for each ROW and AFUNC()
+                                  #  - does not reduce ROW_SET groups to single ROWs
+                                  #  - does not restrict which values other COLs can use
+                                  #Any AFUNC can be used as WFUNC
+                                  #  - but some WFUNC cannot be used as AFUNC
+AFUNC (...) over (...) ...        #When combined with `group by`:
+ group by ...                     #  - `group by` and `having` are applied first, independently
+                                  #     - i.e. WFUNC operates on ROWs after grouping
+                                  #  - WFUNC have same "ROW_ALIAS"[."COL"] restrictions as other `select VALs`
+
+AFUNC(...) filter (...) over (...)#Can be used, like a normal AFUNC()
+
+AFUNC(distinct|all ...) over (...)
+AFUNC(... order by ...) over (...)#Cannot be used, unlike a normal AFUNC()
+
+AFUNC(ZSET, VAL, ...)             #Must be called with: AFUNC(...) over (... order by COL_REXPR)
+                                  #ZSET is the window. VAL is COL_REXPR.
+
+select ...
+ AFUNC(...) over "WINDOW"
+ ... window "WINDOW" as (WINDOW)  #Same as: `select ... AFUNC(...) over (WINDOW)`
+select ...
+ AFUNC(...) over ("WINDOW" ...)
+ ... window "WINDOW" as (WINDOW)  #Same as: `select ... AFUNC(...) over (WINDOW ...)`
+
+AFUNC(...) over                   #Define window as: the ROWs with same COL_REXPR,... as current ROW
+ (partition by COL_REXPR,...)     #  - i.e. similar to `group by`
+                                  #If not specified:
+                                  #  - if `over (... order by COL_REXPR,...)`:
+                                  #     - same as `partition by COL_REXPR,...`
+                                  #     - but each window includes any previous ROW
+                                  #  - otherwise: single window
+
+AFUNC(...) over (... order by ...)#Sort window ROWs. Same syntax as `select ... order by ...`
+                                  #"Peer ROWs" are the preceding|following ones with same sort value
+
+AFUNC(...) over (... rows         #Only include specific range of ROWs in current window
+ between FRAME and FRAME2)        #FRAME is start (included) and FRAME2 end (excluded)
+                                  #FRAME[2] can be:
+                                  #  - unbounded preceding: first ROW
+                                  #  - unbounded following: last ROW
+                                  #  - current row
+                                  #  - VAL preceding: VALnth previous ROW (up to first ROW)
+                                  #  - VAL following: VALnth next ROW (up to last ROW)
+AFUNC(...) over (... rows FRAME)  #Same as `rows between FRAME and current row`
+AFUNC(...) over (... groups ...)  #Same as `rows ...` except FRAME[2]:
+                                  #  - current row: include peer ROWs
+                                  #  - VAL preceding|following: peer ROWs are counting as 1
+AFUNC(...) over (... range ...)   #Same as `rows ...` except FRAME[2]:
+                                  #  - current row: include peer ROWs
+                                  #  - VAL preceding|following:
+                                  #     - VAL is based on the sort value
+                                  #     - not based on ROW position within the window
+AFUNC(...) over (... range
+ between unbounded preceding
+ and current row)                 #Default behavior
+
+AFUNC(...) over                   #Exclude specific ROWs in current window, based on EXCLUDE:
+ (... rows|groups|range           #  - no others (def): none
+ ... exclude EXCLUDE)             #  - current row
+                                  #  - ties: peers (except current row)
+                                  #  - group: peers + current row
 
 
                                              /=+===============================+=\
@@ -2633,9 +2906,10 @@ count(SET)->UINT                  #AFUNC. Number of values, excluding nulls
 count(*)->UINT                    #AFUNC. Number of values, including nulls
 
 rank(ZSET, VAL)->UINT             #AFUNC. 1-based index of VAL in sorted ZSET
-                                  #If equal value, VAL is considered lower
-dense_rank(ZSET, VAL)->UINT       #Same but remove duplicates first
-percent_rank(ZSET, VAL)->FLOAT    #Same but returns as 0-1 percentage
+                                  #If equal value, same index, but increments index for next value
+dense_rank(ZSET, VAL)->UINT       #Same as rank() but if equal value, does not increment index for next value
+                                  #I.e. like removing duplicates first
+percent_rank(ZSET, VAL)->FLOAT    #Same as rank() but returns as 0-1 percentage
 cume_dist(ZSET, VAL)->FLOAT       #AFUNC. Cumulative distribution, i.e. rank() / count()
 
 mode(ZSET)->VAL                   #AFUNC. Mode
@@ -2643,6 +2917,28 @@ mode(ZSET)->VAL                   #AFUNC. Mode
 percentile_cont(ZSET, FLOAT[_ARR])#AFUNC. Percentile value[s], with interpolation
  ->VAL[_ARR]                      #AFUNC. FLOAT is 0-1 percentage
 percentile_disc(...)              #AFUNC. Percentile value[s], without interpolation
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:          WINDOW RANK          :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+row_number(SET)->UINT             #WFUNC. Current 1-based index within window
+
+nth_value(SET, COL_REXPR, UINT)
+ ->VAL|null                       #WFUNC. Returns COL_REXPR value at index UINT within window
+first|last_value(SET, COL_REXPR)
+ ->VAL                            #WFUNC. Returns COL_REXPR value at first|last index within window
+
+lead(SET, COL_REXPR, UINT[, VAL]) #WFUNC. Returns COL_REXPR value at index row_number() + UINT within window
+ ->VAL                            #If none, returns VAL (def: null)
+lag(...)->VAL                     #Same as lead but using -UINT
+
+ntile(SET, UINT)->UINT2           #Returns 1 for first index, UINT for last index, and interpolated values in-between.
+                                  #If SET length >= UINT, returns row_number() instead
 
 
                                              /=+===============================+=\
@@ -2668,116 +2964,767 @@ regr_*(...)                       #AFUNC. Linear regression. Not documented yet
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:      AGGREGATION TO SORT      :==(
+                                            )==:            CURSORS            :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
-select ... group by grouping sets #Same as `select ... group by COL_REXPR` union all `select ... group by COL_REXPR2` ...
- (COL_REXPR,...)                  #I.e. COL_REXPRs:
-                                  #  - are independent from each other
-                                  #  - produce different ROWs ("grouping sets") merged with `union all`
-                                  #In `select VALs`, each COL_REXPR is null in the other grouping sets
-                                  #  - including if COL_REXPR is a sub-expression within `select VAL`
-                                  #  - examples:
-                                  #     - select a, b ... group by grouping sets(a, b):
-                                  #        - first ROWs: `select a, null`
-                                  #        - second ROWs: `select null, b`
-                                  #     - select coalesce(a, VAL) ... group by grouping sets(a, b):
-                                  #        - first ROWs: `select a`
-                                  #        - second ROWs: `select VAL`
-select ... group by grouping sets #Can use a (...) list. Each list item is passed to `group by`
- ((COL_REXPR, COL_REXPR2,...),...)#I.e. like `select ... group by (COL_REXPR, COL_REXPR2,...)` union all ...
-                                  #It can be an empty (), i.e. like `select ... group by ()`
-
-select ... group by               #Same as single grouping sets (...) with cartesian product
- grouping sets (...),             #Example:
- grouping sets (...)              #  select ... group by grouping sets((a, b), (c, d)), grouping sets((e, f), (g, h))
-                                  #  -> grouping sets((a, b, e, f), (a, b, g, h), (c, d, e, f), (c, d, g, h))
-select ... group by distinct
- grouping sets (...),
- grouping sets (...)              #Ignore duplicate grouping sets produced by the cartesian product
-select ... group by COL_REXPR,    #Same. Example:
- grouping sets (...)              #  select ... group by a, grouping sets((b, c), (d, e))
-                                  #  -> grouping sets((a, b, c), (a, d, e))
-
-select ... group by grouping sets
- (grouping sets(...), ...)        #Same as grouping sets(..., ...)
-
-rollup(COL_REXPR,...)             #Same as: grouping sets ((COL_REXPR1,...), ..., (COL_REXPR1, COL_REXPR2), (COL_REXPR1), ())
-                                  #With each grouping set having one less COL_REXPR
-                                  #Meant when a series of groups that are subsets of each other
-cube(COL_REXPR,...)               #Same as: grouping sets ((COL_REXPR,...), ..., ())
-                                  #With all possible combinations of COL_REXPR,... including all|none of them
-rollup|cube((...),...)            #If using a (...) list, it is kept as as a list when translating to `grouping sets`,
-                                  #then it is flattened.
-                                  #E.g. `cube((a, b), (c, d))` -> `grouping sets((a, b, c, d), (a, b), (c, d), ())`
-
-grouping(COL_REXPR,...)->UINT     #AFUNC. UINT indicates the COL_REXPRs used by the current grouping sets
-                                  #It is a bitwise ???
-
-PARTIAL AGGREGATION ==>           #AFUNC which can compute its result in parallel divide-and-conquer
-                                  #I.e. has a combine function to merge intermediary results
-                                  #  - using the same initcond
-                                  #Cannot rely on SET items order
-                                  #Must be marked `parallel safe`
-                                  #Most builtin AFUNCs allow partial aggregation, except for *agg, mode|percentile*, *rank, cume_dist
-
-create aggregate AFUNC            #Creates an AFUNC(COL,...):
-(TYPE...) (sfunc = FUNC,          #  - TYPE are type of each COL.
-stype = TYPE2                     #  - each VAL... of each COL is passed inside successive FUNC(VAL2, VAL...)
-[, finalfunc = FUNC2]             #     - VAL2 is the return value of the last FUNC(), and its type is TYPE2
-[, initcond = STR]                #     - its value in the first FUNC() is TYPE2 STR (typecasting from STR) (def: null)
-)                                 #  - last FUNC can be different if FUNC2(VAL2) is defined: takes only one ARG, and can return any type.
-                                  #  - last VAL2 is returned
-                                  #  - by convention, null should be ignored in FUNC, unless there are only null, where null should be
-                                  #    returned
+CURSORS ==>                       #Row iterators over a specific query (executed once when opening the cursor)
+declare CURSOR                    #Creates and open a CURSOR for query TABLE (any that would also work in a from ... clause)
+[scroll] cursor                   #Is closed at end of transaction (if no transaction, is immediately closed), unless with hold is used.
+[with hold]                       #Using select for update|share:
+for TABLE                         #  - is not compatible with with hold or scroll
+                                  #  - is recommended if using a ... where current of ... to make sure rows are the same
+                                  #If scroll, fetch can work backward.
+                                  #Starting position is before the first row. After the last row is the end.
+fetch [WORD]                      #Return rows of CURSOR according to position specified by WORD, and move it too:
+from CURSOR                       #  - forward|backward [NUM|all] (def: forward): retrieves several rows if NUM
+                                  #  - relative NUM: 0 for current row
+                                  #  - absolute NUM (if negative, from the end): 0 for before first row, more than number of rows for
+                                  #    after last row
+move [WORD] from CURSOR           #Same but only moves cursor, doesn't return anything.
+close CURSOR|all                  #Close a CURSOR (or all). Automatically done at end of transaction for a CURSOR without "with hold"
+update|delete ... where           #Same as update|delete ... where BOOL, with BOOL being current position of CURSOR.
+current of CURSOR                 #Grouping cannot be used in the TABLE of CURSOR.
 
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:            WINDOW             :==(
+                                            )==:      PREPARED STATEMENTS      :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
-See again `select ...` documentation for full syntax???
+prepare PREP([TYPE...])           #Parse COMMAND to make it faster to use later, if complex and often used COMMAND.
+as COMMAND                        #Must be used with execute PREP(...):
+execute PREP(...)                 #  - Each TYPE can be specified in COMMAND as positional argument $NUM
+                                  #  - execute PREP(...) supply those arguments
+                                  #  - last TYPE... can be "unknown", meaning "anyelement" (can still be used as $NUM), providing it
+                                  #    can be determined runtime
+                                  #  - no overloading
+                                  #COMMAND must be select|insert|update|delete|values
+                                  #No problem of caching: PREP will be reparsed if:
+                                  #  - used TABLE (including COLs) change types
+                                  #  - search_path changes
+deallocate PREP|all               #Delete a PREP.
+                                  #deallocate all is automatically done at end of each session.
 
-AFUNC (COL) over                  #Window function WFUNC:
-([partition by "COL"]             #  - the whole expression returns a COL of length n (not 1)
- [order by ...]                   #  - for each element, AFUNC() is fired on a moving WINDOW, for each COL group. Groups are defined as:
- [rows|range between              #     - if "partition by": according to identical VAL in "COL"
- WORD and WORD2])                 #     - if no "partition by":
-                                  #        - if "order by": same, but each group also include previous groups
-                                  #        - if no "order by": only one group
-                                  #  - WINDOW is:
-                                  #     - inside each group, between WORD and WORD2, which can be:
-                                  #        - unbounded|VAL preceding|following
-                                  #        - current row: according to current element
-                                  #     - def is between unbounded preceding and unbounded following, which means AFUNC() is applied on
-                                  #       the whole group each time
-                                  #     - if there is a group of identical VAL..., current row means:
-                                  #        - if range: for each VAL, the first one for WORD, and the last one for WORD2
-                                  #        - if rows: for each VAL, that VAL
-                                  #  - the output is sorted by COL2, inside each group
-                                  #WFUNC are performed after AFUNC, and AFUNC after all the later clauses (e.g. BOOL).
-                                  #To include a former in a later, use a command substitution, e.g. instead of AFUNC(COL):
-                                  #  (select AFUNC(COL) [from COL])
-AFUNC([COL]) over WINDOW,         #If multiple AFUNCs in a statement use the same WINDOW, it can use an alias WINDOW, then put a later
-AFUNC2([TABLE2]) over WINDOW ...  #clause, as: window WINDOW as (...)
 
-WFUNC-SPECIFIC AFUNCs
- ==>                              #
-row_number()                      #Index inside WINDOW
-cume_dist()                       #Row number inside WINDOW, divided by number of rows for the group
-first|last_value("COL")           #Returns first|last element of the WINDOW
-nth_value("COL", UINT)            #Returns element number UINT of the WINDOW (null if not existing)
-lag|lead("COL", UINT[, VAL])      #Returns the element UINT times before|after in the WINDOW (VAL (def: null) if not existing)
-rank()                            #Numeral rank, according to "order by", inside WINDOW
-dense_rank()                      #Same but if equal value, equal rank too
-percent_rank()                    #Same but from 0 to 1
-ntile(UINT)                       #Returns 1..UINT, starting from lower to upper value, with equal (if possible) number of values in
-                                  #each 1..UINT (buckets)
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:            SCHEMAS            :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+create schema SCHEMA              #Creates a SCHEMA (namespace inside a DATABASE).
+[authorization USER]              #USER is the owner (def: current_user).
+
+alter ENTITY "ENTITY"
+ set schema SCHEMA                #For all ENTITYs that can have a SCHEMA
+
+[SCHEMA.]VAR                      #Access/write a VAR (usually "TABLE" but can be any VAR) for a specific SCHEMA.
+                                  #If not specified, use the ENVVAR_ARR search_path, by def. {USER, public}. Searched from left to
+                                  #right. If nothing found and writing operation, use the leftest SCHEMA (except USER)
+
+pg_catalog                        #SCHEMA for all pg_* tables and builtins functions and types. It's implicit in the search path.
+                                  #To override those builtins, put pg_catalog at the end of the search path
+
+current_schema()                  #
+current_schemas([BOOL])           #If true, include implicit ones (e.g. pg_catalog)
+pg_is_other_temp_schema(OID)      #Is it a temporary schema
+pg_my_temp_schema()               #Temp SCHEMA OID, 0 if none.
+pg_TYPE_is_visible(OID)           #Checks if an object is accessible through current SCHEMA path.
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:         DICTIONARIES          :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+PRINCIPLES ==>                    #Normalize a STR document by using:
+                                  #  - a REGCONF, i.e. a combination of:
+                                  #     - a PARSER, that break words into tokens according to whitespaces, hyphens, etc.
+                                  #       Can produce overlapping tokens (both the compound token and its parts).
+                                  #       Tokens can be words, hyphen-separated token, email address, URL or part of URL (path, host,
+                                  #       etc.), numbers, XML tags
+                                  #     - a list of DICTIONARY, i.e. a TEMPLATE filled with arguments.
+                                  #       Goal is to remove common words, change grammatical forms, etc.
+                                  #  - current REGCONF is chosen with ENVVAR default_text_search_config (can be set by initdb -T STR)
+                                  #    Can be returned by get_current_ts_config()
+                                  #Normalized STR documents are TSVECTOR. Queries are performed using TSQUERY.
+
+LIMITS ==>                        #  - 2KB for lexemes. Max. 2^64 by TSVECTOR. Max 256 positions by lexeme.
+                                  #  - 1MB for TSVECTOR (divide a document into several TSVECTOR)
+                                  #  - Max. 2^32 elements in a TSQUERY
+
+tsvector                          #Normalized STR document.
+                                  #Each word can have a position and weight, i.e. word:NUMLETTER, where NUM is the position is the
+                                  #document (1 to 16383) and a weight, A, B, C to D, indicating the level (title, subtitle, etc.)
+                                  #Position only serves for relative position comparison, so 16383 is fine.
+tsquery                           #A STR, query combination of normalized words on a tsvector.
+                                  #Words must be separated by & or | (not space)
+                                  #Can include:
+                                  #  - () ! & |, e.g. 'word & (word2 | word3)'
+                                  #  - word:LETTER...: only words in tsvector with weight LETTER... should match
+                                  #  - word:*: not whole word need to match, but only beginning
+to_tsquery|vector                 #As opposed to cast(STR as tsquery|vector), it does normalization.
+([REGCONFIG, ]STR)                #Only use the later if already normalized.
+plainto_tsquery(...)              #Same as to_tsquery() but can't accept operators & | ! (), and implicitely put & between each word
+
+TSQUERY @@ TSVECTOR               #Returns true if match.
+STR @@ STR2                       #Automatically call to_tsquery|vector()
+TSVECTOR || TSVECTOR2
+TSQUERY && || !! TSQURY2
+TSQUERY @> @< TSQUERY2            #Contains|is contained
+
+length(TSVECTOR)                  #number of words
+strip(TSVECTOR)                   #Removes weights and indexes
+setweight(TSVECTOR, 'A|B|C|D')    #Returns TSVECTOR with given weight
+numnode(TSQUERY)                  #number of words and operators
+querytree(TSQUERY)                #returns TSQUERY without parts that can't be accessed (!word and common words), to detect if a TSQUERY
+                                  #can be indexed
+ts_rank[_cd]([REAL_ARR,]          #Computes how much TSQUERY matches TSVECTOR. Used with "order by".
+ TSVECTOR, TSQUERY[, UINT])       #ts_rank look at the number of occurences, and ts_rank_cd at the proximity of occurences
+                                  #(smaller is better)
+                                  #REAL_ARR weights occurences according to 4 REAL for the weights D, C, B, A (def: 0.1, 0.2, 0.4, 1).
+                                  #UINT is a or'd flag, that computes following operations on output :
+                                  #  - 0 (def): nothing
+                                  #  - 1: n/(log(len(n))+1)
+                                  #  - 2: n/len(n)
+                                  #  - 4: n/mean between occurences (only ts_rank_cd)
+                                  #  - 8: n/number of unique words
+                                  #  - 16: n/(log(number of unique words)+1)
+                                  #  - 32: n/(n+1)
+ts_headline([REGCONF,] STR,       #Returns a STR3 with matching results.
+ TSQUERY[, STR2])                 #To make it faster, use select ts_headline(STR, TSQUERY) from (select ...) where the subquery returns
+                                  #only rows that match the TSQUERY.
+                                  #STR2 have options, as 'VAR=VAL...':
+                                  #  - StartSel, StopSel STR: to be put around matches (def: '<b>' and '</b>')
+                                  #  - Min|MaxWords UINT: to filter matches by number of occurences
+                                  #  - ShortWord UINT: length minimal of words at being and end of matches
+                                  #  - HighlightAll BOOL: negates previous args
+                                  #  - FragmentDelimiter STR: between each match in output
+                                  #  - MaxFragments UINT: to display in output
+ts_rewrite(3 TSQUERY)             #Change occurences of TSQUERY2 inside TSQUERY to TSQUERY3
+ts_rewrite(TSQUERY, TABLE)        #Same with a TABLE with two TSQUERY columns
+
+ts_debug([REGCONFIG, ]STR)        #Returns result of conversion STR -> TSVECTOR, as a TABLE with COLs:
+                                  #  - alias STR: TYPE of TOKEN
+                                  #  - description STR: of TYPE of TOKEN
+                                  #  - token STR: original TOKEN
+                                  #  - dictionaries STR_ARR and dictionary STR (the one chosen)
+                                  #  - lexemes STR_ARR: final tokens
+ts_lexize(STR, STR2)              #Returns token STR2 as STR_ARR according to dictionary STR
+ts_parse(STR|OID, STR2)           #Same for parser. Returns a TABLE with COLs:
+                                  #  - tokid INT: token type
+                                  #  - token STR
+ts_token_type(STR|OID)            #Returns all token types of the parser STR|OID, as a TABLE with COLs:
+                                  #  - tokid INT
+                                  #  - alias STR
+                                  #  - description STR
+ts_stat(STR[, STR2])              #For a query STR returning a TSVECTOR, returning each word in a TABLE:
+                                  #  - word STR
+                                  #  - ndoc UINT: numero du TSVECTOR
+                                  #  - nentry UINT: number of occurences
+                                  #If STR2, only lexemes with weights STR2 will be picked.
+
+create text search                #... can be:
+configuration REGCONF             #  - parser = STR
+(...)                             #  - or copy = REGCONF2
+                                  #Dictionaries are specified with alter text search configuration ...
+alter text search                 #... controls DICTIONARY for specific TOKEN (as WORD) can be:
+configuration REGCONF             #  - add|alter mapping for TOKEN... with DICTIONARY...
+...                               #  - drop mapping [if exists] for TOKEN...
+                                  #  - alter mapping [for TOKEN...] replace DICTIONARY with DICTIONARY2
+                                  #Available ones:
+                                  #  - pg_catalog.LANG (def: english), which uses:
+                                  #     - LANG_stem DICTIONARY for words, simple DICTIONARY for rest
+                                  #     - pg_catalog.default PARSER
+                                  #  - pg_catalog.simple, which uses:
+                                  #     - simple DICTIONARY for all
+                                  #     - pg_catalog.default PARSER
+
+create text search                #Create a DICTIONARY, which is a TEMPLATE but with args filled in ... (as VAR = VAL)
+dictionary DICTIONARY             #Available ones:
+(template = TEMPLATE, ...)        #  - LANG_stem:
+                                  #     - snowball TEMPLATE with language = LANG and stopwords = LANG
+                                  #  - simple:
+                                  #     - simple TEMPLATE
+                                 ## - unaccent:
+                                 ##    - filtering dictionary removing accent
+                                 ##    - does it according to argument rules (which can be altered), pointing to
+                                 ##      SHAREDIR/tsearch_data/ARG.rules.
+                                 ##      The default one can be found with unaccent.rules (works for western languages)
+                                 ##    - can also use unaccent([ARG, ]STR)
+                                 ##    - Postgres extension 'unaccent'
+                                 ## - dict_xsyn:
+                                 ##    - synonym dictionary: a word is spread into several synonymous words, so that synonymous words
+                                 ##      are counted together
+                                 ##    - arguments (can be altered):
+                                 ##       - rules, pointing to SHAREDIR/tsearch_data/ARG.rules, see example at
+                                 ##         SHAREDIR/tsearch_data/xsyn_sample.rules
+                                 ##       - matchorig|synonyms BOOL: the original word or synonyms are accepted as input
+                                 ##         (def: true and false)
+                                 ##       - keeporig|synonyms BOOL: the original word or synonyms are produced in output
+                                 ##         (def: true and true)
+                                 ##    - Postgres extension 'dict_xsyn'
+alter text search
+dictionary DICTIONARY(...)        #
+
+create text search                #Creates a TEMPLATE. Must be superuser ROLE.
+template TEMPLATE                 #A TEMPLATE:
+ ([init = FUNC, ]lexize = FUNC2)  #  - take a STR in input from the parser and can return:
+                                  #     - STR_ARR of the normalized words
+                                  #     - empty STR_ARR if common words
+                                  #     - null if word is unknown, so original STR passed to the next dictionary
+                                  #     - STR, with the TSL_FILTER flag on (filtering dictionary): pass STR to the next dictionary
+                                  #       dictionary
+                                  #       Ex of filtering dictionary: removing accents
+                                  #  - usually use FILES:
+                                  #     - can be found under SHAREDIR/tsearch_data/FILE.extension (extension depends on TEMPLATE)
+                                  #     - FILE must be in UTF-8
+                                  #  - use arguments that are filled by DICTIONARY
+                                  #Available TEMPLATE:
+                                  #  - simple:
+                                  #     - arguments: accept BOOL (def: true), stopwords FILE
+                                  #     - FILE (extension: .stop) is one word by line
+                                  #     - if input:
+                                  #        - is found in FILE, returns empty STR_ARR
+                                  #        - is not found:
+                                  #           - if accept is true, returns word as STR_ARR
+                                  #           - if accept is false, returns null
+                                  #     - input is lowercased first
+                                  #  - synonym:
+                                  #     - arguments: casesensitive BOOL (def: false), synonyms FILE (extension: .syn)
+                                  #     - FILE (extension: .syn) have two space-separated fields
+                                  #     - if input:
+                                  #        - is found in first field of FILE, returns second field
+                                  #        - otherwise returns null
+                                  #     - input is lowercased first if not casesensitive
+                                  #       Second field can have * at the end, indicating to be a word:* if used as a TSQUERY
+                                  #  - thesaurus:
+                                  #     - arguments: dictfile FILE, dictionary DICTIONARY
+                                  #     - FILE (extension: .ths) have two colon-separated fields (can contain several words)
+                                  #       Can have #comment
+                                  #     - if input:
+                                  #        - is found in first field of FILE, returns second field
+                                  #        - otherwise returns null
+                                  #     - first use another DICTIONARY.
+                                  #       Common words will be erased by DICTIONARY, but can still match them in first field of FILE
+                                  #       with ?
+                                  #  - ispell:
+                                  #     - arguments: stopwords FILE, afffile FILE2, dictfile FILE3
+                                  #     - FILE (extension: .stop): like stopwords in pg_catalog.simple
+                                  #     - FILE2 (extension: .affix) and FILE3 (extension: .dict): see doc. for ispell
+                                  #     - In short, can turn grammatical variations of a word into a single form.
+                                  #  - snowball:
+                                  #     - arguments: stopwords FILE, language WORD
+                                  #     - like ispell, but simpler and never return null (so should be placed in the end)
+
+create text search
+parser PARSER
+(start = FUNC, gettoken = FUNC2,
+end = FUNC3,                      #Creates a PARSER. Must be superuser ROLE.
+lextypes = FUNC4                  #Available ones:
+[, headline = FUNC5])             #   - 'pg_catalog.default' (def). Notion of a "letter" depends on locales.
+
+                                 ##Following functions can be used to test similarities between STR.
+                                 ##Postgres extension 'fuzzystrmatch'
+levenshtein(STR, STR2
+ [, INS_COST, DEL_COST,SUB_COST])##Show differences, like agrep
+levenshtein_less_equal(..., INT) ##Same but if more than INT, returns INT+1 (faster).
+metaphone(STR, INT)              ##Convert to STR to phonetic-style code, and truncate it if more than INT characters (max 255)
+                                 ##For english language. Does not work well with Unicode characters.
+dmetaphone(STR)                  ##Same but unlim size.
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:             INDEX             :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+create [unique] index             #Create an INDEX on COL...
+[concurrently] INDEX              #Cannot be directly used, but makes select|update|delete on COL... faster (used by the planner).
+on "TABLE"(COL,...                #Can't create two INDEX with same names, even on different tables.
+[OPCLASS])                        #Will be picked when the query use the same expression used in create index ...:
+[using INDEX_METHOD]              #  - COL (not "COL"):
+[asc|desc]                        #     - "expression index" makes it possible to use INDEX when query usually use COL (e.g. FUNC(COL))
+[nulls first|last]                #     - if use operator, needs extra set of parenthesis, e.g. ((COL + VAL))
+[with (VAR = VAL...)]             #  - where BOOL:
+[where BOOL]                      #     - "partial index" (only on part of "TABLE"), faster when query usually use where BOOL
+                                  #     - useful when where BOOL is selective (only few rows)
+                                  #  - multiple COL...: "multicolumn index":
+                                  #     - should be used only if COL... are almost always queried together
+                                  #     - for btree|gist, only faster when using query using COL... in the same order and connected
+                                  #       with and (up to the last OP)
+                                  #     - for gist, quite slow if first COL has few distinct values
+                                  #     - not for spgist
+                                  #  - [asc|desc] [nulls first|last]:
+                                  #     - "sorted index", faster when querying using order by ...
+                                  #     - for btree, useless (except with desc nulls last or asc nulls first, or with multiple COL...
+                                  #       with different sort order) since it can scan in both directions and automatically sort.
+                                  #  - using INDEX_METHOD (def: btree): see below
+                                  #  - OPCLASS:
+                                  #     - use a specific OPCLASS for the type of COL instead of the default one
+                                  #       The underlying OP must be immutable.
+                                  #Others:
+                                  #  - unique:
+                                  #     - only for btree
+                                  #     - use it if COL... can't have duplicate records (faster)
+                                  #     - as opposed to usual unique CONSTRAINT, can be done on COL (not only "COL")
+                                  #  - concurrently: instead of asking for an exclusive lock, wait for possible conflicting transactions
+                                  #    to complete for each row. Slower but will not lock the "TABLE".
+                                  #    Can fail: then drop INDEX and recreate it.
+                                  #  - with (VAR = VAL...): see create table ...
+                                  #An "index-only scan" is a query that can use only the INDEX without even visiting the TABLE (faster).
+                                  #A query using "... and|or ..." can use each ... INDEX separately, then combine the result.
+                                  #INDEX performances:
+                                  #  - makes read faster, but write slower (needs to maintain the INDEX)
+                                  #  - is mostly efficient if the query is selective (chooses few rows) on a big table.
+                                  #  - to know when to use an INDEX, check with explain if INDEX is chosen by the planner for most-used
+                                  #    queries or skipped in favor of a sequential scan.
+                                  #Max 32 COLs
+
+create table ...
+ exclude|unique|primary key ...   #Those CONSTRAINTs create an underlying INDEX
+ [include("COL",...)]
+ [with (OPTS)]                    #Configure underlying INDEX
+
+create table ... exclude
+ [using INDEX_METHOD]
+ ("COL"|(REXPR)
+  [OPCLASS]
+  [asc|desc]
+  [nulls first|last]              #COL_ARG. Configure underlying INDEX
+ ,...) ...                        #INDEX_METHOD cannot be gin
+
+create table ... partition by ...
+ ("COL"|(COL_REXPR) OPCLASS)      #
+
+INDEX_METHOD ==>                  #"Index accessor method"
+                                  #Structure in which indexes are conceptually stored (because in the end they are TABLE), and
+                                  #functions to maintain/create those structures.
+                                  #In short: way to create INDEX, linked to specific types and operators.
+                                  #Are linked to specific OPFAMILY, which are groups of OPCLASS (operator class), which is a combination
+                                  #of INDEX_METHOD + TYPE + FUNC...:
+                                  #  - an INDEX_METHOD provides an API with few FUNCs to implement
+                                  #  - to implement a TYPE, need to write them for those TYPE -> OPCLASS
+                                  #  - available OPCLASS and OPFAMILY are usually called TYPE_ops (_TYPE_ops for ARR)
+                                  #INDEX_METHOD available are:
+                                  #  - btree (def):
+                                  #      - implemented on all TYPE for < <= = >= > <> (implies in, between, etc.)
+                                  #      - faster if = is used first in queries
+                                  #  - gin:
+                                  #      - for VAL = one of VAL...
+                                  #      - implemented on most operators for:
+                                  #         - TSVECTOR
+                                  #         - ARR
+                                  #         - INT_ARR && <@ @> @@
+                                 ##        - HSTORE @> <@ ? ?& ?|
+                                 ##     - for INT_ARR, use special OPCLASS gin|gist__int[big]_ops
+                                 ##        - big_ops: prefer if big dataset
+                                  #  - gist:
+                                  #      - implemented on most operators for CIRCLE, POINT, BOX, POLYGON, RANGE, TSQUERY, LTREE
+                                  #      - implemented also on TSVECTOR, INT_ARR and HSTORE (like gist):
+                                  #         - gin tends to be faster read but slower write
+                                  #  - spgist:
+                                  #      - implemented on most operators for POINT, RANGE, and on < <= >= = > <> for STR
+                                  #  - more are available by adding a row to pg_am. Some are available as EXTENSION.
+create operator
+class|family ...                  #Create user-defined OPCLASS|OPFAMILY. Need C functions (see doc online)
+alter operator
+family ...                        #
+
+create table ...
+ using ACCESS_METHOD              #
+
+drop index concurrently ...       #Like create index concurrently ...
+                                  #Needs to be outside of a transaction, restrict and only one INDEX
+
+reindex index|table|              #Rebuild INDEX... of the target (system is like database but only include system catalogs)
+database|system                   #Needed to reclaim space when an INDEX has shrink size a lot.
+INDEX|"TABLE"|DATABASE            #Also needed if an INDEX is corrupted due to software bug.
+                                  #If corrupted INDEX are on system catalogs, use postgres --single -P instead of postgres, otherwise it
+                                  #will crash. Then use reindex and restart.
+                                  #Ask for a exclusive lock
+
+cluster [verbose]                 #Makes the physical layout of TABLE rows similar to INDEX_METHOD.
+ ["TABLE" [using INDEX_METHOD]]   #Goal is to speed up queries of a TABLE with an INDEX using INDEX_METHOD.
+                                  #Is one-time operation (new rows are not clustered). Acquires an exclusive lock.
+                                  #Good idea to run analyze afterwards.
+                                  #INDEX_METHOD can be ommitted the second time, because remember it. Memory can be altered with:
+                                  #  - alter table "TABLE" cluster on INDEX
+                                  #  - alter table "TABLE" set without cluster
+                                  #  - same for materialized views
+                                  #"TABLE" can be omitted to specify all "TABLE" having used cluster.
+
+create table ...                  #Cache ROW inserts, for speed
+ with (buffering = on|off|auto)   #If auto (def): when INDEX size > ENVVAR effective_cache_size
+                                  #For gist INDEX only
+
+create table ...                  #If on (def), faster writes, but slower reads
+ with (fastupdate = on|off)       #For gin INDEX only
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:            EXPLAIN            :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+explain([verbose,]                #Display the query tree of COMMAND:
+ [analyze, [buffers,]             #  - nodes can be:
+ [timing false,]]                 #     - Sort: order by ...
+ [costs false,]                   #     - Limit: offset|fetch
+ [format text|xml|json|yaml])     #     - Aggregate: AFUNC
+ COMMAND                          #     - GroupAggregate: group by
+                                  #     - HashAggregate: some AFUNC
+                                  #     - WindowAgg: WFUNC
+                                  #     - Filter: where TEST (or having)
+                                  #     - Join: can be:
+                                  #        - Nested loop, with a Join Filter: normal one
+                                  #        - Hash, with a Hash Cond: involves an extra Hash step (compare hashes)
+                                  #        - Merge join, compare both TABLE next to each other (must be sorted)
+                                  #     - bottom only:
+                                  #        - sequential scan: linear read of TABLE
+                                  #        - index scan: using an INDEX, then visiting the TABLE
+                                  #          - index-only scan: using an INDEX, and no need to visit the TABLE to answer the query
+                                  #        - bitmap scan:
+                                  #           - using an INDEX with first a Bitmap Index Scan on the INDEX
+                                  #           - then fetching the TABLE with a Bitmap Heap Scan
+                                  #           - difference with index scan: fetch all INDEX, then all TABLE, and not row by row INDEX
+                                  #             then TABLE (index scan)
+                                  #           - if using several INDEX, will do a BitmapAnd or BitmapOr
+                                  #        - values scan: values(...)
+                                  #  - each node include the cost|resources of its children
+                                  #Options:
+                                  #  - analyze: show the actual time (unless timing false is used) and memory consumed
+                                  #    Actually execute the COMMAND (otherwise, it is not) (can put in a transaction with rollback if
+                                  #    don't want the execution to persist)
+                                  #    - buffers: show info about buffer hits, which shows which parts are I/O intensive
+                                  #  - costs (def: true):
+                                  #    - show the resources taken, in a cost-based approach according to ENVVAR:
+                                  #       - seq_page_cost (def: 1): sequential disk page fetch (used in sequential scan)
+                                  #       - random_page_cost (def: 4): non-sequential disk page fetch (used in INDEX retrieval)
+                                  #         Put at 2-3 if fast disks.
+                                  #       - cpu_tuple_cost (def: 0.01): CPU cost for processing a row
+                                  #       - cpu_index_tuple_cost (def: 0.005): CPU cost for processing a row in an INDEX
+                                  #       - cpu_operator_cost (def: 0.0025): CPU cost for processing a FUNC
+                                  #    - values are:
+                                  #       - cost: first is initial cost, second is final cost
+                                  #       - rows: number of rows manipulated
+                                  #       - width: average size (in bytes) of a row
+                                  #Advice:
+                                  #  - use real data close to real environment, not test ones.
+                                  #  - run analyze first if lot of change since last time autovacuum did (because based on pg_statistic)
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:          CONCURRENCY          :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+SESSION ==>                       #Beginning and end of a list of commands (e.g. interactive prompt)
+CONCURRENCY ==>                   #Uses Multiversion Concurrency Control (MVCC) instead of traditional locks, for best performance
+                                  #while still reliable:
+                                  #  - transactions create a snapshot of the current state ("database version").
+                                  #  - read/write locks are "predicate locks": they don't block, they are just informative, and later on
+                                  #    might cancel actions if concurrency problem.
+                                  #Best to have consistent data is:
+                                  #  - if several statements need to be "write all or nothing", use transactions:
+                                  #      - if the state being read can be changed by other clients in the middle of the transaction
+                                  #        without problems, use read committed statements
+                                  #      - otherwise, use serializable statements, but then if abort, must redo the transaction.
+                                  #        Client software usually notify of transaction failures: in such case, client needs to send
+                                  #        the request again.
+                                  #      - in all cases, put as read only if possible, and deferrable when it's a long operation.
+                                  #  - otherwise, transactions are not needed: operations are atomic and ask for the relevant blocking
+                                  #    locks, so no concurrency problem (are actually atomic transactions)
+                                  #When asking for locks:
+                                  #  - Transaction asking for locks will wait ENVVAR lock_timeout (def: 0, in ms) before cancelling,
+                                  #    and ENVVAR deadlock_timeout (def: 1s) before checking if there is a deadlock (in which case it
+                                  #    is cancelled)
+                                  #  - all transactions cannot exceed an average of ENVVAR max_[pred_]locks_per_transaction (def: 64)
+                                  #    predicate or not-predicate locks.
+                                  #FUNC():
+                                  #  - always a single read commited transaction, acquiring locks
+                                  #     - begin block of PL/PGSQL is logic-wise, not used for concurrency
+                                  #  - finer concurrency control is only at SQL level, so need wrap FUNC() call in a SQL transaction
+start transaction                 #Start a transaction (ends with rollback|commit), statements are only committed to the database at the
+[isolation level WORD,]           #end of the transaction (but "appear" committed locally inside the statement)
+[read write|only,]                #A transaction that has any statement with an error will abort (rollback when committed).
+[[not] deferrable]                #WORD can be read committed, repeatable read or serializable.
+                                  #Effects of WORD, for W2 -> R1 or W1 (same rows, 1 and 2 are transactions)
+                                    +-------------------------------------------+-------------------------------------------+
+                                    |                  W2 -> R1                 |                  W2 -> W1                 |
++-----------------------------------+-------------------------------------------+-------------------------------------------+
+| atomic or committed transaction 1 |                                    No problems                                        |
+| atomic or committed transaction 2 |                                                                                       |
++-----------------------------------+-------------------------------------------+-------------------------------------------+
+| ongoing transaction 1             |                                           | read committed: ignores W2                |
+| ongoing transaction 2             |                                           | non read committed: aborts (will rollback)|
++-----------------------------------+                 ignores W2                +-------------------------------------------+
+| atomic or committed transaction 1 |                                           |                  blocks                   |
+| ongoing transaction 2             |                                           |                                           |
++-----------------------------------+-------------------------------------------+-------------------------------------------+
+| ongoing transaction 1             | non read committed and R1 -> W2 -> R1:    | non read committed and R1 -> W2 -> W1:    |
+| atomic or committed transaction 2 |  ignores W2                               |  aborts (will rollback)                   |
+|                                   | else:                                     | else:                                     |
+|                                   |  takes W2 into account                    |  takes W2 into account                    |
++-----------------------------------+-------------------------------------------+-------------------------------------------+
+                                  #Summary:
+                                  #  - read committed (def):
+                                  #    - ignores other ongoing transactions, but takes into account changes by committed transactions
+                                  #      or atomic statements
+                                  #    -> see state for the current statement
+                                  #  - repeatable read:
+                                  #    - ignores other ongoing transactions, including changes, unless it conflicts, in which case
+                                  #      it aborts.
+                                  #    -> see state at start of transaction (first statement after "start transaction")
+                                  #  - serializable:
+                                  #    - like repeatable read, but two concurrent serializable doing a W that depends on a R that is
+                                  #      changed by this W: the second will abort.
+                                  #      - ex: insert into "TABLE"("COL") select sum("COL") from "TABLE"; by two serializable transactions.
+                                  #    -> can virtually consider successful transactions (not aborting) to happen one after the other,
+                                  #       while still avoiding blocking locks to achieve it.
+                                  #Others:
+                                  #  - read write|only (def: read write):
+                                  #     - read only allow further concurrency optimization
+                                  #     - read only can still write to TEMP
+                                  #  - deferrable (def: not deferrable):
+                                  #     - if serializable and read only, blocks until sees no chance of being cancelled, then go on.
+                                  #     - good if cancellation might take a long time to repeat the transaction (e.g. backups)
+                                  #Synchronization of two TRANSACTIONs:
+                                  #  - TRANSACTION must:
+                                  #     - both be either repeatable read or serializable.
+                                  #       If TRANSACTION2 is serializable, so must be TRANSACTION1
+                                  #     - if TRANSACTION1 is readonly, so must be TRANSACTION2
+                                  #     - Must be just after the "start transaction"
+                                  #  - steps:
+                                  #     - TRANSACTION1 does select pg_export_snapshot(), which prints a SNAPSHOT_ID
+                                  #     - TRANSACTION2 does set transaction snapshot SNAPSHOT_ID, as STR
+                                  #Can have extra infos with:
+                                  #  - txid_current(): current TRANSACTION_ID
+                                  #  - txid_current_snapshot(): current SNAPSHOT_ID
+                                  #  - txid_snapshot_xid(SNAPSHOT_ID): returns current transaction ID
+                                  #  - txid_snapshot_xmax|xmin(SNAPSHOT_ID)
+                                  #  - txid_visible_in_snapshot(TRANSACTION_ID, SNAPSHOT_ID)
+set transaction ...               #Changes isolation level, etc. (same as start transaction ...) for current transaction.
+                                  #Must be just after the "start transaction"
+set session
+characteristics                   #Same but for all future transactions.
+as transaction ...                #Same as setting ENVVAR default_transaction_isolation|read_only|deferrable
+rollback|commit                   #Finishes a transaction.
+                                  #For rollback, actions are actually dropped (nothing happens).
+savepoint LABEL
+rollback to savepoint             #Inside a transaction block, rollback to LABEL go back to the state where savepoint LABEL was (and
+LABEL                             #releases all savepoint LABEL that might have been defined after it).
+release savepoint LABEL           #Delete a savepoint
+
+prepare transaction STR           #Do a two-phase commit:
+                                  #  - transaction is temporary rollbacked (except the ENVVAR changes) and will only be committed once
+                                  #    commit prepared STR is done
+                                  #  - commit|rollback prepared STR can be done by other clients (not inside a transaction), if same ROLE
+                                  #    or superuser ROLE.
+                                  #    So goal is to have a single client managing the transaction of other clients
+                                  #    ("transaction management system")
+                                  #STR must be unique, and less than 200 bytes
+                                  #Transaction must not involve notify|[un]listen, TEMP nor CURSOR with hold
+                                  #ENVVAR max_prepared_transactions (def: 0, so disabled) is available. Is set, should be
+                                  #max_connections * number of prepared_transactions per connection
+
+lock "TABLE" ...                  #Put a blocking lock on "TABLE"... among several mode WORD, and release at end of current transaction:
+[in WORD mode] [nowait]           #  - should do it at beginning of transaction if repeatable read or serializable.
+                                  #  - locks goal is to conflict with each other
+                                  #  - prefer predicate locks
+                                  #If can't access lock:
+                                  #  - if nowait, only emits error
+                                  #  - otherwise, transaction will be rollbacked
+                                  #WORD are:
+                                  #  - access exclusive (commands that erase data): block everything
+                                  #  - exclusive: let up to access share
+                                  #  - share row exclusive: let up to row share
+                                  #  - share update exclusive (commands that change schemas (clean/analyze/optimize data/alter)): let up
+                                  #    to row exclusive
+                                  #  - row exclusive (commands that write data)
+                                  #  - row share (select for update/share)
+                                  #  - access share (commands that read data)
+select ... for update             #Gets an access exclusive lock on the rows in ... for "TABLE" (def: all), released at end of transaction
+[of "TABLE"...] [nowait]          #(not statement). Cannot use union, intersect or except.
+select ... for share
+[of "TABLE"...] [nowait]          #Same for share row exclusive
+
+pg_[try_]advisory_                #Gets a lock linked to a ID BIGINT:
+[xact_]lock[_shared]              #  - can be "_shared" or not (block lock() attempts, but not lock_shared() attempts)
+(BIGINT)                          #  - session-level (stops at unlock() or at end of session)
+                                  #    - if "xact_" transaction-level (stops at end of transaction only)
+                                  #  - If "try_", only returns false/true but no block if can't get the lock.
+                                  #  - can lock several times (needs to unlock several times)
+pg_advisory_unlock
+[_shared](BIGINT)                 #Returns true if such lock existed.
+pg_advisory_unlock_all()          #
+
+set constraints                   #Change the initially deferred|immediate state of CONSTRAINT... (def: all) within the current
+all|CONSTRAINT...                 #transaction.
+deferred|immediate                #CONSTRAINT can be declared (including during create table ...)
+                                  #  - initially immediate (def): constraints are checked at each statement.
+                                  #  - initially deferred: at each end of transaction (except not null and check())
+                                  #  - not deferrable (def: deferrable): cannot be initially deferred.
+                                  #Includes previous statements (retroactively), so can fire at specific point in transaction.
+"COL" TYPE ...
+ [initially deferred|immediate]
+ [[not] deferrable]               #Same for a specific COL_ARG (including multicolumn)
+alter table "TABLE"
+ alter constraint "CONSTRAINT"
+ [initially deferred|immediate]
+ [[not] deferrable]               #Same for a specific CONSTRAINT
+create ... trigger ...
+ on "TABLE"|VIEW [from TABLE2]
+ [[not] deferrable]
+ [initially deferred|immediate]   #Same for a TFUNC
+
+alter table ... detach partition
+ ... [concurrently|finalize]      #
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:         LARGE OBJECTS         :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+LARGEOBJECT ==>                   #Efficient way to manipulate big VAL (based on a file):
+                                  #  - can manipulate only through OID
+                                  #  - can read/write/seek (see online doc) like in C
+lo_import(STR)                    #Creates a LARGEOBJECT from file at path STR, and returns its OID
+lo_export(OID, STR)               #Creates a file at path STR with LARGEOBJECT with OID
+lo_unlink(OID)                    #Needs to unlink LARGEOBJECT after use
+                                 ##Instead of unlinking manually, could create a TFUNC executing lo_manage(COL_OID) on TABLE containing
+                                 ##LARGEOBJECT as OID, before update or delete, for each row. Should delete * from table before dropping
+                                 ##a TABLE to keep the trigger.
+                                 ##Postgres extension 'lo'
+                                 ##Command-line vacuumlo DATABASE (with connection options) can also be used.
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:          TABLESPACE           :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+create tablespace "TABLESPACE"    #Create a TABLESPACE, i.e. a group of DATABASE, TABLE, MATERIALIZED VIEW and INDEX:
+ [owner ROLE]                     #  - located on the disk at a specific location STR (must be empty dir)
+ location STR                     #  - owned by ROLE (def: current ROLE)
+                                  #Must be a superuser to do it.
+                                  #Goal:
+                                  #  - Unlike SCHEMA, can't be used for permissions.
+                                  #    Only permission is create, i.e. possibility to assign a newly created VAR to TABLESPACE
+                                  #  - is used to control the physical locations of database objects, in order to:
+                                  #     - optimize performance, e.g. putting heavily used INDEX on fast storage
+                                  #     - optimize space, e.g. put heavy space DATABASE on high-volume storage, with possibility to move
+                                  #       to another is space is not enough anymore
+                                  #Is cluster-wide, so can be assigned to objects of different DATABASE.
+                                  #Each new VAR has as a TABLESPACE (unless explicity mentionned):
+                                  #  - if cluster-wide object, pg_global
+                                  #  - otherwise the default TABLESPACE of the database.
+                                  #    It is inherited from its template (pg_default for template0|1), but can be overriden by:
+                                  #     - if TEMP or INDEX on TEMP, ENVVAR_ARR temp_tablespace: if used as an ARR, allocate randomly
+                                  #       accross TABLESPACE...
+                                  #     - otherwise, ENVVAR default_tablespace
+                                  #Symlinks to DIR of user-created TABLESPACE can be found in DATADIR/pg_tblspc
+drop tablespace "TABLESPACE"      #Can only be done if empty
+
+create table|materialized view ...
+ tablespace "TABLESPACE" ...
+create index ...
+ tablespace "TABLESPACE"
+ [where ...]
+create database
+[with] tablespace [=] "TABLESPACE"#Set ENTITY TABLESPACE on creation
+
+create table ...
+ exclude|unique|primary key ...
+ using index tablespace "TABLSPAC"#Set TABLESPACE of CONSTRAINT's INDEX
+
+alter ENTITY "ENTITY" ...         #Set TABLESPACE of one ENTITY. Moves the data files.
+ set tablespace "TABLESPACE"      #For ENTITY: table, materialized view, index, database
+
+alter ENTITY                      #Set TABLESPACE2 of all ENTITYs in a given TABLESPACE
+ all in tablespace "TABLESPACE"   #For ENTITY: table, materialized view, index
+ [owned by ROLE,...]              #Only ones owned by ROLE,...
+ set tablespace "TABLESPACE2"
+ [nowait]                         #All ENTITYs are locked.
+                                  #If nowait, uses lock ... nowait, i.e. fail if cannot lock right away
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:          EFFICIENCY           :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+create table ...                  #Keep 1-INT% additional free space on the page storing TABLE
+ with (fillfactor = 10-100)       #Def: 100, i.e. none
+                                  #Goal: faster memory allocation if lots of updates
+
+WRITING ==>                       #Best way to write a big amount of data fast:
+                                  #  - put in only one transaction/statement
+                                  #  - use copy or (if copy not possible) prepare, if possible on an empty TABLE
+                                  #  - create the INDEX and foreign keys constraints after the data has been put into
+                                  #     - when doing so, increasing ENVVAR maintenance_work_mem INT, max. memory used by vacuum,
+                                  #       create INDEX and foreign key constraint creation (def: '16MB')
+                                  #  - less checkpoints (increasing ENVVAR checkpoint_segments and checkpoint_timeout)
+                                  #  - temporarily disabling WAL or replication
+                                  #Should run analyze afterwards.
+
+PERFORMANCE ==>                   #Can:
+                                  #  - disable durability, by:
+                                  #      - putting fsync and full_page_writes off (risky)
+                                  #      - putting synchronous_commit off (more durable and almost same performance gain)
+                                  #  - less checkpoints (see below)
+
+PERFORMANCE TUNING ==>            #ENVVAR:
+                                  #  - work_mem (def: 1MB): max memory used by a single command for each of its sort operations and hash
+                                  #    tables, before writing temp files to disk.
+                                  #    Average total memory taken will be average_number_of_hash/sort_operations_by_command *
+                                  #    number_of_connections * work_mem. Should not be more than RAM taken by:
+                                  #      kernel + other applications + shared_buffers + let memory for kernel buffer
+                                  #  - maintenance_work_mem (def: 16MB): max memory used by vacuum, create index and add foreign key.
+                                  #    Usually not a lot of those operations are run concurrently, so can be set higher (256MB is good)
+                                  #  - effective_cache_size (def: '128MB'): hint of the amount of cache available for queries
+                                  #    (doesn't change the actual cache size). Should be 50-75% of the available free+cached HDD memory
+                                  #  - wal_buffers (def: -1, which auto-select a value): memory used for caching WAL, i.e. number of
+                                  #    WAL segments (16MB) that can be cached for all sessions before flushing them.
+                                  #    If high number of transactions, might consider increasing for better performance.
+                                  #    Best is 16MB.
+                                  #  - max_stack_depth (def: 2MB):
+                                  #     - higher can provoke stack overflow (crashing the server) if higher than the kernel limit, with
+                                  #       a safety margin of 2MB
+                                  #       current OS limit can be seen with ulimit -s (8MB)
+                                  #     - lower can cancel complex queries requiring more stack.
+                                  #  - temp_file_limit (def: -1, unlim): max memory for temp files, in KB
+                                  #  - max_files_per_processes (def: 1000): max opened files per session (see limit with ulimit -S|H -n)
+                                  #    Def on Linux: 1024, so that's good.
+                                  #  - effective_io_concurrency: when using several disks at same time (e.g. RAID), number of disks that
+                                  #    can write at same time
+                                  #  - shared_buffers (def: 128MB): memory for shared buffers (def: 128MB).
+                                  #    Good value is 25% of RAM (if > 1GB total RAM)
+                                  #Look at amount of memory taken with pgcluu or pgbadger
+
+HARDWARE ==>                      #  - more RAM -> more cache
+                                  #  - good hard drives. RAID0 or RAID1 is good idea
+                                  #  - CPU less important, but still important for complex functions
 
 
                                              /=+===============================+=\
@@ -3181,9 +4128,9 @@ PL/R ==>                          #plr: for R:
                                   #    - everything else <-> STR
                                   #  - TFUNC: defines pg.tg.* like tg_* in PL/PGSQL
                                   #  - WFUNC: will pass:
-                                  #     - fargNUM...: other values in WINDOW (NUM starts at 1)
-                                  #     - fnumrows: WINDOW size
-                                  #     - prownum: offset of WINDOW
+                                  #     - fargNUM...: other values in window (NUM starts at 1)
+                                  #     - fnumrows: window size
+                                  #     - prownum: offset of window
                                   #  - Global data are possible across calls, including global functions.
 
 PL/R FUNC() ==>                   #
@@ -3226,770 +4173,27 @@ plr_modules                       #TABLE executing plr_modules.modsrc (R code as
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:         DICTIONARIES          :==(
+                                            )==:       CUSTOM AGGREGATE        :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
-PRINCIPLES ==>                    #Normalize a STR document by using:
-                                  #  - a REGCONF, i.e. a combination of:
-                                  #     - a PARSER, that break words into tokens according to whitespaces, hyphens, etc.
-                                  #       Can produce overlapping tokens (both the compound token and its parts).
-                                  #       Tokens can be words, hyphen-separated token, email address, URL or part of URL (path, host,
-                                  #       etc.), numbers, XML tags
-                                  #     - a list of DICTIONARY, i.e. a TEMPLATE filled with arguments.
-                                  #       Goal is to remove common words, change grammatical forms, etc.
-                                  #  - current REGCONF is chosen with ENVVAR default_text_search_config (can be set by initdb -T STR)
-                                  #    Can be returned by get_current_ts_config()
-                                  #Normalized STR documents are TSVECTOR. Queries are performed using TSQUERY.
+PARTIAL AGGREGATION ==>           #AFUNC which can compute its result in parallel divide-and-conquer
+                                  #I.e. has a combine function to merge intermediary results
+                                  #  - using the same initcond
+                                  #Cannot rely on SET items order
+                                  #Must be marked `parallel safe`
+                                  #Most builtin AFUNCs allow partial aggregation, except for *agg, mode|percentile*, *rank, cume_dist
 
-LIMITS ==>                        #  - 2KB for lexemes. Max. 2^64 by TSVECTOR. Max 256 positions by lexeme.
-                                  #  - 1MB for TSVECTOR (divide a document into several TSVECTOR)
-                                  #  - Max. 2^32 elements in a TSQUERY
-
-tsvector                          #Normalized STR document.
-                                  #Each word can have a position and weight, i.e. word:NUMLETTER, where NUM is the position is the
-                                  #document (1 to 16383) and a weight, A, B, C to D, indicating the level (title, subtitle, etc.)
-                                  #Position only serves for relative position comparison, so 16383 is fine.
-tsquery                           #A STR, query combination of normalized words on a tsvector.
-                                  #Words must be separated by & or | (not space)
-                                  #Can include:
-                                  #  - () ! & |, e.g. 'word & (word2 | word3)'
-                                  #  - word:LETTER...: only words in tsvector with weight LETTER... should match
-                                  #  - word:*: not whole word need to match, but only beginning
-to_tsquery|vector                 #As opposed to cast(STR as tsquery|vector), it does normalization.
-([REGCONFIG, ]STR)                #Only use the later if already normalized.
-plainto_tsquery(...)              #Same as to_tsquery() but can't accept operators & | ! (), and implicitely put & between each word
-
-TSQUERY @@ TSVECTOR               #Returns true if match.
-STR @@ STR2                       #Automatically call to_tsquery|vector()
-TSVECTOR || TSVECTOR2
-TSQUERY && || !! TSQURY2
-TSQUERY @> @< TSQUERY2            #Contains|is contained
-
-length(TSVECTOR)                  #number of words
-strip(TSVECTOR)                   #Removes weights and indexes
-setweight(TSVECTOR, 'A|B|C|D')    #Returns TSVECTOR with given weight
-numnode(TSQUERY)                  #number of words and operators
-querytree(TSQUERY)                #returns TSQUERY without parts that can't be accessed (!word and common words), to detect if a TSQUERY
-                                  #can be indexed
-ts_rank[_cd]([REAL_ARR,]          #Computes how much TSQUERY matches TSVECTOR. Used with "order by".
- TSVECTOR, TSQUERY[, UINT])       #ts_rank look at the number of occurences, and ts_rank_cd at the proximity of occurences
-                                  #(smaller is better)
-                                  #REAL_ARR weights occurences according to 4 REAL for the weights D, C, B, A (def: 0.1, 0.2, 0.4, 1).
-                                  #UINT is a or'd flag, that computes following operations on output :
-                                  #  - 0 (def): nothing
-                                  #  - 1: n/(log(len(n))+1)
-                                  #  - 2: n/len(n)
-                                  #  - 4: n/mean between occurences (only ts_rank_cd)
-                                  #  - 8: n/number of unique words
-                                  #  - 16: n/(log(number of unique words)+1)
-                                  #  - 32: n/(n+1)
-ts_headline([REGCONF,] STR,       #Returns a STR3 with matching results.
- TSQUERY[, STR2])                 #To make it faster, use select ts_headline(STR, TSQUERY) from (select ...) where the subquery returns
-                                  #only rows that match the TSQUERY.
-                                  #STR2 have options, as 'VAR=VAL...':
-                                  #  - StartSel, StopSel STR: to be put around matches (def: '<b>' and '</b>')
-                                  #  - Min|MaxWords UINT: to filter matches by number of occurences
-                                  #  - ShortWord UINT: length minimal of words at being and end of matches
-                                  #  - HighlightAll BOOL: negates previous args
-                                  #  - FragmentDelimiter STR: between each match in output
-                                  #  - MaxFragments UINT: to display in output
-ts_rewrite(3 TSQUERY)             #Change occurences of TSQUERY2 inside TSQUERY to TSQUERY3
-ts_rewrite(TSQUERY, TABLE)        #Same with a TABLE with two TSQUERY columns
-
-ts_debug([REGCONFIG, ]STR)        #Returns result of conversion STR -> TSVECTOR, as a TABLE with COLs:
-                                  #  - alias STR: TYPE of TOKEN
-                                  #  - description STR: of TYPE of TOKEN
-                                  #  - token STR: original TOKEN
-                                  #  - dictionaries STR_ARR and dictionary STR (the one chosen)
-                                  #  - lexemes STR_ARR: final tokens
-ts_lexize(STR, STR2)              #Returns token STR2 as STR_ARR according to dictionary STR
-ts_parse(STR|OID, STR2)           #Same for parser. Returns a TABLE with COLs:
-                                  #  - tokid INT: token type
-                                  #  - token STR
-ts_token_type(STR|OID)            #Returns all token types of the parser STR|OID, as a TABLE with COLs:
-                                  #  - tokid INT
-                                  #  - alias STR
-                                  #  - description STR
-ts_stat(STR[, STR2])              #For a query STR returning a TSVECTOR, returning each word in a TABLE:
-                                  #  - word STR
-                                  #  - ndoc UINT: numero du TSVECTOR
-                                  #  - nentry UINT: number of occurences
-                                  #If STR2, only lexemes with weights STR2 will be picked.
-
-create text search                #... can be:
-configuration REGCONF             #  - parser = STR
-(...)                             #  - or copy = REGCONF2
-                                  #Dictionaries are specified with alter text search configuration ...
-alter text search                 #... controls DICTIONARY for specific TOKEN (as WORD) can be:
-configuration REGCONF             #  - add|alter mapping for TOKEN... with DICTIONARY...
-...                               #  - drop mapping [if exists] for TOKEN...
-                                  #  - alter mapping [for TOKEN...] replace DICTIONARY with DICTIONARY2
-                                  #Available ones:
-                                  #  - pg_catalog.LANG (def: english), which uses:
-                                  #     - LANG_stem DICTIONARY for words, simple DICTIONARY for rest
-                                  #     - pg_catalog.default PARSER
-                                  #  - pg_catalog.simple, which uses:
-                                  #     - simple DICTIONARY for all
-                                  #     - pg_catalog.default PARSER
-
-create text search                #Create a DICTIONARY, which is a TEMPLATE but with args filled in ... (as VAR = VAL)
-dictionary DICTIONARY             #Available ones:
-(template = TEMPLATE, ...)        #  - LANG_stem:
-                                  #     - snowball TEMPLATE with language = LANG and stopwords = LANG
-                                  #  - simple:
-                                  #     - simple TEMPLATE
-                                 ## - unaccent:
-                                 ##    - filtering dictionary removing accent
-                                 ##    - does it according to argument rules (which can be altered), pointing to
-                                 ##      SHAREDIR/tsearch_data/ARG.rules.
-                                 ##      The default one can be found with unaccent.rules (works for western languages)
-                                 ##    - can also use unaccent([ARG, ]STR)
-                                 ##    - Postgres extension 'unaccent'
-                                 ## - dict_xsyn:
-                                 ##    - synonym dictionary: a word is spread into several synonymous words, so that synonymous words
-                                 ##      are counted together
-                                 ##    - arguments (can be altered):
-                                 ##       - rules, pointing to SHAREDIR/tsearch_data/ARG.rules, see example at
-                                 ##         SHAREDIR/tsearch_data/xsyn_sample.rules
-                                 ##       - matchorig|synonyms BOOL: the original word or synonyms are accepted as input
-                                 ##         (def: true and false)
-                                 ##       - keeporig|synonyms BOOL: the original word or synonyms are produced in output
-                                 ##         (def: true and true)
-                                 ##    - Postgres extension 'dict_xsyn'
-alter text search
-dictionary DICTIONARY(...)        #
-
-create text search                #Creates a TEMPLATE. Must be superuser ROLE.
-template TEMPLATE                 #A TEMPLATE:
- ([init = FUNC, ]lexize = FUNC2)  #  - take a STR in input from the parser and can return:
-                                  #     - STR_ARR of the normalized words
-                                  #     - empty STR_ARR if common words
-                                  #     - null if word is unknown, so original STR passed to the next dictionary
-                                  #     - STR, with the TSL_FILTER flag on (filtering dictionary): pass STR to the next dictionary
-                                  #       dictionary
-                                  #       Ex of filtering dictionary: removing accents
-                                  #  - usually use FILES:
-                                  #     - can be found under SHAREDIR/tsearch_data/FILE.extension (extension depends on TEMPLATE)
-                                  #     - FILE must be in UTF-8
-                                  #  - use arguments that are filled by DICTIONARY
-                                  #Available TEMPLATE:
-                                  #  - simple:
-                                  #     - arguments: accept BOOL (def: true), stopwords FILE
-                                  #     - FILE (extension: .stop) is one word by line
-                                  #     - if input:
-                                  #        - is found in FILE, returns empty STR_ARR
-                                  #        - is not found:
-                                  #           - if accept is true, returns word as STR_ARR
-                                  #           - if accept is false, returns null
-                                  #     - input is lowercased first
-                                  #  - synonym:
-                                  #     - arguments: casesensitive BOOL (def: false), synonyms FILE (extension: .syn)
-                                  #     - FILE (extension: .syn) have two space-separated fields
-                                  #     - if input:
-                                  #        - is found in first field of FILE, returns second field
-                                  #        - otherwise returns null
-                                  #     - input is lowercased first if not casesensitive
-                                  #       Second field can have * at the end, indicating to be a word:* if used as a TSQUERY
-                                  #  - thesaurus:
-                                  #     - arguments: dictfile FILE, dictionary DICTIONARY
-                                  #     - FILE (extension: .ths) have two colon-separated fields (can contain several words)
-                                  #       Can have #comment
-                                  #     - if input:
-                                  #        - is found in first field of FILE, returns second field
-                                  #        - otherwise returns null
-                                  #     - first use another DICTIONARY.
-                                  #       Common words will be erased by DICTIONARY, but can still match them in first field of FILE
-                                  #       with ?
-                                  #  - ispell:
-                                  #     - arguments: stopwords FILE, afffile FILE2, dictfile FILE3
-                                  #     - FILE (extension: .stop): like stopwords in pg_catalog.simple
-                                  #     - FILE2 (extension: .affix) and FILE3 (extension: .dict): see doc. for ispell
-                                  #     - In short, can turn grammatical variations of a word into a single form.
-                                  #  - snowball:
-                                  #     - arguments: stopwords FILE, language WORD
-                                  #     - like ispell, but simpler and never return null (so should be placed in the end)
-
-create text search
-parser PARSER
-(start = FUNC, gettoken = FUNC2,
-end = FUNC3,                      #Creates a PARSER. Must be superuser ROLE.
-lextypes = FUNC4                  #Available ones:
-[, headline = FUNC5])             #   - 'pg_catalog.default' (def). Notion of a "letter" depends on locales.
-
-                                 ##Following functions can be used to test similarities between STR.
-                                 ##Postgres extension 'fuzzystrmatch'
-levenshtein(STR, STR2
- [, INS_COST, DEL_COST,SUB_COST])##Show differences, like agrep
-levenshtein_less_equal(..., INT) ##Same but if more than INT, returns INT+1 (faster).
-metaphone(STR, INT)              ##Convert to STR to phonetic-style code, and truncate it if more than INT characters (max 255)
-                                 ##For english language. Does not work well with Unicode characters.
-dmetaphone(STR)                  ##Same but unlim size.
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:            CURSORS            :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-CURSORS ==>                       #Row iterators over a specific query (executed once when opening the cursor)
-declare CURSOR                    #Creates and open a CURSOR for query TABLE (any that would also work in a from ... clause)
-[scroll] cursor                   #Is closed at end of transaction (if no transaction, is immediately closed), unless with hold is used.
-[with hold]                       #Using select for update|share:
-for TABLE                         #  - is not compatible with with hold or scroll
-                                  #  - is recommended if using a ... where current of ... to make sure rows are the same
-                                  #If scroll, fetch can work backward.
-                                  #Starting position is before the first row. After the last row is the end.
-fetch [WORD]                      #Return rows of CURSOR according to position specified by WORD, and move it too:
-from CURSOR                       #  - forward|backward [NUM|all] (def: forward): retrieves several rows if NUM
-                                  #  - relative NUM: 0 for current row
-                                  #  - absolute NUM (if negative, from the end): 0 for before first row, more than number of rows for
-                                  #    after last row
-move [WORD] from CURSOR           #Same but only moves cursor, doesn't return anything.
-close CURSOR|all                  #Close a CURSOR (or all). Automatically done at end of transaction for a CURSOR without "with hold"
-update|delete ... where           #Same as update|delete ... where BOOL, with BOOL being current position of CURSOR.
-current of CURSOR                 #Grouping cannot be used in the TABLE of CURSOR.
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:            SCHEMAS            :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-create schema SCHEMA              #Creates a SCHEMA (namespace inside a DATABASE).
-[authorization USER]              #USER is the owner (def: current_user).
-
-alter ENTITY "ENTITY"
- set schema SCHEMA                #For all ENTITYs that can have a SCHEMA
-
-[SCHEMA.]VAR                      #Access/write a VAR (usually "TABLE" but can be any VAR) for a specific SCHEMA.
-                                  #If not specified, use the ENVVAR_ARR search_path, by def. {USER, public}. Searched from left to
-                                  #right. If nothing found and writing operation, use the leftest SCHEMA (except USER)
-
-pg_catalog                        #SCHEMA for all pg_* tables and builtins functions and types. It's implicit in the search path.
-                                  #To override those builtins, put pg_catalog at the end of the search path
-
-current_schema()                  #
-current_schemas([BOOL])           #If true, include implicit ones (e.g. pg_catalog)
-pg_is_other_temp_schema(OID)      #Is it a temporary schema
-pg_my_temp_schema()               #Temp SCHEMA OID, 0 if none.
-pg_TYPE_is_visible(OID)           #Checks if an object is accessible through current SCHEMA path.
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:          CONCURRENCY          :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-SESSION ==>                       #Beginning and end of a list of commands (e.g. interactive prompt)
-CONCURRENCY ==>                   #Uses Multiversion Concurrency Control (MVCC) instead of traditional locks, for best performance
-                                  #while still reliable:
-                                  #  - transactions create a snapshot of the current state ("database version").
-                                  #  - read/write locks are "predicate locks": they don't block, they are just informative, and later on
-                                  #    might cancel actions if concurrency problem.
-                                  #Best to have consistent data is:
-                                  #  - if several statements need to be "write all or nothing", use transactions:
-                                  #      - if the state being read can be changed by other clients in the middle of the transaction
-                                  #        without problems, use read committed statements
-                                  #      - otherwise, use serializable statements, but then if abort, must redo the transaction.
-                                  #        Client software usually notify of transaction failures: in such case, client needs to send
-                                  #        the request again.
-                                  #      - in all cases, put as read only if possible, and deferrable when it's a long operation.
-                                  #  - otherwise, transactions are not needed: operations are atomic and ask for the relevant blocking
-                                  #    locks, so no concurrency problem (are actually atomic transactions)
-                                  #When asking for locks:
-                                  #  - Transaction asking for locks will wait ENVVAR lock_timeout (def: 0, in ms) before cancelling,
-                                  #    and ENVVAR deadlock_timeout (def: 1s) before checking if there is a deadlock (in which case it
-                                  #    is cancelled)
-                                  #  - all transactions cannot exceed an average of ENVVAR max_[pred_]locks_per_transaction (def: 64)
-                                  #    predicate or not-predicate locks.
-                                  #FUNC():
-                                  #  - always a single read commited transaction, acquiring locks
-                                  #     - begin block of PL/PGSQL is logic-wise, not used for concurrency
-                                  #  - finer concurrency control is only at SQL level, so need wrap FUNC() call in a SQL transaction
-start transaction                 #Start a transaction (ends with rollback|commit), statements are only committed to the database at the
-[isolation level WORD,]           #end of the transaction (but "appear" committed locally inside the statement)
-[read write|only,]                #A transaction that has any statement with an error will abort (rollback when committed).
-[[not] deferrable]                #WORD can be read committed, repeatable read or serializable.
-                                  #Effects of WORD, for W2 -> R1 or W1 (same rows, 1 and 2 are transactions)
-                                    +-------------------------------------------+-------------------------------------------+
-                                    |                  W2 -> R1                 |                  W2 -> W1                 |
-+-----------------------------------+-------------------------------------------+-------------------------------------------+
-| atomic or committed transaction 1 |                                    No problems                                        |
-| atomic or committed transaction 2 |                                                                                       |
-+-----------------------------------+-------------------------------------------+-------------------------------------------+
-| ongoing transaction 1             |                                           | read committed: ignores W2                |
-| ongoing transaction 2             |                                           | non read committed: aborts (will rollback)|
-+-----------------------------------+                 ignores W2                +-------------------------------------------+
-| atomic or committed transaction 1 |                                           |                  blocks                   |
-| ongoing transaction 2             |                                           |                                           |
-+-----------------------------------+-------------------------------------------+-------------------------------------------+
-| ongoing transaction 1             | non read committed and R1 -> W2 -> R1:    | non read committed and R1 -> W2 -> W1:    |
-| atomic or committed transaction 2 |  ignores W2                               |  aborts (will rollback)                   |
-|                                   | else:                                     | else:                                     |
-|                                   |  takes W2 into account                    |  takes W2 into account                    |
-+-----------------------------------+-------------------------------------------+-------------------------------------------+
-                                  #Summary:
-                                  #  - read committed (def):
-                                  #    - ignores other ongoing transactions, but takes into account changes by committed transactions
-                                  #      or atomic statements
-                                  #    -> see state for the current statement
-                                  #  - repeatable read:
-                                  #    - ignores other ongoing transactions, including changes, unless it conflicts, in which case
-                                  #      it aborts.
-                                  #    -> see state at start of transaction (first statement after "start transaction")
-                                  #  - serializable:
-                                  #    - like repeatable read, but two concurrent serializable doing a W that depends on a R that is
-                                  #      changed by this W: the second will abort.
-                                  #      - ex: insert into "TABLE"("COL") select sum("COL") from "TABLE"; by two serializable transactions.
-                                  #    -> can virtually consider successful transactions (not aborting) to happen one after the other,
-                                  #       while still avoiding blocking locks to achieve it.
-                                  #Others:
-                                  #  - read write|only (def: read write):
-                                  #     - read only allow further concurrency optimization
-                                  #     - read only can still write to TEMP
-                                  #  - deferrable (def: not deferrable):
-                                  #     - if serializable and read only, blocks until sees no chance of being cancelled, then go on.
-                                  #     - good if cancellation might take a long time to repeat the transaction (e.g. backups)
-                                  #Synchronization of two TRANSACTIONs:
-                                  #  - TRANSACTION must:
-                                  #     - both be either repeatable read or serializable.
-                                  #       If TRANSACTION2 is serializable, so must be TRANSACTION1
-                                  #     - if TRANSACTION1 is readonly, so must be TRANSACTION2
-                                  #     - Must be just after the "start transaction"
-                                  #  - steps:
-                                  #     - TRANSACTION1 does select pg_export_snapshot(), which prints a SNAPSHOT_ID
-                                  #     - TRANSACTION2 does set transaction snapshot SNAPSHOT_ID, as STR
-                                  #Can have extra infos with:
-                                  #  - txid_current(): current TRANSACTION_ID
-                                  #  - txid_current_snapshot(): current SNAPSHOT_ID
-                                  #  - txid_snapshot_xid(SNAPSHOT_ID): returns current transaction ID
-                                  #  - txid_snapshot_xmax|xmin(SNAPSHOT_ID)
-                                  #  - txid_visible_in_snapshot(TRANSACTION_ID, SNAPSHOT_ID)
-set transaction ...               #Changes isolation level, etc. (same as start transaction ...) for current transaction.
-                                  #Must be just after the "start transaction"
-set session
-characteristics                   #Same but for all future transactions.
-as transaction ...                #Same as setting ENVVAR default_transaction_isolation|read_only|deferrable
-rollback|commit                   #Finishes a transaction.
-                                  #For rollback, actions are actually dropped (nothing happens).
-savepoint LABEL
-rollback to savepoint             #Inside a transaction block, rollback to LABEL go back to the state where savepoint LABEL was (and
-LABEL                             #releases all savepoint LABEL that might have been defined after it).
-release savepoint LABEL           #Delete a savepoint
-
-prepare transaction STR           #Do a two-phase commit:
-                                  #  - transaction is temporary rollbacked (except the ENVVAR changes) and will only be committed once
-                                  #    commit prepared STR is done
-                                  #  - commit|rollback prepared STR can be done by other clients (not inside a transaction), if same ROLE
-                                  #    or superuser ROLE.
-                                  #    So goal is to have a single client managing the transaction of other clients
-                                  #    ("transaction management system")
-                                  #STR must be unique, and less than 200 bytes
-                                  #Transaction must not involve notify|[un]listen, TEMP nor CURSOR with hold
-                                  #ENVVAR max_prepared_transactions (def: 0, so disabled) is available. Is set, should be
-                                  #max_connections * number of prepared_transactions per connection
-
-lock "TABLE" ...                  #Put a blocking lock on "TABLE"... among several mode WORD, and release at end of current transaction:
-[in WORD mode] [nowait]           #  - should do it at beginning of transaction if repeatable read or serializable.
-                                  #  - locks goal is to conflict with each other
-                                  #  - prefer predicate locks
-                                  #If can't access lock:
-                                  #  - if nowait, only emits error
-                                  #  - otherwise, transaction will be rollbacked
-                                  #WORD are:
-                                  #  - access exclusive (commands that erase data): block everything
-                                  #  - exclusive: let up to access share
-                                  #  - share row exclusive: let up to row share
-                                  #  - share update exclusive (commands that change schemas (clean/analyze/optimize data/alter)): let up
-                                  #    to row exclusive
-                                  #  - row exclusive (commands that write data)
-                                  #  - row share (select for update/share)
-                                  #  - access share (commands that read data)
-select ... for update             #Gets an access exclusive lock on the rows in ... for "TABLE" (def: all), released at end of transaction
-[of "TABLE"...] [nowait]          #(not statement). Cannot use union, intersect or except.
-select ... for share
-[of "TABLE"...] [nowait]          #Same for share row exclusive
-
-pg_[try_]advisory_                #Gets a lock linked to a ID BIGINT:
-[xact_]lock[_shared]              #  - can be "_shared" or not (block lock() attempts, but not lock_shared() attempts)
-(BIGINT)                          #  - session-level (stops at unlock() or at end of session)
-                                  #    - if "xact_" transaction-level (stops at end of transaction only)
-                                  #  - If "try_", only returns false/true but no block if can't get the lock.
-                                  #  - can lock several times (needs to unlock several times)
-pg_advisory_unlock
-[_shared](BIGINT)                 #Returns true if such lock existed.
-pg_advisory_unlock_all()          #
-
-set constraints                   #Change the initially deferred|immediate state of CONSTRAINT... (def: all) within the current
-all|CONSTRAINT...                 #transaction.
-deferred|immediate                #CONSTRAINT can be declared (including during create table ...)
-                                  #  - initially immediate (def): constraints are checked at each statement.
-                                  #  - initially deferred: at each end of transaction (except not null and check())
-                                  #  - not deferrable (def: deferrable): cannot be initially deferred.
-                                  #Includes previous statements (retroactively), so can fire at specific point in transaction.
-"COL" TYPE ...
- [initially deferred|immediate]
- [[not] deferrable]               #Same for a specific COL_ARG (including multicolumn)
-alter table "TABLE"
- alter constraint "CONSTRAINT"
- [initially deferred|immediate]
- [[not] deferrable]               #Same for a specific CONSTRAINT
-create ... trigger ...
- on "TABLE"|VIEW [from TABLE2]
- [[not] deferrable]
- [initially deferred|immediate]   #Same for a TFUNC
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:             INDEX             :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-create [unique] index             #Create an INDEX on COL...
-[concurrently] INDEX              #Cannot be directly used, but makes select|update|delete on COL... faster (used by the planner).
-on "TABLE"(COL,...                #Can't create two INDEX with same names, even on different tables.
-[OPCLASS])                        #Will be picked when the query use the same expression used in create index ...:
-[using INDEX_METHOD]              #  - COL (not "COL"):
-[asc|desc]                        #     - "expression index" makes it possible to use INDEX when query usually use COL (e.g. FUNC(COL))
-[nulls first|last]                #     - if use operator, needs extra set of parenthesis, e.g. ((COL + VAL))
-[with (VAR = VAL...)]             #  - where BOOL:
-[where BOOL]                      #     - "partial index" (only on part of "TABLE"), faster when query usually use where BOOL
-                                  #     - useful when where BOOL is selective (only few rows)
-                                  #  - multiple COL...: "multicolumn index":
-                                  #     - should be used only if COL... are almost always queried together
-                                  #     - for btree|gist, only faster when using query using COL... in the same order and connected
-                                  #       with and (up to the last OP)
-                                  #     - for gist, quite slow if first COL has few distinct values
-                                  #     - not for spgist
-                                  #  - [asc|desc] [nulls first|last]:
-                                  #     - "sorted index", faster when querying using order by ...
-                                  #     - for btree, useless (except with desc nulls last or asc nulls first, or with multiple COL...
-                                  #       with different sort order) since it can scan in both directions and automatically sort.
-                                  #  - using INDEX_METHOD (def: btree): see below
-                                  #  - OPCLASS:
-                                  #     - use a specific OPCLASS for the type of COL instead of the default one
-                                  #       The underlying OP must be immutable.
-                                  #Others:
-                                  #  - unique:
-                                  #     - only for btree
-                                  #     - use it if COL... can't have duplicate records (faster)
-                                  #     - as opposed to usual unique CONSTRAINT, can be done on COL (not only "COL")
-                                  #  - concurrently: instead of asking for an exclusive lock, wait for possible conflicting transactions
-                                  #    to complete for each row. Slower but will not lock the "TABLE".
-                                  #    Can fail: then drop INDEX and recreate it.
-                                  #  - with (VAR = VAL...): see create table ...
-                                  #An "index-only scan" is a query that can use only the INDEX without even visiting the TABLE (faster).
-                                  #A query using "... and|or ..." can use each ... INDEX separately, then combine the result.
-                                  #INDEX performances:
-                                  #  - makes read faster, but write slower (needs to maintain the INDEX)
-                                  #  - is mostly efficient if the query is selective (chooses few rows) on a big table.
-                                  #  - to know when to use an INDEX, check with explain if INDEX is chosen by the planner for most-used
-                                  #    queries or skipped in favor of a sequential scan.
-                                  #Max 32 COLs
-
-create table ...
- exclude|unique|primary key ...   #Those CONSTRAINTs create an underlying INDEX
- [include("COL",...)]
- [with (OPTS)]                    #Configure underlying INDEX
-
-create table ... exclude
- [using INDEX_METHOD]
- ("COL"|(REXPR)
-  [OPCLASS]
-  [asc|desc]
-  [nulls first|last]              #COL_ARG. Configure underlying INDEX
- ,...) ...                        #INDEX_METHOD cannot be gin
-
-INDEX_METHOD ==>                  #"Index accessor method"
-                                  #Structure in which indexes are conceptually stored (because in the end they are TABLE), and
-                                  #functions to maintain/create those structures.
-                                  #In short: way to create INDEX, linked to specific types and operators.
-                                  #Are linked to specific OPFAMILY, which are groups of OPCLASS (operator class), which is a combination
-                                  #of INDEX_METHOD + TYPE + FUNC...:
-                                  #  - an INDEX_METHOD provides an API with few FUNCs to implement
-                                  #  - to implement a TYPE, need to write them for those TYPE -> OPCLASS
-                                  #  - available OPCLASS and OPFAMILY are usually called TYPE_ops (_TYPE_ops for ARR)
-                                  #INDEX_METHOD available are:
-                                  #  - btree (def):
-                                  #      - implemented on all TYPE for < <= = >= > <> (implies in, between, etc.)
-                                  #      - faster if = is used first in queries
-                                  #  - gin:
-                                  #      - for VAL = one of VAL...
-                                  #      - implemented on most operators for:
-                                  #         - TSVECTOR
-                                  #         - ARR
-                                  #         - INT_ARR && <@ @> @@
-                                 ##        - HSTORE @> <@ ? ?& ?|
-                                 ##     - for INT_ARR, use special OPCLASS gin|gist__int[big]_ops
-                                 ##        - big_ops: prefer if big dataset
-                                  #  - gist:
-                                  #      - implemented on most operators for CIRCLE, POINT, BOX, POLYGON, RANGE, TSQUERY, LTREE
-                                  #      - implemented also on TSVECTOR, INT_ARR and HSTORE (like gist):
-                                  #         - gin tends to be faster read but slower write
-                                  #  - spgist:
-                                  #      - implemented on most operators for POINT, RANGE, and on < <= >= = > <> for STR
-                                  #  - more are available by adding a row to pg_am. Some are available as EXTENSION.
-create operator
-class|family ...                  #Create user-defined OPCLASS|OPFAMILY. Need C functions (see doc online)
-alter operator
-family ...                        #
-
-create table ...
- using ACCESS_METHOD              #
-
-drop index concurrently ...       #Like create index concurrently ...
-                                  #Needs to be outside of a transaction, restrict and only one INDEX
-
-reindex index|table|              #Rebuild INDEX... of the target (system is like database but only include system catalogs)
-database|system                   #Needed to reclaim space when an INDEX has shrink size a lot.
-INDEX|"TABLE"|DATABASE            #Also needed if an INDEX is corrupted due to software bug.
-                                  #If corrupted INDEX are on system catalogs, use postgres --single -P instead of postgres, otherwise it
-                                  #will crash. Then use reindex and restart.
-                                  #Ask for a exclusive lock
-
-cluster [verbose]                 #Makes the physical layout of TABLE rows similar to INDEX_METHOD.
- ["TABLE" [using INDEX_METHOD]]   #Goal is to speed up queries of a TABLE with an INDEX using INDEX_METHOD.
-                                  #Is one-time operation (new rows are not clustered). Acquires an exclusive lock.
-                                  #Good idea to run analyze afterwards.
-                                  #INDEX_METHOD can be ommitted the second time, because remember it. Memory can be altered with:
-                                  #  - alter table "TABLE" cluster on INDEX
-                                  #  - alter table "TABLE" set without cluster
-                                  #  - same for materialized views
-                                  #"TABLE" can be omitted to specify all "TABLE" having used cluster.
-
-create table ...                  #Cache ROW inserts, for speed
- with (buffering = on|off|auto)   #If auto (def): when INDEX size > ENVVAR effective_cache_size
-                                  #For gist INDEX only
-
-create table ...                  #If on (def), faster writes, but slower reads
- with (fastupdate = on|off)       #For gin INDEX only
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:          EFFICIENCY           :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-PARTITIONS ==>                    #Parts (sets of rows) of a TABLE, used for improved performance (when querying, altering or deleting a
-                                  #whole partition (e.g. drop "TABLE" is faster than delete "TABLE" where BOOL)).
-                                  #There is:
-                                  #  - an empty parent TABLE
-                                  #  - partitions are children TABLE... with:
-                                  #    - same "COL"...
-                                  #    - a check CONSTRAINT to restrict to a specific set of row
-                                  #    - an INDEX on the COL on which the CONSTRAINT is based.
-                                  #  - a trigger FUNC that redirects data inserted in the parent TABLE to the correct child
-                                  #  - Partitions should not overlap, and should together cover the whole data.
-
-prepare PREP([TYPE...])           #Parse COMMAND to make it faster to use later, if complex and often used COMMAND.
-as COMMAND                        #Must be used with execute PREP(...):
-execute PREP(...)                 #  - Each TYPE can be specified in COMMAND as positional argument $NUM
-                                  #  - execute PREP(...) supply those arguments
-                                  #  - last TYPE... can be "unknown", meaning "anyelement" (can still be used as $NUM), providing it
-                                  #    can be determined runtime
-                                  #  - no overloading
-                                  #COMMAND must be select|insert|update|delete|values
-                                  #No problem of caching: PREP will be reparsed if:
-                                  #  - used TABLE (including COLs) change types
-                                  #  - search_path changes
-deallocate PREP|all               #Delete a PREP.
-                                  #deallocate all is automatically done at end of each session.
-
-LARGEOBJECT ==>                   #Efficient way to manipulate big VAL (based on a file):
-                                  #  - can manipulate only through OID
-                                  #  - can read/write/seek (see online doc) like in C
-lo_import(STR)                    #Creates a LARGEOBJECT from file at path STR, and returns its OID
-lo_export(OID, STR)               #Creates a file at path STR with LARGEOBJECT with OID
-lo_unlink(OID)                    #Needs to unlink LARGEOBJECT after use
-                                 ##Instead of unlinking manually, could create a TFUNC executing lo_manage(COL_OID) on TABLE containing
-                                 ##LARGEOBJECT as OID, before update or delete, for each row. Should delete * from table before dropping
-                                 ##a TABLE to keep the trigger.
-                                 ##Postgres extension 'lo'
-                                 ##Command-line vacuumlo DATABASE (with connection options) can also be used.
-
-explain([verbose,]                #Display the query tree of COMMAND:
- [analyze, [buffers,]             #  - nodes can be:
- [timing false,]]                 #     - Sort: order by ...
- [costs false,]                   #     - Limit: offset|fetch
- [format text|xml|json|yaml])     #     - Aggregate: AFUNC
- COMMAND                          #     - GroupAggregate: group by
-                                  #     - HashAggregate: some AFUNC
-                                  #     - WindowAgg: WFUNC
-                                  #     - Filter: where TEST (or having)
-                                  #     - Join: can be:
-                                  #        - Nested loop, with a Join Filter: normal one
-                                  #        - Hash, with a Hash Cond: involves an extra Hash step (compare hashes)
-                                  #        - Merge join, compare both TABLE next to each other (must be sorted)
-                                  #     - bottom only:
-                                  #        - sequential scan: linear read of TABLE
-                                  #        - index scan: using an INDEX, then visiting the TABLE
-                                  #          - index-only scan: using an INDEX, and no need to visit the TABLE to answer the query
-                                  #        - bitmap scan:
-                                  #           - using an INDEX with first a Bitmap Index Scan on the INDEX
-                                  #           - then fetching the TABLE with a Bitmap Heap Scan
-                                  #           - difference with index scan: fetch all INDEX, then all TABLE, and not row by row INDEX
-                                  #             then TABLE (index scan)
-                                  #           - if using several INDEX, will do a BitmapAnd or BitmapOr
-                                  #        - values scan: values(...)
-                                  #  - each node include the cost|resources of its children
-                                  #Options:
-                                  #  - analyze: show the actual time (unless timing false is used) and memory consumed
-                                  #    Actually execute the COMMAND (otherwise, it is not) (can put in a transaction with rollback if
-                                  #    don't want the execution to persist)
-                                  #    - buffers: show info about buffer hits, which shows which parts are I/O intensive
-                                  #  - costs (def: true):
-                                  #    - show the resources taken, in a cost-based approach according to ENVVAR:
-                                  #       - seq_page_cost (def: 1): sequential disk page fetch (used in sequential scan)
-                                  #       - random_page_cost (def: 4): non-sequential disk page fetch (used in INDEX retrieval)
-                                  #         Put at 2-3 if fast disks.
-                                  #       - cpu_tuple_cost (def: 0.01): CPU cost for processing a row
-                                  #       - cpu_index_tuple_cost (def: 0.005): CPU cost for processing a row in an INDEX
-                                  #       - cpu_operator_cost (def: 0.0025): CPU cost for processing a FUNC
-                                  #    - values are:
-                                  #       - cost: first is initial cost, second is final cost
-                                  #       - rows: number of rows manipulated
-                                  #       - width: average size (in bytes) of a row
-                                  #Advice:
-                                  #  - use real data close to real environment, not test ones.
-                                  #  - run analyze first if lot of change since last time autovacuum did (because based on pg_statistic)
-
-create tablespace "TABLESPACE"    #Create a TABLESPACE, i.e. a group of DATABASE, TABLE, MATERIALIZED VIEW and INDEX:
- [owner ROLE]                     #  - located on the disk at a specific location STR (must be empty dir)
- location STR                     #  - owned by ROLE (def: current ROLE)
-                                  #Must be a superuser to do it.
-                                  #Goal:
-                                  #  - Unlike SCHEMA, can't be used for permissions.
-                                  #    Only permission is create, i.e. possibility to assign a newly created VAR to TABLESPACE
-                                  #  - is used to control the physical locations of database objects, in order to:
-                                  #     - optimize performance, e.g. putting heavily used INDEX on fast storage
-                                  #     - optimize space, e.g. put heavy space DATABASE on high-volume storage, with possibility to move
-                                  #       to another is space is not enough anymore
-                                  #Is cluster-wide, so can be assigned to objects of different DATABASE.
-                                  #Each new VAR has as a TABLESPACE (unless explicity mentionned):
-                                  #  - if cluster-wide object, pg_global
-                                  #  - otherwise the default TABLESPACE of the database.
-                                  #    It is inherited from its template (pg_default for template0|1), but can be overriden by:
-                                  #     - if TEMP or INDEX on TEMP, ENVVAR_ARR temp_tablespace: if used as an ARR, allocate randomly
-                                  #       accross TABLESPACE...
-                                  #     - otherwise, ENVVAR default_tablespace
-                                  #Symlinks to DIR of user-created TABLESPACE can be found in DATADIR/pg_tblspc
-drop tablespace "TABLESPACE"      #Can only be done if empty
-
-create table|materialized view ...
- tablespace "TABLESPACE" ...
-create index ...
- tablespace "TABLESPACE"
- [where ...]
-create database
-[with] tablespace [=] "TABLESPACE"#Set ENTITY TABLESPACE on creation
-
-create table ...
- exclude|unique|primary key ...
- using index tablespace "TABLSPAC"#Set TABLESPACE of CONSTRAINT's INDEX
-
-alter ENTITY "ENTITY" ...         #Set TABLESPACE of one ENTITY. Moves the data files.
- set tablespace "TABLESPACE"      #For ENTITY: table, materialized view, index, database
-
-alter ENTITY                      #Set TABLESPACE2 of all ENTITYs in a given TABLESPACE
- all in tablespace "TABLESPACE"   #For ENTITY: table, materialized view, index
- [owned by ROLE,...]              #Only ones owned by ROLE,...
- set tablespace "TABLESPACE2"
- [nowait]                         #All ENTITYs are locked.
-                                  #If nowait, uses lock ... nowait, i.e. fail if cannot lock right away
-
-create table ...                  #Keep 1-INT% additional free space on the page storing TABLE
- with (fillfactor = 10-100)       #Def: 100, i.e. none
-                                  #Goal: faster memory allocation if lots of updates
-
-WRITING ==>                       #Best way to write a big amount of data fast:
-                                  #  - put in only one transaction/statement
-                                  #  - use copy or (if copy not possible) prepare, if possible on an empty TABLE
-                                  #  - create the INDEX and foreign keys constraints after the data has been put into
-                                  #     - when doing so, increasing ENVVAR maintenance_work_mem INT, max. memory used by vacuum,
-                                  #       create INDEX and foreign key constraint creation (def: '16MB')
-                                  #  - less checkpoints (increasing ENVVAR checkpoint_segments and checkpoint_timeout)
-                                  #  - temporarily disabling WAL or replication
-                                  #Should run analyze afterwards.
-
-PERFORMANCE ==>                   #Can:
-                                  #  - disable durability, by:
-                                  #      - putting fsync and full_page_writes off (risky)
-                                  #      - putting synchronous_commit off (more durable and almost same performance gain)
-                                  #  - less checkpoints (see below)
-
-PERFORMANCE TUNING ==>            #ENVVAR:
-                                  #  - work_mem (def: 1MB): max memory used by a single command for each of its sort operations and hash
-                                  #    tables, before writing temp files to disk.
-                                  #    Average total memory taken will be average_number_of_hash/sort_operations_by_command *
-                                  #    number_of_connections * work_mem. Should not be more than RAM taken by:
-                                  #      kernel + other applications + shared_buffers + let memory for kernel buffer
-                                  #  - maintenance_work_mem (def: 16MB): max memory used by vacuum, create index and add foreign key.
-                                  #    Usually not a lot of those operations are run concurrently, so can be set higher (256MB is good)
-                                  #  - effective_cache_size (def: '128MB'): hint of the amount of cache available for queries
-                                  #    (doesn't change the actual cache size). Should be 50-75% of the available free+cached HDD memory
-                                  #  - wal_buffers (def: -1, which auto-select a value): memory used for caching WAL, i.e. number of
-                                  #    WAL segments (16MB) that can be cached for all sessions before flushing them.
-                                  #    If high number of transactions, might consider increasing for better performance.
-                                  #    Best is 16MB.
-                                  #  - max_stack_depth (def: 2MB):
-                                  #     - higher can provoke stack overflow (crashing the server) if higher than the kernel limit, with
-                                  #       a safety margin of 2MB
-                                  #       current OS limit can be seen with ulimit -s (8MB)
-                                  #     - lower can cancel complex queries requiring more stack.
-                                  #  - temp_file_limit (def: -1, unlim): max memory for temp files, in KB
-                                  #  - max_files_per_processes (def: 1000): max opened files per session (see limit with ulimit -S|H -n)
-                                  #    Def on Linux: 1024, so that's good.
-                                  #  - effective_io_concurrency: when using several disks at same time (e.g. RAID), number of disks that
-                                  #    can write at same time
-                                  #  - shared_buffers (def: 128MB): memory for shared buffers (def: 128MB).
-                                  #    Good value is 25% of RAM (if > 1GB total RAM)
-                                  #Look at amount of memory taken with pgcluu or pgbadger
-pgtune -i FILE                    #Checks postgresql.conf FILE, and prints an optimized version (mostly for performance ENVVAR)
-                                  #Can do -o FILE2, but should pipe it to diff - FILE, to see differences.
--M NUM                            #Total memory in bytes (def: guess it)
--c NUM                            #Number of connections expected (change max_connections and work_mem)
--T WORD                           #Type of application, among DW (OLAP), OLTP, Web or Desktop. Def is Mixed (-> unspecified)
-                                  #Desktop assumes lower cache, mem and connections, DW moderate, and Web and OLTP very high.
-
-HARDWARE ==>                      #  - more RAM -> more cache
-                                  #  - good hard drives. RAID0 or RAID1 is good idea
-                                  #  - CPU less important, but still important for complex functions
-
-pgbench                           #Does a benchmark, to compare machines or server conf speed.
-                                  #Must first do a pgbench -i to initialize it (creates four pgbench_* tables), with following options
-                                  #while initializing:
--F NUM                            #Percentage of not-null in pgbench_* tables (def: 100)
--s NUM                            #Multiply default number or rows in pgbench_* tables. Should be at least >= -c NUM
---[index-]tablespace=TABLESPACE   #Use a custom TABLESPACE for tables or indexes (to do if used in production)
---unlogged-tables                 #Create pgbench_* as unlogged tables
-                                  #While not initializing:
-                                  #  - tps is transactions per seconds.
-                                  #  - has following options:
--h -p -U                          #Connection options (see psql)
--c NUM                            #Number of concurrent connections. Should be close to average in real production.
--t NUM                            #Number of transactions per client. Higher gives more precision.
-                                  #Should be high enough to run few minutes
--j NUM                            #Number of threads
--n -f FILE                        #Execute SQL FILE, instead of default one (simple update, select and insert statements)
-                                  #Can include commands:
-                                  #  - \setrandom "INT" MIN MAX
-                                  #  - \setshell "INT" COMMAND ARGS
--S                                #Perform only select statements
--r                                #Show execution time for clients, per statements.
-
-OTHERS ==>                        # - TABLE fillfactor, fastupdate
+create aggregate AFUNC            #Creates an AFUNC(COL,...):
+(TYPE...) (sfunc = FUNC,          #  - TYPE are type of each COL.
+stype = TYPE2                     #  - each VAL... of each COL is passed inside successive FUNC(VAL2, VAL...)
+[, finalfunc = FUNC2]             #     - VAL2 is the return value of the last FUNC(), and its type is TYPE2
+[, initcond = STR]                #     - its value in the first FUNC() is TYPE2 STR (typecasting from STR) (def: null)
+)                                 #  - last FUNC can be different if FUNC2(VAL2) is defined: takes only one ARG, and can return any type.
+                                  #  - last VAL2 is returned
+                                  #  - by convention, null should be ignored in FUNC, unless there are only null, where null should be
+                                  #    returned
 
 
                                              /=+===============================+=\
@@ -4343,8 +4547,8 @@ collation for (STR)               #Returns COLLATION
 
 create table "TABLE"
  ("COL" TYPE collate COLLATION)   #
-create table ...
- partition by ... ("COL"|(REXPR)
+create table ... partition by ...
+ ("COL"|(COL_REXPR)
  collate COLLATION ...)           #
 
 
@@ -4475,6 +4679,7 @@ alter foreign table "FTABLE"
 alter foreign table "FTABLE"
  [alter "COL"] options
  ([add|set|drop] VAR VAL ...)     #
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -6637,3 +6842,48 @@ PGMODELER ==>                     #GUI modelling tool:
                                   #    dictionaries, unlogged|temp tables, reference to VIEW COL
                                   #  - relationships: generalization is inherits, copy is create table like, others are foreign keys (with proper uniqueness)
                                   #  - there is a tree to go through object on the right panel
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:            PGBENCH            :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+pgbench                           #Does a benchmark, to compare machines or server conf speed.
+                                  #Must first do a pgbench -i to initialize it (creates four pgbench_* tables), with following options
+                                  #while initializing:
+-F NUM                            #Percentage of not-null in pgbench_* tables (def: 100)
+-s NUM                            #Multiply default number or rows in pgbench_* tables. Should be at least >= -c NUM
+--[index-]tablespace=TABLESPACE   #Use a custom TABLESPACE for tables or indexes (to do if used in production)
+--unlogged-tables                 #Create pgbench_* as unlogged tables
+                                  #While not initializing:
+                                  #  - tps is transactions per seconds.
+                                  #  - has following options:
+-h -p -U                          #Connection options (see psql)
+-c NUM                            #Number of concurrent connections. Should be close to average in real production.
+-t NUM                            #Number of transactions per client. Higher gives more precision.
+                                  #Should be high enough to run few minutes
+-j NUM                            #Number of threads
+-n -f FILE                        #Execute SQL FILE, instead of default one (simple update, select and insert statements)
+                                  #Can include commands:
+                                  #  - \setrandom "INT" MIN MAX
+                                  #  - \setshell "INT" COMMAND ARGS
+-S                                #Perform only select statements
+-r                                #Show execution time for clients, per statements.
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:            PGTUNE             :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+pgtune -i FILE                    #Checks postgresql.conf FILE, and prints an optimized version (mostly for performance ENVVAR)
+                                  #Can do -o FILE2, but should pipe it to diff - FILE, to see differences.
+-M NUM                            #Total memory in bytes (def: guess it)
+-c NUM                            #Number of connections expected (change max_connections and work_mem)
+-T WORD                           #Type of application, among DW (OLAP), OLTP, Web or Desktop. Def is Mixed (-> unspecified)
+                                  #Desktop assumes lower cache, mem and connections, DW moderate, and Web and OLTP very high.
