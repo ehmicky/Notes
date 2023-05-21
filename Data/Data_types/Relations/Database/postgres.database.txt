@@ -851,6 +851,7 @@ format(STR, VAL...)->STR2         #Similar to sprintf(). Can use:
 STR [not] [i]like 'GLOB'          #BOOL. True if matches
  [escape 'CHAR']                  #i if case-insensitive
                                   #'CHAR' is escape character (def: '\').
+STR [!]~~[*] 'GLOB'               #Alternative syntax for [not] [i]like
 
 
                                              /=+===============================+=\
@@ -2021,14 +2022,10 @@ create
  [inherits ...]
  [partition by ...]
  [using ...]
- [with (OPTS)]
+ [with (TOPTS)]
  [on commit ...]
  [tablespace ...]
  [as SUBQUERY ...]                #Creates a TABLE
-
-exclude ... with (OPTS)
-unique ... with (OPTS)
-primary key ... with (OPTS)       #Same as create ... with (OPTS) but on CONSTRAINT's underlying INDEX
 
 create table ... of "ROW_TYPE"    #ROW_TYPE of (COL_ARG,...)
                                   #"COL" TYPE ... -> "COL" [with options] ...
@@ -2051,8 +2048,8 @@ create table ...                  #Populates values with SUBQUERY
 select VALS,...                   #Same as `select ...` but creates "TABLE" instead of returning ROW_SET
  into [table] "TABLE" ...         #Prefer `create table as SUBQUERY` as it has more features and is more standard
 
-create table ... with (OPTS)
-alter table ... set (OPTS)        #Same OPTS
+create table ... with (TOPTS)
+alter table ... set (TOPTS)       #"Table storage options"
 
 pg_class                          #All TABLE-like elements: TABLE, VIEW, INDEX, SEQUENCE, MVIEW and ROW
                                   #???
@@ -2132,8 +2129,7 @@ exclude                           #COL_ARG
                                   #Can also use REXPR
                                   #OP must be commutative
                                   #Creates a CONSTRAINT "TABLE_COL_excl"
-                                  #Creates a btree INDEX
-                                  #  - with same name as "CONSTRAINT"
+                                  #Uses an INDEX, that it creates with the same name
  [where (BOOL_REXPR)]             #Do not fail new ROW if BOOL false
 
 unique                            #COL_CONSTRAINT. Same as exclude("COL" with =) but faster
@@ -2217,7 +2213,7 @@ like "TABLE|ROW_TYPE"             #COL_ARG. Copy (not inherit) the ROW_TYPE as C
                                   #  - defaults: default VAL
                                   #  - indexes: INDEX, primary key, unique, exclude
                                   #  - constraints: check(BOOL_REXPR)
-                                  #  - storage: with (OPTS)
+                                  #  - storage: TOPTS
                                   #  - generated: generated COL
                                   #  - identity: identity COL
                                   #  - compression
@@ -2283,7 +2279,7 @@ CHILD DOES NOT INHERIT ==>        #  - unique, primary key, exclude
                                   #  - identity COL
                                   #  - rules, triggers
                                   #  - unlogged
-                                  #  - create table ... with (OPTS)
+                                  #  - create table ... with (TOPTS)
                                   #  - comments
 
 "ROW_ALIAS".tableoid              #Can be used to distinguish parent|child
@@ -2344,7 +2340,7 @@ DECLARATIVE PARTITIONING ==>      #Partitioning using `create table ... partitio
                                   #Parent TABLE cannot use:
                                   #  - exclude()
                                   #  - check(...) no inherit
-                                  #  - with (OPTS)
+                                  #  - with (TOPTS)
                                   #Child TABLE cannot override:
                                   #  - not null
 PARTITION KEY ==>                 #COL_REXPRs used to decide which child TABLE to use
@@ -2438,8 +2434,8 @@ alter view "VIEW"
  drop|set default [VAL]           #Add a `default` CONSTRAINT, forwarded to underlying SUBQUERY
 
 create view "VIEW"
- [with (OPTS)] ...                #
- [with (security_barrier)]        #Ensure ROWs are not securely hidden when using `where BOOL_REXPR`
+ with (VOPTS) ...                 #
+VOPTS.security_barrier            #Ensure ROWs are not securely hidden when using `where BOOL_REXPR`
                                   #Cover channel attacks are still possible
                                   #  - using explain query plans, time of queries, etc.
                                   #  - e.g. to infer size of hidden rows
@@ -2462,7 +2458,7 @@ pg_views.viewowner                #pg_authid.rolname NAME of owner
 
 create materialized view "MVIEW"  #Readonly TABLE that is populated on-demand via a SUBQUERY
  [("COL",...)]                    #Like create view ...
- [with (OPTS)]                    #Like create table ...
+ [with (TOPTS)]                   #Like create table ...
  as SUBQUERY                      #
 
 refresh materialized view "MVIEW" #Re-populates TABLE
@@ -2480,7 +2476,7 @@ alter materialized view "MVIEW"
  ...
 alter materialized view "MVIEW"
  [alter [column] "COL"]
- [re]set (OPTS)
+ [re]set (TOPTS)
 alter materialized view "MVIEW"
  cluster on "INDEX"
 alter materialized view "MVIEW"
@@ -4035,7 +4031,7 @@ ENVVAR lc_collate                 #Used by:
                                   #  - order by
                                   #  - how INDEXs are persisted
                                   #     - i.e. cannot be changed without a `reindex`
-                                  #  - INDEX on `like` operator
+                                  #  - INDEX on like|~ operators
                                   #Only for collatable TYPEs (such as STR)
                                   #Cannot use a OP|FUNC with argument TYPEs that have a different lc_collate
                                   #Must be compatible with current ENCODING
@@ -4146,6 +4142,8 @@ pg_import_system_collations       #Populates pg_collation based on current OS
 
 create table "TABLE"
  ("COL" TYPE collate COLLATION)
+create index "INDEX" on "TABLE"
+ ("COL"|(REXPR) collate COLLATION)
 create type "ROW"
  as ("COL" TYPE collate COLLATION)
 alter table "TABLE"
@@ -4174,6 +4172,12 @@ STR collate "COLLATION"           #Sets COLLATION for a single STR
 
 collation for (STR)               #'COLLATION' of STR
 
+bpchar|varchar|text_pattern_ops   #Non-default OPCLASS for BPCHAR|VARCHAR|TEXT to use:
+                                  #  - for OPs: like or ~
+                                  #  - if COLLATION's lc_collate is not C|POSIX
+                                  #Does not handle < <= >= >
+                                  #Only for ACCESS_METHODs btree|hash
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -4182,22 +4186,43 @@ collation for (STR)               #'COLLATION' of STR
                                              \=+===============================+=/
 
 
-create [unique] index             #Create an INDEX on COL...
-[concurrently] INDEX              #Cannot be directly used, but makes select|update|delete on COL... faster (used by the planner).
-on "TABLE"(COL,...)               #Can't create two INDEX with same names, even on different tables.
-[asc|desc]                        #Will be picked when the query use the same expression used in create index ...:
-[nulls first|last]                #  - COL (not "COL"):
-[with (OPTS)]                     #     - "expression index" makes it possible to use INDEX when query usually use COL (e.g. FUNC(COL))
-[where BOOL_REXPR]                #     - if use operator, needs extra set of parenthesis, e.g. ((COL + VAL))
-                                  #  - where BOOL:
-                                  #     - "partial index" (only on part of "TABLE"), faster when query usually use where BOOL
-                                  #     - useful when where BOOL is selective (only few rows)
-                                  #  - multiple COL...: "multicolumn index":
+create index "INDEX"              #Create an INDEX
+ on "TABLE"("COL"|(REXPR))        #Data structure storing the value COL|(REXPR) for each ROW in an optimized data structure
+                                  #Used by the planner to automatically speedup read queries
+                                  #  - at the expense of write speed, since each write must update INDEX
+                                  #Only used by queries:
+                                  #  - that use exactly "COL"|(REXPR)
+                                  #  - with the clauses supported by the ACCESS_METHOD (e.g. `where`, etc.)
+                                  #  - with the OPs supported by the ACCESS_METHOD (e.g. =, etc.)
+                                  #Its contents cannot be directly read|write
+
+create index ...                  #"Multicolumn INDEX"
+ on "TABLE"("COL"|(REXPR),...)    #
                                   #     - should be used only if COL... are almost always queried together
                                   #     - for btree|gist, only faster when using query using COL... in the same order and connected
                                   #       with and (up to the last OP)
                                   #     - for gist, quite slow if first COL has few distinct values
-                                  #     - not for spgist
+
+create unique index ...           #
+
+create index concurrently ...     #
+
+create index ... ("COL"|(REXPR)
+[asc|desc] [nulls first|last],...)#
+
+create index ...
+ include ("COL",...)              #
+
+create index ...
+ nulls [not] distinct             #
+
+create index ... with (IOPTS)     #"Index storage options". Different from TOPTS.
+
+create index ... where BOOL_REXPR #"Partial index". Only indexes ROWs with BOOL_REXPR true
+                                  #Goal: faster writes when:
+                                  #  - only few ROWs are usually read
+                                  #  - other ROWs are write-heavy
+
                                   #  - [asc|desc] [nulls first|last]:
                                   #     - "sorted index", faster when querying using order by ...
                                   #     - for btree, useless (except with desc nulls last or asc nulls first, or with multiple COL...
@@ -4224,9 +4249,12 @@ INDEX SCAN ==>                    #Query using an INDEX
 INDEX-ONLY SCAN ==>               #Query that uses only the INDEX without visiting the TABLE, i.e. faster
 
 create table ...
- exclude|unique|primary key ...   #Those CONSTRAINTs create an underlying INDEX
- [include("COL",...)]
- [with (OPTS)]                    #Configure underlying INDEX
+ exclude|unique|primary key ...
+ include("COL",...)               #Configure underlying INDEX
+
+create table ...
+ exclude|unique|primary key ...
+ with (IOPTS)                     #Set CONSTRAINT's underlying INDEX's IOPTS
 
 create table ...
  exclude("COL"|(REXPR) [asc|desc]
@@ -4246,18 +4274,9 @@ INDEX|"TABLE"|DATABASE            #Also needed if an INDEX is corrupted due to s
                                   #will crash. Then use reindex and restart.
                                   #Ask for a exclusive lock
 
-create table ...                  #Cache ROW inserts, for speed
- with (buffering = on|off|auto)   #If auto (def): when INDEX size > ENVVAR effective_cache_size
-                                  #For gist INDEX only
-
-create table ...                  #If on (def), faster writes, but slower reads
- with (fastupdate = on|off)       #For gin INDEX only
-
 pg_index                          #All INDEX. ???
 pg_indexes                        #Same but with other infos, like the query that created it. ???
 pg_stat_progress_create_index     #TABLE with ongoing `create index` and `reindex` statements. ???
-
-C LOCALE ==>                      #Only one that can use INDEXes on `like` operator
 
 
                                              /=+===============================+=\
@@ -4358,7 +4377,7 @@ OPERATIONS ==>                    #Many operations use ACCESS_METHODs
                                   #  - backward scan
                                   #  - parallel scan
                                   #  - predicate lock
-                                  #Can support:
+                                  #Can also support:
                                   #  - no constraint on first COL
                                   #  - multi-COL
 
@@ -4367,7 +4386,7 @@ INDEX STORAGE ==>                 #ACCESS_METHODs can support:
                                   #  - cluster
                                   #  - `include`
                                   #  - ENVVAR maintenance_work_mem
-                                  #with (OPTS) of TABLE|INDEX are ACCESS_METHOD-specific
+                                  #with (TOPTS|IOPTS) of TABLE|INDEX are ACCESS_METHOD-specific
 
 create access method ...          #Whether this is meant for:
  type table|index                 #  - INDEXs ("index method"):
@@ -4389,10 +4408,12 @@ create table ...
 alter table "TABLE"
  set access method "ACCESS_METHOD"#Set TABLE's ACCESS_METHOD
 
-create index ... on "TABLE"(...)
- using ACCESS_METHOD
+create index ... on "TABLE"
+ using ACCESS_METHOD (...)
 create table ...
  exclude using ACCESS_METHOD ...  #Set INDEX's ACCESS_METHOD
+create table ...
+ unique|primary key               #Always use btree ACCESS_METHOD
 
 pg_am                             #TABLE with ACCESS_METHODs
 pg_am.oid                         #OID
@@ -4403,7 +4424,7 @@ pg_am.amhandler                   #REGPROC of handler
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:   AVAILABLE ACCESS METHODS    :==(
+                                            )==:             BTREE             :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
@@ -4430,6 +4451,14 @@ btree                             #Default ACCESS_METHOD for INDEXs
                                   #  - ordering OPCLASSs
                                   #  - storage TYPE
 
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:             HASH              :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
 hash                              #ACCESS_METHOD
                                   #For any TYPE with =
                                   #  - except BSTR, MONEY, LTREE, TSQUERY|TSVECTOR, POINT|BOX|CIRCLE|POLYGON
@@ -4440,10 +4469,17 @@ hash                              #ACCESS_METHOD
                                   #  - uniqueness|grouping: only if btree = OP not available
                                   #Does not support:
                                   #  - include
-                                  #  - fillfactor
                                   #  - multi-COL
                                   #  - ordering OP
                                   #  - storage TYPE
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:              GIN              :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
 
 gin                               #ACCESS_METHOD
                                   #For VAL = one of VAL...
@@ -4473,8 +4509,16 @@ gin                               #ACCESS_METHOD
                                   #Does not support:
                                   #  - exclude()
                                   #  - include
-                                  #  - fillfactor
+                                  #  - IOPTS.fillfactor
                                   #  - ordering OPCLASSs
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:             GIST              :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
 
 gist                              #ACCESS_METHOD
                                   #Generic search tree
@@ -4489,7 +4533,7 @@ gist                              #ACCESS_METHOD
                                   #  - BOX|CIRCLE|POLYGON|POINT with <-> << >> <@ @> &< &> && ~= <<| |>> &<| |&> <^ >^
                                   #Comparison with gin for TSVECTOR|INT4_ARR|HSTORE:
                                   #  - faster read but slower write
-                                  #OPCLASS_OPTS ???
+                                  #OOPTS ???
                                   #  - for LTREE_ARR, HSTORE, LTREE, TSVECTOR
                                   #Support FUNC: fetch() for INET|POINT
                                   #  - get the original value from the stored one, for index-only scans
@@ -4505,6 +4549,14 @@ gist                              #ACCESS_METHOD
                                   #Supports
                                   #  - order by BOX|CIRCLE|POLYGON|POINT <-> POINT (ordering operator)
 
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:            SPGIST             :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
 spgist                            #ACCESS_METHOD
                                   #For:
                                   #  - STR with < <= = >= > ~<~ ~<=~ ~>=~ ~>~ ^@
@@ -4517,6 +4569,14 @@ spgist                            #ACCESS_METHOD
                                   #  - order by BOX|POLYGON|POINT <-> POINT (ordering operator)
                                   #Does not support:
                                   #  - multi-COL
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:             BRIN              :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
 
 brin                              #ACCESS_METHOD
                                   #Does not support:
@@ -4533,12 +4593,12 @@ brin                              #ACCESS_METHOD
                                   #     - except B[STR] and STR
                                   #  - non-default OPCLASSs
                                   #  - support FUNC: getDistance(VAL, VAL2)
-                                  #  - OPCLASS_OPTS: values_per_range
+                                  #  - OOPTS: values_per_range
                                   #bloom:
                                   #  - for same types as `minmax` with =
                                   #  - non-default OPCLASSs
                                   #  - support FUNC: hash(VAL)
-                                  #  - OPCLASS_OPTS: n_distinct_per_range, false_positive_rate
+                                  #  - OOPTS: n_distinct_per_range, false_positive_rate
                                   #inclusion:
                                   #  - for:
                                   #     - RANGE with << >> && &< &> @> <@ -|- < <= = >= >
@@ -4550,17 +4610,27 @@ brin                              #ACCESS_METHOD
                                   #     - canBeMerged(VAL, VAL2): only INET, to prevent merging IPv4 vs IPv6
                                   #     - isEmpty(VAL): only RANGE, for 'empty'
 
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:             BLOOM             :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
 bloom                             #ACCESS_METHOD
                                   #Trusted Postgres extension 'bloom'
 
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:             HEAP              :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
 heap                              #ACCESS_METHOD
                                   #Unlike other ACCESS_METHODs, meant for TABLEs, not INDEXs
-
-bpchar|varchar|text_pattern_ops: ???
-  - documented in https://www.postgresql.org/docs/current/indexes-opclass.html
-  - for ACCESS_METHODs btree|hash
-  - OPs: ~<~ ~<=~ ~=~ ~>=~ ~>~
-  - not by default
 
 intarray extension INDEXs: https://www.postgresql.org/docs/current/intarray.html#id-1.11.7.29.8 ???
 
@@ -4705,9 +4775,8 @@ pg_amproc.amprocnum               #UINT. Function number
 pg_amproc.amproc                  #REGPROC of OP
 pg_amproc.amprocleft|righttype    #REGTYPE of OP left|right argument
 
-create index "INDEX" on "TABLE"
- (... OPCLASS[(OPCLASS_OPTS)],...)#OPCLASS used by an INDEX "COL"|COL_REGEXP
- ...                              #OPCLASS_OPTS are OPCLASS-specific
+create index "INDEX" on "TABLE"   #OPCLASS used by an INDEX "COL"|REGEXP
+ (... OPCLASS[(OOPTS)],...) ...   #OOPTS are OPCLASS-specific
 
 create table ... exclude
  ("COL"|(REXPR) OPCLASS,...) ...  #OPCLASS used by `exclude` (def: use underlying INDEX's ACCESS_METHOD)
@@ -5032,7 +5101,6 @@ create table|materialized view ...
  tablespace "TABLESPACE" ...
 create index ...
  tablespace "TABLESPACE"
- [where ...]
 create database
 [with] tablespace [=] "TABLESPACE"#Set ENTITY TABLESPACE on creation
 
@@ -5061,8 +5129,8 @@ pg_tablespace                     #All TABLESPACE
                                              \=+===============================+=/
 
 
-create table ...                  #Keep 1-INT% additional free space on the page storing TABLE
- with (fillfactor = 10-100)       #Def: 100, i.e. none
+TOPTS|IOPTS.fillfactor            #10-100. Keep 1-INT% additional free space on the page storing TABLE|INDEX
+                                  #Def: 100 (TOPTS) or 90 (IOPTS), i.e. none
                                   #Memory allocation happens on `insert`
                                   #Goal:
                                   #  - faster memory allocation if lots of `update`
@@ -7053,19 +7121,17 @@ AUTOVACUUM ==>                    #Daemon automatically doing vacuum [analyze] o
                                   #     - autovacuum_naptime INT: min. time (def: '1min') * number of databases before two launches
                                   #     - autovacuum_max_workers: numbers of DATABASEs that can be vacuumed at same time (def: 3)
                                   #  - doesn't vacuum TEMP
-create table ...                  #Set ENVVAR *autovacuum* for this TABLE
- with (*autovacuum* = VAL)        #Not for: autovacuum_max_workers, autovacuum_naptime
+TOPTS.*autovacuum*                #Set ENVVAR *autovacuum* for this TABLE
+                                  #Not for: autovacuum_max_workers, autovacuum_naptime
                                   #Different names:
                                   #  - autovacuum -> autovacuum_enabled
                                   #  - vacuum_freeze_table_age -> autovacuum_freeze_table_age
                                   #  - vacuum_multixact_freeze_min_age -> autovacuum_multixact_freeze_min_age
-create table ...                  #Same but only for pg_toast_OID TABLE
- with (toast.*autovacuum* = VAL)  #Def: same value
+TOPTS.toast.*autovacuum*          #Same but only for pg_toast_OID TABLE
+                                  #Def: same value
                                   #Not for: autovacuum_analyze*
-create table
- with (vacuum_index_cleanup = VAL)#
-create table
- with (vacuum_truncate = BOOL)    #
+TOPTS.vacuum_index_cleanup        #VAL
+TOPTS.vacuum_truncate             #BOOL
 
 pg_stat_progress_vacuum           #TABLE with ongoing `vacuum` statements. ???
 
@@ -7522,8 +7588,7 @@ repmgrd                           #Daemon doing automatic failover.
                                   #Needs to do all the standby register first.
 -f DIR                            #
 
-create table ...
- with (user_catalog_table = BOOL) #???
+TOPTS.user_catalog_table          #BOOL???
 
 alter table "TABLE"
  replica identity ...             #???
