@@ -3717,17 +3717,17 @@ tsvector                          #TYPE. STR after:
                                   #Max 1MB
                                   #  - i.e. might need to split documents into chunks
                                   #Max 2e19 TOKENs
-TOKEN:NUMCHAR,...                 #Specify a TOKEN's:
-                                  #  - weight CHAR:
+TOKEN:NUM[WEIGHT],...             #Specify a TOKEN's:
+                                  #  - WEIGHT is a CHAR:
                                   #     - A|B|C|D
                                   #     - def: D
                                   #     - specifies importance (title, subtitle, etc.)
                                   #  - position NUM, inside STR
                                   #     - min 1, max 16383
                                   #     - used for relative position comparison
-                                  #Duplicates with different NUMCHARs are merged
+                                  #Duplicates with different NUMWEIGHTs are merged
                                   #  - max 256 duplicates per TOKEN
-                                  #NUMCHARs are parsed as TOKENs themselves
+                                  #NUMWEIGHTs are parsed as TOKENs themselves
 ...\:                             #Must be escaped
 
 STR <-> TSVECTOR
@@ -3737,6 +3737,9 @@ TSVECTOR_UNKNOWN -> TSVECTOR      #Type cast. Only does tokenization, unless use
 
 to_vector([REGCONFIG, ]STR)
  ->TSVECTOR                       #Does tokenization + normalization + duplicate merges
+to_vector
+ ([REGCONFIG, ]OBJ_JSON[B])
+ ->TSVECTOR                       #Like to_vector() but using OBJ values, concatenated
 ts_debug([REGCONFIG, ]STR)
  ->ROW_SET                        #Like to_vector() but returned as ROW_SET
 ROW.alias                         #'TOKEN_TYPE'
@@ -3746,13 +3749,35 @@ ROW.dictionaries                  #'DICTIONARY'_ARR chosen
 ROW.dictionary                    #Final 'DICTIONARY'|null
 ROW.lexemes                       #STR_ARR. Final TOKENs
 
+array_to_tsvector(STR_ARR)
+ ->TSVECTOR                       #Join with space. Does not apply tokenization, normalization, nor duplicate merges
+tsvector_to_array(TSVECTOR)
+ ->STR_ARR                        #Inverse
+
 TSVECTOR || TSVECTOR2             #Concatenates
 
 length(TSVECTOR)->UINT            #Number of TOKENs
 
-strip(TSVECTOR)->TSVECTOR         #Removes NUMCHARs
-setweight(TSVECTOR, 'CHAR')
- ->TSVECTOR                       #Sets TSVECTOR weight on all TOKENs
+strip(TSVECTOR)->TSVECTOR         #Removes NUMWEIGHTs
+setweight(TSVECTOR, 'WEIGHT'
+ [, 'TOKEN'_ARR])->TSVECTOR       #Sets TSVECTOR WEIGHT on TOKENs (def: all)
+to_filter
+ (TSVECTOR, 'WEIGHT'[_ARR])
+ ->TSVECTOR                       #Only include TOKENs with specific WEIGHTs
+
+unnest(TSVECTOR)->ROW_SET         #Return each TOKEN as a ROW
+ROW.lexeme                        #'TOKEN'
+ROW.positions                     #UINT_ARR
+ROW.weights                       #'WEIGHT'_ARR
+
+ts_stat('SUBQUERY'[, 'WEIGHT...'])#With SUBQUERY returning TSVECTOR, return each of its TOKEN as ROW_SET
+ ->ROW_SET                        #If 'WEIGHT...', only include TOKENs with those
+ROW.word                          #'TOKEN'
+ROW.nentry                        #Number of matches
+ROW.ndoc                          #Number of TSVECTORs
+
+to_delete(TSVECTOR, 'TOKEN'[_ARR])
+ ->TSVECTOR                       #Exclude specific TOKENs
 
 
                                              /=+===============================+=\
@@ -3772,25 +3797,35 @@ TSQUERY_UNKNOWN -> TSQUERY        #Type cast. Only does tokenization, unless use
 '...'                             #TSQUERY_UNKNOWN, with following syntax
                                   #Must \-escape: < : & | ( ) !
 TOKEN                             #
-TOKEN:CHAR...                     #Only if weight CHAR
+TOKEN:WEIGHT...                   #Only if this WEIGHT
 PREFIX:*                          #Match from start only
 ... & ...                         #And
 ... | ...                         #Or (not space)
 (...)                             #
 ! ...                             #Not
+... <-> ...                       #Must immediately follow ("phrase query"), using :NUM positions
+... <NUM> ...                     #Must follow after exactly NUM positions
 
 to_tsquery([REGCONFIG, ]STR)
  ->TSQUERY                        #Does tokenization + normalization + duplicate merges
 plainto_tsquery([REGCONFIG, ]STR) #Same as to_tsquery() but:
- ->TSQUERY                        #  - ignores :CHAR :* & | () !
-                                  #  - implicitely put & between each TOKEN
+ ->TSQUERY                        #  - ignores all operators
+                                  #  - put & between each TOKEN
+phraseto_tsquery([REGCONFIG, ]STR)#Same as to_tsquery() but:
+ ->TSQUERY                        #  - ignores all operators
+                                  #  - put <-> or <NUM> between each TOKEN
+websearch_to_tsquery              #Same as to_tsquery() but:
+ ([REGCONFIG, ]STR)->TSQUERY      #  - ignores all operators
+                                  #  - "..." -> put <-> or <NUM> between each TOKEN
+                                  #  - or -> |
+                                  #  - - -> !
 
 TSQUERY && TSQUERY2               #And
 TSQUERY || TSQUERY2               #Or
 !! TSQUERY                        #Not
 
 TSQUERY @> TSQUERY2               #BOOL. Is superset|equal
-                                  #Handles different orders, parenthesis, etc.
+                                  #Only considers TOKENs, not operators
 TSQUERY <@ TSQUERY2               #BOOL. Is subset|equal
 
 numnode(TSQUERY)->UINT            #Number of TOKENs and operators
@@ -3798,46 +3833,50 @@ numnode(TSQUERY)->UINT            #Number of TOKENs and operators
 querytree(TSQUERY)->TSQUERY       #Remove TOKENs that cannot be accessed (!TOKEN)
                                   #Can return empty STR
 
-TSQUERY @@ TSVECTOR               #Returns true if match.
+ts_rewrite
+ (TSQUERY, TSQUERY2, TSQUERY3)
+ ->TSQUERY                        #Change occurences of TSQUERY2 inside TSQUERY to TSQUERY3
+ts_rewrite(TSQUERY, 'SUBQUERY')   #Same with TSQUERY2|3 are computed by running SUBQUERY returning 2 COLs
 
-ts_rank([FLOAT_ARR,]              #Counts number of matches with TSQUERY on TSVECTOR
+TSQUERY @@ TSVECTOR
+TSVECTOR @@ TSQUERY               #Returns true if match.
+
+ts_rank_cd([FLOAT_ARR,]           #Counts number of matches with TSQUERY on TSVECTOR
  TSVECTOR, TSQUERY[, UINT])       #To use with `order_by`
- ->FLOAT                          #FLOAT_ARR is multiplied to matches for weight D|C|B|A (def: 0.1, 0.2, 0.4, 1)
-                                  #UINT is an or'd flag, that computes following operations on return value:
-                                  #  - 0 (def): nothing
-                                  #  - 1: n/(log(m)+1)
+ ->FLOAT                          #FLOAT_ARR is multiplied to matches for WEIGHT D|C|B|A (def: 0.1, 0.2, 0.4, 1)
+                                  #Ignores TOKENs without :NUM positions, unless just one match
+                                  #UINT computes following operations on return value:
+                                  #  - 0 (def): n
+                                  #  - 1: n/log(m+1)*log(2)
                                   #  - 2: n/m
-                                  #  - 4: n/x (only ts_rank_cd)
+                                  #  - 4: n/x
                                   #  - 8: n/u
-                                  #  - 16: n/(log(u)+1)
+                                  #  - 16: n/log(u+1)*log(2)
                                   #  - 32: n/(n+1)
+                                  #UINT is or'd flag, i.e. can combine several computations
                                   #With:
                                   #  - n: count of matches
+                                  #  - m: count of TOKENs in TSVECTOR (must use :NUM position)
                                   #  - u: count of unique TOKENs in TSVECTOR
-                                  #  - m: document length ???
                                   #  - x: mean harmonic distance between matches
-ts_rank_cd(...)->FLOAT            #Same as ts_rank() but takes into account proximity of matches instead
-                                  #I.e. requires :NUM positions
-                                  #Smaller is better
+                                  #     - only with ts_rank_cd
+                                  #     - sum of :NUM position 1/difference between each match and the next one
+                                  #     - e.g. :1 :11 :111 -> 1/10 + 1/100 -> .11
+ts_rank(...)->FLOAT               #Same as ts_rank() but n is first normalized from 0 to 1
+                                  #  - using: 1-1/(.9 + 1.644 * n)
 
-ts_headline([REGCONF,] STR,       #Returns a STR3 with matching results.
- TSQUERY[, STR2])                 #To make it faster, use select ts_headline(STR, TSQUERY) from (select ...) where the subquery returns
-                                  #only rows that match the TSQUERY.
-                                  #STR2 have options, as 'VAR=VAL...':
-                                  #  - StartSel, StopSel STR: to be put around matches (def: '<b>' and '</b>')
-                                  #  - Min|MaxWords UINT: to filter matches by number of occurences
-                                  #  - ShortWord UINT: length minimal of words at being and end of matches
-                                  #  - HighlightAll BOOL: negates previous args
-                                  #  - FragmentDelimiter STR: between each match in output
-                                  #  - MaxFragments UINT: to display in output
-ts_rewrite(3 TSQUERY)             #Change occurences of TSQUERY2 inside TSQUERY to TSQUERY3
-ts_rewrite(TSQUERY, TABLE)        #Same with a TABLE with two TSQUERY columns
-
-ts_stat(STR[, STR2])              #For a query STR returning a TSVECTOR, returning each word in a TABLE:
-                                  #  - word STR
-                                  #  - ndoc UINT: numero du TSVECTOR
-                                  #  - nentry UINT: number of occurences
-                                  #If STR2, only lexemes with weights STR2 will be picked.
+ts_headline([REGCONFIG,] STR,     #Highlight matches.
+ TSQUERY[, 'OPT=VAL,...'])->STR   #For performance, should apply only on ROWs with matches
+                                  #  - e.g. select ts_headline(...) from (select ...)
+OPTS.StartSel                     #STR (def: '<b>'). Prepended to each match
+OPTS.StopSel                      #STR (def: '</b>'). Appended to each match
+OPTS.FragmentDelimiter            #STR (def: '...'). Ellipsis symbol
+OPTS.MinWords                     #UINT (def: 15). Min TOKENs to output
+OPTS.MaxWords                     #UINT (def: 35). Max TOKENs to output
+OPTS.ShortWord                    #UINT (def: 3). Remove TOKENs with <= UINT characters at start|end of return value,
+                                  #unless they are matches
+OPTS.HighlighAll                  #BOOL (def: false). Negates OPTS.MinWords|MaxWords|ShortWord
+OPTS.MaxFragments                 #UINT (def: 0). Max fragments in output
 
 
                                              /=+===============================+=\
