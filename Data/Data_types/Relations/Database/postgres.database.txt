@@ -2574,7 +2574,7 @@ ENVVAR IntervalStyle              #Should not be set to 'sql_standard'
 
 
 select ... group by COL_REXPR,... #Group ROWs that are equal by all of COL_REXPR,...
-                                  #Each ROW_SET group is reduced to a single ROW
+select ... group by (COLREXPR,...)#Each ROW_SET group is reduced to a single ROW
                                   #If a COL uses AFUNC(), it:
                                   #  - reduces ROW_SET into a SCALAR
                                   #  - cannot be targeted by a COL_REXPR
@@ -2590,7 +2590,8 @@ select ... group by COL_REXPR,... #Group ROWs that are equal by all of COL_REXPR
                                   #  - then:
                                   #     - cannot use any "ROW_ALIAS"[."COL"]
                                   #     - all those COLs are computed in a single separate ROW_SET, combined with a cartesian product
-                                  #If no `group by`, AFUNC() operates on all ROWs as a single group
+select ... group by ()            #Single ROW_SET group
+                                  #Default behavior
 
 select ... having BOOL_REXPR      #Like `where BOOL_REXPR` except:
                                   #  - after `group by`
@@ -2672,10 +2673,10 @@ regr_*(...)                       #AFUNC. Linear regression. Not documented yet
                                              \=+===============================+=/
 
 
-select ... group by grouping sets #Same as `select ... group by COL_REXPR` union `select ... group by COL_REXPR2` ...
+select ... group by grouping sets #Same as `select ... group by COL_REXPR` union all `select ... group by COL_REXPR2` ...
  (COL_REXPR,...)                  #I.e. COL_REXPRs:
-                                  #  - independent from each other
-                                  #  - produce different ROWs ("grouping sets") merged with `union`
+                                  #  - are independent from each other
+                                  #  - produce different ROWs ("grouping sets") merged with `union all`
                                   #In `select VALs`, each COL_REXPR is null in the other grouping sets
                                   #  - including if COL_REXPR is a sub-expression within `select VAL`
                                   #  - examples:
@@ -2685,15 +2686,35 @@ select ... group by grouping sets #Same as `select ... group by COL_REXPR` union
                                   #     - select coalesce(a, VAL) ... group by grouping sets(a, b):
                                   #        - first ROWs: `select a`
                                   #        - second ROWs: `select VAL`
-select ... group by grouping sets #COL_REXPR can be a ROW. Each COL of that ROW is passed to `group by`
- (COL_REXPR_ROW,...)              #I.e. like `select ... group by COL_EXPR, COL2_EXPR,...`
-                                  #It can be an empty ROW, i.e. like `select` with no `group by`
+select ... group by grouping sets #Can use a (...) list. Each list item is passed to `group by`
+ ((COL_REXPR, COL_REXPR2,...),...)#I.e. like `select ... group by (COL_REXPR, COL_REXPR2,...)` union all ...
+                                  #It can be an empty (), i.e. like `select ... group by ()`
 
-rollup(COL_EXPR,...)              #Same as: grouping sets ((COL_REXPRn,...), ..., (COL_REXPR2, COL_REXPR1), (COL_REXPR1), ())
+select ... group by               #Same as single grouping sets (...) with cartesian product
+ grouping sets (...),             #Example:
+ grouping sets (...)              #  select ... group by grouping sets((a, b), (c, d)), grouping sets((e, f), (g, h))
+                                  #  -> grouping sets((a, b, e, f), (a, b, g, h), (c, d, e, f), (c, d, g, h))
+select ... group by distinct
+ grouping sets (...),
+ grouping sets (...)              #Ignore duplicate grouping sets produced by the cartesian product
+select ... group by COL_REXPR,    #Same. Example:
+ grouping sets (...)              #  select ... group by a, grouping sets((b, c), (d, e))
+                                  #  -> grouping sets((a, b, c), (a, d, e))
 
-grouping sets, cube, rollup???
-  - including https://www.postgresql.org/docs/current/functions-aggregate.html#FUNCTIONS-GROUPING-TABLE
-See SELECT reference ???
+select ... group by grouping sets
+ (grouping sets(...), ...)        #Same as grouping sets(..., ...)
+
+rollup(COL_REXPR,...)             #Same as: grouping sets ((COL_REXPR1,...), ..., (COL_REXPR1, COL_REXPR2), (COL_REXPR1), ())
+                                  #With each grouping set having one less COL_REXPR
+                                  #Meant when a series of groups that are subsets of each other
+cube(COL_REXPR,...)               #Same as: grouping sets ((COL_REXPR,...), ..., ())
+                                  #With all possible combinations of COL_REXPR,... including all|none of them
+rollup|cube((...),...)            #If using a (...) list, it is kept as as a list when translating to `grouping sets`,
+                                  #then it is flattened.
+                                  #E.g. `cube((a, b), (c, d))` -> `grouping sets((a, b, c, d), (a, b), (c, d), ())`
+
+grouping(COL_REXPR,...)->UINT     #AFUNC. UINT indicates the COL_REXPRs used by the current grouping sets
+                                  #It is a bitwise ???
 
 PARTIAL AGGREGATION ==>           #AFUNC which can compute its result in parallel divide-and-conquer
                                   #I.e. has a combine function to merge intermediary results
