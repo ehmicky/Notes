@@ -1763,6 +1763,7 @@ array_replace(ARR, VAL, VAL2)->ARR#Same but replace with VAL2
 
 ROW_TYPE                          #Conceptually like an OBJ
                                   #Also called "composed type" or "ctype"
+                                  #Values are also called "tuples"
                                   #Max 1600 COLs
                                   #Max size:
                                   #  - after TOAST: 400GB
@@ -2016,6 +2017,10 @@ TABLE                             #ROW_SET with a known ROW_TYPE, that is persis
                                   #But not as a:
                                   #  - "ROW_TYPE" variable
                                   #  - ROW[_SET] value
+
+HEAP ==>                          #Memory storing TABLEs (as opposed to INDEXs)
+HEAP PAGE ==>                     #8KB memory page containing 1-n TABLE ROWs
+                                  #Also called "blocks"
 
 create
  [temp|unlogged]
@@ -2851,6 +2856,21 @@ select ... from FROM
  natural [...] join FROM2         #Same as `using("COL",...)` with "COL" common between FROM and FROM2
 
 SELF JOIN ==>                     #Using twice the same FROM
+
+NESTED LOOP JOIN ==>              #Read both ROW_SET sequentially as outer|inner loops
+                                  #Left ROW_SET is the outer loop
+                                  #  - i.e. only the inner loop can use INDEXs on the join condition
+                                  #O(n^2) but efficient if outer loop is small
+HASH JOIN ==>                     #Build hash tables for each ROW_SET, where the key is a hash of the join condition
+                                  #Read sequentially one of the hash table, looking up the other
+                                  #O(n) but cost of hash computation
+                                  #Only with OP =
+MERGE JOIN ==>                    #Sort each ROW_SET on the join condition, then do a merge join
+                                  #O(n log n) but reduced to O(n) when can skip sorting thanks to one of:
+                                  #  - an `order by` on the same value as the join condition is used
+                                  #  - ROW_SETs can use ordered scans
+                                  #  - another merge join sorted the left ROW_SET
+                                  #Only with OP =
 
 
                                              /=+===============================+=\
@@ -4178,12 +4198,6 @@ STR collate "COLLATION"           #Sets COLLATION for a single STR
 
 collation for (STR)               #'COLLATION' of STR
 
-bpchar|varchar|text_pattern_ops   #Non-default OPCLASS for BPCHAR|VARCHAR|TEXT to use:
-                                  #  - for OPs: like or ~
-                                  #  - if COLLATION's lc_collate is not C|POSIX
-                                  #Does not handle < <= >= >
-                                  #Only for ACCESS_METHODs btree|hash
-
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -4204,12 +4218,34 @@ create index "INDEX"              #Create an INDEX
                                   #Its contents cannot be directly read|write
                                   #REXPR must be purely functional
 
+SEQUENTIAL SCAN ==>               #Query that reads ROWs sequentially, without an INDEX
+                                  #Chosen if either
+                                  #  - an INDEX cannot be used
+                                  #  - the planner considers an INDEX would be slower
+INDEX SCAN ==>                    #Query using an INDEX
+                                  #INDEX returns TIDs, which are then used to fetch TABLE ROWs
+                                  #Not efficient if:
+                                  #  - query selects most ROWs
+                                  #  - small TABLE
+BITMAP SCAN ==>                   #Alternative to index scan.
+                                  #Instead of returning TIDs, the INDEX creates a bitmap ("bitmap index scan")
+                                  #  - with 0|1 for each heap page (i.e. sets of ROWs)
+                                  #  - initially only 0s, each ROW match sets 1 to its heap page ("bitmap populating")
+                                  #The bitmap is then used to read TABLE ROWs ("bitmap heap scan")
+                                  #  - using a full sequential scan
+                                  #  - unlike index scan which uses random access with TIDs
+                                  #  - since a heap page contains 1-n ROWs, must re-apply filters to find the right ROWs ("Recheck Cond")
+                                  #Faster than index scan if many ROWs are fetched
+
+BITMAP SCAN COMBINATION ==>       #When using '... and|or ...'
+                                  #Perform separate bitmap scans, then combine them with bitwise logic
+                                  #Sometimes slower than a sequential scan, if too many ...
+                                  #Also, individual ordered scans from each ... is lost, i.e. might need to re-sort
+
 create index ...                  #"Multicolumn INDEX"
- on "TABLE"("COL"|(REXPR),...)    #Stores multiple "COL"|(REXPR), i.e. faster when those are queried together
+ on "TABLE"("COL"|(REXPR),...)    #Stores multiple "COL"|(REXPR)
+                                  #Can be faster than bitmap scan combination, providing all "COL"|(REXPR) are queried together
                                   #Behavior is ACCESS_METHOD-specific
-                                  #Even without a multi-COL INDEX
-                                  #  - a query using `... and|or ...` can combine result of each separate ...
-                                  #  - but it is sometimes slower
                                   #Max 32 COLs
 
 create unique index ...           #Similar to `unique` or `exclude (... with =)` CONSTRAINTs
@@ -4228,7 +4264,7 @@ alter table "TABLE" add           #Add the CONSTRAINT using an existing INDEX
                                   #  - use btree ACCESS_METHOD
 
 ORDERED SCAN ==>                  #Some ACCESS_METHODs automatically sort
-                                  #This allows `order by "COL"|(REXPR)` to use the INDEX
+                                  #This allows `order by "COL"|(REXPR)` or merge joins to use the INDEX
                                   #asc|desc and nulls first|last must match
                                   #(REXPR) can only be used if an "ordering operator" exists for the ACCESS_METHOD
 BACKWARD SCAN ==>                 #Some ACCESS_METHODs can query in backward order
@@ -4262,20 +4298,19 @@ create table ...                  #Stores "COL" in INDEX, but do not use it in q
  exclude|unique|primary key ...   #I.e. only used to increase probability of index-only scans
  include("COL",...)               #Some ACCESS_METHODs do not support it
 
-SEQUENTIAL SCAN ==>               #Query that reads ROWs sequentially, without an INDEX
-                                  #Chosen if either
-                                  #  - an INDEX cannot be used
-                                  #  - the planner considers an INDEX would be slower
-INDEX SCAN ==>                    #Query using an INDEX
-                                  #Not efficient if:
-                                  #  - query selects most ROWs
-                                  #  - small TABLE
+PARALLEL INDEX BUILD ==>          #Some ACCESS_METHODs can use multiple worker processes with `create index`
 
 pg_index                          #TABLE with all INDEXs
 pg_index.indexrelid               #REGCLASS of INDEX
 pg_index.indrelid                 #REGCLASS of TABLE
 pg_index.indnatts                 #INT2. Number of COLs
 pg_index.indnkeyatts              #INT2. Number of COLs, except non-key COLs
+pg_index.indkey                   #ARR of COLs (pg_attribute.attnum) being indexed. 0 if REXPR
+pg_index.indcollation             #REGCOLLATION_ARR of indexed COLs. 0 if none
+pg_index.indclass                 #ARR of OPCLASSs (pg_opclass.oid)
+pg_index.indoption                #INT2_ARR of COLs' OOPTs
+pg_index.indexprs                 #PG_NODE_TREE representing REXPR. null if none
+pg_index.indpred                  #PG_NODE_TREE representing `where BOOL_REXPR`. null if none
 pg_index.indisunique              #BOOL. Whether `unique`
 pg_index.indnullsnotdistinct      #BOOL. Whether `nulls not distinct`
 pg_index.indisprimary             #BOOL. Whether used as `primary key`
@@ -4283,20 +4318,19 @@ pg_index.indisexclusion           #BOOL. Whether used as `exclude`
 pg_index.indimmediate             #BOOL. Whether `not valid` was not used
 pg_index.indisvalid               #BOOL. Whether `not valid` was used and not `validate ...`
 pg_index.indisclustered           #BOOL. Whether `cluster` was last called
-pg_index.indcheckxmin        │ boolean      │           │ not null │         │ plain    │             │              │
-pg_index.indisready          │ boolean      │           │ not null │         │ plain    │             │              │
-pg_index.indislive           │ boolean      │           │ not null │         │ plain    │             │              │
-pg_index.indisreplident      │ boolean      │           │ not null │         │ plain    │             │              │
-pg_index.indkey              │ int2vector   │           │ not null │         │ plain    │             │              │
-pg_index.indcollation        │ oidvector    │           │ not null │         │ plain    │             │              │
-pg_index.indclass            │ oidvector    │           │ not null │         │ plain    │             │              │
-pg_index.indoption           │ int2vector   │           │ not null │         │ plain    │             │              │
-pg_index.indexprs            │ pg_node_tree │ C         │          │         │ extended │             │              │
-pg_index.indpred             │ pg_node_tree │ C         │          │         │ extended │             │              │
+pg_index.indcheckxmin             #BOOL. Whether the INDEX cannot be queried due to awaiting concurrent transactions
+pg_index.indisready               #BOOL. Whether the INDEX can be written to
+pg_index.indislive                #BOOL. Whether the INDEX is being deleted
+pg_index.indisreplident           #BOOL. Whether it is a replica identity
 
-pg_indexes                        #Same but with other infos, like the query that created it. ???
+pg_indexes                        #Higher-level VIEW over pg_index
+pg_indexes.schemaname             #pg_namespace.nspname of "SCHEMA"
+pg_indexes.tablename              #pg_class.relname of "TABLE"
+pg_indexes.indexname              #pg_class.relname of "INDEX"
+pg_indexes.tablespace             #pg_tablespace.spcname of "TABLESPACE"
+pg_indexes.indexdef               #STR from pg_get_indexdef()
 
-PARALLEL INDEX BUILD ==>          #Some ACCESS_METHODs can use multiple worker processes with `create index`
+pg_get_indexdef(REGCLASS)->STR    #Returns 'CREATE ...' statement that created INDEX
 
 
                                              /=+===============================+=\
@@ -4823,55 +4857,182 @@ create type "RANGE_TYPE" as
                                              \=+===============================+=/
 
 
-explain([verbose,]                #Display the query tree of COMMAND:
- [analyze, [buffers,]             #  - nodes can be:
- [timing false,]]                 #     - Sort: order by ...
- [costs false,]                   #     - Limit: offset|fetch
- [format text|xml|json|yaml])     #     - Aggregate: AFUNC
- COMMAND                          #     - GroupAggregate: group by
-                                  #     - HashAggregate: some AFUNC
-                                  #     - WindowAgg: WFUNC
-                                  #     - Filter: where TEST (or having)
-                                  #     - Join: can be:
-                                  #        - Nested loop, with a Join Filter: normal one
-                                  #        - Hash, with a Hash Cond: involves an extra Hash step (compare hashes)
-                                  #        - Merge join, compare both TABLE next to each other (must be sorted)
-                                  #     - bottom only:
-                                  #        - sequential scan: linear read of TABLE
-                                  #        - index scan: using an INDEX, then visiting the TABLE
-                                  #          - index-only scan: using an INDEX, and no need to visit the TABLE to answer the query
-                                  #        - bitmap scan:
-                                  #           - using an INDEX with first a Bitmap Index Scan on the INDEX
-                                  #           - then fetching the TABLE with a Bitmap Heap Scan
-                                  #           - difference with index scan: fetch all INDEX, then all TABLE, and not row by row INDEX
-                                  #             then TABLE (index scan)
-                                  #           - if using several INDEX, will do a BitmapAnd or BitmapOr
-                                  #        - values scan: values(...)
-                                  #  - each node include the cost|resources of its children
-                                  #Options:
-                                  #  - analyze: show the actual time (unless timing false is used) and memory consumed
-                                  #    Actually execute the COMMAND (otherwise, it is not) (can put in a transaction with rollback if
-                                  #    don't want the execution to persist)
-                                  #    - buffers: show info about buffer hits, which shows which parts are I/O intensive
-                                  #  - costs (def: true):
-                                  #    - show the resources taken, in a cost-based approach according to ENVVAR:
-                                  #       - seq_page_cost (def: 1): sequential disk page fetch (used in sequential scan)
-                                  #       - random_page_cost (def: 4): non-sequential disk page fetch (used in INDEX retrieval)
-                                  #         Put at 2-3 if fast disks.
-                                  #       - cpu_tuple_cost (def: 0.01): CPU cost for processing a row
-                                  #       - cpu_index_tuple_cost (def: 0.005): CPU cost for processing a row in an INDEX
-                                  #       - cpu_operator_cost (def: 0.0025): CPU cost for processing a FUNC
-                                  #    - values are:
-                                  #       - cost: first is initial cost, second is final cost
-                                  #       - rows: number of rows manipulated
-                                  #       - width: average size (in bytes) of a row
-                                  #Advice:
+explain [(ZOPTS)] COMMAND         #Show the execution plan of COMMAND
+                                  #Advice: ???
                                   #  - use real data close to real environment, not test ones.
                                   #  - run analyze first if lot of change since last time autovacuum did (because based on pg_statistic)
+
+explain verbose ...
+ZOPTS.verbose                     #BOOL (def: false)
+
+explain analyze ...               #BOOL (def: false)
+ZOPTS.analyze                     #Print the  ???
+                                  #show the actual time (unless timing false is used) and memory consumed
+                                  #    Actually execute the COMMAND (otherwise, it is not) (can put in a transaction with rollback if
+                                  #    don't want the execution to persist)
+
+ZOPTS.buffers                     #BOOL (def: false)
+                                  #Show info about buffer hits, which shows which parts are I/O intensive ???
+
+ZOPTS.timing                      #BOOL (def: true)
+
+ZOPTS.costs                       #BOOL (def: true) ???
+                                  #Show the resources taken by node + children, in a cost-based approach according to ENVVAR:
+                                  #  - seq_page_cost (def: 1): sequential disk page fetch (used in sequential scan)
+                                  #  - random_page_cost (def: 4): non-sequential disk page fetch (used in INDEX retrieval)
+                                  #    Put at 2-3 if fast disks.
+                                  #  - cpu_tuple_cost (def: 0.01): CPU cost for processing a row
+                                  #  - cpu_index_tuple_cost (def: 0.005): CPU cost for processing a row in an INDEX
+                                  #  - cpu_operator_cost (def: 0.0025): CPU cost for processing a FUNC
+                                  #Values are:
+                                  #  - cost: first is initial cost, second is final cost
+                                  #  - rows: number of rows manipulated
+                                  #  - width: average size (in bytes) of a row
+
+ZOPTS.settings                    #BOOL (def: false)
+
+ZOPTS.wal                         #BOOL (def: false)
+
+ZOPTS.summary                     #BOOL (def: false)
+
+ZOPTS.format                      #text (def) or json|yaml|xml
+
+TREE ==>                          #Output is a tree with following nodes
+
+Sort                              #order by
+Limit                             #offset|fetch
+Aggregate                         #AFUNC
+GroupAggregate                    #group by
+HashAggregate                     #some AFUNC ???
+WindowAgg                         #WFUNC
+Filter                            #where|having
+
+Join                              #
+Nested loop + Join Filter         #Nest loop join
+Hash + Hash Cond                  #Hash join
+Merge join                        #
+
+Sequential Scan                   #
+Index Scan                        #
+Bitmap Heap Scan                  #
+Bitmap Index Scan                 #
+BitmapAnd                         #... and ...
+BitmapOr                          #... or ...
+Index Only Scan                   #
+Values Scan                       #values(...)
 
 alter table "TABLE" set
  alter [column] "COL"
  set(n_distinct[_inherited] = NUM)#???
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:            ANALYZE            :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+analyze [verbose]                 #Fill in pg_statistic.
+ ["TABLE"[("COL"...)]]            #Parameters are like for vacuum.
+                                  #Requires only an access share lock.
+                                  #FOREIGNTABLE are analyzed only when explicitly specified, and not always supported.
+
+pg_stat_progress_analyze          #TABLE with ongoing `analyze` statements. ???
+
+pg_statistic                      #Stats used by the planner to optimize queries (only indexed COL).
+                                  #Not exact stats, because only a random sample of the rows is chosen for efficiency purpose.
+                                  #Example of statistics: number of entries, distinct entries, histograms, size (number of disk blocks)
+                                  #ENVVAR default_statistics_target (def: 100, from 0 to 10000) decides the sample size.
+                                  #Can be set column-wise with:
+                                  #  alter table|index ... alter [column] "COL" set statistics INT (-1 means default)
+                                  #(same for FTABLE and materialized views).
+                                  #  - starelid REGCLASS: of the TABLE
+                                  #  - staatnum UINT: COL index. Refers to pg_attribute.attnum.
+                                  #  - stainherit BOOL: all COLs have false + (if inherited COL) a row with true, with inherited
+                                  #    version of the TABLE
+                                  #  - stanullfrac FLOAT: percentage of null values
+                                  #  - stawidth INT: average size of null values
+                                  #  - stadistinct FLOAT: number of repetitions: -NUM if repetitions (UNIQUE/TOTAL, closer to 0 if
+                                  #    many repetitions), +NUM means no repetitions (UNIQUE), 0 means unknown
+                                  #  - for NUM statistics:
+                                  #     - stakindNUM INT: subtype of the statistic (code number)
+                                  #     - staopNUM REGOPER: OP used
+                                  #     - stanumbersNUM FLOAT_ARR: stats as FLOAT, or null if COL is not numerical
+                                  #     - stavaluesNUM ARR: stats as the same type as the COL
+pg_stats                          #User-friendly version of pg_statistic
+
+pg_statistic_ext
+pg_statistic_ext_data
+pg_stats_ext
+pg_stats_ext_exprs                #???
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:            VACUUM             :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+vacuum([full, ][freeze, ]         #Options:
+ [verbose, ][analyze])            #  - analyze: do analyze ... too
+ ["TABLE"[("COL"...)]]            #  - full:
+                                  #     - make database size shrink to its minimum (while non-full keep same size, but let rows space
+                                  #       be used by further writes)
+                                  #     - require exclusive lock
+                                  #     - slower and should be avoided
+                                  #  - verbose: print details
+                                  #Goal:
+                                  #  - With MVCC deleted rows are actually hidden so that other transactions can read them.
+                                  #    Once they are not used anymore, those are "dead rows".
+                                  #    Delete them, so optimize disk storage and thus speed (garbage-collection)
+                                  #  - update visibility map: 1 and 0 map for rows that are not committed yet.
+                                  #    Used to optimize index-only scans queries.
+                                  #  - protect losing very old data due to xid (xmin or xmax) wraparound:
+                                  #     - rows that will be wraparound but are still not committed can be "frozen" (frozenxid at the
+                                  #       TABLE-level), so that their xid is skipped in the wraparound
+                                  #        - vacuum freeze rows that are older than ENVVAR vacuum_freeze_max_age transactions or
+                                  #          2e9 - ENVVAR vacuum_freeze_min_age (def: 5e7) transactions
+                                  #            - if problems of wraparound, increase vacuum_freeze_max_age or decrease
+                                  #              vacuum_freeze_min_age
+                                  #        - force vacuuming freeze rows if "freeze" is used (can violate MVCC)
+                                  #        - TABLE with no "dead rows" will not be checked for frozenxid removal unless it is older
+                                  #          than ENVVAR vacuum_freeze_table_age (def: 1.5e8)
+                                  #     - 2e9 xid, so need to vacuum once every 1e9 transactions
+                                  #     - if there are wraparound risk, the server will not accept any new command
+                                  #Def. TABLE is all TABLE that current ROLE has permissions. Def. "COL" is all "COL".
+                                  #Cannot be done inside a transaction.
+                                  #Requires share update exclusive lock, and makes database slower during vacuuming.
+
+AUTOVACUUM ==>                    #Daemon automatically doing vacuum [analyze] on individual TABLE... according to how many rows are
+                                  #changed. Better than doing it manually.
+                                  #Enabled by ENVVAR autovacuum (def: 'on')
+                                  #  - do vacuum every time:
+                                  #     - a vacuum freeze is needed
+                                  #       (can set its own ENVVAR autovacuum_freeze_* to override vacuum_freeze_*)
+                                  #     - or ENVVAR autovacuum_vacuum_threshold (def: 50) +
+                                  #       (number of inserted|deleted|updated rows) * ENVVAR autovacuum_vacuum_scale_factor (def: 0.2)
+                                  #  - do vacuum analyze similary according to ENVVAR autovacuum_analyze_threshold (def: 50)
+                                  #    and autovacuum_analyze_scale_factor (def: 0.1)
+                                  #  - ENVVAR:
+                                  #     - autovacuum_naptime INT: min. time (def: '1min') * number of databases before two launches
+                                  #     - autovacuum_max_workers: numbers of DATABASEs that can be vacuumed at same time (def: 3)
+                                  #  - doesn't vacuum TEMP
+TOPTS.*autovacuum*                #Set ENVVAR *autovacuum* for this TABLE
+                                  #Not for: autovacuum_max_workers, autovacuum_naptime
+                                  #Different names:
+                                  #  - autovacuum -> autovacuum_enabled
+                                  #  - vacuum_freeze_table_age -> autovacuum_freeze_table_age
+                                  #  - vacuum_multixact_freeze_min_age -> autovacuum_multixact_freeze_min_age
+TOPTS.toast.*autovacuum*          #Same but only for pg_toast_OID TABLE
+                                  #Def: same value
+                                  #Not for: autovacuum_analyze*
+TOPTS.vacuum_index_cleanup        #VAL
+TOPTS.vacuum_truncate             #BOOL
+
+pg_stat_progress_vacuum           #TABLE with ongoing `vacuum` statements. ???
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -5085,9 +5246,8 @@ SYSTEM COLS ==>                   #Hidden COLs defined for every TABLE ROW
                                   #  - including insert, update, delete, vacuum full, etc.
 tid                               #TYPE. ID of a ROW version within a given TABLE.
                                   #Is (UINT, UINT2)
-                                  #  - UINT is block index within ROW_SET
-                                  #  - UINT2 is ROW index within block
-                                  #Blocks are how ROW_SET is physically stored
+                                  #  - UINT is heap page number within ROW_SET
+                                  #  - UINT2 is ROW index within heap page
 
 "ROW_ALIAS".cmin|cmax             #CID of the last write statement on the ROW
 cid                               #TYPE. ID of a write statement within a given TABLE + transaction (XID)
@@ -7124,105 +7284,6 @@ pg_total_relation_size(OID|STR)   #Same but with INDEX included
 pg_table_size(OID|STR)            #Same with INDEX excluded and only for TABLE
 pg_size_pretty(UINT)              #Convert a bytes size into human readable STR.
 
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:         MAINTAINANCE          :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-vacuum([full, ][freeze, ]         #Options:
- [verbose, ][analyze])            #  - analyze: do analyze ... too
- ["TABLE"[("COL"...)]]            #  - full:
-                                  #     - make database size shrink to its minimum (while non-full keep same size, but let rows space
-                                  #       be used by further writes)
-                                  #     - require exclusive lock
-                                  #     - slower and should be avoided
-                                  #  - verbose: print details
-                                  #Goal:
-                                  #  - With MVCC deleted rows are actually hidden so that other transactions can read them.
-                                  #    Once they are not used anymore, those are "dead rows".
-                                  #    Delete them, so optimize disk storage and thus speed (garbage-collection)
-                                  #  - update visibility map: 1 and 0 map for rows that are not committed yet.
-                                  #    Used to optimize index-only scans queries.
-                                  #  - protect losing very old data due to xid (xmin or xmax) wraparound:
-                                  #     - rows that will be wraparound but are still not committed can be "frozen" (frozenxid at the
-                                  #       TABLE-level), so that their xid is skipped in the wraparound
-                                  #        - vacuum freeze rows that are older than ENVVAR vacuum_freeze_max_age transactions or
-                                  #          2e9 - ENVVAR vacuum_freeze_min_age (def: 5e7) transactions
-                                  #            - if problems of wraparound, increase vacuum_freeze_max_age or decrease
-                                  #              vacuum_freeze_min_age
-                                  #        - force vacuuming freeze rows if "freeze" is used (can violate MVCC)
-                                  #        - TABLE with no "dead rows" will not be checked for frozenxid removal unless it is older
-                                  #          than ENVVAR vacuum_freeze_table_age (def: 1.5e8)
-                                  #     - 2e9 xid, so need to vacuum once every 1e9 transactions
-                                  #     - if there are wraparound risk, the server will not accept any new command
-                                  #Def. TABLE is all TABLE that current ROLE has permissions. Def. "COL" is all "COL".
-                                  #Cannot be done inside a transaction.
-                                  #Requires share update exclusive lock, and makes database slower during vacuuming.
-
-AUTOVACUUM ==>                    #Daemon automatically doing vacuum [analyze] on individual TABLE... according to how many rows are
-                                  #changed. Better than doing it manually.
-                                  #Enabled by ENVVAR autovacuum (def: 'on')
-                                  #  - do vacuum every time:
-                                  #     - a vacuum freeze is needed
-                                  #       (can set its own ENVVAR autovacuum_freeze_* to override vacuum_freeze_*)
-                                  #     - or ENVVAR autovacuum_vacuum_threshold (def: 50) +
-                                  #       (number of inserted|deleted|updated rows) * ENVVAR autovacuum_vacuum_scale_factor (def: 0.2)
-                                  #  - do vacuum analyze similary according to ENVVAR autovacuum_analyze_threshold (def: 50)
-                                  #    and autovacuum_analyze_scale_factor (def: 0.1)
-                                  #  - ENVVAR:
-                                  #     - autovacuum_naptime INT: min. time (def: '1min') * number of databases before two launches
-                                  #     - autovacuum_max_workers: numbers of DATABASEs that can be vacuumed at same time (def: 3)
-                                  #  - doesn't vacuum TEMP
-TOPTS.*autovacuum*                #Set ENVVAR *autovacuum* for this TABLE
-                                  #Not for: autovacuum_max_workers, autovacuum_naptime
-                                  #Different names:
-                                  #  - autovacuum -> autovacuum_enabled
-                                  #  - vacuum_freeze_table_age -> autovacuum_freeze_table_age
-                                  #  - vacuum_multixact_freeze_min_age -> autovacuum_multixact_freeze_min_age
-TOPTS.toast.*autovacuum*          #Same but only for pg_toast_OID TABLE
-                                  #Def: same value
-                                  #Not for: autovacuum_analyze*
-TOPTS.vacuum_index_cleanup        #VAL
-TOPTS.vacuum_truncate             #BOOL
-
-pg_stat_progress_vacuum           #TABLE with ongoing `vacuum` statements. ???
-
-analyze [verbose]                 #Fill in pg_statistic.
- ["TABLE"[("COL"...)]]            #Parameters are like for vacuum.
-                                  #Requires only an access share lock.
-                                  #FOREIGNTABLE are analyzed only when explicitly specified, and not always supported.
-
-pg_stat_progress_analyze          #TABLE with ongoing `analyze` statements. ???
-
-pg_statistic                      #Stats used by the planner to optimize queries (only indexed COL).
-                                  #Not exact stats, because only a random sample of the rows is chosen for efficiency purpose.
-                                  #Example of statistics: number of entries, distinct entries, histograms, size (number of disk blocks)
-                                  #ENVVAR default_statistics_target (def: 100, from 0 to 10000) decides the sample size.
-                                  #Can be set column-wise with:
-                                  #  alter table|index ... alter [column] "COL" set statistics INT (-1 means default)
-                                  #(same for FTABLE and materialized views).
-                                  #  - starelid REGCLASS: of the TABLE
-                                  #  - staatnum UINT: COL index. Refers to pg_attribute.attnum.
-                                  #  - stainherit BOOL: all COLs have false + (if inherited COL) a row with true, with inherited
-                                  #    version of the TABLE
-                                  #  - stanullfrac FLOAT: percentage of null values
-                                  #  - stawidth INT: average size of null values
-                                  #  - stadistinct FLOAT: number of repetitions: -NUM if repetitions (UNIQUE/TOTAL, closer to 0 if
-                                  #    many repetitions), +NUM means no repetitions (UNIQUE), 0 means unknown
-                                  #  - for NUM statistics:
-                                  #     - stakindNUM INT: subtype of the statistic (code number)
-                                  #     - staopNUM REGOPER: OP used
-                                  #     - stanumbersNUM FLOAT_ARR: stats as FLOAT, or null if COL is not numerical
-                                  #     - stavaluesNUM ARR: stats as the same type as the COL
-pg_stats                          #User-friendly version of pg_statistic
-
-pg_statistic_ext
-pg_statistic_ext_data
-pg_stats_ext
-pg_stats_ext_exprs                #???
 
                                              /=+===============================+=\
                                             /  :                               :  \
