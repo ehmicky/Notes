@@ -11,7 +11,8 @@ TO DOCUMENT:
      - pg_policies, pg_policy
   - parallel queries:
      - chapter 15
-     - create table ... with (parallel_workers)
+     - create|alter table ... with (parallel_workers)
+        - see also impact on `create index` (see SQL command reference)
   - transform
      - pg_transform
   - logical replication:
@@ -556,8 +557,9 @@ ROW = <> < <= > >= ROW2           #null if contains any null
 
 [not] null                        #COL_CONSTRAINT. See below
 
-unique nulls [not] distinct       #If `nulls distinct` (def), ignore nulls
-                                  #I.e. can have multiple nulls
+unique nulls [not] distinct
+create unique index ...           #If `nulls distinct` (def), ignore nulls
+ nulls [not] distinct             #I.e. can have multiple nulls
 exclude()                         #Ignore nulls
 
 references "TABLE2"("COL2")       #null ROWs are ignored in both COL and COL2
@@ -582,8 +584,11 @@ union|intersect|except distinct
 AFUNC(distinct)                   #null = null
 group by
 over (partition by)               #null = null
+BTREE DEDUPLICATION ==>           #null = null
 
-order by ... nulls first|last     #Def: nulls first for desc, nulls last for asc
+order by ... nulls first|last
+create index ...
+ (...  nulls first|last,...)      #Def: nulls first for desc, nulls last for asc
 
 AFUNC(...)                        #Ignores nulls
                                   #  - except: *agg(...), count(*), *rank(), cume_dist()
@@ -2129,7 +2134,6 @@ exclude                           #COL_ARG
                                   #Can also use REXPR
                                   #OP must be commutative
                                   #Creates a CONSTRAINT "TABLE_COL_excl"
-                                  #Uses an INDEX, that it creates with the same name
  [where (BOOL_REXPR)]             #Do not fail new ROW if BOOL false
 
 unique                            #COL_CONSTRAINT. Same as exclude("COL" with =) but faster
@@ -2378,6 +2382,8 @@ alter table "PARENT_TABLE"
  default                          #Mark a TABLE as a new child
 alter table "PARENT_TABLE"
  detach partition "CHILD_TABLE"   #Unmark a TABLE as a child
+alter index "PARENT_INDEX"
+ attach partition "CHILD_INDEX"   #
 
 create table ...
  partition by list ...            #Child TABLE owns ROWs where partition key's value is among VAL,...
@@ -4195,88 +4201,120 @@ create index "INDEX"              #Create an INDEX
                                   #  - with the clauses supported by the ACCESS_METHOD (e.g. `where`, etc.)
                                   #  - with the OPs supported by the ACCESS_METHOD (e.g. =, etc.)
                                   #Its contents cannot be directly read|write
+                                  #REXPR must be purely functional
 
 create index ...                  #"Multicolumn INDEX"
  on "TABLE"("COL"|(REXPR),...)    #Stores multiple "COL"|(REXPR), i.e. faster when those are queried together
                                   #Behavior is ACCESS_METHOD-specific
+                                  #Even without a multi-COL INDEX
+                                  #  - a query using `... and|or ...` can combine result of each separate ...
+                                  #  - but it is sometimes slower
+                                  #Max 32 COLs
 
-create unique index ...           #
+create unique index ...           #Similar to `unique` or `exclude (... with =)` CONSTRAINTs
+                                  #Makes INDEX faster
                                   #Only supported by btree ACCESS_METHOD
+create table ...
+ exclude|unique|primary key ...   #Those CONSTRAINTs use a btree INDEX, automatically created with the same name
+alter table "TABLE" add           #Add the CONSTRAINT using an existing INDEX
+ [constraint "CONSTRAINT"]        #Def "CONSTRAINT" name: same as "INDEX"
+ unique|primary key using "INDEX" #INDEX must:
+                                  #  - not use REXPR
+                                  #  - not use `where` (partial INDEX)
+                                  #  - not use `asc|desc`
+                                  #  - not use `deferrable`
+                                  #  - be `unique`
+                                  #  - use btree ACCESS_METHOD
 
-create index concurrently ...     #
-
-create index ... ("COL"|(REXPR)   #"Sorted INDEX"
- asc|desc [nulls first|last],...) #Stores "COL"|(REXPR) in sorted order.
-                                  #This speeds up `order by "COL"|(REXPR)`
-                                  #Behavior is ACCESS_METHOD-specific:
-                                  #  - some automatically sort
-                                  #     - i.e. only needed when using sorted multicolumn INDEXs
-                                  #  - some allow backward scans
-                                  #     - i.e. only needed when using asc nulls first or desc nulls last
+ORDERED SCAN ==>                  #Some ACCESS_METHODs automatically sort
+                                  #This allows `order by "COL"|(REXPR)` to use the INDEX
+                                  #asc|desc and nulls first|last must match
                                   #(REXPR) can only be used if an "ordering operator" exists for the ACCESS_METHOD
-
-create index ...
- include ("COL",...)              #
-
-create index ...
- nulls [not] distinct             #
+BACKWARD SCAN ==>                 #Some ACCESS_METHODs can query in backward order
+                                  #This allows ordered scan to be either asc|desc except:
+                                  #  - on multi-COLs with different asc|desc
+                                  #  - when using asc nulls first or desc nulls last
+create index ... ("COL"|(REXPR)
+ asc|desc [nulls first|last],...)
+create table ...
+ exclude("COL"|(REXPR) asc|desc
+ [nulls first|last],...) ...      #Specifies sorting order for ordered scans.
 
 create index ... where BOOL_REXPR #"Partial INDEX". Only indexes ROWs with BOOL_REXPR true
+                                  #BOOL_REXPR can refer to any "COL" from TABLE, not just the indexed ones
                                   #Goal: faster writes when:
                                   #  - only few ROWs are usually read
                                   #  - other ROWs are write-heavy
+                                  #Other possible goal: only apply unique constraint on specific ROWs
 
-create index ... with (IOPTS)     #"INDEX storage options". Different from TOPTS.
+create index ... with (IOPTS)
+alter index ... set (IOPTS)
+create table ...
+ exclude|unique|primary key ...
+ with (IOPTS)                     #"INDEX storage options". Different from TOPTS.
 
-
-                                  #Others:
-                                  #  - unique:
-                                  #     - use it if COL... can't have duplicate records (faster)
-                                  #     - as opposed to usual unique CONSTRAINT, can be done on COL (not only "COL")
-                                  #  - concurrently: instead of asking for an exclusive lock, wait for possible conflicting transactions
-                                  #    to complete for each row. Slower but will not lock the "TABLE".
-                                  #    Can fail: then drop INDEX and recreate it.
-                                  #  - with (VAR = VAL...): see create table ...
-                                  #A query using "... and|or ..." can use each ... INDEX separately, then combine the result.
-                                  #INDEX performances:
-                                  #  - makes read faster, but write slower (needs to maintain the INDEX)
-                                  #  - is mostly efficient if the query is selective (chooses few rows) on a big table.
-                                  #  - to know when to use an INDEX, check with explain if INDEX is chosen by the planner for most-used
-                                  #    queries or skipped in favor of a sequential scan.
-                                  #Max 32 COLs
+INDEX-ONLY SCAN ==>               #Query that uses only the INDEX without visiting the TABLE, i.e. faster
+                                  #Must not use REXPRs
+create index ...
+ include ("COL",...)
+create table ...                  #Stores "COL" in INDEX, but do not use it in query planning, nor uniqueness ("non-key COLs")
+ exclude|unique|primary key ...   #I.e. only used to increase probability of index-only scans
+ include("COL",...)               #Some ACCESS_METHODs do not support it
 
 SEQUENTIAL SCAN ==>               #Query that reads ROWs sequentially, without an INDEX
+                                  #Chosen if either
+                                  #  - an INDEX cannot be used
+                                  #  - the planner considers an INDEX would be slower
 INDEX SCAN ==>                    #Query using an INDEX
-INDEX-ONLY SCAN ==>               #Query that uses only the INDEX without visiting the TABLE, i.e. faster
+                                  #Not efficient if:
+                                  #  - query selects most ROWs
+                                  #  - small TABLE
 
-create table ...
- exclude|unique|primary key ...
- include("COL",...)               #Configure underlying INDEX
+pg_index                          #TABLE with all INDEXs
+pg_index.indexrelid               #REGCLASS of INDEX
+pg_index.indrelid                 #REGCLASS of TABLE
+pg_index.indnatts                 #INT2. Number of COLs
+pg_index.indnkeyatts              #INT2. Number of COLs, except non-key COLs
+pg_index.indisunique              #BOOL. Whether `unique`
+pg_index.indnullsnotdistinct      #BOOL. Whether `nulls not distinct`
+pg_index.indisprimary             #BOOL. Whether used as `primary key`
+pg_index.indisexclusion           #BOOL. Whether used as `exclude`
+pg_index.indimmediate             #BOOL. Whether `not valid` was not used
+pg_index.indisvalid               #BOOL. Whether `not valid` was used and not `validate ...`
+pg_index.indisclustered           #BOOL. Whether `cluster` was last called
+pg_index.indcheckxmin        │ boolean      │           │ not null │         │ plain    │             │              │
+pg_index.indisready          │ boolean      │           │ not null │         │ plain    │             │              │
+pg_index.indislive           │ boolean      │           │ not null │         │ plain    │             │              │
+pg_index.indisreplident      │ boolean      │           │ not null │         │ plain    │             │              │
+pg_index.indkey              │ int2vector   │           │ not null │         │ plain    │             │              │
+pg_index.indcollation        │ oidvector    │           │ not null │         │ plain    │             │              │
+pg_index.indclass            │ oidvector    │           │ not null │         │ plain    │             │              │
+pg_index.indoption           │ int2vector   │           │ not null │         │ plain    │             │              │
+pg_index.indexprs            │ pg_node_tree │ C         │          │         │ extended │             │              │
+pg_index.indpred             │ pg_node_tree │ C         │          │         │ extended │             │              │
 
-create table ...
- exclude|unique|primary key ...
- with (IOPTS)                     #Set CONSTRAINT's underlying INDEX's IOPTS
-
-create table ...
- exclude("COL"|(REXPR) [asc|desc]
- [nulls first|last],...) ...      #COL_ARG. Configure underlying INDEX
-
-alter table "TABLE"
- add [constraint "CONSTRAINT"]
- unique|primary key using "INDEX" #
-
-drop index concurrently ...       #Like create index concurrently ...
-                                  #Needs to be outside of a transaction, restrict and only one INDEX
-
-reindex index|table|              #Rebuild INDEX... of the target (system is like database but only include system catalogs)
-database|system                   #Needed to reclaim space when an INDEX has shrink size a lot.
-INDEX|"TABLE"|DATABASE            #Also needed if an INDEX is corrupted due to software bug.
-                                  #If corrupted INDEX are on system catalogs, use postgres --single -P instead of postgres, otherwise it
-                                  #will crash. Then use reindex and restart.
-                                  #Ask for a exclusive lock
-
-pg_index                          #All INDEX. ???
 pg_indexes                        #Same but with other infos, like the query that created it. ???
+
+PARALLEL INDEX BUILD ==>          #Some ACCESS_METHODs can use multiple worker processes with `create index`
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:            REINDEX            :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+reindex index "INDEX"             #Re-create INDEX, to make it take less space with current data
+                                  #Needed to optimize space after changing IOPTS, or after a very big INDEX size decrease
+                                  #Also needed if INDEX is corrupted due to software|hardware issue
+reindex table "TABLE"             #Same for the TABLE's INDEXs
+reindex schema "SCHEMA"           #Same for the SCHEMA's INDEXs
+reindex system "DATABASE"         #Same for the pg_catalog.* INDEXs
+reindex database "DATABASE"       #Same for the DATABASE's INDEXs
+
+reindex verbose ...               #Prints a progress bar
+
 pg_stat_progress_create_index     #TABLE with ongoing `create index` and `reindex` statements. ???
 
 
@@ -4295,7 +4333,7 @@ cluster "TABLE"                   #Optimizes the physical layout of "TABLE" to m
                                   #Should run `analyze` afterwards.
 cluster ...                       #Without a "TABLE": all TABLEs previously cluster'd by current ROLE
 
-cluster ... using "INDEX"         #Set the INDEX for next calls
+cluster ... using "INDEX"         #Set the INDEX for next calls of `cluster`
                                   #Must be specified the first time for a given "TABLE"
 alter table "TABLE"
  cluster on "INDEX"
@@ -4349,45 +4387,31 @@ OPERATIONS ==>                    #Many operations use ACCESS_METHODs
                                   #  - otherwise, the default ACCESS_METHOD for that operation + TYPE is used
                                   #Most of those operations are only available with specific ACCESS_METHODs
                                   #Operations:
-                                  #  - filter
-                                  #     - for:
-                                  #        - where|having|on|check VAL OP VAL2
-                                  #        - is [not] null
-                                  #        - partition by range|list
-                                  #     - using OPs = < <= > >=
-                                  #     - "search OP"
-                                  #  - sorting
-                                  #     - order by "COL"|COL_REXPR
-                                  #        - using OP < (by default)
-                                  #     - order by VAL OP VAL2
-                                  #        - "ordering OP"
-                                  #     - RANGE OPs
-                                  #        - using OP < (by default)
+                                  #  - where|having|on|check VAL OP VAL2
+                                  #  - is [not] null
+                                  #  - order by "COL"|COL_REXPR
+                                  #  - order by VAL OP VAL2 ("ordering OP")
                                   #  - distinct|grouping
-                                  #     - for:
-                                  #        - distinct, union|intersect|except distinct, AFUNC(distinct), group by, over (partition by)
-                                  #        - ARR = <> ARR2
-                                  #        - exclude CONSTRAINT
-                                  #     - using OP = (by default)
-                                  #  - unique:
-                                  #     - unique CONSTRAINT, create unique ...
+                                  #     - for distinct, union|intersect|except distinct, AFUNC(distinct), group by, over (partition by)
+                                  #  - ARR = <> ARR2
+                                  #  - exclude CONSTRAINT
+                                  #  - unique: unique CONSTRAINT, create unique ...
                                   #  - over (range NUM preceding|following)
-                                  #     - using support FUNC "in_range"
                                   #  - hash join|aggregation
-                                  #     - also partition by hash
-                                  #     - using OP =
-                                  #  - ordered scan
-                                  #  - backward scan
+                                  #  - partition by range|list
+                                  #  - partition by hash
+                                  #  - ordered scan, including backward
                                   #  - parallel scan
                                   #  - predicate lock
                                   #Can also support:
                                   #  - no constraint on first COL
                                   #  - multi-COL
+                                  #  - parallel index build
 
 INDEX STORAGE ==>                 #ACCESS_METHODs can support:
                                   #  - storage TYPE
                                   #  - cluster
-                                  #  - `include`
+                                  #  - non-key COLs
                                   #  - ENVVAR maintenance_work_mem
                                   #with (TOPTS|IOPTS) of TABLE|INDEX are ACCESS_METHOD-specific
 
@@ -5025,6 +5049,27 @@ create ... trigger ...
 alter table ... detach partition
  ... [concurrently|finalize]      #
 
+create index concurrently ...     #Instead of using an exclusive lock, await conflicting transactions for each ROW.
+reindex index concurrently ...    #Can fail: must then either:
+                                  #  - drop INDEX and recreate it
+                                  #  - reindex it
+                                  #Slower.
+                                  #Cannot be:
+                                  #  - in a transaction
+                                  #  - on partitioned TABLEs
+drop index concurrently ...       #Same for `drop`
+                                  #Cannot:
+                                  #  - use `cascase`
+                                  #  - drop multiple INDEXs
+
+HOT ==>                           #"Heap-Only Tuples"
+                                  #Optimization for MVCC that where an `update` does not need to:
+                                  #  - INDEX ROWs can be updated directly instead of creating an intermediary ROW
+                                  #  - TABLE ROWs can be vacuumed during any statement (including `select`)
+                                  #Only happens if:
+                                  #  - `update` does not modify COLs that are indexed
+                                  #  - there is enough space on the current page
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -5104,8 +5149,10 @@ create table|materialized view ...
  tablespace "TABLESPACE" ...
 create index ...
  tablespace "TABLESPACE"
+reindex
+ tablespace "TABLESPACE" ...
 create database
-[with] tablespace [=] "TABLESPACE"#Set ENTITY TABLESPACE on creation
+[with] tablespace [=] "TABLESPACE"#Set ENTITY TABLESPACE
 
 create table ...
  exclude|unique|primary key ...
@@ -5138,16 +5185,20 @@ TOPTS|IOPTS.fillfactor            #10-100. Keep 1-INT% additional free space on 
                                   #Goal:
                                   #  - faster memory allocation if lots of `update`
                                   #  - `update`s can keep their `cluster` optimization, since they do not need new memory allocations
+                                  #  - increase changes of Heap-Only Tuples
 
 WRITING ==>                       #Best way to write a big amount of data fast:
                                   #  - put in only one transaction/statement
                                   #  - use copy or (if copy not possible) prepare, if possible on an empty TABLE
                                   #  - create the INDEX and foreign keys constraints after the data has been put into
-                                  #     - when doing so, increasing ENVVAR maintenance_work_mem INT, max. memory used by vacuum,
-                                  #       create INDEX and foreign key constraint creation (def: '16MB')
                                   #  - less checkpoints (increasing ENVVAR checkpoint_segments and checkpoint_timeout)
                                   #  - temporarily disabling WAL or replication
                                   #Should run analyze afterwards.
+
+ENVVAR maintenance_work_mem       #STR (def: '64MB'). Max memory used by vacuum, create INDEX, and create foreign key
+                                  #Good idea to increase it.
+ENVVAR
+ max_parallel_maintenance_workers #Max NUM of parallel worker processes used by vacuum (without full) and create INDEX
 
 PERFORMANCE ==>                   #Can:
                                   #  - disable durability, by:
@@ -6044,8 +6095,8 @@ EXTENSION                         #TABLESPACE, for a specific DATABASE.
 alter extension EXTNSIN
 add|drop TYPE VAR                 #
 
-alter ENTITY "ENTITY" [no] depends#Mark as dependency, for `drop ... cascade`
- on extension "EXTENSION"         #For ENTITY: function, routine, procedure, trigger, materialized view
+alter ENTITY "ENTITY" [no]        #Mark as dependency, for `drop ... cascade`
+ depends on extension "EXTENSION" #For ENTITY: function, routine, procedure, trigger, materialized view, index
 
 load STR                          #Loads a shared library located at STR, in order:
                                   #  - an absolute path
@@ -7150,7 +7201,7 @@ pg_statistic                      #Stats used by the planner to optimize queries
                                   #Example of statistics: number of entries, distinct entries, histograms, size (number of disk blocks)
                                   #ENVVAR default_statistics_target (def: 100, from 0 to 10000) decides the sample size.
                                   #Can be set column-wise with:
-                                  #  alter table "TABLE" alter "COL" set statistics INT (-1 means default)
+                                  #  alter table|index ... alter [column] "COL" set statistics INT (-1 means default)
                                   #(same for FTABLE and materialized views).
                                   #  - starelid REGCLASS: of the TABLE
                                   #  - staatnum UINT: COL index. Refers to pg_attribute.attnum.
