@@ -2879,9 +2879,8 @@ insert into "TABLE"               #Name of each ROW to use in other parts of ins
 
 insert ... on conflict ...        #Configure behavior when inserted VAL fails an unique or exclude() CONSTRAINT
 insert ... on conflict do nothing #Ignore ROW, instead of failing
-insert ...                        #Updates current ROW instead of inserting a new one
+insert ...                        #Updates current ROW instead of inserting a new one, i.e. upserts
  on conflict do update set ARG,...#ARG is same syntax as update ... set ARG,...
-                                  #Can be used to upsert
                                   #If new VALs still fail, do not repeat
                                   #Can use `excluded` as a "ROW_ALIAS" for the VALs being inserted
                                   #Only with unique CONSTRAINT, not `exclude()`
@@ -3441,6 +3440,7 @@ PARSER                            #Tokenizer. Split a STR into tokens ("lexemes"
                                   #Can produce overlapping tokens
                                   #  - both the compound token and its parts
                                   #  - this allows searching for both
+                                  #Max TOKEN size: 2KB
 
 create text search parser "PARSER"#Creates a PARSER.
  (OPTS)                           #Must be superuser ROLE.
@@ -3451,17 +3451,26 @@ OPTS.end                          #FUNC called at end
 OPTS.lextypes                     #FUNC that lists token types
 OPTS.headline                     #FUNC that summarizes token types
 
-pg_catalog.default                #Default "PARSER"
-                                  #Handles:
-                                  #  - whitespaces
-                                  #  - hyphens
-                                  #  - locale-specific letters (based on ENVVAR lc_ctype)
-                                  #  - email address
-                                  #  - URL, scheme, host, path
-                                  #  - Unix relative|absolute file path
-                                  #  - number
-                                  #  - version X.Y.Z
-                                  #  - XML tag
+pg_catalog.default                #Default "PARSER", with following tokens
+blank                             #Whitespace
+asciiword                         #ASCII word
+[num]word                         #Non-ASCII word with[out] digits
+                                  #Uses locale-specific information, based on ENVVAR lc_ctype
+[ascii|num]hword                  #Like *word but hyphenated, as a whole
+hword_[ascii|num]part             #Like *word but hyphenated part
+int                               #INT
+uint                              #UINT
+float                             #FLOAT
+sfloat                            #FLOAT, as NUMe...
+url                               #URL
+protocol                          #SCHEME://
+host                              #HOST
+url_path                          #/PATH of URL
+file                              #/PATH of file
+email                             #Email address
+version                           #X.Y.Z
+tag                               #XML tag
+entity                            #XML entity
 
 pg_ts_parser                      #TABLE with all PARSERs
 pg_ts_parser.oid                  #OID
@@ -3475,14 +3484,14 @@ pg_ts_parser.prsheadline          #REGPROC of OPTS.*
 
 ts_token_type('PARSER'|PARSER_OID)
  ->ROW_SET                        #Returns all token types
-ROW.tokid                         #INT token type
-ROW.alias                         #'NAME'
-ROW.description                   #STR
+ROW.tokid                         #TOKEN_TYPE, as INT
+ROW.alias                         #"TOKEN_TYPE" name
+ROW.description                   #'TOKEN_TYPE_DESCRIPTION'
 
 ts_parse('PARSER'|PARSER_OID, STR)
- ->ROW_SET                        #Parse a STR
+ ->ROW_SET                        #Tokenize a STR
 ROW.token                         #STR value
-ROW.tokid                         #INT token type
+ROW.tokid                         #TOKEN_TYPE
 
 
                                              /=+===============================+=\
@@ -3518,21 +3527,12 @@ simple                            #TEMPLATE removing common words
 OPTS.stopwords                    #'FILE' of common words
                                   #Uses SHAREDIR/tsearch_data/FILE.stop
                                   #  - file with one word per line
-OPTS.accept                       #BOOL. Whether it is a final TEMPLATE (true, def) or not (false)
+OPTS.accept                       #BOOL. Whether it is a final TEMPLATE (true, def) or filtering (false)
 
-snowball                          #Final TEMPLATE using Snowball project
-OPTS.language                     #'LANG' (e.g. 'english').
-                                  #Stems words, i.e. remove alternative forms:
-                                  #  - lowercase
-                                  #  - plural -> singular
-                                  #  - conjugation -> infinitive
-                                  #  - adjective|adverb suffix (e.g. '*ous', '*ly') -> removed
-OPTS.stopwords                    #Like simple TEMPLATE
-
-synonym                           #Filtering TEMPLATE stemming synonyms to a single form.
+synonym                           #Filtering TEMPLATE normalizing synonyms to a single form.
                                   #Can also be used to process words, keeping them as is
-                                  #  - to avoid next TEMPLATEs from wrongly stemming them
-                                  #  - e.g. Paris -> Paris, to avoid stemmer to misrecognize as a plural word
+                                  #  - to avoid next TEMPLATEs from wrongly normalizing them
+                                  #  - e.g. Paris -> Paris, to avoid stemmer to misrecognize it as a plural word
 OPTS.synonyms                     #'FILE' of synonyms
                                   #Uses SHAREDIR/tsearch_data/FILE.syn
                                   #  - each line has two space-separated fields
@@ -3543,21 +3543,42 @@ OPTS.casesensitive                #BOOL (def: false). Lowercases words.
 thesaurus                         #Filtering TEMPLATE
                                   #Like synonym TEMPLATE but can:
                                   #  - match multiple tokens as input
+                                  #     - if multiple choices, longest one is picked
                                   #  - return multiple tokens as output
 OPTS.dictfile                     #'FILE' of substitutions
                                   #Uses SHAREDIR/tsearch_data/FILE.ths
                                   #  - each line has two colon-separated fields
+                                  #  - first field can contain ? to mean a single token removed by OPTS.dictionary
                                   #  - second field can start with * to prevent next TEMPLATE from processing it
-                                  #  - first field can contain ? to mean any token removed by OPTS.dictionary
                                   #  - can have #COMMENT
-OPTS.dictionary                   #DICTIONARY to apply first
+OPTS.dictionary                   #DICTIONARY to apply first ("subdictionary")
                                   #Must end with a final TEMPLATE
+                                  #Only used for matching purpose, not kept in final output
 
-ispell:
-                                  #     - arguments: stopwords FILE, afffile FILE2, dictfile FILE3
-                                  #     - FILE (extension: .stop): like stopwords in pg_catalog.simple
-                                  #     - FILE2 (extension: .affix) and FILE3 (extension: .dict): see doc. for ispell
-                                  #     - In short, can turn grammatical variations of a word into a single form.
+ispell                            #Filtering TEMPLATE using Ispell project
+                                  #Stemmer like snowball:
+                                  #  - more supported languages
+                                  #  - based on word list, instead of generic grammar algorithm
+                                  #     - i.e. more specific
+                                  #     - if word is in list (but might not be), better output
+                                  #     - should be followed by snowball
+                                  #  - can breakdown compound words even without punctuation|space (e.g. German long words)
+OPTS.stopwords                    #Like simple TEMPLATE
+OPTS.dictfile                     #'FILE'
+                                  #Uses SHAREDIR/tsearch_data/FILE.dict
+                                  #Must be manually downloaded and converted to UTF-8
+OPTS.afffile                      #'FILE'
+                                  #Uses SHAREDIR/tsearch_data/FILE.affix
+                                  #Must be manually downloaded and converted to UTF-8
+
+snowball                          #Final TEMPLATE using Snowball project
+OPTS.language                     #'LANG' (e.g. 'english').
+                                  #Stems words, i.e. remove alternative forms:
+                                  #  - lowercase
+                                  #  - plural -> singular
+                                  #  - conjugation -> infinitive
+                                  #  - adjective|adverb suffix (e.g. '*ous', '*ly') -> removed
+OPTS.stopwords                    #Like simple TEMPLATE
 
 
                                              /=+===============================+=\
@@ -3567,10 +3588,8 @@ ispell:
                                              \=+===============================+=/
 
 
-create text search                #Create a DICTIONARY, i.e. TEMPLATE with arguments
- dictionary "DICTIONARY"(OPTS)    #Should put:
-                                  #  - most specific DICTIONARYs first
-                                  #  - DICTIONARY with final TEMPLATE last
+create text search
+ dictionary "DICTIONARY"(OPTS)    #Create a DICTIONARY, i.e. TEMPLATE with arguments
 OPTS.template                     #TEMPLATE
 OPTS.*                            #Arguments to TEMPLATE
 
@@ -3589,12 +3608,23 @@ regdictionary                     #TYPE alias to OID, to cast pg_ts_dict.oid as 
 
 ts_lexize(REGDICTIONARY, 'TOKEN') #Normalize 'TOKEN' according to DICTIONARY
  ->STR_ARR|null                   #'TOKEN' is produced by PARSER
-                                  #Returns null if token is not transformed, and passed to next TEMPLATE
+                                  #Returns null if token is not transformed and passed to next TEMPLATE
                                   #Returns empty ARR if token is omitted
 
 simple                            #DICTIONARY with simple TEMPLATE but no OPTS.stopwords (i.e. noop)
 
 LANG_stem                         #DICTIONARY with snowball TEMPLATE, OPTS.language 'LANG', OPTS.stopwords 'LANG'
+
+unaccent                         ##DICTIONARY with its own TEMPLATE
+                                 ##Similar to synonym TEMPLATE, but focused on turning Unicode characters into ASCII
+                                 ##  - removing accent
+                                 ##  - symbols, e.g. © -> (C) or ʹ -> '
+                                 ##Postgres extension 'unaccent'
+OPTS.rules                       ##'FILE' (def: 'unaccent') of fields with|without accent
+                                 ##Uses SHAREDIR/tsearch_data/FILE.rules
+                                 ##Default works well for Western language
+unaccent(['REGDICTIONARY', ]STR)
+ ->STR                           ##Applies unaccent to STR
 
 dict_xsyn                        ##DICTIONARY with its own TEMPLATE
                                  ##Similar to synonym TEMPLATE, but spread word into several synonyms
@@ -3610,14 +3640,11 @@ OPTS.keepsynonyms                ##BOOL (def: true). Whether to keep synonyms in
 OPTS.matchorig                   ##BOOL (def: true). When OPTS.keeporig true, whether input token can be processed by next TEMPLATEs
 OPTS.matchsynonyms               ##BOOL (def: false). Same for OPTS.keepsynonyms
 
-unaccent:
-                                 ##    - filtering dictionary removing accent
-                                 ##    - does it according to argument rules (which can be altered), pointing to
-                                 ##      SHAREDIR/tsearch_data/ARG.rules.
-                                 ##      The default one can be found with unaccent.rules (works for western languages)
-                                 ##    - can also use unaccent([ARG, ]STR)
-                                 ##    - Postgres extension 'unaccent'
-
+dict_int                         ##DICTIONARY with its own TEMPLATE
+                                 ##Normalize long NUMs
+OPTS.maxlen                      ##NUM (def: 6). Truncate only first 6 digits of NUMs
+OPTS.rejectlong                  ##BOOL (def: false). Instead of truncating, omit long NUMs
+OPTS.absval                      ##BOOL (def: false). Ignore + - signs
 
 
                                              /=+===============================+=\
@@ -3627,30 +3654,53 @@ unaccent:
                                              \=+===============================+=/
 
 
-REGCONF                           #PARSER + list of DICTIONARYs
+create text search                #REGCONF, i.e. PARSER + list of DICTIONARYs (for given TOKEN_TYPEs)
+ configuration "REGCONF"(OPTS)    #Should put:
+                                  #  - most specific DICTIONARYs first
+                                  #  - DICTIONARY with final TEMPLATE last
+OPTS.parser                       #"PARSER"
+OPTS.copy                         #"REGCONF2" to copy PARSER + mappings
+
+alter text search
+ configuration "REGCONF"
+ add|alter mapping
+ for "TOKEN_TYPE",...
+ with DICTIONARY,...              #Apply DICTIONARY for given TOKEN_TYPEs
+alter text search
+ configuration "REGCONF"
+ alter mapping
+ [for "TOKEN_TYPE",...]
+ replace DCTIONARY with DCTIONARY2#
+alter text search
+ configuration "REGCONF"
+ drop mapping [if exists]
+ for "TOKEN_TYPE",...             #
+
+initdb -T 'REGCONF'               #Def: 'pg_catalog.LANG' (using ENVVAR lc_ctype)
 ENVVAR default_text_search_config #Current REGCONF
-initdb -T 'REGCONF'               #
-get_current_ts_config()->'REGCONF'#
+get_current_ts_config()->REGCONFIG#
 
-create text search                #... can be:
-configuration REGCONF             #  - parser = STR
-(...)                             #  - or copy = REGCONF2
-                                  #Dictionaries are specified with alter text search configuration ...
-alter text search                 #... controls DICTIONARY for specific TOKEN (as WORD) can be:
-configuration REGCONF             #  - add|alter mapping for TOKEN... with DICTIONARY...
-...                               #  - drop mapping [if exists] for TOKEN...
-                                  #  - alter mapping [for TOKEN...] replace DICTIONARY with DICTIONARY2
-                                  #Available ones:
-                                  #  - pg_catalog.LANG (def: english), which uses:
-                                  #     - LANG_stem DICTIONARY for words, simple DICTIONARY for rest
-                                  #     - pg_catalog.default PARSER
-                                  #  - pg_catalog.simple, which uses:
-                                  #     - simple DICTIONARY for all
-                                  #     - pg_catalog.default PARSER
+pg_catalog.LANG                   #REGCONF. PARSER pg_catalog.default
+                                  #DICTIONARYs:
+                                  #  - LANG_stem: [ascii]word, hword_[ascii]part, [ascii]numhword
+                                  #  - ignore: blank, tag|entity, protocol
+                                  #  - simple: others
+pg_catalog.simple                 #REGCONF. Same but without LANG_stem DICTIONARY
 
-pg_ts_config[_map]                #All REGCONF. ???
+pg_ts_config                      #TABLE with all REGCONFs
+pg_ts_config.oid                  #OID
+pg_ts_config.cfgname              #"REGCONF" name
+pg_ts_config.cfgparser            #pg_ts_parser.oid of PARSER
+pg_ts_config.cfgnamespace         #REGNAMESPACE of SCHEMA
+pg_ts_config.cfgowner             #REGROLE of owner
 
 regconfig                         #TYPE alias to OID, to cast pg_ts_config.oid as "REGCONF" name
+
+pg_ts_config_map                  #TABLE with all REGCONFs mappings
+pg_ts_config_map.mapcfg           #REGCONFIG of REGCONF
+pg_ts_config_map.mapdict          #pg_ts_dict.oid of DICTIONARY
+pg_ts_config_map.maptokentype     #TOKEN_TYPE
+pg_ts_config_map.mapseqno         #INT with priority order for a given TOKEN_TYPE
 
 
                                              /=+===============================+=\
@@ -3660,27 +3710,49 @@ regconfig                         #TYPE alias to OID, to cast pg_ts_config.oid a
                                              \=+===============================+=/
 
 
-LIMITS ==>                        #  - 2KB for lexemes. Max. 2^64 by TSVECTOR. Max 256 positions by lexeme.
-
-tsvector                          #Normalized STR document.
-                                  #Each word can have a position and weight, i.e. word:NUMLETTER, where NUM is the position is the
-                                  #document (1 to 16383) and a weight, A, B, C to D, indicating the level (title, subtitle, etc.)
-                                  #Position only serves for relative position comparison, so 16383 is fine.
+tsvector                          #TYPE. STR after:
+                                  #  - PARSER tokenization
+                                  #  - REGCONFIG normalization
+                                  #  - duplicate merging
                                   #Max 1MB
                                   #  - i.e. might need to split documents into chunks
+                                  #Max 2e19 TOKENs
+TOKEN:NUMCHAR,...                 #Specify a TOKEN's:
+                                  #  - weight CHAR:
+                                  #     - A|B|C|D
+                                  #     - def: D
+                                  #     - specifies importance (title, subtitle, etc.)
+                                  #  - position NUM, inside STR
+                                  #     - min 1, max 16383
+                                  #     - used for relative position comparison
+                                  #Duplicates with different NUMCHARs are merged
+                                  #  - max 256 duplicates per TOKEN
+                                  #NUMCHARs are parsed as TOKENs themselves
+...\:                             #Must be escaped
 
-TSVECTOR || TSVECTOR2             #
+STR <-> TSVECTOR
+TSVECTOR_UNKNOWN -> TSVECTOR      #Type cast. Only does tokenization, unless used with @@
 
-length(TSVECTOR)                  #number of words
-strip(TSVECTOR)                   #Removes weights and indexes
-setweight(TSVECTOR, 'A|B|C|D')    #Returns TSVECTOR with given weight
+'...'                             #TSVECTOR_UNKNOWN
 
-ts_debug([REGCONFIG, ]STR)        #Returns result of conversion STR -> TSVECTOR, as a TABLE with COLs:
-                                  #  - alias STR: TYPE of TOKEN
-                                  #  - description STR: of TYPE of TOKEN
-                                  #  - token STR: original TOKEN
-                                  #  - dictionaries STR_ARR and dictionary STR (the one chosen)
-                                  #  - lexemes STR_ARR: final tokens
+to_vector([REGCONFIG, ]STR)
+ ->TSVECTOR                       #Does tokenization + normalization + duplicate merges
+ts_debug([REGCONFIG, ]STR)
+ ->ROW_SET                        #Like to_vector() but returned as ROW_SET
+ROW.alias                         #'TOKEN_TYPE'
+ROW.description                   #'TOKEN_TYPE_DESCRIPTION'
+ROW.token                         #STR. Original input
+ROW.dictionaries                  #'DICTIONARY'_ARR chosen
+ROW.dictionary                    #Final 'DICTIONARY'|null
+ROW.lexemes                       #STR_ARR. Final TOKENs
+
+TSVECTOR || TSVECTOR2             #Concatenates
+
+length(TSVECTOR)->UINT            #Number of TOKENs
+
+strip(TSVECTOR)->TSVECTOR         #Removes NUMCHARs
+setweight(TSVECTOR, 'CHAR')
+ ->TSVECTOR                       #Sets TSVECTOR weight on all TOKENs
 
 
                                              /=+===============================+=\
@@ -3690,38 +3762,64 @@ ts_debug([REGCONFIG, ]STR)        #Returns result of conversion STR -> TSVECTOR,
                                              \=+===============================+=/
 
 
-tsquery                           #A STR, query combination of normalized words on a tsvector.
-                                  #Words must be separated by & or | (not space)
-                                  #Can include:
-                                  #  - () ! & |, e.g. 'word & (word2 | word3)'
-                                  #  - word:LETTER...: only words in tsvector with weight LETTER... should match
-                                  #  - word:*: not whole word need to match, but only beginning
-                                  #Max 4e9 elements
+tsquery                           #TYPE. Query on a TSVECTOR.
+                                  #Goes through tokenization + normalization + duplicates like TSVECTOR.
+                                  #Max 4e9 TOKENs
 
-to_tsquery|vector                 #As opposed to cast(STR as tsquery|vector), it does normalization.
-([REGCONFIG, ]STR)                #Only use the later if already normalized.
-plainto_tsquery(...)              #Same as to_tsquery() but can't accept operators & | ! (), and implicitely put & between each word
+STR <-> TSQUERY
+TSQUERY_UNKNOWN -> TSQUERY        #Type cast. Only does tokenization, unless used with @@
+
+'...'                             #TSQUERY_UNKNOWN, with following syntax
+                                  #Must \-escape: < : & | ( ) !
+TOKEN                             #
+TOKEN:CHAR...                     #Only if weight CHAR
+PREFIX:*                          #Match from start only
+... & ...                         #And
+... | ...                         #Or (not space)
+(...)                             #
+! ...                             #Not
+
+to_tsquery([REGCONFIG, ]STR)
+ ->TSQUERY                        #Does tokenization + normalization + duplicate merges
+plainto_tsquery([REGCONFIG, ]STR) #Same as to_tsquery() but:
+ ->TSQUERY                        #  - ignores :CHAR :* & | () !
+                                  #  - implicitely put & between each TOKEN
+
+TSQUERY && TSQUERY2               #And
+TSQUERY || TSQUERY2               #Or
+!! TSQUERY                        #Not
+
+TSQUERY @> TSQUERY2               #BOOL. Is superset|equal
+                                  #Handles different orders, parenthesis, etc.
+TSQUERY <@ TSQUERY2               #BOOL. Is subset|equal
+
+numnode(TSQUERY)->UINT            #Number of TOKENs and operators
+
+querytree(TSQUERY)->TSQUERY       #Remove TOKENs that cannot be accessed (!TOKEN)
+                                  #Can return empty STR
 
 TSQUERY @@ TSVECTOR               #Returns true if match.
-STR @@ STR2                       #Automatically call to_tsquery|vector()
-TSQUERY && || !! TSQURY2          #
-TSQUERY @> @< TSQUERY2            #Contains|is contained
 
-numnode(TSQUERY)                  #number of words and operators
-querytree(TSQUERY)                #returns TSQUERY without parts that can't be accessed (!word and common words), to detect if a TSQUERY
-                                  #can be indexed
-ts_rank[_cd]([REAL_ARR,]          #Computes how much TSQUERY matches TSVECTOR. Used with "order by".
- TSVECTOR, TSQUERY[, UINT])       #ts_rank look at the number of occurences, and ts_rank_cd at the proximity of occurences
-                                  #(smaller is better)
-                                  #REAL_ARR weights occurences according to 4 REAL for the weights D, C, B, A (def: 0.1, 0.2, 0.4, 1).
-                                  #UINT is a or'd flag, that computes following operations on output :
+ts_rank([FLOAT_ARR,]              #Counts number of matches with TSQUERY on TSVECTOR
+ TSVECTOR, TSQUERY[, UINT])       #To use with `order_by`
+ ->FLOAT                          #FLOAT_ARR is multiplied to matches for weight D|C|B|A (def: 0.1, 0.2, 0.4, 1)
+                                  #UINT is an or'd flag, that computes following operations on return value:
                                   #  - 0 (def): nothing
-                                  #  - 1: n/(log(len(n))+1)
-                                  #  - 2: n/len(n)
-                                  #  - 4: n/mean between occurences (only ts_rank_cd)
-                                  #  - 8: n/number of unique words
-                                  #  - 16: n/(log(number of unique words)+1)
+                                  #  - 1: n/(log(m)+1)
+                                  #  - 2: n/m
+                                  #  - 4: n/x (only ts_rank_cd)
+                                  #  - 8: n/u
+                                  #  - 16: n/(log(u)+1)
                                   #  - 32: n/(n+1)
+                                  #With:
+                                  #  - n: count of matches
+                                  #  - u: count of unique TOKENs in TSVECTOR
+                                  #  - m: document length ???
+                                  #  - x: mean harmonic distance between matches
+ts_rank_cd(...)->FLOAT            #Same as ts_rank() but takes into account proximity of matches instead
+                                  #I.e. requires :NUM positions
+                                  #Smaller is better
+
 ts_headline([REGCONF,] STR,       #Returns a STR3 with matching results.
  TSQUERY[, STR2])                 #To make it faster, use select ts_headline(STR, TSQUERY) from (select ...) where the subquery returns
                                   #only rows that match the TSQUERY.
