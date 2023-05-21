@@ -362,12 +362,14 @@ end                               #Def RVAL: null
 
 unknown                           #Unknown TYPE
                                   #Has no operators, but is usually implicitly transtyped based on operators
-unknown -> VAL                    #Possible with any TYPE
+unknown -> VAL                    #Possible with any TYPE, except any*
 VAL ~> unknown                    #Never possible, except with unknown itself
 
 '...'                             #UNKNOWN
                                   #'' to escape a '
                                   #Otherwise can include any character, including \, newlines and Unicode codepoints.
+                                  #Cannot include \0
+                                  #  - must use BYTEA with '\x00'
                                   #Internally encoded as UTF-8
                                   #Used for the literal value of all TYPEs, meant to be cast
                                   #  - noted as TYPE_UNKNOWN, meaning UNKNOWN that can be cast to TYPE
@@ -376,6 +378,12 @@ $[TAG]$...$[TAG]$                 #Like '...' but can include '
 U&'...'                           #Like '...' but can also include \NNNN or \+NNNNNN codepoint
 E'...'                            #Like '...' but can use backslash escape sequences
                                   #\b, \f, \n, \r, \t, \v, \\, \NNN, \xNN, \uNNNN, \UNNNNNNNN
+
+any*                              #TYPE. "Polymorphic type", i.e. abstract
+                                  #Used in FUNCs to represent generic types
+unknown -> any*                   #Not possible
+
+PSEUDO TYPE ==>                   #Any of: any*, unknown, record, cstring, void, [event_]trigger
 
 
                                              /=+===============================+=\
@@ -765,6 +773,7 @@ regexp_split_to_table(...)
 
 
 ENUM_TYPE                         #Each enum has its own TYPE
+anyenum                           #TYPE. Any ENUM_TYPE
 
 '...'                             #ENUM_VAL_UNKNOWN
 
@@ -830,6 +839,7 @@ bytea                             #TYPE. Like BSTR but byte-wise
 
 '...'                             #BYTEA_UNKNOWN, using UTF-8 endoding
 '\x...'                           #If starting with \x, ... is hex only
+                                  #Only way to include \x00
 
 encode(BYTEA, STR)->STR2          #Converts to format STR:
                                   #  - 'hex': hex only
@@ -1044,8 +1054,11 @@ regcollation                      #TYPE alias to OID. ID of a COLLATION.
 regnamespace                      #TYPE alias to OID. ID of a NAMESPACE.
 regrole                           #TYPE alias to OID. ID of a ROLE.
 
+REG* <-> OID
 INT8 <=-> OID|REG*
 INT2 -> OID|REG*                  #Type cast
+
+REG* -> STR                       #Type cast as name, e.g. "FUNC", "TYPE", etc.
 
 regclass                          #TYPE alias to OID. "TABLE" name.
 tableoid -> REGCLASS              #Type cast OID to "TABLE" name
@@ -1431,6 +1444,7 @@ int8range                         #RANGE TYPE of INT8
 numrange                          #RANGE TYPE of NUMERIC
 daterange                         #RANGE TYPE of DATE
 ts[tz]range                       #RANGE TYPE of TIMESTAMP[TZ]
+anyrange                          #TYPE. Any RANGE TYPE
 
 create type TYPE as range(OPTS)   #New RANGE TYPE.
 OPTS.subtype                      #TYPE of start|end
@@ -1496,7 +1510,8 @@ int4multirange
 int8multirange
 nummultirange
 datemultirange
-ts[tz]multirange                  #MULTIRANGE TYPEs
+ts[tz]multirange
+anymultirange                     #MULTIRANGE TYPEs
 
 RANGE ~> MULTIRANGE               #Type cast
 
@@ -1520,11 +1535,13 @@ unnest(MULTIRANGE)->RANGE_SET     #
                                              \=+===============================+=/
 
 
-array                             #TYPE2 with 0-n values of same TYPE
-TYPE[]                            #Dimensions are defined at write-time.
+TYPE[]                            #TYPE2 with 0-n values of same TYPE
+                                  #Dimensions are defined at write-time.
                                   #Underlying TYPE can be another ARR for multidimensional ARRs.
                                   #1-based indices
                                   #Max length 1.3e8
+[any]array                        #TYPE. Any TYPE2[]
+anynonarray                       #TYPE.
 
 array[VAL...]                     #ARR literal value.
 '{VAL,...}'                       #ARR_UNKNOWN
@@ -2998,6 +3015,46 @@ regr_*(...)                       #AFUNC. Linear regression. Not documented yet
 
                                              /=+===============================+=\
                                             /  :                               :  \
+                                            )==:      PREPARED STATEMENT       :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+prepare PREP[(TYPE,...)]          #Save COMMAND as PREP
+ as COMMAND                       #COMMAND must be select|values or insert|update|delete|merge
+                                  #Pre-parse it
+                                  #  - i.e. faster to execute
+                                  #  - re-parsed on changes, such as:
+                                  #     - used "TABLE" changed TYPEs
+                                  #     - search_path changed
+                                  #TYPEs are parameters
+                                  #  - which can be used in COMMAND as $1, etc.
+                                  #  - optional:
+                                  #     - arguments can be passed even without a corresponding parameter TYPE
+                                  #     - they are cast as unknown
+
+execute PREP[(VAL,...)]           #Execute COMMAND from PREP
+
+deallocate PREP|all               #Delete a PREP
+                                  #Automatically done at end of each session
+
+pg_prepared_statements            #TABLE with all PREPs
+pg_prepared_statements.name       #'PREP'
+pg_prepared_statements
+ .parameter_types                 #REGTYPE_ARR of parameters
+pg_prepared_statements.statement  #'COMMAND'
+pg_prepared_statements.from_sql   #BOOL. Whether COMMAND is SQL
+                                  #PREPs can also be created through some low-level protocol
+pg_prepared_statements
+ .prepare_time                    #TIMESTAMPTZ of creation
+pg_prepared_statements
+ .generic_plans                   #UINT. Number of `execute` which used a generic plan
+pg_prepared_statements
+ .custom_plans                    #UINT. Number of `execute` which used a custom plan
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
                                             )==:            CURSORS            :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -3020,28 +3077,6 @@ move [WORD] from CURSOR           #Same but only moves cursor, doesn't return an
 close CURSOR|all                  #Close a CURSOR (or all). Automatically done at end of transaction for a CURSOR without "with hold"
 update|delete ... where           #Same as update|delete ... where BOOL, with BOOL being current position of CURSOR.
 current of CURSOR                 #Grouping cannot be used in the TABLE of CURSOR.
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:      PREPARED STATEMENTS      :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-prepare PREP([TYPE...])           #Parse COMMAND to make it faster to use later, if complex and often used COMMAND.
-as COMMAND                        #Must be used with execute PREP(...):
-execute PREP(...)                 #  - Each TYPE can be specified in COMMAND as positional argument $NUM
-                                  #  - execute PREP(...) supply those arguments
-                                  #  - last TYPE... can be "unknown", meaning "anyelement" (can still be used as $NUM), providing it
-                                  #    can be determined runtime
-                                  #  - no overloading
-                                  #COMMAND must be select|insert|update|delete|values
-                                  #No problem of caching: PREP will be reparsed if:
-                                  #  - used TABLE (including COLs) change types
-                                  #  - search_path changes
-deallocate PREP|all               #Delete a PREP.
-                                  #deallocate all is automatically done at end of each session.
 
 
                                              /=+===============================+=\
@@ -3781,17 +3816,13 @@ stable|volatile]                  #        - calling FUNC(TABLE) needs a referen
 [security                         #           - select * from "TABLE", FUNC(TABLE)
 invoker|definer]                  #        - FUNC("TABLE"|"ROW") can also be called "TABLE"|"ROW".FUNC, so it is unwise to name FUNC same
 [cost FLOAT]                      #          as a member of "TABLE"|"ROW"
-[rows UINT]                       #      - record:
-                                  #        - like ROW of any*
-                                  #      - pseudo-type:
-                                  #        - any[element|[non]array|enum|range]:
-                                  #          - polymorphic types.
-                                  #          - Must be all of the same type (args and return value), for a specific call.
-                                  #          - anyarray|range must have same type as other any*
-                                  #          - if return value is polymorphic, at least one arg must be too.
-                                  #          - $0 is a VAR with the polymorphic type, initialized to null.
-                                  #            Can be used to store return value or do computations.
-                                  #        - cstring (null-terminated, for C only)
+[rows UINT]                       #      - any*:
+                                  #        - Must be all of the same type (args and return value), for a specific call.
+                                  #        - anyarray|range must have same type as other any*
+                                  #        - if return value is polymorphic, at least one arg must be too.
+                                  #        - $0 is a VAR with the polymorphic type, initialized to null.
+                                  #          Can be used to store return value or do computations.
+                                  #      - cstring (null-terminated, for C only)
                                   #    - variadic ARG (must be ARR):
                                   #      - elements of ARR must then be of same TYPE
                                   #      - can fire it with FUNC(..., variadic ARR) or FUNC(..., ...)
@@ -4814,7 +4845,6 @@ pg_collation                      #All COLLATION
 pg_conversion                     #All CONVERSION
 
 pg_cursors                        #All CURSOR
-pg_prepared_statements            #All PREP
 pg_prepared_xacts                 #All "prepare transaction STR"
 
 pg_foreign_data_wrapper           #All FDW
