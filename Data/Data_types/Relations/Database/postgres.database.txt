@@ -6023,6 +6023,8 @@ xid[8]                            #TYPE. Index of a write transaction within a g
                                   #Cannot use < <= > >=
 XID[8] <~=> TEXT                  #Type cast
 
+age(XID)->UINT                    #Difference between current transaction xmin and XID
+
 cid|xid                           #4 bytes. Might be re-used in the lifetime of cluster
 xid                               #Min|max values are circular
                                   #I.e. previous|next 2e9 values are considered <|>, when taking wraparound into account
@@ -6035,7 +6037,9 @@ XID8 ~> XID                       #Type cast
                                   #On:
                                   #  - commit: other sessions set it, i.e. like current session
                                   #  - rollback: current session reverts it, i.e. like other sessions
-                                  #I.e. xmin always <= current transaction's XID (with wraparound considered)
+                                  #Current transaction can see any ROWs:
+                                  #  - with xmin <= current transaction's XID (with wraparound considered)
+                                  #  - or frozen
 "ROW_ALIAS".xmax                  #For state not visible yet in current session:
                                   #  - 0 if committed by current|other sessions, or if uncommitted by current session
                                   #  - set if uncommitted by other sessions
@@ -6053,33 +6057,35 @@ XID8 ~> XID                       #Type cast
                                              \=+===============================+=/
 
 
-pg_class.relfrozenxid             #XID. Minimum xmin of the TABLE.
-                                  #Set by vacuum. Initially 0.
-                                  #Any ROW with xmax <= relfrozenxid is "frozen" by vacuum (using visibility map) ???
-                                  #It indicates that the ROW:
-                                  #  - is an uncommitted transaction (xmin <> xmax)
-                                  #  - is long enough that XID wrapped around
-                                  #     - 4-bytes long, i.e. every 2e9 transactions
-freezing: always visible, even if xid appears >
-vacuum freezes ROWs if old
-relfrozenxid: all xid < are frozen
+FREEZING ROWS ==>                 #ROWs with an old xmin are marked as frozen by vacuum (using visibility map)
+                                  #This ensures that, even when XIDs wrap around:
+                                  #  - their XID is not re-used
+                                  #  - their xmin is still considered older than the current transaction, i.e. remains visible
+                                  #Frozen ROWs are unfrozen by any write
 
+pg_class.relfrozenxid             #XID. Oldest xmin of the TABLE's not-frozen ROWs.
+                                  #Set by vacuum. Initially 0.
+                                  #Goal: avoid having to scan all ROWs to know whether some might need to be frozen or not
 pg_database.datfrozenxid          #Minimum value for relfrozenxid
 
-ENVVAR vacuum_freeze_min_age      #NUM (def: 5e7). Do not freeze ROWs if relfrozenxid younger than NUM transactions
+ENVVAR vacuum_freeze_min_age      #NUM (def: 5e7). Freeze ROWs older than NUM transactions
                                   #Must be at least half of autovacuum_freezen_max_age
-ENVVAR autovacuum_freeze_max_age  #NUM (def: 2e8). Freeze ROWs if relfrozenxid older than (NUM + vacuum_freeze_min_age) transactions
-                                  #Only with autovacuum
-                                  #Min 1e5
+ENVVAR autovacuum_freeze_max_age  #NUM (def: 2e8, min 1e5). Forces autovacuum (even if disabled)
+                                  #if any not-frozen ROW is older than (NUM - vacuum_freeze_min_age) transactions
 ENVVAR vacuum_freeze_table_age    #NUM (def: 1.5e8). Only check for frozen ROWs in heap pages with dead ROWs,
-                                  #unless relfrozenxid is older than NUM transactions
-
-vacuum freeze ...                 #Force freezing ROWs, i.e. ignore ENVVAR vacuum_freeze_min|max_age
-vacuum (freeze = true)            #Implied by `vacuum full`
-                                  #Might break MVCC
+                                  #unless any not-frozen ROW is older than NUM transactions
+                                  #Max value: 95% of autovacuum_freeze_max_age
 
 pg_class.relminmxid               #XID. Like pg_class.relfrozenxid, but for multixact IDs ???
 pg_database.datminmxid            #XID. Same for pg_database.datfrozenxid
+
+vacuum freeze ...                 #Freeze all ROWs, ignoring ENVVAR *vacuum_freeze*
+vacuum (freeze = true)            #Implied by `vacuum full`
+                                  #Might break MVCC
+
+MULTIXACT IDS ==>                 #"Multiple transaction ID". XID of all transactions currently locking a specific ROW
+                                  #(e.g. using `select ... for ...`)
+                                  #"ROW_ALIAS".xmax shows the most recent multixact ID
 
 
                                              /=+===============================+=\
@@ -6107,7 +6113,7 @@ VISIBILITY MAP ==>                #Bitmap of all heap pages of a TABLE
                                   #"all-frozen bit":
                                   #  - 1 if has only frozen ROWs
                                   #  - set to 1 by vacuum
-                                  #  - set to 0 by ???
+                                  #  - set to 0 by any write
                                   #Fast to access
                                   #  - bitmap, i.e. small
                                   #  - usually kept in-memory
