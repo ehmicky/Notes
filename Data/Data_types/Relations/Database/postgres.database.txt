@@ -4639,7 +4639,10 @@ create table ...                  #Stores "COL" in INDEX, but do not use it in q
  include("COL",...)               #Some ACCESS_METHODs do not support it
 
 VISIBILITY MAP ==>                #Checked before doing index-only scans:
-                                  #  - if heap page has ongoing transactions, must fetch ROW from TABLE instead of index-only ("heap fetch")
+                                  #  - must fetch ROW from TABLE instead of index-only ("heap fetch"):
+                                  #     - if heap page lacks all-visible bit
+                                  #        - i.e. if was written since last vacuum
+                                  #     - reason: there "might" be uncommitted writes
                                   #  - i.e. index-only scans less frequent on write-heavy TABLEs
 
 create index ... where BOOL_REXPR #"Partial INDEX". Only indexes ROWs with BOOL_REXPR true
@@ -4752,11 +4755,16 @@ pg_stat_progress_create_index     #STR among:
                                   #     - 'waiting for readers before marking dead': await read locks
                                   #     - 'waiting for readers before dropping': await read locks before `drop`
                                   #Unless concurrently, only 'initializing' and 'building index'
-current_locker_pid                #INT8. PID of process with a lock being awaited, during 'waiting for ...'
-lockers_done|total                #INT8. NUM of processes locking, during 'waiting for ...'
-blocks_done|total                 #NUM of page heaps processed, during 'building index' and 'index validation: scanning index|table'
-tuples_done|total                 #NUM of ROWs processed, during 'building index'
-partitions_done|total             #NUM of partitions, if partitioned TABLE. 0 during `reindex`
+pg_stat_progress_create_index
+ .current_locker_pid              #INT8. PID of process with a lock being awaited, during 'waiting for ...'
+pg_stat_progress_create_index
+ .lockers_done|total              #INT8. NUM of processes locking, during 'waiting for ...'
+pg_stat_progress_create_index
+ .blocks_done|total               #NUM of page heaps processed, during 'building index' and 'index validation: scanning index|table'
+pg_stat_progress_create_index
+ .tuples_done|total               #NUM of ROWs processed, during 'building index'
+pg_stat_progress_create_index
+ .partitions_done|total           #NUM of partitions, if partitioned TABLE. 0 during `reindex`
 
 
                                              /=+===============================+=\
@@ -5645,18 +5653,44 @@ vacuum (freeze = true)            #Implied by `vacuum full`
 
 
 DEAD ROWS ==>                     #Deleted ROWs are kept until vacuum
-                                  #This allows ongoing transactions to keep seeing if either:
+                                  #This allows ongoing transactions to keep seeing them if either:
                                   #  - they have not committed yet and were started before the deletion
                                   #  - the deleting transaction has not committed yet
 
 VISIBILITY MAP ==>                #Bitmap of all heap pages of a TABLE
-                                  #  - 0 if no ongoing uncommitted transactions, i.e. latest data visible to all current|future transactions
+                                  #Contains 2 bits per heap page.
+                                  #"all-visible bit":
+                                  #  - set to 0 by any write
+                                  #  - set to 1 by vacuum
+                                  #  - i.e. 0 means "might" contain uncommitted writes, or dead ROWs
+                                  #  - i.e. 1 means latest data can be "certainly" read by any current|future transaction
+                                  #  - also set as a PD_ALL_VISIBLE bit in the data itself, as opposed to in the visibility map
+                                  #"all-frozen bit":
+                                  #  - 1 if has only frozen ROWs
+                                  #  - set to 1 by vacuum
+                                  #  - set to 0 by ???
                                   #Fast to access
                                   #  - bitmap, i.e. small
                                   #  - usually kept in-memory
-                                  #Updated by vacuum
-https://www.postgresql.org/docs/current/storage-vm.html
-pg_visibility ???
+                                  #Saved in a `*_vm` file, next to TABLE physical file
+
+pg_visibility[_map]               #Returns visibility map of heap page number INT8 of REGCLASS
+ (REGCLASS, INT8)->ROW            #Non-trusted extension 'pg_visibility'
+ROW.all_visible                   #BOOL
+ROW.pd_all_visible                #BOOL
+                                  #Not returned if `_map` (faster)
+ROW.all_frozen                    #BOOL
+
+pg_visibility[_map]
+ (REGCLASS)->ROW_SET              #Returns visibility map of all heap pages of REGCLASS
+pg_visibility_map_summary
+ (REGCLASS)->ROW                  #Counts as ROW: all_visible|all_frozen INT8
+
+pg_check_visible|frozen           #Returns TIDs of ROWs with 0 bits inn all_visible|frozen,
+ (REGCLASS)->TID_SET              #which mismatches actual state of the ROW, i.e. visibility map is corrupted
+pg_truncate_visibility_map        #Remove visibility map. It will be rebuilt by next vacuum.
+ (REGCLASS)                       #Meant if visibility map corrupted
+
 
 
                                              /=+===============================+=\
@@ -5670,7 +5704,7 @@ vacuum (OPTS)                     #Does:
  ["TABLE"[("COL",...)]]           #  - delete dead ROWs on:
                                   #     - TABLEs
                                   #     - INDEXs ("index cleanup")
-                                  #  - delete frozen ROWs
+                                  #  - freeze ROWs
                                   #  - update visibility map
                                   #Def "TABLE": all that current ROLE has permissions
                                   #Def "COL": all
@@ -5692,6 +5726,13 @@ OPTS.index_cleanup                #on|off or auto (def). Whether to delete dead 
 TOPTS.vacuum_index_cleanup        #If auto, done if there are enough dead ROWs on the TABLE of the INDEXs
                                   #Always `on` if `vacuum full`
 
+OPTS.disable_page_skipping        #BOOL. If false (def), ignore heap pages which visibility map has:
+                                  #  - all_visible 1
+                                  #     - except with `vacuum full`
+                                  #  - all_frozen 1
+                                  #Also ignores some heap pages if locked by other transactions
+                                  #Can be set to true if visibility map is corrupted
+
 OPTS.skip_locked                  #BOOL (def: false). `vacuum` requires `shared update exclusive` lock.
                                   #If true and the lock cannot be obtained immediately, skip vacuuming the specific TABLE.
                                   #Only for normal TABLEs, not for its INDEXs, child TABLEs, or foreign TABLEs.
@@ -5706,9 +5747,46 @@ OPTS.parallel                     #Max NUM of parallel workers when vacuuming IN
                                   #Only on INDEXs matching ENVVAR min_parallel_table_scan_size
                                   #Cannot be used with `vacuum full`
 
-OPTS.disable_page_skipping        #BOOL (def: false) ???
-
 pg_stat_progress_vacuum           #TABLE with ongoing `vacuum` statements. ???
+
+pg_stat_progress_vacuum.relid     #REGCLASS of TABLE
+pg_stat_progress_vacuum.datid     #pg_database.oid of DATABASE
+pg_stat_progress_vacuum.datname   #NAME of "DATABASE"
+pg_stat_progress_vacuum.pid       #INT4. PID of server
+
+pg_stat_progress_vacuum.phase     #STR among:
+                                  #  - 'initializing'
+                                  #  - 'scanning heap': read heap, freeze ROWs
+                                  #    The heap_blks_scanned column can be used to monitor the progress of the scan.
+                                  #  - 'vacuuming indexes': remove dead ROWs of INDEX
+                                  #    It may happen multiple times per vacuum if maintenance_work_mem (or, in the case of autovacuum, autovacuum_work_mem if set)
+                                  #    is insufficient to store the number of dead tuples found.
+                                  #  - 'vacuuming heap': remove dead ROWs of TABLE, update visibility map
+                                  #    If heap_blks_scanned is less than heap_blks_total, the system will return to scanning the heap after this phase is completed;
+                                  #    otherwise, it will begin cleaning up indexes after this phase is completed.
+                                  #  - 'cleaning up indexes'
+                                  #  - 'truncating heap'
+                                  #  - 'performing final cleanup':
+                                  #    During this phase, VACUUM will vacuum the free space map, update statistics in pg_class, and report statistics to the cumulative statistics system.
+
+pg_stat_progress_vacuum
+ .heap_blks_total                 #INT8. Total number of heap blocks in the table.
+                                  #This number is reported as of the beginning of the scan; blocks added later will not be (and need not be) visited by this VACUUM.
+pg_stat_progress_vacuum
+ .heap_blks_scanned               #INT8. Number of heap blocks scanned.
+                                  #Because the visibility map is used to optimize scans, some blocks will be skipped without inspection;
+                                  #skipped blocks are included in this total, so that this number will eventually become equal to heap_blks_total when the vacuum is complete.
+                                  #This counter only advances when the phase is scanning heap.
+pg_stat_progress_vacuum
+ .heap_blks_vacuumed              #INT8. Number of heap blocks vacuumed.
+                                  #Unless the table has no indexes, this counter only advances when the phase is vacuuming heap.
+                                  #Blocks that contain no dead tuples are skipped, so the counter may sometimes skip forward in large increments.
+pg_stat_progress_vacuum
+ .index_vacuum_count              #INT8. Number of completed index vacuum cycles.
+pg_stat_progress_vacuum
+ .max_dead_tuples                 #INT8. Number of dead tuples that we can store before needing to perform an index vacuum cycle, based on maintenance_work_mem.
+pg_stat_progress_vacuum
+ .num_dead_tuples                 #INT8. Number of dead tuples collected since the last index vacuum cycle.
 
 
                                              /=+===============================+=\
