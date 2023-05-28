@@ -2400,6 +2400,41 @@ pg_index.indisvalid               #BOOL. Whether `not valid` was used and not `v
 
                                              /=+===============================+=\
                                             /  :                               :  \
+                                            )==:      DEFERRED CONSTRAINT      :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+set constraints CONSTRAINT,...    #Check CONSTRAINT|TFUNCs at the end of the current transaction only.
+ deferred                         #Does not apply to check() and `not null`
+                                  #Cannot be done if marked as `not deferrable` (see below)
+                                  #  - default for unique and exclude() CONSTRAINTs
+set constraints CONSTRAINT,...
+ immediate                        #Default behavior: check CONSTRAINTs at the end of each statement
+
+set constraints all ...           #Same for all CONSTRAINTs
+
+"COL" TYPE ...
+ [[not] deferrable]
+ [initially deferred|immediate]   #Same for a specific COL_ARG (including multicolumn)
+alter table "TABLE"
+ alter constraint "CONSTRAINT"
+ [[not] deferrable]
+ [initially deferred|immediate]   #Same for foreign key CONSTRAINT
+alter table "TABLE"
+ add unique|primary key ...
+ [[not] deferrable]
+ [initially deferred|immediate]   #Same for unique|primary key CONSTRAINT
+create ... trigger ...
+ [[not] deferrable]
+ [initially deferred|immediate]   #Same for a TFUNC
+
+pg_constraint.condeferrable       #BOOL. Whether CONSTRAINT is deferrable
+pg_constraint.condeferred         #BOOL. Whether CONSTRAINT is deferred by default
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
                                             )==:             CHECK             :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -2761,6 +2796,11 @@ alter table "PARENT_TABLE"
  detach partition "CHILD_TABLE"   #Unmark a TABLE as a child
 alter index "PARENT_INDEX"
  attach partition "CHILD_INDEX"   #
+
+alter table ... detach partition  #Use a weaker lock that allow concurrent read|writes
+ ... concurrently                 #Cannot be done inside a transaction, nor if there is a `default` partition
+alter table ... detach partition
+ ... finalize                     #If a previous `concurrently` was canceled, finish it
 
 create table ...
  partition by list ...            #Child TABLE owns ROWs where partition key's value is among VAL,...
@@ -4867,6 +4907,14 @@ VISIBILITY MAP ==>                #Checked before doing index-only scans:
                                   #     - reason: there "might" be uncommitted writes
                                   #  - i.e. index-only scans less frequent on write-heavy TABLEs
 
+HOT ==>                           #"Heap-Only Tuples"
+                                  #Optimization for MVCC where during an `update`:
+                                  #  - INDEX does not need to be updated
+                                  #  - Dead ROWs created by `update` can be removed by any statement (including `select`) instead of only vacuum
+                                  #Only happens if:
+                                  #  - `update` does not modify COLs that are indexed
+                                  #  - there is enough space on the current page
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -5013,6 +5061,27 @@ pg_stat_progress_cluster
  .index_rebuild_count             #NUM of INDEXs rebuilt during 'rebuilding index'
 
 pg_index.indisclustered           #BOOL. Whether `cluster` was last called on INDEX
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:       CONCURRENT INDEX        :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+create index concurrently ...     #Use a weaker lock of TABLE that allow concurrent read|writes
+reindex index concurrently ...    #Can fail: must then either:
+                                  #  - drop INDEX and recreate it
+                                  #  - reindex it
+                                  #Slower.
+                                  #Cannot be:
+                                  #  - in a transaction
+                                  #  - on partitioned TABLEs
+drop index concurrently ...       #Same for `drop`
+                                  #Cannot:
+                                  #  - use `cascase`
+                                  #  - drop multiple INDEXs
 
 
                                              /=+===============================+=\
@@ -5874,23 +5943,63 @@ WAL: bytes=UINT                   #Number of bytes added to WAL
                                              \=+===============================+=/
 
 
-analyze [verbose]                 #Fill in pg_statistic.
- ["TABLE"[("COL"...)]]            #Parameters are like for vacuum.
-                                  #Requires only an access share lock.
-                                  #FOREIGNTABLE are analyzed only when explicitly specified, and not always supported.
-                                  #Should be run before `explain` if lot of change since last time autovacuum did (because based on pg_statistic)
-                                  #Updates pg_class.relpages|reltuples|relallvisible (like vacuum does)
+analyze [(OPTS)]                  #Fill in pg_statistic and pg_class.relpages|reltuples|relallvisible
+ ["TABLE"[("COL",...)]]           #Def TABLEs|COLs: all that user has access to, except FTABLEs
+                                  #FTABLEs are not always supported
+OPTS.verbose
+analyze verbose ...               #Show progress
 
-pg_stat_progress_analyze          #TABLE with ongoing `analyze` statements. ???
+OPTS.skip_locked                  #Like vacuum OPTS.skip_locked, except requiring an `access share` lock
 
-ENVVAR default_statistics_target  #NUM (def: 100, from 0 to 10000). pg_statistic's sample size.
-                                  #pg_statistic only takes a random sample of the ROWs, i.e. approximate.
+pg_stat_progress_analyze          #TABLE with ongoing `analyze` statements.
+pg_stat_progress_analyze.relid    #REGCLASS of TABLE
+pg_stat_progress_analyze.datid    #pg_database.oid of DATABASE
+pg_stat_progress_analyze.datname  #NAME of "DATABASE"
+pg_stat_progress_analyze.pid      #INT4. PID of server
+pg_stat_progress_analyze.phase    #STR among:
+                                  #  - 'initializing'
+                                  #  - 'acquiring sample rows': reading ROWs
+                                  #  - 'acquiring inherited sample rows': reading ROWs of child TABLEs
+                                  #    Columns child_tables_total, child_tables_done, and current_child_table_relid contain the progress information for this phase.
+                                  #  - 'computing statistics'
+                                  #  - 'computing extended statistics': for `create statistics`
+                                  #  - 'finalizing analyze': updating pg_class.*
+pg_stat_progress_analyze
+ .sample_blks_total               #INT8. Number of heap pages in total
+pg_stat_progress_analyze
+ .sample_blks_scanned             #INT8. Number of heap pages done.
+pg_stat_progress_analyze
+ .ext_stats_total                 #INT8. Number of extended statistics in total
+pg_stat_progress_analyze
+ .ext_stats_computed              #INT8. Number of extended statistics done, during 'computing statistics'
+pg_stat_progress_analyze
+ .child_tables_total              #INT8. Number of child tables in total, during 'acquiring inherited sample rows'
+pg_stat_progress_analyze
+ .child_tables_done               #INT8. Number of child tables done, during 'acquiring inherited sample rows'
+pg_stat_progress_analyze
+ .current_child_table_relid       #OID of the "CHILD_TABLE" being read, during 'acquiring inherited sample rows'
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:         PG_STATISTIC          :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+ENVVAR default_statistics_target  #NUM (def: 100, from 0 to 10000)
+                                  #Number of items in pg_statistic.* COLs that are ARRs
                                   #Higher values are slower but gives better results.
 alter table|index ...
  alter [column] "COL"
- set statistics NUM               #Sets default_statistics_target for a COL. -1 means default
+ set statistics NUM               #Sets default_statistics_target for a COL. -1 means default. 0 means none.
+pg_attribute.attstattarget        #INT4. `set statistics NUM` of that COL
 
-pg_statistic                      #Statistic of an indexed COL, used by the planner to optimize queries.
+COPTS.n_distinct                  #NUM. Explicitly set pg_statistic.stadistinct for a given COL
+COPTS.n_distinct_inherited        #NUM. Same but includes child TABLEs
+
+pg_statistic                      #Statistic of a COL or an index REXPR, used by the planner to optimize queries.
+                                  #Only takes a random sample of the ROWs, i.e. approximate.
 pg_statistic.starelid             #REGCLASS of the TABLE
 pg_statistic.staatnum             #pg_attribute.attnum of the COL
 pg_statistic.stainherit           #BOOL. True if "PARENT_TABLE", i.e. include "CHILD_TABLE" stats
@@ -5921,28 +6030,13 @@ pg_stats.n_distinct               #FLOAT4. Like pg_statistic.stadistinct
 pg_stats.most_common_vals         #ARR of most common values. null if none
 pg_stats.most_common_freqs        #FLOAT4_ARR. Frequencies of most_common_vals. null if none.
 pg_stats.histogram_bounds         #ARR. Percentiles. null if none
+pg_stats.most_common_elems        #ARR. Like most_common_vals but for ARR items. null if COL TYPE is not ARR.
+pg_stats.most_common_elem_freqs   #FLOAT4_ARR. Like most_common_freqs but for ARR items. null if COL TYPE is not ARR.
+                                  #Each value is followed by min|max frequency. Optionally also the frequency of null values.
+pg_stats.elem_count_histogram     #FLOAT4_ARR. Like histogram_bounds but for ARR items. null if COL_TYPE is not ARR
 pg_stats.correlation              #-1 to 1. Statistical correlation between physical locations (ctid) and logical locations (ROW index)
                                   #When close to 0, means index scans will require lots of random access, i.e. expensive
                                   #null if none
-pg_stats.most_common_elems        #ARR. Like most_common_vals but for ARR items. null if COL TYPE is not ARR.
-pg_stats.most_common_elem_freqs   #FLOAT4_ARR. A list of the frequencies of the most common element values, i.e., the fraction of rows containing at least one instance of the given value.
-                                  #Two or three additional values follow the per-element frequencies;
-                                  #these are the minimum and maximum of the preceding per-element frequencies, and optionally the frequency of null elements.
-                                  #(Null when most_common_elems is.)
-pg_stats.elem_count_histogram     #float4[] A histogram of the counts of distinct non-null element values within the values of the column,
-                                  #followed by the average number of distinct non-null elements.
-                                  #(Null for scalar types.)
-
-https://www.postgresql.org/docs/current/planner-stats.html
-
-pg_statistic_ext
-pg_statistic_ext_data
-pg_stats_ext
-pg_stats_ext_exprs                #???
-
-COPTS.n_distinct[_inherited]      #NUM ???
-
-ENVVAR default_statistics_target ???
 
 pg_class.relpages|reltuples       #Set only by analyze, vacuum and some DDL commands like create index
  |relallvisible                   #I.e. estimate only since it might have changed
@@ -5951,7 +6045,11 @@ pg_class.relpages                 #INT4. Size of the file on-disk, in 8KB pages.
 pg_class.reltuples                #FLOAT4. Number of non-dead ROWs
                                   #-1 if VIEW|ROW_TYPE, or if not analyze|vacuum'd yet
 
-pg_attribute.attstattarget int4 attstattarget controls the level of detail of statistics accumulated for this column by ANALYZE. A zero value indicates that no statistics should be collected. A negative value says to use the system default statistics target. The exact meaning of positive values is data type-dependent. For scalar data types, attstattarget is both the target number of “most common values” to collect, and the target number of histogram bins to create.
+Detailed explanation at https://www.postgresql.org/docs/current/planner-stats-details.html ???
+
+create_statistics, pg_statistic_ext, pg_statistic_ext_data, pg_stats_ext, pg_stats_ext_exprs ???
+  - also https://www.postgresql.org/docs/current/planner-stats.html#PLANNER-STATS-EXTENDED
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -6274,7 +6372,6 @@ pg_stat_progress_vacuum.relid     #REGCLASS of TABLE
 pg_stat_progress_vacuum.datid     #pg_database.oid of DATABASE
 pg_stat_progress_vacuum.datname   #NAME of "DATABASE"
 pg_stat_progress_vacuum.pid       #INT4. PID of server
-
 pg_stat_progress_vacuum.phase     #STR among:
                                   #  - 'initializing'
                                   #  - 'scanning heap': read heap, freeze ROWs
@@ -6349,14 +6446,170 @@ TOPTS.toast.*autovacuum*          #Same but only for pg_toast_OID TABLE
 
                                              /=+===============================+=\
                                             /  :                               :  \
+                                            )==:          TABLE LOCK           :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+lock "TABLE",...                  #Acquire a lock on "TABLE",...
+                                  #Must be inside a transaction:
+                                  #  - released at the end of it
+                                  #  - must be at beginning of transaction if `repeatable read` or `serializable`
+                                  #Automatically done by SQL commands
+
+lock ... nowait                   #When lock cannot be acquired, prints an error and rollback the transaction,
+                                  #instead of waiting
+
+lock ... in access exclusive mode #Do not allow any other locks
+                                  #For commands that prevent others to read data
+                                  #In general because they delete|re-create ENTITYs: drop table, truncate, reindex, cluster, vacuum full
+                                  #Default mode
+lock ... in exclusive mode        #Allow other locks if access share
+                                  #For commands that prevent others to `select ... for ...`
+lock ...                          #Allow other locks if access|row share
+ in share row exclusive mode      #For commands that prevent others to write|delete data
+lock ... in share mode            #Same as `share row exclusive` except allow other locks to be `share`
+lock ...                          #Allow other locks if access|row share or row exclusive
+ in share update exclusive mode   #For commands that change DDLs, such as vacuum|analyze, comment
+lock ... in row exclusive mode    #For commands that write|delete data
+lock ... in row share mode        #For `select ... for ...`
+lock ... in access share mode     #For commands that read data
+
+ENVVAR lock_timeout               #NUM (in ms, def: 0). Max amount of time to wait for a lock
+ENVVAR deadlock_timeout           #INT (in ms, def: 1000). After that amount of times, check for deadlocks.
+                                  #If a deadlock is detected, abort those transactions.
+                                  #Should be higher than the average time for a transaction, because deadlock
+                                  #check is slow, and to allow ending transactions to resolve locks.
+ENVVAR max_locks_per_transaction  #NUM (def: 64). Max locks per transaction
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:           ROW LOCK            :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+select ... for ...                #Acquire a lock on TABLE ROWs
+                                  #Acquired|released inside a transaction, like TABLE locks
+                                  #  - i.e. not only for the specific `select` statement
+                                  #Cannot use union|intersect|except
+select ... for ... of "TABLE",... #Which TABLE to lock. Def: all in the select statement
+
+select ... for ... nowait         #Like lock ... nowait
+
+select ... for update             #Prevent ROWs from being deleted|updated
+                                  #Do not allow any other ROW locks
+                                  #For commands that write those ROWs, such as `delete`, or `update` on unique COLs
+select ... for no key update      #Prevent ROWs from being deleted|updated
+                                  #Allow `for key share` locks
+                                  #For commands that write those ROWs, but `update` are on non-unique COLs,
+                                  #such as `update` on non-unique COLs
+select ... for share              #Prevent ROWs from being deleted|updated
+                                  #For commands that read those ROWs, including non-unique COLs
+select ... for key share          #Prevent ROWs from being deleted, or `update` on unique COLs
+                                  #For commands that read those ROWs, but only unique COLs
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:         ADVISORY LOCK         :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+pg_advisory_lock(INT8)            #Acquire an advistory lock, i.e. lock linked to an ID (INT8)
+                                  #Cannot be done several times, which requires several unlocks then
+pg_advisory_unlock(INT8)->BOOL    #false if there was no lock
+                                  #Automatically done at end of session
+pg_advisory_unlock_all()          #
+
+pg_try_advisory_*(INT8)->BOOL     #If cannot be acquired, return false instead of waiting
+
+pg_advisory_xact_*(INT8)          #Automatically release at end of transaction, instead of session
+
+pg_advisory_*_shared(INT8)        #Allow other lock_shared() (but not other lock())
+pg_advisory_unlock_shared(INT8)   #
+
+pg_advisory_*(INT4, INT4)         #Same with two INT4s instead of a INT8
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:          LIST LOCKS           :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+pg_locks                          #TABLE with all locks
+                                  #Most of them are null if not relevant for the given locktype
+
+pg_locks.locktype                 #Lock type among:
+                                  #  - relation: TABLE lock
+                                  #  - tuple: ROW lock
+                                  #  - advisory: pg_advisory*
+                                  #Those others are mostly internal:
+                                  #  - object: ENTITY
+                                  #  - extend: add a COL to a TABLE
+                                  #  - spectoken: inserting a ROW
+                                  #  - frozenid: setting pg_database.datfrozenxid|datminmxid
+                                  #  - page: heap page
+                                  #  - transactionid: wait for a transaction to end
+                                  #  - virtualxid
+                                  #  - userlock
+
+pg_locks.granted                  #BOOL. Whether lock is held, as opposed to awaited.
+pg_locks.waitstart                #TIMESTAMPTZ. When starting waiting for lock
+pg_locks.fastpath                 #BOOL. Whether lock was cached
+
+pg_locks.pid                      #INT4. PID of server process
+pg_locks.database                 #pg_database.oid of the DATABASE
+                                  #0 if shared object
+
+pg_locks.relation                 #pg_class.oid of the TABLE being locked
+pg_locks.mode                     #STR. Lock mode if locktype 'relation|tuple'
+pg_locks.page                     #INT4. Heap page number
+pg_locks.tuple                    #INT2. Index ROW being locked within its heap page
+pg_locks.classid
+pg_locks.objid
+pg_locks.objsubid                 #Same syntax as pg_depend.*, but for ENTITY with locktype 'object'
+pg_locks.virtualxid               #STR. Virtual ID if locktype 'virtualxid'
+pg_locks.virtualtransaction       #STR. Virtual ID of the other transaction
+pg_locks.transactionid            #XID of transaction, if locktype 'transactionid'
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
                                             )==:          CONCURRENCY          :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
-SESSION ==>                       #Series of commands in a specific client connection to the server
-                                  #E.g. interactive prompt
-                                  #Only one DATABASE per SESSION
+SINGLE STATEMENTS ==>             #Statements not in a transaction are handled like a single-statement commited transaction
+
+begin
+start transaction                 #Start a transaction
+commit                            #End a transaction
+rollback                          #End a transaction, but cancel any statements within it
+
+savepoint LABEL
+rollback to savepoint LABEL       #Inside a transaction block, rollback to LABEL go back to the state where savepoint LABEL was (and
+                                  #releases all savepoint LABEL that might have been defined after it).
+release savepoint LABEL           #Delete a savepoint
+
+prepare transaction STR           #Do a two-phase commit:
+                                  #  - transaction is temporary rollbacked (except the ENVVAR changes) and will only be committed once
+                                  #    commit prepared STR is done
+                                  #  - commit|rollback prepared STR can be done by other clients (not inside a transaction), if same ROLE
+                                  #    or superuser ROLE.
+                                  #    So goal is to have a single client managing the transaction of other clients
+                                  #    ("transaction management system")
+                                  #STR must be unique, and less than 200 bytes
+                                  #Transaction must not involve notify|[un]listen, TEMP nor CURSOR with hold
+                                  #ENVVAR max_prepared_transactions (def: 0, so disabled) is available. Is set, should be
+                                  #max_connections * number of prepared_transactions per connection
+
+pg_prepared_xacts                 #All "prepare transaction STR". ???
 
 CONCURRENCY ==>                   #Uses Multiversion Concurrency Control (MVCC) instead of traditional locks, for best performance
                                   #while still reliable:
@@ -6367,48 +6620,39 @@ CONCURRENCY ==>                   #Uses Multiversion Concurrency Control (MVCC) 
                                   #  - if several statements need to be "write all or nothing", use transactions:
                                   #      - if the state being read can be changed by other clients in the middle of the transaction
                                   #        without problems, use read committed statements
-                                  #      - otherwise, use serializable statements, but then if abort, must redo the transaction.
-                                  #        Client software usually notify of transaction failures: in such case, client needs to send
-                                  #        the request again.
-                                  #      - in all cases, put as read only if possible, and deferrable when it's a long operation.
+                                  #      - otherwise, use serializable statements, but then if abort, must redo the transaction
+                                  #      - in all cases, put as read only if possible, and deferrable when it's a long operation
                                   #  - otherwise, transactions are not needed: operations are atomic and ask for the relevant blocking
                                   #    locks, so no concurrency problem (are actually atomic transactions)
-                                  #When asking for locks:
-                                  #  - Transaction asking for locks will wait ENVVAR lock_timeout (def: 0, in ms) before cancelling,
-                                  #    and ENVVAR deadlock_timeout (def: 1s) before checking if there is a deadlock (in which case it
-                                  #    is cancelled)
-                                  #  - all transactions cannot exceed an average of ENVVAR max_[pred_]locks_per_transaction (def: 64)
-                                  #    predicate or not-predicate locks.
+                                  #All transactions cannot exceed an average of ENVVAR max_pred_locks_per_transaction (def: 64) predicate locks
                                   #FUNC():
                                   #  - always a single read commited transaction, acquiring locks
-                                  #     - begin block of PL/PGSQL is logic-wise, not used for concurrency
                                   #  - finer concurrency control is only at SQL level, so need wrap FUNC() call in a SQL transaction
-start transaction                 #Start a transaction (ends with rollback|commit), statements are only committed to the database at the
+begin                             #Start a transaction (ends with rollback|commit), statements are only committed to the database at the
 [isolation level WORD,]           #end of the transaction (but "appear" committed locally inside the statement)
 [read write|only,]                #A transaction that has any statement with an error will abort (rollback when committed).
 [[not] deferrable]                #WORD can be read committed, repeatable read or serializable.
                                   #Effects of WORD, for W2 -> R1 or W1 (same rows, 1 and 2 are transactions)
-                                    +-------------------------------------------+-------------------------------------------+
-                                    |                  W2 -> R1                 |                  W2 -> W1                 |
-+-----------------------------------+-------------------------------------------+-------------------------------------------+
-| atomic or committed transaction 1 |                                    No problems                                        |
-| atomic or committed transaction 2 |                                                                                       |
-+-----------------------------------+-------------------------------------------+-------------------------------------------+
-| ongoing transaction 1             |                                           | read committed: ignores W2                |
-| ongoing transaction 2             |                                           | non read committed: aborts (will rollback)|
-+-----------------------------------+                 ignores W2                +-------------------------------------------+
-| atomic or committed transaction 1 |                                           |                  blocks                   |
-| ongoing transaction 2             |                                           |                                           |
-+-----------------------------------+-------------------------------------------+-------------------------------------------+
-| ongoing transaction 1             | non read committed and R1 -> W2 -> R1:    | non read committed and R1 -> W2 -> W1:    |
-| atomic or committed transaction 2 |  ignores W2                               |  aborts (will rollback)                   |
-|                                   | else:                                     | else:                                     |
-|                                   |  takes W2 into account                    |  takes W2 into account                    |
-+-----------------------------------+-------------------------------------------+-------------------------------------------+
+                          +-------------------------------------------+-------------------------------------------+
+                          |                  W2 -> R1                 |                  W2 -> W1                 |
++-------------------------+-------------------------------------------+-------------------------------------------+
+| committed transaction 1 |                                    No problems                                        |
+| committed transaction 2 |                                                                                       |
++-------------------------+-------------------------------------------+-------------------------------------------+
+| ongoing transaction 1   |                                           | read committed: ignores W2                |
+| ongoing transaction 2   |                                           | non read committed: aborts (will rollback)|
++-------------------------+                 ignores W2                +-------------------------------------------+
+| committed transaction 1 |                                           |                  blocks                   |
+| ongoing transaction 2   |                                           |                                           |
++-------------------------+-------------------------------------------+-------------------------------------------+
+| ongoing transaction 1   | non read committed and R1 -> W2 -> R1:    | non read committed and R1 -> W2 -> W1:    |
+| committed transaction 2 |  ignores W2                               |  aborts (will rollback)                   |
+|                         | else:                                     | else:                                     |
+|                         |  takes W2 into account                    |  takes W2 into account                    |
++-------------------------+-------------------------------------------+-------------------------------------------+
                                   #Summary:
                                   #  - read committed (def):
                                   #    - ignores other ongoing transactions, but takes into account changes by committed transactions
-                                  #      or atomic statements
                                   #    -> see state for the current statement
                                   #  - repeatable read:
                                   #    - ignores other ongoing transactions, including changes, unless it conflicts, in which case
@@ -6422,7 +6666,7 @@ start transaction                 #Start a transaction (ends with rollback|commi
                                   #       while still avoiding blocking locks to achieve it.
                                   #Others:
                                   #  - read write|only (def: read write):
-                                  #     - read only allow further concurrency optimization
+                                  #     - read only allows further concurrency optimization
                                   #     - read only can still write to TEMP
                                   #  - deferrable (def: not deferrable):
                                   #     - if serializable and read only, blocks until sees no chance of being cancelled, then go on.
@@ -6447,109 +6691,6 @@ set transaction ...               #Changes isolation level, etc. (same as start 
 set session
 characteristics                   #Same but for all future transactions.
 as transaction ...                #Same as setting ENVVAR default_transaction_isolation|read_only|deferrable
-rollback|commit                   #Finishes a transaction.
-                                  #For rollback, actions are actually dropped (nothing happens).
-savepoint LABEL
-rollback to savepoint             #Inside a transaction block, rollback to LABEL go back to the state where savepoint LABEL was (and
-LABEL                             #releases all savepoint LABEL that might have been defined after it).
-release savepoint LABEL           #Delete a savepoint
-
-prepare transaction STR           #Do a two-phase commit:
-                                  #  - transaction is temporary rollbacked (except the ENVVAR changes) and will only be committed once
-                                  #    commit prepared STR is done
-                                  #  - commit|rollback prepared STR can be done by other clients (not inside a transaction), if same ROLE
-                                  #    or superuser ROLE.
-                                  #    So goal is to have a single client managing the transaction of other clients
-                                  #    ("transaction management system")
-                                  #STR must be unique, and less than 200 bytes
-                                  #Transaction must not involve notify|[un]listen, TEMP nor CURSOR with hold
-                                  #ENVVAR max_prepared_transactions (def: 0, so disabled) is available. Is set, should be
-                                  #max_connections * number of prepared_transactions per connection
-
-pg_prepared_xacts                 #All "prepare transaction STR". ???
-
-lock "TABLE" ...                  #Put a blocking lock on "TABLE"... among several mode WORD, and release at end of current transaction:
-[in WORD mode] [nowait]           #  - should do it at beginning of transaction if repeatable read or serializable.
-                                  #  - locks goal is to conflict with each other
-                                  #  - prefer predicate locks
-                                  #If can't access lock:
-                                  #  - if nowait, only emits error
-                                  #  - otherwise, transaction will be rollbacked
-                                  #WORD are:
-                                  #  - access exclusive (commands that erase data): block everything
-                                  #  - exclusive: let up to access share
-                                  #  - share row exclusive: let up to row share
-                                  #  - share update exclusive (commands that change schemas (clean/analyze/optimize data/alter)): let up
-                                  #    to row exclusive
-                                  #  - row exclusive (commands that write data)
-                                  #  - row share (select for update/share)
-                                  #  - access share (commands that read data)
-select ... for update             #Gets an access exclusive lock on the rows in ... for "TABLE" (def: all), released at end of transaction
-[of "TABLE"...] [nowait]          #(not statement). Cannot use union, intersect or except.
-select ... for share
-[of "TABLE"...] [nowait]          #Same for share row exclusive
-
-pg_locks                          #All currently held locks. ???
-
-pg_[try_]advisory_                #Gets a lock linked to a ID BIGINT:
-[xact_]lock[_shared]              #  - can be "_shared" or not (block lock() attempts, but not lock_shared() attempts)
-(BIGINT)                          #  - session-level (stops at unlock() or at end of session)
-                                  #    - if "xact_" transaction-level (stops at end of transaction only)
-                                  #  - If "try_", only returns false/true but no block if can't get the lock.
-                                  #  - can lock several times (needs to unlock several times)
-pg_advisory_unlock
-[_shared](BIGINT)                 #Returns true if such lock existed.
-pg_advisory_unlock_all()          #
-
-set constraints                   #Change the initially deferred|immediate state of CONSTRAINT... (def: all) within the current
-all|CONSTRAINT...                 #transaction.
-deferred|immediate                #CONSTRAINT can be declared (including during create table ...)
-                                  #  - initially immediate (def): constraints are checked at each statement.
-                                  #  - initially deferred: at each end of transaction (except not null and check())
-                                  #  - not deferrable (def: deferrable): cannot be initially deferred.
-                                  #Includes previous statements (retroactively), so can fire at specific point in transaction.
-"COL" TYPE ...
- [[not] deferrable]
- [initially deferred|immediate]   #Same for a specific COL_ARG (including multicolumn)
-alter table "TABLE"
- alter constraint "CONSTRAINT"
- [[not] deferrable]
- [initially deferred|immediate]   #Same for foreign key CONSTRAINT
-alter table "TABLE"
- add unique|primary key ...
- [[not] deferrable]
- [initially deferred|immediate]   #Same for unique|primary key CONSTRAINT
-create ... trigger ...
- on "TABLE"|VIEW [from TABLE2]
- [[not] deferrable]
- [initially deferred|immediate]   #Same for a TFUNC
-
-pg_constraint.condeferrable       #BOOL. Whether CONSTRAINT is deferrable
-pg_constraint.condeferred         #BOOL. Whether CONSTRAINT is deferred by defaul
-
-alter table ... detach partition
- ... [concurrently|finalize]      #
-
-create index concurrently ...     #Instead of using an exclusive lock, await conflicting transactions for each ROW.
-reindex index concurrently ...    #Can fail: must then either:
-                                  #  - drop INDEX and recreate it
-                                  #  - reindex it
-                                  #Slower.
-                                  #Cannot be:
-                                  #  - in a transaction
-                                  #  - on partitioned TABLEs
-drop index concurrently ...       #Same for `drop`
-                                  #Cannot:
-                                  #  - use `cascase`
-                                  #  - drop multiple INDEXs
-
-HOT ==>                           #"Heap-Only Tuples"
-                                  #Optimization for MVCC that where an `update` does not need to:
-                                  #  - INDEX ROWs can be updated directly instead of creating an intermediary ROW
-                                  #  - TABLE ROWs can be vacuumed during any statement (including `select`)
-                                  #Only happens if:
-                                  #  - `update` does not modify COLs that are indexed
-                                  #  - there is enough space on the current page
 
 
                                              /=+===============================+=\
@@ -7341,7 +7482,7 @@ grant PRIVILEGE...                #Gives permissions PRIVILEGE... on VAR... to R
 on [TYPE] VAR...                  #  - TYPE:
 to ROLE...                        #     - is table (def)|sequence|database|domain|function|language|schema|tablespace|type|
 [with grant option]               #       large object|foreign data wrapper|foreign server
-                                  #         - table include VIEW and FOREIGNTABLE
+                                  #         - table include VIEW and FTABLE
                                   #     - [TYPE] VAR can be all TYPEs in schema SCHEMA for table|sequence|function
                                   #  - PRIVILEGE:
                                   #     - can be:
@@ -8097,6 +8238,10 @@ DATADIR ==>                       #  - base/: databases main data.
                                   #  - global/: cluster-wide data.
                                   #  - pg_xlog/: WAL
                                   #  - pg_log/: logs (see log_directory)
+
+SESSION ==>                       #Series of commands in a specific client connection to the server
+                                  #E.g. interactive prompt
+                                  #Only one DATABASE per SESSION
 
 
                                              /=+===============================+=\
