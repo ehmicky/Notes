@@ -2862,16 +2862,11 @@ pg_class.relpartbound             #PG_NODE_TREE. If is partition's child TABLE, 
 
 create view "VIEW" as SUBQUERY    #VIEW forward statements to SUBQUERY
                                   #Goal: encapsulation
-                                  #Readonly if SUBQUERY uses:
-                                  #  - select VAL that is not select "COL"
-                                  #  - join
-                                  #  - distinct
-                                  #  - group by
-                                  #  - limit|offset
-                                  #  - union|intersect|except
-                                  #  - top-level with
-                                  #  - with (security_barrier)
                                   #Child dependency of anything mentioned in SUBQUERY (e.g. TABLEs)
+
+create view "VIEW"
+ with (VOPTS) ...                 #
+alter view "VIEW" set (VOPTS)     #
 
 create view "VIEW"(COL,...) ...   #Change "COL" names. Omitted COLs keep their names.
 alter view "VIEW"
@@ -2881,9 +2876,22 @@ alter view "VIEW"
  alter [column] "COL"
  drop|set default [VAL]           #Add a `default` CONSTRAINT, forwarded to underlying SUBQUERY
 
-create view "VIEW"
- with (VOPTS) ...                 #
-VOPTS.security_barrier            #Ensure ROWs are not securely hidden when using `where BOOL_REXPR`
+WRITABLE VIEW ==>                 #Possible unless SUBQUERY uses:
+                                  #  - select VAL that is not select "COL"
+                                  #  - join
+                                  #  - distinct
+                                  #  - group by
+                                  #  - limit|offset
+                                  #  - union|intersect|except
+                                  #  - top-level with
+                                  #  - with (security_barrier)
+
+create view "VIEW" ...
+ as SUBQUERY with                 #Reject inserts|updates that do not match VIEW's SUBQUERY, i.e. would not be visible in VIEW
+ [cascaded|local] check option    #Does not work with: `recursive`, `instead of` TFUNCs and `instead` RULEs
+VOPTS.check_option                #If "cascaded", check in parent VIEWs recursively
+
+VOPTS.security_barrier            #Ensure ROWs are securely hidden when using `where BOOL_REXPR`
                                   #Cover channel attacks are still possible
                                   #  - using explain query plans, time of queries, etc.
                                   #  - e.g. to infer size of hidden rows
@@ -6811,7 +6819,8 @@ TOPTS.toast.*autovacuum*          #Same but only for pg_toast_OID TABLE
 
 
 create role "ROLE"                #Create a ROLE, i.e. identity with sets of PRIVILEGEs and ownerships, for a given CLUSTER.
-                                  #Sometimes called "user" too
+create group ...                  #Same as create role ...
+create|alter user ...             #Same as create role ... except `login` is true by default
 
 create|alter role "ROLE"          #Whether the ROLE is superuser:
  [no]superuser                    #  - has all PRIVILEGEs
@@ -6871,6 +6880,8 @@ grant "ROLE",... to "ROLE2",...   #Membership is inherited deeply
 revoke "ROLE",... to "ROLE2",...  #Remove membership
  [restrict|cascade]               #Whether to also removes the related PRIVILEGEs
 
+alter group ...                   #Deprecated alternative syntax
+
 create|alter role "ROLE"          #If inherit (def), members inherit parent ROLE's PRIVILEGEs
  [no]inherit                      #Regardless of [no]inherit, members can switch to parent ROLE
 
@@ -6919,23 +6930,26 @@ set local|session role|session ...#Same as set local|session ENVVAR ...
                                              \=+===============================+=/
 
 
-                                  #ROLE owns ENTITYs they create.
+ENTITY OWNER ==>                  #Def: ROLE that created the ENTITY
+                                  #ROLE has all PRIVILEGEs over their ENTITYs
                                   #ROLE is parent dependency of owned ENTITYs
-                                  #ROLE can only be deleted if it does own any ENTITY
-                                  #Has full PRIVILEGEs over the ENTITYs they create
+                                  #  - cannot `drop cascade`, i.e. can only be deleted if it does own any ENTITY
+                                  #Not for: role, user mapping, text search parser|template
+                                  #Always same as TABLE's owner: index, rule, trigger, policy
+                                  #Readonly for: extension
 
-alter ENTITY "ENTITY"             #Set owner
- owner to RROLE                   #Not for ENTITY: extension, group, index, policy, role, rule,
-                                  #text search parser|template, trigger, user, user mapping
-                                  #Also for pseudo-ENTITY: large object OID
-drop owned by ROLE...             #Drop all objects (except cluster-specific objects) owned by ROLE, and
-[restrict|cascade]                #revoke privileges given to ROLE.
+alter ENTITY "ENTITY"             #Change owner
+ owner to RROLE                   #Current ROLE must:
+                                  #  - be RROLE, or a member of it
+                                  #  - have `create` PRIVILEGE on ENTITY's SCHEMA
 reassign owned
-by ROL... to ROLE2                #Change ownership.
+ by RROLE,... to RROLE2           #Same for all ENTITYs owned by RROLE
 
-create schema ["SCHEMA"]          #Set SCHEMA's owner. Def: current_user
- authorization ROLE               #Same ROLE as `alter ... owner to ROLE`
-                                  #Def "SCHEMA": ROLE
+drop owned by RROLE,...           #Drop all ENTITYs owned by RROLE, except cluster-wide ones
+                                  #Also revoke PRIVILEGEs for RROLE on those ENTITYs, including cluster-wide ones
+
+create schema ["SCHEMA"]          #Set SCHEMA's owner
+ authorization RROLE              #Def "SCHEMA": ROLE
 
 pg_namespace.pg_nspowner          #REGROLE of SCHEMA's owner
 pg_type.typowner                  #REGROLE of TYPE's owner
@@ -6995,15 +7009,10 @@ revoke ... restrict|cascade       #If ROLE granted to other ROLE2s:
 
 grant|revoke ... granted by RROLE #Requires current_user to be RROLE
 
-grant ... to public               #Public is an implicit ROLE that any other ROLEs belong to
-revoke ... from public            #Def privileges:
-alter default privileges          #  - connect
- to|from public                   #  - temp
-                                  #  - usage|create on "public" SCHEMA
-                                  #  - execute
-                                  #  - usage on LANGUAGEs
-                                  #Def privileges can be revoked
-                                  #Cannot have `grant` PRIVILEGE
+grant ... to public
+revoke ... from public
+alter default privileges          #Public is an implicit ROLE that any other ROLEs belong to
+ to|from public                   #Cannot have `grant` PRIVILEGE
 
 
                                              /=+===============================+=\
@@ -7014,7 +7023,7 @@ alter default privileges          #  - connect
 
 
 alter default privileges
- grant PRIVILEGE,... on ENTITYs   #Like `grant`, but on default PRIVILEGEs, i.e. ones acquired by owners when creating an ENTITY
+ grant PRIVILEGE,... on ENTITYs   #Like `grant`, but on default PRIVILEGEs: granted by default to non-owners on specific ENTITYs
  to "ROLE",...                    #Only for ENTITYs: tables, sequences, functions|routines, types, schemas
 alter default privileges
  revoke PRIVILEGE,... on ENTITYs
@@ -7025,6 +7034,28 @@ alter default privileges          #Only for ENTITYs created by ROLE
 
 alter default privileges
  in schema "SCHEMA" ...           #Only for ENTITYs created in SCHEMA
+
+PUBLIC DEFAULT PRIVILEGES ==>     #`public` ROLE has default PRIVILEGEs:
+                                  #  - DATABASE: connect, temp
+                                  #  - `public` SCHEMA: usage, create
+                                  #  - TYPE|DOMAIN: usage
+                                  #  - FUNC|PROCEDURE: execute
+                                  #  - LANGUAGEs: usage
+
+pg_default_acl                    #TABLE with default PRIVILEGEs
+pg_default_acl.oid                #OID
+pg_default_acl.defaclrole         #REGROLE
+pg_default_acl.defaclobjtype      #ENTITY among: 'r' (tables), S (sequences), f (functions|routines), T (types), n (schemas)
+pg_default_acl.defaclnamespace    #REGNAMESPACE of ENTITY
+pg_default_acl.defaclacl          #ACLITEM_ARR
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:      PRIVILEGES INITIAL       :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
 
 INITIAL PRIVILEGES ==>            #PRIVILEGEs granted either by initdb, or by `grant` inside an EXTENSION's SQLMAIN
 
@@ -7148,7 +7179,7 @@ usage                             #PRIVILEGE on SEQUENCE, with ACL: U
 
 usage                             #PRIVILEGE on LANGUAGE, with ACL: U
                                   #Create FUNC with this LANGUAGE
-execute                           #PRIVILEGE on FUNCTION|PROCEDURE|ROUTINE, with ACL: X
+execute                           #PRIVILEGE on FUNC|PROCEDURE|ROUTINE, with ACL: X
                                   #Execute FUNC() (including TFUNC())
 
 create                            #PRIVILEGE on TABLESPACE, with ACL: C
@@ -7167,27 +7198,38 @@ usage                             #PRIVILEGE on FSERVER, with ACL: U
                                              \=+===============================+=/
 
 
-aclitem                           #ACLITEM
-                                  #Record ENTITY's PRIVILEGEs, on its pg_catalog.* TABLE
+aclitem                           #TYPE for PRIVILEGEs
+                                  #Some PRIVILEGEs do not have ACLs (see above)
+                                  #Each PRIVILEGE is associated with a CHAR (see above)
                                   #Cannot use < <= > >=
 
-https://www.postgresql.org/docs/15/functions-info.html
-
 '[ROLE]=CHAR.../ROLE2'            #ACLITEM_UNKNOWN
-                                  #ROLE: granted (def: public)
-                                  #ROLE2: granter
-                                  #CHAR: PRIVILEGE (shown above)
-                                  #CHAR* if `grant` PRIVILEGE
-                                  #Default PRIVILEGEs are not shown
+                                  #CHAR: PRIVILEGE
+                                  #CHAR* `grant` PRIVILEGE
+                                  #ROLE: having the PRIVILEGE (def: `public`)
+                                  #ROLE2: granting the PRIVILEGE
+                                  #Does not include default PRIVILEGEs nor owner's PRIVILEGEs
 
+ACLITEM_ARR @> ACLITEM            #At least one ACLITEM has:
+                                  #  - same ROLE[2]
+                                  #  - at least the same PRIVILEGEs
+
+pg_database.datacl                #ACLITEM_ARR of DATABASE
 pg_namespace.aclitem              #ACLITEM_ARR of SCHEMA
-pg_type.typacl                    #ACLITEM_ARR of TYPE
-pg_class.relacl                   #ACLITEM_ARR of RELATION
+pg_type.typacl                    #ACLITEM_ARR of TYPE|DOMAIN
+pg_class.relacl                   #ACLITEM_ARR of TABLE|SEQUENCE
 pg_attribute.attacl               #ACLITEM_ARR of COL
 pg_largeobject_metadata.lomacl    #ACLITEM_ARR of LARGEOBJ
+pg_language.lanacl                #ACLITEM_ARR of LANGUAGE
+pg_proc.proacl                    #ACLITEM_ARR of FUNC|PROCEDURE|ROUTINE
+pg_tablespace.spcacl              #ACLITEM_ARR of TABLESPACE
+pg_foreign_data_wrapper.fdwacl    #ACLITEM_ARR of FDW
+pg_foreign_server.srvacl          #ACLITEM_ARR of FSERVER
 
-pg_default_acl                    #All default privileges. ???
-pg_parameter_acl                  #TABLE with privileges. ???
+pg_parameter_acl                  #TABLE with PRIVILEGEs on ENVVARs
+pg_parameter_acl.oid              #OID
+pg_parameter_acl.parname          #'ENVVAR'
+pg_parameter_acl.paracl           #ACLITEM_ARR
 
 
                                              /=+===============================+=\
@@ -7495,7 +7537,7 @@ pg_extension.extcondition         #'BOOL_REXPR'_ARR of pg_extension_config_dump(
 
 
 load 'FILE'                       #Loads a C library
-                                  #Automatically done by `create function` for a C FUNCTION
+                                  #Automatically done by `create function` for a C FUNC
 ENVVAR shared_preload_libraries   #'DIR,...' that perform `load 'FILE'`. Must omit file .EXT
                                   #Def: none
                                   #Some "C addons" are pre-installed in '$libdir'
@@ -7924,139 +7966,6 @@ regprocedure                      #TYPE alias to OID, to cast pg_proc.oid as "FU
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:            TRIGGER            :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-create [constraint]               #Execute a FUNC for a specific EVENT on "TABLE" or VIEW.
-trigger TFUNC                     #Multiple TFUNC are fired alphabetically.
-before|after|instead              #  - EVENT can be insert|delete|truncate, or update [of "COL"...]
-of EVENT [or EVENT2...]           #    "COL"... means "COL" or "COL2", etc.
-on "TABLE"|VIEW [from TABLE2]     #    Truncate only on before|after and on "TABLE".
-[for each row]                    #  - before|after|instead of is for the constraint checking + the operation itself (row-wise).
-[when (BOOL)]                     #    So before fired even if constraint fails, but not after.
-execute procedure FUNC(STR...)    #    If COMMAND is the one triggering EVENT "for each row":
-                                  #       - before|instead of are executed row-wise according to COMMAND (so next rows in TFUNC see
-                                  #         changes of previous rows by COMMAND)
-                                  #       - after is executed table-wise according to COMMAND (so rows in TFUNC see changes of all rows
-                                  #         by COMMAND)
-                                  #    before|instead of are executed on all rows
-                                  #    instead of can only be on VIEW and cannot use when BOOL. Usually used to modify the underlying
-                                  #    "TABLE" so users can modify VIEW.
-                                  #    Can also use or EVENT2...
-                                  #  - FUNC: any language (e.g. PL/* or C) but not SQL. See doc about TFUNC for those languages.
-                                  #    Must take no arguments (arguments are passed with special variables) and with a trigger return
-                                  #    type, but actually returning:
-                                  #     - "before" + "for each row":
-                                  #        - null: skip further TFUNC and cancel statement (for that row)
-                                  #        - "ROW"|"TABLE" with same structure as new|old (including them):
-                                  #          - modified row: modify new and return it.
-                                  #          - unmodified row: return old|new according to the operation
-                                  #     - otherwise: return null
-                                  #  - for each row: fired for each manipulated row (not fired if no manipulated row), and not once for
-                                  #    all rows.
-                                  #    Necessary for constraint trigger and instead of.
-                                  #    Impossible on non-truncate VIEW.
-                                  #  - constraint: makes it possible to:
-                                  #     - change not deferrable, etc. with set constraints TFUNC deferred|immediate (def: immediate)
-                                  #     - use not deferrable, etc. (same as for CONSTRAINT).
-                                  #    Must be "after" and "for each row".
-                                  #    Can be used to simulate a constraint, in which case an exception should be raised.
-                                  #    Can also use set constraints to fire trigger at specific point during current transaction.
-                                  #  - when (BOOL):
-                                  #     - can use old|new like trigger functions
-                                  #     - BOOL cannot be a subquery.
-                                  #A TFUNC can fire another one ("cascading triggers"), including recursively.
-                                  #Can see current TFUNC depth with pg_trigger_depth()
-                                  #To create a TFUNC notifying of each modification:
-                                  #  - triggered_change_notification([STR]) is a function to use to do notify STR, for each row,
-                                  #    after insert and/or update and/or delete, with payload explaining the modification.
-                                  #  - Trusted postgres extension 'tcn'
-                                  #Auto-dependency child of its TABLE|COL
-alter table "TABLE"               #all|user:
- enable|disable                   #  - not for RULE
- [replica|always]                 #  - same but all include system TRIGGER (enforcing CONSTRAINT), not user
- rule|trigger                     #replica|always:
- RULE|TRIGGER|all|user            #  - def: affects only non-replication sessions (ENVVAR session_replication_role "origin" (def) or
-                                  #    "local")
-                                  #  - replica: affects only replication sessions (session_replication_role "replica")
-                                  #  - always: affects all sessions
-
-pg_trigger                        #All TFUNC. ???
-
-pg_class.relhastriggers           #BOOL. Whether RELATION has TFUNCs
-pg_tables.hastriggers             #BOOL. Whether TABLE has TFUNCs
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:         EVENT TRIGGER         :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-
-create event trigger              #Like TFUNC but EVENT can be DDL not DML:
-EFUNC on EVENT                    #  - ddl_command_start|end: before|after a create, alter or drop (except for cluster-wide objects
-[when tag in (STR...)]            #    and TFUNC|EFUNC)
-execute procedure FUNC()          #  - sql_drop: same but only for drop
-                                  #     - FUNC() can use pg_event_trigger_dropped_objects() which returns a TABLE with one row for
-                                  #       each dropped objects and COL...:
-                                  #        - classid: DATABASE OID
-                                  #        - objid: object OID
-                                  #        - objsubid: e.g. for columns the attnum
-                                  #        - object_type STR
-                                  #        - schema_name STR
-                                  #        - object_name STR
-                                  #        - object_identity STR: SCHEMA.OBJECT name
-                                  #STR... are commands (e.g. 'drop table') to filter EFUNC.
-                                  #FUNC must return have an event_trigger return type, and takes no arguments.
-                                  #Must be superuser.
-alter event trigger
- disable|enable
- [replica|always]                 #
-
-pg_event_trigger                  #All EFUNC. ???
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:             RULE              :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-create [or replace]               #Creates a macro that modifies a command matching EVENT into COMMANDS (add or replace according to
-rule RULE as on EVENT             #"instead"), for "TABLE", when BOOL:
-to "TABLE" [where BOOL]           #  - EVENT:
-do [instead] COMMANDS             #     - select|insert|update|delete
-                                  #     - select must be "instead", non-"where BOOL" and with select COMMAND
-                                  #       (similar to create a VIEW)
-                                  #  - BOOL:
-                                  #     - can refer to old|new."COL" (like triggers)
-                                  #COMMANDS:
-                                  #  - nothing: with "instead", original EVENT is dropped
-                                  #  - COMMAND or (COMMAND;...):
-                                  #     - Must be select|insert|update|delete|notify.
-                                  #     - For insert, the original EVENT is performed before COMMAND, for others after.
-                                  #     - "instead" non-"where BOOL" COMMAND insert|update|delete must be MSUBQUERY
-                                  #       so that calling command can use returning itself.
-                                  #When to use rules:
-                                  #  - VIEW are better than RULE with select EVENT.
-                                  #  - rules are similar to TFUNC, often faster but harder and less flexible.
-                                  #    Prefer triggers unless performance is critical, in which case check if actually faster.
-                                  #Child auto-dependency of its TABLE|COL
-
-pg_rewrite                        #All RULE. ???
-pg_rules                          #Same, but more for user-defined RULE. ???
-
-pg_class.relhasrules              #BOOL. Whether RELATION has RULEs
-pg_tables.hasrules                #BOOL. Whether TABLE has RULEs
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
                                             )==:           OPERATOR            :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -8090,6 +7999,47 @@ regoperator                       #TYPE alias to OID, to cast pg_operator.oid as
 
                                              /=+===============================+=\
                                             /  :                               :  \
+                                            )==:       CUSTOM AGGREGATE        :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+PARTIAL AGGREGATION ==>           #AFUNC which can compute its result in parallel divide-and-conquer
+                                  #I.e. has a combine function to merge intermediary results
+                                  #  - using the same initcond
+                                  #Cannot rely on SET items order
+                                  #Cannot use ZSET, grouping sets, AFUNC(distinct ...) nor AFUNC(... order by ...)
+                                  #Must be marked `parallel safe`
+                                  #Most builtin AFUNCs allow partial aggregation, except for *agg, mode|percentile*, *rank, cume_dist
+
+create aggregate AFUNC            #Creates an AFUNC(COL,...):
+(TYPE...) (sfunc = FUNC,          #  - TYPE are type of each COL.
+stype = TYPE2                     #  - each VAL... of each COL is passed inside successive FUNC(VAL2, VAL...)
+[, finalfunc = FUNC2]             #     - VAL2 is the return value of the last FUNC(), and its type is TYPE2
+[, initcond = STR]                #     - its value in the first FUNC() is TYPE2 STR (typecasting from STR) (def: null)
+)                                 #  - last FUNC can be different if FUNC2(VAL2) is defined: takes only one ARG, and can return any type.
+                                  #  - last VAL2 is returned
+                                  #  - by convention, null should be ignored in FUNC, unless there are only null, where null should be
+                                  #    returned
+
+pg_aggregate                      #All AFUNC. ???
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:              JIT              :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+TO DOCUMENT ??? including:
+  - https://www.postgresql.org/docs/15/jit.html
+  - in `explain`
+
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
                                             )==:      FUNCTIONS LANGUAGES      :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -8099,6 +8049,17 @@ pg_language                       #All activated LANGUAGE, including:
                                   #  - lanpltrusted BOOL: can not access filesystem (so non-superuser can create function)
                                   #    Is false for C, R and SH but true to SQL and PL/PGSQL
                                   #???
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:           TRANSFORM           :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+TO DOCUMENT ??? including:
+  - pg_transform
 
 
                                              /=+===============================+=\
@@ -8355,30 +8316,135 @@ plr_modules                       #TABLE executing plr_modules.modsrc (R code as
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:       CUSTOM AGGREGATE        :==(
+                                            )==:            TRIGGER            :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
-PARTIAL AGGREGATION ==>           #AFUNC which can compute its result in parallel divide-and-conquer
-                                  #I.e. has a combine function to merge intermediary results
-                                  #  - using the same initcond
-                                  #Cannot rely on SET items order
-                                  #Cannot use ZSET, grouping sets, AFUNC(distinct ...) nor AFUNC(... order by ...)
-                                  #Must be marked `parallel safe`
-                                  #Most builtin AFUNCs allow partial aggregation, except for *agg, mode|percentile*, *rank, cume_dist
+create [constraint]               #Execute a FUNC for a specific EVENT on "TABLE" or VIEW.
+trigger TFUNC                     #Multiple TFUNC are fired alphabetically.
+before|after|instead              #  - EVENT can be insert|delete|truncate, or update [of "COL"...]
+of EVENT [or EVENT2...]           #    "COL"... means "COL" or "COL2", etc.
+on "TABLE"|VIEW [from TABLE2]     #    Truncate only on before|after and on "TABLE".
+[for each row]                    #  - before|after|instead of is for the constraint checking + the operation itself (row-wise).
+[when (BOOL)]                     #    So before fired even if constraint fails, but not after.
+execute procedure FUNC(STR...)    #    If COMMAND is the one triggering EVENT "for each row":
+                                  #       - before|instead of are executed row-wise according to COMMAND (so next rows in TFUNC see
+                                  #         changes of previous rows by COMMAND)
+                                  #       - after is executed table-wise according to COMMAND (so rows in TFUNC see changes of all rows
+                                  #         by COMMAND)
+                                  #    before|instead of are executed on all rows
+                                  #    instead of can only be on VIEW and cannot use when BOOL. Usually used to modify the underlying
+                                  #    "TABLE" so users can modify VIEW.
+                                  #    Can also use or EVENT2...
+                                  #  - FUNC: any language (e.g. PL/* or C) but not SQL. See doc about TFUNC for those languages.
+                                  #    Must take no arguments (arguments are passed with special variables) and with a trigger return
+                                  #    type, but actually returning:
+                                  #     - "before" + "for each row":
+                                  #        - null: skip further TFUNC and cancel statement (for that row)
+                                  #        - "ROW"|"TABLE" with same structure as new|old (including them):
+                                  #          - modified row: modify new and return it.
+                                  #          - unmodified row: return old|new according to the operation
+                                  #     - otherwise: return null
+                                  #  - for each row: fired for each manipulated row (not fired if no manipulated row), and not once for
+                                  #    all rows.
+                                  #    Necessary for constraint trigger and instead of.
+                                  #    Impossible on non-truncate VIEW.
+                                  #  - constraint: makes it possible to:
+                                  #     - change not deferrable, etc. with set constraints TFUNC deferred|immediate (def: immediate)
+                                  #     - use not deferrable, etc. (same as for CONSTRAINT).
+                                  #    Must be "after" and "for each row".
+                                  #    Can be used to simulate a constraint, in which case an exception should be raised.
+                                  #    Can also use set constraints to fire trigger at specific point during current transaction.
+                                  #  - when (BOOL):
+                                  #     - can use old|new like trigger functions
+                                  #     - BOOL cannot be a subquery.
+                                  #A TFUNC can fire another one ("cascading triggers"), including recursively.
+                                  #Can see current TFUNC depth with pg_trigger_depth()
+                                  #To create a TFUNC notifying of each modification:
+                                  #  - triggered_change_notification([STR]) is a function to use to do notify STR, for each row,
+                                  #    after insert and/or update and/or delete, with payload explaining the modification.
+                                  #  - Trusted postgres extension 'tcn'
+                                  #Auto-dependency child of its TABLE|COL
+alter table "TABLE"               #all|user:
+ enable|disable                   #  - not for RULE
+ [replica|always]                 #  - same but all include system TRIGGER (enforcing CONSTRAINT), not user
+ rule|trigger                     #replica|always:
+ RULE|TRIGGER|all|user            #  - def: affects only non-replication sessions (ENVVAR session_replication_role "origin" (def) or
+                                  #    "local")
+                                  #  - replica: affects only replication sessions (session_replication_role "replica")
+                                  #  - always: affects all sessions
 
-create aggregate AFUNC            #Creates an AFUNC(COL,...):
-(TYPE...) (sfunc = FUNC,          #  - TYPE are type of each COL.
-stype = TYPE2                     #  - each VAL... of each COL is passed inside successive FUNC(VAL2, VAL...)
-[, finalfunc = FUNC2]             #     - VAL2 is the return value of the last FUNC(), and its type is TYPE2
-[, initcond = STR]                #     - its value in the first FUNC() is TYPE2 STR (typecasting from STR) (def: null)
-)                                 #  - last FUNC can be different if FUNC2(VAL2) is defined: takes only one ARG, and can return any type.
-                                  #  - last VAL2 is returned
-                                  #  - by convention, null should be ignored in FUNC, unless there are only null, where null should be
-                                  #    returned
+pg_trigger                        #All TFUNC. ???
 
-pg_aggregate                      #All AFUNC. ???
+pg_class.relhastriggers           #BOOL. Whether RELATION has TFUNCs
+pg_tables.hastriggers             #BOOL. Whether TABLE has TFUNCs
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:         EVENT TRIGGER         :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+
+create event trigger              #Like TFUNC but EVENT can be DDL not DML:
+EFUNC on EVENT                    #  - ddl_command_start|end: before|after a create, alter or drop (except for cluster-wide objects
+[when tag in (STR...)]            #    and TFUNC|EFUNC)
+execute procedure FUNC()          #  - sql_drop: same but only for drop
+                                  #     - FUNC() can use pg_event_trigger_dropped_objects() which returns a TABLE with one row for
+                                  #       each dropped objects and COL...:
+                                  #        - classid: DATABASE OID
+                                  #        - objid: object OID
+                                  #        - objsubid: e.g. for columns the attnum
+                                  #        - object_type STR
+                                  #        - schema_name STR
+                                  #        - object_name STR
+                                  #        - object_identity STR: SCHEMA.OBJECT name
+                                  #STR... are commands (e.g. 'drop table') to filter EFUNC.
+                                  #FUNC must return have an event_trigger return type, and takes no arguments.
+                                  #Must be superuser.
+alter event trigger
+ disable|enable
+ [replica|always]                 #
+
+pg_event_trigger                  #All EFUNC. ???
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:             RULE              :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+create [or replace]               #Creates a macro that modifies a command matching EVENT into COMMANDS (add or replace according to
+rule RULE as on EVENT             #"instead"), for "TABLE", when BOOL:
+to "TABLE" [where BOOL]           #  - EVENT:
+do [instead] COMMANDS             #     - select|insert|update|delete
+                                  #     - select must be "instead", non-"where BOOL" and with select COMMAND
+                                  #       (similar to create a VIEW)
+                                  #  - BOOL:
+                                  #     - can refer to old|new."COL" (like triggers)
+                                  #COMMANDS:
+                                  #  - nothing: with "instead", original EVENT is dropped
+                                  #  - COMMAND or (COMMAND;...):
+                                  #     - Must be select|insert|update|delete|notify.
+                                  #     - For insert, the original EVENT is performed before COMMAND, for others after.
+                                  #     - "instead" non-"where BOOL" COMMAND insert|update|delete must be MSUBQUERY
+                                  #       so that calling command can use returning itself.
+                                  #When to use rules:
+                                  #  - VIEW are better than RULE with select EVENT.
+                                  #  - rules are similar to TFUNC, often faster but harder and less flexible.
+                                  #    Prefer triggers unless performance is critical, in which case check if actually faster.
+                                  #Child auto-dependency of its TABLE|COL
+
+pg_rewrite                        #All RULE. ???
+pg_rules                          #Same, but more for user-defined RULE. ???
+
+pg_class.relhasrules              #BOOL. Whether RELATION has RULEs
+pg_tables.hasrules                #BOOL. Whether TABLE has RULEs
 
 
                                              /=+===============================+=\
@@ -10275,29 +10341,6 @@ datafiller.py [FILE]              #Script printing commands filling randomly som
 --null FLOAT
 --mangle                          #Sets VAR
 -T                                #Put in a single transaction (normal isolation level)
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:           TRANSFORM           :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-TO DOCUMENT ??? including:
-  - pg_transform
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:              JIT              :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-TO DOCUMENT ??? including:
-  - https://www.postgresql.org/docs/15/jit.html
-  - in `explain`
 
 
                                              /=+===============================+=\
