@@ -16,8 +16,10 @@ TO DOCUMENT:
      - pg_subscription, pg_subscription_rel, pg_stat_subscription, pg_stat_subscription_stats
   - JIT:
      - https://www.postgresql.org/docs/15/jit.html
+     - including in `explain`
   - security labels:
      - pg_[sh]seclabel, pg_seclabels
+  - aclitem
   - all `???`
   - information_schema
 
@@ -152,6 +154,8 @@ U&"VAR2"                          #Make VAR case-sensitive
                                   #VAL is only optional if either:
                                   #  - it has a default value
                                   #  - it has no value, i.e. it is implicitly a BOOL
+                                  #Some commands allow specifying OPTS both in (...) and as keywords
+                                  #  - prefer (...) as keywords tend to be deprecated then
 (VAR [VAL], ...)                  #ZOPTS. Same without = sign
 
 DDL                               #"Data Definition Language"
@@ -180,6 +184,7 @@ OUTPUT ==>                        #Some statements return the NUM of ROWs manipu
 
 
 name                              #TYPE of a "VAR", used internally. 64 bytes string.
+NAME[NUM]                         #'CHAR'
 
 VAR                               #Any identifier
                                   #[[:alnum:]_]+
@@ -204,6 +209,7 @@ VARCHAR|BPCHAR <=-> NAME          #Type casting
 
 
 create schema "SCHEMA"            #Creates a SCHEMA, i.e. namespace inside a DATABASE
+                                  #Dependency parent of the ENTITYs it contains
 
 create schema "SCHEMA"            #Combine create schema + create ENTITYs within that SCHEMA
  create ENTITY ... [,...]         #ENTITY: table, view, index, sequence, trigger
@@ -237,8 +243,9 @@ pg_catalog                        #SCHEMA for system data. "System catalogs"
                                   #  - can be explicitly added to ENVVAR search_path to override priority order
                                   #Sometimes readonly. Should avoid modifying.
                                   #DATABASE-specific unless on cluster-specific ENTITY
+                                  #  - dependency child of DATABASE
 
-PG_NODE_TREE                      #Internal serialized information, specific to pg_catalog.*
+pg_node_tree                      #Internal serialized information TYPE, specific to pg_catalog.*
 pg_get_expr(PG_NODE_TREE,         #Converts PG_NODE_TREE to STR
  TABLE.oid[, BOOL])->STR          #BOOL (def: false) is prettify
 
@@ -246,6 +253,13 @@ information_schema                #SCHEMA for system data
                                   #Unlike pg_catalog, is standard SQL
                                   #Does not contain Postgres-specific information
                                   #Are all VIEWs over pg_catalog.*
+DOMAIN TYPES ==>                  #The following are DOMAIN_TYPEs used only by information_schema
+                                  #All use not null
+sql_identifier                    #NAME_TYPE, COLLATION "C"
+yes_or_no                         #VARCHAR(3)_TYPE, 'YES|NO', COLLATION "C"
+character_data                    #VARCHAR_TYPE, COLLATION "C"
+cardinal_number                   #INT4_TYPE, >= 0
+time_stamp                        #TIMESTAMPTZ_TYPE, default current_timestamp
 
 pg_namespace                      #TABLE with all SCHEMAs
 pg_namespace.oid                  #OID
@@ -303,12 +317,15 @@ create cast ... with inout ...
 create cast ...
  without function ...             #Same but with a 'i|b' castmethod (def: 'f')
 
-pg_type                           #All TYPE, including:
-                                  #  - typispreffered BOOL: if true, is used as the TYPE for the whole typecategory with
-                                  #    overloading functions (def: text for STR, and real for numeric)
-                                  #???
-
-regtype                           #TYPE alias to OID, to cast pg_type.oid as "TYPE" name
+YOPTS.preferred                   #BOOL (def: false). Each YOPTS.category has a single true, which is the preferred type cast.
+pg_type.typispreferred            #Also used as the preferred TYPE in overloaded FUNCs
+                                  #For:
+                                  #  - NUM -> FLOAT8
+                                  #  - STR -> TEXT
+                                  #  - BSTR -> VARBIT
+                                  #  - date|time[stamp][tz] -> TIMESTAMPTZ
+                                  #  - REG* -> OID
+                                  #  - inet|cidr -> INET
 
 
                                              /=+===============================+=\
@@ -317,6 +334,8 @@ regtype                           #TYPE alias to OID, to cast pg_type.oid as "TY
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
+
+FIXED LENGTH TYPES ==>            #Types that do not have a variable length
 
 VARIABLE BOUNDED LENGTH TYPES     #One of:
  ==>                              #  - numeric(...)
@@ -327,7 +346,12 @@ VARIABLE UNBOUNDED LENGTH TYPES   #One of:
  ==>                              #  - numeric
                                   #  - text
                                   #  - bit varying, bytea
-                                  #  - json, xml, hstore
+                                  #  - pg_node_tree
+                                  #  - [MULTI]RANGE_TYPE
+                                  #  - ARR_TYPE
+                                  #  - ROW_TYPE
+                                  #  - any other TYPE built from variable '...': json[b]|jsonpath, xml, hstore,
+                                  #    ltree|l[txt]query, query_int, path|polygon, inet|cidr, tsvector|tsquery
                                   #Max length: 1GB
 
 SIZING CAST ==>                   #Type cast to same type
@@ -335,6 +359,29 @@ SIZING CAST ==>                   #Type cast to same type
                                   #  - failing if too large
                                   #  - padding or truncating
                                   #Usually implicit casting
+
+YOPTS.internallength              #INT2. Number of bytes of a TYPE.
+                                  #Can be `variable` for variable bounded|unbounded TYPE
+pg_type.typlen                    #INT2 of YOPTS.internallength. Can be:
+                                  #  - -2: cstring|unknown
+                                  #  - -1: variable bounded|unbounded TYPE
+
+YOPTS.alignment                   #'CHAR' specifying how many bytes to align the values when stored, i.e. padding them if necessary.
+pg_type.typalign                  #Can be:
+                                  #  - 'c' (1 byte, i.e. no alignment)
+                                  #  - 's' (2 bytes)
+                                  #  - 'i' (4 bytes)
+                                  #  - 'd' (8 bytes, usually)
+                                  #Usually same as YOPTS.internallength for fixed-length TYPEs except:
+                                  #  - no alignment: cstring|unknown, name, uuid
+                                  #  - 2 bytes: tidd
+                                  #For variable length TYPEs:
+                                  #  - ARR|RANGE_TYPE: uses underlying TYPE's alignment
+                                  #  - 8 bytes: ROW_TYPE, PATH|POLYGON
+                                  #  - 4 bytes: all others
+
+YOPTS.passedbyvalue               #BOOL. Whether the TYPE is passed by value or by reference.
+pg_type.typbyval                  #Builtin TYPEs: true if fixed length of 1-8 bytes, except macaddr[8] and tid
 
 
                                              /=+===============================+=\
@@ -375,18 +422,25 @@ alter table "TABLE"
 alter table "TABLE"               #Sets TOAST behavior among:
  alter [column] "COL"             #  - plain
  set storage ENUM                 #     - no out-of-line nor compression
-                                  #     - only possible value for non-variable length TYPEs
+                                  #     - only possible value for fixed length TYPEs
                                   #  - extended:
                                   #     - both out-of-line and compression
-                                  #     - def for variable length TYPEs
+                                  #     - built-in TYPEs: for variable length TYPEs
                                   #  - external:
                                   #     - out-of-line but not compression
                                   #     - i.e. faster computation but more space
                                   #  - main:
                                   #     - no out-of-line but compression
+                                  #     - might still be out-of-line, but only as last resort after extended|external ones
+                                  #     - built-in TYPEs: numeric, inet|cidr
+YOPTS.storage                     #'CHAR' for TOAST behavior for the TYPE
+pg_type.typstorage                #Can be 'p|x|e|m' for plain|extended|external|main
 
 create table "TABLE"              #Do not use out-of-line nor compression for values < UINT bytes
  set (toast_tuple_target = UINT)  #Min: 128, max: 8160, def: 2040 (which is usually good)
+
+OPTS.process_toast                #BOOL (def: true). Whether `vacuum` applies to TOAST TABLEs too
+                                  #Always `on` if `vacuum full`
 
 
                                              /=+===============================+=\
@@ -517,7 +571,12 @@ any*                              #TYPE. "Polymorphic type", i.e. abstract
                                   #Used in FUNCs to represent generic types
 unknown -> any*                   #Not possible
 
-PSEUDO TYPE ==>                   #Any of: any*, unknown, record, cstring, void, [event_]trigger
+cstring                           #TYPE. null-terminated STR
+                                  #Similar to unknown, but meant to use inside FUNCs
+                                  #Does not have any OPs (not even =), not used in FUNCs|COLs, but can be cast
+CSTR <~=> STR                     #
+
+PSEUDO-TYPE ==>                   #Any of: any*, unknown, record, cstring, void, [event_]trigger, internal, *_handler, pg_ddl_command
 
 
                                              /=+===============================+=\
@@ -663,7 +722,7 @@ INT2 <=-> INT4 <=-> INT8
  <=-> NUMERIC                     #When cast as smaller TYPE, fails if beyond max size.
  <=-> FLOAT4 <=-> FLOAT8          #When cast from FLOAT to INT, rounds nearest, then towards 0
 
-money                             #TYPE. Like numeric(Infinity, 2)
+money                             #TYPE. Like numeric(Infinity, 2). 8-byte long
                                   #Max value: 1e17
 MONEY <=> NUMERIC
 INT4|8 => MONEY                   #Type cast
@@ -916,6 +975,7 @@ ENUM_TYPE                         #Each enum has its own TYPE
 anyenum                           #TYPE. Any ENUM_TYPE
 
 '...'                             #ENUM_VAL_UNKNOWN
+ENUM_VAL                          #4-byte long
 
 create type "ENUM_TYPE"
  as enum(ENUM_VAL...)             #Arguments list decides ordering
@@ -1056,13 +1116,13 @@ uniq(INT4_ARR)->INT4_ARR          #Remove duplicates. Must be first sorted
                                              \=+===============================+=/
 
 
-date                              #TYPE
+date                              #TYPE. 4 bytes-long
 'YYYY-MM-DD'                      #DATE_UNKNOWN
 
-time                              #TYPE
+time                              #TYPE. 8 bytes-long
 'HH:MM:SS[.SSSSSS]'               #TIME_UNKNOWN
 
-timestamp                         #TYPE
+timestamp                         #TYPE. 8 bytes-long
 'DATE TIME'                       #TIMESTAMP_UNKNOWN
 
 TIME[TZ] <= TIMESTAMP[TZ]         #Type cast, removing DATE
@@ -1167,7 +1227,7 @@ TIME[STAMP][TZ] at time zone 'TZ' #TIME[STAMP]TZ
                                              \=+===============================+=/
 
 
-interval [PERIOD [to PERIOD2]]    #TYPE
+interval [PERIOD [to PERIOD2]]    #TYPE. 16-byte long
                                   #PERIOD is year|month|day|hour|minute|second (def: any)
 
 TIME <=-> INTERVAL                #Type cast
@@ -1245,7 +1305,7 @@ normal_rand(INT, FLOAT, FLOAT2)   #INT random variables following N(FLOAT, FLOAT
                                              \=+===============================+=/
 
 
-uuid                              #TYPE
+uuid                              #TYPE. 16-byte long
                                   #Trusted postgres extension 'uuid-ossp'
 'nnnn-nnnn-nnnn-nnnn-nnnn-
  nnnn-nnnn-nnnn'                  #UUID_UNKNOWN. Dashes all optional
@@ -1544,25 +1604,30 @@ trunc(MACADDR[8])->MACADDR[8]     #Put second half as 00
                                              \=+===============================+=/
 
 
-point                             #TYPE
+point                             #TYPE. 16-byte long
 '(NUM,NUM2)'                      #POINT_UNKNOWN
+POINT[0|1]                        #NUM[2]
 
-line                              #TYPE. Infinite LINE
+line                              #TYPE. Infinite LINE. 24-byte long
 '((NUM,NUM2),(NUM3,NUM4))'        #LINE_UNKNOWN
 '{NUM,NUM2,NUM3}'                 #LINE_UNKNOWN as NUMx + NUM2y + NUM3
+LINE[0|1|2]                       #NUM[2|3]
 
-lseg                              #TYPE. Segment LINE
+lseg                              #TYPE. Segment LINE. 32-byte long
 '((NUM,NUM2),(NUM3,NUM4))'        #LSEG_UNKNOWN
+LSEG[0|1]                         #POINT
 
-box                               #TYPE. Rectangle.
+box                               #TYPE. Rectangle. 32-byte long
 '((NUM,NUM2),(NUM3,NUM4))'        #BOX_UNKNOWN (diagonal)
+'{(...);...}'                     #BOX_ARR_UNKNOWN must use ;
+BOX[0|1]                          #POINT
 
 path                              #TYPE
 polygon                           #TYPE. Like closed PATH
 '((NUM,NUM2)...)'                 #Closed PATH_UNKNOWN
 '[(NUM,NUM2)...]'                 #Open PATH_UNKNOWN
 
-circle                            #TYPE
+circle                            #TYPE. 32-byte long
 '<(NUM,NUM2),NUM3>'               #CIRCLE_UNKNOWN
 
 POINT <~ LSEG <~ BOX
@@ -1694,7 +1759,7 @@ unnest(MULTIRANGE)->RANGE_SET     #
 
 
 TYPE[]                            #TYPE2 with 0-n values of same TYPE
-                                  #Dimensions are defined at write-time.
+_TYPE                             #Dimensions are defined at write-time.
                                   #Underlying TYPE can be another ARR for multidimensional ARRs.
                                   #1-based indices
                                   #Max length 1.3e8
@@ -1760,6 +1825,21 @@ array_remove(ARR, VAL)->ARR       #Filter out any element = VAL
                                   #ARR must be one-dimensional
 array_replace(ARR, VAL, VAL2)->ARR#Same but replace with VAL2
 
+YOPTS.subscript                   #FUNC implementing VAL[NUM] for any given TYPE
+pg_type.typsubscript              #Common ones:
+                                  #  - array_subscript_handler: ARR_TYPEs
+                                  #  - raw_array_subscript_handler: NAME, POINT|LINE|LSEG|BOX
+                                  #  - jsonb_subscript_handler: JSONB
+                                  #  - hstore_subscript_handler: HSTORE
+
+YOPTS.element                     #Underlying TYPE of an ARR_TYPE, if it is an ARR_TYPE
+pg_type.typelem                   #Not set if underlying type is not known (e.g. JSONB|HSTORE)
+
+pg_type.typarray                  #PGTYPE of a TYPE, i.e. inverse of pg_type.typelem. 0 if none
+
+YOPTS.delimiter                   #'CHAR' (def: ',') used in '{...}' ARR_UNKNOWN for a given TYPE
+pg_type.typdelim                  #Builtin TYPEs: ',' for all except ';' for BOX
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -1813,6 +1893,8 @@ alter type "ROW"
 ROW = <> ROW2                     #BOOL. Done deeply
                                   #Must have same amount of COLs, but names do not need to match
 ROW < <= > >= ROW2                #BOOL, with first COL compared first, etc.
+
+pg_type.typrelid                  #REGCLASS of a ROW_TYPE. 0 if not ROW_TYPE
 
 
                                              /=+===============================+=\
@@ -1906,6 +1988,14 @@ alter domain "TYPE"
  [if exists] "CONSTRAINT"
  [restrict|cascade]               #
 
+pg_type.typbasetype               #REGTYPE of underlying TYPE of DOMAIN_TYPE. 0 if not DOMAIN_TYPE
+pg_type.typtypmod                 #INT4 passed to underlying TYPE(INT4) of DOMAIN_TYPE
+                                  #0 if not DOMAIN_TYPE, or if underlying TYPE is not variable bounded
+pg_type.typndims                  #INT4. Number of dimensions of underlying ARR_TYPE of DOMAIN_TYPE
+                                  #0 if not DOMAIN_TYPE, or if underlying TYPE is not ARR_TYPE
+pg_type.typdefaultbin             #PG_NODE_TREE of the default value, if using DOMAIN_TYPE
+pg_type.typnotnull                #BOOL. `not null` on DOMAIN_TYPE. 0 if not DOMAIN_TYPE
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -1914,10 +2004,72 @@ alter domain "TYPE"
                                              \=+===============================+=/
 
 
-create type TYPE(OPTS)            #Creates user-defined TYPE, based on C functions
-                                  #Not documented yet
-OPTS.input                        #FUNC
-OPTS.ouput                        #FUNC2
+BASE TYPE ==>                     #Non-user-defined TYPE
+                                  #Includes any "_TYPE"
+
+create type TYPE(YOPTS)           #Creates user-defined TYPE, based on C functions
+                                  #Not fully documented yet
+
+YOPTS.category                    #'CHAR' among:
+                                  #  - 'B': BOOL
+                                  #  - 'N': NUM (or OID-like)
+                                  #  - 'S': STR|NAME
+                                  #  - 'Z': char, pg_node_tree
+                                  #  - 'V': BSTR
+                                  #  - 'D': date|time[stamp][tz]
+                                  #  - 'T': INTERVAL
+                                  #  - 'A': ARR_TYPE
+                                  #  - 'G': point|line|lseg|box|polygon|path|circle
+                                  #  - 'I': inet|cidr
+                                  #  - 'U': user-defined (including tid|cid|xid|xid8, bytea, EXTENSION TYPEs like json, etc.)
+                                  #  - 'E': ENUM_TYPE
+                                  #  - 'R': [MULTI]RANGE_TYPE
+                                  #  - 'C': ROW_TYPE
+                                  #  - 'P': pseudo-type
+                                  #  - 'X': unknown
+                                  #Def: 'U'
+
+YOPTS.default                     #VAL assigned as default value
+
+YOPTS.like                        #TYPE2
+
+YOPTS.input                       #FUNC
+YOPTS.ouput                       #FUNC
+YOPTS.receive                     #FUNC
+YOPTS.send                        #FUNC
+YOPTS.typemod_in                  #FUNC
+YOPTS.typemod_out                 #FUNC
+YOPTS.analyze                     #FUNC
+
+pg_type                           #TABLE with all TYPEs
+pg_type.oid                       #OID
+pg_type.typname                   #"TYPE" name
+pg_type.typnamespace              #REGNAMESPACE of "SCHEMA"
+pg_type.typowner                  #REGROLE of owner
+pg_type.typtype                   #'CHAR' among:
+                                  #  - 'b': base TYPE (typcategory 'B|N|S|Z|V|D|T|A|G|I|U')
+                                  #  - 'e': ENUM_TYPE (typcategory 'E')
+                                  #  - 'r': RANGE_TYPE (typcategory 'R')
+                                  #  - 'm': MULTIRANGE_TYPE (typcategory 'R')
+                                  #  - 'd': DOMAIN_TYPE (uses underlying TYPE's typcategory)
+                                  #  - 'c': ROW_TYPE (typcategory 'C')
+                                  #  - 'p': pseudo-type (typcategory 'P|X')
+pg_type.typcategory               #'CHAR' of YOPTS.category
+pg_type.typdefault                #STR of YOPTS.default. Can be:
+                                  #  - null: none
+                                  #  - VAL: if `create type` was used
+                                  #  - 'EXPR': with DOMAIN_TYPE
+pg_type.typinput                  #REGPROC of YOPTS.input
+pg_type.typoutput                 #REGPROC of YOPTS.output
+pg_type.typreceive                #REGPROC of YOPTS.receive. 0 if none.
+pg_type.typsend                   #REGPROC of YOPTS.send. 0 if none.
+pg_type.typmodin                  #REGPROC of YOPTS.typemod_in. 0 if none.
+pg_type.typmodout                 #REGPROC of YOPTS.typemod_out. 0 if none.
+pg_type.typanalyze                #REGPROC of YOPTS.analyze. 0 if none.
+pg_type.typisdefined              #BOOL. Temporarily set to false while `create type` is ongoing.
+pg_type.typacl                    #ACLITEM_ARR
+
+regtype                           #TYPE alias to OID, to cast pg_type.oid as "TYPE" name
 
 
                                              /=+===============================+=\
@@ -1972,39 +2124,43 @@ alter ENTITY ... set (OPTS)       #Sets OPTS after creation
 alter ENTITY ...                  #Sets OPTS to default value
  reset (OPTS.VAR,...)             #Not with ENTITY: publication|subscription
 
-drop ENTITY                       #Delete an ENTITY
- [if exists]                      #Unless set, fails if exists
- "ENTITY"
- [restrict|cascade]               #If there are dependent objects
-                                  #  - 'restrict' (def): fail
-                                  #  - 'cascade':
-                                  #     - drop them, recursively
-                                  #     - not allowed for database|tablespace|role|user mapping
-                                  #Dependent objects removed even with 'restrict':
-                                  #  - database: pg_catalog.* entries
-                                  #  - extension: pg_catalog.* entries, routine, table column
-                                  #  - table column: constraint, SEQUENCE, index, rule, trigger
-                                  #Set TABLESPACE2 of all ENTITYs in a given TABLESPACE
-                                  #For ENTITY: table, materialized view, index
-                                  #  - role: role membership
-                                  #  - operator family: operator class
-                                  #Dependent objects removed with 'cascade':
-                                  #  - schema: objects in the SCHEMA
-                                  #  - table: foreign key constraint, inherited child TABLE
-                                  #  - aggregate, [foreign] table, operator, [materialized] view: [materialized] view
-                                  #  - access method, operator class|family, text search configuration: index
-                                  #  - type, domain: table column
-                                  #  - ROW_TYPE: table using `of "ROW_TYPE"`
-                                  #  - type, language: function, operator
-                                  #  - function: operator, trigger
-                                  #  - access method: operator class|family
-                                  #  - foreign data wrapper: foreign table, server
-                                  #  - server: user mapping
-                                  #  - text search dictionary|parser: text search configuration
-                                  #  - text search template: text search dictionary
+drop ENTITY "ENTITY"              #Delete an ENTITY
+drop ENTITY if exists "ENTITY"    #Unless set, fails if exists
 
-pg_[sh]depend                     #TABLE with dependencies between [cluster-wide] objects
-                                  #???
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:         DEPENDENCIES          :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+drop ENTITY ... restrict|cascade  #If there are dependency child objects
+                                  #  - 'restrict' (def): fail
+                                  #  - 'cascade': drop them, recursively
+                                  #     - not allowed for database|tablespace|role|user mapping
+
+pg_[sh]depend                     #TABLE with child|parent dependencies between [cluster-wide] ENTITYs
+pg_[sh]depend.classid             #REGCLASS of a pg_catalog.* "TABLE". Entity type, e.g. pg_type|proc|class|...
+pg_[sh]depend.objid               #OID of the ENTITY within its pg_catalog.* "TABLE"
+pg_[sh]depend.objsubid            #INT4. "COL" number. 0 if classid is not pg_class
+pg_[sh]depend.refclassid
+pg_[sh]depend.refobjid
+pg_[sh]depend.refobjsubid         #Same for the ENTITY it depends on
+pg_shdepend                       #pg_database.oid of DATABASE
+pg_depend.deptype                 #'CHAR' for the type of dependence among:
+                                  #  - 'n' ("normal"): delete child with `cascade`
+                                  #  - 'a' ("auto"): delete child with `cascade|restrict`
+                                  #  - 'i' ("internal"): like 'a', except if child is dropped due to another parent being
+                                  #    deleted, its initial parent is deleted too
+                                  #  - 'P|S' ("partition primary|secondary"): partition CHILD_TABLE
+                                  #  - 'e' ("extension"): EXTENSION direct child
+                                  #  - 'x' ("auto extension"): EXTENSION indirect child
+pg_shdepend.deptype               #'CHAR' for the type of dependence among:
+                                  #  - 'o' ("owner"): ROLE owner child
+                                  #  - 'a' ("ACL"): ROLE mentioned in ACL
+                                  #  - 'r' ("policy"): ROLE mentioned in POLICY
+                                  #  - 't' ("tablespace"): TABLESPACE parent of a TABLE
 
 
                                              /=+===============================+=\
@@ -2064,7 +2220,7 @@ select VALS,...                   #Same as `select ...` but creates "TABLE" inst
 create table ... with (TOPTS)
 alter table ... set (TOPTS)       #"Table storage options"
 
-pg_class                          #All TABLE-like elements: TABLE, VIEW, INDEX, SEQUENCE, MVIEW and ROW
+pg_class                          #All ENTITYs using ROW_TYPEs: TABLE, VIEW, INDEX, SEQUENCE, MVIEW, ROW
                                   #???
 pg_class.relishared               #BOOL. Whether cluster-wide
 pg_class.relhasindexes            #BOOL. Whether has INDEXs
@@ -2095,6 +2251,7 @@ pg_tables.rowsecurity             #pg_class.rel*
 
 
 CONSTRAINT                        #Condition validating udpates, and making them fail if false
+                                  #Auto-dependency child of its COLs
 COL_CONSTRAINT                    #Single-COL CONSTRAINT
 
 alter table "TABLE" add COL_ARG   #
@@ -2294,6 +2451,7 @@ like "TABLE|ROW_TYPE"             #COL_ARG. Copy (not inherit) the ROW_TYPE as C
 create table ...                  #"CHILD_TABLE" inherits from "PARENT_TABLE"
  inherits ("PARENT_TABLE",...)    #Can be deep inheritance
                                   #Can have multiple parents
+                                  #CHILD_TABLE is child dependency of PARENT_TABLE
 
 READING ROWS ==>                  #Reading parent ROWs also reads child ROWs, but not vice-versa
                                   #  - including `select`
@@ -2497,6 +2655,7 @@ create view "VIEW" as SUBQUERY    #VIEW forward statements to SUBQUERY
                                   #  - union|intersect|except
                                   #  - top-level with
                                   #  - with (security_barrier)
+                                  #Child dependency of anything mentioned in SUBQUERY (e.g. TABLEs)
 
 create view "VIEW"(COL,...) ...   #Change "COL" names. Omitted COLs keep their names.
 alter view "VIEW"
@@ -2530,6 +2689,7 @@ pg_views.viewowner                #pg_authid.rolname NAME of owner
 
 
 create materialized view "MVIEW"  #Readonly TABLE that is populated on-demand via a SUBQUERY
+                                  #Child dependency of anything mentioned in SUBQUERY (e.g. TABLEs)
  [("COL",...)]                    #Like create view ...
  [with (TOPTS)]                   #Like create table ...
  as SUBQUERY                      #
@@ -2638,6 +2798,7 @@ alter sequence "SEQUENCE" ...     #Same syntax as create sequence ...
                                   #  - default nextval('SEQUENCE')
                                   #  - not null
                                   #"SEQUENCE" is named 'TABLE_COL_seq'
+                                  #Auto-dependency child of its COL
 
 generated always|by default       #COL_CONSTRAINT. "Identity COL". Same as "COL" *serial, with additional features.
  as identity                      #COL TYPE must be int2|4|8.
@@ -3807,8 +3968,8 @@ OPTS.stopwords                    #Like simple TEMPLATE
                                              \=+===============================+=/
 
 
-create text search
- dictionary "DICTIONARY"(OPTS)    #Create a DICTIONARY, i.e. TEMPLATE with arguments
+create text search                #Create a DICTIONARY, i.e. TEMPLATE with arguments
+ dictionary "DICTIONARY"(OPTS)    #Parent dependency of TEMPLATE
 OPTS.template                     #TEMPLATE
 OPTS.*                            #Arguments to TEMPLATE
 
@@ -3877,6 +4038,7 @@ create text search                #REGCONF, i.e. PARSER + list of DICTIONARYs (f
  configuration "REGCONF"(OPTS)    #Should put:
                                   #  - most specific DICTIONARYs first
                                   #  - DICTIONARY with final TEMPLATE last
+                                  #Parent dependency of PARSER|DICTIONARY
 OPTS.parser                       #"PARSER"
 OPTS.copy                         #"REGCONF2" to copy PARSER + mappings
 
@@ -4400,6 +4562,10 @@ STR collate "COLLATION"           #Sets COLLATION for a single STR
 
 collation for (STR)               #'COLLATION' of STR
 
+YOPTS.collatable                  #BOOL (def: false). Whether TYPE is COLLATION-sensitive.
+                                  #Built-in types: true for STR ("default"), name ("C"), pg_node_tree ("default")
+pg_type.typcollation              #REGCOLLATION of the TYPE. 0 if YOPTS.collatable false. Otherwise set.
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -4419,6 +4585,7 @@ create index "INDEX"              #Create an INDEX
                                   #     - including equivalent ones, e.g. < > -> between, = -> in, ~~ -> like
                                   #Its contents cannot be directly read|write
                                   #REXPR must be purely functional
+                                  #Auto-dependency child of its COL
 
 ENVVAR enable_seqscan             #"Sequential scan". Query that reads ROWs sequentially, without an INDEX
                                   #Fast if:
@@ -4429,11 +4596,12 @@ ENVVAR                            #STR (def: '8MB'). Minimum amount of TABLE ROW
 TOPTS.parallel_workers            #NUM of workers when doing parallel sequential scan
                                   #Def: guessed based on TABLE size
 
-ENVVAR enable_indexscan           #"Index scan". Query using an INDEX
+ENVVAR enable_indexscan           #"[Plain] index scan". Query using an INDEX
                                   #INDEX returns TIDs, which are then used to fetch TABLE ROWs
                                   #Not efficient on query that select only few ROWs out of many
-ENVVAR                            #STR (def: '512kB'). Minimum amount of INDEX ROWs read to consider using a "parallel index scan".
- min_parallel_index_scan_size     #I.e. index scan run in parallel.
+ENVVAR                            #STR (def: '512kB'). Minimum amount of INDEX ROWs read to consider using:
+ min_parallel_index_scan_size     #  - a "parallel index scan"
+                                  #  - a parallel `vacuum`
                                   #ACCESS_METHOD-specific (only some support it)
 
 ENVVAR enable_bitmapscan          #"Bitmap scan". Alternative to index scan.
@@ -4558,7 +4726,37 @@ reindex database "DATABASE"       #Same for the DATABASE's INDEXs
 
 reindex verbose ...               #Prints a progress bar
 
-pg_stat_progress_create_index     #TABLE with ongoing `create index` and `reindex` statements. ???
+pg_stat_progress_create_index     #TABLE with ongoing `create index` and `reindex` statements
+pg_stat_progress_create_index
+ .command                         #'CREATE INDEX|REINDEX [CONCURRENTLY] ...'
+pg_stat_progress_create_index
+ .relid                           #REGCLASS of TABLE
+pg_stat_progress_create_index.
+ index_relid                      #REGCLASS of INDEX. 0 if none
+pg_stat_progress_create_index
+ .datid                           #pg_database.oid of DATABASE
+pg_stat_progress_create_index
+ .datname                         #NAME of "DATABASE"
+pg_stat_progress_create_index.pid #INT4. PID of server
+pg_stat_progress_create_index     #STR among:
+ .phase                           #  - 'initializing'
+                                  #  - 'waiting for writers before build': await concurrent write transactions
+                                  #  - 'building index: SUBPHASE': ACCESS_METHOD build INDEX
+                                  #  - 'waiting for writers before validation': await concurrent write transactions
+                                  #  - 'index validation: ...': only if `create index`
+                                  #     - 'index validation: scanning index': find ROWs to validate
+                                  #     - 'index validation: sorting tuples': sort ROWs to validate
+                                  #     - 'index validation: scanning table': validate ROWs
+                                  #  - 'waiting for old snapshots': await concurrent read transactions
+                                  #  - 'waiting for readers ...': only if `reindex`
+                                  #     - 'waiting for readers before marking dead': await read locks
+                                  #     - 'waiting for readers before dropping': await read locks before `drop`
+                                  #Unless concurrently, only 'initializing' and 'building index'
+current_locker_pid                #INT8. PID of process with a lock being awaited, during 'waiting for ...'
+lockers_done|total                #INT8. NUM of processes locking, during 'waiting for ...'
+blocks_done|total                 #NUM of page heaps processed, during 'building index' and 'index validation: scanning index|table'
+tuples_done|total                 #NUM of ROWs processed, during 'building index'
+partitions_done|total             #NUM of partitions, if partitioned TABLE. 0 during `reindex`
 
 
                                              /=+===============================+=\
@@ -4623,6 +4821,7 @@ pg_stat_progress_cluster
 create                            #Create an "index access method"
  access method "ACCESS_METHOD"    #How a TABLE|INDEX is physically read|written, i.e. its data structure and operators.
                                   #Must be superuser
+                                  #Parent dependency of any INDEX using it
 
 OPERATIONS ==>                    #Many operations use ACCESS_METHODs
                                   #  - if an INDEX on the COLs|COL_REXPR exist, use its OPCLASS
@@ -4633,17 +4832,20 @@ OPERATIONS ==>                    #Many operations use ACCESS_METHODs
                                   #  - where|having|on|check VAL OP VAL2
                                   #  - order by "COL"|COL_REXPR (ordered scan, including backward)
                                   #  - order by VAL OP VAL2 (ordering OP)
+                                  #  - is [not] null (in BOOL_REXPR)
+                                  #  - VAL OP any|all (ARR)
                                   #  - distinct|grouping: distinct, union|intersect|except distinct, AFUNC(distinct), group by, over (partition by)
                                   #  - exclude CONSTRAINT
                                   #  - unique: unique CONSTRAINT, create unique ...
                                   #  - over (range NUM preceding|following)
                                   #  - partition by range|list
                                   #  - partition by hash
-                                  #Can also support:
+
+SCAN FEATURES ==>                 #Can also support:
                                   #  - multi-COL
-                                  #  - optimized hash join|aggregate
-                                  #  - index-only scan
+                                  #  - plain index scan
                                   #  - bitmap index scan
+                                  #  - index-only scan
                                   #  - parallel index scan
                                   #  - parallel index build
                                   #  - predicate lock
@@ -4740,6 +4942,8 @@ pg_opfamily.opfowner              #REGROLE of owner
 
 OPCLASS                           #"Operator class", i.e. OP and helper FUNCs that an INDEX ACCESS_METHOD can use
                                   #ACCESS_METHOD-specific, including its "OPCLASS" name
+                                  #Child auto-dependency of its OPFAMILY
+                                  #Parent dependency of INDEX using it
                                   #Usually named "TYPE_ops"
 
 create operator class "OPCLASS"
@@ -4770,7 +4974,9 @@ create operator class ...         #Mark as "search operator" (def)
 
 create operator class ...         #Mark as "ordering operator":
  as operator ...                  #  - OP returns NUM: distance between arguments
- for order by OPFAMILY2           #  - used in order by VAL OP VAL2
+ for order by OPFAMILY2           #  - allow using `order by VAL OP VAL2`
+                                  #     - if either VAL|VAL2 indexed, as opposed to whole `VAL OP VAL2`
+                                  #     - even for TYPEs that do not have < OP
                                   #OPFAMILY2 is used to sort the return values
                                   #  - must use a b-tree ACCESS_METHOD
 
@@ -5344,6 +5550,7 @@ pg_statistic                      #Stats used by the planner to optimize queries
                                   #     - staopNUM REGOPER: OP used
                                   #     - stanumbersNUM FLOAT_ARR: stats as FLOAT, or null if COL is not numerical
                                   #     - stavaluesNUM ARR: stats as the same type as the COL
+
 pg_stats                          #User-friendly version of pg_statistic
 
 https://www.postgresql.org/docs/current/planner-stats.html
@@ -5362,68 +5569,72 @@ ENVVAR default_statistics_target ???
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:            VACUUM             :==(
+                                            )==:          SYSTEM COLS          :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
-vacuum([full, ][freeze, ]         #Options:
- [verbose, ][analyze])            #  - analyze: do analyze ... too
- ["TABLE"[("COL"...)]]            #  - full:
-                                  #     - make database size shrink to its minimum (while non-full keep same size, but let rows space
-                                  #       be used by further writes)
-                                  #     - require exclusive lock
-                                  #     - slower and should be avoided
-                                  #  - verbose: print details
-                                  #Goal:
-                                  #  - With MVCC deleted rows are actually hidden so that other transactions can read them.
-                                  #    Once they are not used anymore, those are "dead rows".
-                                  #    Delete them, so optimize disk storage and thus speed (garbage-collection)
-                                  #  - update visibility map: 1 and 0 map for rows that are not committed yet.
-                                  #    Used to optimize index-only scans queries.
-                                  #  - protect losing very old data due to xid (xmin or xmax) wraparound:
-                                  #     - rows that will be wraparound but are still not committed can be "frozen" (frozenxid at the
-                                  #       TABLE-level), so that their xid is skipped in the wraparound
-                                  #        - vacuum freeze rows that are older than ENVVAR vacuum_freeze_max_age transactions or
-                                  #          2e9 - ENVVAR vacuum_freeze_min_age (def: 5e7) transactions
-                                  #            - if problems of wraparound, increase vacuum_freeze_max_age or decrease
-                                  #              vacuum_freeze_min_age
-                                  #        - force vacuuming freeze rows if "freeze" is used (can violate MVCC)
-                                  #        - TABLE with no "dead rows" will not be checked for frozenxid removal unless it is older
-                                  #          than ENVVAR vacuum_freeze_table_age (def: 1.5e8)
-                                  #     - 2e9 xid, so need to vacuum once every 1e9 transactions
-                                  #     - if there are wraparound risk, the server will not accept any new command
-                                  #Def. TABLE is all TABLE that current ROLE has permissions. Def. "COL" is all "COL".
-                                  #Cannot be done inside a transaction.
-                                  #Requires share update exclusive lock, and makes database slower during vacuuming.
+SYSTEM COLS ==>                   #Hidden COLs defined for every TABLE ROW
 
-AUTOVACUUM ==>                    #Daemon automatically doing vacuum [analyze] on individual TABLE... according to how many rows are
-                                  #changed. Better than doing it manually.
-                                  #Enabled by ENVVAR autovacuum (def: 'on')
-                                  #  - do vacuum every time:
-                                  #     - a vacuum freeze is needed
-                                  #       (can set its own ENVVAR autovacuum_freeze_* to override vacuum_freeze_*)
-                                  #     - or ENVVAR autovacuum_vacuum_threshold (def: 50) +
-                                  #       (number of inserted|deleted|updated rows) * ENVVAR autovacuum_vacuum_scale_factor (def: 0.2)
-                                  #  - do vacuum analyze similary according to ENVVAR autovacuum_analyze_threshold (def: 50)
-                                  #    and autovacuum_analyze_scale_factor (def: 0.1)
-                                  #  - ENVVAR:
-                                  #     - autovacuum_naptime INT: min. time (def: '1min') * number of databases before two launches
-                                  #     - autovacuum_max_workers: numbers of DATABASEs that can be vacuumed at same time (def: 3)
-                                  #  - doesn't vacuum TEMP
-TOPTS.*autovacuum*                #Set ENVVAR *autovacuum* for this TABLE
-                                  #Not for: autovacuum_max_workers, autovacuum_naptime
-                                  #Different names:
-                                  #  - autovacuum -> autovacuum_enabled
-                                  #  - vacuum_freeze_table_age -> autovacuum_freeze_table_age
-                                  #  - vacuum_multixact_freeze_min_age -> autovacuum_multixact_freeze_min_age
-TOPTS.toast.*autovacuum*          #Same but only for pg_toast_OID TABLE
-                                  #Def: same value
-                                  #Not for: autovacuum_analyze*
-TOPTS.vacuum_index_cleanup        #VAL
-TOPTS.vacuum_truncate             #BOOL
+"ROW_ALIAS".ctid                  #TID of the ROW version. Changed on write statements.
+                                  #  - including insert, update, delete, vacuum full, etc.
+tid                               #TYPE. ID of a ROW version within a given TABLE.
+                                  #Is (UINT, UINT2)
+                                  #  - UINT is heap page number within ROW_SET
+                                  #  - UINT2 is ROW index within heap page
+ENVVAR enable_tidscan             #"TID scan". When using ctid with `where|on`, can directly fetch the ROWs
+                                  #without scanning other ROWs, since the ctid contains the ROW physical location.
 
-pg_stat_progress_vacuum           #TABLE with ongoing `vacuum` statements. ???
+"ROW_ALIAS".cmin|cmax             #CID of the last write statement on the ROW
+cid                               #TYPE. ID of a write statement within a given TABLE + transaction (XID)
+                                  #Incrementing ID, starting at 0
+
+"ROW_ALIAS".xmin|xmax             #XID of the last write transaction on the ROW
+xid[8]                            #TYPE. ID of a write transaction within a given TABLE
+                                  #Incrementing ID, starting at 0
+
+tid|cid|xid                       #4 bytes. Might be re-used in the lifetime of cluster
+xid8                              #8 bytes. Never re-used in the lifetime of cluster
+XID8 ~> XID                       #Type cast
+
+"ROW_ALIAS".xmin|ctid             #For state visible in current session:
+                                  #  - set if committed by current|other sessions, or if uncommitted by current session
+                                  #  - unchanged if uncommitted by other sessions
+                                  #On:
+                                  #  - commit: other sessions set it, i.e. like current session
+                                  #  - rollback: current session reverts it, i.e. like other sessions
+"ROW_ALIAS".xmax                  #For state not visible yet in current session:
+                                  #  - 0 if committed by current|other sessions, or if uncommitted by current session
+                                  #  - set if uncommitted by other sessions
+                                  #On:
+                                  #  - commit: other sessions reset it to 0, i.e. like current session
+                                  #  - rollback: current session sets it, i.e. like other sessions
+"ROW_ALIAS".cmin|cmax             #Concurrency behavior is like xmin for insert|update, and like xmax for delete
+                                  #There is no difference between cmin and cmax
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:          FROZEN ROWS          :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+"ROW_ALIAS".relfrozenxid          #XID. When set, means the ROW is "frozen"
+                                  #This avoids other other "ROW_ALIAS".xmin|xmax from using this "ROW_ALIAS".xmin|xmax
+                                  #Necessary since XID is only 4-bytes long, i.e. wraps around every 2e9 transactions
+                                  #Only if xmin <> xmax, i.e. there are uncommitted concurrent transactions
+                                  #Only for pg_class|pg_database
+                                  #Server stops if there are wraparound risk, i.e. if vacuum is not performed
+
+ENVVAR vacuum_freeze_min_age      #NUM (def: 5e7). Do not freeze ROWs if younder than NUM transactions
+ENVVAR vacuum_freeze_max_age      #NUM (def: 2e8). Unfreeze ROWs if older than (NUM + vacuum_freeze_min_age) transactions
+ENVVAR vacuum_freeze_table_age    #NUM (def: 1.5e8). Only check for frozen ROWs in heap pages with dead ROWs,
+                                  #unless ROW is older than NUM transactions
+
+vacuum freeze ...                 #Force unfreezing ROWs, i.e. ignore ENVVAR vacuum_freeze_min|max_age
+vacuum (freeze = true)            #Implied by `vacuum full`
+                                  #Might break MVCC
 
 
                                              /=+===============================+=\
@@ -5433,13 +5644,101 @@ pg_stat_progress_vacuum           #TABLE with ongoing `vacuum` statements. ???
                                              \=+===============================+=/
 
 
+DEAD ROWS ==>                     #Deleted ROWs are kept until vacuum
+                                  #This allows ongoing transactions to keep seeing if either:
+                                  #  - they have not committed yet and were started before the deletion
+                                  #  - the deleting transaction has not committed yet
+
 VISIBILITY MAP ==>                #Bitmap of all heap pages of a TABLE
-                                  #  - 0 if no ongoing transactions, i.e. latest data visible to all current|future transactions
+                                  #  - 0 if no ongoing uncommitted transactions, i.e. latest data visible to all current|future transactions
                                   #Fast to access
                                   #  - bitmap, i.e. small
                                   #  - usually kept in-memory
+                                  #Updated by vacuum
 https://www.postgresql.org/docs/current/storage-vm.html
 pg_visibility ???
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:            VACUUM             :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+vacuum (OPTS)                     #Does:
+ ["TABLE"[("COL",...)]]           #  - delete dead ROWs on:
+                                  #     - TABLEs
+                                  #     - INDEXs ("index cleanup")
+                                  #  - delete frozen ROWs
+                                  #  - update visibility map
+                                  #Def "TABLE": all that current ROLE has permissions
+                                  #Def "COL": all
+                                  #Cannot be done inside a transaction
+                                  #Makes database slower during vacuuming
+
+vacuum analyze ...
+OPTS.analyze                      #BOOL (def: false). Run `analyze`
+
+vacuum verbose ...
+OPTS.verbose                      #BOOL (def: false). Print details
+
+vacuum full ...                   #BOOL (def: false)
+OPTS.full                         #Unless specified, empty heap pages are left for new writes, but they do not make the TABLE size shrink
+                                  #Requires `exclusive` lock
+                                  #Slow and should be used only when necessary
+
+OPTS.index_cleanup                #on|off or auto (def). Whether to delete dead ROWs on INDEXs
+TOPTS.vacuum_index_cleanup        #If auto, done if there are enough dead ROWs on the TABLE of the INDEXs
+                                  #Always `on` if `vacuum full`
+
+OPTS.skip_locked                  #BOOL (def: false). `vacuum` requires `shared update exclusive` lock.
+                                  #If true and the lock cannot be obtained immediately, skip vacuuming the specific TABLE.
+                                  #Only for normal TABLEs, not for its INDEXs, child TABLEs, or foreign TABLEs.
+
+OPTS.truncate                     #BOOL. When true (def), if a page heap becomes empty due to `vacuum` and it is at end of
+TOPTS.vacuum_truncate             #the TABLE, truncate them, i.e. let OS reclaim space.
+                                  #Requires `access exclusive` lock when this happens
+
+OPTS.parallel                     #Max NUM of parallel workers when vacuuming INDEXs
+                                  #Max 1 per INDEX on a given TABLE
+                                  #Def: max, i.e. NUM of INDEXs on the TABLE
+                                  #Only on INDEXs matching ENVVAR min_parallel_table_scan_size
+                                  #Cannot be used with `vacuum full`
+
+OPTS.disable_page_skipping        #BOOL (def: false) ???
+
+pg_stat_progress_vacuum           #TABLE with ongoing `vacuum` statements. ???
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:          AUTOVACUUM           :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+ENVVAR autovacuum                 #BOOL (def: false). Automatically run `vacuum [analyze]` on TABLEs
+                                  #Not run on TEMP TABLEs
+ENVVAR
+ autovacuum_vacuum_scale_factor   #NUM (def: 0.2)
+ENVVAR autovacuum_vaccum_threshold#NUM (def: 50). Run autovacuum after NUM writes (inserted|updated|deleted ROWs) * autovacuum_vacuum_scale_factor
+ENVVAR
+ autovacuum_analyze_threshold     #NUM (def: 50). Same for `vacuum analyze`
+ENVVAR autovacuum_freeze_*        #Run autovacuum anytime ROWs must be unfrozen, according to ENVVAR vacuum_freeze_*
+                                  #which can be overriden by this.
+ENVVAR autovacuum_naptime         #STR (def: '1min'). Mininum duration between 2 autovacuums, per DATABASE
+ENVVAR autovacuum_max_workers     #NUM (def: 3) of DATABASEs that can be vacuumed at the same time
+
+TOPTS.*autovacuum*                #Set ENVVAR *autovacuum* for this TABLE
+                                  #Not for: autovacuum_naptime|max_workers
+                                  #Different names:
+                                  #  - autovacuum -> autovacuum_enabled
+                                  #  - vacuum_freeze_table_age -> autovacuum_freeze_table_age
+                                  #  - vacuum_multixact_freeze_min_age -> autovacuum_multixact_freeze_min_age
+TOPTS.toast.*autovacuum*          #Same but only for pg_toast_OID TABLE
+                                  #Def: same value
+                                  #Not for: autovacuum_analyze*
 
 
                                              /=+===============================+=\
@@ -5639,52 +5938,6 @@ HOT ==>                           #"Heap-Only Tuples"
                                   #Only happens if:
                                   #  - `update` does not modify COLs that are indexed
                                   #  - there is enough space on the current page
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:          SYSTEM COLS          :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-SYSTEM COLS ==>                   #Hidden COLs defined for every TABLE ROW
-
-"ROW_ALIAS".ctid                  #TID of the ROW version. Changed on write statements.
-                                  #  - including insert, update, delete, vacuum full, etc.
-tid                               #TYPE. ID of a ROW version within a given TABLE.
-                                  #Is (UINT, UINT2)
-                                  #  - UINT is heap page number within ROW_SET
-                                  #  - UINT2 is ROW index within heap page
-ENVVAR enable_tidscan             #"TID scan". When using ctid with `where|on`, can directly fetch the ROWs
-                                  #without scanning other ROWs, since the ctid contains the ROW physical location.
-
-"ROW_ALIAS".cmin|cmax             #CID of the last write statement on the ROW
-cid                               #TYPE. ID of a write statement within a given TABLE + transaction (XID)
-                                  #Incrementing ID, starting at 0
-
-"ROW_ALIAS".xmin|xmax             #XID of the last write transaction on the ROW
-xid[8]                            #TYPE. ID of a write transaction within a given TABLE
-                                  #Incrementing ID, starting at 0
-
-tid|cid|xid                       #4 bytes. Might be re-used in the lifetime of cluster
-xid8                              #8 bytes. Never re-used in the lifetime of cluster
-XID8 ~> XID                       #Type cast
-
-"ROW_ALIAS".xmin|ctid             #For state visible in current session:
-                                  #  - set if committed by current|other sessions, or if uncommitted by current session
-                                  #  - unchanged if uncommitted by other sessions
-                                  #On:
-                                  #  - commit: other sessions set it, i.e. like current session
-                                  #  - rollback: current session reverts it, i.e. like other sessions
-"ROW_ALIAS".xmax                  #For state not visible yet in current session:
-                                  #  - 0 if committed by current|other sessions, or if uncommitted by current session
-                                  #  - set if uncommitted by other sessions
-                                  #On:
-                                  #  - commit: other sessions reset it to 0, i.e. like current session
-                                  #  - rollback: current session sets it, i.e. like other sessions
-"ROW_ALIAS".cmin|cmax             #Concurrency behavior is like xmin for insert|update, and like xmax for delete
-                                  #There is no difference between cmin and cmax
 
 
                                              /=+===============================+=\
@@ -5912,6 +6165,7 @@ invoker|definer]                  #        - FUNC("TABLE"|"ROW") can also be cal
                                   #  - cost FLOAT: CPU cost for the planner (cpu_operation_cost) (def: 1 for C FUNC, 100 for others)
                                   #  - rows UINT: average number of rows returned, for the planner (def: 1000). Only if return value
                                   #    returns several rows.
+                                  #Is parent dependency of anything that uses the FUNC (e.g. VIEW, etc.)
 alter function FUNC(...)
 ...                               #... is any of the options after language LANG. Can use not leakproof.
 
@@ -5975,6 +6229,7 @@ execute procedure FUNC(STR...)    #    If COMMAND is the one triggering EVENT "f
                                   #  - triggered_change_notification([STR]) is a function to use to do notify STR, for each row,
                                   #    after insert and/or update and/or delete, with payload explaining the modification.
                                   #  - Trusted postgres extension 'tcn'
+                                  #Auto-dependency child of its TABLE|COL (even with `drop ... restrict`)
 create event trigger              #Like TFUNC but EVENT can be DDL not DML:
 EFUNC on EVENT                    #  - ddl_command_start|end: before|after a create, alter or drop (except for cluster-wide objects
 [when tag in (STR...)]            #    and TFUNC|EFUNC)
@@ -6024,6 +6279,7 @@ do [instead] COMMANDS             #     - select|insert|update|delete
                                   #  - VIEW are better than RULE with select EVENT.
                                   #  - rules are similar to TFUNC, often faster but harder and less flexible.
                                   #    Prefer triggers unless performance is critical, in which case check if actually faster.
+                                  #Child auto-dependency of its TABLE|COL
 
 pg_rewrite                        #All RULE. ???
 pg_rules                          #Same, but more for user-defined RULE. ???
@@ -6367,6 +6623,7 @@ create role ROLE                  #Create a ROLE:
                                   #  - admin ROLE2...: same as role ROLE2, but ROLE2 are added with admin_option
                                   #  - connection limit: how many connections at same time (def: -1, unlim)
                                   #  - noinherits: see grant|revoke
+                                  #Parent dependency of every ENTITY it owns
 alter role ROLE ...               #Can be all options of create role but:
                                   #  - can use no..., e.g. nosuperuser
                                   #  - no in role, role or admin
@@ -6654,6 +6911,7 @@ EXTENSION                         #TABLESPACE, for a specific DATABASE.
                                   #Some EXTENSIONs are already present in the default compilation of PostgreSQL, or personalized
                                   #compilations (but usually not activated).
                                   #Permissions are the ones required in executing the underlying SQL file.
+                                  #Dependency parent to all its ENTITYs (even with `drop ... restrict`)
                                   #Files must already be present in SHAREDIR/extensions/:
                                   #  - a SQL file "EXTENSION--VERSION.sql" defining new ROW, FUNC, etc.:
                                   #     - implicitly inside a transaction, so cannot use transaction statements
@@ -6727,6 +6985,7 @@ wrapper FDW                       #Can be slow and not optimized.
                                   #     - FTABLE options:
                                   #        - filename STR: absolute path
                                   #        - ...: same options as copy COMMAND, except force* and oids
+                                  #Parent dependency of foreign table and server
 alter foreign data wrapper FDW
 [no handler|handler FUNC]         #
 [no validator|validator FUNC]     #
@@ -6749,6 +7008,7 @@ pg_foreign_server                 #All FSERVER. ???
 create user mapping
 for ROLE|current_user
 server FSERVER                    #Specify authentication details on FSERVER for ROLE.
+                                  #Child dependency of server
 [options (VAR STR ...)]           #STR are all FDW-dependent options.
 alter user mapping ...
 [options ([add|set|drop] ... )]   #
