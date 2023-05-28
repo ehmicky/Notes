@@ -24,6 +24,9 @@ TO FINISH ==>                     #  - SSH, GPG
 
 VERSION ==>                       #15.3
 
+pg_config|postgres --version      #Prints Postgres full version, including OS
+DATADIR|DBDIR/PG_VERSION          #Postgres version used by a CLUSTER|DATABASE
+
 ARCHITECTURE ==>                  #RDBMS with focus on standard compliance and extensibility.
                                   #Conform to SQL:2016 for most of it
                                   #Client (psql, pgadmin, etc.) / server (postgres) architecture
@@ -155,6 +158,9 @@ TCL                               #"Transaction Control Language"
 OUTPUT ==>                        #Some statements return the NUM of ROWs manipulated.
                                   #This is separate from the ROW_SET returned by a SUBQUERY, and is not printed by default
                                   #For: select|insert|update|delete|merge|move|fetch|copy|create table as
+
+.sql                              #File extension for SQL
+application/sql                   #MIME type for SQL
 
 
                                              /=+===============================+=\
@@ -571,7 +577,7 @@ VARIABLE UNBOUNDED LENGTH TYPES   #One of:
  ==>                              #  - numeric
                                   #  - text
                                   #  - bit varying, bytea
-                                  #  - pg_node_tree
+                                  #  - pg_node_tree, pg_snapshot
                                   #  - [MULTI]RANGE_TYPE
                                   #  - ARR_TYPE
                                   #  - ROW_TYPE
@@ -2952,6 +2958,8 @@ pg_class.relpersistence           #'CHAR'. Whether RELATION is:
                                   #  - 't': temporary
                                   #  - 'u': unlogged
 
+DATADIR/base/pgsql_tmp            #DIR with TEMP data
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -4648,6 +4656,10 @@ ENVVAR lc_time                    #Used by to_char(), ENVVAR DateStyle
 C LOCALE ==>                      #Not language-specific, but faster
                                   #Same as POSIX locale
 
+LOCALEDIR                         #DIR with locale-specific information
+                                  #On my system: /usr/share/locale
+pg_config --localedir             #Prints LOCALEDIR
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -6096,9 +6108,13 @@ HEAP PAGE CACHING ==>             #Heap pages can be cached
                                   #  - "write": when a dirtied heap page is evicted from cache
                                   #Temporary heap pages are never cached
 
-pg_class.relfilenode              #OID. RELATION's filename on-disk.
-                                  #0 if VIEW|ROW_TYPE
-                                  #Also 0 on some pg_catalog.* TABLEs: cluster-wide ones, and pg_class|attribute|type|proc
+TOPTS|IOPTS.fillfactor            #10-100. Keep 1-INT% additional free space on the page storing TABLE|INDEX
+                                  #Def: 100 (TOPTS) or 90 (IOPTS), i.e. none
+                                  #Memory allocation happens on `insert`
+                                  #Goal:
+                                  #  - faster memory allocation if lots of `update`
+                                  #  - `update`s can keep their `cluster` optimization, since they do not need new memory allocations
+                                  #  - increase changes of Heap-Only Tuples
 
 
                                              /=+===============================+=\
@@ -6118,17 +6134,18 @@ FREE SPACE MAP ==>                #Data structure storing amount of unused bytes
                                   #However, free space value is only updated by vacuum
                                   #  - i.e. might not perfectly match current state
                                   #  - new nodes have incorrect value 0 (i.e. no bytes available) until next vacuum
-                                  #Stored as a `*_fsm` file sibling to TABLE file
                                   #Also called FSM
 
 pg_freespace(REGCLASS, INT8)->INT2#Returns amount of free space (in bytes) of heap page number INT8 of REGCLASS, according to FSM
                                   #Non-trusted Postgres extension 'pg_freespacemap'
 pg_freespace(REGCLASS)->ROW_SET   #Same for all heap pages of REGCLASS, as ROW: blkno INT8, avail INT2
 
+DBDIR|CLUSTERDIR/REGCLASS_OID_fsm #FSM location
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:             MVCC              :==(
+                                            )==:              XID              :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
@@ -6139,10 +6156,6 @@ MVCC ==>                          #"Multiversion concurrency control"
                                   #ROW updates behave like a delete + insert (as opposed to being done in-place)
                                   #Transactions see different versions of those ROWs, depending on when they were started and
                                   #their isolation level
-
-"ROW_ALIAS".xmin                  #"Insert ID". XID of the transaction that created the ROW
-"ROW_ALIAS".xmax                  #"Delete ID". XID of the transaction that deleted the ROW
-                                  #0 if not deleted yet
 
 xid                               #TYPE. Index of a write transaction within a given DATABASE
                                   #Incrementing, starting at 2
@@ -6158,24 +6171,42 @@ xid                               #TYPE. Index of a write transaction within a g
                                   #  - i.e. previous|next 2e9 values are considered <|>, when taking wraparound into account
 XID <~=> TEXT                     #Type cast
 
-age(XID)->UINT                    #Difference between current session's XID2 and XID
-
 xid8                              #Like xid but 8 bytes. I.e. never re-used in the lifetime of cluster
 XID8 ~> XID                       #Type cast
 XID8 <~=> TEXT                    #Type cast
 
+"ROW_ALIAS".xmin                  #"Insert ID". XID of the transaction that created the ROW
+"ROW_ALIAS".xmax                  #"Delete ID". XID of the transaction that deleted the ROW
+                                  #0 if not deleted yet
+
+pg_current_xact_id()->XID8        #Current transaction's XID8
+                                  #If in a readonly statement|transaction, acquires a new XID8 for it
+pg_current_xact_id_if_assigned()  #Current transaction's XID8
+ ->XID8                           #If in a readonly statement|transaction, returns null
+age(XID)->UINT                    #Difference between current session's XID2 and XID
+
 ROW VISIBILITY ==>                #Cannot see ROWs creations|deletions of other transactions if either:
                                   #  - other is uncommitted
-                                  #  - current is uncommited, and other is later, i.e. ROWs with xmin > current session XID
+                                  #  - current is uncommitted, and other is later, i.e. ROWs with xmin > current session XID
                                   #However, can check whether a ROW has pending deletion in either case by checking its xmax
                                   #Rolled back transactions undo any ROW creation|deletion and xmax changes
 
-"ROW_ALIAS".cmin                  #CID of the statement that created|deleted the ROW
-"ROW_ALIAS".cmax                  #Identical to cmin
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:              CID              :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
 cid                               #TYPE. Index of a write statement within a given DATABASE transaction (XID)
                                   #Incrementing, starting at 0
                                   #Cannot use < <= > >=
+
 CID <~=> TEXT                     #Type cast
+
+"ROW_ALIAS".cmin                  #CID of the statement that created|deleted the ROW
+"ROW_ALIAS".cmax                  #Identical to cmin
 
 
                                              /=+===============================+=\
@@ -6220,8 +6251,7 @@ vacuum (freeze = true)            #Implied by `vacuum full`
                                              \=+===============================+=/
 
 
-ROW LOCKING ==>                   #When acquiring locks at a ROW-level (`select ... for ...`), "ROW_ALIAS".xmax is set with
-                                  #the XID of the locking transaction
+ROW LOCKING ==>                   #When acquiring ROW locks, "ROW_ALIAS".xmax is set with the XID of the locking transaction.
                                   #I.e. xmax has two meaning (locking and deletion), which cannot be distinguished without
                                   #using more complex utilities like pageinspect
 
@@ -6270,7 +6300,6 @@ VISIBILITY MAP ==>                #Bitmap of all heap pages of a TABLE
                                   #Fast to access
                                   #  - bitmap, i.e. small
                                   #  - usually kept in-memory
-                                  #Saved in a `*_vm` file, next to TABLE physical file
 
 pg_visibility[_map]               #Returns visibility map of heap page number INT8 of REGCLASS
  (REGCLASS, INT8)->ROW            #Non-trusted extension 'pg_visibility'
@@ -6290,6 +6319,321 @@ pg_truncate_visibility_map        #Remove visibility map. It will be rebuilt by 
  (REGCLASS)                       #Meant if visibility map corrupted
 
 pg_class.relallvisible            #INT4. Number of RELATION's heap pages with all-visible bit in the visibility map.
+
+DBDIR|CLUSTERDIR/REGCLASS_OID_vm  #Visibility map location
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:          TRANSACTION          :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+begin [work|transaction]          #Start a transaction
+start transaction                 #Statements in uncommitted transactions are not:
+                                  #  - visible to other sessions
+                                  #     - which would otherwise be called a "dirty read"
+                                  #  - durable
+                                  #However, they wait on locks created by all other transactions, committed or not
+                                  #They are committed atomically ("all of nothing")
+                                  #If a statement errors, the transaction "aborts", i.e. commit will behave like rollback
+                                  #Cannot do it inside another transaction
+
+commit [work|transaction]         #End a transaction
+rollback [work|transaction]       #End a transaction, but cancel any statements within it
+                                  #Except for: SEQUENCEs, and some aspects of CURSORs
+commit|rollback ... and [no] chain#If `and chain`, end a transaction, then start a new one with same characteristics
+
+pg_xact_status(XID8)->STR         #Whether the transaction is 'in progress', 'committed' or 'aborted'
+                                  #null if transaction is too old
+
+SINGLE STATEMENTS ==>             #Statements not in a transaction are handled like a single-statement committed transaction
+                                  #SQL commands acquire the locks they need
+                                  #FUNC() are run in a single `read commit` transaction
+                                  #Multiple statements transactions are faster since they only require creating a single transaction
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:          SAVEPOINTS           :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+savepoint SAVEPOINT               #Mark a specific statement with a SAVEPOINT
+                                  #Must be inside a transaction
+
+rollback [work|transaction]       #Rollback to state when SAVEPOINT was created
+ to [savepoint] SAVEPOINT         #Delete any other SAVEPOINT created since then
+
+release [savepoint] SAVEPOINT     #Delete a savepoint
+                                  #Automatically done at end of transaction
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:           ISOLATION           :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+begin isolation level             #Make state consistent at the statement level
+ read [un]committed               #Other committed transactions writes are visible
+                                  #Default mode
+
+begin isolation level             #Make state consistent at the transaction level
+ repeatable read                  #Other committed transactions writes are not visible
+                                  #This prevents "nonrepeatable reads":
+                                  #  - reads of same ENTITY|ROW in the same transaction give inconsistent results
+                                  #  - due to other committed transactions writes
+                                  #This also prevents "phantom reads":
+                                  #  - same but for reads with a `where BOOL_REXPR`
+                                  #  - fixed by predicate locks
+                                  #They abort the current transaction if it writes on the same ENTITY|ROW
+
+begin isolation level             #Make state consistent at the database level, with each transaction being atomic
+ serializable                     #Same as `repeatable read` except transaction is rolled back on commit if:
+                                  #  - other `serializable` transactions wrote on ENTITY|ROWs read by current transaction
+                                  #  - providing current transaction might have used the result, i.e. by performing a write
+                                  #This prevents "serialization anomaly"
+                                  #  - e.g. two transactions inserting count(*) on same TABLE
+
+begin ... read write|only         #If `read only` (def: `read write`), cannot write (except to TEMP)
+                                  #This allows some concurrency optimization
+
+begin ... [not] deferrable        #If `deferrable` (def: `not deferrable`), `serializable` and `read only`,
+                                  #the transaction's first query initially waits for any concurrent transactions which might cancel it, or vice-versa
+                                  #Good for long transactions.
+
+PREDICATE LOCK ==>                #Locks created by `serializable` transactions to check whether it should abort.
+                                  #They do not block other transactions
+                                  #They can use a `where BOOL_REXPR` instead of a set of ROWs
+ENVVAR
+ max_pred_locks_per_transaction   #NUM (def: 64). Max predicate locks per transaction
+ENVVAR max_pred_locks_per_relation#NUM (def: -2). If > NUM predicate locks on a given relation, it becomes a table lock
+                                  #If NUM is negative, its actual value is max_pred_locks_per_transaction / abs(NUM)
+ENVVAR max_pred_locks_per_page    #NUM (def: 2). Same for page locks
+
+ENVVAR transaction_isolation
+ENVVAR transaction_read_only      #Current arguments ... of current transaction
+ENVVAR transaction_deferrable     #Can be set
+set transaction ...               #Changes arguments ... passed to `begin` of current transaction
+                                  #Must be before any query
+set session characteristics
+ as transaction ...               #Changes default arguments ... passed to any future transaction in current session
+ENVVAR
+ default_transaction_isolation
+ENVVAR
+ default_transaction_read_only
+ENVVAR
+ default_transaction_deferrable   #Default arguments ... passed for any transaction in any session
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:           SNAPSHOT            :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+pg_snapshot                       #TYPE of the "database version" visible by a transaction.
+                                  #Taken by the first query of a `repeatable read` or `serializable` transaction ("snapshot isolation")
+                                  #Contains:
+                                  #  - xmin XID8: transaction with lowest XID8 that is visible
+                                  #  - xmax XID8: transaction with highest XID8 that is visible
+                                  #  - xips XID8_ARR (def: []): individual uncommitted transactions that are not visible
+                                  #Cannot use = <> < <= > >=
+'XMIN:XMAX:[XIP,...]'             #PG_SNAPSHOT_UNKNOWN
+PG_SNAPSHOT <~=> TEXT             #Type cast
+
+pg_current_snapshot()->PG_SNAPSHOT#Gets PG_SNAPSHOT of current transaction
+pg_snapshot_xmin|xmax(PG_SNAPSHOT)
+ ->XID8                           #Gets PG_SNAPSHOT's xmin|xmax
+pg_snapshot_xip(PG_SNAPSHOT)
+ ->XID8_SET                       #Gets PG_SNAPSHOT's xips
+pg_visible_in_snapshot
+ (XID8, PG_SNAPSHOT)->BOOL        #Whether transaction XID8 is visible in PG_SNAPSHOT
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:        SYNCHRONIZATION        :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+pg_export_snapshot()              #Make two transactions have the same PG_SNAPSHOT ("snapshot synchronization")
+ ->'SNAPSHOT_ID'                  #Both transactions can still not see each other uncommmited writes
+set transaction snapshot          #XID1 must use pg_export_snapshot(), XID2 must use set transaction snapshot
+ 'SNAPSHOT_ID'                    #`set transaction snapshot` must be before any query
+                                  #  - but not pg_export_snapshot()
+                                  #XID2 must be either
+                                  #  - `repeatable read`
+                                  #  - `serializable`, in which case XID1 must be too
+                                  #If XID1 is readonly, XID2 must be too
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:     PREPARED TRANSACTION      :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+prepare transaction 'PXID'        #"Two-phase commit". Rollback current transaction, except ENVVAR changes.
+                                  #Saves the statements as PXID (max 200 bytes).
+                                  #Transaction must not use notify|[un]listen, TEMP, CURSOR with hold
+                                  #PXIDs keeps its locks until committed
+                                  #  - it also prevents vacuuming
+                                  #  - i.e. should not be kept uncommitted for too long
+commit|rollback prepared 'PXID'   #Commit|discard statements stored as PXID.
+                                  #Must not be inside a transaction.
+                                  #Can be done by other sessions, providing same ROLE or superuser.
+                                  #Goal: single session managing transactions of others ("transaction management system")
+
+ENVVAR max_prepared_transactions  #Max NUM (def: 0, i.e. disabled) of PXIDs, for all connections
+
+pg_prepared_xacts                 #TABLE with all PXIDs
+pg_prepared_xacts.gid             #'PXID'
+pg_prepared_xacts.transaction     #XID of PXID
+pg_prepared_xacts.prepared        #TIMESTAMPTZ when PXID was created
+pg_prepared_xacts.database        #"DATABASE" name
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:          TABLE LOCK           :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+lock "TABLE",...                  #Acquire a lock on "TABLE",...
+                                  #Must be inside a transaction:
+                                  #  - released at the end of it
+                                  #  - must be at beginning of transaction if `repeatable read` or `serializable`
+                                  #Automatically done by SQL commands
+
+lock ... nowait                   #When lock cannot be acquired, prints an error and rollback the transaction,
+                                  #instead of waiting
+
+lock ... in access exclusive mode #Do not allow any other locks
+                                  #For commands that prevent others to read data
+                                  #In general because they delete|re-create ENTITYs: drop table, truncate, reindex, cluster, vacuum full
+                                  #Default mode
+lock ... in exclusive mode        #Allow other locks if access share
+                                  #For commands that prevent others to `select ... for ...`
+lock ...                          #Allow other locks if access|row share
+ in share row exclusive mode      #For commands that prevent others to write|delete data
+lock ... in share mode            #Same as `share row exclusive` except allow other locks to be `share`
+lock ...                          #Allow other locks if access|row share or row exclusive
+ in share update exclusive mode   #For commands that change DDLs, such as vacuum|analyze, comment
+lock ... in row exclusive mode    #For commands that write|delete data
+lock ... in row share mode        #For `select ... for ...`
+lock ... in access share mode     #For commands that read data
+
+ENVVAR lock_timeout               #NUM (in ms, def: 0). Max amount of time to wait for a lock
+ENVVAR deadlock_timeout           #INT (in ms, def: 1000). After that amount of times, check for deadlocks.
+                                  #If a deadlock is detected, abort those transactions.
+                                  #Should be higher than the average time for a transaction, because deadlock
+                                  #check is slow, and to allow ending transactions to resolve locks.
+ENVVAR max_locks_per_transaction  #NUM (def: 64). Max locks per transaction
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:           ROW LOCK            :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+select ... for ...                #Acquire a lock on TABLE ROWs
+                                  #Acquired|released inside a transaction, like TABLE locks
+                                  #  - i.e. not only for the specific `select` statement
+                                  #Cannot use union|intersect|except
+select ... for ... of "TABLE",... #Which TABLE to lock. Def: all in the select statement
+
+select ... for ... nowait         #Like lock ... nowait
+
+select ... for update             #Prevent ROWs from being deleted|updated
+                                  #Do not allow any other ROW locks
+                                  #For commands that write those ROWs, such as `delete`, or `update` on unique COLs
+select ... for no key update      #Prevent ROWs from being deleted|updated
+                                  #Allow `for key share` locks
+                                  #For commands that write those ROWs, but `update` are on non-unique COLs,
+                                  #such as `update` on non-unique COLs
+select ... for share              #Prevent ROWs from being deleted|updated
+                                  #For commands that read those ROWs, including non-unique COLs
+select ... for key share          #Prevent ROWs from being deleted, or `update` on unique COLs
+                                  #For commands that read those ROWs, but only unique COLs
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:         ADVISORY LOCK         :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+pg_advisory_lock(INT8)            #Acquire an advistory lock, i.e. lock linked to an ID (INT8)
+                                  #Cannot be done several times, which requires several unlocks then
+pg_advisory_unlock(INT8)->BOOL    #false if there was no lock
+                                  #Automatically done at end of session
+pg_advisory_unlock_all()          #
+
+pg_try_advisory_*(INT8)->BOOL     #If cannot be acquired, return false instead of waiting
+
+pg_advisory_xact_*(INT8)          #Automatically release at end of transaction, instead of session
+
+pg_advisory_*_shared(INT8)        #Allow other lock_shared() (but not other lock())
+pg_advisory_unlock_shared(INT8)   #
+
+pg_advisory_*(INT4, INT4)         #Same with two INT4s instead of a INT8
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:          LIST LOCKS           :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+pg_locks                          #TABLE with all locks
+                                  #Most of them are null if not relevant for the given locktype
+
+pg_locks.locktype                 #Lock type among:
+                                  #  - relation: TABLE lock
+                                  #  - tuple: ROW lock
+                                  #  - advisory: pg_advisory*
+                                  #Those others are mostly internal:
+                                  #  - object: ENTITY
+                                  #  - extend: add a COL to a TABLE
+                                  #  - spectoken: inserting a ROW
+                                  #  - frozenid: setting pg_database.datfrozenxid|datminmxid
+                                  #  - page: heap page
+                                  #  - transactionid: wait for a transaction to end
+                                  #  - virtualxid
+                                  #  - userlock
+
+pg_locks.granted                  #BOOL. Whether lock is held, as opposed to awaited.
+pg_locks.waitstart                #TIMESTAMPTZ. When starting waiting for lock
+pg_locks.fastpath                 #BOOL. Whether lock was cached
+
+pg_locks.pid                      #INT4. PID of server process
+pg_locks.database                 #pg_database.oid of the DATABASE
+                                  #0 if shared object
+
+pg_locks.relation                 #pg_class.oid of the TABLE being locked
+pg_locks.mode                     #STR. Lock mode if locktype 'relation|tuple'
+                                  #Is 'SIReadLock' if predicate lock
+pg_locks.page                     #INT4. Heap page number
+pg_locks.tuple                    #INT2. Index ROW being locked within its heap page
+pg_locks.classid
+pg_locks.objid
+pg_locks.objsubid                 #Same syntax as pg_depend.*, but for ENTITY with locktype 'object'
+pg_locks.virtualxid               #STR. Virtual ID if locktype 'virtualxid'
+pg_locks.virtualtransaction       #STR. Virtual ID of the other transaction
+pg_locks.transactionid            #XID of transaction, if locktype 'transactionid'
 
 
                                              /=+===============================+=\
@@ -6446,251 +6790,239 @@ TOPTS.toast.*autovacuum*          #Same but only for pg_toast_OID TABLE
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:          TABLE LOCK           :==(
+                                            )==:           EXTENSION           :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
-lock "TABLE",...                  #Acquire a lock on "TABLE",...
-                                  #Must be inside a transaction:
-                                  #  - released at the end of it
-                                  #  - must be at beginning of transaction if `repeatable read` or `serializable`
-                                  #Automatically done by SQL commands
+SHAREDIR/extensions/              #EXTENSION_DIR containing all enabled|disabled EXTENSIONs
+                                  #Can add more to it manually, but many are already present in most builds
+                                  #(but disabled except for "plpgsql")
 
-lock ... nowait                   #When lock cannot be acquired, prints an error and rollback the transaction,
-                                  #instead of waiting
+EXTENSION_DIR/                    #INIMAIN, EXTENSIONS's main declarative file
+ EXTENSION[--VERSION[--VERSION2]] #INI format
+ .control                         #If --VERSION, only for that specific VERSION
+                                  #If --VERSION2, executed when upgrading from VERSION to VERSION2 with `alter extension ... update`
+INIMAIN.default_version           #Current 'EVERSION'
+INIMAIN.comment                   #STR. Description
+INIMAIN.superuser                 #BOOL (def: true). Whether should be run with superuser privileges.
+INIMAIN.trusted                   #BOOL (def: !INIMAIN.superuser). Whether non-superuser can enable the EXTENSION.
+INIMAIN.requires "EXTENSION",...  #Depend on other EXTENSIONs
+INIMAIN.directory                 #'DIR' of SQLMAIN (def: same as INIMAIN)
+INIMAIN.schema                    #Main 'SCHEMA'
+INIMAIN.relocatable               #BOOL (def: false). Whether 'SCHEMA' can be written to, except by SQLMAIN
+INIMAIN.module_pathname           #STR which can be used as `MODULE_PATHNAME` in SQLMAIN
+                                  #Can include `$libdir`
+                                  #Meant to be used inside `create function ... as 'MODULE_PATHNAME', 'FUNC_NAME' language C`
+INIMAIN.encoding                  #'ENCODING' (def: client's encoding) of SQLMAIN
 
-lock ... in access exclusive mode #Do not allow any other locks
-                                  #For commands that prevent others to read data
-                                  #In general because they delete|re-create ENTITYs: drop table, truncate, reindex, cluster, vacuum full
-                                  #Default mode
-lock ... in exclusive mode        #Allow other locks if access share
-                                  #For commands that prevent others to `select ... for ...`
-lock ...                          #Allow other locks if access|row share
- in share row exclusive mode      #For commands that prevent others to write|delete data
-lock ... in share mode            #Same as `share row exclusive` except allow other locks to be `share`
-lock ...                          #Allow other locks if access|row share or row exclusive
- in share update exclusive mode   #For commands that change DDLs, such as vacuum|analyze, comment
-lock ... in row exclusive mode    #For commands that write|delete data
-lock ... in row share mode        #For `select ... for ...`
-lock ... in access share mode     #For commands that read data
+EXTENSION_DIR/                    #SQLMAIN, EXTENSION's main imperative file
+ EXTENSION--VERSION.sql           #It is a SQL file which can execute any statements, including DDLs
+                                  #Only applies to current DATABASE
+                                  #  - cannot create cluster-wide ENTITYs
+                                  #Wrapped in a transaction, i.e. cannot use transactions itself
+                                  #Any ENTITY created is an auto-dependency child of EXTENSION
 
-ENVVAR lock_timeout               #NUM (in ms, def: 0). Max amount of time to wait for a lock
-ENVVAR deadlock_timeout           #INT (in ms, def: 1000). After that amount of times, check for deadlocks.
-                                  #If a deadlock is detected, abort those transactions.
-                                  #Should be higher than the average time for a transaction, because deadlock
-                                  #check is slow, and to allow ending transactions to resolve locks.
-ENVVAR max_locks_per_transaction  #NUM (def: 64). Max locks per transaction
+pg_extension_config_dump          #Mark TABLE as both used by EXTENSION, but writable by user.
+ ("TABLE", 'BOOL_REXPR')          #Meant for EXTENSION's config.
+                                  #This ensures TABLE is included in backups, as opposed to rest of EXTENSION.
+                                  #'BOOL_REXPR' is applied as `where` filter. Can be ''.
+
+\echo Use "CREATE EXTENSION ..."
+ to load this file.
+\quit                             #Should be put to protect against using psql on SQLMAIN
+
+create extension "EXTENSION"      #Enable an EXTENSION
+create extension ...
+ version 'EVERSION'               #Override INIMAIN.default_version
+create extension ...
+ schema "SCHEMA"                  #Override INIMAIN.schema
+create extension ... cascade ???
+
+alter extension "EXTENSION"
+ update [to 'EVERSION']           #Changes EVERSION (def: INIMAIN.default_version)
+
+alter extension "EXTENSION"       #Add an ENTITY to the EXTENSION
+ add|drop ENTITY "ENTITY"         #Meant for EXTENSION's upgrade files
+
+alter ENTITY "ENTITY" [no]        #Mark ENTITY as a dependency
+ depends on extension "EXTENSION" #Only for ENTITY: function|routine|procedure|trigger, materialized view, index
+
+pg_available_extension_versions   #TABLE with all EXTENSION for all EVERSIONs
+pg_available_extension_versions
+ .name                            #"EXTENSION" name
+pg_available_extension_versions
+ .version                         #'EVERSION'
+pg_available_extension_versions
+ .installed                       #BOOL. Whether enabled
+pg_available_extension_versions
+ .comment                         #STR. INIMAIN.comment
+pg_available_extension_versions
+ .superuser                       #BOOL. INIMAIN.superuser
+pg_available_extension_versions
+ .trusted                         #BOOL. INIMAIN.trusted
+pg_available_extension_versions
+ .requires                        #"EXTENSION"_ARR. INIMAIN.requires
+pg_available_extension_versions
+ .schema                          #"SCHEMA". INIMAIN.schema. null if relocatable
+pg_available_extension_versions
+ .relocatable                     #BOOL. INIMAIN.relocatable
+
+pg_available_extensions           #TABLE with all EXTENSIONs for their default EVERSION
+pg_available_extensions.name      #"EXTENSION" name
+pg_available_extensions
+ .default_version                 #'EVERSION'. null if no INIMAIN.default_version
+pg_available_extensions
+ .installed_version               #'EVERSION'. null if disabled
+pg_available_extensions.comment   #INIMAIN.comment
+
+pg_extension                      #TABLE with all enabled EXTENSIONs
+pg_extension.oid                  #OID
+pg_extension.extname              #"EXTENSION" name
+pg_extension.extnamespace         #REGNAMESPACE of main SCHEMA
+pg_extension.extrelocatable       #BOOL. INIMAIN.relocatable
+pg_extension.extversion           #'EVERSION'
+pg_extension.extconfig            #REGCLASS_ARR of TABLEs marked by pg_extension_config_dump()
+                                  #null if none
+pg_extension.extcondition         #'BOOL_REXPR'_ARR of pg_extension_config_dump() second argument
+                                  #null if none
+
+PGXS                              #Build system for EXTENSIONs, as a Makefile
+                                  #On my system, main file is at /usr/lib/postgresql/VERSION/lib/pgxs/src/makefiles/pgxs.mk
+                                  #Not documented yet ???
+pg_config --pgxs                  #Prints PGXS's main file
 
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:           ROW LOCK            :==(
+                                            )==:          C LIBRARIES          :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
-select ... for ...                #Acquire a lock on TABLE ROWs
-                                  #Acquired|released inside a transaction, like TABLE locks
-                                  #  - i.e. not only for the specific `select` statement
-                                  #Cannot use union|intersect|except
-select ... for ... of "TABLE",... #Which TABLE to lock. Def: all in the select statement
+load 'FILE'                       #Loads a C library
+                                  #Automatically done by `create function` for a C FUNCTION
+ENVVAR shared_preload_libraries   #'DIR,...' that perform `load 'FILE'`. Must omit file .EXT
+ENVVAR dynamic_library_path       #'DIR:...' (def: '$libdir'). Relative paths of `load 'FILE'` if not absolute.
+                                  #Can include '$libdir'
 
-select ... for ... nowait         #Like lock ... nowait
+$libdir                           #DIR with EXTENSION-defined C libraries
+                                  #On my system: /usr/lib/postgresql/VERSION/lib/
+                                  #Only $libdir/plugins/ can be used by non-superusers
+pg_config --pkglibdir             #Prints $libdir location
 
-select ... for update             #Prevent ROWs from being deleted|updated
-                                  #Do not allow any other ROW locks
-                                  #For commands that write those ROWs, such as `delete`, or `update` on unique COLs
-select ... for no key update      #Prevent ROWs from being deleted|updated
-                                  #Allow `for key share` locks
-                                  #For commands that write those ROWs, but `update` are on non-unique COLs,
-                                  #such as `update` on non-unique COLs
-select ... for share              #Prevent ROWs from being deleted|updated
-                                  #For commands that read those ROWs, including non-unique COLs
-select ... for key share          #Prevent ROWs from being deleted, or `update` on unique COLs
-                                  #For commands that read those ROWs, but only unique COLs
+SHAREDLIBDIR                      #DIR with system C libraries
+                                  #On my system: /usr/lib/x86_64-linux-gnu
+pg_config --libdir                #Prints SHAREDLIBDIR
+
+INCLUDEDIR                        #DIR with C header files for clients
+                                  #Not always present
+                                  #On my system: /usr/include/postgresql
+pg_config --includedir            #Prints INCLUDEDIR
+
+INCLUDEDIR-SERVER                 #DIR with C header files for server
+                                  #Not always present
+                                  #On my system: /usr/include/postgresql/VERSION/server
+pg_config --includedir-server     #Prints INCLUDEDIR-SERVER
+
+PKGINCLUDEDIR                     #DIR with other C header files
+                                  #Not always present
+                                  #On my system: /usr/include/postgresql
+pg_config --pkgincludedir         #Prints PKGINCLUDEDIR
 
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:         ADVISORY LOCK         :==(
+                                            )==:        BUILD-TIME DATA        :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
-pg_advisory_lock(INT8)            #Acquire an advistory lock, i.e. lock linked to an ID (INT8)
-                                  #Cannot be done several times, which requires several unlocks then
-pg_advisory_unlock(INT8)->BOOL    #false if there was no lock
-                                  #Automatically done at end of session
-pg_advisory_unlock_all()          #
+pg_config                         #Prints all build-time configuration
+                                  #Is both a CLI, and a TABLE where each ROW is a variable
 
-pg_try_advisory_*(INT8)->BOOL     #If cannot be acquired, return false instead of waiting
+pg_config
+ --configure
+ --cc
+ --cflags[_sl]
+ --cppflags
+ --ldflags[_sl|_ex]
+ --libs                           #Prints CLI flags used at build time
 
-pg_advisory_xact_*(INT8)          #Automatically release at end of transaction, instead of session
+BINDIR                            #Main DIR for binaries (psql, postgres, pg_ctl, etc.)
+                                  #On my system: /usr/lib/postgresql/VERSION/bin/
+                                  #Often /usr/bin symlink to it
+pg_config --bindir                #Prints BINDIR location
 
-pg_advisory_*_shared(INT8)        #Allow other lock_shared() (but not other lock())
-pg_advisory_unlock_shared(INT8)   #
+SHAREDIR                          #DIR with shared files: EXTENSIONs, TEMPLATE files, man pages, etc.
+                                  #On my system: /usr/share/postgresql/VERSION
+pg_config --sharedir              #Prints SHAREDIR
 
-pg_advisory_*(INT4, INT4)         #Same with two INT4s instead of a INT8
+MANDIR                            #DIR with man files
+                                  #On my system: /usr/share/postgresql/VERSION/man
+pg_config --maindir               #Prints MANDIR
+
+DOCDIR                            #DIR with changelogs, license files and generic documentation
+                                  #On my system: /usr/share/doc/postgresql*
+pg_config --docdir                #Prints DOCDIR location
+
+HTMLDIR                           #Same as DOCDIR but for HTML files
+                                  #On my system: same as DOCDIR
+pg_config --htmldir               #Prints HTMLDIR location
 
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:          LIST LOCKS           :==(
+                                            )==:         RUNTIME DATA          :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
-pg_locks                          #TABLE with all locks
-                                  #Most of them are null if not relevant for the given locktype
+VARDIR                            #DIR with runtime data
+                                  #On my system: /var/lib/postgresql
 
-pg_locks.locktype                 #Lock type among:
-                                  #  - relation: TABLE lock
-                                  #  - tuple: ROW lock
-                                  #  - advisory: pg_advisory*
-                                  #Those others are mostly internal:
-                                  #  - object: ENTITY
-                                  #  - extend: add a COL to a TABLE
-                                  #  - spectoken: inserting a ROW
-                                  #  - frozenid: setting pg_database.datfrozenxid|datminmxid
-                                  #  - page: heap page
-                                  #  - transactionid: wait for a transaction to end
-                                  #  - virtualxid
-                                  #  - userlock
+DATADIR                           #DIR with CLUSTER-specific data
+                                  #Must have permissions 0700
+                                  #On my system: VARDIR/VERSION/CLUSTER
 
-pg_locks.granted                  #BOOL. Whether lock is held, as opposed to awaited.
-pg_locks.waitstart                #TIMESTAMPTZ. When starting waiting for lock
-pg_locks.fastpath                 #BOOL. Whether lock was cached
+DATADIR/global                    #CLUSTERDIR. Cluster-wide data.
 
-pg_locks.pid                      #INT4. PID of server process
-pg_locks.database                 #pg_database.oid of the DATABASE
-                                  #0 if shared object
+DBDIR                             #DIR with DATABASE-specific data
+                                  #On my system: DATADIR/base/DATABASE_OID
+                                  #6MB for empty database
 
-pg_locks.relation                 #pg_class.oid of the TABLE being locked
-pg_locks.mode                     #STR. Lock mode if locktype 'relation|tuple'
-pg_locks.page                     #INT4. Heap page number
-pg_locks.tuple                    #INT2. Index ROW being locked within its heap page
-pg_locks.classid
-pg_locks.objid
-pg_locks.objsubid                 #Same syntax as pg_depend.*, but for ENTITY with locktype 'object'
-pg_locks.virtualxid               #STR. Virtual ID if locktype 'virtualxid'
-pg_locks.virtualtransaction       #STR. Virtual ID of the other transaction
-pg_locks.transactionid            #XID of transaction, if locktype 'transactionid'
+DBDIR|CLUSTERDIR/REGCLASS_OID     #Data and metadata of a relation
+                                  #Contains all its heap pages
+pg_class.relfilenode              #OID. REGCLASS_OID used in DBDIR
+                                  #Same as regclass.oid, except 0 if:
+                                  #  - VIEW|ROW_TYPE
+                                  #  - some pg_catalog.* TABLEs: cluster-wide ones, and pg_class|attribute|type|proc
+
+oid2name                          #Translate OID to name ???
+                                  #         - without option: database oid -> name
+                                  #         - -H -p -U -P: usual connection flags
+                                  #         - -d DATABASE: show table oid -> name
+                                  #           - -S: include system catalogs, views and TOAST
+                                  #         - -f|o NUM: for tables with filenode|oid NUM
+                                  #         - -t STR: same with name
+                                  #         - -i: include SEQUENCE and INDEX
+                                  #         - -s: info about TABLESPACE
+                                  #      - pg_relation_filenode|filepath(OID|STR)
 
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:          CONCURRENCY          :==(
+                                            )==:         CONFIGURATION         :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
-SINGLE STATEMENTS ==>             #Statements not in a transaction are handled like a single-statement commited transaction
+SYSCONFDIR                        #DIR with system-wide configuration file
+                                  #On my system: /etc/postgresql-common
+pg_config --sysconfdir            #Prints SYSCONFDIR
 
-begin
-start transaction                 #Start a transaction
-commit                            #End a transaction
-rollback                          #End a transaction, but cancel any statements within it
-
-savepoint LABEL
-rollback to savepoint LABEL       #Inside a transaction block, rollback to LABEL go back to the state where savepoint LABEL was (and
-                                  #releases all savepoint LABEL that might have been defined after it).
-release savepoint LABEL           #Delete a savepoint
-
-prepare transaction STR           #Do a two-phase commit:
-                                  #  - transaction is temporary rollbacked (except the ENVVAR changes) and will only be committed once
-                                  #    commit prepared STR is done
-                                  #  - commit|rollback prepared STR can be done by other clients (not inside a transaction), if same ROLE
-                                  #    or superuser ROLE.
-                                  #    So goal is to have a single client managing the transaction of other clients
-                                  #    ("transaction management system")
-                                  #STR must be unique, and less than 200 bytes
-                                  #Transaction must not involve notify|[un]listen, TEMP nor CURSOR with hold
-                                  #ENVVAR max_prepared_transactions (def: 0, so disabled) is available. Is set, should be
-                                  #max_connections * number of prepared_transactions per connection
-
-pg_prepared_xacts                 #All "prepare transaction STR". ???
-
-CONCURRENCY ==>                   #Uses Multiversion Concurrency Control (MVCC) instead of traditional locks, for best performance
-                                  #while still reliable:
-                                  #  - transactions create a snapshot of the current state ("database version").
-                                  #  - read/write locks are "predicate locks": they don't block, they are just informative, and later on
-                                  #    might cancel actions if concurrency problem.
-                                  #Best to have consistent data is:
-                                  #  - if several statements need to be "write all or nothing", use transactions:
-                                  #      - if the state being read can be changed by other clients in the middle of the transaction
-                                  #        without problems, use read committed statements
-                                  #      - otherwise, use serializable statements, but then if abort, must redo the transaction
-                                  #      - in all cases, put as read only if possible, and deferrable when it's a long operation
-                                  #  - otherwise, transactions are not needed: operations are atomic and ask for the relevant blocking
-                                  #    locks, so no concurrency problem (are actually atomic transactions)
-                                  #All transactions cannot exceed an average of ENVVAR max_pred_locks_per_transaction (def: 64) predicate locks
-                                  #FUNC():
-                                  #  - always a single read commited transaction, acquiring locks
-                                  #  - finer concurrency control is only at SQL level, so need wrap FUNC() call in a SQL transaction
-begin                             #Start a transaction (ends with rollback|commit), statements are only committed to the database at the
-[isolation level WORD,]           #end of the transaction (but "appear" committed locally inside the statement)
-[read write|only,]                #A transaction that has any statement with an error will abort (rollback when committed).
-[[not] deferrable]                #WORD can be read committed, repeatable read or serializable.
-                                  #Effects of WORD, for W2 -> R1 or W1 (same rows, 1 and 2 are transactions)
-                          +-------------------------------------------+-------------------------------------------+
-                          |                  W2 -> R1                 |                  W2 -> W1                 |
-+-------------------------+-------------------------------------------+-------------------------------------------+
-| committed transaction 1 |                                    No problems                                        |
-| committed transaction 2 |                                                                                       |
-+-------------------------+-------------------------------------------+-------------------------------------------+
-| ongoing transaction 1   |                                           | read committed: ignores W2                |
-| ongoing transaction 2   |                                           | non read committed: aborts (will rollback)|
-+-------------------------+                 ignores W2                +-------------------------------------------+
-| committed transaction 1 |                                           |                  blocks                   |
-| ongoing transaction 2   |                                           |                                           |
-+-------------------------+-------------------------------------------+-------------------------------------------+
-| ongoing transaction 1   | non read committed and R1 -> W2 -> R1:    | non read committed and R1 -> W2 -> W1:    |
-| committed transaction 2 |  ignores W2                               |  aborts (will rollback)                   |
-|                         | else:                                     | else:                                     |
-|                         |  takes W2 into account                    |  takes W2 into account                    |
-+-------------------------+-------------------------------------------+-------------------------------------------+
-                                  #Summary:
-                                  #  - read committed (def):
-                                  #    - ignores other ongoing transactions, but takes into account changes by committed transactions
-                                  #    -> see state for the current statement
-                                  #  - repeatable read:
-                                  #    - ignores other ongoing transactions, including changes, unless it conflicts, in which case
-                                  #      it aborts.
-                                  #    -> see state at start of transaction (first statement after "start transaction")
-                                  #  - serializable:
-                                  #    - like repeatable read, but two concurrent serializable doing a W that depends on a R that is
-                                  #      changed by this W: the second will abort.
-                                  #      - ex: insert into "TABLE"("COL") select sum("COL") from "TABLE"; by two serializable transactions.
-                                  #    -> can virtually consider successful transactions (not aborting) to happen one after the other,
-                                  #       while still avoiding blocking locks to achieve it.
-                                  #Others:
-                                  #  - read write|only (def: read write):
-                                  #     - read only allows further concurrency optimization
-                                  #     - read only can still write to TEMP
-                                  #  - deferrable (def: not deferrable):
-                                  #     - if serializable and read only, blocks until sees no chance of being cancelled, then go on.
-                                  #     - good if cancellation might take a long time to repeat the transaction (e.g. backups)
-                                  #Synchronization of two TRANSACTIONs:
-                                  #  - TRANSACTION must:
-                                  #     - both be either repeatable read or serializable.
-                                  #       If TRANSACTION2 is serializable, so must be TRANSACTION1
-                                  #     - if TRANSACTION1 is readonly, so must be TRANSACTION2
-                                  #     - Must be just after the "start transaction"
-                                  #  - steps:
-                                  #     - TRANSACTION1 does select pg_export_snapshot(), which prints a SNAPSHOT_ID
-                                  #     - TRANSACTION2 does set transaction snapshot SNAPSHOT_ID, as STR
-                                  #Can have extra infos with:
-                                  #  - txid_current(): current TRANSACTION_ID
-                                  #  - txid_current_snapshot(): current SNAPSHOT_ID
-                                  #  - txid_snapshot_xid(SNAPSHOT_ID): returns current transaction ID
-                                  #  - txid_snapshot_xmax|xmin(SNAPSHOT_ID)
-                                  #  - txid_visible_in_snapshot(TRANSACTION_ID, SNAPSHOT_ID)
-set transaction ...               #Changes isolation level, etc. (same as start transaction ...) for current transaction.
-                                  #Must be just after the "start transaction"
-set session
-characteristics                   #Same but for all future transactions.
-as transaction ...                #Same as setting ENVVAR default_transaction_isolation|read_only|deferrable
+USERCONFDIR                       #DIR with OS user-specific configuration file
+                                  #On my system: ~/.postgresql
 
 
                                              /=+===============================+=\
@@ -6762,14 +7094,6 @@ pg_matviews.tablespace            #pg_tablespace.spcname of MVIEW
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
-
-TOPTS|IOPTS.fillfactor            #10-100. Keep 1-INT% additional free space on the page storing TABLE|INDEX
-                                  #Def: 100 (TOPTS) or 90 (IOPTS), i.e. none
-                                  #Memory allocation happens on `insert`
-                                  #Goal:
-                                  #  - faster memory allocation if lots of `update`
-                                  #  - `update`s can keep their `cluster` optimization, since they do not need new memory allocations
-                                  #  - increase changes of Heap-Only Tuples
 
 WRITING ==>                       #Best way to write a big amount of data fast:
                                   #  - put in only one transaction/statement
@@ -6971,7 +7295,7 @@ execute procedure FUNC(STR...)    #    If COMMAND is the one triggering EVENT "f
                                   #  - triggered_change_notification([STR]) is a function to use to do notify STR, for each row,
                                   #    after insert and/or update and/or delete, with payload explaining the modification.
                                   #  - Trusted postgres extension 'tcn'
-                                  #Auto-dependency child of its TABLE|COL (even with `drop ... restrict`)
+                                  #Auto-dependency child of its TABLE|COL
 alter table "TABLE"               #all|user:
  enable|disable                   #  - not for RULE
  [replica|always]                 #  - same but all include system TRIGGER (enforcing CONSTRAINT), not user
@@ -7612,6 +7936,8 @@ pg_conversion.conowner            #REGROLE of CONVERSION's owner
 pg_collation.collowner            #REGROLE of COLLATION's owner
 pg_opfamily.opfowner              #REGROLE of OPFAMILY's owner
 pg_opclass.opcowner               #REGROLE of OPCLASS's owner
+pg_extension.extowner             #REGROLE of EXTENSION's owner
+pg_prepared_xacts.owner           #"ROLE" name of PXID's owner
 
 
                                              /=+===============================+=\
@@ -7701,12 +8027,12 @@ pg_hba.conf                       #File under a cluster DATADIR controlling:
                                   #          - require: SSL. If root CA, verify certificate
                                   #          - verify-ca: SSL. Always verify certificate
                                   #          - verify-full: SSL. Verify certificate, and that hostname match in certificate
-                                  #        - sslcert: certificate FILE (def: ~/.postgresql/postgresql.crt or PGSSLCERT)
+                                  #        - sslcert: certificate FILE (def: USERCONFDIR/postgresql.crt or PGSSLCERT)
                                   #        - sslkey:
-                                  #          - Secret key (def: ~/.postgresql/postgresql.key or PGSSLKEY).
+                                  #          - Secret key (def: USERCONFDIR/postgresql.key or PGSSLKEY).
                                   #          - Can also be OpenSSL engines, as ENGINE:KEY
-                                  #        - sslrootcert: CA certificate FILE (def: ~/.postgresql/root.crt or PGSSLROOTCERT)
-                                  #        - sslcrl: CA revocation list FILE (def: ~/.postgresql/root.crl or PGSSLCRL)
+                                  #        - sslrootcert: CA certificate FILE (def: USERCONFDIR/root.crt or PGSSLROOTCERT)
+                                  #        - sslcrl: CA revocation list FILE (def: USERCONFDIR/root.crl or PGSSLCRL)
                                   #    - krb5: Kerberos5
                                   #      - libpq variable krbsrvname: Kerberos server name (def: PGREALM or PGKRBSRVNAME)
                                   #    - GSSAPI:
@@ -7760,66 +8086,10 @@ TO DOCUMENT, including: ???
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:          EXTENSIONS           :==(
+                                            )==:     FOREIGN DATA WRAPPER      :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
-
-create extension                  #Activate an EXTENSION, i.e. a collection of objects (library), except DATABASE, ROLE, INDEX and
-EXTENSION                         #TABLESPACE, for a specific DATABASE.
-[schema SCHEMA]                   #STR is the version (def: the one in the default_version)
-[version STR]                     #SCHEMA is for objects defined in EXTENSION (default: current SCHEMA)
-                                  #Some EXTENSIONs are already present in the default compilation of PostgreSQL, or personalized
-                                  #compilations (but usually not activated).
-                                  #Permissions are the ones required in executing the underlying SQL file.
-                                  #Dependency parent to all its ENTITYs (even with `drop ... restrict`)
-                                  #Files must already be present in SHAREDIR/extensions/:
-                                  #  - a SQL file "EXTENSION--VERSION.sql" defining new ROW, FUNC, etc.:
-                                  #     - implicitly inside a transaction, so cannot use transaction statements
-                                  #     - do select pg_extension_config_dump(STR, STR2); for a TABLE named STR used for users to
-                                  #       personalize the extension.
-                                  #       It will make the TABLE backupable, as opposed to rest of EXTENSION.
-                                  #       STR is a filter, e.g. 'where BOOL' or ''.
-                                  #     - should include protective lines:
-                                  #       -- complain if script is sourced in psql, rather than via CREATE EXTENSION
-                                  #       \echo Use "CREATE EXTENSION pgrowlocks" to load this file. \quit
-                                  #  - an ASCII text file "EXTENSION.control" defining metadata as VAR = VAL ..., with #comment possible:
-                                  #     - default_version STR: current version
-                                  #     - relocatable BOOL (def: false): if SCHEMA can be changed after create extension
-                                  #     - comment STR: description
-                                  #     - directory STR: DIR of the SQL file (def: same as *.control file)
-                                  #     - encoding STR (def: client's encoding): to be defined in no ASCII characters
-                                  #     - module_pathname STR:
-                                  #       - can be used as MODULE_PATHNAME in the *.sql file
-                                  #       - can use $libdir, e.g. '$libdir/myextension'
-                                  #     - requires STR...: other extensions this one depends on
-                                  #     - superuser BOOL (def: true): if only superuser can create extension
-                                  #     - schema STR: def. SCHEMA (only if non-relocatable)
-                                  #  - additional EXTENSION--VERSION.control with same format but for a specific VERSION can be defined
-                                  #  - additional EXTENSION--VERSION--VERSION2.sql are executed to go through VERSION to VERSION2 with
-                                  #    alter extension update
-alter extension EXTNSIN
-add|drop TYPE VAR                 #
-
-alter ENTITY "ENTITY" [no]        #Mark as dependency, for `drop ... cascade`
- depends on extension "EXTENSION" #For ENTITY: function, routine, procedure, trigger, materialized view, index
-
-load STR                          #Loads a shared library located at STR, in order:
-                                  #  - an absolute path
-                                  #  - or look into ENVVAR dynamic_library_path, which a colon-separated list (def: $libdir),
-                                  #    where items can start with $libdir (def: /usr/lib/postgresql/9.3/lib/)
-                                  #    (can be seen with pg_config --pkglibdir)
-                                  #If not superuser, must be inside $libdir/plugins/
-                                  #STR path convention is OS-specific.
-                                  #Not useful if only functions definitions because they are loaded automatically with create function...
-                                  #Can also use ENVVAR shared_preload_libraries (comma-separated list), without the extension .so
-
-pg_extension                      #Activated EXTENSION
-                                  #???
-pg_available_extensions           #Possible EXTENSION for their current version
-                                  #???
-pg_available_extension_versions   #Possible EXTENSION for all versions
-                                  #???
 
 create foreign data               #Creates a FDW, i.e. functions that permits using another DBMS inside PostgreSQL.
 wrapper FDW                       #Can be slow and not optimized.
@@ -7856,6 +8126,14 @@ options
 pg_foreign_data_wrapper           #All FDW. ???
 pg_attribute.attfdwoptions text[] Attribute-level foreign data wrapper options, as “keyword=value” strings ???
 
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:        FOREIGN SERVER         :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
 create server FSERVER [type STR]
 [version STR2]                    #Creates a FSERVER, i.e. a connection to a specific DATABASE using a FDW.
 foreign data wrapper FDW          #STR are all FDW-dependent options. They usually specify the connection details
@@ -7867,6 +8145,14 @@ alter server FSERVER
 
 pg_foreign_server                 #All FSERVER. ???
 
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:         USER MAPPING          :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
 create user mapping
 for ROLE|current_user
 server FSERVER                    #Specify authentication details on FSERVER for ROLE.
@@ -7877,6 +8163,14 @@ alter user mapping ...
 
 pg_user_mapping[s]                #All USERMAPPING. With s, leaves out the option field when user should not see it
                                   #???
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:         FOREIGN TABLE         :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
 
 create foreign table "FTABLE"
  ("COL" TYPE
@@ -7979,17 +8273,6 @@ INSTALLATION ==>                  #  - Server: postgresql
                                   #  - Client: postgresql-client, pgadmin3
                                   #  - Extensions: postgresql-contrib, postgresql-EXTENSION
                                   #  - Extension building: postgresql-server-dev
---bin|doc|html|include|
-pkginclude|lib|pkglib|            #Print DIR. By default, useful DIR (so without headers, docs, etc.) are:
-locale|man|share|                 #  - /usr/lib/postgresql/VERSION/: bin and lib
-sysconfdir                        #  - /usr/share/postgresql{,-common}/VERSION/
---includedir-server|pgxs          #  - /etc/postgresql-common/: few conf files
---configure                       #Print all configuration flags (usually to mimic another installation)
---cc|cppflags|
-cflags[_sl]|
-ldflags[_ex|sl]|libs              #Print makefile variables
-
-pg_config                         #TABLE with compile-time config. ???
 
 REGRESSION ==>                    #Running the regression tests (to unsure installation is fine):
                                   #  - download source, configure and build it
@@ -8039,8 +8322,6 @@ STOPPING ==>                      #Terminate server:
                                   #Terminate a client current statement (superuser or same member, but not same user):
                                   #  - pg_cancel_backend(PID)
                                   #  - send INT (2, CTRL-C)
-LOCATIONS ==>                     #  - Each cluster has a DATADIR (must have permissions 0700)
-                                  #  - SHAREDIR, e.g. /usr/share/postgresql/VERSION/
 
 initdb [-D DATADIR]               #Creates a cluster, i.e.:
                                   #  - populates or create DATADIR. Def: PGDATA
@@ -8104,7 +8385,7 @@ postgres [-D DATADIR]             #Starts the server daemon for a specific clust
                                   #Commands that started the server can be found under DATADIR/postmaster.opts
                                   #Connections are done using either:
                                   #  - Unix sockets ("local"), on a socket at DIR/.s.PSQL.PORT (created at server start), where
-                                  #    DIR is designated by ENVVAR unix_socket_directories (def: /tmp or /var/lib/postgresql/),
+                                  #    DIR is designated by ENVVAR unix_socket_directories (def: /tmp or VARDIR),
                                   #    comma-separated list by order of preference. Can be "" to disallow "local" connections.
                                   #    OS_USER must (to avoid spoofing) have:
                                   #      - permissions on DIR, preferably only that user
@@ -8218,26 +8499,6 @@ pg_file_read(STR, STR2, BOOL)     #BOOL is append
 pg_file_rename(STR, STR2)         #
 pg_file_unlink(STR)               #
 pg_file_length(STR)               #
-
-DATADIR ==>                       #  - base/: databases main data.
-                                  #    Querying database|tables oids:
-                                  #      - utility oid2name:
-                                  #         - without option: database oid -> name
-                                  #         - -H -p -U -P: usual connection flags
-                                  #         - -d DATABASE: show table oid -> name
-                                  #           - -S: include system catalogs, views and TOAST
-                                  #         - -f|o NUM: for tables with filenode|oid NUM
-                                  #         - -t STR: same with name
-                                  #         - -i: include SEQUENCE and INDEX
-                                  #         - -s: info about TABLESPACE
-                                  #      - pg_relation_filenode|filepath(OID|STR)
-                                  #    6MB for an empty database. Each file is a table with optionally:
-                                  #      - a FILE_vm: Visibility Map
-                                  #      - a FILE_fsm: Free Space Map
-                                  #    TOAST are special subfiles when a file is too big.
-                                  #  - global/: cluster-wide data.
-                                  #  - pg_xlog/: WAL
-                                  #  - pg_log/: logs (see log_directory)
 
 SESSION ==>                       #Series of commands in a specific client connection to the server
                                   #E.g. interactive prompt
@@ -8484,6 +8745,9 @@ pg_listening_channels()           #
                                              \=+===============================+=/
 
 
+LOGDIR                            #DIR with logs
+                                  #On my system: /var/log/postgresl
+
 LOGGING ==>                       #Controlled by several ENVVARs
 log_destination                   #Where to put log messages (comma-separated list):
                                   #  - stderr (def)
@@ -8492,7 +8756,7 @@ log_destination                   #Where to put log messages (comma-separated li
                                   #     - goal is to import them in tables with copy from
                                   #  - syslog:
                                   #     - prefer using the logging_collector
-                                  #     - Needs to put local0.* /var/log/postgresql/ in syslog conf file
+                                  #     - Needs to put local0.* LOGDIR/ in syslog conf file
                                   #     - Can use ENVVAR syslog_facility, syslog_ident and event_source
 logging_collector                 #When on, use the logging facility:
                                   #  - redirect stderr to file in ENVVAR log_directory too (can be relative to DATADIR) (def: pg_log).
@@ -9292,6 +9556,7 @@ pg_stat_database_conflicts        #DATABASE, with query cancelled due to recover
 TO DOCUMENT ??? including:
   - pg_publication, pg_publication_namespace, pg_publication_rel, pg_publication_tables
   - pg_subscription, pg_subscription_rel, pg_stat_subscription, pg_stat_subscription_stats
+  - pg_xact_commit_timestamp(), pg_xact_commit_timestamp_origin(), pg_last_committed_xact()
 
 pg_class.relreplident             #'CHAR' with RELATION's COLs used to form `replicate identity`:
                                   #  - 'd': default (primary key, if any)
