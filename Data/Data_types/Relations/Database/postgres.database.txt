@@ -314,6 +314,8 @@ for TYPE language LANG            #For transform
 for ROLE server SERVER            #For user mapping
                                   #ROLE can be user, current_role, current_user, public
 
+ENTITY_CATALOG                    #pg_* TABLE listing ENTITYs of a given kind
+
 alter ENTITY ... "ENTITY" ...     #Sets ENTITY options after creation
                                   #Not for ENTITY: access method, cast, transform
                                   #Several ENTITYs allow combining several `alter ...` into a single statement
@@ -360,8 +362,8 @@ drop ENTITY ... restrict|cascade  #If there are dependency child objects
                                   #     - not allowed for database|tablespace|role|user mapping
 
 pg_[sh]depend                     #TABLE with child|parent dependencies between [cluster-wide] ENTITYs
-pg_[sh]depend.classid             #REGCLASS of a pg_catalog.* "TABLE". Entity type, e.g. pg_type|proc|class|...
-pg_[sh]depend.objid               #OID of the ENTITY within its pg_catalog.* "TABLE"
+pg_[sh]depend.classid             #REGCLASS of the ENTITY_CATALOG
+pg_[sh]depend.objid               #OID of the ENTITY within its ENTITY_CATALOG
 pg_[sh]depend.objsubid            #INT4. "COL" number. 0 if classid is not pg_class
 pg_[sh]depend.refclassid
 pg_[sh]depend.refobjid
@@ -2228,6 +2230,20 @@ pg_class.relrewrite               #REGCLASS. When a RELATION is copied to a new 
                                   #Set to 0 after the change. Since those operations are atomic, this is always 0 from user perspective
 
 regclass                          #TYPE alias to OID, to cast pg_class.oid as "NAME"
+
+oid2name                          #List DATABASE|RELATION|TABLESPACEs by OID|name
+                                  #By default, prints all DATABASE OID|names
+-H|p|U|P                          #Connection flags
+--filenode|-f REGCLASS_OID        #Print relation "NAME" using its relfilenode
+--oid|-o REGCLASS_OID             #Same using its OID
+--table|-t NAME_GLOB              #Inverse
+-d DATABASE                       #Select DATABASE.
+                                  #Also, by default, prints all its RELATIONs
+--indexes|-i                      #Also print SEQUENCE|INDEXs
+--system-objects|-S               #Also print system catalogs and TOAST_TABLEs
+--tablespaces|-s                  #Prints all TABLESPACEs
+--quiet|-q                        #Do not print header
+--extended|-x                     #Also print OID, SCHEMA and TABLESPACE
 
 
                                              /=+===============================+=\
@@ -6790,50 +6806,469 @@ TOPTS.toast.*autovacuum*          #Same but only for pg_toast_OID TABLE
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:           EXTENSION           :==(
+                                            )==:             ROLE              :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
-SHAREDIR/extensions/              #EXTENSION_DIR containing all enabled|disabled EXTENSIONs
+ROLES ==>                         #ROLE are users or group of users for a given cluster.
+                                  #Difference between OS_USER (OS-specific) and ROLE (cluster-specific).
+                                  #Default installation creates a OS_USER "postgres", with group "postgres", often used as owner of
+                                  #clusters.
+                                  #Each cluster has a superuser ROLE:
+                                  #  - defined as the owner OS_USER (user that created the cluster using initdb)
+                                  #  - should have OS permissions over the DATADIR of the cluster
+                                  #By default, client connects as ROLE using OS_USER, but can use flags to do otherwise.
+                                  #  - so anyone that can login as the owner OS_USER of a cluster on a local computer can be superuser
+                                  #    ROLE too.
+                                  #ROLE own VAR they create.
+
+create role ROLE                  #Create a ROLE:
+[superuser]                       #  - superuser: creates another superuser ROLE (must be superuser ROLE)
+[createdb|role]                   #    Cannot drop the initial superuser ROLE.
+[[encrypted] password STR]        #    readonly ENVVAR is_superuser ('on|off') is available.
+[login] [replication]             #  - createdb|role|login|replication: gives createdb|role|login|replication privilege (see PRIVILEGE)
+[connection limit INT]            #  - password STR:
+[noinherits]                      #     - either plaintext or "md5STR" where STR is a md5 hash.
+[valid until TIMTMPTZ]            #     - If encrypted is specified, STR must be plaintext -> it is converted to a "md5STR".
+[in role ROLE2...]                #     - can be null for no password.
+[role passwordcheck ROLE2...]     #     - only useful with authentication methods with passwords (i.e. "password" and "md5")
+[admin ROLE2]                     #     - will cancel if password is weak.
+                                  #       Must also put '$libdir/passwordcheck' in shared_preload_libraries.
+                                  #       Will not work on md5 hashes, only plaintext.
+                                  #       It is recommended to rebuild the module by modifying the Makefile to enable CrackLib
+                                  #       (better weak password recognition). Must be enabled at buildtime anyway.
+                                  #     - report password failure after ENVVAR auth_delay.milliseconds (def: 0), to avoid bruteforce
+                                  #       (but makes DDoD easier).
+                                  #       Must put auth_delay in shared_preload_libraries
+                                  #        - Trusted postgres extension 'auth_delay'
+                                  #  - valid until TIMESTAMPTZ: validity of the password
+                                  #  - in role ROLE2...: grants ROLE as a member of ROLE2... (prefer using grant|revoke)
+                                  #  - role ROLE2...: inverse
+                                  #  - admin ROLE2...: same as role ROLE2, but ROLE2 are added with admin_option
+                                  #  - connection limit: how many connections at same time (def: -1, unlim)
+                                  #  - noinherits: see grant|revoke
+                                  #Parent dependency of every ENTITY it owns
+alter role ROLE ...               #Can be all options of create role but:
+                                  #  - can use no..., e.g. nosuperuser
+                                  #  - no in role, role or admin
+alter ENTITY "ENTITY"             #Set owner
+ owner to ROLE                    #ROLE can be current_role, current_user or session_user
+                                  #Not for ENTITY: extension, group, index, policy, role, rule,
+                                  #text search parser|template, trigger, user, user mapping
+                                  #Also for pseudo-ENTITY: large object OID
+drop role ROLE...                 #Drop ROLE and cluster-specific objects owned by ROLE.
+                                  #Doesn't work if ROLE own database-specific objects (use reassign|drop owned by ROLE first) or
+                                  #privileges.
+                                  #If client connection, doesn't stop it.
+drop owned by ROLE...             #Drop all objects (except cluster-specific objects) owned by ROLE, and
+[restrict|cascade]                #revoke privileges given to ROLE.
+reassign owned
+by ROL... to ROLE2                #Change ownership.
+
+drop role ...                     #Can only be done if not used by any DATABASE
+
+create schema ["SCHEMA"]          #Set SCHEMA's owner. Def: current_user
+ authorization ROLE               #Same ROLE as `alter ... owner to ROLE`
+                                  #Def "SCHEMA": ROLE
+
+set [local] role ROLE             #Same syntax as set, but here change current ROLE
+                                  #If not superuser, must be a ROLE that the session_user is member of (but not inverse, not other
+                                  #members of same ROLE), directly or indirectly.
+                                  #There are two types of users:
+                                  #  - current user: current ROLE. Used for permission checking.
+                                  #  - session user: ROLE that (usually) started the session.
+                                  #    Used to switch roles with set role and set session authorization.
+                                  #    So for a session, can switch back and forth between same possible ROLE (as long as set
+                                  #    session authorization is not called)
+                                  #VAR session_user (one that started the session) and current_user are available.
+                                  #If ROLE is none, reset to current session_user.
+                                  #ROLE can be written as STR
+                                  #  - local: same as set local ...
+set [local] session               #Same but:
+authorization ROLE                #  - for both session_user and current_user
+                                  #  - must be superuser
+                                  #  - use default to reset to initial session_user
+
+pg_authid|roles                   #All ROLE, including:
+                                  #  - rolcatupdate BOOL (def: false): if false, all ROLE, including superuser ROLE, cannot write on
+                                  #    system catalogs.
+                                  #pg_roles blanks out the password
+                                  #???
+
+regrole                           #TYPE alias to OID, to cast pg_authid.oid as "ROLE" name
+
+pg_auth_members                   #ROLE memberships, including:
+                                  #  - roleid|member|grantor REGROLE: means ROLE2 is a member of ROLE, which has been granted by ROLE3
+                                  #???
+pg_user                           #TABLE with users. ???
+
+pg_namespace.pg_nspowner          #REGROLE of SCHEMA's owner
+pg_type.typowner                  #REGROLE of TYPE's owner
+pg_largeobject_metadata.lomowner  #REGROLE of LARGEOBJ's owner
+pg_class.relowner                 #REGROLE of RELATION's owner
+pg_tables.tableowner              #REGROLE of TABLE's owner
+pg_views.viewowner                #REGROLE of VIEW's owner
+pg_matviews.matviewowner          #REGROLE of MVIEW's owner
+pg_sequences.sequenceowner        #REGROLE of SEQUENCE's owner
+pg_ts_dict.dictowner              #REGROLE of DICTIONARY's owner
+pg_ts_config.cfgowner             #REGROLE of REGCONF's owner
+pg_conversion.conowner            #REGROLE of CONVERSION's owner
+pg_collation.collowner            #REGROLE of COLLATION's owner
+pg_opfamily.opfowner              #REGROLE of OPFAMILY's owner
+pg_opclass.opcowner               #REGROLE of OPCLASS's owner
+pg_extension.extowner             #REGROLE of EXTENSION's owner
+pg_prepared_xacts.owner           #"ROLE" name of PXID's owner
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:             GRANT             :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+grant PRIVILEGE...                #Gives permissions PRIVILEGE... on VAR... to ROLE...:
+on [TYPE] VAR...                  #  - TYPE:
+to ROLE...                        #     - is table (def)|sequence|database|domain|function|language|schema|tablespace|type|
+[with grant option]               #       large object|foreign data wrapper|foreign server
+                                  #         - table include VIEW and FTABLE
+                                  #     - [TYPE] VAR can be all TYPEs in schema SCHEMA for table|sequence|function
+                                  #  - PRIVILEGE:
+                                  #     - can be:
+                                  #        - on table:
+                                  #           - insert (a): insert or copy from
+                                  #           - delete (d): delete
+                                  #           - truncate (D): truncate
+                                  #           - references (x): needed on both TABLE to use foreign key
+                                  #           - trigger (t): create trigger
+                                  #        - on table|sequence|large object:
+                                  #           - select (r):
+                                  #              - select, copy or using VAR in update|delete
+                                  #              - sequence: same + currval()
+                                  #              - large object: being read
+                                  #           - update (w)
+                                  #              - update, select for share|update
+                                  #              - sequence: same + nextval|setval()
+                                  #              - large object: being written
+                                  #        - on sequence|domain|foreign data wrapper|foreign server|language|schema|type:
+                                  #           - usage (U):
+                                  #              - language:
+                                  #                - create function for this PL/* language
+                                  #                - careful if functions can access OS (e.g. Bash)
+                                  #              - schema: reading VAR in SCHEMA (without permission can still look up VAR names in
+                                  #                SCHEMA)
+                                  #              - sequence: currval() + nextval()
+                                  #              - type|domain: using it in creation of any VAR (including FUNC() and TABLE)
+                                  #              - foreign data wrapper: create server using FDW
+                                  #              - foreign server: create foreign table using FSERVER
+                                  #        - on database:
+                                  #           - connect (c): can start client session
+                                  #           - temp (T): create temp
+                                  #        - on database|schema|tablespace:
+                                  #           - create (C):
+                                  #             - database: create schema
+                                  #             - schema: create any VAR inside SCHEMA, and rename (must be owner too)
+                                  #             - tablespace: create table|index|temp in it, and use TABLESPACE in create database
+                                  #        - on function:
+                                  #           - execute (X): executing *FUNC() (including TFUNC())
+                                  #        - on all:
+                                  #           - all privileges
+                                  #     - Other PRIVILEGE which can be obtained differently:
+                                  #        - drop|alter:
+                                  #           - no way to grant them to others:
+                                  #              - drop or alter definition of VAR:
+                                  #        - grant|revoke:
+                                  #           - grant PRIVILEGE ... with grant|admin option:
+                                  #              - grant for PRIVILEGE for the specific PRIVILEGE and TYPE
+                                  #              - admin for ROLE membership
+                                  #        - createrole:
+                                  #           - create|alter role ... createrole:
+                                  #              - create role (or drop|alter)
+                                  #              - To do so on superuser ROLE, must be superuser.
+                                  #              - implies admin option
+                                  #              - can create roles with higher permissions or memberships, so can be dangerous
+                                  #        - createdb:
+                                  #           - create|alter role ... createdb:
+                                  #              - create database (or drop|alter)
+                                  #        - login:
+                                  #           - create|alter role ... login:
+                                  #              - ROLE can initiate a client session (e.g. with psql)
+                                  #                Without it (def) ROLE can only be assigned with set role ROLE
+                                  #        - replication:
+                                  #           - create|alter role ... login:
+                                  #             - ROLE can use pg_basebackup
+                                  #     - PRIVILEGE can be PRIVILEGE("COL"...) for select|insert|update|references
+                                  #     - Def. PRIVILEGE is all for TABLE owner and superuser.
+                                  #       They can revoke their own privileges though.
+                                  #     - Permissions are optimistic: has privileges in following cases:
+                                  #        - granted at table-level but revoked at column-level
+                                  #        - granted to ROLE2 to which is member, but revoked to the specific ROLE
+                                  #     - SQL only has VAR, not VAR...
+                                  #  - ROLE:
+                                  #     - if ROLE2 is a member of ROLE (directly or indirectly), it is targeted too:
+                                  #         - generally ROLE is just a group name, and ROLE2 real users, or subgroups
+                                  #         - but could also copy and extend|restrict permissions of another user
+                                  #         - inherit:
+                                  #           - by def., ROLE2 inherit privileges of ROLE (except "Other PRIVILEGE")
+                                  #           - with noinherits, can still use set role ROLE (but then loses its inital PRIVILEGE)
+                                  #     - can be public:
+                                  #        - meaning all current and future ROLE.
+                                  #        - cannot be member of a ROLE.
+                                  #        - has default privilege: connect, temp, usage and create on SCHEMA public, execute, usage on
+                                  #          LANGUAGES. Can be revoked.
+                                  #     - If current user is superuser or can grant thanks to membership or "with grant option", looks
+                                  #       like PRIVILEGE has been granted by VAR owner
+revoke [grant|admin               #Inverse.
+option for] PRIVILEGE...          #"with grant|admin option" is revoked too. If "grant|admin option for", only "with grant|admin option"
+on [TYPE] VAR...                  #is removed.
+from ROLE...                      #Revoke privileges granted to others by ROLE2 too: if restrict, command will fail if there are some
+[restrict|cascade]                #ROLE can only revoke ROLE2 for PRIVILEGE it previously personnally granted the other or a ROLE the
+                                  #other is member of.
+
+alter default privileges          #Change default PRIVILEGE for ROLE2 (in ...) of all VAR (write TYPEs, not TYPE VAR) that will be
+[for ROLE...]                     #created in the future by ROLE (must be current user (def) or a ROLE3 that ROLE is member of), in
+[in schema SCHEMA]                #SCHEMA (if specified)
+grant|revoke...                   #Only for TABLE, SEQUENCE, FUNC or TYPE.
+
+grant ROLE... to ROL2...          #
+[with admin option]               #
+revoke [admin option
+for] ROL... from ROL2...          #Grant|revoke ROLE2... as members of ROLE...
+[restrict|cascade]                #Gives|revokes associated PRIVILEGE too.
+
+has_TYPE_privilege                #TYPE can also be:
+ ([ROLE, ]VAR, PRIVILEGE)         #  - any_column
+                                  #  - column: adds a "COL" arg after VAR
+pg_has_role
+ ([ROLE, ]ROLE2, PRIVILEGE)       #With membership
+
+pg_init_privs                     #TABLE with initial privileges. ???
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:              ACL              :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+aclitem                           #ACLITEM
+                                  #Record ENTITY's PRIVILEGEs, on its pg_catalog.* TABLE
+                                  #Cannot use < <= > >=
+
+'[ROLE]=CHAR.../ROLE2'            #ACLITEM_UNKNOWN
+                                  #ROLE: granted (def: public)
+                                  #ROLE2: granter
+                                  #CHAR: PRIVILEGE (shown above between parenthesis)
+                                  #CHAR* if `with grant option`
+                                  #Default PRIVILEGEs are not shown
+
+pg_namespace.aclitem              #ACLITEM_ARR of SCHEMA
+pg_type.typacl                    #ACLITEM_ARR of TYPE
+pg_class.relacl                   #ACLITEM_ARR of RELATION
+pg_attribute.attacl               #ACLITEM_ARR of COL
+pg_largeobject_metadata.lomacl    #ACLITEM_ARR of LARGEOBJ
+
+pg_default_acl                    #All default privileges. ???
+pg_parameter_acl                  #TABLE with privileges. ???
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:        AUTHENTICATION         :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+pg_hba.conf                       #File under a cluster DATADIR controlling:
+                                  #  - who can connect (host address, OS_USER)
+                                  #  - to which database
+                                  #  - with which connection method
+                                  #  - under which ROLE
+                                  #Have five whitespaces-separated fields (can contain whitespace if double-quoted) (with #Comment):
+                                  #  - type (protocol):
+                                  #    - local: local connection (Unix sockets)
+                                  #    - host: TCP/IP
+                                  #    - host[no]ssl: TCP/IP with|without SSL. For SSL:
+                                  #       - must set ENVVAR ssl to "on" (def: "off") at server start
+                                  #       - must have been enable when installing|building PostgreSQL
+                                  #  - database:
+                                  #    - connect to which DATABASE... (comma-separated)
+                                  #    - sameuser means DATABASE with same name as ROLE
+                                  #    - samerole means DATABASE with same name as ROLE or a member of ROLE
+                                  #    - replication: special DATABASE used by pg_basebackup
+                                  #    - @FILE... means list of DATABASE is available under DATADIR/FILE (if relative) or FILE (if abs.)
+                                  #    - can be all
+                                  #  - user:
+                                  #    - under which ROLE... (comma-separated) can connect
+                                  #    - +ROLE means any member of ROLE
+                                  #    - @FILE... means list of ROLE is available under DATADIR/FILE (if relative) or FILE (if abs.)
+                                  #    - can be all
+                                  #  - address:
+                                  #    - which IPv4|6 addresses (along the netmask range) can connect
+                                  #    - can also be a hostname (can be slow)
+                                  #      - including a .DOMAINNAME for hosts under DOMAINNAME
+                                  #    - can be all
+                                  #    - samehost: any of the machine own IPs
+                                  #    - samenet: any of the machine own subnet
+                                  #  - netmask (optional):
+                                  #    - IPv4|v6 netmask
+                                  #  - auth. method:
+                                  #    - trust|reject: always accept|refuse
+                                  #    - ident [map=MAP]:
+                                  #      - use MAP in pg_ident.conf (ENVVAR ident_file) to determine which ROLE correspond to OS_USER
+                                  #      - def: ROLE = OS_USER
+                                  #    - password|md5: ask for password (md5 hashes it but not crypto-secure)
+                                  #      - libpq variable password:
+                                  #         - To use if is demanded. Def: PGPASSWORD
+                                  #         - Can also use a FILE PAGPASSFILE (def: ~/.pgpass), which should contain lines with format:
+                                  #             host:port:database:user:password (first four field can be *)
+                                  #           Permission must be 0600
+                                  #    - SSL:
+                                  #      - libpq variables:
+                                  #        - sslmode: priority of SSL over non-SSL (def: PGSSLMODE):
+                                  #          - disable: non-SSL
+                                  #          - prefer (def): first SSL, then non-SSL
+                                  #          - require: SSL. If root CA, verify certificate
+                                  #          - verify-ca: SSL. Always verify certificate
+                                  #          - verify-full: SSL. Verify certificate, and that hostname match in certificate
+                                  #        - sslcert: certificate FILE (def: USERCONFDIR/postgresql.crt or PGSSLCERT)
+                                  #        - sslkey:
+                                  #          - Secret key (def: USERCONFDIR/postgresql.key or PGSSLKEY).
+                                  #          - Can also be OpenSSL engines, as ENGINE:KEY
+                                  #        - sslrootcert: CA certificate FILE (def: USERCONFDIR/root.crt or PGSSLROOTCERT)
+                                  #        - sslcrl: CA revocation list FILE (def: USERCONFDIR/root.crl or PGSSLCRL)
+                                  #    - krb5: Kerberos5
+                                  #      - libpq variable krbsrvname: Kerberos server name (def: PGREALM or PGKRBSRVNAME)
+                                  #    - GSSAPI:
+                                  #      - libpq variable gsslib: on Windows, set to "gssapi" to use GSSAPI instead of SSPI
+                                  #        (def: PGGSSLIB)
+                                  #  - auth. method options (optional):
+                                  #    - as VAR=VAL ...
+                                  #    - see above
+                                  #Default settings:
+                                  #  - host and local connections: initdb --auth-host|local=STR (or -A STR for both)
+                                  #  - default password: initdb -W|--pwfile=FILE, from stdin or from first line of FILE (if using
+                                  #    password authentication)
+                                  #Only the first matching line is chosen. Put most likely first for efficiency.
+                                  #Location can be changed by ENVVAR hba_file
+                                  #Read on server startup, or when receiving a SIGHUP.
+
+requirekeeper                     #LIBPQ variable: OS_USER behind the server process must match STR.
+                                  #Avoid another OS_USER starting the server while legit one is rebooting it.
+
+pg_hba_file_rules                 #TABLE with pg_gba.conf contents. ???
+pg_ident_file_mappings            #TABLE with pg_ident.conf contents. ???
+pg_stat_ssl                       #???
+pg_stat_gssapi                    #???
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:      ROW-LEVEL SECURITY       :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+TO DOCUMENT, including: ???
+  - alter table ... row level security
+  - pg_policies, pg_policy
+
+pg_class.relrowsecurity           #BOOL. Whether RELATION has row-level security
+pg_tables.rowsecurity             #BOOL. Whether TABLE has row-level security
+pg_class.relforcerowsecurity      #BOOL. Whether RELATION's row-level security applies to owner
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:        SECURITY LABELS        :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+TO DOCUMENT, including: ???
+   - pg_[sh]seclabel, pg_seclabels
+
+security label [for PROVIDER]
+ on VAR is STR                    #Used to implement SE-Linux (see online doc)
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:       EXTENSION CREATE        :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+SHAREDIR/extension/               #EXTENSION_DIR containing all enabled|disabled EXTENSIONs
                                   #Can add more to it manually, but many are already present in most builds
                                   #  - called "contrib"
                                   #  - disabled except for "plpgsql"
 
-EXTENSION_DIR/                    #INIMAIN, EXTENSIONS's main declarative file
- EXTENSION[--VERSION[--VERSION2]] #INI format
- .control                         #If --VERSION, only for that specific VERSION
-                                  #If --VERSION2, executed when upgrading from VERSION to VERSION2 with `alter extension ... update`
+EXTENSION_DIR/                    #INIMAIN ("control file"), EXTENSIONS's main declarative file
+ EXTENSION[--EVERSION].control    #INI format. ASCII only.
+                                  #If --EVERSION, only for that version
+                                  #  - cannot specify INIMAIN.default_version|directory then
 INIMAIN.default_version           #Current 'EVERSION'
+                                  #Def: one specified with `create extension ... version`
 INIMAIN.comment                   #STR. Description
+                                  #Can also use `comment on extension` instead
 INIMAIN.superuser                 #BOOL (def: true). Whether should be run with superuser privileges.
 INIMAIN.trusted                   #BOOL (def: !INIMAIN.superuser). Whether non-superuser can enable the EXTENSION.
-INIMAIN.requires "EXTENSION",...  #Depend on other EXTENSIONs
-INIMAIN.directory                 #'DIR' of SQLMAIN (def: same as INIMAIN)
-INIMAIN.schema                    #Main 'SCHEMA'. It must already exist
-                                  #Def: default 'SCHEMA' for current session
-INIMAIN.relocatable               #BOOL (def: false). Whether 'SCHEMA' can be overridden by `create extension schema`
-                                  #Cannot be true if INIMAIN.schema is specified
+INIMAIN.requires "EXTENSION",...  #Fail if other EXTENSIONs not already installed
+INIMAIN.directory                 #'DIR' of SQLMAIN (def: './extension')
+                                  #Relative to SHAREDIR
+INIMAIN.schema                    #Default 'SCHEMA' in SQLMAIN, i.e. set as ENVVAR search_path
+                                  #Def: keep current search_path
+                                  #SCHEMA must already exist
+                                  #Setting it prevents:
+                                  #  - INIMAIN.relocatable true
+                                  #  - `create extension ... schema`
+INIMAIN.relocatable               #BOOL (def: false). Whether 'SCHEMA' can be overridden by `alter extension ... set schema`
 INIMAIN.module_pathname           #STR which can be used as `MODULE_PATHNAME` in SQLMAIN
-                                  #Can include `$libdir`
+                                  #Can include `$libdir`, e.g. '$libdir/EXTENSION'
                                   #Meant to be used inside `create function ... as 'MODULE_PATHNAME', 'FUNC_NAME' language C`
-INIMAIN.encoding                  #'ENCODING' (def: client's encoding) of SQLMAIN
+INIMAIN.encoding                  #'ENCODING' (def: server's ENCODING) of SQLMAIN
 
-EXTENSION_DIR/                    #SQLMAIN, EXTENSION's main imperative file
- EXTENSION--VERSION.sql           #It is a SQL file which can execute any statements, including DDLs
+EXTENSION_DIR/                    #SQLMAIN ("script file"), EXTENSION's main imperative file
+ EXTENSION--EVERSION.sql          #It is a SQL file which can execute any statements, usually DDLs
                                   #Only applies to current DATABASE
-                                  #  - cannot create cluster-wide ENTITYs
+                                  #  - cluster-wide ENTITYs can be created, but are not associated with the EXTENSION
+                                  #Cannot use POLICYs nor SECURITY_LABELs
                                   #Wrapped in a transaction, i.e. cannot use transactions itself
                                   #Any ENTITY created is an auto-dependency child of EXTENSION
 
+@extowner@                        #Replaced by current "ROLE", inside SQLMAIN
+@extschema@                       #Replaced by current "SCHEMA", inside SQLMAIN
+
+EXTENSION_DIR/                    #"Upgrade script".
+ EXTENSIN--EVERSION--EVERSION2.sql#Executed when upgrading from EVERSION to EVERSION2 with `alter extension ... update`
+                                  #Can also be downgrade scripts
+pg_extension_update_paths         #Returns all upgrade scripts
+ ('EXTENSION')->ROW_SET           #ROW: source|target 'EVERSION', path 'EVERSION--...'|null
+
 pg_extension_config_dump          #Mark TABLE as both used by EXTENSION, but writable by user.
- ("TABLE", 'BOOL_REXPR')          #Meant for EXTENSION's config.
+ ("TABLE", 'where BOOL_REXPR')    #Meant for EXTENSION's config.
                                   #This ensures TABLE is included in backups, as opposed to rest of EXTENSION.
-                                  #'BOOL_REXPR' is applied as `where` filter. Can be ''.
+                                  #'wehre BOOL_REXPR' filters which ROWs to backup. Can be ''.
+                                  #Can be called several times, to override previous calls (e.g. in upgrade script)
 
 \echo Use "CREATE EXTENSION ..."
  to load this file.
 \quit                             #Should be put to protect against using psql on SQLMAIN
+
+PGXS                              #Build system for EXTENSIONs, as a Makefile
+                                  #On my system, main file is at /usr/lib/postgresql/VERSION/lib/pgxs/src/makefiles/pgxs.mk
+                                  #Not documented yet
+pg_config --pgxs                  #Prints PGXS's main file
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:         EXTENSION USE         :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
 
 create extension "EXTENSION"      #Enable an EXTENSION
 create extension ...
@@ -6846,10 +7281,18 @@ alter extension "EXTENSION"
  update [to 'EVERSION']           #Changes EVERSION (def: INIMAIN.default_version)
 
 alter extension "EXTENSION"       #Add an ENTITY to the EXTENSION
- add|drop ENTITY "ENTITY"         #Meant for EXTENSION's upgrade files
+ add|drop ENTITY "ENTITY"         #Meant for upgrade scripts
 
 alter ENTITY "ENTITY" [no]        #Mark ENTITY as a dependency
  depends on extension "EXTENSION" #Only for ENTITY: function|routine|procedure|trigger, materialized view, index
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:        EXTENSION LIST         :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
 
 pg_available_extension_versions   #TABLE with all EXTENSION for all EVERSIONs
 pg_available_extension_versions
@@ -6889,11 +7332,6 @@ pg_extension.extconfig            #REGCLASS_ARR of TABLEs marked by pg_extension
                                   #null if none
 pg_extension.extcondition         #'BOOL_REXPR'_ARR of pg_extension_config_dump() second argument
                                   #null if none
-
-PGXS                              #Build system for EXTENSIONs, as a Makefile
-                                  #On my system, main file is at /usr/lib/postgresql/VERSION/lib/pgxs/src/makefiles/pgxs.mk
-                                  #Not documented yet ???
-pg_config --pgxs                  #Prints PGXS's main file
 
 
                                              /=+===============================+=\
@@ -7001,16 +7439,13 @@ pg_class.relfilenode              #OID. REGCLASS_OID used in DBDIR
                                   #  - VIEW|ROW_TYPE
                                   #  - some pg_catalog.* TABLEs: cluster-wide ones, and pg_class|attribute|type|proc
 
-oid2name                          #Translate OID to name ???
-                                  #         - without option: database oid -> name
-                                  #         - -H -p -U -P: usual connection flags
-                                  #         - -d DATABASE: show table oid -> name
-                                  #           - -S: include system catalogs, views and TOAST
-                                  #         - -f|o NUM: for tables with filenode|oid NUM
-                                  #         - -t STR: same with name
-                                  #         - -i: include SEQUENCE and INDEX
-                                  #         - -s: info about TABLESPACE
-                                  #      - pg_relation_filenode|filepath(OID|STR)
+pg_relation_filepath(REGCLASS)
+ ->'PATH'                         #Relative to DATADIR
+pg_relation_filenode(REGCLASS)
+ ->REGCLASS_OID                   #
+pg_filenode_relation
+ (TABLESPACE_OID, REGCLASS_OID)
+ ->REGCLASS                       #TABLESPACE_OID can be 0 to use DATABASE's default TABLESPACE
 
 
                                              /=+===============================+=\
@@ -7026,6 +7461,38 @@ pg_config --sysconfdir            #Prints SYSCONFDIR
 
 USERCONFDIR                       #DIR with OS user-specific configuration file
                                   #On my system: ~/.postgresql
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:            COMMENT            :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+comment on ENTITY "ENTITY"        #Add a comment
+ is 'COMMENT'                     #Child auto-dependency of ENTITY
+comment ... is null               #Delete a comment
+
+obj_description
+ (OID, 'ENTITY_CATALOG')
+ ->STR|null                       #Get DATABASE-wide ENTITY's comment
+shobj_description
+ (OID, 'ENTITY_CATALOG')
+ ->STR|null                       #Get cluster-wide ENTITY's comment
+col_description
+ (TABLE_OID, COL_NUM)->STR|null   #Get COL's comment
+
+\d*                               #Print comments under `description` column
+
+pg_description                    #TABLE with all COMMENTs on DATABASE-wide ENTITYs
+pg_description.classoid           #Like pg_depend.classid
+pg_description.objoid             #Like pg_depend.objid
+pg_description.objsubid           #Like pg_depend.objsubid
+pg_description.description        #'COMMENT'
+
+pg_shdescription                  #TABLE with all COMMENTs on cluster-wide ENTITYs
+                                  #Same COLs except no objsubid
 
 
                                              /=+===============================+=\
@@ -7708,387 +8175,6 @@ pg_aggregate                      #All AFUNC. ???
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:     USERS AND PRIVILEGES      :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-ROLES ==>                         #ROLE are users or group of users for a given cluster.
-                                  #Difference between OS_USER (OS-specific) and ROLE (cluster-specific).
-                                  #Default installation creates a OS_USER "postgres", with group "postgres", often used as owner of
-                                  #clusters.
-                                  #Each cluster has a superuser ROLE:
-                                  #  - defined as the owner OS_USER (user that created the cluster using initdb)
-                                  #  - should have OS permissions over the DATADIR of the cluster
-                                  #By default, client connects as ROLE using OS_USER, but can use flags to do otherwise.
-                                  #  - so anyone that can login as the owner OS_USER of a cluster on a local computer can be superuser
-                                  #    ROLE too.
-                                  #ROLE own VAR they create.
-
-create role ROLE                  #Create a ROLE:
-[superuser]                       #  - superuser: creates another superuser ROLE (must be superuser ROLE)
-[createdb|role]                   #    Cannot drop the initial superuser ROLE.
-[[encrypted] password STR]        #    readonly ENVVAR is_superuser ('on|off') is available.
-[login] [replication]             #  - createdb|role|login|replication: gives createdb|role|login|replication privilege (see PRIVILEGE)
-[connection limit INT]            #  - password STR:
-[noinherits]                      #     - either plaintext or "md5STR" where STR is a md5 hash.
-[valid until TIMTMPTZ]            #     - If encrypted is specified, STR must be plaintext -> it is converted to a "md5STR".
-[in role ROLE2...]                #     - can be null for no password.
-[role passwordcheck ROLE2...]     #     - only useful with authentication methods with passwords (i.e. "password" and "md5")
-[admin ROLE2]                     #     - will cancel if password is weak.
-                                  #       Must also put '$libdir/passwordcheck' in shared_preload_libraries.
-                                  #       Will not work on md5 hashes, only plaintext.
-                                  #       It is recommended to rebuild the module by modifying the Makefile to enable CrackLib
-                                  #       (better weak password recognition). Must be enabled at buildtime anyway.
-                                  #     - report password failure after ENVVAR auth_delay.milliseconds (def: 0), to avoid bruteforce
-                                  #       (but makes DDoD easier).
-                                  #       Must put auth_delay in shared_preload_libraries
-                                  #        - Trusted postgres extension 'auth_delay'
-                                  #  - valid until TIMESTAMPTZ: validity of the password
-                                  #  - in role ROLE2...: grants ROLE as a member of ROLE2... (prefer using grant|revoke)
-                                  #  - role ROLE2...: inverse
-                                  #  - admin ROLE2...: same as role ROLE2, but ROLE2 are added with admin_option
-                                  #  - connection limit: how many connections at same time (def: -1, unlim)
-                                  #  - noinherits: see grant|revoke
-                                  #Parent dependency of every ENTITY it owns
-alter role ROLE ...               #Can be all options of create role but:
-                                  #  - can use no..., e.g. nosuperuser
-                                  #  - no in role, role or admin
-alter ENTITY "ENTITY"             #Set owner
- owner to ROLE                    #ROLE can be current_role, current_user or session_user
-                                  #Not for ENTITY: extension, group, index, policy, role, rule,
-                                  #text search parser|template, trigger, user, user mapping
-                                  #Also for pseudo-ENTITY: large object OID
-drop role ROLE...                 #Drop ROLE and cluster-specific objects owned by ROLE.
-                                  #Doesn't work if ROLE own database-specific objects (use reassign|drop owned by ROLE first) or
-                                  #privileges.
-                                  #If client connection, doesn't stop it.
-drop owned by ROLE...             #Drop all objects (except cluster-specific objects) owned by ROLE, and
-[restrict|cascade]                #revoke privileges given to ROLE.
-reassign owned
-by ROL... to ROLE2                #Change ownership.
-
-drop role ...                     #Can only be done if not used by any DATABASE
-
-create schema ["SCHEMA"]          #Set SCHEMA's owner. Def: current_user
- authorization ROLE               #Same ROLE as `alter ... owner to ROLE`
-                                  #Def "SCHEMA": ROLE
-
-set [local] role ROLE             #Same syntax as set, but here change current ROLE
-                                  #If not superuser, must be a ROLE that the session_user is member of (but not inverse, not other
-                                  #members of same ROLE), directly or indirectly.
-                                  #There are two types of users:
-                                  #  - current user: current ROLE. Used for permission checking.
-                                  #  - session user: ROLE that (usually) started the session.
-                                  #    Used to switch roles with set role and set session authorization.
-                                  #    So for a session, can switch back and forth between same possible ROLE (as long as set
-                                  #    session authorization is not called)
-                                  #VAR session_user (one that started the session) and current_user are available.
-                                  #If ROLE is none, reset to current session_user.
-                                  #ROLE can be written as STR
-                                  #  - local: same as set local ...
-set [local] session               #Same but:
-authorization ROLE                #  - for both session_user and current_user
-                                  #  - must be superuser
-                                  #  - use default to reset to initial session_user
-
-pg_authid|roles                   #All ROLE, including:
-                                  #  - rolcatupdate BOOL (def: false): if false, all ROLE, including superuser ROLE, cannot write on
-                                  #    system catalogs.
-                                  #pg_roles blanks out the password
-                                  #???
-
-regrole                           #TYPE alias to OID, to cast pg_authid.oid as "ROLE" name
-
-pg_auth_members                   #ROLE memberships, including:
-                                  #  - roleid|member|grantor REGROLE: means ROLE2 is a member of ROLE, which has been granted by ROLE3
-                                  #???
-pg_user                           #TABLE with users. ???
-
-grant PRIVILEGE...                #Gives permissions PRIVILEGE... on VAR... to ROLE...:
-on [TYPE] VAR...                  #  - TYPE:
-to ROLE...                        #     - is table (def)|sequence|database|domain|function|language|schema|tablespace|type|
-[with grant option]               #       large object|foreign data wrapper|foreign server
-                                  #         - table include VIEW and FTABLE
-                                  #     - [TYPE] VAR can be all TYPEs in schema SCHEMA for table|sequence|function
-                                  #  - PRIVILEGE:
-                                  #     - can be:
-                                  #        - on table:
-                                  #           - insert (a): insert or copy from
-                                  #           - delete (d): delete
-                                  #           - truncate (D): truncate
-                                  #           - references (x): needed on both TABLE to use foreign key
-                                  #           - trigger (t): create trigger
-                                  #        - on table|sequence|large object:
-                                  #           - select (r):
-                                  #              - select, copy or using VAR in update|delete
-                                  #              - sequence: same + currval()
-                                  #              - large object: being read
-                                  #           - update (w)
-                                  #              - update, select for share|update
-                                  #              - sequence: same + nextval|setval()
-                                  #              - large object: being written
-                                  #        - on sequence|domain|foreign data wrapper|foreign server|language|schema|type:
-                                  #           - usage (U):
-                                  #              - language:
-                                  #                - create function for this PL/* language
-                                  #                - careful if functions can access OS (e.g. Bash)
-                                  #              - schema: reading VAR in SCHEMA (without permission can still look up VAR names in
-                                  #                SCHEMA)
-                                  #              - sequence: currval() + nextval()
-                                  #              - type|domain: using it in creation of any VAR (including FUNC() and TABLE)
-                                  #              - foreign data wrapper: create server using FDW
-                                  #              - foreign server: create foreign table using FSERVER
-                                  #        - on database:
-                                  #           - connect (c): can start client session
-                                  #           - temp (T): create temp
-                                  #        - on database|schema|tablespace:
-                                  #           - create (C):
-                                  #             - database: create schema
-                                  #             - schema: create any VAR inside SCHEMA, and rename (must be owner too)
-                                  #             - tablespace: create table|index|temp in it, and use TABLESPACE in create database
-                                  #        - on function:
-                                  #           - execute (X): executing *FUNC() (including TFUNC())
-                                  #        - on all:
-                                  #           - all privileges
-                                  #     - Other PRIVILEGE which can be obtained differently:
-                                  #        - drop|alter:
-                                  #           - no way to grant them to others:
-                                  #              - drop or alter definition of VAR:
-                                  #        - grant|revoke:
-                                  #           - grant PRIVILEGE ... with grant|admin option:
-                                  #              - grant for PRIVILEGE for the specific PRIVILEGE and TYPE
-                                  #              - admin for ROLE membership
-                                  #        - createrole:
-                                  #           - create|alter role ... createrole:
-                                  #              - create role (or drop|alter)
-                                  #              - To do so on superuser ROLE, must be superuser.
-                                  #              - implies admin option
-                                  #              - can create roles with higher permissions or memberships, so can be dangerous
-                                  #        - createdb:
-                                  #           - create|alter role ... createdb:
-                                  #              - create database (or drop|alter)
-                                  #        - login:
-                                  #           - create|alter role ... login:
-                                  #              - ROLE can initiate a client session (e.g. with psql)
-                                  #                Without it (def) ROLE can only be assigned with set role ROLE
-                                  #        - replication:
-                                  #           - create|alter role ... login:
-                                  #             - ROLE can use pg_basebackup
-                                  #     - PRIVILEGE can be PRIVILEGE("COL"...) for select|insert|update|references
-                                  #     - Def. PRIVILEGE is all for TABLE owner and superuser.
-                                  #       They can revoke their own privileges though.
-                                  #     - Permissions are optimistic: has privileges in following cases:
-                                  #        - granted at table-level but revoked at column-level
-                                  #        - granted to ROLE2 to which is member, but revoked to the specific ROLE
-                                  #     - SQL only has VAR, not VAR...
-                                  #  - ROLE:
-                                  #     - if ROLE2 is a member of ROLE (directly or indirectly), it is targeted too:
-                                  #         - generally ROLE is just a group name, and ROLE2 real users, or subgroups
-                                  #         - but could also copy and extend|restrict permissions of another user
-                                  #         - inherit:
-                                  #           - by def., ROLE2 inherit privileges of ROLE (except "Other PRIVILEGE")
-                                  #           - with noinherits, can still use set role ROLE (but then loses its inital PRIVILEGE)
-                                  #     - can be public:
-                                  #        - meaning all current and future ROLE.
-                                  #        - cannot be member of a ROLE.
-                                  #        - has default privilege: connect, temp, usage and create on SCHEMA public, execute, usage on
-                                  #          LANGUAGES. Can be revoked.
-                                  #     - If current user is superuser or can grant thanks to membership or "with grant option", looks
-                                  #       like PRIVILEGE has been granted by VAR owner
-revoke [grant|admin               #Inverse.
-option for] PRIVILEGE...          #"with grant|admin option" is revoked too. If "grant|admin option for", only "with grant|admin option"
-on [TYPE] VAR...                  #is removed.
-from ROLE...                      #Revoke privileges granted to others by ROLE2 too: if restrict, command will fail if there are some
-[restrict|cascade]                #ROLE can only revoke ROLE2 for PRIVILEGE it previously personnally granted the other or a ROLE the
-                                  #other is member of.
-
-alter default privileges          #Change default PRIVILEGE for ROLE2 (in ...) of all VAR (write TYPEs, not TYPE VAR) that will be
-[for ROLE...]                     #created in the future by ROLE (must be current user (def) or a ROLE3 that ROLE is member of), in
-[in schema SCHEMA]                #SCHEMA (if specified)
-grant|revoke...                   #Only for TABLE, SEQUENCE, FUNC or TYPE.
-
-grant ROLE... to ROL2...          #
-[with admin option]               #
-revoke [admin option
-for] ROL... from ROL2...          #Grant|revoke ROLE2... as members of ROLE...
-[restrict|cascade]                #Gives|revokes associated PRIVILEGE too.
-
-security label [for PROVIDER]
- on VAR is STR                    #Used to implement SE-Linux (see online doc)
-
-has_TYPE_privilege                #TYPE can also be:
- ([ROLE, ]VAR, PRIVILEGE)         #  - any_column
-                                  #  - column: adds a "COL" arg after VAR
-pg_has_role
- ([ROLE, ]ROLE2, PRIVILEGE)       #With membership
-
-pg_init_privs                     #TABLE with initial privileges. ???
-
-pg_namespace.pg_nspowner          #REGROLE of SCHEMA's owner
-pg_type.typowner                  #REGROLE of TYPE's owner
-pg_largeobject_metadata.lomowner  #REGROLE of LARGEOBJ's owner
-pg_class.relowner                 #REGROLE of RELATION's owner
-pg_tables.tableowner              #REGROLE of TABLE's owner
-pg_views.viewowner                #REGROLE of VIEW's owner
-pg_matviews.matviewowner          #REGROLE of MVIEW's owner
-pg_sequences.sequenceowner        #REGROLE of SEQUENCE's owner
-pg_ts_dict.dictowner              #REGROLE of DICTIONARY's owner
-pg_ts_config.cfgowner             #REGROLE of REGCONF's owner
-pg_conversion.conowner            #REGROLE of CONVERSION's owner
-pg_collation.collowner            #REGROLE of COLLATION's owner
-pg_opfamily.opfowner              #REGROLE of OPFAMILY's owner
-pg_opclass.opcowner               #REGROLE of OPCLASS's owner
-pg_extension.extowner             #REGROLE of EXTENSION's owner
-pg_prepared_xacts.owner           #"ROLE" name of PXID's owner
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:              ACL              :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-aclitem                           #ACLITEM
-                                  #Record ENTITY's PRIVILEGEs, on its pg_catalog.* TABLE
-                                  #Cannot use < <= > >=
-
-'[ROLE]=CHAR.../ROLE2'            #ACLITEM_UNKNOWN
-                                  #ROLE: granted (def: public)
-                                  #ROLE2: granter
-                                  #CHAR: PRIVILEGE (shown above between parenthesis)
-                                  #CHAR* if `with grant option`
-                                  #Default PRIVILEGEs are not shown
-
-pg_namespace.aclitem              #ACLITEM_ARR of SCHEMA
-pg_type.typacl                    #ACLITEM_ARR of TYPE
-pg_class.relacl                   #ACLITEM_ARR of RELATION
-pg_attribute.attacl               #ACLITEM_ARR of COL
-pg_largeobject_metadata.lomacl    #ACLITEM_ARR of LARGEOBJ
-
-pg_default_acl                    #All default privileges. ???
-pg_parameter_acl                  #TABLE with privileges. ???
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:        AUTHENTICATION         :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-pg_hba.conf                       #File under a cluster DATADIR controlling:
-                                  #  - who can connect (host address, OS_USER)
-                                  #  - to which database
-                                  #  - with which connection method
-                                  #  - under which ROLE
-                                  #Have five whitespaces-separated fields (can contain whitespace if double-quoted) (with #Comment):
-                                  #  - type (protocol):
-                                  #    - local: local connection (Unix sockets)
-                                  #    - host: TCP/IP
-                                  #    - host[no]ssl: TCP/IP with|without SSL. For SSL:
-                                  #       - must set ENVVAR ssl to "on" (def: "off") at server start
-                                  #       - must have been enable when installing|building PostgreSQL
-                                  #  - database:
-                                  #    - connect to which DATABASE... (comma-separated)
-                                  #    - sameuser means DATABASE with same name as ROLE
-                                  #    - samerole means DATABASE with same name as ROLE or a member of ROLE
-                                  #    - replication: special DATABASE used by pg_basebackup
-                                  #    - @FILE... means list of DATABASE is available under DATADIR/FILE (if relative) or FILE (if abs.)
-                                  #    - can be all
-                                  #  - user:
-                                  #    - under which ROLE... (comma-separated) can connect
-                                  #    - +ROLE means any member of ROLE
-                                  #    - @FILE... means list of ROLE is available under DATADIR/FILE (if relative) or FILE (if abs.)
-                                  #    - can be all
-                                  #  - address:
-                                  #    - which IPv4|6 addresses (along the netmask range) can connect
-                                  #    - can also be a hostname (can be slow)
-                                  #      - including a .DOMAINNAME for hosts under DOMAINNAME
-                                  #    - can be all
-                                  #    - samehost: any of the machine own IPs
-                                  #    - samenet: any of the machine own subnet
-                                  #  - netmask (optional):
-                                  #    - IPv4|v6 netmask
-                                  #  - auth. method:
-                                  #    - trust|reject: always accept|refuse
-                                  #    - ident [map=MAP]:
-                                  #      - use MAP in pg_ident.conf (ENVVAR ident_file) to determine which ROLE correspond to OS_USER
-                                  #      - def: ROLE = OS_USER
-                                  #    - password|md5: ask for password (md5 hashes it but not crypto-secure)
-                                  #      - libpq variable password:
-                                  #         - To use if is demanded. Def: PGPASSWORD
-                                  #         - Can also use a FILE PAGPASSFILE (def: ~/.pgpass), which should contain lines with format:
-                                  #             host:port:database:user:password (first four field can be *)
-                                  #           Permission must be 0600
-                                  #    - SSL:
-                                  #      - libpq variables:
-                                  #        - sslmode: priority of SSL over non-SSL (def: PGSSLMODE):
-                                  #          - disable: non-SSL
-                                  #          - prefer (def): first SSL, then non-SSL
-                                  #          - require: SSL. If root CA, verify certificate
-                                  #          - verify-ca: SSL. Always verify certificate
-                                  #          - verify-full: SSL. Verify certificate, and that hostname match in certificate
-                                  #        - sslcert: certificate FILE (def: USERCONFDIR/postgresql.crt or PGSSLCERT)
-                                  #        - sslkey:
-                                  #          - Secret key (def: USERCONFDIR/postgresql.key or PGSSLKEY).
-                                  #          - Can also be OpenSSL engines, as ENGINE:KEY
-                                  #        - sslrootcert: CA certificate FILE (def: USERCONFDIR/root.crt or PGSSLROOTCERT)
-                                  #        - sslcrl: CA revocation list FILE (def: USERCONFDIR/root.crl or PGSSLCRL)
-                                  #    - krb5: Kerberos5
-                                  #      - libpq variable krbsrvname: Kerberos server name (def: PGREALM or PGKRBSRVNAME)
-                                  #    - GSSAPI:
-                                  #      - libpq variable gsslib: on Windows, set to "gssapi" to use GSSAPI instead of SSPI
-                                  #        (def: PGGSSLIB)
-                                  #  - auth. method options (optional):
-                                  #    - as VAR=VAL ...
-                                  #    - see above
-                                  #Default settings:
-                                  #  - host and local connections: initdb --auth-host|local=STR (or -A STR for both)
-                                  #  - default password: initdb -W|--pwfile=FILE, from stdin or from first line of FILE (if using
-                                  #    password authentication)
-                                  #Only the first matching line is chosen. Put most likely first for efficiency.
-                                  #Location can be changed by ENVVAR hba_file
-                                  #Read on server startup, or when receiving a SIGHUP.
-
-requirekeeper                     #LIBPQ variable: OS_USER behind the server process must match STR.
-                                  #Avoid another OS_USER starting the server while legit one is rebooting it.
-
-pg_hba_file_rules                 #TABLE with pg_gba.conf contents. ???
-pg_ident_file_mappings            #TABLE with pg_ident.conf contents. ???
-pg_stat_ssl                       #???
-pg_stat_gssapi                    #???
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:      ROW-LEVEL SECURITY       :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-TO DOCUMENT, including: ???
-  - alter table ... row level security
-  - pg_policies, pg_policy
-
-pg_class.relrowsecurity           #BOOL. Whether RELATION has row-level security
-pg_tables.rowsecurity             #BOOL. Whether TABLE has row-level security
-pg_class.relforcerowsecurity      #BOOL. Whether RELATION's row-level security applies to owner
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:        SECURITY LABELS        :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-TO DOCUMENT, including: ???
-   - pg_[sh]seclabel, pg_seclabels
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
                                             )==:     FOREIGN DATA WRAPPER      :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -8328,8 +8414,6 @@ STOPPING ==>                      #Terminate server:
 
 initdb [-D DATADIR]               #Creates a cluster, i.e.:
                                   #  - populates or create DATADIR. Def: PGDATA
-                                  #     - directory under which all data of the cluster are stored.
-                                  #     - /usr/local/pgsql/data/ or /var/lib/pgsql/data/ are often used.
                                   #  - creates template0|1 and an empty database "postgres"
                                   #  - create cluster-specific system catalogs
                                   #  - initialize cluster-wide ENVVARs
@@ -10031,26 +10115,6 @@ datafiller.py [FILE]              #Script printing commands filling randomly som
 --null FLOAT
 --mangle                          #Sets VAR
 -T                                #Put in a single transaction (normal isolation level)
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:            COMMENT            :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-comment on ... is STR             #Add a comment STR, that can be read with:
-                                  #  - col_description(TABLEOID, NUM)
-                                  #  - [sh]obj_description(OID, DATABASE): shobj is for cluster-wide objects
-                                  #  - a psql command \d* under "description"
-                                  #... is TYPE followed by the definition, e.g. table "TABLE", trigger TFUNC on "TABLE", column "TABLE"."COL"
-                                  #cast (TYPE as TYPE2), aggregate AFUNC(...), etc.
-                                  #TYPE can be any object that can be used with create TYPE ...
-                                  #If STR is null, remove the comment.
-                                  #To write must be owner or superuser
-
-pg_[sh]description                #All COMMENT [on cluster-wide objects]. ???
 
 
                                              /=+===============================+=\
