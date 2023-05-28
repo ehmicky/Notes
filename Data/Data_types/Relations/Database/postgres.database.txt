@@ -9,11 +9,6 @@ TO DOCUMENT:
   - row-level security
      - alter table ... row level security
      - pg_policies, pg_policy
-  - parallel queries:
-     - chapter 15
-     - create|alter table ... with (parallel_workers)
-        - see also impact on `create index` (see SQL command reference)
-     - ENVVAR parallel_setup|tuple_cost, min_parallel_table|index_scan_size
   - transform
      - pg_transform
   - logical replication:
@@ -2301,6 +2296,7 @@ create table ...                  #"CHILD_TABLE" inherits from "PARENT_TABLE"
 
 READING ROWS ==>                  #Reading parent ROWs also reads child ROWs, but not vice-versa
                                   #  - including `select`
+                                  #This behaves like `union all` is performed
 WRITING ROWS ==>                  #Writing parent|child ROWs only writes parent|child ROWs
                                   #  - including `insert`
                                   #  - can use rule to redirect parent inserts to child, if it has same COLs
@@ -2423,6 +2419,14 @@ ENVVAR enable_partition_pruning   #"Partition pruning".
                                   #Queries skip child TABLEs if `where BOOL_REXPR` does not match its `for values ...`
                                   #Only with declarative partitioning
                                   #Compared to ENVVAR constraint_exclusion: faster, and works on more complex `where BOOL_REXPR`
+
+ENVVAR enable_partitionwise_join  #"Partitionwise join".
+                                  #Allow joins on partitioned TABLEs to directly join their child TABLEs
+                                  #Join condition must include all partition keys
+                                  #Partition keys must have the same TYPEs
+                                  #Slow planning time, i.e. disabled by default
+ENVVAR                            #"Partitionwise aggregate".
+ enable_partitionwise_aggregate   #Similar for `group by` and AFUNCs
 
 create table "PARENT_TABLE"
  partition by METHOD
@@ -2916,6 +2920,9 @@ select ...                        #Can be done multiple times
 select ... union|intersect|except
  distinct|all SUBQUERY            #If "distinct" (def), removes duplicate rows on merged result
 
+ENVVAR enable_parallel_append     #"Parallel append"
+                                  #When combining multiple ROW_SETs, distribute producing each in multiple parallel workers
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -2937,6 +2944,7 @@ select ... from FROM
 select ... from FROM              #Like `cross join` but:
  left [outer] join FROM2          #  - if a FROM ROW has BOOL false with every FROM2 ROW
  on BOOL_REXPR                    #  - it is kept as a single ROW, with nulls in FROM2 COLs
+                                  #Parenthesis can be used to force order
 select ... from FROM
  right [outer] join FROM2
  on BOOL_REXPR                    #Like `left join` but with FROM2 ROWs instead
@@ -2961,13 +2969,18 @@ SELF JOIN ==>                     #Using twice the same FROM
 
 
 ENVVAR enable_nestloop            #"Nested loop join".
-                                  #Read both ROW_SET sequentially as outer|inner loops
-                                  #Left ROW_SET is the outer loop
+                                  #Read both FROMs sequentially as outer|inner loops
+                                  #One FROM is the outer loop
                                   #  - i.e. only the inner loop can use INDEXs on the join condition
                                   #O(n^2) but efficient if outer loop is small
+ENVVAR enable_memoize             #If outer loops has duplicate values, only perform a single inner loop for all of them
+                                  #Do it thanks to memoization, i.e. cost memory and CPU if no duplicate values
+NESTED LOOP JOIN ON UNIQUE ==>    #If inner loop's join condition is `unique`, can skip each inner loop iterate after finding one match
+PARALLEL NESTED LOOP JOIN ==>     #Distribute the outer loop values among parallel workers.
+                                  #The inner loop is not parallelized
 
 ENVVAR enable_hashjoin            #"Hash join".
-                                  #Build hash tables for each ROW_SET, where the key is a hash of the join condition
+                                  #Build hash tables for each FROM, where the key is a hash of the join condition
                                   #Read sequentially one of the hash table, looking up the other
                                   #Hash table size (number of "buckets")
                                   #  - guessed automatically
@@ -2976,13 +2989,15 @@ ENVVAR enable_hashjoin            #"Hash join".
                                   #  - hash computation
                                   #  - on-disk memory + I/O, if hash table too large due to too many ROWs
                                   #Only with OP =
+ENVVAR enable_parallel_hash       #"Parallel hash join"
+                                  #Create the hash table in parallel workers
 
 ENVVAR enable_mergejoin           #"Merge join".
-                                  #Sort each ROW_SET on the join condition, then do a merge join
+                                  #Sort each FROM on the join condition, then do a merge join
                                   #O(n log n) but reduced to O(n) when can skip sorting thanks to one of:
-                                  #  - an `order by` on the same value as the join condition is used
-                                  #  - ROW_SETs can use ordered scans
-                                  #  - another merge join sorted the left ROW_SET
+                                  #  - an `order by` on the same value as the join condition being used
+                                  #  - FROMs using ordered scans
+                                  #  - another merge join sorted the other FROMs
                                   #Only with OP =
 
 ENVVAR enable_material            #"Materialization".
@@ -2998,16 +3013,47 @@ ENVVAR enable_material            #"Materialization".
                                              \=+===============================+=/
 
 
-JOIN STRATEGY ==>                 #When joining multiple ROW_SETs decides:
+JOIN STRATEGY ==>                 #When joining multiple FROMs decides:
                                   #  - in which order to join each pair
                                   #  - when to apply each `where|on` condition
+                                  #  - which join method to use
 
 JOIN EXHAUSTIVE SEARCH ==>        #Join strategy comparing the cost of each possible solution
-                                  #Best execution time, but high planning time if many ROW_SETs
+                                  #Best execution time, but high planning time if many FROMs
+ENVVAR join_collapse_limit        #NUM (def: same as ENVVAR from_collapse_limit)
+                                  #Use left-to-right join order instead of doing a join exhaustive search if:
+                                  #  - there are > NUM FROMs
+                                  #  - that use `join` keyword (not commas)
+                                  #Higher value allow planner to optimize better, but take longer planning time
+                                  #Can be 1 (combined with `join` keyword) to force a specific join order
+
+OUTER JOIN STRATEGY ==>           #Outer joins force order:
+                                  #  - left|right join:
+                                  #     - must first perform any FROM that is a parenthesized sub-join
+                                  #     - e.g. FROM left join (FROM2 join FROM3)
+                                  #     - e.g. FROM left join (select * from FROM2 join FROM3)
+                                  #  - full join:
+                                  #     - must join both sides together directly
+                                  #     - e.g. FROM full join FROM2 join FROM3 -> (FROM full join FROM2) join FROM3
+ENVVAR from_collapse_limit        #NUM (def: 8). Parenthesized sub-join ignore parentheses if:
+                                  #  - has <= NUM FROMs
+                                  #  - does not use full joins
+                                  #E.g. FROM join (FROM2 join FROM3) -> FROM join FROM2 join FROM3
+                                  #Higher value allow planner to optimize better, but take longer planning time
 
 ENVVAR geqo                       #BOOL (def: true)
-                                  #Enables the "GEneric Query Optimizer"
-                                  #
+                                  #Enables the "GEnetic Query Optimizer"
+                                  #Join strategy using a genetic algorithm
+ENVVAR geqo_threshold             #NUM (def: 12). Use GEQO when joining >= NUM FROMs
+ENVVAR geqo_effort                #1-10 (def: 5). Higher value spend more time planning, but with better results
+                                  #This only sets the values of ENVVAR geqo_pool_size|generations|selection_bias
+ENVVAR geqo_pool_size             #NUM of solutions being evaluated in each round. Usually between 100-1000
+                                  #Def: 0, i.e. uses geqo_effort
+ENVVAR geqo_generations           #NUM of rounds. Usually between 100-1000
+                                  #Def: 0, i.e. uses geqo_effort
+ENVVAR geqo_selection_bias        #NUM deciding how many solutions to remove after each round
+                                  #1-1/NUM are removed. Usually 1.5-2. Def: 2
+ENVVAR geqo_seed                  #GEQO randomness seed, from 0 to 1. Def: 0
 
 
                                              /=+===============================+=\
@@ -3134,6 +3180,7 @@ with recursive ...                #Allow using "ROW_ALIAS" inside its own MSUBQU
                                   #  - first recursion skips `union ...`
                                   #  - next recursions are repeated until `union ...` returns no ROWs
                                   #     - usually when BOOL_REXPR false for all ROWs
+ENVVAR recursive_worktable_factor #NUM (def: 10). Hint to the query planner of the average depth of a recursive CTE
 
 
                                              /=+===============================+=\
@@ -3248,6 +3295,9 @@ pg_cursors.is_holdable            #BOOL
 pg_cursors.is_binary              #BOOL
 pg_cursors.creation_time          #TIMESTAMPTZ
 
+ENVVAR cursor_tuple_fraction      #0-1 (def: .1). Hint to the query planner at how much percentage of ROWs of TABLEs
+                                  #is usually retrieved by a single `fetch ... from "CURSOR"`
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -3358,6 +3408,12 @@ select ... group by (COLREXPR,...)#Each ROW_SET group is reduced to a single ROW
                                   #     - all those COLs are computed in a single separate ROW_SET, combined with a cartesian product
 select ... group by ()            #Single ROW_SET group
                                   #Default behavior
+
+GROUP AGGREGATE ==>               #Sort all COL_REXPR,... to perform the grouping
+
+ENVVAR enable_hashagg             #"Hash aggregate" alternative.
+                                  #Build a hash table with hashes of COL_REXPR,... as key to perform the grouping
+                                  #Faster unless group aggregate can benefit from an ordered scan
 
 select ... having BOOL_REXPR      #Like `where BOOL_REXPR` except:
                                   #  - after `group by`
@@ -4356,14 +4412,21 @@ create index "INDEX"              #Create an INDEX
                                   #REXPR must be purely functional
 
 ENVVAR enable_seqscan             #"Sequential scan". Query that reads ROWs sequentially, without an INDEX
-                                  #Chosen if either
-                                  #  - an INDEX cannot be used
-                                  #  - the planner considers an INDEX would be slower
+                                  #Fast if:
+                                  #  - small TABLE
+                                  #  - query selects most ROWs
+ENVVAR                            #STR (def: '8MB'). Minimum amount of TABLE ROWs read to consider using a "parallel sequential scan".
+ min_parallel_table_scan_size     #I.e. sequential scan run in parallel: each worker handles different heap pages
+TOPTS.parallel_workers            #NUM of workers when doing parallel sequential scan
+                                  #Def: guessed based on TABLE size
+
 ENVVAR enable_indexscan           #"Index scan". Query using an INDEX
                                   #INDEX returns TIDs, which are then used to fetch TABLE ROWs
-                                  #Not efficient if:
-                                  #  - query selects most ROWs
-                                  #  - small TABLE
+                                  #Not efficient on query that select only few ROWs out of many
+ENVVAR                            #STR (def: '512kB'). Minimum amount of INDEX ROWs read to consider using a "parallel index scan".
+ min_parallel_index_scan_size     #I.e. index scan run in parallel.
+                                  #ACCESS_METHOD-specific (only some support it)
+
 ENVVAR enable_bitmapscan          #"Bitmap scan". Alternative to index scan.
                                   #Instead of returning TIDs, the INDEX creates a bitmap ("bitmap index scan")
                                   #  - with 0|1 for each heap page (i.e. sets of ROWs)
@@ -4373,6 +4436,8 @@ ENVVAR enable_bitmapscan          #"Bitmap scan". Alternative to index scan.
                                   #  - unlike index scan which uses random access with TIDs
                                   #  - since a heap page contains 1-n ROWs, must re-apply filters to find the right ROWs ("Recheck Cond")
                                   #Faster than index scan if many ROWs are fetched
+                                  #  - but not too many, where a sequential scan is then often faster
+PARALLEL BITMAP SCAN ==>          #Bitmap scan where the heap scan (not the index scan) is run as a parallel sequential scan
 
 BITMAP SCAN COMBINATION ==>       #When using '... and|or ...'
                                   #Perform separate bitmap scans, then combine them with bitwise logic
@@ -4397,7 +4462,7 @@ create table ...                  #Stores "COL" in INDEX, but do not use it in q
  include("COL",...)               #Some ACCESS_METHODs do not support it
 
 VISIBILITY MAP ==>                #Checked before doing index-only scans:
-                                  #  - if heap page has ongoing transactions, cannot do index-only scan
+                                  #  - if heap page has ongoing transactions, must fetch ROW from TABLE instead of index-only ("heap fetch")
                                   #  - i.e. index-only scans less frequent on write-heavy TABLEs
 
 create index ... where BOOL_REXPR #"Partial INDEX". Only indexes ROWs with BOOL_REXPR true
@@ -4413,8 +4478,6 @@ alter index ... set (IOPTS)
 create table ...
  exclude|unique|primary key ...
  with (IOPTS)                     #"INDEX storage options". Different from TOPTS.
-
-PARALLEL INDEX BUILD ==>          #Some ACCESS_METHODs can use multiple worker processes with `create index`
 
 pg_index                          #TABLE with all INDEXs
 pg_index.indexrelid               #REGCLASS of INDEX
@@ -4447,6 +4510,26 @@ pg_indexes.tablespace             #pg_tablespace.spcname of "TABLESPACE"
 pg_indexes.indexdef               #STR from pg_get_indexdef()
 
 pg_get_indexdef(REGCLASS)->STR    #Returns 'CREATE ...' statement that created INDEX
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:     PARALLEL INDEX BUILD      :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+PARALLEL INDEX BUILD ==>          #Some ACCESS_METHODs can use multiple worker processes with `create index`
+
+ENVVAR                            #Max NUM (def: 2) of parallel worker processes used for parallel
+ max_parallel_maintenance_workers #`create index` or `vacuum`
+                                  #Must be < ENVVAR max_parallel_workers
+                                  #Higher is faster, but consumes more CPU
+                                  #NUM of worker processes is also set by TOPTS.parallel_workers
+
+ENVVAR maintenance_work_mem       #STR (def: '64MB'). Max memory used by `create INDEX`, `vacuum` and `create foreign key`
+                                  #Good idea to increase it.
+                                  #If multiple parallel workers, it is limit for all, not for each
 
 
                                              /=+===============================+=\
@@ -4964,6 +5047,50 @@ record_image_ops: ???
 
                                              /=+===============================+=\
                                             /  :                               :  \
+                                            )==:       PARALLEL QUERIES        :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+PARALLEL QUERY ==>                #COMMAND using multiple worker processes in parallel
+                                  #Must not:
+                                  #  - lock any ROW
+                                  #  - be inside another parallel query
+PARALLEL COMMAND ==>              #Must be SUBQUERY
+                                  #  - or equivalent: create|refresh materialized view, create table as, select into
+                                  #Can be:
+                                  #  - sequential|index|bitmap scans
+                                  #  - joins
+                                  #  - partial AFUNCs
+                                  #  - union all, partitioning
+PARTIAL PLAN ==>                  #Part of the plan executed by a parallel worker
+
+ENVVAR max_parallel_workers       #Max NUM (def: 8) of parallel worker processes
+                                  #Must be < ENVVAR max_worker_processes
+                                  #Increase memory, CPU and I/O linearly, i.e. resource-intensive
+                                  #ENVVAR work_mem is applied for each worker, not for all
+ENVVAR                            #Max NUM (def: 2) of parallel worker processes for parallel queries
+ max_parallel_workers_per_gather
+                                  #Must be < ENVVAR max_parallel_workers
+
+ENVVAR enable_gathermerge         #"Gather merge": parallel query that is sorted, i.e. parent process performs a merge sort
+
+ENVVAR                            #If true (def), parent process can perform some of the workers task instead of waiting for them
+ parallel_leader_participation    #However, it increases chances for workers to wait for parent to process their output,
+                                  #since parent might be busy.
+                                  #  - this is especially likely if many ROWs are returned from workers
+
+create|alter function|aggregate   #Whether [A]FUNC can be:
+ ...                              #  - safe: run in parallel workers or their parent
+ parallel safe|restricted|unsafe  #  - restricted: not run in parallel workers, but in their parent
+                                  #  - unsafe (def): not run in parallel workers nor their parent
+                                  #I.e. restricted|unsafe removes the possibility for parallel queries
+                                  #Parallel safety requires being purely functional
+                                  #Most built-in FUNCs are parallel safe
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
                                             )==:            EXPLAIN            :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -5009,11 +5136,17 @@ TREE ==>                          #Output is a tree with following nodes.
                                   #Each node results include its children.
                                   #Children are executed before parents.
 
+Insert on TABLE                   #`insert`
 Update on TABLE                   #`update`
+Delete on TABLE                   #`delete`
 
 Update on CHILD_TABLE PARENT_TABLE#Inheritance
 
-Sequential Scan                   #
+Gather [Merge]                    #Parallel query
+Workers Planned: NUM              #NUM of parallel worker processes, expected
+Workers Launched: NUM             #NUM of parallel worker processes
+
+[Parallel] Seq Scan on TABLE      #
 
 Index Scan                        #
 Index Cond: STR                   #Query "COL"|(REXPR) matching the INDEX's
@@ -5024,10 +5157,13 @@ Bitmap Index Scan                 #
 BitmapAnd                         #... and ... (bitmap scan combination)
 BitmapOr                          #... or ... (bitmap scan combination)
 
-Values Scan                       #values(...)
+Values Scan on "..."              #values(...)
+
+TID Scan on TABLE                 #
+TID Cond                          #`where`
 
 Index Only Scan                   #
-Heap Fetches                      #UINT. Number of times TABLEs were fetched, with Index Only Scan
+Heap Fetches: UINT                #Index-only heap fetches
 
 Result                            #COMMAND return value
 Output                            #COMMAND return value contents
@@ -5047,11 +5183,15 @@ Sort Method:
 Incremental Sort                  #
 Presorted Key                     #Incremental sort argument that is sorted
 
-Join                              #
 Materialize                       #Materialization of a ROW_SET
+
+Subquery Scan on "QUERY"          #(SUBQUERY)
+
+Join                              #
 
 Nested Loop                       #Nested loop join
 Join Filter                       #Nested loop join condition (where|on)
+Memoize                           #Nested loop join memoization
 
 Hash Join                         #
 Hash Cond: STR                    #Hash join condition (where|on)
@@ -5066,16 +5206,38 @@ Merge Cond: STR                   #Merge join condition (where|on)
 
 Limit                             #offset|fetch
 
+Unique                            #distinct
+
+[Parallel] Append                 #union all, or partitioning
+[Parallel] MergeAppend            #union all + order by
+Setop Intersect                   #intersect
+Setop Except                      #except
+
 Aggregate                         #AFUNC
-GroupAggregate                    #group by
-HashAggregate                     #some AFUNC ???
+Partial Aggregate                 #Parallel AFUNC worker process
+Finalize Aggregate                #Parallel AFUNC parent process, merging workers results
+
+Group                             #group by without AFUNCs
+GroupAggregate                    #Group aggregation (group by)
+HashAggregate                     #Hash aggregation (group by)
+MixedAggregate                    #grouping sets
+Group Key                         #group by's argument
+
 WindowAgg                         #WFUNC
+
+ProjectSet                        #select FUNC()->SET
+FunctionScan                      #from FUNC()->SET
+
+RecursiveUnion                    #with recursive ... select ... union ...
+WorkTable Scan                    #Recursive loop in `with recursive`
 
 (costs=NUM..NUM2)                 #Cost. Decides between different strategies
                                   #NUM is "startup cost" (initialization logic), NUM2 is "total cost"
                                   #Can be multiplied by factors set in ENVVARs
+ENVVAR parallel_setup_cost        #NUM (def: 1000). Cost of starting a worker process
 ENVVAR random_page_cost           #NUM (def: 4). Cost of random I/O read of a heap page
 ENVVAR seq_page_cost              #NUM (def: 1). Cost of sequential I/O read of a heap page
+ENVVAR parallel_tuple_cost        #NUM (def: 0.1). Cost of sending a ROW from a worker to the parent process
 ENVVAR cpu_tuple_cost             #NUM (def: 0.01). Cost of CPU processing of a TABLE ROW
 ENVVAR cpu_index_tuple_cost       #NUM (def: 0.005). Cost of CPU processing of an INDEX ROW
 ENVVAR cpu_operator_cost          #NUM (def: 0.0025). Cost of CPU execution of a FUNC
@@ -5114,9 +5276,10 @@ ENVVAR enable_*                   #Whether specific query optimizations are enab
                                   #  - i.e. false only discourages it
                                   #  - for: enable_seqscan|sort|nestloop|material
 
-alter table "TABLE" set
- alter [column] "COL"
- set(n_distinct[_inherited] = NUM)#???
+https://webcache.googleusercontent.com/search?q=cache:4MoXLOppSsMJ:https://www.depesz.com/2013/05/19/explaining-the-unexplainable-part-4/&cd=7&hl=en&ct=clnk&gl=pt ???
+HashSetOp ???
+LockRows ???
+anti-join ???
 
 
                                              /=+===============================+=\
@@ -5156,10 +5319,18 @@ pg_statistic                      #Stats used by the planner to optimize queries
                                   #     - stavaluesNUM ARR: stats as the same type as the COL
 pg_stats                          #User-friendly version of pg_statistic
 
+https://www.postgresql.org/docs/current/planner-stats.html
+
 pg_statistic_ext
 pg_statistic_ext_data
 pg_stats_ext
 pg_stats_ext_exprs                #???
+
+alter table "TABLE" set
+ alter [column] "COL"
+ set(n_distinct[_inherited] = NUM)#???
+
+ENVVAR default_statistics_target ???
 
 
                                              /=+===============================+=\
@@ -5458,6 +5629,8 @@ tid                               #TYPE. ID of a ROW version within a given TABL
                                   #Is (UINT, UINT2)
                                   #  - UINT is heap page number within ROW_SET
                                   #  - UINT2 is ROW index within heap page
+ENVVAR enable_tidscan             #"TID scan". When using ctid with `where|on`, can directly fetch the ROWs
+                                  #without scanning other ROWs, since the ctid contains the ROW physical location.
 
 "ROW_ALIAS".cmin|cmax             #CID of the last write statement on the ROW
 cid                               #TYPE. ID of a write statement within a given TABLE + transaction (XID)
@@ -5590,11 +5763,6 @@ WRITING ==>                       #Best way to write a big amount of data fast:
                                   #  - temporarily disabling WAL or replication
                                   #Should run analyze afterwards.
 
-ENVVAR maintenance_work_mem       #STR (def: '64MB'). Max memory used by vacuum, create INDEX, and create foreign key
-                                  #Good idea to increase it.
-ENVVAR
- max_parallel_maintenance_workers #Max NUM of parallel worker processes used by vacuum (without full) and create INDEX
-
 PERFORMANCE ==>                   #Can:
                                   #  - disable durability, by:
                                   #      - putting fsync and full_page_writes off (risky)
@@ -5725,6 +5893,9 @@ alter routine VAR(...)            #Like alter function ... except works also on 
                                   #  - called on null input, returns null on null input, strict
                                   #  - support FUNC
 drop routine VAR(...),...         #Like drop function ... except works also on AFUNC and PROCEDURE
+
+PARALLEL [UN]SAFE???
+  - most builtin FUNCs are parallel safe, but user FUNCs are parallel unsafe by default
 
 do [language LANGUAGE]
 STR                               #Execute an anonymous function STR (body of function), from LANGUAGE (def: plpgsql)
@@ -6111,6 +6282,7 @@ PARTIAL AGGREGATION ==>           #AFUNC which can compute its result in paralle
                                   #I.e. has a combine function to merge intermediary results
                                   #  - using the same initcond
                                   #Cannot rely on SET items order
+                                  #Cannot use ZSET, grouping sets, AFUNC(distinct ...) nor AFUNC(... order by ...)
                                   #Must be marked `parallel safe`
                                   #Most builtin AFUNCs allow partial aggregation, except for *agg, mode|percentile*, *rank, cume_dist
 
@@ -6590,6 +6762,10 @@ alter foreign table "FTABLE"
  ([add|set|drop] VAR VAL ...)     #
 
 pg_foreign_table                  #All FTABLE. ???
+
+ENVVAR enable_async_append, and asynchronous appends ???
+
+"Foreign Scan" when using explain ???
 
 
                                              /=+===============================+=\
