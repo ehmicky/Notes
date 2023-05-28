@@ -1078,6 +1078,9 @@ bit|octet_length(STR)->INT        #In server ENCODING bits|bytes
 
 position(STR in STR2)->UINT       #Index of STR inside STR2. 0 if not found.
 
+STR ^@ STR2
+starts_with(STR, STR2)->BOOL      #
+
 left|right(STR, UINT)->STR2       #UINT first|last characters
 substring
  (STR from UINT [for UINT2])->STR2#UINT2 characters (def: all) from index UINT
@@ -4694,6 +4697,8 @@ pg_import_system_collations       #Populates pg_collation based on current OS
 STR collate "COLLATION"           #Sets COLLATION for a single STR
 collation for (STR)               #'COLLATION' of STR
 
+VAL ~<~ ~<=~ ~>=~ ~>~ VAL2        #Like VAL < <= >= > VAL, but with COLLATION always "C"
+
 create type "RANGE_TYPE"
  as range(collation = COLLATION)  #For a RANGE
 create domain ...
@@ -5245,87 +5250,60 @@ create type "RANGE_TYPE" as
 
 
 btree                             #Default ACCESS_METHOD for INDEXs
-                                  #Generic binary tree
-                                  #For:
-                                  #  - any TYPE with < <= = >= > <>
-                                  #  - except: POINT|BOX|CIRCLE|POLYGON, CID|XID, ACLITEM
-                                  #  - HSTORE with #<# #<=# = #>=# #># ???
-                                  #Faster if first COLs use =
-                                  #Supports:
-                                  #  - ordered scans
-                                  #  - parallel scans
-                                  #  - uniqueness|grouping
-                                  #  - order by
+                                  #Use case: most generic INDEX
+                                  #Sometimes called "nbtree"
+
+DATA STRUCTURE ==>                #Uses b-tree
+                                  #Self-balancing k-way search tree
+                                  #Each node contains a sequence of sub-nodes
+                                  #  - if children, each sub-node is in-between 2 children (position-wise and value-wise)
+                                  #  - i.e. optimized for sequential read|write of chunks
+                                  #Each node is a memory page
+                                  #Max index ROW: 2.5KB
+
+TYPES/OPS ==>                     #For any TYPE with < <= = >= > <>
+                                  #Except TYPEs without those OPs: HSTORE (except =), POINT|BOX|CIRCLE|POLYGON, CID|XID, ACLITEM
+
+STR like '...%'                   #Can also be used
+STR ~ '^...'                      #No glob|REGEXP characters in ...
+                                  #Not if case-insensitive
+                                  #If COLLATION's lc_collate is not C|POSIX:
+                                  #  - must use non-default OPCLASS bpchar|varchar|text_pattern_ops for BPCHAR|VARCHAR|TEXT
+                                  #  - this OPCLASS cannot handle < <= >= >
+
+FEATURES ==>                      #  - ordered scan, including backward
+                                  #  - is [not] null
+                                  #  - VAL OP any|all (ARR)
+                                  #  - distinct|grouping
+                                  #  - exclude
+                                  #  - unique
                                   #  - over (range NUM preceding|following): for NUM, DATE|TIME[STAMP][TZ]|INTERVAL
                                   #  - partition by range|list
-                                  #  - RANGE OPs
-                                  #  - deduplication optimization ???
-                                  #     - for BOOL, STR, INT|MONEY, BSTR, BYTEA, DATE|TIME[STAMP][TZ]|INTERVAL,
-                                  #       ENUM, MACADDR[8]|INET, OID|TID|UUID|XID8|PG_LSN
-                                  #Does not support:
-                                  #  - ordering OPCLASSs
-                                  #  - storage TYPE
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:             HASH              :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-hash                              #ACCESS_METHOD
-                                  #For any TYPE with =
-                                  #  - except BSTR, MONEY, LTREE, TSQUERY|TSVECTOR, POINT|BOX|CIRCLE|POLYGON
-                                  #  - no cross-TYPE OPs for DATE|TIMESTAMP[TZ]
-                                  #Supports:
-                                  #  - hash join|aggregation
-                                  #  - partition by hash
-                                  #  - uniqueness|grouping: only if btree = OP not available
-                                  #Does not support:
-                                  #  - include
-                                  #  - multi-COL
-                                  #  - ordering OP
-                                  #  - storage TYPE
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:              GIN              :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-gin                               #ACCESS_METHOD
-                                  #For VAL = one of VAL...
-                                  #For:
-                                  #  - ARR with = && @> <@
-                                  #  - INT4_ARR with = && @> <@ @@
-                                  #  - TSQUERY @@ TSVECTOR
-                                  #  - HSTORE with @> <@ ? ?| ?&
-                                  #  - JSONB with @> <@ ? ?| ?& @? @@
-                                  #     - jsonb_path_ops OPCLASS
-                                  #        - only for OPs @> <@ @? @@
-                                  #        - non-default OPCLASS that is more performant
-                                  #For INT_ARR, use special OPCLASS gin|gist__int[big]_ops
-                                  #  - big_ops: prefer if big dataset
-                                  #Different storage TYPE:
-                                  #  - ARR -> ARR item type
-                                  #  - INT4_ARR -> INT4
-                                  #  - HSTORE -> TEXT
-                                  #  - JSONB -> TEXT
-                                  #  - TSVECTOR -> TEXT
-                                  #Support FUNCs:
-                                  #  - triConsistent() for ARR|JSONB|TSVECTOR
-                                  #     - allow returning "maybe"
-                                  #  - compare() for all but ARR
-                                  #     - i.e. use btree instead, because comparison FUNC depends on item type
-                                  #  - comparePartial() for TSVECTOR
-                                  #Does not support:
-                                  #  - exclude()
-                                  #  - include
+                                  #  - plain index scan
+                                  #  - bitmap index scan
+                                  #  - index-only scan
+                                  #  - parallel index scan
+                                  #  - parallel index build
+                                  #  - predicate lock
+                                  #  - non-key COLs
+                                  #  - cluster
+                                  #  - ENVVAR maintenance_work_mem
                                   #  - IOPTS.fillfactor
-                                  #  - ordering OPCLASSs
+
+MULTI-COL ==>                     #Only efficient when all the non-last COLs use =
+                                  #  - the second-to-last COL can also use <>
+                                  #  - according to COL order specified by `create index`, not by query
+
+IOPTS.deduplicate_items           #BOOL (def: true). Store duplicate INDEX ROWs as single ROW
+                                  #For BOOL, STR, INT|MONEY, BSTR, BYTEA, DATE|TIME[STAMP][TZ]|INTERVAL, ENUM, MACADDR[8]|INET, OID|TID|UUID|XID8|PG_LSN
+                                  #Done on create index or reindex
+                                  #Skipped if unique COLs
+                                  #Usually good, except if:
+                                  #  - very write-heavy INDEX
+                                  #  - with not many duplicates, but no unique CONSTRAINT
+                                  #Cannot be used with:
+                                  #  - non-deterministic COLLATION
+                                  #  - non-key COLs
 
 
                                              /=+===============================+=\
@@ -5336,33 +5314,62 @@ gin                               #ACCESS_METHOD
 
 
 gist                              #ACCESS_METHOD
-                                  #Generic search tree
-                                  #For:
+                                  #Use cases: specific TYPE|OPs
+
+DATA STRUCTURE ==>                #Generalized balanced search tree
+                                  #Generalized: any search tree can be implemented by OPCLASSs (B-Tree, etc.)
+                                  #Allows using perfect search tree for a given TYPE and OPs
+
+TYPES/OPS ==>                     #For:
+                                  #  - TSQUERY|TSVECTOR with @> <@ @@
+                                  #  - [MULTI]RANGE with << >> <@ @> &< &> && = -|-
+                                  #  - INET with < <= = >= > <> && << <<= >> >>=
+                                  #     - requires inet_ops OPCLASS
                                   #  - LTREE with < <= = >= > @> <@
                                   #  - LTREE[_ARR] with <@ @> ~ @ ?
-                                  #  - INT4_ARR with = && @> @@
-                                  #  - INET with < <= = >= > <> && << <<= >> >>=
-                                  #  - HSTORE with @> ? ?| ?&
-                                  #  - TSQUERY with @> <@ @@
-                                  #  - [MULTI]RANGE with << >> <@ @> &< &> && = -|-
+                                  #  - INT4_ARR with = && @> <@ @@
+                                  #     - requires gist__int[big]_ops OPCLASS
+                                  #        - big_ops: prefer if many ROWs
+                                  #  - HSTORE with @> <@ ? ?| ?&
                                   #  - BOX|CIRCLE|POLYGON|POINT with <-> << >> <@ @> &< &> && ~= <<| |>> &<| |&> <^ >^
-                                  #Comparison with gin for TSVECTOR|INT4_ARR|HSTORE:
-                                  #  - faster read but slower write
-                                  #OOPTS ???
-                                  #  - for LTREE_ARR, HSTORE, LTREE, TSVECTOR
-                                  #Support FUNC: fetch() for INET|POINT
-                                  #  - get the original value from the stored one, for index-only scans
-                                  #Different storage TYPE:
-                                  #  - CIRCLE|POINT|POLYGON -> BOX
-                                  #  - INT4_ARR -> intbig_gkey
-                                  #  - LTREE_ARR -> LTREE_GIST
-                                  #  - LTREE -> LTREE_GIST
-                                  #  - HSTORE -> GHSTORE
-                                  #  - MULTIRANGE -> RANGE
-                                  #  - TSQUERY -> INT8
-                                  #  - TSVECTOR -> GTSVECTOR
-                                  #Supports
-                                  #  - order by BOX|CIRCLE|POLYGON|POINT <-> POINT (ordering operator)
+
+btree_gist                        #Also for BOOL|NUM|MONEY|STR|CHAR|NAME|BYTEA|BSTR|DATE|TIME[STAMP][TZ]|INTERVAL|OID|UUID|MACADDR[8]|INET|CIDR|ENUM
+                                  #With <= < = >= >
+                                  #Usually slower than btree
+                                  #  - except when creating multi-COL GiST indexes
+                                  #Also has OPs
+                                  #  - <>
+                                  #  - NUM|MONEY|DATE|TIME[STAMP][TZ]|INTERVAL|OID <-> (ordering OP)
+                                  #Trusted extension "btree_gist"
+
+FEATURES ==>                      #  - order by BOX|CIRCLE|POLYGON|POINT <-> POINT (ordering operator) ("nearest-neighbor search")
+                                  #  - is [not] null
+                                  #  - exclude
+                                  #  - plain index scan
+                                  #  - bitmap index scan
+                                  #  - index-only scans for INET|POINT
+                                  #  - predicate lock
+                                  #  - non-key COLs
+                                  #  - cluster
+                                  #  - IOPTS.fillfactor
+
+MULTI-COL                         #Only efficient when the first COLs filter out many ROWs
+                                  #For LTREE[_ARR], HSTORE, TSVECTOR
+
+IOPTS.buffering                   #BOOL|'auto' (def)
+                                  #Cache ROW inserts, for speed
+                                  #If auto: when INDEX size > ENVVAR effective_cache_size
+
+OOPTS.siglen                      #NUM (max: 2024)
+                                  #Def: 124 (HSTORE), 16 (TSQUERY|INT4_ARR), 8 (LTREE), 28 (LTREE_ARR)
+                                  #Some TYPE|OPs use a hash of data for comparison, i.e. lossy
+                                  #This its the size (in bytes)
+                                  #Higher gives better results but higher INDEX size
+
+OOPTS.numranges                   #NUM (def: 100, max: 253)
+                                  #With gist__intbig_ops OPCLASS
+                                  #Number of INT_RANGEs to use to summarize each INT4_ARR
+                                  #Higher value is faster, but higher INDEX size
 
 
                                              /=+===============================+=\
@@ -5373,17 +5380,84 @@ gist                              #ACCESS_METHOD
 
 
 spgist                            #ACCESS_METHOD
-                                  #For:
+                                  #Use cases: like GiST but more performant for values that intersect a lot
+
+DATA STRUCTURE ==>                #Like GiST but for unbalanced search trees
+
+TYPES/OPS ==>                     #For:
                                   #  - STR with < <= = >= > ~<~ ~<=~ ~>=~ ~>~ ^@
                                   #  - RANGE with << >> <@ @> = -|-
                                   #  - BOX|POLYGON|POINT with <-> << >> <@ @> &< &> && ~= <<| |>> &<| |&> <^ >^
+                                  #     - kd_point_ops: non default OPCLASS for POINT, sometimes faster
                                   #  - INET with < <= = >= > <> && << <<= >> >>=
-                                  #Different storage TYPE:
-                                  #  - POLYGON -> BOX
-                                  #Supports:
-                                  #  - order by BOX|POLYGON|POINT <-> POINT (ordering operator)
-                                  #Does not support:
-                                  #  - multi-COL
+
+FEATURES ==>                      #  - order by BOX|POLYGON|POINT <-> POINT (ordering operator)
+                                  #  - is [not] null
+                                  #  - exclude
+                                  #  - plain index scan
+                                  #  - bitmap index scan
+                                  #  - index-only scans, except for POLYGON
+                                  #  - predicate lock
+                                  #  - non-key COLs
+                                  #  - IOPTS.fillfactor
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:              GIN              :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+gin                               #ACCESS_METHOD
+                                  #Use case: set OPs (subset|superset|intersect), especially with duplicate set elements
+                                  #Generally more performant than gist for TSVECTOR|INT4_ARR|HSTORE
+
+DATA STRUCTURE ==>                #Generalized Inverted Index
+                                  #B-Tree specialized for storing sets
+                                  #Each node is an element of a set, instead of set itself
+                                  #I.e. slower inserts due to doing one insert per set element
+                                  #Duplicate elements are merged as a single list of TIDs
+
+TYPES/OPS ==>                     #For:
+                                  #  - ARR with = && @> <@
+                                  #  - INT4_ARR with = && @> <@ @@
+                                  #     - gin__int[big]_ops OPCLASS
+                                  #        - big_ops (def): prefer if many ROWs but lacks @> <@
+                                  #  - TSQUERY @@ TSVECTOR
+                                  #  - HSTORE with @> <@ ? ?| ?&
+                                  #  - JSONB with @> <@ ? ?| ?& @? @@
+                                  #     - jsonb_path_ops OPCLASS
+                                  #        - only for OPs @> <@ @? @@
+                                  #        - non-default OPCLASS that is more performant
+
+btree_gin                         #Also for BOOL|NUM|MONEY|STR|CHAR|NAME|BYTEA|BSTR|DATE|TIME[STAMP][TZ]|INTERVAL|OID|UUID|MACADDR[8]|INET|CIDR|ENUM
+                                  #With <= < = >= >
+                                  #Usually slower than btree
+                                  #Only useful when creating multi-COL GIN indexes
+                                  #Trusted extension "btree_gin"
+
+FEATURES ==>                      #  - bitmap index scan
+                                  #  - predicate lock
+                                  #  - ENVVAR maintenance_work_mem
+
+MULTI-COL ==>                     #Efficient regardless of which OP is used, and in any order
+
+IOPTS.fastupdate                  #BOOL (def: true)
+                                  #Use a "pending list", i.e. buffer elements to insert, so they are inserted in bulk
+                                  #Emptied on either:
+                                  #  - ENVVAR|IOPTS.gin_pending_list_limit INT (in KB) (def: 4MB)
+                                  #     - higher values happens less often, but take longer
+                                  #  - vacuum|analyze
+                                  #  - gin_clean_pending_list()
+                                  #Pro: faster inserts
+                                  #Con: slower reads|updates, since pending list must be queried too
+
+ENVVAR gin_fuzzy_search_limit     #NUM (def: 0, i.e. none)
+                                  #Max tokens returned by TSQUERY @@ TSVECTOR
+                                  #Pro: performance on big TSVECTOR
+                                  #Con: less accurate results
+                                  #Values of 5e3-20e3 usually good
 
 
                                              /=+===============================+=\
@@ -5394,36 +5468,105 @@ spgist                            #ACCESS_METHOD
 
 
 brin                              #ACCESS_METHOD
-                                  #Does not support:
-                                  #  - include
-                                  #  - fillfactor
-                                  #  - ordering OP
-                                  #Has multiple sub-categories: minmax, minmax_multi, bloom, inclusion
-                                  #minmax:
-                                  #  - for any type with < <= = >= >
-                                  #     - except BOOL, ENUM, MONEY, ARR, RECORD, MULTIRANGE, HSTORE, JSONB, LTREE, CIRCLE|POINT|POLYGON, TSQUERY|TSVECTOR, CID|XID|XID8
-                                  #     - no cross-TYPE OPs for BPCHAR|VARCHAR|TEXT
-                                  #minmax_multi:
-                                  #  - for same types as `minmax` with < <= = >= >
-                                  #     - except B[STR] and STR
-                                  #  - non-default OPCLASSs
-                                  #  - support FUNC: getDistance(VAL, VAL2)
-                                  #  - OOPTS: values_per_range
-                                  #bloom:
-                                  #  - for same types as `minmax` with =
-                                  #  - non-default OPCLASSs
-                                  #  - support FUNC: hash(VAL)
-                                  #  - OOPTS: n_distinct_per_range, false_positive_rate
-                                  #inclusion:
-                                  #  - for:
-                                  #     - RANGE with << >> && &< &> @> <@ -|- < <= = >= >
-                                  #     - BOX with << >> && &< &> @> <@ ~= &<| |&> <<| |>>
-                                  #     - INET with << >> >>= <<= && =
-                                  #  - support FUNCs:
-                                  #     - merge(VAL, VAL2)
-                                  #     - contains(VAL, VAL2)
-                                  #     - canBeMerged(VAL, VAL2): only INET, to prevent merging IPv4 vs IPv6
-                                  #     - isEmpty(VAL): only RANGE, for 'empty'
+                                  #"Block Range INdex"
+                                  #Use case:
+                                  #  - Very large TABLEs
+                                  #  - Data read close to each other, e.g. in chunks
+                                  #  - Indexed values increase mostly monotonically
+
+DATA STRUCTURE ==>                #Splits data into block ranges
+                                  #Block ranges have a min|max value
+                                  #  - better if they do not overlap each other too much
+                                  #Block ranges maps to filesystem pages
+                                  #Finding right block is fast, but does a sequential read inside the block
+                                  #Low memory and CPU overhead of INDEX structure
+
+FEATURES ==>                      #  - is [not] null
+                                  #  - bitmap index scan
+
+MULTI-COL ==>                     #Efficient regardless of which OP is used, and in any order
+
+SUMMARIZATION ==>                 #Adding min|max to a block range
+                                  #New block ranges are not automatically summarization
+                                  #Done on vacuum on the TABLE
+IOPTS.autosummarize               #BOOL (def: false). If true, also summarize:
+                                  #  - when vacuum on any other TABLE
+                                  #  - on any non-last block range
+brin_summarize_new_values
+ (INDEX_REGCLASS)->UINT           #Summarize all unsummarized block ranges
+brin_summarize_range
+ (INDEX_REGCLASS, UINT)->UINT2    #Summarize specific block range
+brin_desummarize_range            #Remove summary on specific block range
+ (INDEX_REGCLASS, UINT)->UINT2    #Goal: when a block range's summary is not accurate anymore due to updates
+
+IOPTS.pages_per_range             #NUM (def: 128) of page heaps per block range
+                                  #Should be close to NUM of page heaps usually read by queries
+                                  #  - if too high: longer sequential scan
+                                  #  - if too low: higher memory|CPU taken by INDEX
+
+CATEGORIES ==>                    #Has multiple categories: minmax, minmax_multi, bloom, inclusion
+                                  #Depending on indexed values TYPEs and OPCLASSs
+
+minmax                            #Category for < <= = >= >
+                                  #For any TYPE except BOOL, ENUM, MONEY, ARR, RECORD, MULTIRANGE, HSTORE, JSONB, LTREE, CIRCLE|POINT|POLYGON, TSQUERY|TSVECTOR, CID|XID|XID8
+                                  #No cross-TYPE OPs for BPCHAR|VARCHAR|TEXT
+                                  #Uses normal min|max, i.e. most generic category
+
+minmax_multi                      #Category for same types as `minmax` with < <= = >= >
+                                  #  - except B[STR] and STR
+                                  #Uses multiple min|max per block range
+                                  #  - i.e. good when values have gaps
+                                  #Non-default OPCLASSs
+OOPTS.values_per_range            #NUM (def: 32, min 8, max 256)
+                                  #Max NUM of values used for the min|max ranges
+                                  #I.e. max NUM/2 min|max ranges
+
+bloom                             #Category for same types as `minmax` with =
+                                  #Uses a Bloom filter
+                                  #I.e. good for small INDEX size with OP =, providing false positives are ok
+                                  #Non-default OPCLASSs
+OOPTS.false_positive_rate         #NUM (def: 0.01, min 0.0001, max 0.25)
+                                  #Lower values requires larger INDEX size
+OOPTS.n_distinct_per_range        #NUM. Similar to TOPS.n_distinct, but meant as a hint for Bloom filter to reduce its size
+
+inclusion                         #Category for:
+                                  #  - RANGE with << >> && &< &> @> <@ -|- < <= = >= >
+                                  #  - BOX with << >> && &< &> @> <@ ~= &<| |&> <<| |>>
+                                  #  - INET with << >> >>= <<= && =
+                                  #Uses multidimensional min|max specific to those TYPEs, e.g. bounding boxes
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:             HASH              :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+hash                              #ACCESS_METHOD
+                                  #Use case: OP = on large TABLE with unique values
+
+DATA STRUCTURE ==>                #Hash table
+                                  #Key is hash of data
+                                  #  - 4 bytes
+                                  #Value are ROW ids with that hash
+                                  #  - i.e. slow if many values are duplicates
+                                  #Fast with = on many ROWs
+                                  #When TABLE size increase, need to split buckets, which is slow and locks the table
+                                  #  - i.e. not good if TABLE size increases rapidly
+                                  #Always lossy, because requires searching among values with same checksum
+
+TYPES/OPS ==>                     #For any TYPE with =
+                                  #  - except BSTR, MONEY, LTREE, TSQUERY|TSVECTOR, POINT|BOX|CIRCLE|POLYGON
+                                  #  - no cross-TYPE OPs for DATE|TIMESTAMP[TZ]
+
+FEATURES ==>                      #  - distinct|grouping
+                                  #  - exclude
+                                  #  - partition by hash
+                                  #  - plain index scan
+                                  #  - bitmap index scan
+                                  #  - predicate lock
+                                  #  - IOPTS.fillfactor
 
 
                                              /=+===============================+=\
@@ -5434,7 +5577,27 @@ brin                              #ACCESS_METHOD
 
 
 bloom                             #ACCESS_METHOD
-                                  #Trusted Postgres extension 'bloom'
+                                  #Use case: OP = with many duplicates
+                                  #  - sometimes faster than btree when queries use many indexed COLs at once with OP =
+                                  #Non-trusted extension "bloom"
+
+DATA STRUCTURE ==>                #Bloom filter
+                                  #Lossy due false positives being rechecked
+                                  #I.e. true is slower than false
+
+TYPES/OPS ==>                     #For: STR|INT4 with =
+
+FEATURES ==>                      #  - plain index scan
+                                  #  - bitmap index scan
+
+MULTI-COL ==>                     #Only efficient when all the non-last COLs use =
+
+OOPTS.length                      #NUM (def: 80, max: 4096)
+                                  #Bloom filter size in bytes, for all COLs together
+                                  #Larger size are faster
+
+OOPTS.col1-32                     #NUM (def: 2, max: 4095)
+                                  #Bits taken by individual COLs inside Bloom filter
 
 
                                              /=+===============================+=\
@@ -5446,18 +5609,6 @@ bloom                             #ACCESS_METHOD
 
 heap                              #ACCESS_METHOD
                                   #Unlike other ACCESS_METHODs, meant for TABLEs, not INDEXs
-
-intarray extension INDEXs: https://www.postgresql.org/docs/current/intarray.html#id-1.11.7.29.8 ???
-
-kd_point_ops: ???
-  - on POINT (any OPs), with ACCESS_METHOD spgist
-  - documented in https://postgrespro.com/blog/pgsql/4220639
-  - not by default
-
-record_image_ops: ???
-  - on RECORD, with ACCESS_METHOD btree
-  - OPs: *< *<= *= *>= *> RANGE
-  - not by default
 
 
                                              /=+===============================+=\
