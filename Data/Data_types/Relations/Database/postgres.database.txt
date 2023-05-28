@@ -6,9 +6,6 @@
 
 
 TO DOCUMENT:
-  - row-level security
-     - alter table ... row level security
-     - pg_policies, pg_policy
   - transform
      - pg_transform
   - logical replication:
@@ -17,9 +14,6 @@ TO DOCUMENT:
   - JIT:
      - https://www.postgresql.org/docs/15/jit.html
      - including in `explain`
-  - security labels:
-     - pg_[sh]seclabel, pg_seclabels
-  - aclitem
   - all `???`
   - information_schema
 
@@ -265,7 +259,6 @@ pg_namespace                      #TABLE with all SCHEMAs
 pg_namespace.oid                  #OID
 pg_namespace.nspname              #NAME of "SCHEMA"
 pg_namespace.pg_nspowner          #REGROLE of owner
-pg_namespace.aclitem              #ACLITEM_ARR
 
 regnamespace                      #TYPE alias to OID, to cast pg_namespace.oid as "SCHEMA" name
 
@@ -431,7 +424,6 @@ pg_type.typmodin                  #REGPROC of YOPTS.typemod_in. 0 if none.
 pg_type.typmodout                 #REGPROC of YOPTS.typemod_out. 0 if none.
 pg_type.typanalyze                #REGPROC of YOPTS.analyze. 0 if none.
 pg_type.typisdefined              #BOOL. Temporarily set to false while `create type` is ongoing.
-pg_type.typacl                    #ACLITEM_ARR
 
 regtype                           #TYPE alias to OID, to cast pg_type.oid as "TYPE" name
 
@@ -652,7 +644,7 @@ pg_type.typstorage                #Can be 'p|x|e|m' for plain|extended|external|
 create table "TABLE"              #Do not use out-of-line nor compression for values < UINT bytes
  set (toast_tuple_target = UINT)  #Min: 128, max: 8160, def: 2040 (which is usually good)
 
-OPTS.process_toast                #BOOL (def: true). Whether `vacuum` applies to TOAST TABLEs too
+OPTS.process_toast                #BOOL (def: true). Whether `vacuum` applies to TOAST_TABLEs too
                                   #Always `on` if `vacuum full`
 
 
@@ -689,7 +681,6 @@ lo_put(OID, INT8, BYTEA)          #Writes LARGEOBJ
 pg_largeobject_metadata           #TABLE with all LARGEOBJ metadata
 pg_largeobject_metadata.oid       #OID of LARGEOBJ
 pg_largeobject_metadata.lomowner  #REGROLE of owner
-pg_largeobject_metadata.lomacl    #ACLITEM_ARR
 
 pg_largeobject                    #TABLE with all LARGEOBJ data
                                   #Must be superuser
@@ -2162,6 +2153,82 @@ ROW [not] in SUBQUERY             #Same as ROW =|<> any SUBQUERY
 
                                              /=+===============================+=\
                                             /  :                               :  \
+                                            )==:           RELATION            :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+RELATION ==>                      #ENTITYs with COLs
+                                  #I.e. TABLE, INDEX, SEQUENCE, [M]VIEW, ROW_TYPE, FTABLE
+pg_class                          #TABLE with all RELATIONs
+
+pg_class.relhasindex|relhasrules  #Set to true immediately, but only set to false by `vacuum`.
+ |relhastriggers|relhassubclass   #I.e. might be true if ENTITY was dropped recently
+pg_class.relpages|reltuples       #Set only by analyze, vacuum and some DDL commands like create index
+ |relallvisible                   #I.e. estimate only since it might have changed
+                                  #Used by the query planner
+
+pg_class.oid                      #OID
+pg_class.relname                  #"TABLE" name
+pg_class.relnamespace             #REGNAMESPACE of SCHEMA
+pg_class.relowner                 #REGROLE of owner
+pg_class.relkind                  #'CHAR' among:
+                                  #  - r: TABLE
+                                  #  - i: INDEX
+                                  #  - p: partitioned TABLE
+                                  #  - I: partitioned INDEX
+                                  #  - S: SEQUENCE
+                                  #  - t: TOAST_TABLE
+                                  #  - v: VIEW
+                                  #  - m: MVIEW
+                                  #  - c: ROW_TYPE created through `create type`
+                                  #  - f: FTABLE
+pg_class.reltype                  #REGTYPE of ROW_TYPE
+                                  #0 for INDEX|SEQUENCE|TOAST_TABLE
+pg_class.relfilenode              #OID. Filename on-disk.
+                                  #0 if VIEW|ROW_TYPE
+                                  #Also 0 on some pg_catalog.* TABLEs: cluster-wide ones, and pg_class|attribute|type|proc
+pg_class.relpages                 #INT4. Size of the file on-disk, in 8KB pages.
+pg_class.reltuples                #FLOAT4. Number of non-dead ROWs
+                                  #-1 if VIEW|ROW_TYPE, or if not analyze|vacuum'd yet
+
+pg_class.relpersistence           #'CHAR' among
+                                  #p = permanent table/sequence
+                                  #u = unlogged table/sequence
+                                  #t = temporary table/sequence
+pg_class.relnatts                 #int2 Number of user columns in the relation (system columns not counted).
+                                  #There must be this many corresponding entries in pg_attribute.
+                                  #See also pg_attribute.attnum.
+pg_class.relchecks                #int2 Number of CHECK constraints on the table;
+                                  #see pg_constraint catalog
+pg_class.relhassubclass           #bool True if table or index has (or once had) any inheritance children or partitions
+pg_class.relforcerowsecurity      #bool True if row-level security (when enabled) will also apply to table owner;
+                                  #see pg_policy catalog
+pg_class.relreplident             #char Columns used to form “replica identity” for rows:
+                                  #d = default (primary key, if any),
+                                  #n = nothing,
+                                  #f = all columns,
+                                  #i = index with indisreplident set (same as nothing if the index used has been dropped)
+pg_class.relispartition           #bool True if table or index is a partition
+pg_class.relrewrite               #oid (references pg_class.oid)
+                                  #For new relations being written during a DDL operation that requires a table rewrite,
+                                  #this contains the OID of the original relation; otherwise zero.
+                                  #That state is only visible internally;
+                                  #this field should never contain anything other than zero for a user-visible relation.
+pg_class.relfrozenxid             #xid All transaction IDs before this one have been replaced with a permanent (“frozen”) transaction ID in this table.
+                                  #This is used to track whether the table needs to be vacuumed in order to prevent transaction ID wraparound or to allow pg_xact to be shrunk.
+                                  #Zero (InvalidTransactionId) if the relation is not a table.
+pg_class.relminmxid               #xid All multixact IDs before this one have been replaced by a transaction ID in this table.
+                                  #This is used to track whether the table needs to be vacuumed in order to prevent multixact ID wraparound or to allow pg_multixact to be shrunk.
+                                  #Zero (InvalidMultiXactId) if the relation is not a table.
+pg_class.reloptions               #text[] Access-method-specific options, as “keyword=value” strings
+pg_class.relpartbound             #pg_node_tree If table is a partition (see relispartition), internal representation of the partition bound
+
+regclass                          #TYPE alias to OID, to cast pg_class.oid as "NAME"
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
                                             )==:             TABLE             :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -2176,6 +2243,8 @@ TABLE                             #ROW_SET with a known ROW_TYPE, that is persis
                                   #But not as a:
                                   #  - "ROW_TYPE" variable
                                   #  - ROW[_SET] value
+
+SYSTEM COLS ==>                   #Hidden COLs defined for every TABLE ROW: tableoid, ctid, cmin|cmax, xmin|xmax
 
 create
  [temp|unlogged]
@@ -2216,16 +2285,6 @@ select VALS,...                   #Same as `select ...` but creates "TABLE" inst
 create table ... with (TOPTS)
 alter table ... set (TOPTS)       #"Table storage options"
 
-pg_class                          #All ENTITYs using ROW_TYPEs: TABLE, VIEW, INDEX, SEQUENCE, MVIEW, ROW
-                                  #???
-pg_class.relishared               #BOOL. Whether cluster-wide
-pg_class.relhasindexes            #BOOL. Whether has INDEXs
-pg_class.relhasrules              #BOOL. Whether has RULEs
-pg_class.relhastriggers           #BOOL. Whether has TFUNCs
-pg_class.relrowsecurity           #BOOL. Whether has row-level security
-
-regclass                          #TYPE alias to OID, to cast pg_class.oid as "NAME"
-
 pg_tables                         #TABLE with all TABLEs
 pg_tables.tablename               #pg_class.relname NAME of TABLE
 pg_tables.schemaname              #pg_namespace.nspname NAME of NAMESPACE
@@ -2235,6 +2294,9 @@ pg_tables.hasindexes
 pg_tables.hasrules
 pg_tables.hastriggers
 pg_tables.rowsecurity             #pg_class.rel*
+
+pg_class.reloftype                #REGTYPE of ROW_TYPE when `of ROW_TYPE` was used
+                                  #0 if none, or if not TABLE
 
 "ROW_ALIAS".tableoid              #REGCLASS of TABLE. System COL
 
@@ -4687,6 +4749,8 @@ pg_indexes.indexdef               #STR from pg_get_indexdef()
 
 pg_get_indexdef(REGCLASS)->STR    #Returns 'CREATE ...' statement that created INDEX
 
+pg_class.relhasindex              #BOOL. Whether has INDEXs
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -4893,6 +4957,9 @@ pg_am.oid                         #OID
 pg_am.amname                      #"ACCESS_METHOD" name
 pg_am.amtype                      #'t' (TABLE) or 'i' (INDEX)
 pg_am.amhandler                   #REGPROC of handler
+
+pg_class.relam                    #pg_am.oid of the RELATION's ACCESS_METHOD
+                                  #0 if SEQUENCE|VIEW|ROW_TYPE
 
 
                                              /=+===============================+=\
@@ -5531,6 +5598,7 @@ analyze [verbose]                 #Fill in pg_statistic.
                                   #Requires only an access share lock.
                                   #FOREIGNTABLE are analyzed only when explicitly specified, and not always supported.
                                   #Should be run before `explain` if lot of change since last time autovacuum did (because based on pg_statistic)
+                                  #Updates pg_class.relpages|reltuples|relallvisible (like vacuum does)
 
 pg_stat_progress_analyze          #TABLE with ongoing `analyze` statements. ???
 
@@ -5573,7 +5641,7 @@ ENVVAR default_statistics_target ???
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:             HEAP              :==(
+                                            )==:           HEAP PAGE           :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
@@ -5584,6 +5652,7 @@ HEAP PAGE ==>                     #8KB memory page containing 1-n TABLE ROWs
                                   #Also called "blocks"
 
 ROW SIZE ==>                      #Min size: 32 bytes (due to SYSTEM COLs)
+                                  #  - i.e. max 256 ROWs per heap
                                   #Max size: 8KB (due to heap page max size)
                                   #With TOAST: max 400GB of actual data
 
@@ -5593,9 +5662,21 @@ HEAP PAGE NUMBER ==>              #Heap page index within a TABLE
 
 TABLE SIZE ==>                    #Max size: 32TB (due to heap number max number)
 
+"ROW_ALIAS".ctid                  #TID of the ROW
+tid                               #TYPE. Location of a ROW within its TABLE.
+                                  #Is (UINT, UINT2)
+                                  #  - UINT is heap page number
+                                  #  - UINT2 is index within heap page
+                                  #Changed on write statements
+                                  #  - including update, vacuum full
+                                  #  - excluding delete
+'(UINT, UINT2)'                   #TID_UNKNOWN
+ENVVAR enable_tidscan             #"TID scan". When using ctid with `where|on`, can directly fetch the ROWs
+                                  #without scanning other ROWs, since the ctid contains the ROW physical location.
+
 HEAP PAGE TYPES ==>               #Heap pages can be:
-                                  #  - "shared": non-temp TABLE|INDEXs
-                                  #  - "local": temp TABLE|INDEXs
+                                  #  - "shared": non-temp TABLE
+                                  #  - "local": temp TABLE
                                   #  - "temporary": short-term ROW_SET, e.g. during sorts, joins, etc.
 
 HEAP PAGE CACHING ==>             #Heap pages can be cached
@@ -5633,31 +5714,23 @@ pg_freespace(REGCLASS)->ROW_SET   #Same for all heap pages of REGCLASS, as ROW: 
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:          SYSTEM COLS          :==(
+                                            )==:          LAST WRITE           :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
-SYSTEM COLS ==>                   #Hidden COLs defined for every TABLE ROW
-
-"ROW_ALIAS".ctid                  #TID of the ROW version. Changed on write statements.
-                                  #  - including insert, update, delete, vacuum full, etc.
-tid                               #TYPE. ID of a ROW version within a given TABLE.
-                                  #Is (UINT, UINT2)
-                                  #  - UINT is heap page number within ROW_SET
-                                  #  - UINT2 is ROW index within heap page
-ENVVAR enable_tidscan             #"TID scan". When using ctid with `where|on`, can directly fetch the ROWs
-                                  #without scanning other ROWs, since the ctid contains the ROW physical location.
-
 "ROW_ALIAS".cmin|cmax             #CID of the last write statement on the ROW
-cid                               #TYPE. ID of a write statement within a given TABLE + transaction (XID)
-                                  #Incrementing ID, starting at 0
+                                  #Used for versioning the ROW, e.g. with MVCC
+cid                               #TYPE. Index of a write statement within a given TABLE + transaction (XID)
+                                  #Incrementing, starting at 0
+CID <~=> TEXT                     #Type cast
 
 "ROW_ALIAS".xmin|xmax             #XID of the last write transaction on the ROW
-xid[8]                            #TYPE. ID of a write transaction within a given TABLE
-                                  #Incrementing ID, starting at 0
+xid[8]                            #TYPE. Index of a write transaction within a given TABLE
+                                  #Incrementing, starting at 0
+XID[8] <~=> TEXT                  #Type cast
 
-tid|cid|xid                       #4 bytes. Might be re-used in the lifetime of cluster
+cid|xid                           #4 bytes. Might be re-used in the lifetime of cluster
 xid8                              #8 bytes. Never re-used in the lifetime of cluster
 XID8 ~> XID                       #Type cast
 
@@ -5719,7 +5792,7 @@ VISIBILITY MAP ==>                #Bitmap of all heap pages of a TABLE
                                   #  - set to 0 by any write
                                   #  - set to 1 by vacuum
                                   #  - i.e. 0 means "might" contain uncommitted writes, or dead ROWs
-                                  #  - i.e. 1 means latest data can be "certainly" read by any current|future transaction
+                                  #  - i.e. 1 means latest data can "certainly" be read by any current|future transaction
                                   #  - also set as a PD_ALL_VISIBLE bit in the data itself, as opposed to in the visibility map
                                   #"all-frozen bit":
                                   #  - 1 if has only frozen ROWs
@@ -5747,6 +5820,7 @@ pg_check_visible|frozen           #Returns TIDs of ROWs with 0 bits inn all_visi
 pg_truncate_visibility_map        #Remove visibility map. It will be rebuilt by next vacuum.
  (REGCLASS)                       #Meant if visibility map corrupted
 
+pg_class.relallvisible            #INT4. Number of heap pages with all-visible bit in the visibility map.
 
 
                                              /=+===============================+=\
@@ -5762,6 +5836,8 @@ vacuum (OPTS)                     #Does:
                                   #     - INDEXs ("index cleanup")
                                   #  - freeze ROWs
                                   #  - update visibility map
+                                  #  - update FSM values
+                                  #  - update pg_class.relhas*|relpages|reltuples|relallvisible
                                   #Def "TABLE": all that current ROLE has permissions
                                   #Def "COL": all
                                   #Cannot be done inside a transaction
@@ -5822,7 +5898,7 @@ pg_stat_progress_vacuum.phase     #STR among: ???
                                   #    otherwise, it will begin cleaning up indexes after this phase is completed.
                                   #  - 'cleaning up indexes'
                                   #  - 'truncating heap'
-                                  #  - 'performing final cleanup':
+                                  #  - 'performing final cleanup': update FSM, pg_class.relhas*
                                   #    During this phase, VACUUM will vacuum the free space map, update statistics in pg_class, and report statistics to the cumulative statistics system.
 
 pg_stat_progress_vacuum
@@ -5882,7 +5958,10 @@ TOPTS.toast.*autovacuum*          #Same but only for pg_toast_OID TABLE
                                              \=+===============================+=/
 
 
-SESSION ==>                       #Beginning and end of a list of commands (e.g. interactive prompt)
+SESSION ==>                       #Series of commands in a specific client connection to the server
+                                  #E.g. interactive prompt
+                                  #Only one DATABASE per SESSION
+
 CONCURRENCY ==>                   #Uses Multiversion Concurrency Control (MVCC) instead of traditional locks, for best performance
                                   #while still reliable:
                                   #  - transactions create a snapshot of the current state ("database version").
@@ -6094,7 +6173,6 @@ create tablespace "TABLESPACE"    #Create a TABLESPACE, i.e. a group of DATABASE
                                   #       to another is space is not enough anymore
                                   #Is cluster-wide, so can be assigned to objects of different DATABASE.
                                   #Each new VAR has as a TABLESPACE (unless explicity mentionned):
-                                  #  - if cluster-wide object, pg_global
                                   #  - otherwise the default TABLESPACE of the database.
                                   #    It is inherited from its template (pg_default for template0|1), but can be overriden by:
                                   #     - if TEMP or INDEX on TEMP, ENVVAR_ARR temp_tablespace: if used as an ARR, allocate randomly
@@ -6126,8 +6204,13 @@ alter ENTITY                      #Set TABLESPACE2 of all ENTITYs in a given TAB
  [nowait]                         #All ENTITYs are locked.
                                   #If nowait, uses lock ... nowait, i.e. fail if cannot lock right away
 
+pg_global                         #TABLESPACE for cluster-wide ENTITYs
+
 pg_tablespace                     #All TABLESPACE
                                   #???
+
+pg_class.reltablespace            #pg_tablespace.oid of TABLESPACE
+                                  #0 for default TABLESPACE
 
 
                                              /=+===============================+=\
@@ -6293,7 +6376,13 @@ pg_proc                           #All FUNC. ???
 regproc                           #TYPE alias to OID, to cast pg_proc.oid as "FUNC" name
 regprocedure                      #TYPE alias to OID, to cast pg_proc.oid as "FUNC(TYPE,...)" name
 
-pg_event_trigger                  #All EFUNC. ???
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:            TRIGGER            :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
 
 create [constraint]               #Execute a FUNC for a specific EVENT on "TABLE" or VIEW.
 trigger TFUNC                     #Multiple TFUNC are fired alphabetically.
@@ -6340,6 +6429,28 @@ execute procedure FUNC(STR...)    #    If COMMAND is the one triggering EVENT "f
                                   #    after insert and/or update and/or delete, with payload explaining the modification.
                                   #  - Trusted postgres extension 'tcn'
                                   #Auto-dependency child of its TABLE|COL (even with `drop ... restrict`)
+alter table "TABLE"               #all|user:
+ enable|disable                   #  - not for RULE
+ [replica|always]                 #  - same but all include system TRIGGER (enforcing CONSTRAINT), not user
+ rule|trigger                     #replica|always:
+ RULE|TRIGGER|all|user            #  - def: affects only non-replication sessions (ENVVAR session_replication_role "origin" (def) or
+                                  #    "local")
+                                  #  - replica: affects only replication sessions (session_replication_role "replica")
+                                  #  - always: affects all sessions
+
+pg_trigger                        #All TFUNC. ???
+
+pg_class.relhastriggers           #BOOL. Whether has TFUNCs
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:         EVENT TRIGGER         :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+
 create event trigger              #Like TFUNC but EVENT can be DDL not DML:
 EFUNC on EVENT                    #  - ddl_command_start|end: before|after a create, alter or drop (except for cluster-wide objects
 [when tag in (STR...)]            #    and TFUNC|EFUNC)
@@ -6359,16 +6470,16 @@ execute procedure FUNC()          #  - sql_drop: same but only for drop
 alter event trigger
  disable|enable
  [replica|always]                 #
-alter table "TABLE"               #all|user:
- enable|disable                   #  - not for RULE
- [replica|always]                 #  - same but all include system TRIGGER (enforcing CONSTRAINT), not user
- rule|trigger                     #replica|always:
- RULE|TRIGGER|all|user            #  - def: affects only non-replication sessions (ENVVAR session_replication_role "origin" (def) or
-                                  #    "local")
-                                  #  - replica: affects only replication sessions (session_replication_role "replica")
-                                  #  - always: affects all sessions
 
-pg_trigger                        #All TFUNC. ???
+pg_event_trigger                  #All EFUNC. ???
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:             RULE              :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
 
 create [or replace]               #Creates a macro that modifies a command matching EVENT into COMMANDS (add or replace according to
 rule RULE as on EVENT             #"instead"), for "TABLE", when BOOL:
@@ -6393,6 +6504,8 @@ do [instead] COMMANDS             #     - select|insert|update|delete
 
 pg_rewrite                        #All RULE. ???
 pg_rules                          #Same, but more for user-defined RULE. ???
+
+pg_class.relhasrules              #BOOL. Whether has RULEs
 
 
                                              /=+===============================+=\
@@ -6879,12 +6992,6 @@ to ROLE...                        #     - is table (def)|sequence|database|domai
                                   #          LANGUAGES. Can be revoked.
                                   #     - If current user is superuser or can grant thanks to membership or "with grant option", looks
                                   #       like PRIVILEGE has been granted by VAR owner
-                                  #Access controls:
-                                  #  - are recorded in the database objects they are attached (using system catalogs) as ACLITEM_ARR,
-                                  #    i.e. [ROLE]=LETTER.../ROLE2, where ROLE is the granted (def: public), ROLE2 the granter and
-                                  #    LETTER shown above between parenthesis for each PRIVILEGE.
-                                  #  - Each LETTER can be followed by * for "with grant option"
-                                  #  - don't show default PRIVILEGE
 revoke [grant|admin               #Inverse.
 option for] PRIVILEGE...          #"with grant|admin option" is revoked too. If "grant|admin option for", only "with grant|admin option"
 on [TYPE] VAR...                  #is removed.
@@ -6912,8 +7019,32 @@ has_TYPE_privilege                #TYPE can also be:
 pg_has_role
  ([ROLE, ]ROLE2, PRIVILEGE)       #With membership
 
-pg_default_acl                    #All default privileges. ???
 pg_init_privs                     #TABLE with initial privileges. ???
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:              ACL              :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+aclitem                           #ACLITEM
+                                  #Record ENTITY's PRIVILEGEs, on its pg_catalog.* TABLE
+
+'[ROLE]=CHAR.../ROLE2'            #ACLITEM_UNKNOWN
+                                  #ROLE: granted (def: public)
+                                  #ROLE2: granter
+                                  #CHAR: PRIVILEGE (shown above between parenthesis)
+                                  #CHAR* if `with grant option`
+                                  #Default PRIVILEGEs are not shown
+
+pg_namespace.aclitem              #ACLITEM_ARR of SCHEMA
+pg_type.typacl                    #ACLITEM_ARR of TYPE
+pg_class.relacl                   #ACLITEM_ARR of RELATION
+pg_largeobject_metadata.lomacl    #ACLITEM_ARR of LARGEOBJ
+
+pg_default_acl                    #All default privileges. ???
 pg_parameter_acl                  #TABLE with privileges. ???
 
 
@@ -7005,6 +7136,30 @@ pg_hba_file_rules                 #TABLE with pg_gba.conf contents. ???
 pg_ident_file_mappings            #TABLE with pg_ident.conf contents. ???
 pg_stat_ssl                       #???
 pg_stat_gssapi                    #???
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:      ROW-LEVEL SECURITY       :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+TO DOCUMENT, including: ???
+  - alter table ... row level security
+  - pg_policies, pg_policy
+
+pg_class.relrowsecurity           #BOOL. Whether has row-level security
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:        SECURITY LABELS        :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+TO DOCUMENT, including: ???
+   - pg_[sh]seclabel, pg_seclabels
 
 
                                              /=+===============================+=\
@@ -7164,28 +7319,37 @@ ENVVAR enable_async_append, and asynchronous appends ???
 
                                              /=+===============================+=\
                                             /  :                               :  \
+                                            )==:            CLUSTER            :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+CLUSTER ==>                       #Set of DATABASEs, managed by a single instance of a server daemon (postgres).
+                                  #Linked to a DATADIR
+
+CLUSTER-WIDE ENTITYS ==>          #The following ENTITYs are cluster-wide, not DATABASE-wide:
+                                  #  - DATABASE (including their ENVVAR, templates)
+                                  #  - TABLESPACE
+                                  #  - ROLE (including membership, ACL, security label)
+                                  #  - LANGUAGE
+                                  #  - logical replication (including SUBSCRIPTION)
+
+                                  #Also dependencies and COMMENTs on cluster-wise ENTITYs
+pg_class.relisshared              #BOOL. Whether TABLE is cluster-wide
+                                  #Only true for pg_catalog.* TABLEs (and their INDEX and TOAST_TABLEs) about cluster-wide ENTITYs
+
+CLUSTER ENVVARS ==>               #ENVVARs can be cluster-wide
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
                                             )==:           DATABASE            :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
-MAIN STRUCTURE ==>                #  - Cluster: set of DATABASEs, managed by a single instance of a server daemon (postgres).
-                                  #      - linked to a DATADIR
-                                  #      - cluster-wide ENVVARs
-                                  #      - cluster-specific objects:
-                                  #         - DATABASE, including templates
-                                  #         - ROLE
-                                  #         - TABLESPACE
-                                  #         - LANGUAGE
-                                  #         - system catalogs on cluster-specific objects
-                                  #  - Database: set of SCHEMAs. A client can connect only to one DATABASE at once.
-                                  #     - max 4e9
-                                  #  - Schema: set of SQL objects (TABLE, FUNC, etc.)
-                                  #  - Session: client connection to the server for a specific database, e.g. interactive prompt session.
-                                  #  - Transaction: set of statements that should executed all-or-nothing (concurrency)
-                                  #  - Statement: SQL command individually sent to the server by the client.
-
-create database DATABAS           #Create a DATABASE
+create database DATABAS           #Create a DATABASE, i.e. set of SCHEMAs
+                                  #Max 4e9 DATABASEs per CLUSTER
 [owner ROLE]                      #  - ROLE is current one by def
 [template DATABASE2]              #  - DATABASE2 is the initial state of DATABASE:
 [connection limit INT]            #     - It is a default DATABASE2 called template1 by def. (created by initdb)
@@ -7573,8 +7737,8 @@ END OF LINE ==>                   #The seven following commands should be put at
 \setenv VAR [VAL]                 #Sets shell environment variables
 
 \d...[S][+] [SREGEXP]             #Show info about VAR specified in ... (S for also system ones, + for more info) among:
-                                  #  - nothing (all table-like), t (table), v (view), i (index), m (materialized view), s (sequence)
-                                  #  - u (ROLE), dp (default user privilege), p (all table-like with privileges)
+                                  #  - nothing (all RELATIONs), t (table), v (view), i (index), m (materialized view), s (sequence)
+                                  #  - u (ROLE), dp (default user privilege), p (all RELATIONs with privileges)
                                   #  - d (constraint, operator*, rule, trigger)
                                   #  - n (SCHEMA)
                                   #  - b (tablespace)
