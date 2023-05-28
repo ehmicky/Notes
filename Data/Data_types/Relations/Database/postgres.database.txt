@@ -5882,26 +5882,28 @@ analyze [verbose]                 #Fill in pg_statistic.
 
 pg_stat_progress_analyze          #TABLE with ongoing `analyze` statements. ???
 
-pg_statistic                      #Stats used by the planner to optimize queries (only indexed COL).
-                                  #Not exact stats, because only a random sample of the rows is chosen for efficiency purpose.
-                                  #Example of statistics: number of entries, distinct entries, histograms, size (number of disk blocks)
-                                  #ENVVAR default_statistics_target (def: 100, from 0 to 10000) decides the sample size.
-                                  #Can be set column-wise with:
-                                  #  alter table|index ... alter [column] "COL" set statistics INT (-1 means default)
-                                  #(same for FTABLE and materialized views).
-                                  #  - starelid REGCLASS: of the TABLE
-                                  #  - staatnum UINT: COL index. Refers to pg_attribute.attnum.
-                                  #  - stainherit BOOL: all COLs have false + (if inherited COL) a row with true, with inherited
-                                  #    version of the TABLE
-                                  #  - stanullfrac FLOAT: percentage of null values
-                                  #  - stawidth INT: average size of null values
-                                  #  - stadistinct FLOAT: number of repetitions: -NUM if repetitions (UNIQUE/TOTAL, closer to 0 if
-                                  #    many repetitions), +NUM means no repetitions (UNIQUE), 0 means unknown
-                                  #  - for NUM statistics:
-                                  #     - stakindNUM INT: subtype of the statistic (code number)
-                                  #     - staopNUM REGOPER: OP used
-                                  #     - stanumbersNUM FLOAT_ARR: stats as FLOAT, or null if COL is not numerical
-                                  #     - stavaluesNUM ARR: stats as the same type as the COL
+pg_statistic                      #Statistic of an indexed COL, used by the planner to optimize queries.
+                                  #Example of statistics: number of entries, distinct entries, histograms, size (number of heap pages)
+pg_statistic.starelid             #REGCLASS of the TABLE
+pg_statistic.staatnum             #pg_attribute.attnum of the COL
+pg_statistic.stainherit           #BOOL. True if "PARENT_TABLE", i.e. include "CHILD_TABLE" stats
+pg_statistic.stanullfrac          #FLOAT4. Percenage of null values
+pg_statistic.stawidth             #INT4. Average size (in bytes) of non-null values
+pg_statistic.stadistinct          #FLOAT4. Number of distinct values
+                                  #  - -NUM if repetitions (UNIQUE/TOTAL, closer to 0 if many repetitions)
+                                  #  - +NUM means no repetitions (UNIQUE)
+                                  #  - 0 means unknown
+pg_statistic.stakindNUM           #INT: subtype of the statistic (code number)
+pg_statistic.staopNUM             #REGOPER: OP used
+pg_statistic.stanumbersNUM        #FLOAT_ARR: stats as FLOAT, or null if COL is not numerical
+pg_statistic.stavaluesNUM         #ARR: stats as the same type as the COL
+
+ENVVAR default_statistics_target  #NUM (def: 100, from 0 to 10000). pg_statistic's sample size.
+                                  #pg_statistic only takes a random sample of the ROWs, i.e. approximate.
+                                  #Higher values are slower but gives better results.
+alter table|index ...
+ alter [column] "COL"
+ set statistics NUM               #Sets default_statistics_target for a COL. -1 means default
 
 pg_stats                          #User-friendly version of pg_statistic
 
@@ -5948,14 +5950,12 @@ HEAP PAGE NUMBER ==>              #Heap page index within a TABLE
 
 TABLE SIZE ==>                    #Max size: 32TB (due to heap number max number)
 
-"ROW_ALIAS".ctid                  #TID of the ROW
+"ROW_ALIAS".ctid                  #TID of the ROW version
+                                  #Since ROWs versions are immutable, each insert|update creates a new ROW version with a new ctid
 tid                               #TYPE. Location of a ROW within its TABLE.
                                   #Is (INT4, INT2)
                                   #  - INT4 is heap page number
                                   #  - INT2 is index within heap page
-                                  #Changed on write statements
-                                  #  - including update, vacuum full
-                                  #  - excluding delete
 '(UINT, UINT2)'                   #TID_UNKNOWN
 ENVVAR enable_tidscan             #"TID scan". When using ctid with `where|on`, can directly fetch the ROWs
                                   #without scanning other ROWs, since the ctid contains the ROW physical location.
@@ -6004,50 +6004,54 @@ pg_freespace(REGCLASS)->ROW_SET   #Same for all heap pages of REGCLASS, as ROW: 
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:          LAST WRITE           :==(
+                                            )==:             MVCC              :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
-"ROW_ALIAS".cmin|cmax             #CID of the last write statement on the ROW
-                                  #Used for versioning the ROW, e.g. with MVCC
-cid                               #TYPE. Index of a write statement within a given DATABASE + transaction (XID)
+MVCC ==>                          #"Multiversion concurrency control"
+                                  #Strategy to allow concurrency by making each ROW immutable
+                                  #Deleted ROWs are kept until vacuum ("dead rows")
+                                  #ROW updates behave like a delete + insert (as opposed to being done in-place)
+                                  #Transactions see different versions of those ROWs, depending on when they were started and
+                                  #their isolation level
+
+"ROW_ALIAS".xmin                  #"Insert ID". XID of the transaction that created the ROW
+"ROW_ALIAS".xmax                  #"Delete ID". XID of the transaction that deleted the ROW
+                                  #0 if not deleted yet
+
+xid                               #TYPE. Index of a write transaction within a given DATABASE
+                                  #Incrementing, starting at 2
+                                  #Used to represent a DATABASE's version
+                                  #A session:
+                                  #  - increments and acquires the latest XID if starting a write transaction
+                                  #  - uses the latest XID if no ongoing write transaction
+                                  #     - including after ending a write transaction
+                                  #1 is a special value ("bootstrap XID") reserved for write transactions performed during initdb
+                                  #Cannot use < <= > >=
+                                  #4 bytes. Might be re-used in the lifetime of cluster
+                                  #  - Min|max values are circular
+                                  #  - i.e. previous|next 2e9 values are considered <|>, when taking wraparound into account
+XID <~=> TEXT                     #Type cast
+
+age(XID)->UINT                    #Difference between current session's XID2 and XID
+
+xid8                              #Like xid but 8 bytes. I.e. never re-used in the lifetime of cluster
+XID8 ~> XID                       #Type cast
+XID8 <~=> TEXT                    #Type cast
+
+ROW VISIBILITY ==>                #Cannot see ROWs creations|deletions of other transactions if either:
+                                  #  - other is uncommitted
+                                  #  - current is uncommited, and other is later, i.e. ROWs with xmin > current session XID
+                                  #However, can check whether a ROW has pending deletion in either case by checking its xmax
+                                  #Rolled back transactions undo any ROW creation|deletion and xmax changes
+
+"ROW_ALIAS".cmin                  #CID of the statement that created|deleted the ROW
+"ROW_ALIAS".cmax                  #Identical to cmin
+cid                               #TYPE. Index of a write statement within a given DATABASE transaction (XID)
                                   #Incrementing, starting at 0
                                   #Cannot use < <= > >=
 CID <~=> TEXT                     #Type cast
-
-"ROW_ALIAS".xmin|xmax             #XID of the last write transaction on the ROW
-xid[8]                            #TYPE. Index of a write transaction within a given DATABASE
-                                  #Incrementing, starting at 2
-                                  #1 is a special value ("bootstrap XID") reserved for ROWs created during initdb
-                                  #Cannot use < <= > >=
-XID[8] <~=> TEXT                  #Type cast
-
-age(XID)->UINT                    #Difference between current transaction xmin and XID
-
-cid|xid                           #4 bytes. Might be re-used in the lifetime of cluster
-xid                               #Min|max values are circular
-                                  #I.e. previous|next 2e9 values are considered <|>, when taking wraparound into account
-xid8                              #8 bytes. Never re-used in the lifetime of cluster
-XID8 ~> XID                       #Type cast
-
-"ROW_ALIAS".xmin|ctid             #For state visible in current session:
-                                  #  - set if committed by current|other sessions, or if uncommitted by current session
-                                  #  - unchanged if uncommitted by other sessions
-                                  #On:
-                                  #  - commit: other sessions set it, i.e. like current session
-                                  #  - rollback: current session reverts it, i.e. like other sessions
-                                  #Current transaction can see any ROWs:
-                                  #  - with xmin <= current transaction's XID (with wraparound considered)
-                                  #  - or frozen
-"ROW_ALIAS".xmax                  #For state not visible yet in current session:
-                                  #  - 0 if committed by current|other sessions, or if uncommitted by current session
-                                  #  - set if uncommitted by other sessions
-                                  #On:
-                                  #  - commit: other sessions reset it to 0, i.e. like current session
-                                  #  - rollback: current session sets it, i.e. like other sessions
-"ROW_ALIAS".cmin|cmax             #Concurrency behavior is like xmin for insert|update, and like xmax for delete
-                                  #There is no difference between cmin and cmax
 
 
                                              /=+===============================+=\
@@ -6060,8 +6064,9 @@ XID8 ~> XID                       #Type cast
 FREEZING ROWS ==>                 #ROWs with an old xmin are marked as frozen by vacuum (using visibility map)
                                   #This ensures that, even when XIDs wrap around:
                                   #  - their XID is not re-used
-                                  #  - their xmin is still considered older than the current transaction, i.e. remains visible
+                                  #  - their xmin is still considered older than the current session, i.e. remains visible
                                   #Frozen ROWs are unfrozen by any write
+                                  #  - since it deletes the old version of the ROW, i.e. creates a new xmin
 
 pg_class.relfrozenxid             #XID. Oldest xmin of the TABLE's not-frozen ROWs.
                                   #Set by vacuum. Initially 0.
@@ -6075,32 +6080,56 @@ ENVVAR autovacuum_freeze_max_age  #NUM (def: 2e8, min 1e5). Forces autovacuum (e
 ENVVAR vacuum_freeze_table_age    #NUM (def: 1.5e8). Only check for frozen ROWs in heap pages with dead ROWs,
                                   #unless any not-frozen ROW is older than NUM transactions
                                   #Max value: 95% of autovacuum_freeze_max_age
-
-pg_class.relminmxid               #XID. Like pg_class.relfrozenxid, but for multixact IDs ???
-pg_database.datminmxid            #XID. Same for pg_database.datfrozenxid
+ENVVAR vacuum_failsafe_age        #NUM (def: 1.6e9). If any not-frozen ROW is older than NUM transactions,
+                                  #make `vacuum` ignore ENVVAR vacuum_cost_* and only perform ROW freezing.
+                                  #Min value: 105% of autovacuum_freeze_max_age
 
 vacuum freeze ...                 #Freeze all ROWs, ignoring ENVVAR *vacuum_freeze*
 vacuum (freeze = true)            #Implied by `vacuum full`
                                   #Might break MVCC
 
-MULTIXACT IDS ==>                 #"Multiple transaction ID". XID of all transactions currently locking a specific ROW
-                                  #(e.g. using `select ... for ...`)
-                                  #"ROW_ALIAS".xmax shows the most recent multixact ID
-
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:          VISIBILITY           :==(
+                                            )==:           MULTIXACT           :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
-DEAD ROWS ==>                     #Deleted ROWs are kept until vacuum
-                                  #This allows ongoing transactions to keep seeing them if either:
-                                  #  - they have not committed yet and were started before the deletion
-                                  #  - the deleting transaction has not committed yet
-UPDATED ROWS ==>                  #`update` does not modify ROWs in-place: it creates a new copy, for the same reason
-                                  #I.e. it also creates dead ROWs
+ROW LOCKING ==>                   #When acquiring locks at a ROW-level (`select ... for ...`), "ROW_ALIAS".xmax is set with
+                                  #the XID of the locking transaction
+                                  #I.e. xmax has two meaning (locking and deletion), which cannot be distinguished without
+                                  #using more complex utilities like pageinspect
+
+MULTIXACT IDS ==>                 #"Multiple transaction ID".
+                                  #When more than one transaction locks a ROW, "ROW_ALIAS".xmax is a multixact ID.
+                                  #This is a XID, but pointing to an array of transactions, instead of just one.
+                                  #Those are stored in pg_multixact/ subdirectory.
+
+pg_get_multixact_members(XID)     #Returns transactions of a multixact ID.
+ ->ROW_SET                        #ROW: xid XID2, mode STR (lock mode)
+mxid_age(XID)->UINT               #Like age(XID) but for multixact IDs
+
+MULTIXACT WRAPAROUND ==>          #Multixact IDs in xmax have the same wraparound as xmin.
+                                  #This is solved the same way, except instead of freezing the ROW, a new more recent xmax is set instead
+pg_class.relminmxid               #XID. Like pg_class.relfrozenxid but for multixact IDs
+pg_database.datminmxid            #XID. Like pg_database.datfrozenxid but for multixact IDs
+ENVVAR
+ vacuum_multixact_freeze_min_age  #NUM (def: 5e6). Same as vacuum_freeze_min_age but for multixact IDs
+ENVVAR autovacuum_multixact_
+ freeze_max_age                   #NUM (def: 4e8). Same as autovacuum_freeze_max_age but for multixact IDs
+ENVVAR
+ vacuum_multixact_freeze_table_age#NUM (def: 1.5e8). Same as vacuum_freeze_table_age but for multixact IDs
+ENVVAR
+ vacuum_multixact_failsafe_age    #NUM (def: 1.6e9). Same as vacuum_failsafe_age but for multixact IDs
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:        VISIBILITY MAP         :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
 
 VISIBILITY MAP ==>                #Bitmap of all heap pages of a TABLE
                                   #Contains 2 bits per heap page.
@@ -6152,6 +6181,7 @@ vacuum (OPTS)                     #Does:
                                   #     - INDEXs ("index cleanup")
                                   #        - only after a specific amount of dead ROWs on TABLE have accumulated
                                   #  - freeze ROWs
+                                  #     - and update multixact IDs to avoid wraparound
                                   #  - update visibility map
                                   #  - update FSM values
                                   #  - update pg_class.relhas*|relpages|reltuples|relallvisible
@@ -6193,7 +6223,7 @@ OPTS.disable_page_skipping        #BOOL. If false (def), ignore heap pages with 
 
 OPTS.skip_locked                  #BOOL (def: false). `vacuum` requires `shared update exclusive` lock.
                                   #If true and the lock cannot be obtained immediately, skip vacuuming the specific TABLE.
-                                  #Only for normal TABLEs, not for its INDEXs, child TABLEs, or foreign TABLEs.
+                                  #Only for normal TABLEs, not for its INDEXs, child TABLEs, or FTABLEs.
 
 OPTS.parallel                     #Max NUM of parallel workers when vacuuming INDEXs
                                   #Max 1 per INDEX on a given TABLE
@@ -6203,6 +6233,14 @@ OPTS.parallel                     #Max NUM of parallel workers when vacuuming IN
 
 pg_class.relhasindex|relhasrules  #Set to true immediately, but only set to false by `vacuum`.
  |relhastriggers|relhassubclass   #I.e. might be true if ENTITY was dropped recently
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:        VACUUM PROGRESS        :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
 
 pg_stat_progress_vacuum           #TABLE with ongoing `vacuum` statements
 
@@ -6235,6 +6273,21 @@ pg_stat_progress_vacuum
 
                                              /=+===============================+=\
                                             /  :                               :  \
+                                            )==:          VACUUM COST          :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+ENVVAR vacuum_cost_delay          #NUM (def: disabled, in ms) or 'DURATION'.
+                                  #Make vacuum sleep NUMms if it takes too much resources.
+ENVVAR vacuum_cost_limit          #NUM (def: 200). Cost threshold that triggers vacuum to sleep
+ENVVAR vacuum_cost_page_hit       #NUM (def: 1). Cost to read from cache
+ENVVAR vacuum_cost_page_miss      #NUM (def: 2). Cost to read from disk
+ENVVAR vacuum_cost_page_dirty     #NUM (def: 20). Cost to write
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
                                             )==:          AUTOVACUUM           :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -6245,20 +6298,24 @@ ENVVAR autovacuum                 #BOOL (def: false). Automatically run `vacuum 
                                   #`analyze` not run on FTABLEs
 ENVVAR
  autovacuum_vacuum_scale_factor   #NUM (def: 0.2)
-ENVVAR autovacuum_vaccum_threshold#NUM (def: 50). Run autovacuum after NUM writes (inserted|updated|deleted ROWs) * autovacuum_vacuum_scale_factor
+ENVVAR autovacuum_vaccum_threshold#NUM (def: 50). Run autovacuum after NUM inserted|updated|deleted ROWs * autovacuum_vacuum_scale_factor
+ENVVAR autovacuum_vacuum_
+ insert_scale_factor              #NUM (def: 0.2)
+ENVVAR autovacuum_vaccum_
+ insert_threshold                 #NUM (def: 1000). Run autovacuum after NUM inserted ROWs * autovacuum_vacuum_insert_scale_factor
 ENVVAR
  autovacuum_analyze_threshold     #NUM (def: 50). Same for `vacuum analyze`
-ENVVAR autovacuum_freeze_*        #Run autovacuum anytime ROWs must be unfrozen, according to ENVVAR vacuum_freeze_*
-                                  #which can be overriden by this.
 ENVVAR autovacuum_naptime         #STR (def: '1min'). Mininum duration between 2 autovacuums, per DATABASE
 ENVVAR autovacuum_max_workers     #NUM (def: 3) of DATABASEs that can be vacuumed at the same time
+
+ENVVAR autovacuum_cost_delay      #NUM (def: 2ms). Like ENVVAR vacuum_cost_delay, but only during autovacuum
+ENVVAR autovacuum_cost_limit      #NUM (def: not set). Like ENVVAR vacuum_cost_limit, but only during autovacuum
 
 TOPTS.*autovacuum*                #Set ENVVAR *autovacuum* for this TABLE
                                   #Not for: autovacuum_naptime|max_workers
                                   #Different names:
                                   #  - autovacuum -> autovacuum_enabled
-                                  #  - vacuum_freeze_table_age -> autovacuum_freeze_table_age
-                                  #  - vacuum_multixact_freeze_min_age -> autovacuum_multixact_freeze_min_age
+                                  #  - vacuum_freeze_* -> autovacuum_freeze_*
 TOPTS.toast.*autovacuum*          #Same but only for pg_toast_OID TABLE
                                   #Def: same value
                                   #Not for: autovacuum_analyze*
