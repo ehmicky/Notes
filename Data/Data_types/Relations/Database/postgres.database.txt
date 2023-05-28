@@ -469,6 +469,7 @@ VAL = VAL2
 VAL <> VAL2                       #BOOL
 
 VAL > >= < <= VAL2                #BOOL
+                                  #Not for HSTORE, POINT|BOX|CIRCLE|POLYGON, CID|XID, ACLITEM
 VAL between [symmetric]           #BOOL. Same as VAL >= VAL2 and VAL <= VAL3
  VAL2 and VAL3                    #If VAL3 < VAL2:
                                   #  - if symmetric: swap them
@@ -2754,7 +2755,7 @@ MSUBQUERY                         #Means either a SUBQUERY or a `... returning V
 select ... from ROW_SET           #Evaluates once per ROW:
                                   #  - select VAL,...
                                   #  - REXPR
-                                  #If select VAL,... results in a SET itself, do cartesian product
+                                  #If select VAL,... results is a SET itself, do cartesian product
                                   #ROW_SET must be returned by a FUNC()
 select ... from NON_SET           #Converts non-SETs to single-ROW SETs
 select ... from NON_ROW_SET       #Converts non-ROWs to single-COL ROWs
@@ -2762,7 +2763,12 @@ select ... from NON_ROW_SET       #Converts non-ROWs to single-COL ROWs
 
 select ...                        #Uses SUBQUERY's ROW_SET return value
  from [lateral] (SUBQUERY)        #Only evaluated once
-                                  #  - unless SUBQUERY uses a "ROW_ALIAS" from a previous FROM
+                                  #  - unless SUBQUERY uses a "ROW_ALIAS" from a previous FROM, i.e. with a join
+select (SUBQUERY) from ...
+select ... from ...
+ where|having|order by (SUBQUERY) #SUBQUERY can also use "ROW_ALIAS" from a previous FROM, i.e. with a join
+select ... from FROM ...          #"Anti-join". When using `not exists`.
+ where not exists (SUBQUERY)      #Instead of adding cartesian product combinations, removes some.
 
 select ... from "TABLE"           #Same as as `from (table "TABLE") as "TABLE"`
 
@@ -2860,7 +2866,7 @@ ENVVAR enable_incremental_sort    #"Incremental sort".
                                   #  - small groups of ROWs are often grouped together to reduce this
 
 ORDERED SCAN ==>                  #Some ACCESS_METHODs automatically sort
-                                  #This allows `order by "COL"|(REXPR)` or merge joins to use the INDEX
+                                  #This allows `order by` or merge joins to use the INDEX
                                   #asc|desc and nulls first|last must match
                                   #Comparison:
                                   #  - sequential scan + sort: CPU cost of additional sort step, but uses few sequential I/O
@@ -3002,7 +3008,7 @@ ENVVAR enable_mergejoin           #"Merge join".
 
 ENVVAR enable_material            #"Materialization".
                                   #When creating intermediate ROW_SETs (e.g. during joins),
-                                  #persist it fully in-memory, as opposed to processing it ROW by ROW.
+                                  #persist it fully in-memory, as opposed to fetching it on-disk.
                                   #Sometimes faster, but requires memory.
 
 
@@ -3411,9 +3417,12 @@ select ... group by ()            #Single ROW_SET group
 
 GROUP AGGREGATE ==>               #Sort all COL_REXPR,... to perform the grouping
 
-ENVVAR enable_hashagg             #"Hash aggregate" alternative.
+ENVVAR enable_hashagg             #"Hash aggregate". Alternative to group aggregate
                                   #Build a hash table with hashes of COL_REXPR,... as key to perform the grouping
                                   #Faster unless group aggregate can benefit from an ordered scan
+                                  #Also used for:
+                                  #  - over (partition by), AFUNC(distinct), distinct, union|intersect|except distinct
+                                  #  - union|intersect|except all
 
 select ... having BOOL_REXPR      #Like `where BOOL_REXPR` except:
                                   #  - after `group by`
@@ -4617,33 +4626,32 @@ create                            #Create an "index access method"
 
 OPERATIONS ==>                    #Many operations use ACCESS_METHODs
                                   #  - if an INDEX on the COLs|COL_REXPR exist, use its OPCLASS
-                                  #     - faster can re-use INDEX optimized physical structure
+                                  #     - faster because can re-use INDEX optimized physical structure
                                   #  - otherwise, the default ACCESS_METHOD for that operation + TYPE is used
                                   #Most of those operations are only available with specific ACCESS_METHODs
                                   #Operations:
                                   #  - where|having|on|check VAL OP VAL2
-                                  #  - is [not] null
                                   #  - order by "COL"|COL_REXPR (ordered scan, including backward)
                                   #  - order by VAL OP VAL2 (ordering OP)
                                   #  - distinct|grouping: distinct, union|intersect|except distinct, AFUNC(distinct), group by, over (partition by)
                                   #  - exclude CONSTRAINT
                                   #  - unique: unique CONSTRAINT, create unique ...
                                   #  - over (range NUM preceding|following)
-                                  #  - optimized hash join
-                                  #  - optimized hash aggregation
                                   #  - partition by range|list
                                   #  - partition by hash
                                   #Can also support:
                                   #  - multi-COL
+                                  #  - optimized hash join|aggregate
                                   #  - index-only scan
-                                  #  - parallel scan
-                                  #  - predicate lock
+                                  #  - bitmap index scan
+                                  #  - parallel index scan
                                   #  - parallel index build
+                                  #  - predicate lock
 
 INDEX STORAGE ==>                 #ACCESS_METHODs can support:
+                                  #  - non-key COLs
                                   #  - storage TYPE
                                   #  - cluster
-                                  #  - non-key COLs
                                   #  - ENVVAR maintenance_work_mem
                                   #with (TOPTS|IOPTS) of TABLE|INDEX are ACCESS_METHOD-specific
 
@@ -4780,6 +4788,7 @@ create operator class ...         #TYPE used to store the values in the INDEX.
 
 LOSSY OPERATOR ==>                #OP that can return some false positive, with a fast approximate logic
                                   #OP is then called again on the returned values, but with the slower exact logic ("index recheck")
+LOSSY ACCESS METHODS ==>          #Some ACCESS_METHODs always need two steps, i.e. lossy as well
 
 pg_opclass                        #TABLE with all OPCLASSs
 pg_opclass.oid                    #OID
@@ -5070,8 +5079,7 @@ ENVVAR max_parallel_workers       #Max NUM (def: 8) of parallel worker processes
                                   #Increase memory, CPU and I/O linearly, i.e. resource-intensive
                                   #ENVVAR work_mem is applied for each worker, not for all
 ENVVAR                            #Max NUM (def: 2) of parallel worker processes for parallel queries
- max_parallel_workers_per_gather
-                                  #Must be < ENVVAR max_parallel_workers
+ max_parallel_workers_per_gather  #Must be < ENVVAR max_parallel_workers
 
 ENVVAR enable_gathermerge         #"Gather merge": parallel query that is sorted, i.e. parent process performs a merge sort
 
@@ -5132,6 +5140,21 @@ ZOPTS.wal                         #BOOL (def: false)
 ZOPTS.settings                    #BOOL (def: false)
                                   #Whether to print relevant ENVVARs which value was changed
 
+ENVVAR enable_*                   #Whether specific query optimizations are enabled
+                                  #All BOOL with true by default, except enable_partitionwise_*
+                                  #Can set to false to set alternative plans considered by `explain`
+                                  #Some cannot be completely disabled
+                                  #  - i.e. false only discourages it
+                                  #  - for: enable_seqscan|sort|nestloop|material
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:         EXPLAIN TREE          :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
 TREE ==>                          #Output is a tree with following nodes.
                                   #Each node results include its children.
                                   #Children are executed before parents.
@@ -5140,7 +5163,7 @@ Insert on TABLE                   #`insert`
 Update on TABLE                   #`update`
 Delete on TABLE                   #`delete`
 
-Update on CHILD_TABLE PARENT_TABLE#Inheritance
+... on CHILD_TABLE PARENT_TABLE   #Inheritance
 
 Gather [Merge]                    #Parallel query
 Workers Planned: NUM              #NUM of parallel worker processes, expected
@@ -5148,31 +5171,31 @@ Workers Launched: NUM             #NUM of parallel worker processes
 
 [Parallel] Seq Scan on TABLE      #
 
-Index Scan                        #
-Index Cond: STR                   #Query "COL"|(REXPR) matching the INDEX's
+Index [Only] Scan [Backward]
+ using INDEX on TABLE             #
+Index Cond: EXPR                  #Query "COL"|(REXPR) matching the INDEX's
 Rows Removed by Index Recheck: NUM#ROWs excluded by lossy operator recheck
+Heap Fetches: UINT                #Index-only heap fetches
 
-Bitmap Heap Scan                  #
-Bitmap Index Scan                 #
+Bitmap Heap Scan on TABLE         #
+Bitmap Index Scan on TABLE        #
 BitmapAnd                         #... and ... (bitmap scan combination)
 BitmapOr                          #... or ... (bitmap scan combination)
+Recheck Cond: EXPR                #Recheck condition
 
 Values Scan on "..."              #values(...)
 
 TID Scan on TABLE                 #
-TID Cond                          #`where`
-
-Index Only Scan                   #
-Heap Fetches: UINT                #Index-only heap fetches
+TID Cond: EXPR                    #`where`
 
 Result                            #COMMAND return value
 Output                            #COMMAND return value contents
 
-Filter                            #where|having
+Filter: EXPR                      #where|having
 Rows Removed by Filter: NUM       #ROWs excluded by Filter
 
 Sort                              #Explicit sort
-Sort Key                          #Explicit sort argument
+Sort Key: EXPR                    #Explicit sort argument
 Sort Method:
  quicksort Memory: NUM
 Sort Method:
@@ -5181,20 +5204,23 @@ Sort Method:
  external merge Disk: NUM         #Explicit sort methods
 
 Incremental Sort                  #
-Presorted Key                     #Incremental sort argument that is sorted
+Presorted Key: EXPR               #Incremental sort argument that is sorted
 
 Materialize                       #Materialization of a ROW_SET
 
-Subquery Scan on "QUERY"          #(SUBQUERY)
+InitPlan NUM                      #(SUBQUERY) that does not use upper queries
+                                  #NUM is execution order
+SubPlan NUM                       #(SUBQUERY) that uses upper queries, i.e. does a join
+Subquery Scan on "QUERY"          #(SUBQUERY) that uses upper queries
 
-Join                              #
+... [Left|Right|Full] [Anti] Join #
 
 Nested Loop                       #Nested loop join
 Join Filter                       #Nested loop join condition (where|on)
 Memoize                           #Nested loop join memoization
 
 Hash Join                         #
-Hash Cond: STR                    #Hash join condition (where|on)
+Hash Cond: EXPR                   #Hash join condition (where|on)
 Hash                              #Creation of hash table for a ROW_SET during a hash join
 Buckets: NUM                      #Hash table size
 Memory Usage: STR                 #Hash table creation peak memory
@@ -5202,7 +5228,7 @@ Batches: NUM                      #Number of rounds to create hash table
 Disk Usage: STR                   #To persist data in-between hash table batches
 
 Merge Join                        #
-Merge Cond: STR                   #Merge join condition (where|on)
+Merge Cond: EXPR                  #Merge join condition (where|on)
 
 Limit                             #offset|fetch
 
@@ -5212,6 +5238,7 @@ Unique                            #distinct
 [Parallel] MergeAppend            #union all + order by
 Setop Intersect                   #intersect
 Setop Except                      #except
+HashSetOp ...                     #Same but using hash aggregation
 
 Aggregate                         #AFUNC
 Partial Aggregate                 #Parallel AFUNC worker process
@@ -5219,17 +5246,29 @@ Finalize Aggregate                #Parallel AFUNC parent process, merging worker
 
 Group                             #group by without AFUNCs
 GroupAggregate                    #Group aggregation (group by)
-HashAggregate                     #Hash aggregation (group by)
+HashAggregate                     #Hash aggregation (group by, or distinct)
 MixedAggregate                    #grouping sets
 Group Key                         #group by's argument
 
 WindowAgg                         #WFUNC
 
 ProjectSet                        #select FUNC()->SET
-FunctionScan                      #from FUNC()->SET
+Function Scan on FUNC             #from FUNC()->SET
 
+CTE ROW_ALIAS                     #with "ROW_ALIAS"
+CTE Scan on ROW_ALIAS             #Using CTE "ROW_ALIAS"
 RecursiveUnion                    #with recursive ... select ... union ...
 WorkTable Scan                    #Recursive loop in `with recursive`
+
+LockRows                          #select ... for ... update|share
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:         EXPLAIN COST          :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
 
 (costs=NUM..NUM2)                 #Cost. Decides between different strategies
                                   #NUM is "startup cost" (initialization logic), NUM2 is "total cost"
@@ -5268,18 +5307,6 @@ Buffers: temp ...                 #Same for temporary heap pages
 WAL: fpi=UINT                     #Number of full heap pages added to WAL
 WAL: records=UINT                 #Number of ROWs added to WAL
 WAL: bytes=UINT                   #Number of bytes added to WAL
-
-ENVVAR enable_*                   #Whether specific query optimizations are enabled
-                                  #All BOOL with true by default, except enable_partitionwise_*
-                                  #Can set to false to set alternative plans considered by `explain`
-                                  #Some cannot be completely disabled
-                                  #  - i.e. false only discourages it
-                                  #  - for: enable_seqscan|sort|nestloop|material
-
-https://webcache.googleusercontent.com/search?q=cache:4MoXLOppSsMJ:https://www.depesz.com/2013/05/19/explaining-the-unexplainable-part-4/&cd=7&hl=en&ct=clnk&gl=pt ???
-HashSetOp ???
-LockRows ???
-anti-join ???
 
 
                                              /=+===============================+=\
@@ -5893,9 +5920,6 @@ alter routine VAR(...)            #Like alter function ... except works also on 
                                   #  - called on null input, returns null on null input, strict
                                   #  - support FUNC
 drop routine VAR(...),...         #Like drop function ... except works also on AFUNC and PROCEDURE
-
-PARALLEL [UN]SAFE???
-  - most builtin FUNCs are parallel safe, but user FUNCs are parallel unsafe by default
 
 do [language LANGUAGE]
 STR                               #Execute an anonymous function STR (body of function), from LANGUAGE (def: plpgsql)
