@@ -7490,10 +7490,12 @@ CLIENT_USER                       #User name, as specified by client
 
 OS_USER                           #OS user name
                                   #Used as CLIENT_USER when calling binaries
-                                  #Server's OS_USER is used when performing OS|filesystem operations
-                                  #  - cannot be root
-                                  #  - prefer OS_USER with only permissions over DATADIR
-                                  #  - default installation creates 'postgres' OS_USER (group 'postgres') for this
+
+SERVER OS_USER ==>                #Used when performing OS|filesystem operations
+                                  #Cannot be root
+                                  #Prefer OS_USER with only permissions over DATADIR
+                                  #Default installation creates 'postgres' OS_USER (group 'postgres') for this
+
 LIBPQ.requirepeer                 #'OS_USER' of the server. Fail if does not match.
                                   #This prevents hijacking it when server is restarting.
 
@@ -7531,14 +7533,13 @@ HBA[5] reject                     #Always deny
 HBA[5] ident                      #Accept if IDENT[1] for current CLIENT_USER exists
                                   #Current OS_USER uses OS's "ident" utilities
 HBA[5] peer                       #Same but current OS_USER does not use OS's "ident" utilities
+HBA[5] ldap                       #LDAP authentication method. Not documented yet
+HBA[5] radius                     #Radius authentication method. Not documented yet
+HBA[5] pam                        #Linux PAM authentication method. Not documented yet
+HBA[5] bsd                        #BSD authentication method. Not documented yet
 
 initdb --auth|-A=STR              #Forces an authentication method
 initdb --auth-local|host=STR      #Same but only for local|remote connections
-
-HBA[5] pam ???
-HBA[5] ldap ???
-HBA[5] radius ???
-HBA[5] bsd ???
 
 HBA[6] VAR=VAL ...                #Authentication method options
                                   #Can be empty
@@ -7558,8 +7559,17 @@ HBA[1] @PATH                      #To newline-separated file with list of DATABA
                                   #Can include #COMMENT
                                   #Can nest other @PATH
 
-pg_hba_file_rules                 #TABLE with pg_hba.conf contents. ???
+pg_hba_file_rules                 #TABLE with HBA.
                                   #Visible only to superuser
+pg_hba_file_rules.line_number     #INT4
+pg_hba_file_rules.error           #'MESSAGE'|null. Set if syntax error in HBA
+pg_hba_file_rules.type            #STR. HBA[0]
+pg_hba_file_rules.database        #STR_ARR. HBA[1]
+pg_hba_file_rules.user_name       #STR_ARR. HBA[2]
+pg_hba_file_rules.address         #STR. HBA[3]
+pg_hba_file_rules.netmask         #STR. HBA[4]
+pg_hba_file_rules.auth_method     #STR. HBA[5]
+pg_hba_file_rules.options         #STR_ARR. HBA[6]
 
 TODO: move contents from `server` and `client` sections in relevant parts here ???
 
@@ -7575,7 +7585,8 @@ HBA[0] local                      #Connect using Unix sockets
                                   #Not with authentication methods: ident
 
 UNIX_SOCKET_DIR/.s.PGSQL.PORT     #Unix socket
-ENVVAR unix_socket_directories    #'[@]PATH,...' of Unix sockets directories
+
+ENVVAR unix_socket_directories    #'[@]DIR,...' of Unix sockets
 postgres -k STR                   #Can be empty
                                   #If @, is a virtual path instead
                                   #Def on my system: VARDIR
@@ -7592,13 +7603,13 @@ ENVVAR unix_socket_permissions    #Unix socket permissions (def: 0777)
                                              \=+===============================+=/
 
 
-HBA[0] host[[no]ssl]              #TCP/IP
-                                  #Def: both with|without SSL
-ENVVAR ssl                        #BOOL (def: false). Must be true to allow SSL authentication
+HBA[0] host                       #TCP/IP
+
 ENVVAR listen_addresses           #'IPv4|v6,...' of server sockets.
 postgres -h STR                   #Can be '*' (IPv4|6), '0.0.0.0' (IPv4) or '::' (IPv6)
                                   #Can be empty
                                   #Def: 'localhost'
+
 ENVVAR port
 portgres -p NUM                   #Port number (def: 5432)
 
@@ -7636,8 +7647,13 @@ HBA[6] map=IDENT_GROUP            #Use IDENT with IDENT[0] = IDENT_GROUP
                                   #Def: use ROLE with same name as CLIENT_USER
                                   #With identification methods: ident
 
-pg_ident_file_mappings            #TABLE with pg_ident.conf contents. ???
+pg_ident_file_mappings            #TABLE with IDENT
                                   #Visible only to superuser
+pg_ident_file_mappings.line_number#INT4
+pg_ident_file_mappings.error      #'MESSAGE'|null. Set if syntax error in HBA
+pg_ident_file_mappings.map_name   #STR. IDENT[0]
+pg_ident_file_mappings.sys_name   #STR. IDENT[1]
+pg_ident_file_mappings.pg_username#STR. IDENT[2]
 
 
                                              /=+===============================+=\
@@ -7686,46 +7702,89 @@ passwordcheck                     #C addon that cancels `create|alter role` if `
                                              \=+===============================+=/
 
 
+ENVVAR ssl                        #BOOL (def: false). Must be true to allow SSL authentication
+
+HBA[0] host[[no]ssl]              #Def: both with|without SSL
+
 HBA[5] cert                       #Authentication method using SSL certificate
 
 ENVVAR PGSSLMODE                  #Priority of SSL over non-SSL:
 LIBPQ.sslmode                     #  - disable: non-SSL
                                   #  - allow: first non-SSL, then SSL
                                   #  - prefer (def): first SSL, then non-SSL
-                                  #  - require: SSL. If root CA, verify certificate
-                                  #  - verify-ca: SSL. Always verify certificate
-                                  #  - verify-full: SSL. Verify certificate, and that hostname match in certificate
+                                  #  - require: SSL. If root CA, verify client certificate
+                                  #  - verify-ca: SSL. Always verify client certificate
+                                  #  - verify-full: Same but also verify that CLIENT_NAME match in certificate's CN
 
 ENVVAR PGSSLCERT
 USERCONFDIR/postgresql.crt
 LIBPQ.sslcert                     #'PATH' to client certificate file
 HBA[6] clientcert=PATH            #Same but can be used with any authentication method
 
-HBA[6] clientname=STR             #Whether to use the 'CN' (def, Common Name) or 'DN' (Distinguished Name) of the certificate
+DATADIR/server.crt                #'PATH' to server certificate file
+ENVVAR ssl_cert_file              #Relative to DATADIR
 
 ENVVAR PGSSLKEY
-USERCONFDIR/postgresql.key        #Client secret key
+USERCONFDIR/postgresql.key        #Client secret key 'PATH'
 LIBPQ.sslkey                      #Can also be 'ENGINE:KEY' for OpenSSL engines
+
+DATADIR/server.key                #Server secret key 'PATH'
+ENVVAR ssl_key_file               #Must have permissions 0600
 
 LIBPQ.sslpassword                 #Password to client secret key
                                   #Def: prompts
 
+ENVVAR ssl_passphrase_command     #Shell 'COMMAND' to get the password to server secret key on stdout
+                                  #Can use %p for prompted value
+ENVVAR ssl_passphrase_command     #BOOL (def: false). Whether to reload ssl_passphrase_command when CONF is reloaded.
+ _supports_reload                 #Should be true unless use prompted value
+
 ENVVAR PGSSLROOTCERT
 USERCONFDIR/root.crt
-LIBPQ.sslrootcert                 #Client CA certificate FILE
+LIBPQ.sslrootcert                 #Client CA certificate 'PATH'
+
+ENVVAR ssl_ca_file                #Server CA certificate 'PATH'
+                                  #Relative to DATADIR
 
 ENVVAR PGSSLCRL
 USERCONFDIR/root.crl
-LIBPQ.sslcrl                      #Client CA revocation list FILE
+LIBPQ.sslcrl                      #Client CA revocation list 'PATH'
+
+ENVVAR ssl_crl_file               #Server CA revocation list 'PATH'
+                                  #Relative to DATADIR
 
 LIBPQ.sslcrldir                   #Client CA revocation list 'DIR'
 
+ENVVAR ssl_crl_dir                #Server CA revocation list 'DIR'
+                                  #Relative to DATADIR
+                                  #Loaded on each new client connection
+
+HBA[6] clientname=STR             #Whether to use the 'CN' (def, Common Name) or 'DN' (Distinguished Name) of the certificate
+
 LIBPQ.sslsni                      #1|0 (def: 1, i.e. true). Whether client enables SNI
 
-LIBPQ.ssl_min|max_protocol_version#Among 'TLSv1[.1|2|3]'
-                                  #Def: min TLSv1.2
+ENVVAR
+ ssl_min|max_protocol_version     #Among 'TLSv1[.1|2|3]'
+LIBPQ.ssl_min|max_protocol_version#Def: min TLSv1.2
 
-pg_stat_ssl                       #???
+ENVVAR ssl_ciphers                #STR (def: 'HIGH:MEDIUM:+3DES:!aNULL'). List of OpenSSL ciphers
+ENVVAR ssl_prefer_server_ciphers  #BOOL (def: true). Prefer server ciphers over client's
+
+ENVVAR ssl_dh_params_file         #'PATH' to Diffie-Hellman parameters
+ENVVAR ssl_ecdh_curve             #ECDH key exchange algorithm among 'prime256v1' (def), 'secp384r1', 'secp521r1'
+
+ENVVAR OPENSSL_CONF               #Can be used
+
+pg_stat_ssl                       #TABLE with SSL info of each client connection
+pg_stat_ssl.pid                   #INT4. Server PID
+pg_stat_ssl.ssl                   #BOOL. Whether SSL is used
+                                  #If false, all next fields null
+pg_stat_ssl.version               #STR. SSL version
+pg_stat_ssl.cipher                #STR. SSL cipher
+pg_stat_ssl.bits                  #INT4. Number of bits in encryption algorithm
+pg_stat_ssl.client_dn             #STR. DN of client certificate. Truncated above 64 chars
+pg_stat_ssl.client_serial         #NUMERIC. Serial number of client certificate
+pg_stat_ssl.issuer_dn             #STR. DN of client certificate's issuer. Truncated above 64 chars
 
 
                                              /=+===============================+=\
@@ -7749,6 +7808,10 @@ ENVVAR PGGSSLIB                   #Whether to use 'gssapi' or 'sspi'
 LIBPQ.gsslib                      #On Unix, always use gssapi. On Windows, def: sspi
 
 pg_stat_gssapi                    #???
+pg_stat_gssapi.pid                #INT4. Server PID
+pg_stat_gssapi.gss_authenticated boolean True if GSSAPI authentication was used for this connection
+pg_stat_gssapi.principal text Principal used to authenticate this connection, or NULL if GSSAPI was not used to authenticate this connection. This field is truncated if the principal is longer than NAMEDATALEN (64 characters in a standard build).
+pg_stat_gssapi.encrypted boolean True if GSSAPI encryption is in use on this connection
 
 
                                              /=+===============================+=\
@@ -7762,6 +7825,11 @@ HBA[5] krb5                       #Authentication method with Kerberos5
 
 ENVVAR PGREALM|PGKRBSRVNAME       #Kerberos server name
 LIBPQ.krbsrvname                  #Def: 'postgres'
+
+SYSCONFDIR/krb5.keytab
+ENVVAR krb_server_keyfile         #'PATH' to Kerberos server key
+
+ENVVAR krb_caseins_users          #BOOL (def: false). Whether Kerberos user names are case-insensitive
 
 
                                              /=+===============================+=\
