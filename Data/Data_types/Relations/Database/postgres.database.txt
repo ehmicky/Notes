@@ -400,8 +400,7 @@ pg_shdepend.deptype               #'CHAR' for the type of dependence among:
 
 create type TYPE                  #Without YOPTS, creates a new "shell TYPE", i.e. TYPE declared but not implemented yet
                                   #Can be used only to type a FUNC's arguments or return value
-                                  #Useful when needing to name a TYPE being created, i.e. when:
-                                  #  - creating a FUNC used as OPTS.canonical|subtypediff of a RANGE_TYPE
+                                  #Useful when creating a TYPE used in its own YOPTS.*
 
 create type TYPE(YOPTS)           #Creates a new "base TYPE", based on C functions
                                   #Must be superuser
@@ -430,21 +429,28 @@ YOPTS.default                     #VAL assigned as default value
 
 YOPTS.like                        #TYPE2
 
-YOPTS.input                       #FUNC(CSTR[, OID, INT4])->TYPE_VAL
+YOPTS.input                       #FUNC(CSTR[, OID, TYPEMOD_INT4])->TYPE_VAL
                                   #Converts 'UNKNOWN' to TYPE
                                   #OID: of TYPE, or of TYPE[*] if ARR_TYPE
-                                  #INT4: typmod (-1 of none)
                                   #Must be `strict`
 YOPTS.output                      #FUNC(TYPE_VAL)->CSTR
-                                  #Converts TYPE to 'UNKNOWN' to TYPE
+                                  #Converts TYPE to 'UNKNOWN'
 
-YOPTS.receive                     #FUNC. Input BYTEA
-YOPTS.send                        #FUNC. Output BYTEA
+YOPTS.receive                     #FUNC(INTERNAL[, OID, TYPEMOD_INT4])->TYPE_VAL
+                                  #Converts binary representation to TYPE
+                                  #INTERNAL is pointer towards bytes
+                                  #Must be `strict`
+YOPTS.send                        #FUNC(TYPE_VAL)->BYTEA
+                                  #Converts TYPE to binary representation
 
-YOPTS.typemod_in                  #FUNC. Input (NUM,...) from TYPE(NUM,...) (variable bounded TYPE)
-YOPTS.typemod_out                 #FUNC. Output (NUM,...) from TYPE(NUM,...)
-
-YOPTS.analyze                     #FUNC. Customize `analyze`
+YOPTS.typmod_in                   #FUNC(CSTR_ARR)->TYPEMOD_UINT
+                                  #"Type modifier", i.e. arbitrary arguments passed to TYPE
+                                  #Usually for variable-bounded length, e.g. bpchar(NUM)
+                                  #Arguments are converted to a single UINT
+                                  #  - passed to YOPTS.input|receive and cast FUNCs
+                                  #  - as TYPEMOD_INT4, -1 if no TYPEMOD
+YOPTS.typmod_out                  #FUNC(TYPEMOD_UINT)->CSTR
+                                  #Def: returns '(UINT)'
 
 pg_type                           #TABLE with all TYPEs
 pg_type.oid                       #OID
@@ -508,8 +514,8 @@ alter domain "TYPE"
  [restrict|cascade]               #
 
 pg_type.typbasetype               #REGTYPE of underlying TYPE of DOMAIN_TYPE. 0 if not DOMAIN_TYPE
-pg_type.typtypmod                 #INT4 passed to underlying TYPE(INT4) of DOMAIN_TYPE
-                                  #0 if not DOMAIN_TYPE, or if underlying TYPE is not variable bounded
+pg_type.typtypmod                 #TYPEMOD_INT4 passed to underlying TYPE of DOMAIN_TYPE
+                                  #0 if not DOMAIN_TYPE, or if no TYPEMOD
 pg_attribute.atttypmod            #Same for COL
 pg_type.typndims                  #INT4. Number of dimensions of underlying ARR_TYPE of DOMAIN_TYPE
                                   #0 if not DOMAIN_TYPE, or if underlying TYPE is not ARR_TYPE
@@ -546,9 +552,8 @@ TYPE ~> TYPE2                     #Means can do explicit casting
 TYPE <=-> TYPE2                   #Means TYPE2 => TYPE, TYPE -> TYPE2
 
 create cast (TYPE as TYPE2)       #Creates a type casting FUNC
- with function FUNC(...)          #Must be FUNC(TYPE1_VAL[, INT[, BOOL]])->TYPE2_VAL
-                                  #  - INT is the pg_attribute.ATTTYPEMOD (-1 if none)
-                                  #  - BOOL is true if explicit cast
+ with function FUNC(...)          #Must be FUNC(TYPE1_VAL[, TYPEMOD_INT4[, BOOL]])->TYPE2_VAL
+                                  #BOOL is true if explicit cast
                                   #Current ROLE must own TYPE[2]
 create cast (TYPE as TYPE2)       #Create a type cast that does:
  with inout                       #  - TYPE1_VAL -> 'TYPE1_UNKNOWN'
@@ -598,6 +603,8 @@ VARIABLE BOUNDED LENGTH TYPES     #One of:
                                   #  - varchar|bpchar
                                   #  - bit(...)
                                   #  - time[stamp][tz]|interval
+                                  #Internally start with 4 bytes indicating length
+
 VARIABLE UNBOUNDED LENGTH TYPES   #One of:
  ==>                              #  - numeric
                                   #  - text
@@ -608,6 +615,7 @@ VARIABLE UNBOUNDED LENGTH TYPES   #One of:
                                   #  - ROW_TYPE
                                   #  - any other TYPE built from variable '...': json[b]|jsonpath, xml, hstore,
                                   #    ltree|l[txt]query, query_int, path|polygon, inet|cidr, tsvector|tsquery
+                                  #Start with 4 bytes indicating length too
                                   #Max length: 1GB
 
 SIZING CAST ==>                   #Type cast to same type
@@ -2123,12 +2131,13 @@ array_remove(ARR, VAL)->ARR       #Filter out any element = VAL
                                   #ARR must be one-dimensional
 array_replace(ARR, VAL, VAL2)->ARR#Same but replace with VAL2
 
-YOPTS.subscript                   #FUNC implementing VAL[NUM] for any given TYPE
+YOPTS.subscript                   #FUNC(INTERNAL)->INTERNAL implementing VAL[NUM] for any given TYPE
 pg_type.typsubscript              #Common ones:
                                   #  - array_subscript_handler: ARR_TYPEs
                                   #  - raw_array_subscript_handler: NAME, POINT|LINE|LSEG|BOX
                                   #  - jsonb_subscript_handler: JSONB
                                   #  - hstore_subscript_handler: HSTORE
+                                  #Not fully documented yet
 
 YOPTS.element                     #Underlying TYPE of an ARR_TYPE, if it is an ARR_TYPE
 pg_type.typelem                   #Not set if underlying type is not known (e.g. JSONB|HSTORE)
@@ -6140,6 +6149,13 @@ pg_class.relpages                 #INT4. Size of the file on-disk, in 8KB pages.
 pg_class.reltuples                #FLOAT4. Number of non-dead ROWs
                                   #-1 if VIEW|ROW_TYPE, or if not analyze|vacuum'd yet
 
+YOPTS.analyze                     #FUNC(INTERNAL)->BOOL. Customize `analyze` behavior on that TYPE
+                                  #Returns false if should skip analyze
+                                  #INTERNAL is pointer to a STRUCT with fields to set
+                                  #  - mostly computing the values for pg_statistic
+                                  #  - not fully documented yet
+                                  #Def: uses a FUNC that relies on = and < OPs
+
 Detailed explanation at https://www.postgresql.org/docs/current/planner-stats-details.html ???
 
 
@@ -7478,7 +7494,7 @@ OS_USER                           #OS user name
                                   #  - cannot be root
                                   #  - prefer OS_USER with only permissions over DATADIR
                                   #  - default installation creates 'postgres' OS_USER (group 'postgres') for this
-LIBPQ.requirekeeper               #'OS_USER' of the server. Fail if does not match.
+LIBPQ.requirepeer                 #'OS_USER' of the server. Fail if does not match.
                                   #This prevents hijacking it when server is restarting.
 
 CLUSTER OWNER ==>                 #OS_USER that created the CLUSTER should own DATADIR
@@ -7637,10 +7653,10 @@ HBA[5] scram-sha-256              #Same but passed as SCRAM SHA-256 checksum
 
 ENVVAR PGPASSWORD
 LIBPQ.password                    #'PASSWORD|MD5_CHECKSUM' passed for authentication
-ENVVAR PGPASSFILE                 #Same as 'PATH'
-                                  #Def: ~/.pgpass
-                                  #Colon-separated fields: host, port, database, user, password
-                                  #Fields can be * (except password)
+
+~/.pgpass                         #Same as 'PATH'
+ENVVAR PGPASSFILE                 #Colon-separated fields: host, port, database, user, password
+LIBPQ.passfile                    #Fields can be * (except password)
                                   #Permission must be 0600
 
 create|alter role "ROLE"
@@ -7674,6 +7690,7 @@ HBA[5] cert                       #Authentication method using SSL certificate
 
 ENVVAR PGSSLMODE                  #Priority of SSL over non-SSL:
 LIBPQ.sslmode                     #  - disable: non-SSL
+                                  #  - allow: first non-SSL, then SSL
                                   #  - prefer (def): first SSL, then non-SSL
                                   #  - require: SSL. If root CA, verify certificate
                                   #  - verify-ca: SSL. Always verify certificate
@@ -7681,22 +7698,32 @@ LIBPQ.sslmode                     #  - disable: non-SSL
 
 ENVVAR PGSSLCERT
 USERCONFDIR/postgresql.crt
-LIBPQ.sslcert                     #'PATH' to certificate file
+LIBPQ.sslcert                     #'PATH' to client certificate file
 HBA[6] clientcert=PATH            #Same but can be used with any authentication method
 
 HBA[6] clientname=STR             #Whether to use the 'CN' (def, Common Name) or 'DN' (Distinguished Name) of the certificate
 
 ENVVAR PGSSLKEY
-USERCONFDIR/postgresql.key        #Secret key
+USERCONFDIR/postgresql.key        #Client secret key
 LIBPQ.sslkey                      #Can also be 'ENGINE:KEY' for OpenSSL engines
+
+LIBPQ.sslpassword                 #Password to client secret key
+                                  #Def: prompts
 
 ENVVAR PGSSLROOTCERT
 USERCONFDIR/root.crt
-LIBPQ.sslrootcert                 #CA certificate FILE
+LIBPQ.sslrootcert                 #Client CA certificate FILE
 
 ENVVAR PGSSLCRL
 USERCONFDIR/root.crl
-LIBPQ.sslcrl                      #CA revocation list FILE
+LIBPQ.sslcrl                      #Client CA revocation list FILE
+
+LIBPQ.sslcrldir                   #Client CA revocation list 'DIR'
+
+LIBPQ.sslsni                      #1|0 (def: 1, i.e. true). Whether client enables SNI
+
+LIBPQ.ssl_min|max_protocol_version#Among 'TLSv1[.1|2|3]'
+                                  #Def: min TLSv1.2
 
 pg_stat_ssl                       #???
 
@@ -7713,6 +7740,11 @@ HBA[0] host[[no]gssenc]           #TCP/IP, GSSAPI encrypted
 
 HBA[5] gss|sspi                   #Authentication method using GSSAPI
 
+LIBPQ.gssencmode                  #Whether to use GSSAPI encryption:
+                                  #  - 'disable'
+                                  #  - 'prefer' (def)
+                                  #  - 'require'
+
 ENVVAR PGGSSLIB                   #Whether to use 'gssapi' or 'sspi'
 LIBPQ.gsslib                      #On Unix, always use gssapi. On Windows, def: sspi
 
@@ -7728,8 +7760,8 @@ pg_stat_gssapi                    #???
 
 HBA[5] krb5                       #Authentication method with Kerberos5
 
-ENVVAR PGREALM|PGKRBSRVNAME
-LIBPQ.krbsrvname                  #Kerberos server name
+ENVVAR PGREALM|PGKRBSRVNAME       #Kerberos server name
+LIBPQ.krbsrvname                  #Def: 'postgres'
 
 
                                              /=+===============================+=\
@@ -10883,7 +10915,7 @@ QUERY.on("end", FUNC(OBJ))        #Execute QUERY and fire event handler for all 
                                   #     - columnID DOUBLE
                                   #     - dataTypeID DOUBLE
                                   #     - dataTypeSize UINT
-                                  #     - dataTypeModifier UINT
+                                  #     - dataTypeModifier TYPEMOD_UINT
 QUERY.on("error", FUNC(ERROR))    #
 
 CLIENT.query
