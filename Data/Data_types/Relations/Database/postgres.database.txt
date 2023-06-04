@@ -234,12 +234,6 @@ regnamespace                      #TYPE to cast pg_namespace.oid as "SCHEMA" nam
 pg_type.typnamespace              #REGNAMESPACE of TYPE
 pg_class.relnamespace             #REGNAMESPACE of RELATION
 pg_constraint.connamespace        #REGNAMESPACE of CONSTRAINT
-pg_tables.schemaname              #pg_namespace.nspname of TABLE
-pg_indexes.schemaname             #pg_namespace.nspname of INDEX
-pg_views.schemaname               #pg_namespace.nspname of VIEW
-pg_matviews.schemaname            #pg_namespace.nspname of MVIEW
-pg_sequences.schemaname           #pg_namespace.nspname of SEQUENCE
-pg_stats.schemaname               #pg_namespace.nspname of analyzed TABLE
 pg_ts_parser.prsnamespace         #REGNAMESPACE of PARSER
 pg_ts_template.tmplnamespace      #REGNAMESPACE of TEMPLATE
 pg_ts_dict.dictnamespace          #REGNAMESPACE of DICTIONARY
@@ -248,6 +242,13 @@ pg_conversion.connamespace        #REGNAMESPACE of CONVERSION
 pg_collation.collnamespace        #REGNAMESPACE of COLLATION
 pg_opfamily.opfnamespace          #REGNAMESPACE of OPFAMILY
 pg_opclass.opcnamespace           #REGNAMESPACE of OPCLASS
+pg_tables.schemaname              #pg_namespace.nspname of TABLE
+pg_indexes.schemaname             #pg_namespace.nspname of INDEX
+pg_views.schemaname               #pg_namespace.nspname of VIEW
+pg_matviews.schemaname            #pg_namespace.nspname of MVIEW
+pg_sequences.schemaname           #pg_namespace.nspname of SEQUENCE
+pg_stats.schemaname               #pg_namespace.nspname of analyzed TABLE
+pg_policies.schemaname            #pg_namespace.nspname of POLICY
 
 
                                              /=+===============================+=\
@@ -397,10 +398,12 @@ pg_shdepend.deptype               #'CHAR' for the type of dependence among:
                                              \=+===============================+=/
 
 
-BASE TYPE ==>                     #Non-user-defined TYPE
-                                  #Includes any "_TYPE"
+create type TYPE                  #Without YOPTS, creates a new "shell TYPE", i.e. TYPE declared but not implemented yet
+                                  #Can be used only to type a FUNC's arguments or return value
+                                  #Useful when needing to name a TYPE being created, i.e. when:
+                                  #  - creating a FUNC used as OPTS.canonical|subtypediff of a RANGE_TYPE
 
-create type TYPE(YOPTS)           #Creates user-defined TYPE, based on C functions
+create type TYPE(YOPTS)           #Creates a new "base TYPE", based on C functions
                                   #Must be superuser
                                   #Not fully documented yet ???
 
@@ -427,12 +430,20 @@ YOPTS.default                     #VAL assigned as default value
 
 YOPTS.like                        #TYPE2
 
-YOPTS.input                       #FUNC. Input 'UNKNOWN'
-YOPTS.output                      #FUNC. Output 'UNKNOWN'
+YOPTS.input                       #FUNC(CSTR[, OID, INT4])->TYPE_VAL
+                                  #Converts 'UNKNOWN' to TYPE
+                                  #OID: of TYPE, or of TYPE[*] if ARR_TYPE
+                                  #INT4: typmod (-1 of none)
+                                  #Must be `strict`
+YOPTS.output                      #FUNC(TYPE_VAL)->CSTR
+                                  #Converts TYPE to 'UNKNOWN' to TYPE
+
 YOPTS.receive                     #FUNC. Input BYTEA
 YOPTS.send                        #FUNC. Output BYTEA
+
 YOPTS.typemod_in                  #FUNC. Input (NUM,...) from TYPE(NUM,...) (variable bounded TYPE)
 YOPTS.typemod_out                 #FUNC. Output (NUM,...) from TYPE(NUM,...)
+
 YOPTS.analyze                     #FUNC. Customize `analyze`
 
 pg_type                           #TABLE with all TYPEs
@@ -893,7 +904,9 @@ references "TABLE2"("COL2")       #null ROWs are ignored in both COL and COL2
                                   #     - ignore ROW if all COLs null
                                   #     - fail if some COLs null but not others
 
-check (BOOL_REXPR)                #null -> true
+check (BOOL_REXPR)
+policy ... using (BOOL_REXPR)
+policy ... with check (BOOL_REXPR)#null -> true
 
 where BOOL_REXPR                  #null -> false
                                   #For: select, insert on conflict, update, delete, exclude, copy, AFUNC filter, etc.
@@ -1236,8 +1249,8 @@ regexp_split_to_table(...)
 ENUM_TYPE                         #Each enum has its own TYPE
 anyenum                           #TYPE. Any ENUM_TYPE
 
-'...'                             #ENUM_VAL_UNKNOWN
-ENUM_VAL                          #4-byte long
+'...'                             #ENUM_VAL_UNKNOWN. Max 64 chars
+ENUM_VAL                          #Stored as 4-byte long
 
 create type "ENUM_TYPE"
  as enum(ENUM_VAL...)             #Arguments list decides ordering
@@ -1947,9 +1960,11 @@ anyrange                          #TYPE. Any RANGE TYPE
 create type "RANGE_TYPE"
  as range(OPTS)                   #New RANGE TYPE.
 OPTS.subtype                      #TYPE of start|end
+                                  #Must be supported by btree ACCESS_METHOD
 OPTS.multirange_type_name         #'TYPE' of MULTIRANGE
                                   #Def: replace 'range' by 'multirange', or append '_multirange'
 OPTS.subtypediff                  #FUNC(VAL, VAL2)->UINT, computing distance
+                                  #Def: VAL2 - VAL, but is usually slower
 OPTS.canonical                    #FUNC2(VAL)->VAL (def: noop) transforming each VAL
 
 '[VAL, VAL2]'                     #RANGE_UNKNOWN. Square brackets include, parenthesis exclude.
@@ -2543,7 +2558,6 @@ primary key                       #COL_CONSTRAINT.
 
 create unique index ...           #Similar to `unique` or `exclude (... with =)` CONSTRAINTs
                                   #Makes INDEX faster
-                                  #Only supported by btree ACCESS_METHOD
 create table ...
  exclude|unique|primary key ...   #Those CONSTRAINTs use a btree INDEX, automatically created with the same name
 alter table "TABLE" add           #Add the CONSTRAINT using an existing INDEX
@@ -2554,7 +2568,6 @@ alter table "TABLE" add           #Add the CONSTRAINT using an existing INDEX
                                   #  - not use `asc|desc`
                                   #  - not use `deferrable`
                                   #  - be `unique`
-                                  #  - use btree ACCESS_METHOD
 
 pg_constraint.conexclop           #REGOPERATOR_ARR of the CONSTRAINT's `with OP`
 
@@ -3950,7 +3963,8 @@ grouping(COL_REXPR,...)->UINT     #AFUNC. UINT indicates the COL_REXPRs used by 
 
 AFUNC(SET, ...)->SCALAR           #"Aggregate function". Reduce a SET to a SCALAR
                                   #If SCALAR is passed as argument, it is handled like a SET with a single item.
-                                  #Must be used inside a REXPR: select, distinct, order by
+                                  #Must be used inside a REXPR: select, distinct, having, order by
+                                  #Cannot be used inside `where`, `on`, `check()` and POLICY (`using`, `with check`)
 
 AFUNC(...)
  filter (where BOOL_REXPR)        #Filter SET values passed to AFUNC()
@@ -6941,6 +6955,7 @@ pg_user                           #Deprecated TABLE alternatives to pg_roles
 CLUSTER FIRST ROLE ==>            #Has same name as CLUSTER owner's OS_USER, who can authenticate to it
                                   #Is a superuser ROLE
                                   #Cannot be deleted
+initdb -U ROLE                    #Override cluster's first ROLE name
 
 public                            #Implicit ROLE that any other ROLE belongs to
 "[R]PROLE"                        #Either "[R]ROLE" or public
@@ -7002,6 +7017,13 @@ pg_auth_members.member            #REGROLE of member ROLE
 pg_auth_members.grantor           #REGROLE which granted the membership
 pg_auth_members.admin_option      #BOOL
 
+pg_has_role(["ROLE"|ROLE_OID,]
+ 'ROLE2'|ROLE2_OID, 'member')
+ ->BOOL                           #Whether ROLE can `set role ROLE2`
+pg_has_role(["ROLE"|ROLE_OID,]
+ 'ROLE2'|ROLE2_OID, 'usage')
+ ->BOOL                           #Whether ROLE's PRIVILEGEs are a subset of ROLE2's
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -7044,7 +7066,9 @@ set local|session role|session ...#Same as set local|session ENVVAR ...
 
 
 ENTITY OWNER ==>                  #Def: ROLE that created the ENTITY
-                                  #ROLE has all PRIVILEGEs over their ENTITYs (unless explicitly revoked)
+                                  #ROLE has all PRIVILEGEs over their ENTITYs
+                                  #  - as "default PRIVILEGEs", i.e. on creation
+                                  #  - can be revoked
                                   #ROLE is parent dependency of owned ENTITYs
                                   #  - cannot `drop cascade`, i.e. can only be deleted if it does not own any ENTITY
                                   #For all ENTITYs but:
@@ -7124,6 +7148,18 @@ revoke ... restrict|cascade       #If ROLE granted PRIVILEGEs to other ROLE2s:
 
 grant|revoke ... granted by RROLE #Requires current_user to be RROLE
 
+has_ENTITY_privilege
+ (["ROLE"|ROLE_OID, ]
+ 'ENTITY'|ENTITY_OID, 'PRIVILEGE')
+ ->BOOL                           #Whether ROLE (def: current_role) has PRIVILEGE in ENTITY
+has_any_column_privilege
+ (...)->BOOL                      #Same as has_table_privilege(...) but for any of its COLs
+has_column_privilege
+ (["ROLE"|ROLE_OID, ]
+ 'ENTITY'|ENTITY_OID,
+ "COL"|COL_NUM, 'PRIVILEGE')
+ ->BOOL                           #Same for a single COL
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -7136,7 +7172,7 @@ alter default privileges          #Like `grant`, but on "default PRIVILEGEs":
  grant PRIVILEGE,... on ENTITYs   #  - PRIVILEGEs assigned to newly created ENTITYs
  to "PROLE",...                   #  - does not apply to ENTITYs already created
                                   #Includes:
-                                  #  - full PRIVILEGEs given to owners
+                                  #  - owner PRIVILEGEs
                                   #  - PRIVILEGEs inherited through membership (e.g. from `public` ROLE)
                                   #Only for ENTITYs: tables (RELATIONs), sequences, functions|routines, types, schemas
 alter default privileges
@@ -7203,33 +7239,6 @@ pg_init_privs.initprivs           #ACLITEM_ARR
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:       PRIVILEGES CHECK        :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-has_ENTITY_privilege
- (["ROLE"|ROLE_OID, ]
- 'ENTITY'|ENTITY_OID, 'PRIVILEGE')
- ->BOOL                           #Returns whether PRIVILEGE is granted
-has_any_column_privilege
- (...)->BOOL                      #Same as has_table_privilege(...) but for all its COLs
-has_column_privilege
- (["ROLE"|ROLE_OID, ]
- 'ENTITY'|ENTITY_OID,
- "COL"|COL_NUM, 'PRIVILEGE')
- ->BOOL                           #Same for a single COL
-
-pg_has_role(["ROLE"|ROLE_OID,]
- 'ROLE2'|ROLE2_OID, 'member')
- ->BOOL                           #Returns whether ROLE can `set role ROLE2`
-pg_has_role(["ROLE"|ROLE_OID,]
- 'ROLE2'|ROLE2_OID, 'usage')
- ->BOOL                           #Returns whether ROLE's PRIVILEGEs are a subset of ROLE2's
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
                                             )==:        PRIVILEGES LIST        :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -7237,11 +7246,12 @@ pg_has_role(["ROLE"|ROLE_OID,]
 
 ALTER|DROP ==>                    #PRIVILEGE on any ENTITY, no ACL
                                   #`alter|drop` on that ENTITY
-                                  #Also: comment
+                                  #Also settings like: comment, POLICY, etc.
                                   #Always granted to owner ROLE (and members), cannot be granted to others
 
 grant ... with grant option       #PRIVILEGE on any ENTITY, no ACL
 revoke grant options for ...      #Calling `grant PRIVILEGE` on that ENTITY
+
 create role "ROLE2" admin "ROLE"
 grant "ROLE",... to "ROLE2",...
  with admin options
@@ -7262,7 +7272,7 @@ create|alter role ... createdb    #PRIVILEGE on a CLUSTER, no ACL
 
 connect                           #PRIVILEGE on DATABASE, with ACL: c
                                   #Start a client session
-                                  #Without ROLE can still be switched to
+                                  #Without it, can still switch to the ROLE after session started
 create|alter role ... login       #Same but for a given ROLE. No ACL.
 
 create|alter role ... replication #PRIVILEGE, no ACL
@@ -7271,8 +7281,7 @@ create|alter role ... replication #PRIVILEGE, no ACL
                                   #Required by pg_basebackup
 
 set                               #PRIVILEGE on an ENVVAR, with ACL: s
-                                  #Setting ENVVAR value
-                                  #Noop unless ENVVAR would otherwise require superuser ROLE
+                                  #Setting ENVVAR value that otherwise require superuser ROLE
 alter system                      #PRIVILEGE on an ENVVAR, with ACL: A
                                   #Setting ENVVAR value with `alter system`
 
@@ -7343,12 +7352,12 @@ usage                             #PRIVILEGE on FSERVER, with ACL: U
 
 aclitem                           #TYPE for PRIVILEGEs
                                   #Some PRIVILEGEs do not have ACLs (see above)
-                                  #Each PRIVILEGE is associated with a CHAR (see above)
+                                  #The others are associated with a CHAR (see above)
                                   #Cannot use < <= > >=
 
 '[ROLE]=CHAR.../ROLE2'            #ACLITEM_UNKNOWN
                                   #CHAR: PRIVILEGE
-                                  #CHAR* `grant` PRIVILEGE
+                                  #CHAR*: `grant` PRIVILEGE
                                   #ROLE: having the PRIVILEGE (def: `public`)
                                   #ROLE2: granting the PRIVILEGE
                                   #Does not include default PRIVILEGEs nor owner's PRIVILEGEs
@@ -7358,6 +7367,7 @@ ROW.grantee                       #ROLE. 0 if `public`
 ROW.grantor                       #ROLE2
 ROW.privilege_type                #'PRIVILEGE'
 ROW.is_grantable                  #BOOL. `grant` PRIVILEGE
+
 makeaclitem('ROLE', 'ROLE2',
  'PRIVILEGE,...', BOOL)->ACLITEM  #BOOL is `grant` PRIVILEGE
 
@@ -7390,19 +7400,67 @@ pg_parameter_acl.paracl           #ACLITEM_ARR
                                              \=+===============================+=/
 
 
-create policy ???
-alter policy ???
+create policy "POLICY" on "TABLE" #Creates a "row-level security" POLICY, i.e. ROW-wise authorization check
+                                  #POLICY is TABLE-specific, including its "POLICY" name
 
-alter table ... row level security ???
+create|alter policy ...           #If false, make current ROW invisible (not with `insert`)
+ using (BOOL_REXPR)               #BOOL_EXPR is called with query caller's ROLE, not TABLE's owner
+                                  #User might still infer values ("covert channel")
+                                  #  - e.g. by checking if a CONSTRAINT fail with them
+                                  #  - `with check` can prevent this, before it is called before CONSTRAINTs
 
-pg_class.relrowsecurity           #BOOL. Whether RELATION has row-level security
-pg_tables.rowsecurity             #BOOL. Whether TABLE has row-level security
-pg_class.relforcerowsecurity      #BOOL. Whether RELATION's row-level security applies to owner
+create|alter policy ...           #Check new ROWs (with `insert|update`). Errors if false.
+ with check (BOOL_REXPR)          #Def: same as `using`
+                                  #BOOL_EXPR is called with query caller's ROLE, not TABLE's owner
 
-row_security_active() ???
+create policy ...                 #Whether POLICY is
+ as permissive|restrictive        #  - permissive (def): allowlist, i.e. at least one permissive POLICY must match
+                                  #  - restrictive: denylist, i.e. all restrictive POLICYs must match
+                                  #They are combined as:
+                                  #  (PERMISSIVE_POLICY or PERMISSIVE_POLICY2 or ...)
+                                  #  and RESTRICTIVE_POLICY and RESTRICTIVE_POLICY2 and ...
+                                  #If 0 permissive POLICYs: deny any query ("default deny")
+                                  #  - including if 0 POLICYs
 
-pg_policies ???
-pg_policy ???
+create policy ... for             #Whether POLICY is applies on `select|insert|update|delete` (same meaning as PRIVILEGEs)
+ all|select|insert|update|delete  #Def: 'all'
+
+create|alter policy ...
+ to RPROLE,...                    #Def: `public`
+
+alter table ...
+ enable|disable row level security#If disabled (def), POLICYs are noop
+pg_class.relrowsecurity
+pg_tables.rowsecurity             #BOOL. Whether RLS is enabled
+
+alter table ...
+ [no] force row level security    #If `no force` (def), POLICYs are noop for TABLE's owner
+pg_class.relforcerowsecurity      #BOOL. Whether `[no] force`
+row_security_active
+ ('TABLE'|TABLE_OID)->BOOL        #Whether RLS is enabled for TABLE + current ROLE
+
+ENVVAR row_security               #BOOL (def: true). If false, make POLICYs always emit an error
+                                  #Meant for commands which should use full TABLEs, not ROW-wise, like backups
+
+pg_policy                         #TABLE with all POLICYs
+pg_policy.oid                     #OID
+pg_policy.polname                 #"POLICY" name
+pg_policy.polrelid                #REGCLASS of TABLE
+pg_policy.polcmd                  #CHAR among '*' (all), 'r' (select), 'a' (insert), 'w' (update), 'd' (delete)
+pg_policy.polpermissive           #BOOL. permissive|restrictive
+pg_policy.polroles                #REGROLE_ARR. 0 means `public`
+pg_policy.polqual                 #PG_NODE_TREE of `using`
+pg_policy.polwithcheck            #PG_NODE_TREE of `with check`
+
+pg_policies                       #High-level VIEW on top of pg_policy
+pg_policies.policyname            #"POLICY" name
+pg_policies.tablename             #"TABLE" name
+pg_policies.cmd                   #'ALL|SELECT|INSERT|UPDATE|DELETE'
+pg_policies.permissive            #'PERMISSIVE|RESTRICTIVE'
+pg_policies.roles                 #"ROLE"_ARR
+pg_policies.qual                  #STR of `using`
+pg_policies.with_check            #STR of `with check`
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -7411,99 +7469,130 @@ pg_policy ???
                                              \=+===============================+=/
 
 
-OS_USER                           #OS-specific
-                                  #OS|filesystem operations are done using the OS_USER
+CLIENT_USER                       #User name, as specified by client
                                   #Mapped to ROLEs by authentication
 
+OS_USER                           #OS user name
+                                  #Used as CLIENT_USER when calling binaries
+                                  #Server's OS_USER is used when performing OS|filesystem operations
+                                  #  - cannot be root
+                                  #  - prefer OS_USER with only permissions over DATADIR
+                                  #  - default installation creates 'postgres' OS_USER (group 'postgres') for this
+
 CLUSTER OWNER ==>                 #OS_USER that created the CLUSTER should own DATADIR
-                                  #Default installation creates a OS_USER for this, with name 'postgres' and group 'postgres'
 
 auth_delay                        #C addon that rate limits authentication failures
 ENVVAR auth_delay.milliseconds    #NUM (def: 0) of ms between attempts
 
-pg_hba.conf                       #File under a cluster DATADIR controlling:
-                                  #  - who can connect (host address, OS_USER)
-                                  #  - to which database
-                                  #  - with which connection method
-                                  #  - under which ROLE
-                                  #Have five whitespaces-separated fields (can contain whitespace if double-quoted) (with #Comment):
-                                  #  - type (protocol):
-                                  #    - local: local connection (Unix sockets)
-                                  #    - host: TCP/IP
-                                  #    - host[no]ssl: TCP/IP with|without SSL. For SSL:
-                                  #       - must set ENVVAR ssl to "on" (def: "off") at server start
-                                  #       - must have been enable when installing|building PostgreSQL
-                                  #  - database:
-                                  #    - connect to which DATABASE... (comma-separated)
-                                  #    - sameuser means DATABASE with same name as ROLE
-                                  #    - samerole means DATABASE with same name as ROLE or a member of ROLE
-                                  #    - replication: special DATABASE used by pg_basebackup
-                                  #    - @FILE... means list of DATABASE is available under DATADIR/FILE (if relative) or FILE (if abs.)
-                                  #    - can be all
-                                  #  - user:
-                                  #    - under which ROLE... (comma-separated) can connect
-                                  #    - +ROLE means any member of ROLE
-                                  #    - @FILE... means list of ROLE is available under DATADIR/FILE (if relative) or FILE (if abs.)
-                                  #    - can be all
-                                  #  - address:
-                                  #    - which IPv4|6 addresses (along the netmask range) can connect
-                                  #    - can also be a hostname (can be slow)
-                                  #      - including a .DOMAINNAME for hosts under DOMAINNAME
-                                  #    - can be all
-                                  #    - samehost: any of the machine own IPs
-                                  #    - samenet: any of the machine own subnet
-                                  #  - netmask (optional):
-                                  #    - IPv4|v6 netmask
-                                  #  - auth. method:
-                                  #    - trust|reject: always accept|refuse
-                                  #    - ident [map=MAP]:
-                                  #      - use MAP in pg_ident.conf (ENVVAR ident_file) to determine which ROLE correspond to OS_USER
-                                  #      - def: ROLE = OS_USER
-                                  #    - password|md5: ask for password (md5 hashes it but not crypto-secure)
-                                  #      - libpq variable password:
-                                  #         - To use if is demanded. Def: PGPASSWORD
-                                  #         - Can also use a FILE PAGPASSFILE (def: ~/.pgpass), which should contain lines with format:
-                                  #             host:port:database:user:password (first four field can be *)
-                                  #           Permission must be 0600
-                                  #    - SSL:
-                                  #      - libpq variables:
-                                  #        - sslmode: priority of SSL over non-SSL (def: PGSSLMODE):
-                                  #          - disable: non-SSL
-                                  #          - prefer (def): first SSL, then non-SSL
-                                  #          - require: SSL. If root CA, verify certificate
-                                  #          - verify-ca: SSL. Always verify certificate
-                                  #          - verify-full: SSL. Verify certificate, and that hostname match in certificate
-                                  #        - sslcert: certificate FILE (def: USERCONFDIR/postgresql.crt or PGSSLCERT)
-                                  #        - sslkey:
-                                  #          - Secret key (def: USERCONFDIR/postgresql.key or PGSSLKEY).
-                                  #          - Can also be OpenSSL engines, as ENGINE:KEY
-                                  #        - sslrootcert: CA certificate FILE (def: USERCONFDIR/root.crt or PGSSLROOTCERT)
-                                  #        - sslcrl: CA revocation list FILE (def: USERCONFDIR/root.crl or PGSSLCRL)
-                                  #    - krb5: Kerberos5
-                                  #      - libpq variable krbsrvname: Kerberos server name (def: PGREALM or PGKRBSRVNAME)
-                                  #    - GSSAPI:
-                                  #      - libpq variable gsslib: on Windows, set to "gssapi" to use GSSAPI instead of SSPI
-                                  #        (def: PGGSSLIB)
-                                  #  - auth. method options (optional):
-                                  #    - as VAR=VAL ...
-                                  #    - see above
+ENVVAR hba_file                   #'PATH' to HBA file
+                                  #On my system: CLUSTERCONFDIR/pg_hba.conf
+
+HBA                               #Main configuration file for authentication
+                                  #Whitespace-separated
+                                  #Must "-quote whitespaces " and keywords
+                                  #Can use #COMMENT
+                                  #Can use \-terminated lines
+                                  #First matching line is used
+                                  #  - should put most likely first for efficiency
+DEFAULT HBA ==>                   #On my machine:
+                                  #  - any with Unix socket
+                                  #  - local IP with TCP + scram-sha-256
+
+HBA[0]                            #Protocol of client authenticating
+
+HBA[0] local                      #Connect using Unix sockets
+                                  #Not with authentication methods: ident
+UNIX_SOCKET_DIR/.s.PGSQL.PORT     #Unix socket
+ENVVAR unix_socket_directories    #'[@]PATH,...' of Unix sockets directories
+postgres -k STR                   #Can be empty
+                                  #If @, is a virtual path instead
+                                  #Def on my system: VARDIR
+ENVVAR unix_socket_group          #OS group owning socket
+ENVVAR unix_socket_permissions    #Unix socket permissions (def: 0777)
+                                  #Def: current one
+
+HBA[0] host[[no]ssl]              #TCP/IP
+                                  #Def: both with|without SSL
+ENVVAR ssl                        #BOOL (def: false). Must be true to allow SSL authentication
+ENVVAR listen_addresses           #'IPv4|v6,...' of server sockets.
+postgres -h STR                   #Can be '*' (IPv4|6), '0.0.0.0' (IPv4) or '::' (IPv6)
+                                  #Can be empty
+                                  #Def: 'localhost'
+ENVVAR port
+portgres -p NUM                   #Port number (def: 5432)
+
+HBA[3]                            #IPv4|6 of client authenticating
+                                  #Can include a network mask
+                                  #Can also be a hostname
+                                  #  - .DOMAIN includes sub-domains
+                                  #Empty if HBA[0] local
+HBA[3] all                        #Any
+HBA[3] samehost                   #Current machine's IPs
+HBA[3] samenet                    #Current machine's subnet
+
+HBA[4]                            #Network mask applied to HBA[3]
+                                  #Can be empty
+
+HBA[5]                            #Authentication method
+HBA[5] trust                      #Always accept
+HBA[5] reject                     #Always deny
+HBA[5] ident                      #Accept if IDENT[1] for current CLIENT_USER exists
+HBA[5] peer ???
+HBA[5] pam ???
+HBA[5] ldap ???
+HBA[5] radius ???
+
+HBA[6] VAR=VAL ...                #Authentication method options
+                                  #Can be empty
+
+HBA[2]                            #ROLE,... being assumed
+HBA[2] all                        #Any ROLE
+HBA[2] +ROLE                      #Include any member
+HBA[2] @PATH                      #Like HBA[1] @PATH
+
+HBA[1]                            #DATABASE,... being connected to
+HBA[1] all                        #Any DATABASE
+HBA[1] sameuser                   #DATABASE with same name as ROLE
+HBA[1] samerole                   #DATABASE with same name as ROLE or a member
+HBA[1] replication                #DATABASE used by physical replication
+HBA[1] @PATH                      #To newline-separated file with list of DATABASEs
+                                  #Relative to HBA file
+
                                   #Default settings:
                                   #  - host and local connections: initdb --auth-host|local=STR (or -A STR for both)
                                   #  - default password: initdb -W|--pwfile=FILE, from stdin or from first line of FILE (if using
                                   #    password authentication)
-                                  #Only the first matching line is chosen. Put most likely first for efficiency.
-                                  #Location can be changed by ENVVAR hba_file
-                                  #Read on server startup, or when receiving a SIGHUP.
 
-requirekeeper                     #LIBPQ variable: OS_USER behind the server process must match STR.
+LIBPQ.requirekeeper               #OS_USER behind the server process must match STR.
                                   #Avoid another OS_USER starting the server while legit one is rebooting it.
 
-pg_hba_file_rules                 #TABLE with pg_gba.conf contents. ???
+pg_hba_file_rules                 #TABLE with pg_hba.conf contents. ???
                                   #Visible only to superuser
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:             IDENT             :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+ENVVAR ident_file                 #'PATH' to IDENT file, which maps CLIENT_USER to ROLEs
+                                  #On my system: CLUSTERCONFDIR/pg_ident.conf
+                                  #Same format as HBA
+IDENT[0]                          #IDENT_GROUP
+                                  #Can be specified multiple times
+IDENT[1]                          #CLIENT_USER
+                                  #Can be /REGEXP (partial match)
+IDENT[2]                          #ROLE
+                                  #Can use \1 referring to first (...) in IDENT[1] /REGEXP
+
+HBA[6] map=IDENT_GROUP            #Use IDENT with IDENT[0] = IDENT_GROUP
+                                  #Def: use ROLE with same name as CLIENT_USER
+                                  #With identification methods: ident
+
 pg_ident_file_mappings            #TABLE with pg_ident.conf contents. ???
                                   #Visible only to superuser
-pg_stat_ssl                       #???
-pg_stat_gssapi                    #???
 
 
                                              /=+===============================+=\
@@ -7513,21 +7602,96 @@ pg_stat_gssapi                    #???
                                              \=+===============================+=/
 
 
-passwordcheck                     #C addon that cancels `create|alter role` if `password "PASSWORD"` too weak
-                                  #Only with authentication method 'password'
-                                  #Should rebuild the module by modifying the Makefile to enable CrackLib (better weak password recognition)
+HBA[5] password                   #Password authentication method, passed as plain text
+HBA[5] md5                        #Same but passed as md5 checksum
+HBA[5] scram-sha-256 ???
+
+ENVVAR PGPASSWORD
+LIBPQ.password                    #'PASSWORD|MD5_CHECKSUM' passed for authentication
+ENVVAR PGPASSFILE                 #Same as 'PATH'
+                                  #Def: ~/.pgpass
+                                  #Colon-separated fields: host, port, database, user, password
+                                  #Fields can be * (except password)
+                                  #Permission must be 0600
 
 create|alter role "ROLE"
  password null                    #No password (default)
 create|alter role "ROLE"
- password 'PASSWORD'              #Set password for authentication methods 'password'
-create|alter role "ROLE"
- password 'md5HASH'               #Set password for authentication methods 'md5'
+ password 'PASSWORD|MD5_CHECKSUM' #Set password
 create|alter role "ROLE"
  encrypted password ...           #Same
 
 create|alter role "ROLE"
  valid until TIMESTAMPTZ          #Expire password after this
+
+passwordcheck                     #C addon that cancels `create|alter role` if `password "PASSWORD"` too weak
+                                  #Only with authentication method 'password'
+                                  #Should rebuild the module by modifying the Makefile to enable CrackLib (better weak password recognition)
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:              SSL              :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+HBA[5] cert                       #Authentication method using SSL certificate
+
+ENVVAR PGSSLMODE                  #Priority of SSL over non-SSL:
+LIBPQ.sslmode                     #  - disable: non-SSL
+                                  #  - prefer (def): first SSL, then non-SSL
+                                  #  - require: SSL. If root CA, verify certificate
+                                  #  - verify-ca: SSL. Always verify certificate
+                                  #  - verify-full: SSL. Verify certificate, and that hostname match in certificate
+
+ENVVAR PGSSLCERT
+USERCONFDIR/postgresql.crt
+LIBPQ.sslcert                     #'PATH' to certificate file
+
+ENVVAR PGSSLKEY
+USERCONFDIR/postgresql.key        #Secret key
+LIBPQ.sslkey                      #Can also be 'ENGINE:KEY' for OpenSSL engines
+
+ENVVAR PGSSLROOTCERT
+USERCONFDIR/root.crt
+LIBPQ.sslrootcert                 #CA certificate FILE
+
+ENVVAR PGSSLCRL
+USERCONFDIR/root.crl
+LIBPQ.sslcrl                      #CA revocation list FILE
+
+pg_stat_ssl                       #???
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:            GSSAPI             :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+HBA[0] host[[no]gssenc]           #TCP/IP, GSSAPI encrypted
+                                  #Def: both with|without it
+
+HBA[5] gss|sspi                   #Authentication method using GSSAPI
+
+ENVVAR PGGSSLIB                   #Whether to use 'gssapi' or 'sspi'
+LIBPQ.gsslib                      #On Unix, always use gssapi. On Windows, def: sspi
+
+pg_stat_gssapi                    #???
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:           KERBEROS            :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+HBA[5] krb5                       #Authentication method with Kerberos5
+
+ENVVAR PGREALM|PGKRBSRVNAME
+LIBPQ.krbsrvname                  #Kerberos server name
 
 
                                              /=+===============================+=\
@@ -7814,12 +7978,22 @@ pg_filenode_relation
                                              \=+===============================+=/
 
 
-SYSCONFDIR                        #DIR with system-wide configuration file
+SYSCONFDIR                        #DIR with system-wide configuration
                                   #On my system: /etc/postgresql-common
 pg_config --sysconfdir            #Prints SYSCONFDIR
 
-USERCONFDIR                       #DIR with OS user-specific configuration file
+CLUSTERCONFDIR                    #DIR with cluster-wide configuration
+                                  #On my system: /etc/postgresql/VERSION/CLUSTER
+
+USERCONFDIR                       #DIR with OS user-specific configuration
                                   #On my system: ~/.postgresql
+
+SIGHUP
+pg_ctl reload                     #Reload config file, HBA and IDENT
+pg_reload_conf()                  #Must be superuser
+
+Replace "ENVVAR" by "CONF"???
+  - except actual ENVVARs: https://www.postgresql.org/docs/current/libpq-envars.html
 
 ???
 ENVVAR ==>                        #Environment variables. Can be specified with:
@@ -7829,8 +8003,6 @@ ENVVAR ==>                        #Environment variables. Can be specified with:
                                   #        - has lines VAR = VAL, and #comment
                                   #        - can have include[_if_exists] 'FILE' or include_dir 'DIR' (includes DIR/*.conf, by
                                   #        - alphabetical order)
-                                  #        - can use pg_reload_conf() or send SIGHUP to server daemon postgres
-                                  #           - must be superuser
                                   #        - can see load time with pg_conf_load_time()
                                   #     - PGOPTIONS
                                   #  - role-specific:
@@ -8658,7 +8830,7 @@ wrapper FDW                       #Can be slow and not optimized.
 [options (VAR STR ...)]           #Must be superuser.
                                   #Available ones (as EXTENSION):
                                   #  - postgres_fdw: for PostgreSQL to other DBMS
-                                  #     - FSERVER options (can also use libpq variables)
+                                  #     - FSERVER options (can also use LIBPQ.*)
                                   #        - host STR
                                   #        - dbname STR
                                   #        - port STR
@@ -8898,17 +9070,6 @@ initdb [-D DATADIR]               #Creates a cluster, i.e.:
                                   #  - creates template0|1 and an empty database "postgres"
                                   #  - create cluster-specific system catalogs
                                   #  - initialize cluster-wide ENVVARs
-                                  #User:
-                                  #  - should have right to write in DATADIR
-                                  #  - will use current OS_USER as the superuser ROLE (will create the ROLE in the cluster)
-                                  #     - good idea to use a OS_USER which doesn't have any permissions on the filesystem apart from
-                                  #       the directories used by the server.
-                                  #        - A OS_USER "postgres" is created by def. installation for this purpose.
-                                  #  - can't be root
--U ROLE                           #Name of the superuser ROLE (by def. the current OS_USER).
-                                  #Change the ROLE name but not:
-                                  #  - the fact that OS_USER will be superuser
-                                  #  - nor the name of the default database "postgres" (but could rename it)
 -E STR                            #See encoding in this doc.
 --auth-host|local=STR             #
 -A STR                            #
@@ -8916,28 +9077,28 @@ initdb [-D DATADIR]               #Creates a cluster, i.e.:
 --pwfile=FILE                     #Default authentification, see pg_hba.conf
 -X DIR                            #Log DIR
 
-LIBPQ VARIABLES ==>               #Used in several places in this doc.
-host[addr]                        #Def is localhost or PGHOST[ADDR]. Can be an absolute path to a Unix socket.
+libpq                             #Main C client library
+LIBPQ                             #"Libpq variables", used by many clients
+LIBPQ.host[addr]                  #Def is localhost or PGHOST[ADDR]. Can be an absolute path to a Unix socket.
                                   #With addr:
                                   #  - specifies IP address
                                   #  - avoid host name lookup, faster.
                                   #  - Can't be used with Kerberos, GSSAPI, SSPI or verify-full SSL
-port                              #Def is PGPORT (5432)
-dbname                            #Def: OS_USER or PGDATABASE
-user                              #ROLE to use. Def: OS_USER or PGUSER
-connect_timeout                   #In seconds. Def: 0 (unlim). Should not be <2. Def: PGCONNECT_TIMEOUT
-client_encoding                   #Def: "auto" (defaults OS locales). Def: PGCLIENT_ENCODING
-options                           #Set postgres flags at runtime, client-side. Def: PGOPTIONS
+LIBPQ.port                        #Def is PGPORT (5432)
+LIBPQ.dbname                      #Def: CLIENT_USER or PGDATABASE
+LIBPQ.user                        #ROLE to use. Def: CLIENT_USER or PGUSER
+LIBPQ.connect_timeout             #In seconds. Def: 0 (unlim). Should not be <2. Def: PGCONNECT_TIMEOUT
+LIBPQ.client_encoding             #Def: "auto" (defaults OS locales). Def: PGCLIENT_ENCODING
+LIBPQ.options                     #Set postgres flags at runtime, client-side. Def: PGOPTIONS
                                   #Can use -c ENVVAR=VAL to set ENVVAR.
-[fallback_]application_name       #Name of the application (psql, pg_dump, etc.)
+LIBPQ.[fallback_]application_name #Name of the application (psql, pg_dump, etc.)
                                   #Used in logs (title of the client connection). Can be env. variable PGAPPNAME too.
                                   #If application_name or PGAPPNAME is blank, defaults to fallback_* (let users override it)
-keepalives                        #1 to enable it (def). If connection seems lost, sends packet to check it actually is.
-keepalives_                       #Send max *count packets, every *interval seconds. Start sending after non-activity from server for
-[idle|iterval|count]              #*idle packets.
+LIBPQ.keepalives                  #1 to enable it (def). If connection seems lost, sends packet to check it actually is.
+LIBPQ.keepalives                  #Send max *count packets, every *interval seconds. Start sending after non-activity from server for
+ [_idle|iterval|count]            #*idle packets.
                                   #Can also use ENVVAR tcp_keepalives_*
-OTHERS ==>                        #See Authentication section
-service                           #Additional parameters (def: PGSERVICE[FILE])
+LIBPQ.service                     #Additional parameters (def: PGSERVICE[FILE])
 
 postgres [-D DATADIR]             #Starts the server daemon for a specific cluster.
                                   #To start postgres on several clusters on same machine, use different ports.
@@ -8951,26 +9112,7 @@ postgres [-D DATADIR]             #Starts the server daemon for a specific clust
                                   #Print log messages on stderr. Should be launched in the background.
                                   #Can call version(), ENVVAR server_version[_num] and also a file DATADIR/PG_VERSION.
                                   #Commands that started the server can be found under DATADIR/postmaster.opts
-                                  #Connections are done using either:
-                                  #  - Unix sockets ("local"), on a socket at DIR/.s.PSQL.PORT (created at server start), where
-                                  #    DIR is designated by ENVVAR unix_socket_directories (def: /tmp or VARDIR),
-                                  #    comma-separated list by order of preference. Can be "" to disallow "local" connections.
-                                  #    OS_USER must (to avoid spoofing) have:
-                                  #      - permissions on DIR, preferably only that user
-                                  #      - socket itself will be owned by OS_USER and OS_GROUP_USER (can be changed with ENVVAR
-                                  #        unix_socket_group)
-                                  #      - socket itself will have permission ENVVAR unix_socket_permissions (def: 0777). Could set to
-                                  #        0770 or 0700 (only OS_GROUP_USER+OS_USER or only OS_USER can connect)
-                                  #    Client must connect by using DIR as host
-                                  #  - TCP/IP ("host"), which uses socket designated by IP addresses specified in ENVVAR
-                                  #    listen_addresses (comma-separated) with IPv4|6 addresses (def: "localhost"). Should be set at
-                                  #    server start.
-                                  #    "*" means all IPv4|6, "0.0.0.0" all IPv4, "::" all IPv6
                                   #If crash, sessions will restart automatically if ENVVAR restart_after_crash (def: on)
--p NUM                            #Port number (def: 5432).
-                                  #Can also use ENVVAR port at server start.
--k STR                            #Sets ENVVAR unix_socket_directories.
--h STR                            #Sets ENVVAR listen_addresses
 -i                                #Same as -h "*"
 -N                                #Sets ENVVAR max_connections (def: 100), which is the number of superuser + normal users max
                                   #connections. The last ENVVAR superuser_reserved_connections (def: 3) are kept for superuser only.
@@ -9036,8 +9178,8 @@ psql                              #Starts interactive commands while connecting 
                                   #Use readline so can use a .inputrc
                                   #The five first options are connection-related, and shared by other commands. When available, can
                                   #also always use a STR argument instead with either:
-                                  #  - VAR=VAL... as space-separated libpq variables
-                                  #  - postgres://[USER:PASSWORD@][HOST][:PORT]/[DATABASE][?VAR=VAL] (VAR are libpq variables)
+                                  #  - LIBPQ_VAR=VAL,...
+                                  #  - postgres://[USER:PASSWORD@][HOST][:PORT]/[DATABASE][?LIBPQ_VAR=VAL]
 -d DATABASE                       #Def: "postgres"
 -h HOST                           #Def: PGHOST or (if absent) local host.
 -p PORT                           #Def: PGPORT or (if absent) default port.
@@ -9194,7 +9336,7 @@ PGADMIN3 ==>                      #GUI client. Can do almost anything that can b
                                   #  - MaintenanceDB:
                                   #     - DATABASE where pgAdmin connects first (should use postgres)
                                   #     - should install adminpack extension
-                                  #  - Should use the same OS_USER we would use for a normal psql session
+                                  #  - Should use the same CLIENT_USER we would use for a normal psql session
                                   #Usage:
                                   #  - Is not refreshed automatically: needs to refresh it manually.
                                   #  - Some types of objects are hidden by default (e.g. AFUNC or TYPE): can change in options
@@ -9692,7 +9834,7 @@ BACKUPS ==>                       #Either:
                                   #Good idea to compress backups
                                   #Backups methods are all hot backups.
 
-pg_dump [DATABASE]                #Def DATABASE: PGDATABASE or OS_USER
+pg_dump [DATABASE]                #Def DATABASE: PGDATABASE or CLIENT_USER
                                   #Must be connect as superuser ROLE (for both backups and restores).
                                   #Unless "all", doesn't backup cluster-specific information. Remember then to restore them before
                                   #psql <FILE.
@@ -9988,8 +10130,7 @@ REPLICATION ==>                   #  - Idea: like log shipping, but doesn't use 
                                   #    recovery_target_timeline, archive_cleanup_command), but directly get WAL from the server (over
                                   #    TCP connection).
                                   #  - How:
-                                  #     - Set recovery.conf variable primary_conninfo (as "VAR=VAL ...", using libpq variables) for how
-                                  #       to connect to the master.
+                                  #     - Set recovery.conf variable primary_conninfo (as "LIBPQ_VAR=VAL ...") for how to connect to the master.
                                   #     - Same as above for recovery_target_timeline
                                   #     - Must have privileges:
                                   #        - to connect to "replication" virtual DATABASE (in pg_hba.conf)
@@ -10211,7 +10352,7 @@ PGBFILE ==>                       #Usually called pgbouncer.ini
                                   #Each part has VAR = VAL ... (STR don't have any quoting)
 
                                   #[databases]:
-DATABASE                          #STR, libpq string, but with only:
+DATABASE                          #STR, LIBPQ string, but with only:
                                   #  - dbname: def. is same as DATABASE
                                   #  - host: def. is using Unix socket.
                                   #  - port: def. 5432
@@ -10231,7 +10372,7 @@ unix_socket_dir|mode|             #Like PostgreSQL ENVVAR unix_socket_directorie
 group                             #Def. are /tmp, 0777 and ""
 auth_type                         #Similar as in pg_hba.conf. Can be md5 (def), plain (like password in pg_hba.conf), trust or any.
                                   #any is like trust, except that users are not even remembered which means:
-                                  #  - all DATABASE must specify user=VAL in their libpq STR
+                                  #  - all DATABASE must specify user=VAL in their LIBPQ STR
                                   #  - control with admin_users is not effective
 auth_file                         #"USER" "PASSWORD" ...
                                   #Necessary (only USER with a line in it will be able to connect)
