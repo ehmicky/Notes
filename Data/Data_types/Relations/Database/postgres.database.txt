@@ -302,6 +302,8 @@ pg_matviews.schemaname            #pg_namespace.nspname of MVIEW
 pg_sequences.schemaname           #pg_namespace.nspname of SEQUENCE
 pg_stats.schemaname               #pg_namespace.nspname of analyzed TABLE
 pg_policies.schemaname            #pg_namespace.nspname of POLICY
+pg_rules.schemaname               #pg_namespace.nspname of RULE
+pg_publication_tables.schemaname  #pg_namespace.nspname of PUB's TABLE
 
 
                                              /=+===============================+=\
@@ -1019,7 +1021,7 @@ policy ... using (BOOL_REXPR)
 policy ... with check (BOOL_REXPR)#null -> true
 
 where BOOL_REXPR                  #null -> false
-                                  #For: select, insert on conflict, update, delete, exclude, copy, AFUNC filter, etc.
+                                  #For: select, insert on conflict, update, delete, exclude, copy, AFUNC filter, PUB, etc.
 having BOOL_REXPR                 #null -> false
 join ... on BOOL_REXPR            #null -> false
                                   #I.e. ROWs with nulls are usually:
@@ -1710,6 +1712,26 @@ normal_rand(INT, FLOAT, FLOAT2)   #INT random variables following N(FLOAT, FLOAT
 
                                              /=+===============================+=\
                                             /  :                               :  \
+                                            )==:            CRYPTO             :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+pgcrypto                          #FUNCs for: MD5|SHA hash, HMAC, crypt, Blowfish|DES|AES, PGP
+                                  #Trusted EXTENSION 'pgcrypto'
+                                  #Not fully documented yet
+
+gen_random_bytes(INT4)->BYTEA     #Crypto-secure randomness
+                                  #Max INT4: 1024
+
+digest(STR|BYTEA, 'TYPE')->BYTEA2 #Hash
+                                  #'TYPE' can be 'md5' or 'sha1|224|256|384|512'
+hmac(STR|BYTEA, 'KEY', 'TYPE')
+ ->BYTEA2                         #HMAC
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
                                             )==:             UUID              :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -1725,6 +1747,8 @@ uuid_generate_v1[mc]()->UUID      #UUID v1
 uuid_generate_v3|5                #UUID v3|5
  (uuid_ns_*(), STR)->UUID         #* is dns|url|oid|x500
 uuid_generate_v4()->UUID          #UUID v4
+
+get_random_uuid()->UUID           #UUID v4, but does not require EXTENSION 'uuid-ossp'
 
 
                                              /=+===============================+=\
@@ -2527,6 +2551,12 @@ pg_attribute.attmissingval        #ARR (of length 1). Default VAL of the COL bei
 
 pg_class.relnatts                 #INT2. Number of COLs, excluding system COLs
 
+crosstab('SUBQUERY')->ROW_SET     #With SUBQUERY returning ROW2_SET: row_name STR, category STR, value VAL
+                                  #Flips ROW|COLs:
+                                  #  - all ROWs with same row_name are grouped as a single ROW
+                                  #  - category is used as the column name
+                                  #Trusted postgres extension 'tablefunc'
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -2619,6 +2649,7 @@ set constraints CONSTRAINT,...    #Check CONSTRAINT|TFUNCs at the end of the cur
  deferred                         #Does not apply to check() and `not null`
                                   #Cannot be done if marked as `not deferrable` (see below)
                                   #  - default for unique and exclude() CONSTRAINTs
+                                  #Internally done through a TFUNC *_recheck() `for each row` on insert|update
 set constraints CONSTRAINT,...
  immediate                        #Default behavior: check CONSTRAINTs at the end of each statement
 
@@ -2748,7 +2779,7 @@ references ... on delete ACTION   #When removing COL2 values, do ACTION:
                                   #Implemented using a TFUNC:
                                   #  - on TABLE2 delete
                                   #  - `for each row`
-                                  #  - called RI_FKey_*_del()
+                                  #  - called RI_FKey_noaction|restrict|setdefault|setnull|cascade_del()
 references ... on update ACTION   #Same but when updating COL2 values
                                   #Cannot specify "COL",... with set default|null
 
@@ -2892,7 +2923,7 @@ CHILD DOES NOT INHERIT ==>        #  - unique, primary key, exclude
                                   #     - target, i.e. references "CHILD_TABLE" implicitly means "only (CHILD_TABLE)"
                                   #  - INDEX
                                   #  - identity COL
-                                  #  - rules, triggers
+                                  #  - TFUNC, RULE, PUB
                                   #  - unlogged
                                   #  - create table ... with (TOPTS)
                                   #  - comments
@@ -3440,8 +3471,16 @@ select ... from "TABLE"
  tablesample bernoulli(0-100)     #Percentage of ROWs to keep
                                   #Percentage is only average over multiple runs
                                   #Probability is applied ROW-wise, i.e. more precise with high number of ROWs
- tablesample system(0-100)        #Same but applied on groups of multiple ROWs at a time
+ tablesample system(0-100)        #Same but applied on whole heap pages
                                   #I.e. faster, but much less precise
+ tablesample system_rows(NUM)     #Number of ROWs to keep
+                                  #Use whole heap pages too
+                                  #Trusted extension 'tsm_system_rows'
+                                  #Does not support `repeatable`
+ tablesample system_time(NUM)     #NUMms of time spend collecting ROWs
+                                  #Use whole heap pages too
+                                  #Trusted extension 'tsm_system_time'
+                                  #Does not support `repeatable`
  [repeatable FLOAT]               #Random seed (def: different one for each call)
 
 
@@ -4653,6 +4692,14 @@ ROW.word                          #'TOKEN'
 ROW.nentry                        #Number of matches
 ROW.ndoc                          #Number of TSVECTORs
 
+tsvector_update_trigger
+ ('TSVECTOR_COL', 'REGCONF',
+ 'STR_COL',...)                   #TFUNC which sets a `TSVECTOR_COL = to_tsvector(STR) || ...` each time STR_COL changes
+                                  #Must be `before insert or update` + `for each row`
+tsvector_update_trigger_column
+ ('TSVECTOR_COL', 'REGCONF_COL',
+ 'STR_COL',...)                   #Same but storing REGCONF as a COL instead
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -5075,6 +5122,10 @@ create table ... partition by ...
 
 pg_attribute.attcollation         #REGCOLLATION of the COL. 0 if none
 pg_index.indcollation             #REGCOLLATION_ARR of indexed COLs.
+
+citext                            #TYPE like text, but case-insensitive
+                                  #REGEXP can use `c` flag to force case-sensitive
+                                  #Trusted EXTENSION 'citext'
 
 
                                              /=+===============================+=\
@@ -6485,6 +6536,8 @@ TOPTS|IOPTS.fillfactor            #10-100. Keep 1-INT% additional free space on 
                                   #  - `update`s can keep their `cluster` optimization, since they do not need new memory allocations
                                   #  - increase changes of Heap-Only Tuples
 
+pageinspect EXTENSION ???
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -6945,6 +6998,16 @@ select ... for share              #Prevent ROWs from being deleted|updated
 select ... for key share          #Prevent ROWs from being deleted, or `update` on unique COLs
                                   #For commands that read those ROWs, but only unique COLs
 
+pgrowlocks('TABLE')->ROW_SET      #ROW locks on TABLE
+                                  #Non-trusted EXTENSION 'pgrowlocks'
+ROW.locked_row                    #TID of ROW
+ROW.modes                         #STR_ARR with 'Key Share', 'Share', 'For No Key Update', 'No Key Update', 'For Update', 'Update'
+                                  #Multiple if multixact
+ROW.locker                        #XID of locking transaction|multixact
+ROW.multi                         #BOOL. Whether multixact
+ROW.xids                          #XID_ARR if multixact
+ROW.pids                          #BPID_ARR. Multiple if multixact
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -7394,7 +7457,9 @@ pg_extension.extowner             #REGROLE of EXTENSION's owner
 pg_language.lanowner              #REGROLE of LANGUAGE's owner
 pg_tablespace.spcowner            #REGROLE of TABLESPACE's owner
 pg_proc.proowner                  #REGROLE of FUNC's owner
-pg_operator.oprowner              #REGROLE of owner
+pg_event_trigger.evtowner         #REGROLE of EFUNC's owner
+pg_operator.oprowner              #REGROLE of OP's owner
+pg_publication.pubowner           #REGROLE of PUB's owner
 pg_prepared_xacts.owner           #"ROLE" name of PXID's owner
 
 
@@ -8125,6 +8190,10 @@ pg_stat_ssl.bits                  #INT4. Number of bits in encryption algorithm
 pg_stat_ssl.client_dn             #STR. DN of client certificate. Truncated above 63 chars
 pg_stat_ssl.client_serial         #NUMERIC. Serial number of client certificate
 pg_stat_ssl.issuer_dn             #STR. DN of client certificate's issuer. Truncated above 63 chars
+
+sslinfo                           #FUNCs to find similar information as provided by pg_stat_ssl
+                                  #Non-trusted EXTENSION 'sslinfo'
+                                  #Not documented yet
 
 
                                              /=+===============================+=\
@@ -9588,7 +9657,7 @@ $NUM                              #Refers to "ARG", 1-based
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:             PGSQL             :==(
+                                            )==:          PGSQL MAIN           :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
@@ -9855,6 +9924,39 @@ continue ...                      #Same as exit ... but start a new loop iterati
 
                                              /=+===============================+=\
                                             /  :                               :  \
+                                            )==:         PGSQL TRIGGER         :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+TFUNC ==>                         #Those are VARs defined in TFUNCs
+
+tg_argv                           #STR_ARR from: create trigger ... execute function FUNC(STR,...)
+tg_nargs                          #INT4. tg_argv length
+
+tg_name                           #'TFUNC'
+
+ts_table_name                     #'TABLE'
+tg_relid                          #REGCLASS of TABLE
+ts_table_schema                   #'SCHEMA' of TABLE
+
+tg_when                           #'BEFORE|AFTER|INSTEAD OF'
+tg_level                          #'STATEMENT|ROW'
+tg_op                             #'INSERT|UPDATE|DELETE|TRUNCATE'
+
+old                               #Current RECORD, before changes
+                                  #Only if `for each row`
+                                  #Not if `insert`
+new                               #Same but after changes
+                                  #Not if `delete`
+
+EFUNC ==>                         #Those are VARs defined in EFUNCs
+tg_event                          #'EVENT'
+tg_tag                            #'COMMAND'
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
                                             )==:         PGSQL CURSOR          :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -10001,7 +10103,7 @@ plr_modules                       #TABLE executing plr_modules.modsrc (R code as
 
 
 create trigger "TFUNC"            #Execute FUNC when a specific write EVENT happens on "TABLE|VIEW|FTABLE"
- before|after|instead of EVENT    #If multiple FUNCs, called in alphabetical order
+ before|after|instead of EVENT    #If multiple FUNCs, called in alphabetical order of "TFUNC"
  on "TABLE|VIEW|FTABLE"           #LANGUAGE cannot be `sql`
  execute function FUNC(STR,...)   #Auto-dependency child of its TABLE|COL
 
@@ -10040,6 +10142,13 @@ create trigger ...                #Only call TFUNC when BOOL_REXPR true
  when (BOOL_REXPR) ...            #If `for each row`, can refer to `old|new` ROW_ALIAS
                                   #Not with `instead of`
 
+create trigger ...                #"Transition relation". Set ROW_ALIAS (to use inside FUNC) with:
+ referencing old|new table        #  - old: all deleted|updated ROWs
+ [as] "ROW_ALIAS" ...             #  - new: all inserted|updated ROWs
+                                  #Must be `after EVENT`
+                                  #Not with `constraint trigger`
+                                  #If `after each row`, not on child TABLEs
+
 create constraint trigger ...     #Allows making TFUNC `deferred`
                                   #Must be `after EVENT` and `for each row`
                                   #Can be used to simulate a CONSTRAINT by raising exceptions
@@ -10048,21 +10157,16 @@ create constraint trigger ...     #Allows making TFUNC `deferred`
 INTERNAL TFUNC ==>                #`constraint` TFUNC automatically created by:
                                   #  - foreign key CONSTRAINT
                                   #     - also by its `on update|delete` clauses
+                                  #  - deferred CONSTRAINT
 
 create trigger ...                #Changes TABLE2 of internal TFUNC used for foreign key CONSTRAINTs
  on "TABLE" from "TABLE2" ...     #Not recommended
 
-create trigger ...                #"Transition relation". Set ROW_ALIAS (to use inside FUNC) with:
- referencing old|new table        #  - old: all deleted|updated ROWs
- [as] "ROW_ALIAS" ...             #  - new: all inserted|updated ROWs
-                                  #Must be `after EVENT`
-                                  #Not with `constraint trigger`
-                                  #If `after each row`, not on child TABLEs
-
 alter table "TABLE"
  enable|disable trigger TRIGGER   #
-alter table ... trigger user      #All TRIGGERs of current ROLE, excluding CONSTRAINTs
-alter table ... trigger all       #All TRIGGERs of current ROLE, including CONSTRAINTs
+alter table ... trigger user      #All TRIGGERs of current ROLE, excluding internal TFUNCs
+alter table ... trigger all       #All TRIGGERs of current ROLE, including internal TFUNCs
+                                  #If any iternal TFUNC, must be superuser ROLE
 
 TFUNC ARGUMENTS ==>               #No arguments. Input is passed using special LANGUAGE-specific VARs
 
@@ -10080,6 +10184,7 @@ trigger                           #Return TYPE of TFUNCs
                                   #     - not with `after EVENT`
 
 pg_trigger_depth()->NUM           #Depth, if a TFUNC calls a SQL command which fires another TFUNC ("cascading trigger"), including itself
+                                  #Starts at 0
 
 triggered_change_notification     #Create a TFUNC that calls `notify "CHANNEL"` (def CHANNEL: 'tcn')
  (['CHANNEL'])                    #MESSAGE is 'VAL,...' with:
@@ -10106,8 +10211,8 @@ pg_trigger.tgconstraint           #pg_constraint.oid. `create constraint trigger
 pg_trigger.tgdeferrable           #BOOL. Whether deferrable constraint
 pg_trigger.tginitdeferred         #BOOL. Whether initially deferred constraint
 pg_trigger.tgisinternal           #BOOL. Whether internal TFUNC, related to a CONSTRAINT
+pg_trigger.tgconstrindid          #REGCLASS of the INDEX, if internal TFUNC. 0 if none
 pg_trigger.tgconstrrelid          #REGCLASS of the other TABLE, if internal TFUNC related to a foreign key CONSTRAINT. 0 if none
-pg_trigger.tgconstrindid          #REGCLASS of the INDEX, if internal TFUNC related to an exclude|unique|primary key or foreign key CONSTRAINT. 0 if none
 pg_trigger.tgold|newtable         #"TABLE". `referencing old|new table "TABLE"`. null if none
 pg_trigger.tgnargs                #INT2 of arguments passed to FUNC
 pg_trigger.tgargs                 #BYTEA of arguments passed to FUNC
@@ -10115,24 +10220,9 @@ pg_trigger.tgargs                 #BYTEA of arguments passed to FUNC
 pg_class.relhastriggers           #BOOL. Whether RELATION has TFUNCs
 pg_tables.hastriggers             #BOOL. Whether TABLE has TFUNCs
 
-PL/PGSQL ==>
-tg_argv                           #STR_ARR from: create trigger ... execute function FUNC(STR,...)
-tg_nargs                          #INT4. tg_argv length
-tg_name                           #'TFUNC'
-ts_table_name                     #'TABLE'
-tg_relid                          #REGCLASS of TABLE
-tg_when                           #'before|after|instead of'
-tg_level                          #'statement|row'
-tg_op                             #'insert|update|delete|truncate'
-old                               #Current RECORD, before changes
-                                  #Only if `for each row`
-                                  #Not if `insert`
-new                               #Same but after changes
-                                  #Not if `delete`
-
-https://www.postgresql.org/docs/current/plpgsql-trigger.html ???
-
-https://www.postgresql.org/docs/current/functions-trigger.html ???
+suppress_redundant_updates        #TFUNC which prevents updates that set COL with its current value, i.e. do not change anything
+ _trigger()                       #Must be `before update` + `for each row`
+                                  #Meant as a performance optimization on TABLEs where this happens often
 
 
                                              /=+===============================+=\
@@ -10142,37 +10232,68 @@ https://www.postgresql.org/docs/current/functions-trigger.html ???
                                              \=+===============================+=/
 
 
+create event trigger "EFUNC"      #Like TFUNC (same behavior) but EVENT is DDL
+ on EVENT execute function FUNC() #Not for cluster-wide ENTITYs nor EFUNCs
+                                  #Rollbacks the COMMAND if EFUNC fails
+                                  #Must be superuser
 
-create event trigger              #Like TFUNC but EVENT can be DDL not DML:
-EFUNC on EVENT                    #  - ddl_command_start|end: before|after a create, alter or drop (except for cluster-wide objects
-[when tag in (STR...)]            #    and TFUNC|EFUNC)
-execute function FUNC()           #  - sql_drop: same but only for drop
-                                  #     - FUNC() can use pg_event_trigger_dropped_objects() which returns a TABLE with one row for
-                                  #       each dropped objects and COL...:
-                                  #        - classid: DATABASE OID
-                                  #        - objid: object OID
-                                  #        - objsubid: e.g. for columns the attnum
-                                  #        - object_type STR
-                                  #        - schema_name STR
-                                  #        - object_name STR
-                                  #        - object_identity STR: SCHEMA.OBJECT name
-                                  #STR... are commands (e.g. 'drop table') to filter EFUNC.
-                                  #FUNC must return have an event_trigger return type, and takes no arguments.
-                                  #Must be superuser.
-alter event trigger
- disable|enable
- [replica|always]                 #
+create event trigger "EFUNC"
+ on EVENT
+ when tag in ('COMMAND',...) ...  #Only specific COMMANDs, e.g. 'drop table'
 
-pg_event_trigger                  #All EFUNC. ???
+EVENT ddl_command_start           #Before create|alter|drop|grant|revoke|comment|security label
+                                  #ENTITY might not exist
+EVENT ddl_command_end             #After successful create|alter|drop|grant|revoke|comment|security label
+EVENT sql_drop                    #After successful drop or `alter ... drop`
+EVENT table_rewrite               #Before alter table, alter materialized view or alter type "ROW_TYPE"
 
-EFUNC FOR PL/PGSQL ==>            #Return type is event_trigger, but doesn't use return.
-                                  #Can also use:
-                                  #  - tg_event STR: the EVENT
-                                  #  - tg_tag STR: the COMMAND
+alter event trigger disable|enable#
 
-https://www.postgresql.org/docs/current/event-triggers.html ???
+EFUNC ARGUMENTS ==>               #Like TFUNC
+event_trigger                     #TYPE to return from EFUNCs
+                                  #Uses special VARs like TFUNCs, but different ones
 
-https://www.postgresql.org/docs/current/functions-event-triggers.html ???
+pg_event_trigger                  #TABLE with all EFUNCs
+pg_event_trigger.oid              #OID
+pg_event_trigger.evtname          #"EFUNC" name
+pg_event_trigger.evtevent         #"EVENT" name
+pg_event_trigger.evtfoid          #REGPROC of FUNC
+pg_event_trigger.evttags          #'COMMAND'_ARR or null. `when tag in ...`
+
+pg_event_trigger_ddl_commands()
+ ->ROW_SET                        #In EFUNC with EVENT 'ddl_command_end', returns current ENTITYs
+ROW.classid
+ROW.objid
+ROW.objsubid                      #Like pg_depend.*
+ROW.object_type                   #'ENTITY'
+ROW.schema_name                   #'SCHEMA'|null
+ROW.object_identity               #'SCHEMA.NAME'
+ROW.in_extension                  #BOOL. Whether in an EXTENSION's SQLMAIN
+ROW.command_tag                   #'COMMAND'
+ROW.command                       #Full COMMAND as PG_DDL_COMMAND
+
+pg_ddl_command                    #TYPE representing a COMMAND during an EFUNC with EVENT 'ddl_command*'
+                                  #Can only be used in C FUNCs
+
+pg_event_trigger_dropped_objects()
+ ->ROW_SET                        #In EFUNC with EVENT 'sql_drop', returns currently dropped ENTITYs
+ROW.classid
+ROW.objid
+ROW.objsubid
+ROW.object_type
+ROW.schema_name
+ROW.object_identity               #Like above
+ROW.object_name                   #'NAME'|null
+ROW.address_names()->STR_ARR
+ROW.address_args()->STR_ARR       #To pass to pg_get_object_address()
+ROW.is_temporary                  #BOOL if temporary ENTITY
+ROW.original                      #BOOL. False if dropped due to being a child dependency
+ROW.normal                        #BOOL. Whether dependency was "normal" (pg_depend.deptype 'n')
+
+pg_event_trigger_table_
+ rewrite_oid()->OID               #In EFUNC with EVENT 'table_rewrite', returns current TABLE
+pg_event_trigger_table_
+ rewrite_reason()->INT4           #Same with reason number
 
 
                                              /=+===============================+=\
@@ -10182,37 +10303,245 @@ https://www.postgresql.org/docs/current/functions-event-triggers.html ???
                                              \=+===============================+=/
 
 
-create [or replace]               #Creates a macro that modifies a command matching EVENT into COMMANDS (add or replace according to
-rule RULE as on EVENT             #"instead"), for "TABLE", when BOOL:
-to "TABLE" [where BOOL]           #  - EVENT:
-do [instead] COMMANDS             #     - select|insert|update|delete
-                                  #     - select must be "instead", non-"where BOOL" and with select COMMAND
-                                  #       (similar to create a VIEW)
-                                  #  - BOOL:
-                                  #     - can refer to old|new."COL" (like triggers)
-                                  #COMMANDS:
-                                  #  - nothing: with "instead", original EVENT is dropped
-                                  #  - COMMAND or (COMMAND;...):
-                                  #     - Must be select|insert|update|delete|notify.
-                                  #     - For insert, the original EVENT is performed before COMMAND, for others after.
-                                  #     - "instead" non-"where BOOL" COMMAND insert|update|delete must be MSUBQUERY
-                                  #       so that calling command can use returning itself.
-                                  #When to use rules:
-                                  #  - VIEW are better than RULE with select EVENT.
-                                  #  - rules are similar to TFUNC, often faster but harder and less flexible.
-                                  #    Prefer triggers unless performance is critical, in which case check if actually faster.
-                                  #Child auto-dependency of its TABLE|COL
+create rule "RULE"                #Before COMMAND on "TABLE|VIEW", call NEW_COMMAND
+ as on COMMAND to "TABLE|VIEW"    #COMMAND can be select|insert|update|delete
+ do NEW_COMMAND                   #NEW_COMMAND can be select|insert|update|delete|notify or `nothing`
+                                  #If COMMAND `select`, NEW_COMMAND must be `select` too
+                                  #If COMMAND `insert`, NEW_COMMAND performed after instead
+                                  #COMMAND cannot use `with ...`
+                                  #NEW_COMMAND uses ROLE of TABLE|VIEW owner, not COMMAND caller
+                                  #Used internally by [M]VIEWs
+                                  #  - named "_RETURN"
+                                  #  - should prefer VIEWs to RULE with COMMAND `select`
+                                  #Child auto-dependency of its TABLE|VIEW
+
+create rule ...
+ do (NEW_COMMAND;...)             #Not with COMMAND `select`
+
+RULE VS TFUNC ==>                 #RULEs are similar to TFUNCs but:
+                                  #  - implemented by rewriting the original COMMAND
+                                  #     - as opposed to calling a FUNC separately
+                                  #  - use SQL command instead of a FUNC: simpler but less flexible
+                                  #  - fewer features: no `for each row`, `update on "COL"`, `after EVENT`, `truncate`, `deferred`
+                                  #  - `instead` RULEs tend to be faster since query planner knows of the full final commands,
+                                  #    i.e. can optimize them
+
+create rule ...                   #If COMMAND `select`:
+ do instead NEW_COMMAND           #  - required
+                                  #  - replaces the original COMMAND's `from ...`
+                                  #  - other clauses are kept as is
+                                  #     - e.g. `where`, `select VALs`, `order by`, etc.
+                                  #     - i.e. like in VIEWs
+                                  #If not COMMAND `select`:
+                                  #  - replaces the whole original COMMAND
+                                  #  - should use `returning ...`
+                                  #     - only on a single RULE, and cannot use `where BOOL_REXPR`
+
+create rule ...                   #Only perform when BOOL_REXPR true
+ where BOOL_REXPR do NEW_COMMAND  #Not with COMMAND `select`
+                                  #Can use `old|new` "ROW_ALIAS" (like TFUNCs)
 
 alter table enable|disable ...
- rule RULE|user|all               #Like `alter table enable|disable ... trigger TRIGGER|user|all`
+ rule RULE|user|all               #Like `alter table enable|disable ... trigger TRIGGER|user|all` but for RULEs
 
-pg_rewrite                        #All RULE. ???
-pg_rules                          #Same, but more for user-defined RULE. ???
+pg_rules                          #TABLE with all RULEs, excluding "_RETURN"s
+pg_rules.rulename                 #"RULE" name
+pg_rules.tablename                #"TABLE|VIEW" name
+pg_rules.definition               #'CREATE RULE ...'
 
-pg_class.relhasrules              #BOOL. Whether RELATION has RULEs
+pg_rewrite                        #TABLE with all RULEs, including "_RETURN"s
+pg_rewrite.oid                    #OID
+pg_rewrite.rulename               #"RULE" name
+pg_rewrite.ev_class               #REGCLASS of TABLE|VIEW
+pg_rewrite.ev_type                #Among '1' (select), '2' (update), '3' (insert), '4' (delete)
+pg_rewrite.is_instead             #BOOL. `do instead`
+pg_rewrite.ev_action              #PG_NODE_TREE of `NEW_COMMAND`
+pg_rewrite.ev_qual                #PG_NODE_TREE of `where BOOL_REXPR`
+
+pg_class.relhasrules              #BOOL. Whether TABLE|VIEW has RULEs
 pg_tables.hasrules                #BOOL. Whether TABLE has RULEs
 
-https://www.postgresql.org/docs/current/rules.html ???
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:          PUBLICATION          :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+create publication "PUB"          #"Logical replication" PUB, i.e. emits any data changes on specific TABLEs, for SUBs to consume
+                                  #Does not start replication until there is a SUB
+
+create publication "PUB"          #TABLEs to target
+ for table "TABLE",...            #Cannot be temporary|unlogged nor [M]VIEW|FTABLE
+                                  #Current ROLE must own the TABLEs
+
+create publication "PUB"
+ for table "TABLE"("COL",...)     #Only target changes to those COLs (def: all)
+
+create publication "PUB"          #Do not target changes if BOOL_REXPR false
+ for table "TABLE"                #Noop with `truncate` COMMANDs
+ where (BOOL_REXPR)               #Cannot use:
+                                  #  - user-defined FUNC|OP|TYPE|COLLATION
+                                  #  - non-immutable FUNC
+                                  #  - pg_catalog.*
+
+create publication "PUB"          #Target all current|future TABLEs in SCHEMA
+ for tables in schema "SCHEMA",...#"SCHEMA" can be current_schema
+                                  #Must be superuser
+
+create publication "PUB"          #Target all current|future TABLEs in DATABASE
+ for all tables                   #Must be superuser
+
+alter publication "PUB"
+ add|set|drop table "TABLE" ...
+alter publication "PUB"
+ add|set|drop tables in schema ...#
+
+create publication ... with (OPTS)#
+
+OPTS.publish                      #'COMMAND,...' (def: all) among 'insert', 'update', 'delete', 'truncate'
+                                  #Only target specific commands
+
+OPTS.publish_via_partition_root   #BOOL (def: false). When changing a partitioned parent|child TABLE,
+                                  #whether to use the parent TABLE instead
+                                  #This allows replicating to a non-partitioned TABLE
+                                  #If true, `truncate` is ignored
+
+pg_publication                    #TABLE with all PUBs
+pg_publication.oid                #OID
+pg_publication.pubname            #"PUB" name
+pg_publication.puballtables       #BOOL. `for all tables`
+pg_publication.pubinsert
+ |pubupdate|pubdelete|pubtruncate #BOOL. OPTS.publish
+pg_publication.pubviaroot         #BOOL. OPTS.publish_via_partition_root
+
+pg_publication_rel                #TABLE with all `create publication ... for table ...`
+pg_publication_rel.oid            #OID
+pg_publication_rel.prpubid        #pg_publication.oid of PUB
+pg_publication_rel.prrelid        #REGCLASS of TABLE
+pg_publication_rel.prattrs        #ARR of COLs (pg_attribute.attnum), or null for all COLs.
+pg_publication_rel.prqual         #PG_NODE_TREE|null. `where BOOL_REXPR`
+
+pg_publication_namespace          #TABLE with all `create publication ... for tables in schema`
+pg_publication.oid                #OID
+pg_publication.pnpubid            #pg_publication.oid of PUB
+pg_publication.pnnspid            #REGNAMESPACE of SCHEMA
+
+pg_publication_tables             #High-level VIEW combining pg_publication, pg_publication_rel and pg_publication_namespace
+pg_publication_tables.pubname     #"PUB" name
+pg_publication_tables.tablename   #"TABLE" name
+pg_publication_tables.attnames    #"COL"_ARR
+pg_publication_tables.rowfilter   #'BOOL_REXPR' of `where`
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:       REPLICA IDENTITY        :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+alter table "TABLE"               #Sets which COLs identify ROWs
+ replica identity ...             #For a PUB with COMMANDs update|delete, must be called
+                                  #  - PUB COLs must include replica identity COLs
+                                  #  - PUB `where` can only include replica identity COLs
+                                  #Also used by WAL
+
+alter table "TABLE"
+ replica identity default         #Default if primary key (and not pg_catalog.*): use those COLs
+alter table "TABLE"
+ replica identity nothing         #Default otherwise: use no COLs
+alter table "TABLE"
+ replica identity full            #Use all COLs
+alter table "TABLE"               #Use INDEX COLs
+ replica identity                 #Must be unique + not null
+ using index "INDEX"              #Must not be partial, nor deferrable
+
+pg_class.relreplident             #'CHAR' with `replica identity` among 'd|n|f|i'
+pg_index.indisreplident           #BOOL. Whether INDEX is used in a `replica identity`
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:         SUBSCRIPTION          :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+create subscription "SUB"         #Subscribe to a PUB
+ connection 'LIBPQ'               #Connect with 'LIBPQ', i.e. can be in a different DATABASE|CLUSTER|machine
+ publication "PUB",...            #Must be superuser
+                                  #If multiple PUBs on same TABLE:
+                                  #  - must have same COLs
+                                  #  - `where BOOL_EXPRs` are or'd
+                                  #PUB might not exist yet
+
+create subscription "SUB" ...
+ with (OPTS)                      #
+
+alter subscription "SUB"
+ connection 'LIBPQ'               #
+alter subscription "SUB"
+ add|set|drop publication "PUB"
+ [with OPTS]                      #
+
+alter subscription "SUB"
+ add|set|drop publication "PUB"
+ with (refresh = BOOL)            #
+alter subscription "SUB"
+ refresh publication [with (OPTS)]#OPTS: only copy_data
+
+alter subscription "SUB"
+ skip (lsn = PG_LSN)              #
+
+alter subscription "SUB"
+ enable|disable                   #
+OPTS.enabled                      #BOOL (def: true)
+
+OPTS.disable_on_error             #BOOL (def: false). Disable if any internal error in SUB
+
+OPTS.connect                      #BOOL. If false (def: true), do not subscribe until `refresh publication`
+
+SLOT                              #How publisher keeps track of a SUB
+
+OPTS.create_slot                  #BOOL. If true (def):
+                                  #  - automatically create SLOT
+                                  #  - cannot be in a transaction
+                                  #If false:
+                                  #  - publisher must create it with pg_create_logical_replication_slot()
+                                  #  - OPTS.enabled must be false
+                                  #  - required when PUB is in the same CLUSTER
+
+OPTS.slot_name                    #'SLOT' name (def: 'SUB')
+                                  #Can be 'NONE' when OPTS.create_slot false
+
+OPTS.copy_data                    #BOOL. If true (def), copy pre-existing data when SUB starts
+
+OPTS.streaming                    #BOOL. Whether to send transactions in bulk (false, def) or incrementally (true)
+
+OPTS.binary                       #BOOL. Whether to serialize TYPEs using:
+                                  #  - 'UNKNOWN' (false, def), i.e. YOPTS.input|output: more portable across Postgres versions
+                                  #  - binary (true), i.e. YOPTS.send|receive: smaller size
+
+OPTS.two_phase                    #BOOL. Whether to send PREPs on creation (true) or on commit (false, def)
+
+OPTS.synchronous_commit           #Like SCONF.synchronous_commit but only for this SUB
+                                  #Def is 'off' because lost transactions are automatically recovered
+                                  #When using synchronous logical replication, 'off' can be slower
+
+alter subscription ???
+
+pg_subscription ???
+                                  #Visible only to superuser
+
+pg_subscription_rel ???
+
+pg_stat_subscription ???
+
+pg_stat_subscription_stats ???
+
+https://www.postgresql.org/docs/current/logical-replication.html ???
 
 
                                              /=+===============================+=\
@@ -10221,6 +10550,23 @@ https://www.postgresql.org/docs/current/rules.html ???
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
+
+ZSCONF.session_replication_role   #'origin' (def), 'replica' or 'local'
+alter table ...
+ [replica|always] trigger|rule ...#
+
+alter event trigger disable|enable
+ [replica|always]                 #
+
+pg_trigger.tgenabled              #char Controls in which session_replication_role modes the trigger fires.
+                                  #O = trigger fires in “origin” and “local” modes
+                                  #D = trigger is disabled
+                                  #R = trigger fires in “replica” mode
+                                  #A = trigger fires always
+pg_event_trigger.evtenabled       #Same for EFUNC
+pg_rewrite.ev_enabled             #Same for RULE
+
+https://www.postgresql.org/docs/current/functions-admin.html#FUNCTIONS-REPLICATION-TABLE ???
 
 pg_xact_commit_timestamp() ???
 
@@ -10233,82 +10579,19 @@ pg_ls_logicalmapdir()->ROW_SET    #Returns files in pg_logical/mappings DIR
 pg_ls_logicalsnapdir()->ROW_SET   #Returns files in pg_logical/snapshots DIR
                                   #ROW: name STR, size INT8, modification TIMESTAMPTZ
 
-pg_class.relreplident             #'CHAR' with RELATION's COLs used to form `replicate identity`:
-                                  #  - 'd': default (primary key, if any)
-                                  #  - 'n': none
-                                  #  - 'f': all COLs
-                                  #  - 'i': index with indisreplident set
-                                  #By default: 'n' for all, except sql_* which use 'd'
-
-pg_index.indisreplident           #BOOL. Whether INDEX is a replica identity
-
 TOPTS.user_catalog_table          #BOOL???
-
-alter table "TABLE"
- replica identity ...             #???
-
-ZSCONF.session_replication_role   #'origin' (def), 'replica' or 'local'
-alter table ...
- [replica|always] trigger|rule ...#
-
-pg_replication_origin_*(): must be superuser
 
 SCONF.logical_decoding_work_mem ???
 PCONF.max_logical_replication_workers ???
 PCONF.max_replication_slots ???
 HCONF.max_sync_workers_per_subscription ???
 
+pg_replication_origin_*(): must be superuser
+
 pg_replication_origin             #???
 pg_replication_origin_status      #???
                                   #Visible only to superuser
 pg_replication_slots              #???
-
-pg_trigger.tgenabled              #char Controls in which session_replication_role modes the trigger fires.
-                                  #O = trigger fires in “origin” and “local” modes
-                                  #D = trigger is disabled
-                                  #R = trigger fires in “replica” mode
-                                  #A = trigger fires always
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:          PUBLICATION          :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-create publication ???
-alter publication ???
-
-pg_publication ???
-
-pg_publication_namespace ???
-
-pg_publication_rel ???
-
-pg_publication_tables ???
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:         SUBSCRIPTION          :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-create subscription ???
-                                  #Must be superuser
-
-alter subscription ???
-
-pg_subscription ???
-                                  #Visible only to superuser
-
-pg_subscription_rel ???
-
-pg_stat_subscription ???
-
-pg_stat_subscription_stats ???
 
 
                                              /=+===============================+=\
@@ -10378,6 +10661,8 @@ ICONF.shared_memory_size ???
 ICONF.shared_memory_size_in_huge_pages ???
 PCONF.huge_pages ???
 PCONF.huge_pages_size ???
+
+pg_prewarm EXTENSION ???
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -10829,6 +11114,8 @@ HCONF.log_truncate_on_rotation ???
 
 HCONF.log_hostname ???
 
+auto_explain EXTENSION???
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -10904,6 +11191,8 @@ pg_stat_statements                #VIEW for all queries (query, time, number of 
                                   #Can use PCONF.pg_stat_statements.max (def: 1000)
                                   #Must put pg_stat_statements in PCONF.shared_preload_libraries and use EXTENSION pg_stat_statements.
 
+pg_buffercache EXTENSION ???
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -10923,6 +11212,7 @@ pg_total_relation_size(OID|STR)   #Same but with INDEX included
 pg_table_size(OID|STR)            #Same with INDEX excluded and only for TABLE
 pg_size_pretty(UINT)              #Convert a bytes size into human readable STR.
 
+pgstattuple EXTENSION ???
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -11433,6 +11723,8 @@ SEQUENCE.log_cnt                  #0-32 (def: 0). Decrements at each setval|next
                                   #When at 0, writes SEQUENCE to WAL.
                                   #I.e. only every 32 new value of SEQUENCEs are written to WAL, for performance
 
+pg_walinspect EXTENSION ???
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -11511,6 +11803,7 @@ ONLINE BACKUP ==>                 #     - "continuous archiving". Just need to a
                                   #            -c fast|spread   Change HCONF.checkpoint_completion_target (def: spread)
                                   #            -P               Progress bar
                                   #        - use same privileges as streaming replication (PCONF.max_wal_senders, replication privilege, etc.)
+                                  #        - basebackup_to_shell EXTENSION???
                                   #     - in all cases, need to be done regularly, e.g. with a cron script
                                   #        - more regular base backups require more storage, but make faster recoveries
                                   #  - recovery:
