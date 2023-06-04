@@ -295,15 +295,19 @@ pg_opclass.opcnamespace           #REGNAMESPACE of OPCLASS
 pg_seclabels.objnamespace         #REGNAMESPACE|null of SECURITY_LABEL
 pg_proc.pronamespace              #REGNAMESPACE of FUNC
 pg_operator.oprnamespace          #REGNAMESPACE of OP
-pg_tables.schemaname              #pg_namespace.nspname of TABLE
-pg_indexes.schemaname             #pg_namespace.nspname of INDEX
-pg_views.schemaname               #pg_namespace.nspname of VIEW
-pg_matviews.schemaname            #pg_namespace.nspname of MVIEW
-pg_sequences.schemaname           #pg_namespace.nspname of SEQUENCE
-pg_stats.schemaname               #pg_namespace.nspname of analyzed TABLE
-pg_policies.schemaname            #pg_namespace.nspname of POLICY
-pg_rules.schemaname               #pg_namespace.nspname of RULE
-pg_publication_tables.schemaname  #pg_namespace.nspname of PUB's TABLE
+pg_statistic_ext.stxnamespace     #REGNAMESPACE of STATISTICS
+pg_tables.schemaname              #"SCHEMA" name of TABLE
+pg_indexes.schemaname             #"SCHEMA" name of INDEX
+pg_views.schemaname               #"SCHEMA" name of VIEW
+pg_matviews.schemaname            #"SCHEMA" name of MVIEW
+pg_sequences.schemaname           #"SCHEMA" name of SEQUENCE
+pg_stats.schemaname               #"SCHEMA" name of analyzed TABLE
+pg_policies.schemaname            #"SCHEMA" name of POLICY
+pg_rules.schemaname               #"SCHEMA" name of RULE
+pg_publication_tables.schemaname  #"SCHEMA" name of PUB's TABLE
+pg_stats_ext[_exprs]
+ .statistics_schemaname           #"SCHEMA" name of STATISTICS
+pg_stats_ext.schemaname           #"SCHEMA" name of STATISTICS's TABLE
 
 
                                              /=+===============================+=\
@@ -6395,8 +6399,8 @@ pg_stat_progress_analyze
 
 
 SCONF.default_statistics_target   #NUM (def: 100, from 0 to 10000)
-                                  #Number of items in pg_statistic.* COLs that are ARRs
-                                  #Higher values are slower but gives better results.
+                                  #Number of items in pg_statistic.* COLs that are ARRs: most_common_*, histogram_bounds
+                                  #Higher values makes `explain` slower but with better plans
 alter table|index ...
  alter [column] "COL"
  set statistics NUM               #Sets default_statistics_target for a COL. -1 means default. 0 means none.
@@ -6410,17 +6414,10 @@ pg_statistic                      #Statistic of a COL or an index REXPR, used by
                                   #Visible only to superuser
 pg_statistic.starelid             #REGCLASS of the TABLE
 pg_statistic.staatnum             #pg_attribute.attnum of the COL
-pg_statistic.stainherit           #BOOL. True if "PARENT_TABLE", i.e. include "CHILD_TABLE" stats
-pg_statistic.stanullfrac          #FLOAT4. Percentage of null values
-pg_statistic.stawidth             #INT4. Average size (in bytes) of non-null values
-pg_statistic.stadistinct          #FLOAT4. Number of distinct non-null values. Can be:
-                                  #  - NUM:
-                                  #     - means NUM values are unique and non-null
-                                  #     - used when unlikely to increase as table grows
-                                  #  - -NUM:
-                                  #     - means NUM% of values are unique and non-null
-                                  #     - used when likely to increase as table grows
-                                  #  - 0: unknown
+pg_statistic.stainherit           #BOOL. Like pg_stats.inherited
+pg_statistic.stanullfrac          #FLOAT4. Like pg_stats.null_frac
+pg_statistic.stawidth             #INT4. Like pg_stats.avg_width
+pg_statistic.stadistinct          #FLOAT4. Like pg_stats.n_distinct
 pg_statistic.sta*NUM              #Individual statistics. See pg_stats.* for the kinds of statistics
 pg_statistic.stakindNUM           #INT. Statistic type
 pg_statistic.staopNUM             #REGOPER used to order data. 0 if none
@@ -6431,27 +6428,49 @@ pg_statistic.stavaluesNUM         #ARR. statistics with the same type as the COL
 pg_stats                          #VIEW on top of pg_statistic
 pg_stats.tablename                #"TABLE" name
 pg_stats.attname                  #"COL" name
-pg_stats.inherited                #BOOL. Like pg_statistic.stainherit
-pg_stats.null_frac                #FLOAT4. Like pg_statistic.stanullfrac
-pg_stats.avg_width                #INT4. Like pg_statistic.stawidth
-pg_stats.n_distinct               #FLOAT4. Like pg_statistic.stadistinct
+pg_stats.inherited                #BOOL. True if "PARENT_TABLE", i.e. include "CHILD_TABLE" stats
+
+pg_stats.null_frac                #FLOAT4. Percentage of null values
+                                  #Used by query planner to estimate number of ROWs with `where`, `group by`
+                                  #with value either null or not
+                                  #  - e.g. if half of values are null, `where VAL = 1` cannot only return at most half of ROWs
+
+pg_stats.avg_width                #INT4. Average size (in bytes) of non-null values
+                                  #Used in `(width)` output of `explain`
+
+pg_stats.n_distinct               #FLOAT4. Number of distinct non-null values. Can be:
+                                  #  - NUM:
+                                  #     - means NUM values are unique and non-null
+                                  #     - used when unlikely to increase as table grows
+                                  #  - -NUM:
+                                  #     - means NUM% of values are unique and non-null
+                                  #     - used when likely to increase as table grows
+                                  #  - 0: unknown
+                                  #Used by query planner to estimate number of ROWs with `group by`
+
 pg_stats.most_common_vals         #ARR of most common values. null if none
+                                  #Used together with `most_common_freqs` by query planner to estimate number of ROWs with `where VAL = VAL2`
+                                  #with VAL2 being one of the most common values
+                                  #Also used when VAL2 is not one of them, using the average frequency of the remaining (not most common) values
 pg_stats.most_common_freqs        #FLOAT4_ARR. Frequencies of most_common_vals. null if none.
+
 pg_stats.histogram_bounds         #ARR. Percentiles. null if none
+                                  #Used by query planner to estimate number of ROWs with `where` and OPs like < <= > >=
+
 pg_stats.most_common_elems        #ARR. Like most_common_vals but for ARR items. null if COL TYPE is not ARR.
 pg_stats.most_common_elem_freqs   #FLOAT4_ARR. Like most_common_freqs but for ARR items. null if COL TYPE is not ARR.
                                   #Each value is followed by min|max frequency. Optionally also the frequency of null values.
 pg_stats.elem_count_histogram     #FLOAT4_ARR. Like histogram_bounds but for ARR items. null if COL_TYPE is not ARR
+
 pg_stats.correlation              #-1 to 1. Statistical correlation between physical locations (ctid) and logical locations (ROW index)
                                   #When close to 0, means index scans will require lots of random access, i.e. expensive
                                   #null if none
 
-pg_class.relpages|reltuples       #Set only by analyze, vacuum and some DDL commands like create index
- |relallvisible                   #I.e. estimate only since it might have changed
-                                  #Used by the query planner
 pg_class.relpages                 #INT4. Size of the file on-disk, in 8KB pages.
+                                  #Used by the query planner to estimate cost of sequential scans
 pg_class.reltuples                #FLOAT4. Number of non-dead ROWs
                                   #-1 if VIEW|ROW_TYPE, or if not analyze|vacuum'd yet
+                                  #Used by the query planner to estimate cost of sequential scans
 
 YOPTS.analyze                     #FUNC(INTERNAL)->BOOL. Customize `analyze` behavior on that TYPE
                                   #Returns false if should skip analyze
@@ -6459,8 +6478,6 @@ YOPTS.analyze                     #FUNC(INTERNAL)->BOOL. Customize `analyze` beh
                                   #  - mostly computing the values for pg_statistic
                                   #  - not fully documented yet
                                   #Def: uses a FUNC that relies on = and < OPs
-
-Detailed explanation at https://www.postgresql.org/docs/current/planner-stats-details.html ???
 
 
                                              /=+===============================+=\
@@ -6470,16 +6487,79 @@ Detailed explanation at https://www.postgresql.org/docs/current/planner-stats-de
                                              \=+===============================+=/
 
 
-create statistics ???
-alter statistics ???
+create statistics "STATISTICS"    #Make `analyze` collect "multivariate" statistics, i.e. multiple "COL"|(REXPR) together
+ on "COL"|(REXPR),...             #If only one, must be a REXPR, not "COL"
+ from "TABLE"                     #Useful when those "COL"|(REXPR) are both:
+                                  #  - queried together
+                                  #  - correlated
 
-pg_statistic_ext ???
-pg_statistic_ext_data ???
-                                  #Visible only to superuser
-pg_stats_ext ???
-pg_stats_ext_exprs ???
+create statistics "STATISTICS"
+ (KIND,...) ...                   #Specifies which statistics to compute (def: all)
 
-https://www.postgresql.org/docs/current/planner-stats.html#PLANNER-STATS-EXTENDED ???
+create statistics "STATISTICS"    #Like pg_stats.ndistinct, but multivariate
+ (ndistinct,...) ...              #Otherwise, correlated COLs are considered independent by the query planner
+                                  #I.e. query planner would overestimate number of ROWs returned by `group by COL, COL2`
+                                  #  - e.g. if there are 3 COL values and 3 COL2 values, it would estimate 9 total values,
+                                  #    even if those are perfectly correlated, i.e. should be 3 total values
+
+create statistics "STATISTICS"
+ (mcv,...) ...                    #Similar but for pg_stats.most_common_values
+
+create statistics "STATISTICS"    #Functional dependency between COLs, i.e. correlation between their values
+ (dependencies,...) ...           #Used by query planner to estimate number of ROWs with `where VAL = VAL2 and VAL = VAL3`
+                                  #I.e. query planner would overestimate number of ROWs otherwise, if correlated
+                                  #Only with "COL", not REXPR
+
+pg_statistic_ext                  #TABLE with all STATISTICs
+pg_statistic_ext.oid              #OID
+pg_statistic_ext.stxname          #"STATISTICS" name
+pg_statistic_ext.stxrelid         #REGCLASS of "TABLE"
+pg_statistic_ext.stxstattarget    #INT4. Like pg_attribute.attstattarget
+pg_statistic_ext.stxkeys          #ARR of "COL" (pg_attribute.attnum)
+pg_statistic_ext.stxexprs         #PG_NODE_TREE of REXPRs
+pg_statistic_ext.stxkind          #'d|f|m'_ARR
+
+pg_statistic_ext_data             #TABLE with data collected by `analyze` for STATISTICs
+pg_statistic_ext_data.stxoid      #pg_statistic_ext.oid
+pg_statistic_ext_data.stxdinherit #BOOL: like pg_statistic.stainherit
+pg_statistic_ext_data
+ .stxdndistinct                   #PG_NDISTINCT
+pg_statistic_ext_data.stxdmcv     #PG_MCV_LIST
+pg_statistic_ext_data
+ .stxddependencies                #PG_DEPENDENCIES
+pg_statistic_ext_data.stxdexpr    #PG_STATISTIC_ARR
+
+pg_stats_ext                      #High-level VIEW on top of pg_statistic_ext and pg_statistic_ext_data
+pg_stats_ext.tablename            #"TABLE" name
+pg_stats_ext.statistics_name      #"STATISTICS" name
+pg_stats_ext.attnames             #"COL"_ARR
+pg_stats_ext.exprs                #STR_ARR. pg_statistic_ext.stxexprs
+pg_stats_ext.kinds                #CHAR_ARR. pg_statistic_ext.stxkind
+pg_stats_ext[_exprs].inherited    #BOOL. pg_statistic_ext_data.stxdinherit
+pg_stats_ext.n_distinct           #PG_NDISTINCT. pg_statistic_ext_data.stxdndistinct
+pg_stats_ext.dependencies         #PG_DEPENDENCIES. pg_statistic_ext_data.stxddependencies
+pg_stats_ext.most_common_vals     #STR_ARR. Like pg_stats.most_common_vals
+pg_stats_ext.most_common_val_nulls#BOOL_ARR. Whether most_common_vals[*] is null
+pg_stats_ext.most_common_freqs    #FLOAT8_ARR. Like pg_stats.most_common_freqs
+pg_stats_ext                      #FLOAT8_ARR. When multiplying frequency of each COL independently when each other,
+ .most_common_base_freqs          #not their frequency when used together
+
+pg_stats_ext_exprs                #High-level VIEW on top of pg_statistic_ext and pg_statistic_ext_data
+pg_stats_ext_exprs.*              #Like pg_stats.* except no attname ->
+pg_stats_ext_exprs.statistics_name#"STATISTICS" name
+pg_stats_ext_exprs.expr           #'REXPR'
+
+pg_ndistinct                      #TYPE to store ndistinct statistics
+'{"VAL,...": COUNT_NUM}'          #PG_NDISTINCT_UNKNOWN
+PG_NDISTINCT ~> STR               #
+
+pg_mcv_list                       #TYPE to store most common values statistics
+
+pg_dependencies                   #TYPE to store functional dependencies
+'{"VAL => VAL2": CORR_FLOAT}'     #PG_DEPENDENCIES_UNKNOWN
+PG_DEPENDENCIES ~> STR            #
+
+pg_statistic                      #TYPE
 
 
                                              /=+===============================+=\
@@ -6741,6 +6821,7 @@ pg_truncate_visibility_map        #Remove visibility map. It will be rebuilt by 
  (REGCLASS)                       #Meant if visibility map corrupted
 
 pg_class.relallvisible            #INT4. Number of RELATION's heap pages with all-visible bit in the visibility map.
+                                  #Used by the query planner to estimate cost of sequential scans
 
 DBDIR|CLUSTERDIR/REGCLASS_OID_vm  #Visibility map location
 
@@ -7460,6 +7541,10 @@ pg_proc.proowner                  #REGROLE of FUNC's owner
 pg_event_trigger.evtowner         #REGROLE of EFUNC's owner
 pg_operator.oprowner              #REGROLE of OP's owner
 pg_publication.pubowner           #REGROLE of PUB's owner
+pg_subscription.subowner          #REGROLE of SUB's owner
+pg_statistic_ext.stxowner         #REGROLE of STATISTICS's owner
+pg_stats_ext[_exprs]
+ .statistics_owner                #"ROLE" name of STATISTICS's owner
 pg_prepared_xacts.owner           #"ROLE" name of PXID's owner
 
 
@@ -10369,28 +10454,33 @@ pg_tables.hasrules                #BOOL. Whether TABLE has RULEs
                                              \=+===============================+=/
 
 
-create publication "PUB"          #"Logical replication" PUB, i.e. emits any data changes on specific TABLEs, for SUBs to consume
-                                  #Does not start replication until there is a SUB
+create publication "PUB"          #"Logical replication" PUB, i.e. replicate a TABLE
+                                  #Each SUB does replication, i.e. does not start until there is one
+                                  #There can be multiple SUBs per PUB, and multiple PUBs per SUB
+                                  #Unlike physical replication, copies transaction-wise, not heap page-wise
+                                  #Also called "change set" or "replication set"
 
-create publication "PUB"          #TABLEs to target
+create publication "PUB"          #TABLEs to replicate
  for table "TABLE",...            #Cannot be temporary|unlogged nor [M]VIEW|FTABLE
                                   #Current ROLE must own the TABLEs
 
-create publication "PUB"
- for table "TABLE"("COL",...)     #Only target changes to those COLs (def: all)
+create publication "PUB"          #COLs to replicate (def: all)
+ for table "TABLE"("COL",...)     #Non-replicated COLs can differ between PUB|SUB
+                                  #Replicated COLs can have different configuration (TYPE, CONSTRAINT, etc.),
+                                  #providing they are compatible for copy purpose
 
-create publication "PUB"          #Do not target changes if BOOL_REXPR false
+create publication "PUB"          #Do not replicate ROWs where BOOL_REXPR false
  for table "TABLE"                #Noop with `truncate` COMMANDs
  where (BOOL_REXPR)               #Cannot use:
                                   #  - user-defined FUNC|OP|TYPE|COLLATION
                                   #  - non-immutable FUNC
                                   #  - pg_catalog.*
 
-create publication "PUB"          #Target all current|future TABLEs in SCHEMA
+create publication "PUB"          #Replicate all current|future TABLEs in SCHEMA
  for tables in schema "SCHEMA",...#"SCHEMA" can be current_schema
                                   #Must be superuser
 
-create publication "PUB"          #Target all current|future TABLEs in DATABASE
+create publication "PUB"          #Replicate all current|future TABLEs in DATABASE
  for all tables                   #Must be superuser
 
 alter publication "PUB"
@@ -10401,11 +10491,12 @@ alter publication "PUB"
 create publication ... with (OPTS)#
 
 OPTS.publish                      #'COMMAND,...' (def: all) among 'insert', 'update', 'delete', 'truncate'
-                                  #Only target specific commands
+                                  #Only replicate transactions with those commands
+                                  #Does not impact initial snapshot done when SUB starts
 
-OPTS.publish_via_partition_root   #BOOL (def: false). When changing a partitioned parent|child TABLE,
+OPTS.publish_via_partition_root   #BOOL (def: false). When replicating a partitioned parent|child TABLE,
                                   #whether to use the parent TABLE instead
-                                  #This allows replicating to a non-partitioned TABLE
+                                  #This allows SUB to replicate to a non-partitioned TABLE
                                   #If true, `truncate` is ignored
 
 pg_publication                    #TABLE with all PUBs
@@ -10443,17 +10534,20 @@ pg_publication_tables.rowfilter   #'BOOL_REXPR' of `where`
 
 
 alter table "TABLE"               #Sets which COLs identify ROWs
- replica identity ...             #For a PUB with COMMANDs update|delete, must be called
-                                  #  - PUB COLs must include replica identity COLs
-                                  #  - PUB `where` can only include replica identity COLs
+ replica identity ...             #Used by PUB|SUB when updating|deleting ROWs
+                                  #PUB COLs must include replica identity COLs
+                                  #PUB `where` can only include replica identity COLs
                                   #Also used by WAL
 
 alter table "TABLE"
  replica identity default         #Default if primary key (and not pg_catalog.*): use those COLs
+
+alter table "TABLE"               #Default otherwise: use no COLs
+ replica identity nothing         #Cannot be used with PUB, unless there are no update|delete transactions
+
 alter table "TABLE"
- replica identity nothing         #Default otherwise: use no COLs
-alter table "TABLE"
- replica identity full            #Use all COLs
+ replica identity full            #Use all COLs. Slower.
+
 alter table "TABLE"               #Use INDEX COLs
  replica identity                 #Must be unique + not null
  using index "INDEX"              #Must not be partial, nor deferrable
@@ -10488,12 +10582,13 @@ alter subscription "SUB"
 
 alter subscription "SUB"
  add|set|drop publication "PUB"
- with (refresh = BOOL)            #
-alter subscription "SUB"
- refresh publication [with (OPTS)]#OPTS: only copy_data
+ with (refresh = BOOL)            #BOOL (def: false). Update PUBs after adding|removing them
+alter subscription "SUB"          #OPTS: only copy_data
+ refresh publication [with (OPTS)]#If true, cannot be in a transaction
 
-alter subscription "SUB"
- skip (lsn = PG_LSN)              #
+alter subscription "SUB"          #Skip replicating specific transactions, as specified by PG_LSN
+ skip (lsn = PG_LSN)              #Must be superuser
+                                  #PG_LSN can be `none` to undo
 
 alter subscription "SUB"
  enable|disable                   #
@@ -10501,7 +10596,7 @@ OPTS.enabled                      #BOOL (def: true)
 
 OPTS.disable_on_error             #BOOL (def: false). Disable if any internal error in SUB
 
-OPTS.connect                      #BOOL. If false (def: true), do not subscribe until `refresh publication`
+OPTS.connect                      #BOOL. If false (def: true), do not start until `refresh publication`
 
 SLOT                              #How publisher keeps track of a SUB
 
@@ -10513,10 +10608,10 @@ OPTS.create_slot                  #BOOL. If true (def):
                                   #  - OPTS.enabled must be false
                                   #  - required when PUB is in the same CLUSTER
 
-OPTS.slot_name                    #'SLOT' name (def: 'SUB')
+OPTS.slot_name                    #"SLOT" name (def: "SUB")
                                   #Can be 'NONE' when OPTS.create_slot false
 
-OPTS.copy_data                    #BOOL. If true (def), copy pre-existing data when SUB starts
+OPTS.copy_data                    #BOOL. If true (def), copy pre-existing data when SUB starts, in an "initial snapshot"
 
 OPTS.streaming                    #BOOL. Whether to send transactions in bulk (false, def) or incrementally (true)
 
@@ -10525,23 +10620,64 @@ OPTS.binary                       #BOOL. Whether to serialize TYPEs using:
                                   #  - binary (true), i.e. YOPTS.send|receive: smaller size
 
 OPTS.two_phase                    #BOOL. Whether to send PREPs on creation (true) or on commit (false, def)
+                                  #If true and OPTS.copy_data true, cannot use `refresh`
 
 OPTS.synchronous_commit           #Like SCONF.synchronous_commit but only for this SUB
                                   #Def is 'off' because lost transactions are automatically recovered
                                   #When using synchronous logical replication, 'off' can be slower
 
-alter subscription ???
-
-pg_subscription ???
+pg_subscription                   #TABLE with all SUBs
                                   #Visible only to superuser
+pg_subscription.oid               #OID
+pg_subscription.subname           #"SUB" name
+pg_subscription.subpublications   #'PUB'_ARR
+pg_subscription.subconninfo       #'LIBPQ'
+pg_subscription.subdbid           #pg_database.oid of SUB
+pg_subscription.subskiplsn        #PG_LSN or '0/0'. `skip (lsn = PG_LSN)`
+pg_subscription.subenabled        #BOOL. OPTS.enabled
+pg_subscription.subslotname       #"SLOT". OPTS.slot_name
+pg_subscription.substream         #BOOL. OPTS.streaming
+pg_subscription.subbinary         #BOOL. OPTS.binary
+pg_subscription.subtwophasestate  #CHAR. OPTS.two_phase: 'd' (disabled), 'e' (enabled), 'p' (pending enablement)
+pg_subscription.subdisableonerr   #BOOL. OPTS.disable_on_error
+pg_subscription.subsynccommit     #STR. OPTS.synchronous_commit
 
-pg_subscription_rel ???
+pg_subscription_rel               #TABLE with all SUBs state
+pg_subscription_rel.srsubid       #pg_subscription.oid of SUB
+pg_subscription_rel.srrelid       #REGCLASS of TABLE
+pg_subscription_rel.srsubstate    #Among:
+                                  #  - 'i': starting
+                                  #  - 'd': copying data
+                                  #  - 'f': finished copying data
+                                  #  - 's': synchronized
+                                  #  - 'r': ready
+pg_subscription_rel.srsublsn      #PG_LSN of the last replicated transaction
+                                  #null if srsubstate not 's|r'
 
-pg_stat_subscription ???
+pg_stat_subscription              #TABLE with all SUBs detailed state
+pg_stat_subscription.subid        #pg_subscription.oid of SUB
+pg_stat_subscription.subname      #"SUB" name
+pg_stat_subscription.relid        #REGCLASS of TABLE. null for the main worker
+pg_stat_subscription.pid          #INT4. PID of worker process
+pg_stat_subscription
+ .last_msg_receipt_time           #TIMESTAMPTZ of last message sent by PUB
+pg_stat_subscription.received_lsn #PG_LSN of last transaction received
+pg_stat_subscription
+ .last_msg_send_time              #TIMESTAMPTZ of last message received by SUB
+pg_stat_subscription
+ .latest_end_lsn                  #PG_LSN of last transaction reported back to PUB
+pg_stat_subscription
+ .latest_end_time                 #TIMESTAMPTZ of last transaction reported back to PUB
 
-pg_stat_subscription_stats ???
-
-https://www.postgresql.org/docs/current/logical-replication.html ???
+pg_stat_subscription_stats        #TABLE with count of SUBs errors
+pg_stat_subscription_stats.subid  #pg_subscription.oid of SUB
+pg_stat_subscription_stats.subname#"SUB" name
+pg_stat_subscription_stats
+ .apply_error_count               #INT8. Number of errors related to data copy
+pg_stat_subscription_stats
+ .sync_error_count                #INT8. Number of errors related to initial data copy
+pg_stat_subscription_stats
+ .stats_reset                     #TIMESTAMPTZ of last update of pg_stat_subscription_stats
 
 
                                              /=+===============================+=\
@@ -10593,76 +10729,6 @@ pg_replication_origin_status      #???
                                   #Visible only to superuser
 pg_replication_slots              #???
 
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:          EFFICIENCY           :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-WRITING ==>                       #Best way to write a big amount of data fast:
-                                  #  - put in only one transaction/statement
-                                  #  - use copy or (if copy not possible) prepare, if possible on an empty TABLE
-                                  #  - create the INDEX and foreign keys constraints after the data has been put into
-                                  #  - less checkpoints (increasing HCONF.checkpoint_timeout)
-                                  #  - temporarily disabling WAL or replication
-                                  #Should run analyze afterwards.
-
-PERFORMANCE ==>                   #Can:
-                                  #  - disable durability, by:
-                                  #      - putting HCONF.fsync and HCONF.full_page_writes off (risky)
-                                  #      - putting SCONF.synchronous_commit off (more durable and almost same performance gain)
-                                  #  - less checkpoints (see below)
-
-PERFORMANCE TUNING ==>            #CONF:
-                                  #  - SCONF.work_mem (def: 1MB): max memory used by a single command for each of its sort operations and hash
-                                  #    tables, before writing temp files to disk.
-                                  #    Average total memory taken will be average_number_of_hash/sort_operations_by_command *
-                                  #    number_of_connections * SCONF.work_mem. Should not be more than RAM taken by:
-                                  #      kernel + other applications + PCONF.shared_buffers + let memory for kernel buffer
-                                  #    Can also be set with postgres -S NUM
-                                  #  - PCONF.wal_buffers (def: -1, which auto-select a value): memory used for caching WAL, i.e. number of
-                                  #    WAL segments (16MB) that can be cached for all sessions before flushing them.
-                                  #    If high number of transactions, might consider increasing for better performance.
-                                  #    Best is 16MB.
-                                  #  - ZSCONF.max_stack_depth (def: 2MB):
-                                  #     - higher can provoke stack overflow (crashing the server) if higher than the kernel limit, with
-                                  #       a safety margin of 2MB
-                                  #       current OS limit can be seen with ulimit -s (8MB)
-                                  #     - lower can cancel complex queries requiring more stack.
-                                  #  - ZSCONF.temp_file_limit (def: -1, unlim): max memory for temp files, in KB
-                                  #  - PCONF.max_files_per_processes (def: 1000): max opened files per session (see limit with ulimit -S|H -n)
-                                  #    Def on Linux: 1024, so that's good.
-                                  #  - SCONF|AOPTS.effective_io_concurrency: when using several disks at same time (e.g. RAID), number of disks that
-                                  #    can write at same time
-                                  #  - SCONF|AOPTS.maintenance_io_concurrency
-                                  #  - PCONF.shared_buffers (def: 128MB): memory for shared buffers (def: 128MB).
-                                  #    Good value is 25% of RAM (if > 1GB total RAM)
-                                  #    Can also be set by postgres -B NUM
-                                  #Look at amount of memory taken with pgcluu or pgbadger
-
-HARDWARE ==>                      #  - more RAM -> more cache
-                                  #  - good hard drives. RAID0 or RAID1 is good idea
-                                  #  - CPU less important, but still important for complex functions
-
-PCONF.max_worker_processes ???
-SCONF.hash_mem_multiplier ???
-
-HCONF.bgwriter_delay ???
-HCONF.bgwriter_flush_after ???
-HCONF.bgwriter_lru_maxpages ???
-HCONF.bgwriter_lru_multiplier ???
-
-PCONF.min_dynamic_shared_memory ???
-PCONF.shared_memory_type ???
-PCONF.dynamic_shared_memory_type ???
-ICONF.shared_memory_size ???
-ICONF.shared_memory_size_in_huge_pages ???
-PCONF.huge_pages ???
-PCONF.huge_pages_size ???
-
-pg_prewarm EXTENSION ???
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -10789,6 +10855,77 @@ import foreign schema ???
 SCONF.enable_async_append, and asynchronous appends ???
 
 "Foreign Scan" when using explain ???
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:          EFFICIENCY           :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+WRITING ==>                       #Best way to write a big amount of data fast:
+                                  #  - put in only one transaction/statement
+                                  #  - use copy or (if copy not possible) prepare, if possible on an empty TABLE
+                                  #  - create the INDEX and foreign keys constraints after the data has been put into
+                                  #  - less checkpoints (increasing HCONF.checkpoint_timeout)
+                                  #  - temporarily disabling WAL or replication
+                                  #Should run analyze afterwards.
+
+PERFORMANCE ==>                   #Can:
+                                  #  - disable durability, by:
+                                  #      - putting HCONF.fsync and HCONF.full_page_writes off (risky)
+                                  #      - putting SCONF.synchronous_commit off (more durable and almost same performance gain)
+                                  #  - less checkpoints (see below)
+
+PERFORMANCE TUNING ==>            #CONF:
+                                  #  - SCONF.work_mem (def: 1MB): max memory used by a single command for each of its sort operations and hash
+                                  #    tables, before writing temp files to disk.
+                                  #    Average total memory taken will be average_number_of_hash/sort_operations_by_command *
+                                  #    number_of_connections * SCONF.work_mem. Should not be more than RAM taken by:
+                                  #      kernel + other applications + PCONF.shared_buffers + let memory for kernel buffer
+                                  #    Can also be set with postgres -S NUM
+                                  #  - PCONF.wal_buffers (def: -1, which auto-select a value): memory used for caching WAL, i.e. number of
+                                  #    WAL segments (16MB) that can be cached for all sessions before flushing them.
+                                  #    If high number of transactions, might consider increasing for better performance.
+                                  #    Best is 16MB.
+                                  #  - ZSCONF.max_stack_depth (def: 2MB):
+                                  #     - higher can provoke stack overflow (crashing the server) if higher than the kernel limit, with
+                                  #       a safety margin of 2MB
+                                  #       current OS limit can be seen with ulimit -s (8MB)
+                                  #     - lower can cancel complex queries requiring more stack.
+                                  #  - ZSCONF.temp_file_limit (def: -1, unlim): max memory for temp files, in KB
+                                  #  - PCONF.max_files_per_processes (def: 1000): max opened files per session (see limit with ulimit -S|H -n)
+                                  #    Def on Linux: 1024, so that's good.
+                                  #  - SCONF|AOPTS.effective_io_concurrency: when using several disks at same time (e.g. RAID), number of disks that
+                                  #    can write at same time
+                                  #  - SCONF|AOPTS.maintenance_io_concurrency
+                                  #  - PCONF.shared_buffers (def: 128MB): memory for shared buffers (def: 128MB).
+                                  #    Good value is 25% of RAM (if > 1GB total RAM)
+                                  #    Can also be set by postgres -B NUM
+                                  #Look at amount of memory taken with pgcluu or pgbadger
+
+HARDWARE ==>                      #  - more RAM -> more cache
+                                  #  - good hard drives. RAID0 or RAID1 is good idea
+                                  #  - CPU less important, but still important for complex functions
+
+PCONF.max_worker_processes ???
+SCONF.hash_mem_multiplier ???
+
+HCONF.bgwriter_delay ???
+HCONF.bgwriter_flush_after ???
+HCONF.bgwriter_lru_maxpages ???
+HCONF.bgwriter_lru_multiplier ???
+
+PCONF.min_dynamic_shared_memory ???
+PCONF.shared_memory_type ???
+PCONF.dynamic_shared_memory_type ???
+ICONF.shared_memory_size ???
+ICONF.shared_memory_size_in_huge_pages ???
+PCONF.huge_pages ???
+PCONF.huge_pages_size ???
+
+pg_prewarm EXTENSION ???
 
 
                                              /=+===============================+=\
