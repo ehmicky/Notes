@@ -254,6 +254,8 @@ CONF.search_path                  #'SCHEMA,...' used as default. Leftmost has pr
 current_schemas(BOOL)             #Show search_path
  ->'SCHEMA'_ARR                   #If false, do not include pg_catalog and pg_temp*
 
+set schema 'SCHEMA,...'           #Same as: set search_path to 'SCHEMA,...'
+
 DEFAULT CREATE SCHEMA ==>         #When creating a new ENTITY, use the leftmost SCHEMA of search_path, except "$user"
 current_schema
 current_schema()->'SCHEMA'        #Default write schema. null if none
@@ -1659,6 +1661,7 @@ to_reg*(TEXT)->REG*               #
 random()->FLOAT                   #From 0 to 1
                                   #Cycle of 3e14 numbers
                                   #PRNG not crypto-secure
+set seed FLOAT
 setseed(FLOAT)                    #FLOAT is from 0 to 1
 
 normal_rand(INT, FLOAT, FLOAT2)   #INT random variables following N(FLOAT, FLOAT2)
@@ -4761,6 +4764,8 @@ LIBPQ.client_encoding
 set names "ENCODING"              #Client ENCODING
 \encoding "ENCODING"              #Def: default OS encoding
 pg_client_encoding()->"ENCODING"  #If different from server, applies CONVERSION
+
+set names "ENCODING"              #Same as: set client_encoding to "ENCODING"
 
 pg_database.encoding              #ENCODING. create database ... encoding
 
@@ -8353,6 +8358,7 @@ initdb --pgdata|-D DATADIR        #Created by initdb
 
 initdb --allow-group-access|-g    #Set DATADIR with permissions 0770
                                   #Otherwise 0700
+CONF.data_directory_mode          #DATADIR permission. Readonly
 
 DATADIR/global                    #CLUSTERDIR. Cluster-wide data.
 
@@ -8653,6 +8659,14 @@ CLUSTERCONFDIR                    #DIR with cluster-wide configuration
 USERCONFDIR                       #DIR with OS user-specific configuration
                                   #On my system: ~/.postgresql
 
+CONF VALUES ==>                   #Are always STR
+                                  #BOOL uses 'on|off'
+
+SUPERUSER CONF ==>                #Some CONF can only be read|write by a superuser ROLE
+                                  #Can also read them if member of built-in ROLE pg_read_all_settings
+
+CLUSTER-WIDE CONF ==>             #Some CONF cannot be session-specific.
+
 SIGHUP -> SPID
 pg_ctl reload                     #Reload config file, HBA and IDENT
 pg_reload_conf()                  #Must be superuser
@@ -8671,6 +8685,12 @@ CONF.config_file                  #Set CONF for CLUSTER, as an INI file
 include[_if_exists] 'PATH'        #Inside CONF file, include another one
 include_dir 'DIR'                 #Same for DIR/*.conf, in alphabetical order
 
+CLUSTERCONFDIR/
+ postgresql.auto.conf             #Like postgresql.conf but set by `alter system`
+alter system set|reset ...        #Like `set|reset ...` but for postgresql.auto.conf
+                                  #Only effective after CONF reload
+                                  #Cannot be inside a transaction
+
 postgres -C CONFVAR               #Prints CONFVAR from CLUSTER CONF file
 
 alter role all ...                #Like `alter role "ROLE" ...` but for all ROLEs
@@ -8683,6 +8703,9 @@ alter role "ROLE"
 
 alter database "DATABASE"
  set|reset ...                    #Like `set|reset ...` but for all sessions using DATABASE
+
+create function ... set ...       #Like `set ...` but inside a whole FUNC
+set local ...                     #Inside a FUNC, changes the value from `create function ... set ...`
 
 set CONFVAR to VAL                #Set CONFVAR value for current session
 set CONFVAR from current          #Set CONFVAR value using current session value, for all other sessions
@@ -8706,26 +8729,39 @@ show all                          #Print all CONFVARs of current session: name, 
 postgres --describe-config        #Prints a whitespace-separated list of all CONFVARs:
                                   #name, description, defaults
 
-CONF ==>                          #Can be specified with:
-                                  #  - function-specific:
-                                  #     - do create function ... set CONFVAR to VAL | from current:
-                                  #        - from current: use current VAL as VAL
-                                  #     - inside a function:
-                                  #        - set local (if FUNC() used create function ... set ...)
-                                  #Some require superuser ROLE to read|write.
-                                  #  - can also read if member of built-in ROLE pg_read_all_settings
-                                  #Some cannot be session-specific.
-                                  #Are always STR. BOOL actually use 'on' and 'off'.
+pg_settings                       #TABLE with all CONFVARs
+pg_settings.name                  #'CONFVAR'
+pg_settings.setting               #'VAL'
+pg_settings.unit                  #Unit among:
+                                  #  - null
+                                  #  - 'ms|s|min'
+                                  #  - 'B|kB|8kB|MB'
+pg_settings.category              #'CATEGORY[ / SUBCATEGORY]', e.g. 'Resource Usage / Disk'
+pg_settings.short_desc            #STR. Short description
+pg_settings.extra_desc            #STR. Long description
+pg_settings.context               #How to change the setting among:
+                                  #  -
+ postmaster        │    47
+ superuser-backend │     4
+ user              │   135
+ internal          │    20
+ backend           │     2
+ sighup            │    82
+ superuser         │    42
+pg_settings.vartype               #text Parameter type (bool, enum, integer, real, or string)
+pg_settings.source                #text Source of the current parameter value
+pg_settings.min_val               #text Minimum allowed value of the parameter (null for non-numeric values)
+pg_settings.max_val               #text Maximum allowed value of the parameter (null for non-numeric values)
+pg_settings.enumvals              #text[] Allowed values of an enum parameter (null for non-enum values)
+pg_settings.boot_val              #text Parameter value assumed at server startup if the parameter is not otherwise set
+pg_settings.reset_val             #text Value that RESET would reset the parameter to in the current session
+pg_settings.sourcefile            #text Configuration file the current value was set in
+                                  #(null for values set from sources other than configuration files, or when examined by a user who neither is a superuser nor has privileges of pg_read_all_settings);
+                                  #helpful when using include directives in configuration files
+pg_settings.sourceline            #int4 Line number within the configuration file the current value was set at
+                                  #(null for values set from sources other than configuration files, or when examined by a user who neither is a superuser nor has privileges of pg_read_all_settings).
+pg_settings.pending_restart       #bool true if the value has been changed in the configuration file but needs a restart; or false otherwise.
 
-alter TYPE VAR ... set CONFVAR
- to VAL|from current              #
-alter TYPE VAR ...
- reset CONFVAR|all                #For database, function or role
-
-alter system ... ???
-
-pg_settings                       #All CONFVARs, with also when is readonly, type, min|max value, unit
-                                  #???
 pg_db_role_setting                #All role and/or database-specific CONFVARs
                                   #???
 pg_file_settings                  #TABLE with config CONFVARs. ???
