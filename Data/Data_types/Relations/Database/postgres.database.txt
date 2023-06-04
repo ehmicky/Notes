@@ -223,6 +223,7 @@ pg_ENTITY_is_visible(OID)->BOOL   #True if ENTITY's SCHEMA is within ENVVAR sear
 
 public                            #SCHEMA automatically created, initially empty
                                   #Meant for non-user-specific data
+                                  #`public` ROLE has `usage` PRIVILEGEs
 
 pg_namespace                      #TABLE with all SCHEMAs
 pg_namespace.oid                  #OID
@@ -263,6 +264,11 @@ pg_catalog                        #SCHEMA for system data. "System catalogs"
                                   #Sometimes readonly. Should avoid modifying.
                                   #DATABASE-specific unless on cluster-specific ENTITY
                                   #  - dependency child of DATABASE
+
+PRIVILEGES ==>                    #Owned by CLUSTER|DATABASE owner
+                                  #Most TABLEs are read-only to `public`
+                                  #pg_settings is read-write
+                                  #A few TABLEs can only be seen by superuser
 
 pg_node_tree                      #Internal serialized information TYPE, specific to pg_catalog.*
 pg_get_expr(PG_NODE_TREE,         #Converts PG_NODE_TREE to STR
@@ -394,6 +400,7 @@ BASE TYPE ==>                     #Non-user-defined TYPE
                                   #Includes any "_TYPE"
 
 create type TYPE(YOPTS)           #Creates user-defined TYPE, based on C functions
+                                  #Must be superuser
                                   #Not fully documented yet ???
 
 YOPTS.category                    #'CHAR' among:
@@ -542,9 +549,10 @@ pg_cast.castmethod                #How to cast, among:
                                   #  - 'i': C-level I/O functions
                                   #  - 'b': nothing (TYPEs are binary-equivalent)
 
-create cast (TYPE as TYPE2)
- with function FUNC(...)          #Creates a type casting FUNC
- [as assignment|implicit]         #assignment|implicit is 'a|i' castcontext (def: 'e')
+create cast (TYPE as TYPE2)       #Creates a type casting FUNC
+ with function FUNC(...)          #Current ROLE must own TYPE[2]
+create cast ...
+ as assignment|implicit           #Same as 'a|i' castcontext (def: 'e')
 create cast ... with inout ...
 create cast ...
  without function ...             #Same but with a 'i|b' castmethod (def: 'f')
@@ -700,7 +708,9 @@ OID                               #When specifying as argument of LARGEOBJ creat
                                   #Can be 0|-1 to ask for a new one
 
 lo_import('PATH'[, OID])->OID     #Creates a LARGEOBJ from a file
+                                  #Must be superuser
 lo_export(OID, 'PATH')            #Creates a file from a LARGEOBJ
+                                  #Must be superuser
 
 lo_creat(OID)->OID                #Creates an empty LARGEOBJ
 lo_from_bytea(OID, BYTEA)->OID    #Creates a LARGEOBJ from BYTEA
@@ -715,7 +725,7 @@ pg_largeobject_metadata           #TABLE with all LARGEOBJ metadata
 pg_largeobject_metadata.oid       #OID of LARGEOBJ
 
 pg_largeobject                    #TABLE with all LARGEOBJ data
-                                  #Must be superuser
+                                  #Visible only to superuser
 pg_largeobject.loid               #pg_largeobject_metadata.oid of LARGEOBJ
 pg_largeobject.data               #BYTEA with contents
 pg_largeobject.pageno             #INT 0-based index, if BYTEA split into several chunks
@@ -1230,7 +1240,8 @@ alter type "ENUM_TYPE" add value
  [if not exists] ENUM_VAL
  [before|after ENUM_VAL2]         #
 alter type "ENUM_TYPE"
- rename ENUM_VAL to ENUM_VAL2     #
+ rename value
+ ENUM_VAL to ENUM_VAL2            #
 
 ENUM_VAL < <= > >= ENUM_VAL2      #BOOL. Using ordering
 
@@ -3554,6 +3565,15 @@ delete from "TABLE"
 
                                              /=+===============================+=\
                                             /  :                               :  \
+                                            )==:             MERGE             :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+merge into ... ???
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
                                             )==:           TRUNCATE            :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -4062,14 +4082,12 @@ regr_*(...)                       #AFUNC. Linear regression. Not documented yet
                                              \=+===============================+=/
 
 
-PARSER                            #Tokenizer. Split a STR into tokens ("lexemes")
-                                  #Can produce overlapping tokens
+create text search parser "PARSER"#Tokenizer. Split a STR into tokens ("lexemes")
+ (OPTS)                           #Can produce overlapping tokens
                                   #  - both the compound token and its parts
                                   #  - this allows searching for both
                                   #Max TOKEN size: 2KB
-
-create text search parser "PARSER"#Creates a PARSER.
- (OPTS)                           #Must be superuser ROLE.
+                                  #Must be superuser.
                                   #OPTS.* FUNCs not documented yet
 OPTS.start                        #FUNC called at start
 OPTS.gettoken                     #FUNC that processes next token
@@ -4127,7 +4145,7 @@ ROW.tokid                         #TOKEN_TYPE
 
 
 create text search                #Creates a TEMPLATE
- template "TEMPLATE"(OPTS)        #Must be superuser ROLE
+ template "TEMPLATE"(OPTS)        #Must be superuser.
                                   #Normalizes tokens produced by PARSER: removing|transforming them
                                   #Only defines the backbone of the normalization logic
                                   #  - each DICTIONARY instantiates it with specific arguments (e.g. words from a given language)
@@ -5209,8 +5227,8 @@ pg_class.relam                    #pg_am.oid of the RELATION's ACCESS_METHOD
                                              \=+===============================+=/
 
 
-OPFAMILY                          #"Operator family", i.e. group of OPCLASSs (or "loose" ones) that can be
-                                  #simplified when used together in a single expression
+create operator family "OPFAMILY" #"Operator family", i.e. group of OPCLASSs (or "loose" ones) that can be
+ using "ACCESS_METHOD"            #simplified when used together in a single expression
                                   #E.g. >(NUM, NUM2) and <(NUM, NUM2) in `where NUM > NUM2 and NUM < NUM3`
                                   #Usually:
                                   #  - named "TYPE_ops"
@@ -5220,9 +5238,7 @@ OPFAMILY                          #"Operator family", i.e. group of OPCLASSs (or
                                   #     - then OPFAMILY has one OPCLASS for each
                                   #     - also it defines loose OPs for each OP(TYPE, TYPE2) combination ("cross-type OP")
                                   #  - otherwise, OPFAMILY contains a single OPCLASS, often with same name
-
-create operator family "OPFAMILY" #Creates an OPFAMILY
- using "ACCESS_METHOD"            #Must be a superuser
+                                  #Must be a superuser
 
 alter operator family "OPFAMILY"  #Like `create operator class using "ACCESS_METHOD" add operator|function ...` but "loose"
  using "ACCESS_METHOD"            #OPs and support FUNCs can either be in OPCLASSs, or not (loose)
@@ -5249,16 +5265,12 @@ pg_opfamily.opfname               #"OPFAMILY" name
                                              \=+===============================+=/
 
 
-OPCLASS                           #"Operator class", i.e. OP and helper FUNCs that an INDEX ACCESS_METHOD can use
-                                  #ACCESS_METHOD-specific, including its "OPCLASS" name
-                                  #Child auto-dependency of its OPFAMILY
-                                  #Parent dependency of INDEX using it
+create operator class "OPCLASS"   #"Operator class", i.e. OP and helper FUNCs that an INDEX ACCESS_METHOD can use
+ for type TYPE                    #ACCESS_METHOD-specific, including its "OPCLASS" name
+ using "ACCESS_METHOD"            #Child auto-dependency of its OPFAMILY
+ as ...                           #Parent dependency of INDEX using it
                                   #Usually named "TYPE_ops"
-
-create operator class "OPCLASS"
- for type TYPE
- using "ACCESS_METHOD"
- as ...                           #
+                                  #Must be superuser
 
 create operator class "OPCLASS"   #Make it default for the given TYPE
  default for type ...             #If false, must be explicitly specified when creating INDEX|TABLE
@@ -6035,6 +6047,7 @@ COPTS.n_distinct_inherited        #NUM. Same but includes child TABLEs
 
 pg_statistic                      #Statistic of a COL or an index REXPR, used by the planner to optimize queries.
                                   #Only takes a random sample of the ROWs, i.e. approximate.
+                                  #Visible only to superuser
 pg_statistic.starelid             #REGCLASS of the TABLE
 pg_statistic.staatnum             #pg_attribute.attnum of the COL
 pg_statistic.stainherit           #BOOL. True if "PARENT_TABLE", i.e. include "CHILD_TABLE" stats
@@ -6082,8 +6095,24 @@ pg_class.reltuples                #FLOAT4. Number of non-dead ROWs
 
 Detailed explanation at https://www.postgresql.org/docs/current/planner-stats-details.html ???
 
-create_statistics, pg_statistic_ext, pg_statistic_ext_data, pg_stats_ext, pg_stats_ext_exprs ???
-  - also https://www.postgresql.org/docs/current/planner-stats.html#PLANNER-STATS-EXTENDED
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:      EXTENDED STATISTICS      :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+create statistics ???
+alter statistics ???
+
+pg_statistic_ext ???
+pg_statistic_ext_data ???
+                                  #Visible only to superuser
+pg_stats_ext ???
+pg_stats_ext_exprs ???
+
+https://www.postgresql.org/docs/current/planner-stats.html#PLANNER-STATS-EXTENDED ???
 
 
                                              /=+===============================+=\
@@ -6536,6 +6565,9 @@ lock "TABLE",...                  #Acquire a lock on "TABLE",...
                                   #  - released at the end of it
                                   #  - must be at beginning of transaction if `repeatable read` or `serializable`
                                   #Automatically done by SQL commands
+                                  #Requires one of `update|delete|truncate` PRIVILEGEs, except:
+                                  #  - `row exclusive`: can also be `insert` PRIVILEGE
+                                  #  - `access|row share`: requires `select` PRIVILEGE instead
 
 lock ... nowait                   #When lock cannot be acquired, prints an error and rollback the transaction,
                                   #instead of waiting
@@ -6826,10 +6858,10 @@ create|alter role "ROLE"          #Whether the ROLE is superuser:
  [no]superuser                    #  - has all PRIVILEGEs
                                   #  - is implicitly a member of all ROLEs
                                   #Current ROLE must be superuser too
-                                  #Initial superuser ROLE cannot be deleted
 ENVVAR is_superuser               #BOOL
 
 pg_authid                         #TABLE with all ROLEs
+                                  #Visible only to superuser
 pg_authid.oid                     #OID
 pg_authid.rolname                 #"ROLE" name
 pg_authid.rolsuper                #BOOL. create role ... superuser
@@ -6867,6 +6899,58 @@ pg_user                           #Deprecated TABLE alternatives to pg_roles
 
                                              /=+===============================+=\
                                             /  :                               :  \
+                                            )==:         ROLE BUILT-IN         :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+CLUSTER FIRST ROLE ==>            #It has same name as CLUSTER owner's OS_USER, who can authenticate to it
+                                  #It is a superuser ROLE
+                                  #It cannot be deleted
+
+public                            #Implicit ROLE that any other ROLE belongs to
+"[R]PROLE"                        #Either "[R]ROLE" or public
+
+BUILT-IN ROLES ==>                #Their permissions are hardcoded in Postgres code, not in ACLITEMs
+???
+pg_read_all_data                  #ROLE with PRIVILEGEs:
+                                  #  - `select` on RELATION|SEQUENCE|LARGEOBJs
+                                  #  - `usage` on SCHEMAs
+pg_write_all_data                 #ROLE with PRIVILEGEs:
+                                  #  - `update` on RELATION|SEQUENCE|LARGEOBJs
+                                  #  - `insert|delete` on RELATION
+                                  #  - `usage` on SCHEMAs
+pg_read_all_settings              #ROLE with PRIVILEGEs:
+                                  #  - read ENVVARs otherwise visible only to superusers
+pg_read_all_stats                 #ROLE with PRIVILEGEs:
+                                  #  - `select` on pg_stat*, pg_backend_memory_contexts, pg_shmem_allocations
+                                  #  - pg_database|tablespace_size()
+                                  #  - ENVVAR track_activities
+pg_stat_scan_tables               #ROLE with PRIVILEGEs:
+                                  #  - `select` on TABLEs through commands like `vacuum`
+pg_monitor                        #ROLE with PRIVILEGEs:
+                                  #  - member of ROLEs: pg_read_all_settings, pg_read_all_stats, pg_stat_scan_tables
+                                  #  - pg_ls_*() (except pg_ls_dir())
+pg_database_owner                 #ROLE owning `public` SCHEMA, i.e. `create` and `usage` PRIVILEGEs on it
+                                  #DATABASE owner's ROLE is a member of pg_database_owner ROLE
+                                  #  - i.e. can grant PRIVILEGEs to pg_database_owner in a DATABASE's TEMPLATE,
+                                  #    to forward those to actual owner after TEMPLATE has been instantiated
+pg_signal_backend                 #ROLE with PRIVILEGEs:
+                                  #  - pg_cancel|terminate_backend()
+pg_read_server_files              #ROLE that can read filesystem with same OS privileges as server process including:
+                                  #  - COPY ... from 'PATH'
+                                  #  - pg_ls*()
+pg_write_server_files             #ROLE that can write filesystem with same OS privileges as server process including:
+                                  #  - COPY ... to 'PATH'
+                                  #  - pg_basebackup --target=PATH
+pg_execute_server_program         #ROLE that can execute OS commands with same privileges as server process including:
+                                  #  - COPY ... from|to program
+pg_checkpoint                     #ROLE with PRIVILEGEs:
+                                  #  - `checkpoint ...`
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
                                             )==:        ROLE MEMBERSHIP        :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -6874,8 +6958,10 @@ pg_user                           #Deprecated TABLE alternatives to pg_roles
 
 create role "ROLE"                #Makes ROLE2 members of ROLE:
  in role "ROLE2",...              #  - ROLE2 inherits ROLE's PRIVILEGEs
-create role "ROLE2" role "ROLE"   #  - ROLE2 can switch to ROLE
-grant "ROLE",... to "ROLE2",...   #Membership is inherited deeply
+create role "ROLE2" role "ROLE"   #     - except superuser|login|createdb|createrole PRIVILEGEs
+grant "ROLE",... to "ROLE2",...   #  - ROLE2 can switch to ROLE
+                                  #Membership is inherited deeply
+                                  #I.e. this allows ROLE to act both as "users" and "groups".
 
 revoke "ROLE",... to "ROLE2",...  #Remove membership
  [restrict|cascade]               #Whether to also removes the related PRIVILEGEs
@@ -6931,7 +7017,7 @@ set local|session role|session ...#Same as set local|session ENVVAR ...
 
 
 ENTITY OWNER ==>                  #Def: ROLE that created the ENTITY
-                                  #ROLE has all PRIVILEGEs over their ENTITYs
+                                  #ROLE has all PRIVILEGEs over their ENTITYs (unless explicitly revoked)
                                   #ROLE is parent dependency of owned ENTITYs
                                   #  - cannot `drop cascade`, i.e. can only be deleted if it does own any ENTITY
                                   #Not for: role, user mapping, text search parser|template
@@ -6942,8 +7028,8 @@ alter ENTITY "ENTITY"             #Change owner
  owner to RROLE                   #Current ROLE must:
                                   #  - be RROLE, or a member of it
                                   #  - have `create` PRIVILEGE on ENTITY's SCHEMA
-reassign owned
- by RROLE,... to RROLE2           #Same for all ENTITYs owned by RROLE
+reassign owned                    #Same for all ENTITYs owned by RROLE
+ by RROLE,... to RROLE2           #Includes cluster-wide ENTITYs, but excludes ENTITYs in other DATABASEs
 
 drop owned by RROLE,...           #Drop all ENTITYs owned by RROLE, except cluster-wide ones
                                   #Also revoke PRIVILEGEs for RROLE on those ENTITYs, including cluster-wide ones
@@ -6978,7 +7064,7 @@ pg_prepared_xacts.owner           #"ROLE" name of PXID's owner
 
 grant PRIVILEGE,...               #Add PRIVILEGEs to a ROLE for a given ENTITY
  on [ENTITY] "ENTITY",...         #For ENTITYs:
- to "RROLE",...                   #  - table (def): includes VIEW, FTABLE
+ to "RPROLE",...                  #  - table (def): RELATION (except SEQUENCE)
                                   #  - sequence
                                   #  - database
                                   #  - type
@@ -6992,27 +7078,24 @@ grant PRIVILEGE,...               #Add PRIVILEGEs to a ROLE for a given ENTITY
                                   #  - foreign server
                                   #  - parameter: "ENVVAR"
 grant ... on all ENTITY
- in schema "SCHEMA" ...           #For ENTITY: table|sequence, function|procedures|routines
+ in schema "SCHEMA" ...           #For ENTITY: RELATION|sequence, function|procedures|routines
 grant all [privileges] ...        #Grant all PRIVILEGEs (with known ACLs) for a given ENTITY
 
 revoke PRIVILEGE,...              #Remove PRIVILEGEs from a ROLE for a given ENTITY
  on [ENTITY] "ENTITY",...         #Always also remove grant|admin PRIVILEGEs
- from "ROLE",...                  #Revoking a PRIVILEGE does not deny it, it just removes it
+ from "PROLE",...                 #Revoking a PRIVILEGE does not deny it, it just removes it
                                   #  - i.e. if also acquired through inheritance, still granted
                                   #  - e.g. in:
                                   #     - ROLE membership
-                                  #     - parent ENTITY (PRIVILEGEs on TABLE -> COL)
+                                  #     - parent ENTITY:
+                                  #        - RELATION -> COL
+                                  #        - DATABASE -> RELATION: for `analyze`
 
 revoke ... restrict|cascade       #If ROLE granted to other ROLE2s:
                                   #  - restrict (def): fail
                                   #  - cascade: revoke them too
 
 grant|revoke ... granted by RROLE #Requires current_user to be RROLE
-
-grant ... to public
-revoke ... from public
-alter default privileges          #Public is an implicit ROLE that any other ROLEs belong to
- to|from public                   #Cannot have `grant` PRIVILEGE
 
 
                                              /=+===============================+=\
@@ -7024,10 +7107,10 @@ alter default privileges          #Public is an implicit ROLE that any other ROL
 
 alter default privileges
  grant PRIVILEGE,... on ENTITYs   #Like `grant`, but on default PRIVILEGEs: granted by default to non-owners on specific ENTITYs
- to "ROLE",...                    #Only for ENTITYs: tables, sequences, functions|routines, types, schemas
+ to "PROLE",...                   #Only for ENTITYs: tables (RELATIONs), sequences, functions|routines, types, schemas
 alter default privileges
  revoke PRIVILEGE,... on ENTITYs
- from "ROLE",...                  #Same for `revoke`
+ from "PROLE",...                 #Same for `revoke`
 
 alter default privileges          #Only for ENTITYs created by ROLE
  for role|user "ROLE" ...         #Must be current_role (def) or one of its child ROLEs
@@ -7035,17 +7118,36 @@ alter default privileges          #Only for ENTITYs created by ROLE
 alter default privileges
  in schema "SCHEMA" ...           #Only for ENTITYs created in SCHEMA
 
-PUBLIC DEFAULT PRIVILEGES ==>     #`public` ROLE has default PRIVILEGEs:
+PUBLIC PRIVILEGES ==>             #`public` ROLE has default PRIVILEGEs:
                                   #  - DATABASE: connect, temp
-                                  #  - `public` SCHEMA: usage, create
                                   #  - TYPE|DOMAIN: usage
                                   #  - FUNC|PROCEDURE: execute
                                   #  - LANGUAGEs: usage
+                                  #Cannot have `grant` PRIVILEGE
+
+acldefault('CHAR', REGROLE)       #PRIVILEGEs of ENTITYs 'CHAR' owned by REGROLE
+ ->ACLITEM_ARR                    #Since owners have full PRIVILEGEs by default, this is only useful for:
+                                  #  - default PRIVILEGEs that have been revoked
+                                  #  - and not present in `public` ROLE
+                                  #'CHAR' can be:
+                                  #  - 'd': DATABASE
+                                  #  - 'p': ENVVAR
+                                  #  - 'n': SCHEMA
+                                  #  - 'T': TYPE|DOMAIN
+                                  #  - 'r': RELATION
+                                  #  - 'c': COL
+                                  #  - 's': SEQUENCE
+                                  #  - 'L': LARGEOBJ
+                                  #  - 'l': LANGUAGE
+                                  #  - 'f': FUNC|PROCEDURE
+                                  #  - 't': TABLESPACE
+                                  #  - 'F': FDW
+                                  #  - 'S': FSERVER
 
 pg_default_acl                    #TABLE with default PRIVILEGEs
 pg_default_acl.oid                #OID
 pg_default_acl.defaclrole         #REGROLE
-pg_default_acl.defaclobjtype      #ENTITY among: 'r' (tables), S (sequences), f (functions|routines), T (types), n (schemas)
+pg_default_acl.defaclobjtype      #ENTITY among: 'r' (RELATIONs), S (sequences), f (functions|routines), T (types), n (schemas)
 pg_default_acl.defaclnamespace    #REGNAMESPACE of ENTITY
 pg_default_acl.defaclacl          #ACLITEM_ARR
 
@@ -7101,7 +7203,10 @@ pg_has_role(["ROLE"|ROLE_OID,]
                                              \=+===============================+=/
 
 
-DROP/ALTER ==>                    #Can only be done by owner
+ALTER|DROP ==>                    #PRIVILEGE on any ENTITY, no ACL
+                                  #`alter|drop` on that ENTITY
+                                  #Also: comment
+                                  #Always granted to owner ROLE (and members), cannot be granted to others
 
 grant ... with grant option       #PRIVILEGE on any ENTITY, no ACL
 revoke grant options for ...      #Calling `grant PRIVILEGE` on that ENTITY
@@ -7135,44 +7240,50 @@ create|alter role ... replication #PRIVILEGE, no ACL
 
 set                               #PRIVILEGE on an ENVVAR, with ACL: s
                                   #Setting ENVVAR value
+                                  #Noop unless ENVVAR would otherwise require superuser ROLE
 alter system                      #PRIVILEGE on an ENVVAR, with ACL: A
                                   #Setting ENVVAR value with `alter system`
 
 create                            #PRIVILEGE on DATABASE, with ACL: C
-                                  #Create SCHEMA
+                                  #Create SCHEMA|PUBLICATION, enable EXTENSION
 create                            #PRIVILEGE on SCHEMA, with ACL: C
                                   #Create ENTITYs in SCHEMA
                                   #Rename ENTITYs in SCHEMA, if owner
 usage                             #PRIVILEGE on SCHEMA with ACL: U
                                   #Read ENTITYs in SCHEMA
-                                  #Without PRIVILEGE, can still list "ENTITY" names
+                                  #Without PRIVILEGE, can still list ENTITYs names|attributes by using its ENTITY_CATALOG
 
 usage                             #PRIVILEGE on TYPE|DOMAIN with ACL: U
                                   #Create ENTITYs with that TYPE|DOMAIN
 
-select                            #PRIVILEGE on TABLE|SEQUENCE|LARGEOBJ, with ACL: r
-                                  #Reading ROWs|content
-                                  #Including in clauses like `where` of update|delete
+select                            #PRIVILEGE on LARGEOBJ, with ACL: r
+                                  #Reading content
+update                            #PRIVILEGE on LARGEOBJ, with ACL: w
+                                  #Updating content
+
+select                            #PRIVILEGE on RELATION|SEQUENCE, with ACL: r
+                                  #Reading ROWs
+                                  #Including in clauses like `where` or `returning`
                                   #Including through FUNCs, e.g. currval()
-update                            #PRIVILEGE on TABLE|SEQUENCE|LARGEOBJ, with ACL: w
-                                  #Updating ROWs|content
+update                            #PRIVILEGE on RELATION|SEQUENCE, with ACL: w
+                                  #Updating ROWs
                                   #Including `select ... for ...`
                                   #Including through FUNCs, e.g. setval()
-insert                            #PRIVILEGE on TABLE, with ACL: a
+insert                            #PRIVILEGE on RELATION, with ACL: a
                                   #Adding ROWs
-delete                            #PRIVILEGE on TABLE, with ACL: d
+delete                            #PRIVILEGE on RELATION, with ACL: d
                                   #Deleting ROWs
-truncate                          #PRIVILEGE on TABLE, with ACL: D
+truncate                          #PRIVILEGE on RELATION, with ACL: D
                                   #`truncate`
-references                        #PRIVILEGE on TABLE, with ACL: x
-                                  #Foreign key, for either TABLE
-trigger                           #PRIVILEGE on TABLE, with ACL: t
-                                  #Create TFUNC on that TABLE
+references                        #PRIVILEGE on RELATION, with ACL: x
+                                  #Reading ROWs with a foreign key pointing to that RELATION
+trigger                           #PRIVILEGE on RELATION, with ACL: t
+                                  #Create TFUNC on that RELATION
 select|update|insert|references
- ("COL",...)                      #Same as the PRIVILEGE on the TABLE, but on a COL
+ ("COL",...)                      #Same as the PRIVILEGE on the RELATION, but on a COL
 
 temp[orary]                       #PRIVILEGE on DATABASE, with ACL: T
-                                  #Create a TEMP TABLE
+                                  #Create a TEMP RELATION
 
 usage                             #PRIVILEGE on SEQUENCE, with ACL: U
                                   #Using *val()
@@ -7188,7 +7299,7 @@ create                            #PRIVILEGE on TABLESPACE, with ACL: C
 usage                             #PRIVILEGE on FDW with ACL: U
                                   #Create FSERVER using FDW
 usage                             #PRIVILEGE on FSERVER, with ACL: U
-                                  #Create FTABLE using FSERVER
+                                  #Create FTABLE|USERMAPPING using FSERVER
 
 
                                              /=+===============================+=\
@@ -7210,6 +7321,14 @@ aclitem                           #TYPE for PRIVILEGEs
                                   #ROLE2: granting the PRIVILEGE
                                   #Does not include default PRIVILEGEs nor owner's PRIVILEGEs
 
+explode(ACLITEM_ARR)->ROW_SET     #Return ACLITEM as ROW_SET
+ROW.grantee                       #ROLE. 0 if `public`
+ROW.grantor                       #ROLE2
+ROW.privilege_type                #'PRIVILEGE'
+ROW.is_grantable                  #BOOL. `grant` PRIVILEGE
+makeaclitem('ROLE', 'ROLE2',
+ 'PRIVILEGE,...', BOOL)->ACLITEM  #BOOL is `grant` PRIVILEGE
+
 ACLITEM_ARR @> ACLITEM            #At least one ACLITEM has:
                                   #  - same ROLE[2]
                                   #  - at least the same PRIVILEGEs
@@ -7217,7 +7336,7 @@ ACLITEM_ARR @> ACLITEM            #At least one ACLITEM has:
 pg_database.datacl                #ACLITEM_ARR of DATABASE
 pg_namespace.aclitem              #ACLITEM_ARR of SCHEMA
 pg_type.typacl                    #ACLITEM_ARR of TYPE|DOMAIN
-pg_class.relacl                   #ACLITEM_ARR of TABLE|SEQUENCE
+pg_class.relacl                   #ACLITEM_ARR of RELATION|SEQUENCE
 pg_attribute.attacl               #ACLITEM_ARR of COL
 pg_largeobject_metadata.lomacl    #ACLITEM_ARR of LARGEOBJ
 pg_language.lanacl                #ACLITEM_ARR of LANGUAGE
@@ -7234,6 +7353,27 @@ pg_parameter_acl.paracl           #ACLITEM_ARR
 
                                              /=+===============================+=\
                                             /  :                               :  \
+                                            )==:      ROW-LEVEL SECURITY       :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+create policy ???
+alter policy ???
+
+alter table ... row level security ???
+
+pg_class.relrowsecurity           #BOOL. Whether RELATION has row-level security
+pg_tables.rowsecurity             #BOOL. Whether TABLE has row-level security
+pg_class.relforcerowsecurity      #BOOL. Whether RELATION's row-level security applies to owner
+
+row_security_active() ???
+
+pg_policies ???
+pg_policy ???
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
                                             )==:        AUTHENTICATION         :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -7243,8 +7383,7 @@ OS_USER                           #OS-specific
                                   #OS|filesystem operations are done using the OS_USER
                                   #Mapped to ROLEs by authentication
 
-SUPERUSER OS_USER ==>             #OS_USER that created the CLUSTER can authenticate as superuser ROLE
-                                  #It should own DATADIR
+CLUSTER OWNER ==>                 #OS_USER that created the CLUSTER should own DATADIR
                                   #Default installation creates a OS_USER for this, with name 'postgres' and group 'postgres'
 
 auth_delay                        #C addon that rate limits authentication failures
@@ -7328,7 +7467,9 @@ requirekeeper                     #LIBPQ variable: OS_USER behind the server pro
                                   #Avoid another OS_USER starting the server while legit one is rebooting it.
 
 pg_hba_file_rules                 #TABLE with pg_gba.conf contents. ???
+                                  #Visible only to superuser
 pg_ident_file_mappings            #TABLE with pg_ident.conf contents. ???
+                                  #Visible only to superuser
 pg_stat_ssl                       #???
 pg_stat_gssapi                    #???
 
@@ -7359,34 +7500,19 @@ create|alter role "ROLE"
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:      ROW-LEVEL SECURITY       :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-TO DOCUMENT, including: ???
-  - alter table ... row level security
-  - pg_policies, pg_policy
-  - row_security_active()
-
-pg_class.relrowsecurity           #BOOL. Whether RELATION has row-level security
-pg_tables.rowsecurity             #BOOL. Whether TABLE has row-level security
-pg_class.relforcerowsecurity      #BOOL. Whether RELATION's row-level security applies to owner
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
                                             )==:        SECURITY LABELS        :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
-TO DOCUMENT, including: ???
-   - pg_[sh]seclabel, pg_seclabels
-
 security label [for PROVIDER]
  on VAR is STR                    #Used to implement SE-Linux (see online doc)
 
+pg_seclabel ???
+
+pg_shseclabel ???
+
+pg_seclabels ???
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -7409,6 +7535,7 @@ INIMAIN.default_version           #Current 'EVERSION'
 INIMAIN.comment                   #STR. Description
                                   #Can also use `comment on extension` instead
 INIMAIN.superuser                 #BOOL (def: true). Whether should be run with superuser privileges.
+                                  #I.e. by default, created ENTITYs will be owned by superuser.
 INIMAIN.trusted                   #BOOL (def: !INIMAIN.superuser). Whether non-superuser can enable the EXTENSION.
 INIMAIN.requires "EXTENSION",...  #Fail if other EXTENSIONs not already installed
 INIMAIN.directory                 #'DIR' of SQLMAIN (def: './extension')
@@ -7579,7 +7706,8 @@ pg_config --pkgincludedir         #Prints PKGINCLUDEDIR
 
 
 pg_config                         #Prints all build-time configuration
-                                  #Is both a CLI, and a TABLE where each ROW is a variable
+                                  #Is both a CLI, a TABLE where each ROW is a variable, a FUNC returning that TABLE
+                                  #Must be superuser
 
 pg_config
  --configure
@@ -7670,11 +7798,13 @@ ENVVAR ==>                        #Environment variables. Can be specified with:
                                   #        - can have include[_if_exists] 'FILE' or include_dir 'DIR' (includes DIR/*.conf, by
                                   #        - alphabetical order)
                                   #        - can use pg_reload_conf() or send SIGHUP to server daemon postgres
+                                  #           - must be superuser
                                   #        - can see load time with pg_conf_load_time()
                                   #     - PGOPTIONS
                                   #  - role-specific:
                                   #     - alter role "ROLE" ... set ENVVAR to VAL | from current
                                   #                             reset ENVVAR|all
+                                  #        - not for current sessions of those ROLEs
                                   #  - database-specific:
                                   #     - alter role all in database DATABASE ... set ENVVAR from current
                                   #                                               reset ENVVAR|all
@@ -7706,11 +7836,14 @@ alter TYPE VAR ... set ENVVAR
 alter TYPE VAR ...
  reset ENVVAR|all                 #For database, function or role
 
+alter system ... ???
+
 pg_settings                       #All ENVVAR, with also when is readonly, type, min|max value, unit
                                   #???
 pg_db_role_setting                #All role and/or database-specific ENVVAR
                                   #???
 pg_file_settings                  #TABLE with config ENVVARs. ???
+                                  #Visible only to superuser
 
 
                                              /=+===============================+=\
@@ -7755,7 +7888,7 @@ pg_shdescription                  #TABLE with all COMMENTs on cluster-wide ENTIT
 create tablespace "TABLESPACE"    #Create a TABLESPACE, i.e. a group of DATABASE, TABLE, MATERIALIZED VIEW and INDEX:
  [owner ROLE]                     #  - located on the disk at a specific location STR (must be empty dir)
  location STR                     #  - owned by ROLE (def: current ROLE)
-                                  #Must be a superuser to do it.
+                                  #Must be superuser.
                                   #Goal:
                                   #  - Unlike SCHEMA, can't be used for permissions.
                                   #    Only permission is create, i.e. possibility to assign a newly created VAR to TABLESPACE
@@ -7781,6 +7914,8 @@ reindex
  tablespace "TABLESPACE" ...
 create database
 [with] tablespace [=] "TABLESPACE"#Set ENTITY TABLESPACE
+
+alter tablespace ???
 
 create table ...
  exclude|unique|primary key ...
@@ -7934,6 +8069,7 @@ invoker|definer]                  #        - FUNC("TABLE"|"ROW") can also be cal
                                   #  - leakproof: used for performance and security optimization. Means it is immutable, and
                                   #    doesn't give informations about arguments VAL aside from return value (e.g. does not throw errors
                                   #    for some return values but not others, prints arguments VAL, etc.)
+                                  #     - must be superuser
                                   #  - strict:
                                   #     - returns automatically null if an arg is null.
                                   #     - for VARIADIC arg, only works if whole VARIADIC is null, not only part of it.
@@ -7945,15 +8081,10 @@ invoker|definer]                  #        - FUNC("TABLE"|"ROW") can also be cal
                                   #  - cost FLOAT: CPU cost for the planner (cpu_operation_cost) (def: 1 for C FUNC, 100 for others)
                                   #  - rows UINT: average number of rows returned, for the planner (def: 1000). Only if return value
                                   #    returns several rows.
+                                  #  - support FUNC: must be superuser
                                   #Is parent dependency of anything that uses the FUNC (e.g. VIEW, etc.)
 alter function FUNC(...)
 ...                               #... is any of the options after language LANG. Can use not leakproof.
-
-alter routine VAR(...)            #Like alter function ... except works also on AFUNC and PROCEDURE
-                                  #Cannot use:
-                                  #  - called on null input, returns null on null input, strict
-                                  #  - support FUNC
-drop routine VAR(...),...         #Like drop function ... except works also on AFUNC and PROCEDURE
 
 do [language LANGUAGE]
 STR                               #Execute an anonymous function STR (body of function), from LANGUAGE (def: plpgsql)
@@ -7962,6 +8093,33 @@ pg_proc                           #All FUNC. ???
 
 regproc                           #TYPE alias to OID, to cast pg_proc.oid as "FUNC" name
 regprocedure                      #TYPE alias to OID, to cast pg_proc.oid as "FUNC(TYPE,...)" name
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:           PROCEDURE           :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+create procedure ???
+alter procedure ???
+
+call FUNC(...) ???
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:            ROUTINE            :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+alter routine VAR(...)            #Like alter function ... except works also on AFUNC and PROCEDURE
+                                  #Cannot use:
+                                  #  - called on null input, returns null on null input, strict
+                                  #  - support FUNC
+drop routine VAR(...),...         #Like drop function ... except works also on AFUNC and PROCEDURE
 
 
                                              /=+===============================+=\
@@ -7990,6 +8148,8 @@ procedure = FUNC                  #OP is [+-*/<>=~! #%^&|`?]+
                                   #      - positionjoinsel: like POINT operators
                                   #      - contjoinsel: like <@ @>
                                   #  - hashes: VAL OP VAL2 is true if hash(VAL) = hash(VAL2)
+alter operator
+ "OPERATOR"(TYPE, TYPE2) set ???
 
 pg_operator                       #All OPERATOR. ???
 
@@ -8032,18 +8192,21 @@ pg_aggregate                      #All AFUNC. ???
                                              \=+===============================+=/
 
 
-TO DOCUMENT ??? including:
-  - https://www.postgresql.org/docs/15/jit.html
-  - in `explain`
 
+https://www.postgresql.org/docs/15/jit.html ???
+
+In `explain` ???
 
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:      FUNCTIONS LANGUAGES      :==(
+                                            )==:           LANGUAGE            :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
+
+create language ???
+                                  #Must be superuser
 
 pg_language                       #All activated LANGUAGE, including:
                                   #  - lanpltrusted BOOL: can not access filesystem (so non-superuser can create function)
@@ -8058,8 +8221,9 @@ pg_language                       #All activated LANGUAGE, including:
                                              \=+===============================+=/
 
 
-TO DOCUMENT ??? including:
-  - pg_transform
+create transform ???
+
+pg_transform ???
 
 
                                              /=+===============================+=\
@@ -8501,6 +8665,7 @@ create server FSERVER [type STR]
 [version STR2]                    #Creates a FSERVER, i.e. a connection to a specific DATABASE using a FDW.
 foreign data wrapper FDW          #STR are all FDW-dependent options. They usually specify the connection details
 [options (VAR STR3...)]           #(host and port, database name, etc.)
+
 alter server FSERVER
 [version STR]
 [options
@@ -8524,6 +8689,7 @@ alter user mapping ...
 [options ([add|set|drop] ... )]   #
 
 pg_user_mapping[s]                #All USERMAPPING. With s, leaves out the option field when user should not see it
+                                  #Visible only to superuser
                                   #???
 
 
@@ -8564,6 +8730,8 @@ alter foreign table "FTABLE"
  ([add|set|drop] VAR VAL ...)     #
 
 pg_foreign_table                  #All FTABLE. ???
+
+import foreign schema ???
 
 ENVVAR enable_async_append, and asynchronous appends ???
 
@@ -8612,6 +8780,9 @@ create database DATABAS           #Create a DATABASE, i.e. set of SCHEMAs
                                   #     - DATABASE2 cannot be accessed just before and during create database
                                   #  - connection limit: number of concurrent non-superuser client sessions max (def: -1, i.e. unlim)
                                   #Cannot be inside a transaction.
+
+alter database ???
+
 alter database DATABASE
 connection limit INT              #
 
@@ -8789,7 +8960,8 @@ pg_isready                        #Returns (exit code) according to server up or
 -t NUM                            #Timeout (in sec, def 3, 0 to disable)
 -q                                #quiet
 
-discard plans|temp|all            #Remove session-specific information:
+discard sequences ???
+discard plans|temp[orary]|all     #Remove session-specific information:
                                   #  - plans: cached explain plans
                                   #  - temp: TEMP
                                   #  - all: cached explain plans, TEMP, session-specific ENVVAR, PREP, CURSOR, unlisten *,
@@ -8802,7 +8974,7 @@ inet_client|server_addr|port()    #
 
 statement_timeout                 #ENVVAR (in ms) after which client requests fail (def: 0).
 
-FILESYSTEM ACCESS ==>             #
+FILESYSTEM ACCESS ==>             #Also requires superuser
 pg_ls_dir(STR)                    #Returns 'COL'. Must be relative path (.. not allowed)
 pg_read[_binary]_file(STR)        #Returns as STR|BYTEA
 pg_stat_file(STR)->TABLE          #Single row: size, access (atime), modification (mtime), change (ctime), creation (creation time, only Windows), isdir.
@@ -9077,9 +9249,12 @@ logging_collector                 #When on, use the logging facility:
                                   #        (def: "postgresql-%Y-%m-%d_%H%M%S.log") for file creation time
                                   #      - a new file is created every ENVVAR log_rotation_age (def: 1d)
                                   #        or every time the file is more than ENVVAR log_rotation_size (def: 10MB)
-                                  #        or when pg_rotate_file() is called
+                                  #         - or when pg_rotate_file() is called
+                                  #            - must be superuser
                                   #    If csvlog, will be in CSV format and use name ENVVAR application_name.
                                   #  - Files have permission ENVVAR log_file_mode (def: 0600, only server owner can read/write)
+pg_current_logfile()???
+  - must be superuser
 
 log|client_min_messages           #Between debug5-1, log, notice, warning, error, fatal, panic (def: notice for client, warning for log) for
                                   #either client messages or logging.
@@ -9406,8 +9581,12 @@ pg_statio_all|sys|user_sequences  #SEQUENCE, with number of blocks read|hits
 pg_stat[_xact]_user_functions     #FUNC, with number of calls and total time (only FUNC, or FUNC called by it too).
                                   #ENVVAR track_functions must be on.
 
+pg_stat_reset*() ??? Must be superuser
+
 pg_backend_memory_contexts
+                                  #Visible only to superuser
 pg_shmem_allocations
+                                  #Visible only to superuser
 pg_stat_slru                      #???
 
 pg_stat_statements                #VIEW for all queries (query, time, number of rows, I/O).
@@ -9571,7 +9750,7 @@ WAL ==>                           #Write-ahead logs. Logs that store every opera
                                   #    are often used for checkpoint_segments, and checkpoint_timeout can be one day)
                                   #    If ENVVAR checkpoint_warning (def: '30s') is less than the time between checkpoints, but more
                                   #    than checkpoint_timeout, a warning will be issued to the server log.
-                                  #  - can also issue SQL command checkpoint to do it
+                                  #  - can also issue SQL command `checkpoint` to do it
                                   #  - flushes performed by a checkpoints are spread to the next checkpoint. The spread is
                                   #    ENVVAR checkpoint_completion_target, i.e. percentage of size spread for the free time allowed
                                   #    between checkpoints (def: 0.5, best is 0.9). Can go up to 0.9 will improve performance, but
@@ -9637,9 +9816,11 @@ ONLINE BACKUP ==>                 #     - "continuous archiving". Just need to a
                                   #           - removes backup_label file
                                   #        - utilities (not necessarily needed):
                                   #           - pg_is_in_backup(), pg_backup_start_time()
-                                  #           - pg_start|stop_backup() returns the WAL segment as STR: to translate into filenames:
-                                  #              - pg_xlogfile_name[_offset](STR)
-                                  #              - pg_xlog_location_diff(STR, STR2)
+                                  #           - pg_start|stop_backup() returns the WAL segment as STR:
+                                  #              - must be superuser
+                                  #              - to translate into filenames:
+                                  #                 - pg_xlogfile_name[_offset](STR)
+                                  #                 - pg_xlog_location_diff(STR, STR2)
                                   #     - pg_basebackup:
                                   #        - automate all this. Options are:
                                   #            -h -p -U -w      Connection options
@@ -9683,6 +9864,7 @@ ONLINE BACKUP ==>                 #     - "continuous archiving". Just need to a
                                   #                    - recovery_target_xid STR: the transaction ID
                                   #                    - recovery_target_name STR: STR is a restore point, which must have been
                                   #                      previously created by pg_create_restore_point(STR)
+                                  #                       - must be superuser
                                   #                 - time must be after the creation time of DIR2/*
                                   #                 - recover just before|after according to variable (in recovery.conf)
                                   #                   recovery_target_inclusive (def: true, i.e. after)
@@ -9703,6 +9885,9 @@ ONLINE BACKUP ==>                 #     - "continuous archiving". Just need to a
                                   #        - by default, recover to the timeline that was used during the base backup, but can specify
                                   #          recovery_target_timeline STR with "latest" in recovery.conf, or with the specified
                                   #          timeline ID
+
+pg_promote()???
+  - must be superuser
 
 pg_stat_archiver                  #???
 pg_stat_recovery_prefetch         #???
@@ -9851,8 +10036,11 @@ TOPTS.user_catalog_table          #BOOL???
 alter table "TABLE"
  replica identity ...             #???
 
+pg_replication_origin_*(): must be superuser
+
 pg_replication_origin             #???
 pg_replication_origin_status      #???
+                                  #Visible only to superuser
 pg_replication_slots              #???
 pg_stat_replication               #WAL sender processes.
 pg_stat_replication_slots         #???
@@ -9866,10 +10054,11 @@ pg_stat_database_conflicts        #DATABASE, with query cancelled due to recover
                                              \=+===============================+=/
 
 
-TO DOCUMENT ??? including:
-  - pg_publication, pg_publication_namespace, pg_publication_rel, pg_publication_tables
-  - pg_subscription, pg_subscription_rel, pg_stat_subscription, pg_stat_subscription_stats
-  - pg_xact_commit_timestamp(), pg_xact_commit_timestamp_origin(), pg_last_committed_xact()
+pg_xact_commit_timestamp() ???
+
+pg_xact_commit_timestamp_origin() ???
+
+pg_last_committed_xact() ???
 
 pg_class.relreplident             #'CHAR' with RELATION's COLs used to form `replicate identity`:
                                   #  - 'd': default (primary key, if any)
@@ -9880,6 +10069,46 @@ pg_class.relreplident             #'CHAR' with RELATION's COLs used to form `rep
 
 pg_index.indisreplident           #BOOL. Whether INDEX is a replica identity
 
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:          PUBLICATION          :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+create publication ???
+alter publication ???
+
+pg_publication ???
+
+pg_publication_namespace ???
+
+pg_publication_rel ???
+
+pg_publication_tables ???
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:         SUBSCRIPTION          :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+create subscription ???
+                                  #Must be superuser
+
+alter subscription ???
+
+pg_subscription ???
+                                  #Visible only to superuser
+
+pg_subscription_rel ???
+
+pg_stat_subscription ???
+
+pg_stat_subscription_stats ???
 
                                              /=+===============================+=\
                                             /  :                               :  \
