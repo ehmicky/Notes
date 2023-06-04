@@ -7742,7 +7742,7 @@ connect                           #PRIVILEGE on DATABASE, with ACL: c
 create|alter role ... login       #Same but for a given ROLE. No ACL.
 
 create|alter role ... replication #PRIVILEGE, no ACL
-                                  #Start a physical|logical replication session
+                                  #Be used as ROLE consuming physical|logical replication
                                   #Can only be granted by superusers
                                   #Required by pg_basebackup
 
@@ -10457,11 +10457,14 @@ pg_tables.hasrules                #BOOL. Whether TABLE has RULEs
 create publication "PUB"          #"Logical replication" PUB, i.e. replicate a TABLE
                                   #Each SUB does replication, i.e. does not start until there is one
                                   #There can be multiple SUBs per PUB, and multiple PUBs per SUB
-                                  #Unlike physical replication, copies transaction-wise, not heap page-wise
+                                  #Unlike physical replication:
+                                  #  - copies transaction-wise, not heap page-wise
+                                  #  - only copies data, not DDL
                                   #Also called "change set" or "replication set"
 
 create publication "PUB"          #TABLEs to replicate
  for table "TABLE",...            #Cannot be temporary|unlogged nor [M]VIEW|FTABLE
+                                  #Does not replicate SEQUENCE's state
                                   #Current ROLE must own the TABLEs
 
 create publication "PUB"          #COLs to replicate (def: all current|future COLs)
@@ -10476,7 +10479,6 @@ create publication "PUB"          #"Row filter". Do not replicate ROWs where BOO
                                   #  - user-defined FUNC|OP|TYPE|COLLATION
                                   #  - non-immutable FUNC
                                   #  - pg_catalog.*
-                                  #Run using SUB's connection ROLE
 
 create publication "PUB"          #Replicate all current|future TABLEs in SCHEMA
  for tables in schema "SCHEMA",...#"SCHEMA" can be current_schema
@@ -10500,6 +10502,8 @@ OPTS.publish_via_partition_root   #BOOL (def: false). When replicating a partiti
                                   #whether to use the parent TABLE instead
                                   #This allows SUB to replicate to a non-partitioned TABLE
                                   #If true, `truncate` is ignored
+
+PCONF.wal_level                   #Must be 'logical' in PUB
 
 pg_publication                    #TABLE with all PUBs
 pg_publication.oid                #OID
@@ -10561,18 +10565,26 @@ pg_index.indisreplident           #BOOL. Whether INDEX is used in a `replica ide
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:         SUBSCRIPTION          :==(
+                                            )==:      SUBSCRIPTION CREATE      :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
 create subscription "SUB"         #Subscribe to a PUB
- connection 'LIBPQ'               #Connect with 'LIBPQ', i.e. can be in a different DATABASE|CLUSTER|machine
- publication "PUB",...            #Must be superuser
+ connection 'LIBPQ'               #Connect with 'LIBPQ'
+ publication "PUB",...            #  - can be in a different DATABASE|CLUSTER|machine
+                                  #  - uses the connection ROLE, including to run:
+                                  #     - PUB's `where`
+                                  #     - POLICYs
+                                  #Must be superuser
                                   #If multiple PUBs on same TABLE:
                                   #  - must have same COLs
                                   #  - `where BOOL_EXPRs` are or'd
                                   #PUB might not exist yet
+                                  #SUB can modify replicated TABLE:
+                                  #  - if this leads to conflict, stops SUB
+                                  #  - must then solve the conflict
+                                  #  - then skip offending transactions with `skip (lsn = PG_LSN)` or pg_replication_origin_advance()
 
 create subscription "SUB" ...
  with (OPTS)                      #
@@ -10618,8 +10630,9 @@ OPTS.slot_name                    #"SLOT" name (def: "SUB")
                                   #Can be 'NONE' when OPTS.create_slot false
 
 OPTS.copy_data                    #BOOL. If true (def), copy pre-existing data when SUB starts, in an "initial snapshot"
-                                  #Also called "initial data synchronization"
                                   #Creates a temporary SLOT named "pg_SUB_OID_sync_TABLE_OID_*"
+                                  #Internally similar to a `copy` command
+                                  #Once done, "initial data synchronization", i.e. catches up changes that happened during initial snapshot
 
 OPTS.streaming                    #BOOL. Whether to send transactions in bulk (false, def) or incrementally (true)
 
@@ -10654,15 +10667,15 @@ pg_subscription_rel               #TABLE with all SUBs state
 pg_subscription_rel.srsubid       #pg_subscription.oid of SUB
 pg_subscription_rel.srrelid       #REGCLASS of TABLE
 pg_subscription_rel.srsubstate    #Among:
-                                  #  - 'i': starting
-                                  #  - 'd': copying data
-                                  #  - 'f': finished copying data
-                                  #  - 's': synchronized
+                                  #  - 'i': before initial copy
+                                  #  - 'd': initial copy
+                                  #  - 'f': finished ininial copy
+                                  #  - 's': initial data synchronization
                                   #  - 'r': ready
 pg_subscription_rel.srsublsn      #PG_LSN of the last replicated transaction
                                   #null if srsubstate not 's|r'
 
-pg_stat_subscription              #TABLE with all SUBs detailed state
+pg_stat_subscription              #TABLE with all SUBs workers
 pg_stat_subscription.subid        #pg_subscription.oid of SUB
 pg_stat_subscription.subname      #"SUB" name
 pg_stat_subscription.relid        #REGCLASS of TABLE. null for the main worker
@@ -10690,25 +10703,96 @@ pg_stat_subscription_stats
 
                                              /=+===============================+=\
                                             /  :                               :  \
+                                            )==:      SUBSCRIPTION LIMITS      :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+PCONF.max_replication_slots       #NUM (def: 10). In publisher, max amount of SLOTs
+                                  #In consumer, max amount of SUBs
+                                  #Must be <= PCONF.max_wal_senders
+
+PCONF                             #NUM (def: 4). In consumer, max amount of worker processes used for SUBs
+ .max_logical_replication_workers #Disabled SUBs have 0 workers
+                                  #Initial snapshot requires an additional worker
+                                  #Must be <= PCONF.max_worker_processes
+
+HCONF.                            #NUM (def: 2). Max amount of parallel workers during initial snapshot
+ max_sync_workers_per_subscription#Max 1 per TABLE
+                                  #Must be <= PCONF.max_logical_replication_workers
+
+SCONF.logical_decoding_work_mem   #NUM|STR (def: 64MB). Max buffer used by PUB|SUB before flushing to disk
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:     SUBSCRIPTION TRIGGERS     :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+ZSCONF.session_replication_role   #Whether to disable TFUNC|EFUNC|RULEs:
+                                  #  - 'origin' (def): no, intended for neither PUB|SUB
+                                  #  - 'local': no, intended for PUB
+                                  #  - 'replica': yes, intended for SUB
+                                  #     - this avoids calling TFUNC|EFUNC|RULEs twice, in both PUB and SUB
+alter table ... disable|enable
+ always trigger|rule ...          #Enable TFUNC|RULE even if ZSCONF.session_replication_role 'replica'
+alter table ... disable|enable
+ replica trigger|rule ...         #Enable TFUNC|RULE only if ZSCONF.session_replication_role 'replica'
+alter event trigger disable|enable
+ replica|always                   #Same for EFUNC
+
+pg_trigger.tgenabled              #CHAR among: D (disabled), O (enable without always|replica), A (enable always), R (enable replica)
+pg_event_trigger.evtenabled       #Same for EFUNC
+pg_rewrite.ev_enabled             #Same for RULE
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
                                             )==:      LOGICAL REPLICATION      :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
-ZSCONF.session_replication_role   #'origin' (def), 'replica' or 'local'
-alter table ...
- [replica|always] trigger|rule ...#
+REPPLUG                           #Logical decoding "output plugin"
 
-alter event trigger disable|enable
- [replica|always]                 #
+pg_create_logical_replication_slot#Create a SLOT
+ ("SLOT", "REPPLUG"[,BOOL, BOOL2])#BOOL (def: false) is whether temporary, i.e. dropped at end of session, or on error
+ ->ROW                            #BOOL2 (def: false) is like OPTS.two_phase
+ROW.slot_name                     #"SLOT"
+ROW.lsn                           #PG_LSN
 
-pg_trigger.tgenabled              #char Controls in which session_replication_role modes the trigger fires.
-                                  #O = trigger fires in “origin” and “local” modes
-                                  #D = trigger is disabled
-                                  #R = trigger fires in “replica” mode
-                                  #A = trigger fires always
-pg_event_trigger.evtenabled       #Same for EFUNC
-pg_rewrite.ev_enabled             #Same for RULE
+pg_replication_slots              #TABLE with all SLOTs
+pg_replication_slots.slot_name    #"SLOT" name
+pg_replication_slots.slot_type    #Type of replication among: 'physical', 'logical'
+pg_replication_slots.plugin       #"REPPLUG" name. null if physical replication
+pg_replication_slots.datoid       #pg_database.oid of SLOT. null if physical replication
+pg_replication_slots.database     #"DATABASE" name of SLOT. null if physical replication
+pg_replication_slots.temporary    #BOOL. Whether temporary SLOT
+pg_replication_slots.active       #BOOL. Whether enabled
+pg_replication_slots.active_pid   #BPID of PUB. null if disabled
+pg_replication_slots.xmin         #xid The oldest transaction that this slot needs the database to retain.
+                                  #VACUUM cannot remove tuples deleted by any later transaction.
+pg_replication_slots.catalog_xmin #xid The oldest transaction affecting the system catalogs that this slot needs the database to retain.
+                                  #VACUUM cannot remove catalog tuples deleted by any later transaction.
+pg_replication_slots.restart_lsn  #pg_lsn The address (LSN) of oldest WAL which still might be required by the consumer of this slot
+                                  #and thus won't be automatically removed during checkpoints unless this LSN gets behind more than max_slot_wal_keep_size from the current LSN.
+                                  #NULL if the LSN of this slot has never been reserved.
+pg_replication_slots              #pg_lsn The address (LSN) up to which the logical slot's consumer has confirmed receiving data.
+ .confirmed_flush_lsn             #Data older than this is not available anymore.
+                                  #NULL for physical slots.
+pg_replication_slots.wal_status   #text Availability of WAL files claimed by this slot. Possible values are:
+                                  #  - 'reserved': the claimed files are within max_wal_size.
+                                  #  - 'extended': max_wal_size is exceeded but the files are still retained, either by the replication slot or by wal_keep_size.
+                                  #  - 'unreserved': the slot no longer retains the required WAL files and some of them are to be removed at the next checkpoint.
+                                  #    This state can return to reserved or extended.
+                                  #  - 'lost': some required WAL files have been removed and this slot is no longer usable.
+                                  #The last two states are seen only when max_slot_wal_keep_size is non-negative. If restart_lsn is NULL, this field is null.
+pg_replication_slots.safe_wal_size#int8 The number of bytes that can be written to WAL such that this slot is not in danger of getting in state "lost".
+                                  #It is NULL for lost slots, as well as if max_slot_wal_keep_size is -1.
+pg_replication_slots.two_phase    #bool True if the slot is enabled for decoding prepared transactions.
+                                  #Always false for physical slots.
 
 https://www.postgresql.org/docs/current/functions-admin.html#FUNCTIONS-REPLICATION-TABLE ???
 
@@ -10723,19 +10807,15 @@ pg_ls_logicalmapdir()->ROW_SET    #Returns files in pg_logical/mappings DIR
 pg_ls_logicalsnapdir()->ROW_SET   #Returns files in pg_logical/snapshots DIR
                                   #ROW: name STR, size INT8, modification TIMESTAMPTZ
 
-TOPTS.user_catalog_table          #BOOL???
-
-SCONF.logical_decoding_work_mem ???
-PCONF.max_logical_replication_workers ???
-PCONF.max_replication_slots ???
-HCONF.max_sync_workers_per_subscription ???
+TOPTS.user_catalog_table          #BOOL. Whether logical decoding plugins can read this TABLE,
+                                  #even if not being the one replicated.
+                                  #Def: true for pg_catalog.*, false otherwise
 
 pg_replication_origin_*(): must be superuser
 
 pg_replication_origin             #???
 pg_replication_origin_status      #???
                                   #Visible only to superuser
-pg_replication_slots              #???
 
 
                                              /=+===============================+=\
