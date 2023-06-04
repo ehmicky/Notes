@@ -1033,6 +1033,13 @@ AFUNC(...)                        #Ignores nulls
                                   #Returns null if empty SET
                                   #  - except: count()
 
+create|alter function ... strict  #Returns null directly if any argument is null
+                                  #For variadic argument, whole variadic ARR must be null, not just an item
+create|alter function ...
+ returns null on null input       #Same as `strict`
+create|alter function ...
+ called on null input             #Same as not `strict`
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -3048,13 +3055,6 @@ UPDATABLE VIEW ==>                #Possible unless SUBQUERY uses:
                                   #  - with (security_barrier)
                                   #Only `select "COL"` are updatable
                                   #  - but can mix with other `select VAL`, although those will be readonly
-
-VOPTS.security_invoker            #BOOL. In SUBQUERY, whether to use ROLE of:
-                                  #  - false (def): VIEW owner
-                                  #  - true: query caller
-                                  #Whether false|true, query caller's ROLE is used:
-                                  #  - in FUNC() calls in SUBQUERY
-                                  #  - to know whether VIEW itself can be used
 
 create view "VIEW" ...
  as SUBQUERY with                 #Reject inserts|updates that do not match VIEW's SUBQUERY, i.e. would not be visible in VIEW
@@ -5958,10 +5958,12 @@ SCONF                             #If true (def), parent process can perform som
 
 create|alter function|aggregate   #Whether [A]FUNC can be:
  ...                              #  - safe: run in parallel workers or their parent
- parallel safe|restricted|unsafe  #  - restricted: not run in parallel workers, but in their parent
+ parallel safe|restricted|unsafe  #     - must be purely functional
+                                  #  - restricted: not run in parallel workers, but in their parent
+                                  #     - required if gets some global state like: CURSOR, TEMP TABLE, PREP, etc.
                                   #  - unsafe (def): not run in parallel workers nor their parent
+                                  #     - required if sets global state
                                   #I.e. restricted|unsafe removes the possibility for parallel queries
-                                  #Parallel safety requires being purely functional
                                   #Most built-in FUNCs are parallel safe
 
 SCONF.force_parallel_mode         #Force using parallel queries, for debugging purpose. Can be:
@@ -6182,6 +6184,42 @@ Buffers: temp ...                 #Same for temporary heap pages
 WAL: fpi=UINT                     #Number of full heap pages added to WAL
 WAL: records=UINT                 #Number of ROWs added to WAL
 WAL: bytes=UINT                   #Number of bytes added to WAL
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:       EXPLAIN FUNCTION        :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+create|alter function ...         #Multiplied to cpu_operator_cost for the planner (i.e. per ROW)
+ cost FLOAT                       #Def: 1 for C LANGUAGE, 100 for others
+
+create|alter function ...         #Average NUM of ROWs returned, for the planner, if return TYPE is SET
+ rows NUM                         #Def: 1000
+
+create|alter function ...         #Whether state outside of FUNC is:
+ immutable|stable|volatile        #  - immutable: not read|written
+                                  #  - stable: read but not written
+                                  #     - including TABLEs, CONFVARs, current time
+                                  #     - excluding randomness, external processes
+                                  #  - volatile (def): read|written
+                                  #Used by the query planner
+
+create|alter function ...         #Set a FUNC to help query planner
+ support FUNC(INTERNAL)->INTERNAL2#Must use LANGUAGE C
+                                  #Must be superuser
+                                  #INTERNAL[2] not documented yet, but main parts are:
+                                  #  - SupportRequestCost: like `create function ... cost`
+                                  #  - SupportRequestRows: like `create function ... rows`
+                                  #  - SupportRequestSimplify: replace FUNC by its return value
+                                  #  (only for FUNC()->BOOL used in `where`)
+                                  #  - SupportRequestSelectivity: average percentage of ROWs returning true
+                                  #  - SupportRequestIndexCondition: transform into indexable OP
+                                  #  (only for WFUNC)
+                                  #  - SupportRequestOptimizeWindowClause
+                                  #  - SupportRequestWFuncMonotonic: whether monotonic
 
 
                                              /=+===============================+=\
@@ -7289,6 +7327,31 @@ pg_prepared_xacts.owner           #"ROLE" name of PXID's owner
 
                                              /=+===============================+=\
                                             /  :                               :  \
+                                            )==:          ROLE CALLER          :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+VOPTS.security_invoker            #BOOL. In SUBQUERY, whether to use ROLE of:
+                                  #  - false (def): VIEW owner
+                                  #  - true: query caller
+                                  #Whether false|true, query caller's ROLE is used:
+                                  #  - in FUNC() calls in SUBQUERY
+                                  #  - to know whether VIEW itself can be used
+
+create|alter function ...         #Uses ROLE of:
+ [external]                       #  - security invoker (def): caller
+ security invoker|definer         #  - security definer: FUNC owner
+                                  #If `security definer`:
+                                  #  - forbids `set role`
+                                  #  - should set FUNC-specific SCONF.search_path
+                                  #     - should not include any SCHEMA writable by untrusted ROLEs
+                                  #     - otherwise, they could shadow VARs
+                                  #     - e.g. pg_temp should be put at the end
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
                                             )==:       PRIVILEGES GRANT        :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -7640,6 +7703,20 @@ pg_policies.permissive            #'PERMISSIVE|RESTRICTIVE'
 pg_policies.roles                 #"ROLE"_ARR
 pg_policies.qual                  #STR of `using`
 pg_policies.with_check            #STR of `with check`
+
+create|alter function ...         #Does not give any information about arguments:
+ [not] leakproof                  #  - including:
+                                  #     - exceptions on some arguments but not others
+                                  #     - printing argument value
+                                  #  - except: from return value
+                                  #Goal:
+                                  #  - allow passing ROWs as argument, even if those will be restricted by POLICYs or VOPTS.security_barrier
+                                  #  - otherwise, enforces FUNC always called after those, even inside TFUNCs
+                                  #Requires `immutable`
+                                  #Def:
+                                  #  - leakproof if not called with any ROWs restricted by POLICYs or VOPTS.security_barrier
+                                  #  - otherwise, not leakproof
+                                  #Must be superuser
 
 
                                              /=+===============================+=\
@@ -8920,19 +8997,29 @@ pg_file_sync('PATH')              #
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:           FUNCTIONS           :==(
+                                            )==:         FUNCTION CALL         :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
 FUNC(VAL)                         #Positional argument
+
 FUNC("ARG" := VAL)                #Named argument
+
 FUNC(..., ...)
 FUNC(..., variadic ARR)           #Calling a variadic argument
 
 do [language "LANGUAGE"] 'BODY'   #Call anonymous FUNC
                                   #Def LANGUAGE: plpgsql
                                   #Cannot use sql LANGUAGE
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:      FUNCTION DEFINITION      :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
 
 create function                   #Create a FUNC
  "FUNC"([FUNC_ARG,...])           #'BODY' often uses $$...$$ notation
@@ -8958,68 +9045,11 @@ inout "ARG" TYPE                  #Same as `"ARG" TYPE` + `out "ARG" TYPE`, i.e.
 "ROW_ALIAS"."COL"%type            #TYPE of "COL"
                                   #Cannot be used between FUNC_ARGs
 
-create|alter function ...         #Whether state outside of FUNC is:
- immutable|stable|volatile        #  - immutable: not read|written
-                                  #  - stable: read but not written
-                                  #     - including TABLEs, CONFVARs, current time
-                                  #     - excluding randomness, external processes
-                                  #  - volatile (def): read|written
-                                  #Used by the query planner
-
-create|alter function ...         #Does not give any information about arguments:
- [not] leakproof                  #  - including:
-                                  #     - exceptions on some arguments but not others
-                                  #     - printing argument value
-                                  #  - except: from return value
-                                  #Goal:
-                                  #  - allow passing ROWs as argument, even if those will be restricted by POLICYs or VOPTS.security_barrier
-                                  #  - otherwise, enforces FUNC always called after those, even inside TFUNCs
-                                  #Requires `immutable`
-                                  #Def:
-                                  #  - leakproof if not called with any ROWs restricted by POLICYs or VOPTS.security_barrier
-                                  #  - otherwise, not leakproof
-                                  #Must be superuser
-
-create|alter function ... strict  #Returns null directly if any argument is null
-                                  #For variadic argument, whole variadic ARR must be null, not just an item
-create|alter function ...
- returns null on null input       #Same as `strict`
-create|alter function ...
- called on null input             #Same as not `strict`
-
-create|alter function ...         #Uses ROLE of:
- [external]                       #  - security invoker (def): caller
- security invoker|definer         #  - security definer: FUNC owner
-                                  #If `security definer`:
-                                  #  - forbids `set role`
-                                  #  - should set FUNC-specific SCONF.search_path
-                                  #     - with a temporary SCHEMA at the end
-                                  #     - this avoids malicious variable shadowing
-
-create|alter function ...         #Multiplied to cpu_operator_cost for the planner
- cost FLOAT                       #Def: 1 for C LANGUAGE, 100 for others
-
-create|alter function ...         #Average NUM of ROWs returned, for the planner, if return TYPE is SET
- rows NUM                         #Def: 1000
-
-create|alter function ...
- support FUNC                     #???
-                                  #Must be superuser
-
-create|alter function ...
- parallel unsafe|restricted|safe  #???
-
-alter function FUNC(...)
-...                               #... is any of the options after language LANG. Can use not leakproof.
+SCONF.check_function_bodies       #BOOL. If true (def), check syntax error in 'BODY' when FUNC is created
+                                  #Sometimes, this can be an issue when some VARs are not setup yet
+                                  #  - e.g. this is disabled by pg_dump
 
 ICONF.max_function_args           #100. Max NUM of arguments in a FUNC
-
-pg_proc                           #All FUNC. ???
-
-regproc                           #TYPE to cast pg_proc.oid as "FUNC" name
-regprocedure                      #TYPE to cast pg_proc.oid as "FUNC(TYPE,...)" name
-
-SCONF.check_function_bodies ???
 
 
                                              /=+===============================+=\
@@ -9033,6 +9063,11 @@ create procedure ???
 alter procedure ???
 
 call FUNC(...) ???
+
+pg_proc                           #All FUNC. ???
+
+regproc                           #TYPE to cast pg_proc.oid as "FUNC" name
+regprocedure                      #TYPE to cast pg_proc.oid as "FUNC(TYPE,...)" name
 
 
                                              /=+===============================+=\
@@ -9180,7 +9215,7 @@ c                                 #LANGUAGE for the C non-buitin FUNCs
                                   #Not documented yet
 
 create function ...               #Define C FUNC
- as 'PATH', 'FUNC_NAME'           #Calls load 'PATH', using its exported 'FUNC_NAME'
+ as 'PATH'[, 'FUNC_NAME']         #Calls load 'PATH', using its exported 'FUNC_NAME' (def: same as "FUNC")
 
 load 'PATH'                       #Loads a C library
 zPCONF.shared_preload_libraries   #'DIR,...' that perform `load 'FILE'`. Must omit file .EXT
@@ -9230,7 +9265,10 @@ pg_config --pkgincludedir         #Prints PKGINCLUDEDIR
 sql                               #LANGUAGE always available, with BODY being SQL
                                   #Cannot use transactions, vacuum
 
-create function ...  return ...   #Like: `as select '...'`
+create function ...               #Like `as '...'` but parsed as FUNC creation time instead of execution time
+ begin atomic ... end             #Cannot use any* TYPEs
+                                  #Also, sets FUNC as parent dependency of ENTITYs used in ...
+create function ... return ...    #Same as `begin atomic select ... end`
 
 RETURN VALUE ==>                  #Last SQL statement must return either:
                                   #  - a MSUBQUERY
