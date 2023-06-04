@@ -945,7 +945,8 @@ CSTR <~=> STR                     #
 void                              #TYPE of FUNC with no return value
                                   #Different from null, which is a value
 
-PSEUDO-TYPE ==>                   #Any of: any*, unknown, record, cstring, void, [event_]trigger, internal, *_handler, pg_ddl_command
+PSEUDO-TYPE ==>                   #TYPEs meant for FUNCs, not SQL
+                                  #Any of: any*, unknown, record, cstring, void, [event_]trigger, internal, *_handler, pg_ddl_command
 
 
                                              /=+===============================+=\
@@ -2264,7 +2265,7 @@ ROW_TYPE                          #Conceptually like an OBJ
                                   #Max 1600 COLs
 record                            #TYPE of any ROW_TYPE
 
-table(VAR TYPE,...)               #ROW_TYPE
+table(VAR TYPE,...)               #ROW_SET_TYPE
                                   #Can only be used in FUNC return TYPEs
 
 ROW                               #ROW_TYPE value
@@ -8262,6 +8263,32 @@ pg_extension.extcondition         #'BOOL_REXPR'_ARR of pg_extension_config_dump(
 
                                              /=+===============================+=\
                                             /  :                               :  \
+                                            )==:           TRANSFORM           :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+create transform "TYPE"
+ language "LANGUAGE" (
+  from sql with function
+   FUNC(INTERNAL)->INTERNAL       #Add a TYPE to a LANGUAGE
+  to sql with function            #Meant for EXTENSIONs
+   FUNC2(INTERNAL)->TYPE_VAL      #FUNC is called on arguments, FUNC2 on return value
+ )                                #FUNC[2] not documented yet
+
+create function ...
+ transform for type TYPE ,...     #Declare a FUNC with a TYPE that has a TRANSFORM
+
+pg_transform                      #TABLE with all TRANSFORMs
+pg_transform.oid                  #OID
+pg_transform.trftype              #REGTYPE
+pg_transform.trflang              #pg_language.oid
+pg_transform.trffromsql           #REGPROC of FUNC, or 0
+pg_transform.trftosql             #REGPROC of FUNC2, or 0
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
                                             )==:        BUILD-TIME DATA        :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -8915,7 +8942,7 @@ OVERLOADING ==>                   #Possible
 
 "ARG" TYPE                        #FUNC_ARG
 
-TYPE ...                          #"ARG" can be omitted in FUNC_ARG ???
+TYPE ...                          #"ARG" can be omitted in FUNC_ARG, in which case, it cannot be used in FUNC body
 
 "ARG" TYPE default VAL
 "ARG" TYPE = VAL                  #Argument's default value
@@ -8928,43 +8955,46 @@ out "ARG" TYPE                    #Declare return TYPE in parameters list
 out "ARG" TYPE, ...               #Same but returns a ROW_TYPE where each "ARG" is a COL
 inout "ARG" TYPE                  #Same as `"ARG" TYPE` + `out "ARG" TYPE`, i.e. both argument and return TYPE
 
-VAL%type                          #TYPE of VAL
+"ROW_ALIAS"."COL"%type            #TYPE of "COL"
                                   #Cannot be used between FUNC_ARGs
-
-create function ... window        #Declare as a WFUNC.
-                                  #Passes additional arguments about current WINDOW ???
-                                  #Only in specific LANGUAGEs, including C
 
 create|alter function ...         #Whether state outside of FUNC is:
  immutable|stable|volatile        #  - immutable: not read|written
                                   #  - stable: read but not written
+                                  #     - including TABLEs, CONFVARs, current time
+                                  #     - excluding randomness, external processes
                                   #  - volatile (def): read|written
-                                  #Used for performance optimization
+                                  #Used by the query planner
 
-create|alter function ...         #Does not give any information about arguments (except from return value) including:
- [not] leakproof                  #  - exceptions on some arguments but not others
-                                  #  - printing argument value
+create|alter function ...         #Does not give any information about arguments:
+ [not] leakproof                  #  - including:
+                                  #     - exceptions on some arguments but not others
+                                  #     - printing argument value
+                                  #  - except: from return value
+                                  #Goal:
+                                  #  - allow passing ROWs as argument, even if those will be restricted by POLICYs or VOPTS.security_barrier
+                                  #  - otherwise, enforces FUNC always called after those, even inside TFUNCs
                                   #Requires `immutable`
-                                  #Used for performance and security optimization
+                                  #Def:
+                                  #  - leakproof if not called with any ROWs restricted by POLICYs or VOPTS.security_barrier
+                                  #  - otherwise, not leakproof
                                   #Must be superuser
 
 create|alter function ... strict  #Returns null directly if any argument is null
                                   #For variadic argument, whole variadic ARR must be null, not just an item
 create|alter function ...
- called on null input ???
+ returns null on null input       #Same as `strict`
 create|alter function ...
- returns null on null input ???
+ called on null input             #Same as not `strict`
 
 create|alter function ...         #Uses ROLE of:
- security invoker|definer         #  - security invoker (def): caller
-                                  #  - security definer: FUNC owner
+ [external]                       #  - security invoker (def): caller
+ security invoker|definer         #  - security definer: FUNC owner
                                   #If `security definer`:
                                   #  - forbids `set role`
                                   #  - should set FUNC-specific SCONF.search_path
                                   #     - with a temporary SCHEMA at the end
                                   #     - this avoids malicious variable shadowing
-create function ...
- external security invoker|definer#???
 
 create|alter function ...         #Multiplied to cpu_operator_cost for the planner
  cost FLOAT                       #Def: 1 for C LANGUAGE, 100 for others
@@ -9081,6 +9111,11 @@ stype = TYPE2                     #  - each VAL... of each COL is passed inside 
 
 pg_aggregate                      #All AFUNC. ???
 
+create function ... window        #Declare a WFUNC.
+                                  #Passes additional arguments about current WINDOW
+                                  #Only in C LANGUAGE
+                                  #Not documented yet
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -9129,20 +9164,6 @@ pg_language                       #All activated LANGUAGE, including:
                                   #    Is false for C, R and SH but true to SQL and PL/PGSQL
                                   #???
 
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:           TRANSFORM           :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-create function ...
- transform for type TYPE ,...     #
-
-create transform ???
-
-pg_transform ???
 
 
                                              /=+===============================+=\
