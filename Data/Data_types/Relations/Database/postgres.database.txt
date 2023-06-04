@@ -4,7 +4,6 @@
             
 
 
-
                                              /=+===============================+=\
                                             /  :                               :  \
                                             )==:            VERSION            :==(
@@ -294,6 +293,8 @@ pg_collation.collnamespace        #REGNAMESPACE of COLLATION
 pg_opfamily.opfnamespace          #REGNAMESPACE of OPFAMILY
 pg_opclass.opcnamespace           #REGNAMESPACE of OPCLASS
 pg_seclabels.objnamespace         #REGNAMESPACE|null of SECURITY_LABEL
+pg_proc.pronamespace              #REGNAMESPACE of FUNC
+pg_operator.oprnamespace          #REGNAMESPACE of OP
 pg_tables.schemaname              #pg_namespace.nspname of TABLE
 pg_indexes.schemaname             #pg_namespace.nspname of INDEX
 pg_views.schemaname               #pg_namespace.nspname of VIEW
@@ -368,7 +369,7 @@ ENTITY                            #Entity that can be created with `create ENTIT
 VAR,...                           #For most ENTITYs
 VAR                               #For access method, collation, conversion, database, event trigger, language,
                                   #subscription, tablespace, text search *
-VAR(...),...                      #For aggregate, function, procedure, routine
+VAR(...),...                      #For function|procedure|routine|aggregate
 VAR(TYPE|none, TYPE2|none),...    #For operator
 (TYPE as TYPE2)                   #For cast
 VAR on "TABLE"                    #For policy, trigger, rule
@@ -384,7 +385,7 @@ alter ENTITY ... "ENTITY" ...     #Sets ENTITY options after creation
                                   #  - faster than doing individual statements serially
                                   #  - for most actions of:
                                   #     - alter [foreign] table, materialized view, type "ROW"
-                                  #     - alter function, routine, procedure
+                                  #     - alter function|procedure|routine
 
 alter ENTITY "ENTITY"             #Rename an ENTITY.
  rename to "VAR"                  #Not for ENTITY: extension, operator, user mapping
@@ -392,7 +393,7 @@ alter ENTITY "ENTITY"             #Rename an ENTITY.
 create or replace ENTITY ...      #If "ENTITY" already exists, drop it first.
                                   #For ENTITY:
                                   #  - view, rule, trigger
-                                  #  - aggregate, function, procedure
+                                  #  - function|procedure|aggregate
                                   #  - language, transform
 create ENTITY if not exists ...   #If "ENTITY" already exists, noop but no error
                                   #For ENTITY: collation, extension, foreign table, index, materialized view, schema,
@@ -626,7 +627,9 @@ cast(VAL as TYPE)
 VAL::TYPE                         #Explicit casting
 TYPE '...'                        #Explicit casting, but UNKNOWN '...' only
 
-ASSIGNMENT CASTING ==>            #Automatic casting when insert value in a COL
+ASSIGNMENT CASTING ==>            #Automatic casting when:
+                                  #  - inserting a value in a COL
+                                  #  - returning a value inside a FUNC
                                   #Always implies explicit casting too
 
 IMPLICIT CASTING ==>              #Automatic casting when passing arguments to a FUNC
@@ -665,7 +668,9 @@ pg_cast.castmethod                #How to cast, among:
                                   #  - 'b': `without function`
 
 YOPTS.preferred                   #BOOL (def: false). Each YOPTS.category has a single true, which is the preferred type cast.
-pg_type.typispreferred            #Also used as the preferred TYPE in overloaded FUNCs
+pg_type.typispreferred            #Also used as the preferred TYPE in:
+                                  #  - overloaded FUNCs
+                                  #  - anycompatible*
                                   #For:
                                   #  - NUM -> FLOAT8
                                   #  - STR -> TEXT
@@ -914,6 +919,7 @@ min|max(SET)->VAL                 #AFUNC
 
 unknown                           #Unknown TYPE
                                   #Has no operators, but is usually implicitly transtyped based on operators
+                                  #Cannot be used in an ARR_TYPE
 unknown -> VAL                    #Possible with any TYPE, except any*
 VAL ~> unknown                    #Never possible, except with unknown itself
 
@@ -934,8 +940,11 @@ E'...'                            #Like '...' but can use backslash escape seque
 any*                              #TYPE. "Polymorphic type".
                                   #Used in FUNCs to represent generic types
                                   #  - all any* in a given FUNC call's argument|return have same TYPE
-                                  #  - including anyarray|anyrange, but using their underlying TYPE
+                                  #  - including anyarray|any[multi]range, but using their underlying TYPE
+anycompatible*                    #Like any* but polymorphic TYPEs can use implicit casts, not just be identical
 unknown -> any*                   #Not possible
+anyelement
+anycompatible                     #Most general any* TYPE, i.e. matches anything
 
 cstring                           #TYPE. null-terminated STR
                                   #Similar to unknown, but meant to use inside FUNCs
@@ -1028,17 +1037,17 @@ order by ... nulls first|last
 create index ...
  (...  nulls first|last,...)      #Def: nulls first for desc, nulls last for asc
 
-AFUNC(...)                        #Ignores nulls
-                                  #  - except: *agg(...), count(*), *rank(), cume_dist()
-                                  #Returns null if empty SET
-                                  #  - except: count()
-
 create|alter function ... strict  #Returns null directly if any argument is null
                                   #For variadic argument, whole variadic ARR must be null, not just an item
 create|alter function ...
  returns null on null input       #Same as `strict`
 create|alter function ...
  called on null input             #Same as not `strict`
+
+AFUNC(...)                        #Ignores nulls
+                                  #  - except: *agg(...), count(*), *rank(), cume_dist()
+                                  #Returns null if empty SET
+                                  #  - except: count()
 
 
                                              /=+===============================+=\
@@ -1539,12 +1548,19 @@ isfinite(DATE|TIMESTAMP|INTERVAL)
 'allballs'                        #TIME_UNKNOWN (midnight)
 
 'now'                             #DATE|TIME|TIMESTAMP_UNKNOWN
-current_time[stamp]|date          #Same but directly DATE|TIMETZ|TIMESTAMPTZ instead of UNKNOWN
-local_time[stamp]|date            #Same but using current TZ
-statement_timestamp()
- ->TIMESTAMPTZ
+                                  #Beginning of transaction
+current_time[stamp][(NUM)]        #Same but directly DATE|TIMETZ|TIMESTAMPTZ instead of UNKNOWN
+current_date                      #Beginning of transaction
+                                  #NUM is number of decimals below seconds (max|def: 6, i.e. us)
+localtime[stamp][(NUM)]
+localdate                         #Same but using current TZ
+now()->TIMESTAMPTZ
 transaction_timestamp()
- ->TIMESTAMPTZ                    #Beginning of statement|transaction
+ ->TIMESTAMPTZ                    #Beginning of transaction
+statement_timestamp()
+ ->TIMESTAMPTZ                    #Beginning of statement
+clock_timeout()->TIMESTAMPTZ
+timeofday()->'TIMESTAMPTZ'        #Beginning of FUNC call
 
 DATE + - NUM                      #DATE
 DATE - DATE2                      #NUM
@@ -2074,7 +2090,7 @@ int8range                         #RANGE TYPE of INT8
 numrange                          #RANGE TYPE of NUMERIC
 daterange                         #RANGE TYPE of DATE
 ts[tz]range                       #RANGE TYPE of TIMESTAMP[TZ]
-anyrange                          #TYPE. Any RANGE TYPE
+any[compatible]range              #TYPE. Any RANGE TYPE
 
 create type "RANGE_TYPE"
  as range(OPTS)                   #New RANGE TYPE.
@@ -2151,7 +2167,7 @@ int8multirange
 nummultirange
 datemultirange
 ts[tz]multirange
-anymultirange                     #MULTIRANGE TYPEs
+any[compatible]multirange         #MULTIRANGE TYPEs
 
 RANGE ~> MULTIRANGE               #Type cast
 
@@ -2180,8 +2196,9 @@ _TYPE                             #Dimensions are defined at write-time.
                                   #Underlying TYPE can be another ARR for multidimensional ARRs.
                                   #1-based indices
                                   #Max length 1.3e8
-[any]array                        #TYPE. Any TYPE2[]
-anynonarray                       #TYPE.
+array
+any[compatible]array              #TYPE. Any TYPE2[]
+any[compatible]nonarray           #TYPE.
 
 array[VAL...]                     #ARR literal value.
 '{VAL,...}'                       #ARR_UNKNOWN
@@ -2281,6 +2298,8 @@ COL                               #"Column", i.e. ROW property
                                   #Named. Can have duplicate names
                                   #  - e.g. select 1 as a, 2 as a;
                                   #  - but (ROW)."COL" fails
+
+CONTAINER TYPE ==>                #ARR_TYPE|ROW_TYPE|RANGE_TYPE
 
 create type "ROW"
  as ("COL" TYPE,...)              #Create a new ROW_TYPE
@@ -4106,6 +4125,10 @@ AFUNC(...)                        #Similar to AFUNC(ARG..., ...) except ARG... a
                                   #and ... are "direct arguments" (evaluated once for all ROWs)
                                   #`order by`: same syntax as `select ...`
 ZSET                              #Notation that means this AFUNC() argument must be in `within group (order by ZSET)`
+
+PARTIAL AGGREGATION ==>           #AFUNC which can compute its result in parallel divide-and-conquer, as a performance optimization
+                                  #Cannot do so when using ZSET, grouping sets, AFUNC(distinct ...) nor AFUNC(... order by ...)
+                                  #Most builtin AFUNCs allow partial aggregation, except for *agg, mode|percentile*, *rank, cume_dist
 
 
                                              /=+===============================+=\
@@ -6194,17 +6217,34 @@ WAL: bytes=UINT                   #Number of bytes added to WAL
 
 
 create|alter function ...         #Multiplied to cpu_operator_cost for the planner (i.e. per ROW)
- cost FLOAT                       #Def: 1 for C LANGUAGE, 100 for others
+ cost FLOAT                       #Often used:
+                                  #  - 1: def for C FUNC
+                                  #  - 10: slow C FUNC
+                                  #  - 100: def for non-C FUNC
+                                  #  - 1000: slow non-C FUNC
 
 create|alter function ...         #Average NUM of ROWs returned, for the planner, if return TYPE is SET
- rows NUM                         #Def: 1000
+ rows NUM                         #Often used:
+                                  #  - 10|20: unknown, but probably very low
+                                  #  - 100: unknown, but probably lower
+                                  #  - 1000 (def): unknown
+                                  #  - 10000: unknown, but probably lower
+                                  #  - specific NUM: when returns always the same amount of ROWs
 
-create|alter function ...         #Whether state outside of FUNC is:
- immutable|stable|volatile        #  - immutable: not read|written
-                                  #  - stable: read but not written
-                                  #     - including TABLEs, CONFVARs, current time
-                                  #     - excluding randomness, external processes
-                                  #  - volatile (def): read|written
+create|alter function ...         #Can be:
+ immutable|stable|volatile        #  - volatile (def)
+                                  #     - can modify state outside FUNC
+                                  #     - even if same args, can return different values per statement
+                                  #  - stable:
+                                  #     - cannot modify state outside FUNC
+                                  #     - if same args, returns same values, but within a given SQL statement
+                                  #     - can:
+                                  #        - read global state that does not change within statement: TABLEs, CONFVARs, current_timestamp
+                                  #        - but not: randomness, SERIALs, clock_timestamp, external processes
+                                  #  - immutable:
+                                  #     - cannot modify state outside FUNC
+                                  #     - if same args, returns same values, always
+                                  #     - cannot read global mutable state
                                   #Used by the query planner
 
 create|alter function ...         #Set a FUNC to help query planner
@@ -7322,6 +7362,8 @@ pg_opfamily.opfowner              #REGROLE of OPFAMILY's owner
 pg_opclass.opcowner               #REGROLE of OPCLASS's owner
 pg_extension.extowner             #REGROLE of EXTENSION's owner
 pg_tablespace.spcowner            #REGROLE of TABLESPACE's owner
+pg_proc.proowner                  #REGROLE of FUNC's owner
+pg_operator.oprowner              #REGROLE of owner
 pg_prepared_xacts.owner           #"ROLE" name of PXID's owner
 
 
@@ -7339,8 +7381,8 @@ VOPTS.security_invoker            #BOOL. In SUBQUERY, whether to use ROLE of:
                                   #  - in FUNC() calls in SUBQUERY
                                   #  - to know whether VIEW itself can be used
 
-create|alter function ...         #Uses ROLE of:
- [external]                       #  - security invoker (def): caller
+create|alter function|procedure   #Uses ROLE of:
+ ... [external]                   #  - security invoker (def): caller
  security invoker|definer         #  - security definer: FUNC owner
                                   #If `security definer`:
                                   #  - forbids `set role`
@@ -7431,7 +7473,7 @@ alter default privileges
 PUBLIC PRIVILEGES ==>             #`public` ROLE has default PRIVILEGEs:
                                   #  - DATABASE: connect, temp
                                   #  - TYPE|DOMAIN: usage
-                                  #  - FUNC|PROCEDURE: execute
+                                  #  - FUNC: execute
                                   #  - LANGUAGEs: usage
                                   #Cannot have `grant` PRIVILEGE
 
@@ -7446,7 +7488,7 @@ acldefault('CHAR', REGROLE)       #Default PRIVILEGEs of ENTITYs 'CHAR' owned by
                                   #  - 's': SEQUENCE
                                   #  - 'L': LARGEOBJ
                                   #  - 'l': LANGUAGE
-                                  #  - 'f': FUNC|PROCEDURE
+                                  #  - 'f': FUNC
                                   #  - 't': TABLESPACE
                                   #  - 'F': FDW
                                   #  - 'S': FSERVER
@@ -7574,7 +7616,7 @@ usage                             #PRIVILEGE on SEQUENCE, with ACL: U
 
 usage                             #PRIVILEGE on LANGUAGE, with ACL: U
                                   #Create FUNC with this LANGUAGE
-execute                           #PRIVILEGE on FUNC|PROCEDURE|ROUTINE, with ACL: X
+execute                           #PRIVILEGE on FUNC, with ACL: X
                                   #Execute FUNC() (including TFUNC())
 
 create                            #PRIVILEGE on TABLESPACE, with ACL: C
@@ -7625,7 +7667,7 @@ pg_class.relacl                   #ACLITEM_ARR of RELATION|SEQUENCE
 pg_attribute.attacl               #ACLITEM_ARR of COL
 pg_largeobject_metadata.lomacl    #ACLITEM_ARR of LARGEOBJ
 pg_language.lanacl                #ACLITEM_ARR of LANGUAGE
-pg_proc.proacl                    #ACLITEM_ARR of FUNC|PROCEDURE|ROUTINE
+pg_proc.proacl                    #ACLITEM_ARR of FUNC
 pg_tablespace.spcacl              #ACLITEM_ARR of TABLESPACE
 pg_foreign_data_wrapper.fdwacl    #ACLITEM_ARR of FDW
 pg_foreign_server.srvacl          #ACLITEM_ARR of FSERVER
@@ -8231,7 +8273,7 @@ INIMAIN.schema                    #Default 'SCHEMA' in SQLMAIN, i.e. set as SCON
 INIMAIN.relocatable               #BOOL (def: false). Whether 'SCHEMA' can be overridden by `alter extension ... set schema`
 INIMAIN.module_pathname           #STR which can be used as `MODULE_PATHNAME` in SQLMAIN
                                   #Can include `$libdir`, e.g. '$libdir/EXTENSION'
-                                  #Meant to be used inside `create function ... as 'MODULE_PATHNAME', 'FUNC_NAME' language C`
+                                  #Meant to be used inside `create function|procedure ... as 'MODULE_PATHNAME', 'FUNC_NAME' language C`
 INIMAIN.encoding                  #'ENCODING' (def: server's ENCODING) of SQLMAIN
 
 EXTENSION_DIR/                    #SQLMAIN ("script file"), EXTENSION's main imperative file
@@ -8353,7 +8395,7 @@ create transform "TYPE"
    FUNC2(INTERNAL)->TYPE_VAL      #FUNC is called on arguments, FUNC2 on return value
  )                                #FUNC[2] not documented yet
 
-create function ...
+create function|procedure ...
  transform for type TYPE ,...     #Declare a FUNC with a TYPE that has a TRANSFORM
 
 pg_transform                      #TABLE with all TRANSFORMs
@@ -8869,13 +8911,16 @@ alter role "ROLE"
 alter database "DATABASE"
  set|reset ...                    #Like `set|reset ...` but for all sessions using DATABASE
 
-create function ... set ...       #Like `set ...` but inside a whole FUNC
-set local ...                     #Inside a FUNC, changes the value from `create function ... set ...`
+create function|procedure ...
+ set ...                          #Like `set ...` but inside a whole FUNC
+set local ...                     #Inside a FUNC, changes the value from `create function|procedure ... set ...`
 
 pg_db_role_setting                #TABLE with all CONFVARs set to specific ROLE or DATABASE
 pg_db_role_setting.setdatabase    #pg_database.oid or 0
 pg_db_role_setting.setrole        #REGROLE or 0
 pg_db_role_setting.setconfig      #'CONFVAR=VAL'_ARR
+
+pg_proc.proconfig                 #'CONFVAR=VAL'_ARR of FUNC
 
 
                                              /=+===============================+=\
@@ -9003,8 +9048,9 @@ pg_file_sync('PATH')              #
 
 
 FUNC(VAL)                         #Positional argument
-
+FUNC("ARG" => VAL)
 FUNC("ARG" := VAL)                #Named argument
+FUNC(VAL, "ARG" => VAL)           #Mixed positional|named argument
 
 FUNC(..., ...)
 FUNC(..., variadic ARR)           #Calling a variadic argument
@@ -9059,64 +9105,21 @@ ICONF.max_function_args           #100. Max NUM of arguments in a FUNC
                                              \=+===============================+=/
 
 
-create procedure ???
-alter procedure ???
+create|alter procedure "PROCEDURE"#Like `function` except can only be called top-level, using `call`
+ ...                              #Also:
+                                  #  - return TYPE must be either void or ROW_SET
+                                  #  - can start|end transactions
+                                  #`[in]out "ARG" TYPE`
+                                  #  - must be used instead of `returns TYPE`
+                                  #  - `out` ARGs must be specified by caller as if they were `inout`
+                                  #     - however, they are ignored, i.e. usually `null` is passed
+                                  #Same syntax as `create|alter function ...` except:
+                                  #  - no `strict`
+                                  #  - no `leakproof`
+                                  #  - cannot be WFUNC
+                                  #  - no query planner optimization: parallel, cost, rows, support
 
-call FUNC(...) ???
-
-pg_proc                           #All FUNC. ???
-
-regproc                           #TYPE to cast pg_proc.oid as "FUNC" name
-regprocedure                      #TYPE to cast pg_proc.oid as "FUNC(TYPE,...)" name
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:            ROUTINE            :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-alter routine VAR(...)            #Like alter function ... except works also on AFUNC and PROCEDURE
-                                  #Cannot use:
-                                  #  - called on null input, returns null on null input, strict
-                                  #  - support FUNC
-drop routine VAR(...),...         #Like drop function ... except works also on AFUNC and PROCEDURE
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:           OPERATOR            :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-create operator OP                #Creates an OP, i.e. a FUNC using a sign. Can have one or two arguments.
-(left|rightarg = TYPE,            #Can be an already existing OP, with different TYPE (overloading)
-procedure = FUNC                  #OP is [+-*/<>=~! #%^&|`?]+
-[, commutator = OP2]              #Other args are for optimization (hints the planner in rewriting queries so they match an INDEX):
-[, negator = OP3]                 #  - OP2 if VAL OP VAL2 is equivalent to VAL2 OP2 VAL
-[, restrict = FUNC2]              #  - OP3 if VAL OP VAL2 is equivalent to not VAL2 OP3 VAL, or OP VAL to not OP3 VAL
-[, join = FUNC3]                  #  - FUNC2 tells when using VAL OP VAL2 (returning BOOL), how much portion of the COL is likely to be chosen.
-[hashes]                          #    Can choose among default ones:
-                                  #      - eqsel: chooses a small portion, like =
-                                  #      - neqsel: large portion, like <>
-                                  #      - scalar[l|g]tsel: semi-large portion before or after, like < <= or > >=
-                                  #  - FUNC3 is like FUNC2 but for VAL OP VAL2. Default ones:
-                                  #      - eqjoinsel: like =
-                                  #      - neqjoinsel: like <>
-                                  #      - scalar[l|g]tjoinsel: like < <= or > >=
-                                  #      - areajoinsel: like BOX operators
-                                  #      - positionjoinsel: like POINT operators
-                                  #      - contjoinsel: like <@ @>
-                                  #  - hashes: VAL OP VAL2 is true if hash(VAL) = hash(VAL2)
-alter operator
- "OPERATOR"(TYPE, TYPE2) set ???
-
-pg_operator                       #All OPERATOR. ???
-
-regoper                           #TYPE to cast pg_operator.oid as "OP" name
-regoperator                       #TYPE to cast pg_operator.oid as "OP(TYPE,...)" name
+call PROCEDURE_FUNC(...)          #
 
 
                                              /=+===============================+=\
@@ -9126,30 +9129,217 @@ regoperator                       #TYPE to cast pg_operator.oid as "OP(TYPE,...)
                                              \=+===============================+=/
 
 
-PARTIAL AGGREGATION ==>           #AFUNC which can compute its result in parallel divide-and-conquer
-                                  #I.e. has a combine function to merge intermediary results
-                                  #  - using the same initcond
-                                  #Cannot rely on SET items order
-                                  #Cannot use ZSET, grouping sets, AFUNC(distinct ...) nor AFUNC(... order by ...)
-                                  #Must be marked `parallel safe`
-                                  #Most builtin AFUNCs allow partial aggregation, except for *agg, mode|percentile*, *rank, cume_dist
+create aggregate
+ "AFUNC"(FUNC_ARG,...) (OPTS)     #Creates an AFUNC(...)
 
-create aggregate AFUNC            #Creates an AFUNC(COL,...):
-(TYPE...) (sfunc = FUNC,          #  - TYPE are type of each COL.
-stype = TYPE2                     #  - each VAL... of each COL is passed inside successive FUNC(VAL2, VAL...)
-[, finalfunc = FUNC2]             #     - VAL2 is the return value of the last FUNC(), and its type is TYPE2
-[, initcond = STR]                #     - its value in the first FUNC() is TYPE2 STR (typecasting from STR) (def: null)
-)                                 #  - last FUNC can be different if FUNC2(VAL2) is defined: takes only one ARG, and can return any type.
-                                  #  - last VAL2 is returned
-                                  #  - by convention, null should be ignored in FUNC, unless there are only null, where null should be
-                                  #    returned
+OPTS.sfunc                        #FUNC(VAL, VAL2,...)->VAL
+                                  #Reduces the SET elements VAL2s (from FUNC_ARGs) to a single VAL
+                                  #By convention, FUNC is `strict`:
+                                  #  - does not call OPTS.sfunc with nulls elements
+                                  #  - calls OPTS.finalfunc even if only nulls elements
 
-pg_aggregate                      #All AFUNC. ???
+OPTS.initcond                     #UNKNOWN. Initial value passed to OPTS.sfunc
+                                  #Def: null
+OPTS.stype                        #TYPE to cast OPTS.initcond
+
+OPTS.finalfunc                    #FUNC(VAL)->VAL applied at end
+
+OPTS.finalfunc_extra              #Means the last FUNC_ARGs are not passed to any OPTS.* FUNCs
+                                  #Useful for following edge case:
+                                  #  - when those are polymorphic any*
+                                  #  - which cannot be the first FUNC_ARG, because that has `internal` TYPE
+
+OPTS.finalfunc_modify             #Whether OPTS.finalfunc is:
+                                  #  - read_only
+                                  #  - shareable: not readonly but idempotent
+                                  #  - read_write (def)
+                                  #Used by query planner for optimization
+                                  #Can only use as WFUNC if read_only
+OPTS.sortop                       #OP (def: <) used to compare VALs
+                                  #Used by some optimizations, e.g. skipping some ROWs when using min|max() AFUNCs
+OPTS.sspace                       #NUM (def: guessed). Average size of each VAL, used by query planner to compute cost
+
+OPTS.msfunc
+OPTS.minitcond
+OPTS.mstype
+OPTS.mfinalfunc
+OPTS.mfinalfunc_extra
+OPTS.mfinalfunc_modify            #OPTS.m* is like OPTS.* but when called as WFUNC
+OPTS.msspace                      #OPTS.msfunc cannot return null
+OPTS.minvfunc                     #FUNC that reverts OPTS.msfunc, for WFUNC:
+                                  #  - new appended element to WINDOW calls OPTS.msfunc
+                                  #  - element removed at beginning from WINDOW calls OPTS.minvfunc
+                                  #Can return null to opt-out of being used, when reversal is not possible
 
 create function ... window        #Declare a WFUNC.
                                   #Passes additional arguments about current WINDOW
                                   #Only in C LANGUAGE
                                   #Not documented yet
+
+create aggregate "AFUNC"          #Creates an ordered-set AFUNC (i.e. uses ZSET)
+ (... order by TYPE ,...)         #TYPE is ZSET's
+ (OPTS)                           #"Direct arguments" are passed to OPTS.finalfunc instead of OPTS.sfunc
+                                  #OPTS.finalfunc must sort ZSET
+                                  #OPTS: cannot use m* (WFUNC), combinefunc, [de]serialfunc, sortop
+                                  #Must use LANGUAGE C
+OPTS.hypothetical                 #BOOL (def: false). Whether can use both as AFUNC and WFUNC
+                                  #"direct arguments" and "aggregate arguments" must have same TYPE
+
+OPTS.combinefunc                  #FUNC(VAL, VAL2)->VAL3 meant to support "partial aggregation"
+                                  #Like OPTS.sfunc, but combining two VALs returned by other OPTS.sfuncs|initcond
+                                  #Must use OPTS.parallel 'safe'
+OPTS.serialfunc                   #FUNC(INTERNAL)->BYTEA used to serialize VALs while performing a partial aggregation
+OPTS.deserialfunc                 #FUNC(BYTEA)->INTERNAL to do inverse
+
+pg_aggregate                      #TABLE with all AFUNCs
+pg_aggregate.aggfnoid             #REGPROC of AFUNC
+pg_aggregate.aggtransfn           #REGPROC. OPTS.sfunc
+pg_aggregate.agginitval           #STR. OPTS.initcond
+pg_aggregate.aggtranstype         #REGTYPE. OPTS.stype
+pg_aggregate.aggfinalfn           #REGPROC. OPTS.finalfunc. 0 if none
+pg_aggregate.aggfinalextra        #BOOL. OPTS.finalfunc_extra
+pg_aggregate.aggfinalmodify       #'r|s|w'. OPTS.finalfunc_modify
+pg_aggregate.aggsortop            #REGOPERATOR. OPTS.sortop
+pg_aggregate.aggtransspace        #INT4. OPTS.sspace. 0 if none
+pg_aggregate.aggminitval
+pg_aggregate.aggmtranstype
+pg_aggregate.aggmtransfn
+pg_aggregate.aggmfinalfn
+pg_aggregate.aggmfinalextra
+pg_aggregate.aggmfinalmodify
+pg_aggregate.aggmtransspace       #OPTS.m*
+pg_aggregate.aggminvtransfn       #REGPROC. OPTS.minvfunc. 0 if none
+pg_aggregate.aggcombinefn         #REGPROC. OPTS.combinefunc. 0 if none
+pg_aggregate.aggserialfn          #REGPROC. OPTS.serialfunc. 0 if none
+pg_aggregate.aggdeserialfn        #REGPROC. OPTS.deserialfunc. 0 if none
+pg_aggregate.aggkind              #CHAR among: 'n' (normal), 'o' (ordered-set), 'h' (OPTS.hypothetical)
+pg_aggregate.aggnumdirectargs     #INT2. Number of "direct arguments". null if not "ordered-set"
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:            ROUTINE            :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+FUNC                              #"Routine", i.e. either `function`, `procedure` or `aggregate`
+
+alter routine ...                 #Like alter function ... but works also on PROCEDURE|AFUNC
+                                  #Cannot alter `strict`, `support`
+drop routine ...                  #Like drop function ... except works also on PROCEDURE|AFUNC
+
+pg_proc                           #TABLE with all FUNCs
+pg_proc.oid                       #OID
+pg_proc.proname                   #"FUNC" name
+pg_proc.prokind                   #'CHAR' among: 'f' (function), 'p' (procedure), 'a' (aggregate), 'w' (window)
+pg_proc.prolang                   #pg_language.oid of LANGUAGE
+pg_proc.prosqlbody                #PG_NODE_TREE of 'BODY'
+                                  #null if not SQL or if `as '...'`
+pg_proc.prosrc                    #Either 'BODY' or 'FUNC_NAME' from `create function ... as "PATH", "FUNC_NAME"`
+pg_proc.probin                    #'PATH'. `create function ... as "PATH", "FUNC_NAME"`
+pg_proc.proisstrict               #BOOL. `create function ... strict`
+pg_proc.procost                   #FLOAT4. `create function ... cost`
+pg_proc.prorows                   #FLOAT4. `create function ... rows`. 0 if none
+pg_proc.provolatile               #'i|s|v'. `create function ... immutable|stable|volatile`
+pg_proc.prosupport                #REGPROC. `create function ... support`. 0 if none
+pg_proc.prosecdef                 #BOOL. `create function ... security definer`
+pg_proc.proleakproof              #BOOL. `create function ... leakproof`
+pg_proc.proparallel               #'s|r|u'. `create function ... parallel safe|restrict|unsafe`
+pg_proc.protrftypes               #REGTYPE_ARR. `create function ... transform for type TYPE`
+                                  #Null if none.
+pg_proc.proargtypes               #REGTYPE_ARR of arguments
+pg_proc.pronargs                  #INT2. Number of arguments
+pg_proc.pronargdefaults           #INT2. Number of arguments with default values
+pg_proc.proargdefaults            #PG_NODE_TREE of arguments default values
+                                  #null if none
+pg_proc.proargnames               #'ARG'_ARR of arguments
+                                  #If no ARG name, empty STR. If all no name, null.
+pg_proc.provariadic               #REGTYPE of underlying TYPE if `variadic`. 0 if not.
+pg_proc.prorettype                #REGTYPE of return value
+pg_proc.proretset                 #BOOL. Whether returns a SET
+pg_proc.proallargtypes            #REGTYPE_ARR of arguments + `[in]out` ones
+                                  #null if no `[in]out`
+pg_proc.proargmodes               #'CHAR'_ARR of arguments + `[in]out` ones among: 'i' (in), 'o' (out), 'b' (inout), 'v' (variadic), 't' (table(...))
+                                  #null if no `[in]out`
+
+regproc                           #TYPE to cast pg_proc.oid as "FUNC" name
+regprocedure                      #TYPE to cast pg_proc.oid as "FUNC(TYPE,...)" name
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:           OPERATOR            :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+create operator "OP"(OPTS)        #Creates an OP, i.e. a FUNC using punctuation signs as name.
+                                  #OP can use +-*/<>=~!@#%^&|`?
+                                  #Can use overloading
+OPTS.function                     #FUNC. Can have one (rightarg) or two arguments (leftarg|rightarg)
+OPTS.leftarg|rightarg             #TYPE
+
+alter operator
+ "OPERATOR"(TYPE, TYPE2)
+ set (OPTS)                       #
+
+OPTS.commutator                   #OP2, with VAL OP VAL2 === VAL2 OP2 VAL
+                                  #Used for query planner optimization, to reorder a query's expressions
+                                  #  - e.g. to match a multi-COL INDEX
+
+OPTS.negator                      #OP2, with VAL OP VAL2 === not (VAL OP2 VAL2)
+                                  #Or OP VAL === not (OP2 VAL)
+                                  #Used for query planner optimization, to simplify query
+                                  #  - e.g. not (VAL OP VAL2) -> VAL OP2 VAL2
+
+OPTS.restrict                     #FUNC hinting how much percentage of ROWs are returned by `where COL OP VAL2`
+                                  #Only if OP returns BOOL
+                                  #Used for query planner optimization, to compute query cost
+                                  #Can choose among default following ones
+eqsel                             #Very small percentage, like =
+neqsel                            #Large percentage, like <>
+scalar[lt|le|gt|ge]sel            #Semi-large percentage before or after, like < <= > >=
+matchingsel                       #Like matching|subset OPs for TSVECTOR, JSON, LTREE, HSTORE
+tsmatchsel                        #Like TSQUERY @@
+arraycontsel                      #Like subset OPs for ARR, like @> &&
+[ic][n]likesel                    #Like GLOB match [negated] [case insensitive]
+[ic][n]regexeqsel                 #Same for REGEXP
+prefixsel                         #Like ^@
+[multi]rangesel                   #Like OPs for [MULTI]RANGE
+contsel                           #Like subset OPs for geometry
+areasel                           #Like overlapping OPs for geometry
+positionsel                       #Like positioning OPs for geometry
+networksel                        #Like OPs for CIDR|INET
+
+OPTS.join                         #FUNC. Like OPTS.restrict but for `where COL OP COL2`
+                                  #Can choose among default following ones
+*joinsel                          #Like *sel above
+
+OPTS.hashes                       #BOOL (def: false). Whether VAL OP VAL2 === hash(VAL) OP hash(VAL2)
+                                  #Only if OP returns BOOL
+                                  #Used for query planner optimization, to know if can do a hash join
+
+OPTS.merges                       #BOOL (def: false). Whether has a total order
+                                  #Only if OP returns BOOL
+                                  #Used for query planner optimization, to know if can do a merge join
+
+pg_operator                       #TABLE with all OPERATORs
+pg_operator.oid                   #OID
+pg_operator.oprname               #"OP" name
+pg_operator.oprcode               #REGPROC. OPTS.function
+pg_operator.oprleft|oprright      #REGTYPE. OPTS.leftarg|rightarg
+pg_operator.oprkind               #CHAR. 'b' (2 arguments) or 'l' (1 argument)
+pg_operator.oprresult             #REGTYPE of return
+pg_operator.oprcom                #REGOPERATOR. OPTS.commutator. 0 if none.
+pg_operator.oprnegate             #REGOPERATOR. OPTS.negator. 0 if none.
+pg_operator.oprrest               #REGPROC. OPTS.restrict. 0 if none.
+pg_operator.oprjoin               #REGPROC. OPTS.join. 0 if none.
+pg_operator.oprcanmerge           #BOOL. OPTS.merges
+pg_operator.oprcanhash            #BOOL. OPTS.hashes
+
+regoper                           #TYPE to cast pg_operator.oid as "OP" name
+regoperator                       #TYPE to cast pg_operator.oid as "OP(TYPE,...)" name
 
 
                                              /=+===============================+=\
@@ -9183,11 +9373,13 @@ ZLCONF.jit_profiling_support ???
                                              \=+===============================+=/
 
 
-create function ...
+create function|procedure ...
  language 'LANGUAGE'              #Def LANGUAGE: sql, if using `return ...`. Otherwise, no default
 
 create language ???
                                   #Must be superuser
+
+https://www.postgresql.org/docs/current/xplang.html
 
 pl*                               #Procedural LANGUAGEs. Faster than sql, slower than C
 plpython3u                        #Python LANGUAGE. Not documented yet
@@ -9209,12 +9401,12 @@ pg_language                       #All activated LANGUAGE, including:
 
 
 internal                          #LANGUAGE for the C builtin FUNCs
-                                  #Can be referred to to alias them using `create function`
+                                  #Can be referred to to alias them using `create function|procedure ... strict`
 
 c                                 #LANGUAGE for the C non-buitin FUNCs
                                   #Not documented yet
 
-create function ...               #Define C FUNC
+create function|procedure ...     #Define C FUNC
  as 'PATH'[, 'FUNC_NAME']         #Calls load 'PATH', using its exported 'FUNC_NAME' (def: same as "FUNC")
 
 load 'PATH'                       #Loads a C library
@@ -9264,17 +9456,19 @@ pg_config --pkgincludedir         #Prints PKGINCLUDEDIR
 
 sql                               #LANGUAGE always available, with BODY being SQL
                                   #Cannot use transactions, vacuum
+                                  #Cannot create ENTITYs then refer to them
 
-create function ...               #Like `as '...'` but parsed as FUNC creation time instead of execution time
+create function|procedure ...     #Like `as '...'` but parsed as FUNC creation time instead of execution time
  begin atomic ... end             #Cannot use any* TYPEs
                                   #Also, sets FUNC as parent dependency of ENTITYs used in ...
-create function ... return ...    #Same as `begin atomic select ... end`
+create function|procedure ...
+ return ...                       #Same as `begin atomic select ... end`
 
 RETURN VALUE ==>                  #Last SQL statement must return either:
                                   #  - a MSUBQUERY
                                   #  - void
 
-"ARG"                             #Can be used
+["FUNC".]"ARG"                    #Can be used
                                   #Readonly
 $NUM                              #Refers to "ARG", 1-based
 
