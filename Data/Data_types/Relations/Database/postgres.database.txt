@@ -2732,6 +2732,10 @@ references "TABLE2"[("COL2")]     #COL_CONSTRAINT. "Foreign key"
                                   #COL2 must be `unique` or `primary key`
                                   #Def COL2: TABLE2 primary key
                                   #Def "CONSTRAINT" name: "TABLE_COL_fkey"
+                                  #Implemented using TFUNCs:
+                                  #  - on TABLE insert|update
+                                  #  - `for each row`
+                                  #  - called RI_FKey_check_ins|upd()
 
 references ... match full|simple  #See null section
 
@@ -2741,6 +2745,10 @@ references ... on delete ACTION   #When removing COL2 values, do ACTION:
                                   #  - set default ["COL",...]: set COL values (def: all) to default
                                   #  - set null ["COL,"...]: set COL values (def: all) to null
                                   #  - cascade: remove COL values too
+                                  #Implemented using a TFUNC:
+                                  #  - on TABLE2 delete
+                                  #  - `for each row`
+                                  #  - called RI_FKey_*_del()
 references ... on update ACTION   #Same but when updating COL2 values
                                   #Cannot specify "COL",... with set default|null
 
@@ -2951,7 +2959,7 @@ DECLARATIVE PARTITIONING ==>      #Partitioning using `create table ... partitio
                                   #     - can only use normal expression, not REXPR
                                   #     - have the same issues as with `inherits` (see above)
                                   #  - INDEXs
-                                  #  - triggers
+                                  #  - TFUNCs
                                   #Parent TABLE cannot use:
                                   #  - exclude()
                                   #  - check(...) no inherit
@@ -9992,111 +10000,139 @@ plr_modules                       #TABLE executing plr_modules.modsrc (R code as
                                              \=+===============================+=/
 
 
-create trigger "TFUNC"
- before|after|instead of EVENT
- on "TABLE"
- execute function FUNC(STR,...)
-                                  #Execute FUNC when a specific EVENT happens on "TABLE"
-                                  #If multiple FUNCs, called in alphabetical order
-                                  #EVENT can be:
-                                  #  - insert
-                                  #  - update [of "COL" [or ...],...]
-                                  #  - delete
-                                  #  - truncate
-                                  #     - not `instead of`
-                                  #     - not `for each row`
-                                  #     - not on VIEW|FTABLE
+create trigger "TFUNC"            #Execute FUNC when a specific write EVENT happens on "TABLE|VIEW|FTABLE"
+ before|after|instead of EVENT    #If multiple FUNCs, called in alphabetical order
+ on "TABLE|VIEW|FTABLE"           #LANGUAGE cannot be `sql`
+ execute function FUNC(STR,...)   #Auto-dependency child of its TABLE|COL
+
+EVENT insert                      #
+EVENT update                      #
+EVENT update of "COL",...         #Not if:
+                                  #  - `instead of`
+                                  #  - `referencing ...`
+EVENT delete                      #
+EVENT truncate                    #Not if:
+                                  #  - `instead of`
+                                  #  - `for each row`
+                                  #  - VIEW|FTABLE
 
 create trigger "TFUNC"
- before EVENT ...                 #
-create trigger "TFUNC"
- after EVENT ...                  #
-create trigger "TFUNC"
+ before EVENT ...                 #Call before the EVENT, CONSTRAINTs and generated COL
+
+create trigger "TFUNC"            #Replaces the EVENT
  instead of EVENT ...             #Only on VIEWs
+                                  #Not with child TABLEs
+
+create trigger "TFUNC"
+ after EVENT ...                  #Call after the EVENT, CONSTRAINTs and generated COL
+
 create trigger "TFUNC"
  ... EVENT or EVENT2 ...          #
 
+create trigger ...                #Whether to call FUNC:
+ for each row|statement ...       #  - for each statement (def): once for all changed ROWs (even if none)
+                                  #  - for each row: once per changed ROW
+                                  #If VIEW:
+                                  #  - if `instead of`: must `for each row`
+                                  #  - otherwise: must `for each statement`
+
+create trigger ...                #Only call TFUNC when BOOL_REXPR true
+ when (BOOL_REXPR) ...            #If `for each row`, can refer to `old|new` ROW_ALIAS
+                                  #Not with `instead of`
+
 create constraint trigger ...     #Allows making TFUNC `deferred`
-                                  #Must be `after` and `for each row`
+                                  #Must be `after EVENT` and `for each row`
                                   #Can be used to simulate a CONSTRAINT by raising exceptions
+                                  #Not on FTABLEs
 
-create trigger ...
- on "TABLE" from "TABLE2" ...     #
+INTERNAL TFUNC ==>                #`constraint` TFUNC automatically created by:
+                                  #  - foreign key CONSTRAINT
+                                  #     - also by its `on update|delete` clauses
 
-create trigger ...
- for each row|statement ...       #
-                                  #Whether to call FUNC:
-                                  #  - for each statement (def):
-                                  #     - once for all changed ROWs
-                                  #  - for each row:
-                                  #     - once per changed ROW
-                                  #     - required if `instead of`
-                                  #     - if VIEW, must be `instead of`
+create trigger ...                #Changes TABLE2 of internal TFUNC used for foreign key CONSTRAINTs
+ on "TABLE" from "TABLE2" ...     #Not recommended
 
-create trigger ...
- when (BOOL_REXPR) ...            #
-                                  #Can use old|new like trigger functions
-                                  #BOOL cannot be a subquery
+create trigger ...                #"Transition relation". Set ROW_ALIAS (to use inside FUNC) with:
+ referencing old|new table        #  - old: all deleted|updated ROWs
+ [as] "ROW_ALIAS" ...             #  - new: all inserted|updated ROWs
+                                  #Must be `after EVENT`
+                                  #Not with `constraint trigger`
+                                  #If `after each row`, not on child TABLEs
 
-create trigger ...
- referencing old|new table
- [as] "TABLE" ...                 #
+alter table "TABLE"
+ enable|disable trigger TRIGGER   #
+alter table ... trigger user      #All TRIGGERs of current ROLE, excluding CONSTRAINTs
+alter table ... trigger all       #All TRIGGERs of current ROLE, including CONSTRAINTs
 
-                                  #  - before|after|instead of is for the constraint checking + the operation itself (row-wise).
-                                  #    So before fired even if constraint fails, but not after.
-                                  #    If COMMAND is the one triggering EVENT "for each row":
-                                  #       - before|instead of are executed row-wise according to COMMAND (so next rows in TFUNC see
-                                  #         changes of previous rows by COMMAND)
-                                  #       - after is executed table-wise according to COMMAND (so rows in TFUNC see changes of all rows
-                                  #         by COMMAND)
-                                  #    before|instead of are executed on all rows
-                                  #    instead of can only be on VIEW and cannot use when BOOL. Usually used to modify the underlying
-                                  #    "TABLE" so users can modify VIEW.
-                                  #    Can also use or EVENT2...
-                                  #  - FUNC: any language (e.g. PL/* or C) but not SQL. See doc about TFUNC for those languages.
-                                  #    Must take no arguments (arguments are passed with special variables) and with a trigger return
-                                  #    type, but actually returning:
-                                  #     - "before" + "for each row":
-                                  #        - null: skip further TFUNC and cancel statement (for that row)
-                                  #        - "ROW"|"TABLE" with same structure as new|old (including them):
-                                  #          - modified row: modify new and return it.
-                                  #          - unmodified row: return old|new according to the operation
-                                  #     - otherwise: return null
-                                  #A TFUNC can fire another one ("cascading triggers"), including recursively.
-                                  #Can see current TFUNC depth with pg_trigger_depth()
-                                  #To create a TFUNC notifying of each modification:
-                                  #  - triggered_change_notification([STR]) is a function to use to do notify STR, for each row,
-                                  #    after insert and/or update and/or delete, with payload explaining the modification.
-                                  #  - Trusted postgres extension 'tcn'
-                                  #Auto-dependency child of its TABLE|COL
+TFUNC ARGUMENTS ==>               #No arguments. Input is passed using special LANGUAGE-specific VARs
 
-alter table "TABLE"               #all|user:
- enable|disable                   #  - not for RULE
- [replica|always]                 #  - same but all include system TRIGGER (enforcing CONSTRAINT), not user
- rule|trigger                     #replica|always:
- RULE|TRIGGER|all|user            #  - def: affects only non-replication sessions (ZSCONF.session_replication_role "origin" (def) or
-                                  #    "local")
-                                  #  - replica: affects only replication sessions (ZSCONF.session_replication_role "replica")
-                                  #  - always: affects all sessions
+trigger                           #Return TYPE of TFUNCs
+                                  #FUNC must actually return either:
+                                  #  - null:
+                                  #     - `for each row` + `before|instead of EVENT`:
+                                  #        - cancel insert|update|delete for that ROW
+                                  #        - do not call other TFUNCs
+                                  #     - otherwise: do nothing
+                                  #  - ROW:
+                                  #     - if `insert|update`: `new` ROW, possibly modified
+                                  #     - if `delete`: `old` ROW, not modified
+                                  #     - only with `for each row`
+                                  #     - not with `after EVENT`
 
-pg_trigger                        #All TFUNC. ???
+pg_trigger_depth()->NUM           #Depth, if a TFUNC calls a SQL command which fires another TFUNC ("cascading trigger"), including itself
+
+triggered_change_notification     #Create a TFUNC that calls `notify "CHANNEL"` (def CHANNEL: 'tcn')
+ (['CHANNEL'])                    #MESSAGE is 'VAL,...' with:
+                                  #  - "TABLE" name
+                                  #  - I|U|D (insert|update|delete)
+                                  #  - "COL"='VAL',... for each primary key
+                                  #Must be `for each row` + `after EVENT`
+                                  #Cannot be `truncate`
+                                  #Trusted postgres extension 'tcn'
+
+pg_trigger                        #TABLE with all TFUNCs
+pg_trigger.oid                    #OID
+pg_trigger.tgname                 #"TFUNC" name
+pg_trigger.tgrelid                #REGCLASS of TABLE
+pg_trigger.tgparentid             #pg_trigger.oid of parent TFUNC. 0 if not inherited
+pg_trigger.tgfoid                 #REGPROC of the FUNC
+pg_trigger.tgtype                 #INT2. Or'd flag:
+                                  #  - 0|1: for each statement|row
+                                  #  - 0|2|64: after|before|instead of
+                                  #  - 4|8|16|32: insert|delete|update|truncate
+pg_trigger.tgattr                 #ARR of "COL" (pg_attribute.attnum). `update of "COL" or ...`
+pg_trigger.tgqual                 #PG_NODE_TREE. `create trigger ... when (BOOL_REXPR)`. null if none
+pg_trigger.tgconstraint           #pg_constraint.oid. `create constraint trigger ...`. 0 if not
+pg_trigger.tgdeferrable           #BOOL. Whether deferrable constraint
+pg_trigger.tginitdeferred         #BOOL. Whether initially deferred constraint
+pg_trigger.tgisinternal           #BOOL. Whether internal TFUNC, related to a CONSTRAINT
+pg_trigger.tgconstrrelid          #REGCLASS of the other TABLE, if internal TFUNC related to a foreign key CONSTRAINT. 0 if none
+pg_trigger.tgconstrindid          #REGCLASS of the INDEX, if internal TFUNC related to an exclude|unique|primary key or foreign key CONSTRAINT. 0 if none
+pg_trigger.tgold|newtable         #"TABLE". `referencing old|new table "TABLE"`. null if none
+pg_trigger.tgnargs                #INT2 of arguments passed to FUNC
+pg_trigger.tgargs                 #BYTEA of arguments passed to FUNC
 
 pg_class.relhastriggers           #BOOL. Whether RELATION has TFUNCs
 pg_tables.hastriggers             #BOOL. Whether TABLE has TFUNCs
 
-TFUNC FOR PL/PGSQL ==>            #Return type is trigger, but must return either:
-                                  #Arguments are in tg_argv STR_ARR (index starts at 0 and is of size tg_nargs INT).
-                                  #Can also use:
-                                  #  - new|old RECORD: current row for "for each row" TFUNC (only if "for each row")
-                                  #    new is absent if delete, and old is absent if insert.
-                                  #  - tg_name STR: TFUNC name
-                                  #  - tg_when STR: before|after|instead of
-                                  #  - tg_level STR: statement|row ("for each row")
-                                  #  - tg_op STR: insert|update|delete|truncate
-                                  #  - tg_relid OID: of the TABLE
-                                  #  - ts_table_name STR: name of the TABLE
+PL/PGSQL ==>
+tg_argv                           #STR_ARR from: create trigger ... execute function FUNC(STR,...)
+tg_nargs                          #INT4. tg_argv length
+tg_name                           #'TFUNC'
+ts_table_name                     #'TABLE'
+tg_relid                          #REGCLASS of TABLE
+tg_when                           #'before|after|instead of'
+tg_level                          #'statement|row'
+tg_op                             #'insert|update|delete|truncate'
+old                               #Current RECORD, before changes
+                                  #Only if `for each row`
+                                  #Not if `insert`
+new                               #Same but after changes
+                                  #Not if `delete`
 
 https://www.postgresql.org/docs/current/plpgsql-trigger.html ???
+
+https://www.postgresql.org/docs/current/functions-trigger.html ???
 
 
                                              /=+===============================+=\
@@ -10134,6 +10170,10 @@ EFUNC FOR PL/PGSQL ==>            #Return type is event_trigger, but doesn't use
                                   #  - tg_event STR: the EVENT
                                   #  - tg_tag STR: the COMMAND
 
+https://www.postgresql.org/docs/current/event-triggers.html ???
+
+https://www.postgresql.org/docs/current/functions-event-triggers.html ???
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -10163,11 +10203,16 @@ do [instead] COMMANDS             #     - select|insert|update|delete
                                   #    Prefer triggers unless performance is critical, in which case check if actually faster.
                                   #Child auto-dependency of its TABLE|COL
 
+alter table enable|disable ...
+ rule RULE|user|all               #Like `alter table enable|disable ... trigger TRIGGER|user|all`
+
 pg_rewrite                        #All RULE. ???
 pg_rules                          #Same, but more for user-defined RULE. ???
 
 pg_class.relhasrules              #BOOL. Whether RELATION has RULEs
 pg_tables.hasrules                #BOOL. Whether TABLE has RULEs
+
+https://www.postgresql.org/docs/current/rules.html ???
 
 
                                              /=+===============================+=\
@@ -10202,6 +10247,10 @@ TOPTS.user_catalog_table          #BOOL???
 alter table "TABLE"
  replica identity ...             #???
 
+ZSCONF.session_replication_role   #'origin' (def), 'replica' or 'local'
+alter table ...
+ [replica|always] trigger|rule ...#
+
 pg_replication_origin_*(): must be superuser
 
 SCONF.logical_decoding_work_mem ???
@@ -10213,6 +10262,12 @@ pg_replication_origin             #???
 pg_replication_origin_status      #???
                                   #Visible only to superuser
 pg_replication_slots              #???
+
+pg_trigger.tgenabled              #char Controls in which session_replication_role modes the trigger fires.
+                                  #O = trigger fires in “origin” and “local” modes
+                                  #D = trigger is disabled
+                                  #R = trigger fires in “replica” mode
+                                  #A = trigger fires always
 
 
                                              /=+===============================+=\
