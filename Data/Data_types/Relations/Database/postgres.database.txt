@@ -229,7 +229,7 @@ pg_namespace                      #TABLE with all SCHEMAs
 pg_namespace.oid                  #OID
 pg_namespace.nspname              #NAME of "SCHEMA"
 
-regnamespace                      #TYPE alias to OID, to cast pg_namespace.oid as "SCHEMA" name
+regnamespace                      #TYPE to cast pg_namespace.oid as "SCHEMA" name
 
 pg_type.typnamespace              #REGNAMESPACE of TYPE
 pg_class.relnamespace             #REGNAMESPACE of RELATION
@@ -271,6 +271,7 @@ PRIVILEGES ==>                    #Owned by CLUSTER|DATABASE owner
                                   #A few TABLEs can only be seen by superuser
 
 pg_node_tree                      #Internal serialized information TYPE, specific to pg_catalog.*
+                                  #Is internally like a STR
 pg_get_expr(PG_NODE_TREE,         #Converts PG_NODE_TREE to STR
  TABLE.oid[, BOOL])->STR          #BOOL (def: false) is prettify
 
@@ -426,13 +427,13 @@ YOPTS.default                     #VAL assigned as default value
 
 YOPTS.like                        #TYPE2
 
-YOPTS.input                       #FUNC
-YOPTS.ouput                       #FUNC
-YOPTS.receive                     #FUNC
-YOPTS.send                        #FUNC
-YOPTS.typemod_in                  #FUNC
-YOPTS.typemod_out                 #FUNC
-YOPTS.analyze                     #FUNC
+YOPTS.input                       #FUNC. Input 'UNKNOWN'
+YOPTS.output                      #FUNC. Output 'UNKNOWN'
+YOPTS.receive                     #FUNC. Input BYTEA
+YOPTS.send                        #FUNC. Output BYTEA
+YOPTS.typemod_in                  #FUNC. Input (NUM,...) from TYPE(NUM,...) (variable bounded TYPE)
+YOPTS.typemod_out                 #FUNC. Output (NUM,...) from TYPE(NUM,...)
+YOPTS.analyze                     #FUNC. Customize `analyze`
 
 pg_type                           #TABLE with all TYPEs
 pg_type.oid                       #OID
@@ -459,7 +460,7 @@ pg_type.typmodout                 #REGPROC of YOPTS.typemod_out. 0 if none.
 pg_type.typanalyze                #REGPROC of YOPTS.analyze. 0 if none.
 pg_type.typisdefined              #BOOL. Temporarily set to false while `create type` is ongoing.
 
-regtype                           #TYPE alias to OID, to cast pg_type.oid as "TYPE" name
+regtype                           #TYPE to cast pg_type.oid as "TYPE" name
 
 
                                              /=+===============================+=\
@@ -533,29 +534,33 @@ TYPE => TYPE2                     #Means can do assignment casting
 TYPE ~> TYPE2                     #Means can do explicit casting
 TYPE <=-> TYPE2                   #Means TYPE2 => TYPE, TYPE -> TYPE2
 
+create cast (TYPE as TYPE2)       #Creates a type casting FUNC
+ with function FUNC(...)          #Must be FUNC(TYPE1_VAL[, INT[, BOOL]])->TYPE2_VAL
+                                  #  - INT is the pg_attribute.ATTTYPEMOD (-1 if none)
+                                  #  - BOOL is true if explicit cast
+                                  #Current ROLE must own TYPE[2]
+create cast (TYPE as TYPE2)       #Create a type cast that does:
+ with inout                       #  - TYPE1_VAL -> 'TYPE1_UNKNOWN'
+                                  #  - 'TYPE1_UNKNOWN' -> TYPE2_VAL
+                                  #I.e. uses YOPTS.output|input
+create cast (TYPE as TYPE2)       #Create a type cast when TYPE[2] are binary-equivalent.
+ without function                 #I.e. uses YOPTS.send|receive
+
+create cast ... as assignment
+create cast ... as implicit       #Assignment|implicit casting (def: explicit)
+
 pg_cast                           #TABLE with implicit|explicit type casting
 pg_cast.oid                       #OID
 pg_cast.castsource|casttarget     #REGTYPE of source|target TYPE
 pg_cast.castfunc                  #REGPROC of FUNC used for conversion
-                                  #FUNC(TYPE1_VAL[, INT[, BOOL]])->TYPE2_VAL
-                                  #  - INT is the pg_attribute.ATTTYPEMOD
-                                  #  - BOOL is true if explicit cast
 pg_cast.castcontext               #Casting:
                                   #  - 'e': explicit
                                   #  - 'a': assignment
                                   #  - 'i': implicit
 pg_cast.castmethod                #How to cast, among:
-                                  #  - 'f': castfunc
-                                  #  - 'i': C-level I/O functions
-                                  #  - 'b': nothing (TYPEs are binary-equivalent)
-
-create cast (TYPE as TYPE2)       #Creates a type casting FUNC
- with function FUNC(...)          #Current ROLE must own TYPE[2]
-create cast ...
- as assignment|implicit           #Same as 'a|i' castcontext (def: 'e')
-create cast ... with inout ...
-create cast ...
- without function ...             #Same but with a 'i|b' castmethod (def: 'f')
+                                  #  - 'f': `with function`
+                                  #  - 'i': `with inout`
+                                  #  - 'b': `without function`
 
 YOPTS.preferred                   #BOOL (def: false). Each YOPTS.category has a single true, which is the preferred type cast.
 pg_type.typispreferred            #Also used as the preferred TYPE in overloaded FUNCs
@@ -1136,7 +1141,8 @@ l|rpad(STR, UINT[, STR2])->STR3   #Pads STR with STR2 (def: ' ') to length UINT.
                                              \=+===============================+=/
 
 
-char                              #TYPE. Like char(1)
+"char"                            #TYPE. Like char(1)
+                                  #Must be double-quoted, otherwise it is interpreted as BPCHAR
 
 'CHAR'                            #CHAR_UNKNOWN
 
@@ -1521,22 +1527,23 @@ justify_interval
                                              \=+===============================+=/
 
 
-oid                               #TYPE for an ID of a VAR.
-                                  #Internally like an int4
+oid                               #TYPE for an ID of any ENTITY
+                                  #Internally like an INT4
                                   #32 bits, i.e. only use for uniqueness if:
                                   #  - TABLE-scoped
                                   #  - either:
                                   #     - random on <2e3 items
                                   #     - serial on <2e9 items
-INT8 <=-> OID
-INT2 -> OID                       #Type cast
+OID <-=> INT4|8
+OID <- INT2                       #Type cast
 
-reg*                              #TYPE alias to OID, for specific ENTITYs
+reg*                              #TYPE for an ID of specific ENTITYs
+                                  #Internally like an OID
                                   #Allows transtyping a OID from|to a 'NAME' instead
                                   #E.g. pg_namespace.oid::regnamespace -> "SCHEMA"
+REG* <-> OID                      #Type cast
 REG* <-> 'NAME'                   #Type cast
                                   #Can quote using '"NAME"'
-REG* <-> OID                      #Type cast
 to_reg*(TEXT)->REG*               #
 
 
@@ -1585,11 +1592,13 @@ uuid_generate_v4()->UUID          #UUID v4
 json                              #TYPE. Including scalar types.
                                   #Must be well-formed.
                                   #Cannot use = <> < <= > >=, but can cast
+jsonb ???
 
 'JSON'                            #JSON_UNKNOWN
 KEY                               #UINT|STR
 
 JSONB ~> BOOL|NUM|STR             #Type cast. Fail if top-level value is not BOOL|NUM|STR|null
+JSONB <=> JSON                    #Type cast
 
 JSON->KEY                         #OBJ[KEY] as JSON2
 JSON->>KEY                        #OBJ[KEY] as 'JSON2'
@@ -1621,6 +1630,16 @@ json_each_text(OBJ_JSON)->ROW_SET #Same but value COL is STR
 json_object_keys(OBJ_JSON)
  ->STR_SET                        #Each OBJ key -> STR
 
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:           JSONPATH            :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+
+jsonpath ???
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -1659,6 +1678,7 @@ hstore                            #TYPE. OBJ where keys are identifiers
 VAL                               #'VAL'|null
 
 STR ~> HSTORE                     #Type cast, using 'KEY=>VAL,...'
+HSTORE ~> JSON[B]                 #Type cast, using { KEY: VAL, ... }
 
 'KEY=>VAL,...'                    #HSTORE_UNKNOWN
                                   #"" to escape KEY|VAL for whitespace , = >
@@ -1811,7 +1831,7 @@ cidr                              #TYPE
 'CIDR'                            #CIDR_UNKNOWN
 
 INET|CIDR => STR                  #Type cast
-INET => CIDR                      #Type cast
+INET <-=> CIDR                    #Type cast
 
 INET >> >>= << <<= INET2          #Containing|contained within [or equal]
 
@@ -2220,6 +2240,7 @@ ROW [not] in SUBQUERY             #Same as ROW =|<> any SUBQUERY
 
 RELATION ==>                      #ENTITYs with COLs
                                   #I.e. TABLE, INDEX, SEQUENCE, [M]VIEW, ROW_TYPE, FTABLE
+
 pg_class                          #TABLE with all RELATIONs
 pg_class.oid                      #OID
 pg_class.relname                  #"TABLE" name
@@ -2239,7 +2260,7 @@ pg_class.reltype                  #REGTYPE of ROW_TYPE
 pg_class.relrewrite               #REGCLASS. When a RELATION is copied to a new one, old RELATION's REGCLASS.
                                   #Set to 0 after the change. Since those operations are atomic, this is always 0 from user perspective
 
-regclass                          #TYPE alias to OID, to cast pg_class.oid as "NAME"
+regclass                          #TYPE to cast pg_class.oid as "NAME"
 
 oid2name                          #List DATABASE|RELATION|TABLESPACEs by OID|name
                                   #By default, prints all DATABASE OID|names
@@ -2887,22 +2908,34 @@ alter view "VIEW"
  alter [column] "COL"
  drop|set default [VAL]           #Add a `default` CONSTRAINT, forwarded to underlying SUBQUERY
 
-WRITABLE VIEW ==>                 #Possible unless SUBQUERY uses:
-                                  #  - select VAL that is not select "COL"
+UPDATABLE VIEW ==>                #Possible unless SUBQUERY uses:
+                                  #  - AFUNC|WFUNC
+                                  #  - from EXPR (instead of from "TABLE")
                                   #  - join
                                   #  - distinct
-                                  #  - group by
+                                  #  - group by, having
                                   #  - limit|offset
                                   #  - union|intersect|except
+                                  #  - returning
                                   #  - top-level with
                                   #  - with (security_barrier)
+                                  #Only `select "COL"` are updatable
+                                  #  - but can mix with other `select VAL`, although those will be readonly
+
+VOPTS.security_invoker            #BOOL. In SUBQUERY, whether to use ROLE of:
+                                  #  - false (def): VIEW owner
+                                  #  - true: query caller
+                                  #Whether false|true, query caller's ROLE is used:
+                                  #  - in FUNC() calls in SUBQUERY
+                                  #  - to know whether VIEW itself can be used
 
 create view "VIEW" ...
  as SUBQUERY with                 #Reject inserts|updates that do not match VIEW's SUBQUERY, i.e. would not be visible in VIEW
  [cascaded|local] check option    #Does not work with: `recursive`, `instead of` TFUNCs and `instead` RULEs
 VOPTS.check_option                #If "cascaded", check in parent VIEWs recursively
 
-VOPTS.security_barrier            #Ensure ROWs are securely hidden when using `where BOOL_REXPR`
+VOPTS.security_barrier            #Ensure ROWs are no visible in `where BOOL_REXPR`, RULEs, etc.
+                                  #Slower
                                   #Cover channel attacks are still possible
                                   #  - using explain query plans, time of queries, etc.
                                   #  - e.g. to infer size of hidden rows
@@ -4244,7 +4277,7 @@ pg_ts_dict.dictname               #'DICTIONARY' name
 pg_ts_dict.dicttemplate           #pg_ts_template.oid of TEMPLATE
 pg_ts_dict.dictinitoption         #'VAR = VAL,...' of TEMPLATE OPTS
 
-regdictionary                     #TYPE alias to OID, to cast pg_ts_dict.oid as "DICTIONARY" name
+regdictionary                     #TYPE to cast pg_ts_dict.oid as "DICTIONARY" name
 
 ts_lexize(REGDICTIONARY, 'TOKEN') #Normalize 'TOKEN' according to DICTIONARY
  ->STR_ARR|null                   #'TOKEN' is produced by PARSER
@@ -4333,7 +4366,7 @@ pg_ts_config.oid                  #OID
 pg_ts_config.cfgname              #"REGCONF" name
 pg_ts_config.cfgparser            #pg_ts_parser.oid of PARSER
 
-regconfig                         #TYPE alias to OID, to cast pg_ts_config.oid as "REGCONF" name
+regconfig                         #TYPE to cast pg_ts_config.oid as "REGCONF" name
 
 pg_ts_config_map                  #TABLE with all REGCONFs mappings
 pg_ts_config_map.mapcfg           #REGCONFIG of REGCONF
@@ -4771,7 +4804,7 @@ pg_collation.collprovider         #OPTS.provider as 'd' (--locale-provider), 'c'
 pg_collation.collversion          #OPTS.version
 pg_collation.colliculocale        #--icu-locale
 
-regcollation                      #TYPE alias to OID, to cast pg_collation.oid as "COLLATION" name
+regcollation                      #TYPE to cast pg_collation.oid as "COLLATION" name
 
 BUILT-IN COLLATIONS ==>           #  - default: any locale-provider, any ENCODING, any locale
                                   #  - C|POSIX: libc, any ENCODING, 'C|POSIX' locale
@@ -6757,6 +6790,8 @@ OPTS.parallel                     #Max NUM of parallel workers when vacuuming IN
 pg_class.relhasindex|relhasrules  #Set to true immediately, but only set to false by `vacuum`.
  |relhastriggers|relhassubclass   #I.e. might be true if ENTITY was dropped recently
 
+pg_stat_scan_tables               #Members of that built-in ROLE can access TABLEs through commands like `vacuum`
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -6851,7 +6886,6 @@ TOPTS.toast.*autovacuum*          #Same but only for pg_toast_OID TABLE
 
 
 create role "ROLE"                #Create a ROLE, i.e. identity with sets of PRIVILEGEs and ownerships, for a given CLUSTER.
-create group ...                  #Same as create role ...
 create|alter user ...             #Same as create role ... except `login` is true by default
 
 create|alter role "ROLE"          #Whether the ROLE is superuser:
@@ -6875,7 +6909,7 @@ pg_authid.rolconnlimit            #INT4. create role ... connection limit
 pg_authid.rolpassword             #STR|null. create role ... password
 pg_authid.rolvaliduntil           #TIMESTAMPTZ|null. create role ... valid until
 
-regrole                           #TYPE alias to OID, to cast pg_authid.oid as "ROLE" name
+regrole                           #TYPE to cast pg_authid.oid as "ROLE" name
 
 pg_roles                          #Higher-level VIEW on pg_authid
                                   #pg_roles blanks out the password
@@ -6904,49 +6938,40 @@ pg_user                           #Deprecated TABLE alternatives to pg_roles
                                              \=+===============================+=/
 
 
-CLUSTER FIRST ROLE ==>            #It has same name as CLUSTER owner's OS_USER, who can authenticate to it
-                                  #It is a superuser ROLE
-                                  #It cannot be deleted
+CLUSTER FIRST ROLE ==>            #Has same name as CLUSTER owner's OS_USER, who can authenticate to it
+                                  #Is a superuser ROLE
+                                  #Cannot be deleted
 
 public                            #Implicit ROLE that any other ROLE belongs to
 "[R]PROLE"                        #Either "[R]ROLE" or public
 
 BUILT-IN ROLES ==>                #Their permissions are hardcoded in Postgres code, not in ACLITEMs
-???
-pg_read_all_data                  #ROLE with PRIVILEGEs:
-                                  #  - `select` on RELATION|SEQUENCE|LARGEOBJs
-                                  #  - `usage` on SCHEMAs
-pg_write_all_data                 #ROLE with PRIVILEGEs:
-                                  #  - `update` on RELATION|SEQUENCE|LARGEOBJs
-                                  #  - `insert|delete` on RELATION
-                                  #  - `usage` on SCHEMAs
-pg_read_all_settings              #ROLE with PRIVILEGEs:
-                                  #  - read ENVVARs otherwise visible only to superusers
-pg_read_all_stats                 #ROLE with PRIVILEGEs:
-                                  #  - `select` on pg_stat*, pg_backend_memory_contexts, pg_shmem_allocations
-                                  #  - pg_database|tablespace_size()
-                                  #  - ENVVAR track_activities
-pg_stat_scan_tables               #ROLE with PRIVILEGEs:
-                                  #  - `select` on TABLEs through commands like `vacuum`
-pg_monitor                        #ROLE with PRIVILEGEs:
+
+pg_database_owner                 #Built-in ROLE that DATABASE owner's ROLE is a member of.
+                                  #Owns `public` SCHEMA, i.e. with `create` and `usage` PRIVILEGEs
+                                  #In a DATABASE's TEMPLATE
+                                  #  - can grant PRIVILEGEs to pg_database_owner
+                                  #  - to forward those to actual owner after TEMPLATE has been instantiated
+
+pg_read_all_data                  #Built-in ROLE with PRIVILEGEs:
+                                  #  - `select` on all RELATION|SEQUENCE|LARGEOBJs
+                                  #  - `usage` on all SCHEMAs
+pg_write_all_data                 #Built-in ROLE with PRIVILEGEs:
+                                  #  - `update` on all RELATION|SEQUENCE|LARGEOBJs
+                                  #  - `insert|delete` on all RELATIONs
+                                  #  - `usage` on all SCHEMAs
+pg_monitor                        #Built-in ROLE with PRIVILEGEs:
                                   #  - member of ROLEs: pg_read_all_settings, pg_read_all_stats, pg_stat_scan_tables
                                   #  - pg_ls_*() (except pg_ls_dir())
-pg_database_owner                 #ROLE owning `public` SCHEMA, i.e. `create` and `usage` PRIVILEGEs on it
-                                  #DATABASE owner's ROLE is a member of pg_database_owner ROLE
-                                  #  - i.e. can grant PRIVILEGEs to pg_database_owner in a DATABASE's TEMPLATE,
-                                  #    to forward those to actual owner after TEMPLATE has been instantiated
-pg_signal_backend                 #ROLE with PRIVILEGEs:
-                                  #  - pg_cancel|terminate_backend()
-pg_read_server_files              #ROLE that can read filesystem with same OS privileges as server process including:
+
+pg_read_server_files              #Built-in ROLE that can read filesystem with same OS privileges as server process including:
                                   #  - COPY ... from 'PATH'
                                   #  - pg_ls*()
-pg_write_server_files             #ROLE that can write filesystem with same OS privileges as server process including:
+pg_write_server_files             #Same but to write filesystem:
                                   #  - COPY ... to 'PATH'
                                   #  - pg_basebackup --target=PATH
-pg_execute_server_program         #ROLE that can execute OS commands with same privileges as server process including:
+pg_execute_server_program         #Same but to execute OS commands:
                                   #  - COPY ... from|to program
-pg_checkpoint                     #ROLE with PRIVILEGEs:
-                                  #  - `checkpoint ...`
 
 
                                              /=+===============================+=\
@@ -6961,12 +6986,12 @@ create role "ROLE"                #Makes ROLE2 members of ROLE:
 create role "ROLE2" role "ROLE"   #     - except superuser|login|createdb|createrole PRIVILEGEs
 grant "ROLE",... to "ROLE2",...   #  - ROLE2 can switch to ROLE
                                   #Membership is inherited deeply
-                                  #I.e. this allows ROLE to act both as "users" and "groups".
+                                  #I.e. ROLEs can be used as "groups", not only "users"
 
 revoke "ROLE",... to "ROLE2",...  #Remove membership
  [restrict|cascade]               #Whether to also removes the related PRIVILEGEs
 
-alter group ...                   #Deprecated alternative syntax
+create|alter group ...            #Deprecated alternative syntax
 
 create|alter role "ROLE"          #If inherit (def), members inherit parent ROLE's PRIVILEGEs
  [no]inherit                      #Regardless of [no]inherit, members can switch to parent ROLE
@@ -6989,9 +7014,11 @@ pg_auth_members.admin_option      #BOOL
 
 INITIAL SESSION USER ==>          #ROLE that starts a session
                                   #Used to check for permission to `set session authorization`
+
 session_user                      #ROLE that can be changed by `set session authorization`
                                   #Initially same as initial_session_user
                                   #Used to check for permission to `set role`
+
 user                              #ROLE that can be changed by `set role`
 current_user                      #Initially same as session_user
 current_role                      #Used for PRIVILEGEs
@@ -7019,10 +7046,11 @@ set local|session role|session ...#Same as set local|session ENVVAR ...
 ENTITY OWNER ==>                  #Def: ROLE that created the ENTITY
                                   #ROLE has all PRIVILEGEs over their ENTITYs (unless explicitly revoked)
                                   #ROLE is parent dependency of owned ENTITYs
-                                  #  - cannot `drop cascade`, i.e. can only be deleted if it does own any ENTITY
-                                  #Not for: role, user mapping, text search parser|template
-                                  #Always same as TABLE's owner: index, rule, trigger, policy
-                                  #Readonly for: extension
+                                  #  - cannot `drop cascade`, i.e. can only be deleted if it does not own any ENTITY
+                                  #For all ENTITYs but:
+                                  #  - not for: role, user mapping, text search parser|template
+                                  #  - always same as TABLE's owner: index, rule, trigger, policy
+                                  #  - readonly for: extension
 
 alter ENTITY "ENTITY"             #Change owner
  owner to RROLE                   #Current ROLE must:
@@ -7077,21 +7105,20 @@ grant PRIVILEGE,...               #Add PRIVILEGEs to a ROLE for a given ENTITY
                                   #  - foreign data wrapper
                                   #  - foreign server
                                   #  - parameter: "ENVVAR"
-grant ... on all ENTITY
- in schema "SCHEMA" ...           #For ENTITY: RELATION|sequence, function|procedures|routines
+grant ... on all ENTITYs
+ in schema "SCHEMA" ...           #For ENTITYs: tables|sequences, function|procedures|routines
 grant all [privileges] ...        #Grant all PRIVILEGEs (with known ACLs) for a given ENTITY
 
 revoke PRIVILEGE,...              #Remove PRIVILEGEs from a ROLE for a given ENTITY
  on [ENTITY] "ENTITY",...         #Always also remove grant|admin PRIVILEGEs
  from "PROLE",...                 #Revoking a PRIVILEGE does not deny it, it just removes it
-                                  #  - i.e. if also acquired through inheritance, still granted
-                                  #  - e.g. in:
+                                  #  - might still be granted when inherited through:
                                   #     - ROLE membership
                                   #     - parent ENTITY:
                                   #        - RELATION -> COL
                                   #        - DATABASE -> RELATION: for `analyze`
 
-revoke ... restrict|cascade       #If ROLE granted to other ROLE2s:
+revoke ... restrict|cascade       #If ROLE granted PRIVILEGEs to other ROLE2s:
                                   #  - restrict (def): fail
                                   #  - cascade: revoke them too
 
@@ -7105,9 +7132,12 @@ grant|revoke ... granted by RROLE #Requires current_user to be RROLE
                                              \=+===============================+=/
 
 
-alter default privileges
- grant PRIVILEGE,... on ENTITYs   #Like `grant`, but on default PRIVILEGEs: granted by default to non-owners on specific ENTITYs
- to "PROLE",...                   #Only for ENTITYs: tables (RELATIONs), sequences, functions|routines, types, schemas
+alter default privileges          #Like `grant`, but on default PRIVILEGEs: granted by default on specific ENTITYs
+ grant PRIVILEGE,... on ENTITYs   #Includes:
+ to "PROLE",...                   #  - full PRIVILEGEs given to owners
+                                  #  - PRIVILEGEs inherited through membership (e.g. from `public` ROLE)
+                                  #Only applies to ENTITYs not created yet
+                                  #Only for ENTITYs: tables (RELATIONs), sequences, functions|routines, types, schemas
 alter default privileges
  revoke PRIVILEGE,... on ENTITYs
  from "PROLE",...                 #Same for `revoke`
@@ -7821,7 +7851,8 @@ ENVVAR ==>                        #Environment variables. Can be specified with:
                                   #        - set local (if FUNC() used create function ... set ...)
                                   #  - transaction-specific:
                                   #     - set local ...
-                                  #Some require superuser ROLE to write.
+                                  #Some require superuser ROLE to read|write.
+                                  #  - can also read if member of built-in ROLE pg_read_all_settings
                                   #Some cannot be session-specific.
                                   #Are always STR. BOOL actually use 'on' and 'off'.
 set [local] ENVVAR to VAL         #VAL can be default
@@ -8091,8 +8122,8 @@ STR                               #Execute an anonymous function STR (body of fu
 
 pg_proc                           #All FUNC. ???
 
-regproc                           #TYPE alias to OID, to cast pg_proc.oid as "FUNC" name
-regprocedure                      #TYPE alias to OID, to cast pg_proc.oid as "FUNC(TYPE,...)" name
+regproc                           #TYPE to cast pg_proc.oid as "FUNC" name
+regprocedure                      #TYPE to cast pg_proc.oid as "FUNC(TYPE,...)" name
 
 
                                              /=+===============================+=\
@@ -8153,8 +8184,8 @@ alter operator
 
 pg_operator                       #All OPERATOR. ???
 
-regoper                           #TYPE alias to OID, to cast pg_operator.oid as "OP" name
-regoperator                       #TYPE alias to OID, to cast pg_operator.oid as "OP(TYPE,...)" name
+regoper                           #TYPE to cast pg_operator.oid as "OP" name
+regoperator                       #TYPE to cast pg_operator.oid as "OP(TYPE,...)" name
 
 
                                              /=+===============================+=\
@@ -8858,6 +8889,7 @@ STOPPING ==>                      #Terminate server:
                                   #Terminate a client current statement (superuser or same member, but not same user):
                                   #  - pg_cancel_backend(PID)
                                   #  - send INT (2, CTRL-C)
+                                  #pg_cancel|terminate_backend() can also be done if member of built-in ROLE pg_signal_backend
 
 initdb [-D DATADIR]               #Creates a cluster, i.e.:
                                   #  - populates or create DATADIR. Def: PGDATA
@@ -9589,6 +9621,11 @@ pg_shmem_allocations
                                   #Visible only to superuser
 pg_stat_slru                      #???
 
+pg_read_all_stats                 #Members of that built-in ROLE can use:
+                                  #  - `select` on pg_stat*, pg_backend_memory_contexts, pg_shmem_allocations
+                                  #  - pg_database|tablespace_size()
+                                  #  - ENVVAR track_activities
+
 pg_stat_statements                #VIEW for all queries (query, time, number of rows, I/O).
                                   #Can be reset with pg_stat_statements_reset().
                                   #Can use ENVVAR pg_stat_statementsmax (def: 1000)
@@ -9751,6 +9788,7 @@ WAL ==>                           #Write-ahead logs. Logs that store every opera
                                   #    If ENVVAR checkpoint_warning (def: '30s') is less than the time between checkpoints, but more
                                   #    than checkpoint_timeout, a warning will be issued to the server log.
                                   #  - can also issue SQL command `checkpoint` to do it
+                                  #     - must be superuser or member of built-in ROLE pg_checkpoint
                                   #  - flushes performed by a checkpoints are spread to the next checkpoint. The spread is
                                   #    ENVVAR checkpoint_completion_target, i.e. percentage of size spread for the free time allowed
                                   #    between checkpoints (def: 0.5, best is 0.9). Can go up to 0.9 will improve performance, but
