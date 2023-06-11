@@ -33,6 +33,7 @@ PAUSING ==>                       #Automatically done in free after 1 week inact
 
 
 ORG ==>                           #Sets of USERs and PROJECTs
+
 USER ==>                          #Supabase direct users, not end-USERs
                                   #Can have permissions:
                                   #  - billing only (read/write)
@@ -42,7 +43,7 @@ USER ==>                          #Supabase direct users, not end-USERs
                                   #  - owner: also ORG, billing email address
                                   #Unless Enterprise, only: owner, developer
 
-PROJECT                           #Main namespace for a given project
+PROJECT                           #DATABASE + other Supabase features related to it
                                   #Max: 2 (free), unlim (pro)
 PROJECT_ID                        #PROJECT-specific ID
                                   #Also called "reference ID"
@@ -52,29 +53,27 @@ CLOUD PROVIDER ==>                #AWS. Can pick REGION
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:           DATABASE            :==(
+                                            )==:          PERFORMANCE          :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
-DATABASE ==>                      #Postgres 15.1
-                                  #Automatically managed
-                                  #One per PROJECT
-DATABASE SIZE ==>                 #40|60MB taken by Supabase utilities
+DATABASE SIZE ==>                 #40-60MB taken by Supabase utilities
                                   #Pricing: max 500MB (free), 8GB then 1$/8GB, up to 1PB (pro)
                                   #Autoscaling:
                                   #  - when reaching 90% of size
                                   #  - adds 50% more
                                   #  - max once per 6h
+
 DATABASE EGRESS ==>               #2GB/month (free), 50GB/month then 1$/10GB (pro)
 
 RDS INSTANCE TYPES ==>            #Per PROJECT
                                   #Ubuntu
-                                  #Max I/O is for 30m per day
                                   #
                                   #Pricing per month ($):   0    5   50  100  200  400  950 1860  2790  3720
                                   #Memory (GB):             1    2    4    8   16   32   64  128   192   256
                                   #Max I/O (Mbps):       2606 2606 2606 4750 4750 4750 4750 9500 14250 19000
+                                  # (for 30min per day)
                                   #Mean I/O (Mbps):        87  174  347  630 1188 2375 4750 9500 14250 19000
                                   #Max direct connections: 10   30   50  100  200  350  420  450   480   500
                                   #Max pooled connections: 50   75  150  300  600 1200 2800 5600  8600 11600
@@ -97,35 +96,18 @@ ENVVAR max_connections            #Max direct + pooled connections
 ENVVAR max_worker_processes       #4 (instead of 8)
 ENVVAR max_parallel_workers       #2 (instead of 8)
 ENVVAR max_parallel_workers
- _per_gather                      #1 (instead of )
+ _per_gather                      #1 (instead of 2)
 ENVVAR random_page_cost           #1.1 (instead of 4)
-
-ENVVAR max_replication_slots      #5 (instead of 10)
-ENVVAR wal_level                  #'logical'
-
-ENVVAR statement_timeout          #Def: 8s if ROLE authenticated, 3s if ROLE anon
-                                  #Max: 2m
-                                  #Can be changed
-
-ENVVAR lc_collate|lc_ctype        #'C.UTF-8'
-ENVVAR lc_*                       #Others are 'en_US.UTF-8'
-
-ENVVAR ssl_ca_file
-ENVVAR ssl_cert_file
-ENVVAR ssl_key_file               #Server SSL is setup
-
-ENVVAR log_connections            #true
-ENVVAR log_destination            #'csvlog'
-ENVVAR log_line_prefix            #Also includes %h (host)
-ENVVAR log_rotation*              #0
 
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:            SCHEMA             :==(
+                                            )==:           DATABASE            :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
+
+POSTGRES VERSION ==>              #15.1
 
 CLUSTER                           #'main'
 DATABASE                          #'postgres'
@@ -134,8 +116,11 @@ EXPOSED SCHEMAS ==>               #Available to public APIs
                                   #Also full PRIVILEGEs with anon|authenticated|service_role ROLEs
                                   #Def: public, graphql_public, storage, supabase_functions
 
-ENVVAR search_path                #$user, "public"
+ENVVAR search_path                #"$user", "public"
                                   #Also "extensions", if postgres ROLE
+
+ENVVAR lc_collate|lc_ctype        #'C.UTF-8'
+ENVVAR lc_*                       #Others are 'en_US.UTF-8'
 
 
                                              /=+===============================+=\
@@ -145,32 +130,139 @@ ENVVAR search_path                #$user, "public"
                                              \=+===============================+=/
 
 
-DATABASE_URL                      #db.PROJECT_DOMAIN:5432
-DATABASE_NAME                     #'postgres'
-DATABASE_USER                     #'postgres'
-DATABASE_PASSWORD                 #User-specified
-                                  #Can be reset
+PG_HOST                           #db.PROJECT_DOMAIN
+PG_PORT                           #5432
 
-SSL CONNECTION ==>                #Encrypts query in-transit.
-                                  #sslmode=verify-full psql parameter
-                                  #Must download SSL certificate, and pass it to sslrootcert psql parameter
-SSL_ENFORCEMENT                   #Require SSL connection with database connections
+ENVVAR ssl_ca_file
+ENVVAR ssl_cert_file
+ENVVAR ssl_key_file               #Server SSL is setup, i.e. encrypts query in-transit
+
+supabase ssl-enforcement update
+ --enable|disable
+  -db-ssl-enforcement             #Use LIBPQ.sslmode 'verify-full', i.e. require client SSL certificate
 supabase ssl-enforcement get      #
-supabase ssl-enforcement update   #
----enable-db-ssl-enforcement      #
----disable-db-ssl-enforcement     #
 
 NETWORK_RESTRICTIONS              #IP restrictions for PGBouncer and Postgres database
                                   #Not for Rest|GraphQL, Storage, Realtime APIs
                                   #Does not work if an EDGE_FUNC needs to connect to the database
                                   #Def: none
-
 supabase network-restrictions
  update
 --db-allow-cird ID[/MASK]         #Add NETWORK_RESTRICTIONS
                                   #Can be 0.0.0.0/0 to remove any
-
 supabase network-restrictions get #Get NETWORK_RESTRICTIONS
+
+ENVVAR statement_timeout          #Def: 8s if ROLE authenticated, 3s if ROLE anon
+                                  #Can be changed up to 2min
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:             ROLES             :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+AUTHENTICATION ==>                #scram-sha-256 password
+                                  #Main one is for postgres, which can be set|reset
+                                  #Exception: anon|authenticated|service_role ROLEs
+                                  #  - those have no `login` PRIVILEGE
+                                  #  - they are set from initial session ROLE "authenticator"
+                                  #  - they use API_KEYs instead
+                                  #dashboard_user ROLE also has no `login` PRIVILEGE, but I'm unsure how it is set
+
+PRIVILEGES ==>                    #No ROLE has `admin option` PRIVILEGE
+
+authenticator                     #Initial session ROLE in API requests
+                                  #Managed by Postgrest
+                                  #No `inherit` PRIVILEGE
+anon                              #ROLE for anonymous API requests
+                                  #`usage` PRIVILEGEs on all SCHEMAs, except realtime|vault|supabase_migrations
+authenticated                     #ROLE for authenticated API requests, for users
+                                  #`usage` PRIVILEGEs on all SCHEMAs, except realtime|vault|supabase_migrations
+service_role                      #ROLE for privileged API requests, for users
+                                  #`usage` PRIVILEGEs on all SCHEMAs, except realtime|vault|supabase_migrations
+
+dashboard_user                    #ROLE for API requests made through UI
+                                  #`createrole`, `createdb`, `replication` PRIVILEGEs
+                                  #Full PRIVILEGEs on DATABASE and on extensions|storage|auth SCHEMAs
+                                  #No PRIVILEGEs on other SCHEMAs
+
+postgres                          #ROLE for programmatic access, for users
+                                  #Owner of DATABASE
+                                  #`createrole`, `createdb`, `replication`, `bypassrls` PRIVILEGEs
+                                  #Not superuser ROLE
+                                  #Full PRIVILEGEs on public|extensions|storage|auth|supabase_migrations SCHEMAs
+                                  #`usage` PRIVILEGEs on other SCHEMAs
+                                  #Can set itself to ROLEs: anon|authenticated|service_role or supabase_*_admin
+
+supabase_*                        #ROLEs meant for support or built-in features
+supabase_admin                    #Only superuser ROLE
+                                  #Full access to everything
+supabase_read_only_user           #ROLE member of pg_read_all_data
+                                  #`bypassrls` PRIVILEGE
+supabase_auth_admin               #ROLE owning auth SCHEMA|ENTITYs
+                                  #No `inherit` PRIVILEGE, but `createrole`
+supabase_functions_admin          #ROLE owning Edge functions SCHEMA|ENTITYs
+                                  #No `inherit` PRIVILEGE, but `createrole`
+supabase_storage_admin            #ROLE owning storage SCHEMA|ENTITYs
+                                  #No `inherit` PRIVILEGE, but `createrole`
+                                  #Can set itself to ROLEs: anon|authenticated|service_role
+supabase_replication_admin        #ROLE for logical replication features
+                                  #`replication` PRIVILEGE
+
+POLICY                            #Row-level security enabled by default on TABLEs of exposed SCHEMAs
+                                  #`service_role` ROLE has `bypassrls` PRIVILEGE
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:            API KEY            :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+PUBLIC_API_KEY                    #'JWT' for anon ROLE
+ACCESS_TOKEN                      #'JWT' for authenticated ROLE
+                                  #Created either:
+                                  #  - through login endpoints
+                                  #  - through UI, for CLI login, etc.
+PRIVATE_API_KEY                   #'JWT' for service_role ROLE
+
+API_KEY                           #Any 'JWT' used for AUTH
+apikey: API_KEY [C]
+Authorization: Bearer API_KEY [C] #Must specify both
+?apikey=API_KEY                   #Alternative
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:              JWT              :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+pgjwt                             #EXTENSION used under-the-hood (see its doc)
+
+JWT_PAYLOAD                       #Session token, once logged in
+JWT_PAYLOAD.role                  #'anon|authenticated|service_role'
+JWT_PAYLOAD.sub                   #'UUID' of USER
+JWT_PAYLOAD.name                  #'NAME' of USER
+JWT_PAYLOAD.iat                   #DATE_NUM. Start time
+JWT_PAYLOAD.exp                   #DATE_NUM. End time (in 10 years)
+JWT_PAYLOAD.*                     #Any custom data
+
+                                  #Uses PG extension PGJWT
+
+auth.jwt()->JWT_PAYLOAD           #SQL FUNC
+
+sb-access-token                   #Cookie for the access 'JWT'
+sb-refresh-token                  #Cookie for the refresh 'JWT'
+
+JWT EXPIRATION ==>                #Def: 1h, max: 7d
+REFRESH TOKENS ==>                #To extend expiration
+                                  #At most 10 (can be set) to avoid stolen token from having too much impact
+
 
 
                                              /=+===============================+=\
@@ -357,119 +449,6 @@ WEBHOOKS ==>                      #Call either:
                                   #  - of a given TABLE
 
 supabase_functions.hooks          #TABLE with all webhooks. Document ???
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:              JWT              :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-JWT_OBJ                           #Session token, once logged in
-                                  #Uses PG extension PGJWT
-JWT_OBJ.role                      #'anon|authenticated|service_role'
-JWT_OBJ.sub                       #'UUID' of USER
-JWT_OBJ.name                      #'NAME' of USER
-JWT_OBJ.iat                       #DATE_NUM. Creation time
-JWT_OBJ.exp                       #DATE_NUM. Expiration time (in 10 years)
-JWT_OBJ.*                         #Any custom data
-
-JWT_SECRET                        #To decode JWT_OBJ
-TOKEN                             #Encoded JWT_OBJ
-
-sign
- (JWT_OBJ, JWT_SECRET[, 'ALGO'])
- ->'TOKEN'                        #Def ALGO: 'HS256'
-verify                            #OBJ:
- ('TOKEN', JWT_SECRET[, 'ALGO'])  #  - header:
- ->OBJ                            #     - alg 'ALGO'
-                                  #  - payload JWT_OBJ
-                                  #  - valid BOOL
-
-auth.jwt()->JWT_OBJ               #SQL FUNC
-
-sb-access-token                   #Cookie for the access TOKEN
-sb-refresh-token                  #Cookie for the refresh TOKEN
-
-JWT EXPIRATION ==>                #Def: 1h, max: 7d
-REFRESH TOKENS ==>                #To extend expiration
-                                  #At most 10 (can be set) to avoid stolen token from having too much impact
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:            API KEY            :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-PUBLIC_API_KEY                    #TOKEN for anon ROLE
-ACCESS_TOKEN                      #TOKEN for authenticated ROLE
-                                  #Created either:
-                                  #  - through login endpoints
-                                  #  - through UI, for CLI login, etc.
-PRIVATE_API_KEY                   #TOKEN for service_role ROLE
-
-API_KEY                           #Any TOKEN used for AUTH
-apikey: API_KEY [C]
-Authorization: Bearer API_KEY [C] #Must specify both
-?apikey=API_KEY                   #Alternative
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:             ROLES             :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-AUTHENTICATION ==>                #scram-sha-256 password
-                                  #Exception: anon|authenticated|service_role|dashboard_user ROLEs
-                                  #  - those have no `login` PRIVILEGE
-                                  #  - they are set from initial session ROLE "authenticator"
-
-PRIVILEGES ==>                    #No ROLE has `admin option` PRIVILEGE
-
-authenticator                     #Initial session ROLE in API requests
-                                  #Managed by Postgrest
-                                  #No `inherit` PRIVILEGE
-anon                              #ROLE for anonymous API requests
-                                  #`usage` PRIVILEGEs on all SCHEMAs, except realtime|vault|supabase_migrations
-authenticated                     #ROLE for authenticated API requests, for users
-                                  #`usage` PRIVILEGEs on all SCHEMAs, except realtime|vault|supabase_migrations
-service_role                      #ROLE for privileged API requests, for users
-                                  #`usage` PRIVILEGEs on all SCHEMAs, except realtime|vault|supabase_migrations
-dashboard_user                    #ROLE for API requests made through UI
-                                  #`createrole`, `createdb`, `replication` PRIVILEGEs
-                                  #Full PRIVILEGEs on DATABASE and on extensions|storage|auth SCHEMAs
-                                  #No PRIVILEGEs on other SCHEMAs
-
-postgres                          #ROLE for programmatic access, for users
-                                  #Owner of DATABASE
-                                  #`createrole`, `createdb`, `replication`, `bypassrls` PRIVILEGEs
-                                  #Not superuser ROLE
-                                  #Full PRIVILEGEs on public|extensions|storage|auth|supabase_migrations SCHEMAs
-                                  #`usage` PRIVILEGEs on other SCHEMAs
-                                  #Can set itself to ROLEs: anon|authenticated|service_role or supabase_*_admin
-
-supabase_*                        #ROLEs meant for support or built-in features
-supabase_admin                    #Only superuser ROLE
-                                  #Full access to everything
-supabase_read_only_user           #ROLE member of pg_read_all_data
-                                  #`bypassrls` PRIVILEGE
-supabase_auth_admin               #ROLE owning auth SCHEMA|ENTITYs
-                                  #No `inherit` PRIVILEGE, but `createrole`
-supabase_functions_admin          #ROLE owning Edge functions SCHEMA|ENTITYs
-                                  #No `inherit` PRIVILEGE, but `createrole`
-supabase_storage_admin            #ROLE owning storage SCHEMA|ENTITYs
-                                  #No `inherit` PRIVILEGE, but `createrole`
-                                  #Can set itself to ROLEs: anon|authenticated|service_role
-supabase_replication_admin        #ROLE for logical replication features
-                                  #`replication` PRIVILEGE
-
-POLICY                            #Row-level security enabled by default on TABLEs of exposed SCHEMAs
-                                  #`service_role` ROLE has `bypassrls` PRIVILEGE
 
 
                                              /=+===============================+=\
@@ -839,9 +818,12 @@ ENVVAR VERIFY_JWT_SECRET          #'true|false'
 
 
 REALTIME ==>                      #Repository "supabase/realtime"
-                                  #Uses logical replication
 
 realtime                          #SCHEMA with realtime features
+
+LOGICAL REPLICATION ==>           #Used for realtime
+ENVVAR max_replication_slots      #5 (instead of 10)
+ENVVAR wal_level                  #'logical'
 
 CHANNEL                           #Namespace for events
                                   #Max CHANNELs: 500 for all CLIENTs, 100 per CLIENT
@@ -1134,6 +1116,11 @@ CUSTOMER_DOMAIN                   #PROJECT_DOMAIN/customers/v1
 GET CUSTOMER_DOMAIN               #To integrate with Prometeus, for better charts
  /privileged/metrics              #Must be privileged
                                   #Pro only
+
+ENVVAR log_connections            #true
+ENVVAR log_destination            #'csvlog'
+ENVVAR log_line_prefix            #Also includes %h (host)
+ENVVAR log_rotation*              #0
 
 
                                              /=+===============================+=\
