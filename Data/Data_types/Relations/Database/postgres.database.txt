@@ -711,9 +711,9 @@ FIXED LENGTH TYPES ==>            #Types that do not have a variable length
 
 VARIABLE BOUNDED LENGTH TYPES     #One of:
  ==>                              #  - numeric(...)
-                                  #  - varchar|bpchar
+                                  #  - varchar|bpchar(...)
                                   #  - bit(...)
-                                  #  - time[stamp][tz]|interval
+                                  #  - time[stamp][tz]|interval(...)
                                   #Internally start with 4 bytes indicating length
 
 VARIABLE UNBOUNDED LENGTH TYPES   #One of:
@@ -1091,7 +1091,7 @@ AFUNC(...)                        #Ignores nulls
                                              \=+===============================+=/
 
 
-boolean                           #TYPE
+boolean|bool                      #TYPE
 
 BOOL => STR                       #Cast as 'true|false'
 BOOL <~> INT4                     #Cast as 0|1
@@ -1119,26 +1119,24 @@ NUM                               #INT|FLOAT|money
 INT                               #int2|4|8
 FLOAT                             #float4|8|numeric
 
-int2
-smallint                          #TYPE. Signed 2 bytes integer
-int4
-integer                           #TYPE. Signed 4 bytes integer
-int8
-bigint                            #TYPE. Signed 8 bytes integer
+smallint|int2                     #TYPE. Signed 2 bytes integer
+integer|int|int4                  #TYPE. Signed 4 bytes integer
+bigint|int8                       #TYPE. Signed 8 bytes integer
 
-float4
-real                              #TYPE. 4 bytes float
-float8
-double precision                  #TYPE. 8 bytes float
+real|float4|float(1-24)           #TYPE. 4 bytes float
+double precision|float8
+ |float(25-53)                    #TYPE. 8 bytes float
 
-numeric[(NUM[, NUM2])]            #TYPE. Fixed precision integer with NUM digits including NUM2 decimals
-decimal[(NUM[, NUM2])]            #NUM2 can be negative: NUM2 last integer digits are zeros
+numeric|decimal[(NUM[, NUM2])]    #TYPE. Fixed precision integer with NUM digits including NUM2 decimals
+                                  #NUM2 can be negative: NUM2 last integer digits are zeros
                                   #Def NUM,NUM2: unbounded
                                   #Def NUM2: 0
                                   #Max NUM[2]: 1e3
                                   #Min NUM2: -1e3
                                   #Max value: 1e130000, min epsilon: 1e-16000
                                   #Rounded nearest, then towards [-]Infinity
+                                  #0.5 bytes per digit, plus 3-8 bytes
+                                  #Slower than other NUMs
 
 INT2 <=-> INT4 <=-> INT8
  <=-> NUMERIC                     #When cast as smaller TYPE, fails if beyond max size.
@@ -1158,11 +1156,11 @@ NUMe...                           #TYPE:
 -0                                #Same as +0
 
 'NaN'
-'[-]Infinity'                     #FLOAT_UNKNOWN
+'[-]Inf[inity]'                   #FLOAT_UNKNOWN. Case-insensitive
 
-SCONF.extra_float_digits          #NUM of decimals to show when printing FLOATs
+SCONF.extra_float_digits          #NUM of decimals to show when printing FLOAT4|8
                                   #If > 0 (def), unlimited
-                                  #If <= 0, use abs(NUM)
+                                  #If <= 0, use 6|15 + NUM with FLOAT4|8
 
 generate_series(NUM, NUM2[, NUM3])
  ->NUM4_SET                       #From NUM to NUM2, with step NUM3 (def: 1)
@@ -1247,10 +1245,10 @@ STRINGS ==>                       #Unless specified otherwise, operations are do
                                   #Unicode-aware, e.g. case
                                   #1-based indices
 
-varchar[(NUM)]                    #TYPE. STR with NUM max Unicode codepoints (def: unlim)
+varchar|character varying[(NUM)]  #TYPE. STR with NUM max Unicode codepoints (def: unlim)
                                   #Max NUM: 1e7
 bpchar[(NUM)]
-char(NUM)                         #TYPE. Like varchar, but pads with spaces (slower and takes more space)
+char[acter](NUM)                  #TYPE. Like varchar, but pads with spaces (slower and takes more space)
 text                              #TYPE. Like varchar, but variable length
 
 BPCHAR -> VARCHAR|TEXT            #Type cast removes padded spaces
@@ -1553,10 +1551,12 @@ uniq(INT4_ARR)->INT4_ARR          #Remove duplicates. Must be first sorted
 date                              #TYPE. 4 bytes-long
 'YYYY-MM-DD'                      #DATE_UNKNOWN
 
-time                              #TYPE. 8 bytes-long
+time [without time zone] [(NUM)]  #TYPE. 8 bytes-long
+                                  #NUM is number of sub-seconds decimals (min: 0, def|max: 6)
 'HH:MM:SS[.SSSSSS]'               #TIME_UNKNOWN
 
-timestamp                         #TYPE. 8 bytes-long
+timestamp [without time zone]
+ [(NUM)]                          #TYPE. 8 bytes-long
 'DATE TIME'                       #TIMESTAMP_UNKNOWN
 
 TIME[TZ] <= TIMESTAMP[TZ]         #Type cast, removing DATE
@@ -1633,10 +1633,11 @@ pg_sleep(FLOAT)                   #Sleeps FLOATS seconds
 
 LOCALES ==>                       #Used, including current timezone, unless specified otherwise
 
-timetz                            #TYPE. Usually prefered over time
+timetz|time with time zone[(NUM)] #TYPE. Usually prefered over time
 'TIME[TZ]'                        #TIMETZ_UNKNOWN. TZ is [GMT]-|+NUM
 
-timestamptz                       #TYPE. Usually prefered over timestamp
+timestamptz
+ |timestamp with time zone[(NUM)] #TYPE. Usually prefered over timestamp
 'TIMESTAMP[TZ]'                   #TIMESTAMPTZ_UNKNOWN
 
 TIME <=-> TIMETZ
@@ -1669,7 +1670,8 @@ TIME[STAMP][TZ] at time zone 'TZ' #TIME[STAMP]TZ
 
 
 interval [PERIOD [to PERIOD2]]    #TYPE. 16-byte long
-                                  #PERIOD is year|month|day|hour|minute|second (def: any)
+ [(NUM)]                          #PERIOD is year|month|day|hour|minute|second (def: any)
+                                  #NUM is like time(NUM)
 
 TIME <=-> INTERVAL                #Type cast
 
@@ -3300,12 +3302,14 @@ create sequence "SEQUENCE"
 alter sequence "SEQUENCE" ...     #Same syntax as create sequence ...
  [restart [with] INT]             #Like setval()
 
-"COL" [small|big]serial           #COL_ARG with:
- COL_CONSTRAINT...                #  - TYPE int2|4|8
+"COL" serial[4]                   #COL_ARG with:
+ COL_CONSTRAINT...                #  - TYPE int4
                                   #  - default nextval('SEQUENCE')
                                   #  - not null
                                   #"SEQUENCE" is named 'TABLE_COL_seq'
                                   #Auto-dependency child of its COL
+"COL" smallserial|serial2 ...     #Same with TYPE int2
+"COL" bigserial|serial8 ...       #Same with TYPE int8
 
 discard sequences                 #Discard SEQUENCE cache for current session
 
