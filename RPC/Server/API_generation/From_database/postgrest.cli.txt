@@ -9,28 +9,55 @@
 VERSION ==>                       #11.1.0
                                   #Proxies postgres server to expose it as a REST API
 
+postgrest/postgrest               #Docker image
+                                  #CLI binary also available
+
 postgrest                         #Start server
 
 postgrest CONF_PATH               #PATH to CONF
                                   #INI format
 postgrest --dump-config           #Print CONF
+ENVVAR PGRST_*                    #Sets CONF.*
+SCONF.pgrst.*                     #CONF.*
+                                  #Not for:
+                                  #  - CONF that cannot be reloaded
+                                  #  - db-config
+                                  #  - db-channel*
+                                  #  - app.settings.*
 
-SIGUSR1                           #Reloads information cached at server start: CONF and any DDL
-CONF.db-channel                   #"CHANNEL" (def: "pgrst"). Like SIGUSR1 when "CHANNEL" is notified
-CONF.db-channel-enabled           #BOOL (def: true). Enable CONF.db-channel
+CONF.db-pre-config                #"SCHEMA.FUNC" called as FUNC() on server start
+                                  #Meant to set SCONF.pgrst.*
+CONF.db-config                    #BOOL (def: true). Enable CONF.db-pre-config
+
+SIGUSR1
+notify "pgrst", 'reload schema'   #Reloads DDL, which is cached at server start
+SIGUSR2                           #Reloads CONF
+notify "pgrst", 'reload config'   #Cannot reload:
+                                  #  - connection parameters: db-uri, admin-server-port, db-pool-*, server-*
+                                  #  - log-level
+                                  #  - db-tx-end
+CONF.db-channel-enabled           #BOOL (def: true). Enable `notify "pgrst"`
+CONF.db-channel                   #"CHANNEL" (def: "pgrst") to override name
 
 CONF.db-uri                       #'LIBPQ' connection (def: 'postgresql://') to the postgres server
                                   #Also indicates DATABASE to use
+                                  #Can be '@PATH' to file
+Retry-After: NUM [S]              #Set if disconnected, with 503. Also tries to reconnect every 30s
 LIBPQ.keepalives_interval         #Uses 75s by default
 LIBPQ.keepalives_count            #Uses 9 by default
 LIBPQ.keepalives_idle             #Uses 2h by default
 
-CONF.server-host                  #STR (def: '!4'). Host of the postgrest server
+CONF.server-host                  #STR. Host of the postgrest server. Can also be:
+                                  #  - '!4' (def), '!6': any IPv4|6
+                                  #  - '*4', '*6': any IP, with IPv4|6 preferred
+                                  #  - '*': any IP
 CONF.server-port                  #NUM (def: 3000). Port of the postgrest server
 CONF.server-unix-socket           #'PATH' to Unix socket of the postgrest server
 CONF.server-unix-socket-mode      #STR (def: '600'). Permissions of Unix socket
 
-CONF.admin-server-port            #NUM (def: none). Port of admin server used for checks
+CONF.admin-server-port            #ADMIN_PORT (def: none)
+GET HOST:ADMIN_PORT/live          #200, empty response, if postgrest server running. Meant for status check
+GET HOST:ADMIN_PORT/ready         #Same but also checks connection with Postgres database, and SCHEMA cache
 
 CONF.db-schemas                   #"SCHEMA,..." (def: "public") being exposed in REST routes
 Accept-Profile: SCHEMA [C]        #Specifies SCHEMA, when CONF.db-schemas has multiple ones
@@ -41,29 +68,29 @@ Content-Profile: SCHEMA [C]       #Same but for POST|PATCH|PUT|DELETE
 
 CONF.db-extra-search-path         #"SCHEMA" (def: "public") to prepend to SCONF.search_path
 
-CONF.db-pre-config                #"FUNC" used for in-database configuration
-CONF.db-config                    #BOOL (def: true). Enable CONF.db-pre-config
+Accept: application/
+ vnd.pgrst.plan [C]               #Runs `explain` on GET
+Accept: application/
+ vnd.pgrst.plan+json [C]          #`explain` format 'json'
+Accept: application/
+ vnd.pgrst.plan; for="MIME" [C]   #Specifies Content-Type: MIME [C] used by `explain`
+Accept: application/
+ vnd.pgrst.plan;
+ options=STR|... [C]              #`explain` options: analyze, verbose, settings, buffers, wal
+CONF.db-plan-enabled              #BOOL (def: false). Allows application/vnd.pgrst.plan[+json]
 
-Accept:
- application/vnd.pgrst.plan [C]   #Runs `explain` on GET
-CONF.db-plan-enabled              #BOOL (def: false). Allows application/vnd.pgrst.plan
+CONF.db-prepared-statements       #BOOL (def: true). Create PREPs under-the-hood, for performance
+                                  #Must disable if using an external connection pooler (like pgBouncer)
+                                  #  - can only pool sessions, not statements
 
-CONF.db-pool                      #NUM (def: 10) of sockets to keep in pool
-CONF.db-pool-acquisition-timeout  #NUM (def: 10) of secs to wait for a socket in pool
-CONF.db-pool-max-idletime         #NUM (def: 30s) of secs to keep unused sockets in pool
-CONF.db-pool-max-lifetime         #NUM (def: 30min) of secs to keep sockets in pool (used or not)
-
-CONF.db-prepared-statements       #BOOL (def: true). Enable PREPs
-                                  #Might need to disable when behind a connection pooler
-
-CONF.db-tx-end                    #Whether to allow using Prefer: tx=commit|rollback [C] to commit|rollback current transaction
-                                  #Can be:
-                                  #  - 'commit' (def): does not allow
-                                  #  - 'commit-allow-override': allows
-                                  #  - 'rollback[-allow-override]': same but defaults to always rolling back
-
-CONF.log-level                    #Among: 'crit', 'error' (def), 'warn', 'info'
-                                  #Sets SCONF.client_min_messages
+CONF.log-level                    #For Postgrest messages, among:
+                                  #  - 'crit': connection errors
+                                  #  - 'error' (def): also 5**
+                                  #  - 'warn': also 4**
+                                  #  - 'info': also 2**|3**
+                                  #Logs to stdout requests info: IP, ROLE, DATE, METHOD, PATH, STATUS, USER_AGENT
+                                  #Logs to stderr server info
+                                  #Also sets SCONF.client_min_messages
 
 CONF.openapi-mode                 #Generates a URL which produces OpenAPI 2.0 JSON definition.
                                   #Can be:
@@ -73,15 +100,13 @@ CONF.openapi-mode                 #Generates a URL which produces OpenAPI 2.0 JS
                                   #Includes COMMENTs on ENTITYs (e.g. SCHEMA, TABLE, COL)
                                   #  - can include newlines
                                   #  - first line on SCHEMA is used as API title
-CONF.openapi-server-proxy-uri     #'URL' (def: '', i.e. root) of OpenAPI route
+CONF.openapi-server-proxy-uri     #External 'URL' (def: '', i.e. root) of the API
 CONF.openapi-security-active      #BOOL (def: false). Include `security[Definitions]` in response
 
 CONF.db-root-spec                 #'FUNC' (def: '') to manually set OpenAPI response
                                   #Must be a PGSQL FUNC()->JSON calling: openapi json = '{...}'
 
-CONF.raw-media-types              #'MIME,...' (def: '') of raw output
-
-CONF.server-trace-header          #STR (def: '')
+CONF.server-trace-header          #'HEADER' (def: ''). Request header to repeat in response, e.g. 'X-Request-Id'
 
 Accept: MIME [C]                  #
 Content-Type: MIME [C|S]          #
@@ -96,12 +121,19 @@ text/plain                        #STR, only for /rpc/FUNC
 application/octet-stream          #Binary from BYTEA, only for /rpc/FUNC
 text/xml                          #XML, only for /rpc/FUNC
 
+CONF.raw-media-types              #'MIME,...' (def: '').
+                                  #Prevents converting to JSON when using `Accept: MIME [C]` with /rpc/FUNC
+
 Transfer-Encoding: chunked [S]    #Can be used
+
+URL ENCODING ==>                  #Must be used like any URL
 
 Server: postgrest/X.Y.Z [S]       #
 
 Content-Location:
  /TABLE[?VAR=VAL,...] [S]         #
+
+Preference-Applied: ... [S]       #Set when Prefer: ... [C] was used
 
 GET /TABLE                        #select [COL,...] from TABLE [where ...] [order by ...]
                                   #Request body: empty
@@ -132,7 +164,6 @@ POST /rpc/FUNC                    #Call SQL FUNC(...)
                                   #Overloaded FUNCs are supported if their arguments differ by name or arity (not only by TYPE)
 
 GET /rpc/FUNC                     #Same using query variables ?VAR=VAL,... and with a `read only` transaction
-                                  #VAL must be URL encoded
                                   #VAL can use '...' UNKNOWN, e.g. {VAL,...} for ARR
                                   #Variadic ARGs must be repeated
                                   #The above also applies to POST with x-www-form-urlencoded [C]
@@ -205,16 +236,22 @@ VARR                              #Can use:
                                   #  - 1-n (OBJ_ARR): TABLE2 on TABLE2.FOREIGN_KEY = TABLE.PRIMARY_KEY
                                   #  - 1-1 (OBJ): same but FOREIGN_KEY has a unique or primary key CONSTRAINT
                                   #  - n-n (OBJ_ARR): TABLE3 on TABLE3.FOREIGN_KEY = TABLE.PRIMARY_KEY join TABLE2 on TABLE3.FOREIGN_KEY2 = TABLE2.PRIMARY_KEY
+                                  #Works also on [M]VIEWs or FUNCs when they return the foreign keys as is
+                                  #  - e.g. `create view as select FOREIGN_KEY from TABLE`
+?select=CONSTRAINT(...)           #Same but using the foreign key "CONSTRAINT" name instead of the referenced "TABLE2" name
+?select=TABLE2!COL(...)           #Same but specifies the referenced COL. Only needed to avoid ambiguity in some edge cases
 ?select=TABLE2(TABLE3(...),...)   #Can be deep
+?select=...TABLE2(...)            #Spreads to parent OBJ, i.e. like { ...OBJ } in JavaScript
 ?select=FUNC(COL,...)             #Virtual COL, i.e. FUNC(ROW)->ROW2_SET
 ?select=TABLE2!inner(...)         #select ... inner join ...
                                   #I.e. exclude TABLE ROWs where TABLE.TABLE2 is empty ARR
                                   #  - i.e. did not join to anything
                                   #  - including to a ?TABLE2.COL filter
-                                  #     - an alternative is to use ?TABLE2=[not.]is.null (since `emptyArray[] is null` === true)
+?TABLE2=[not.]is.null             #Similar result than ?select=TABLE2!inner, since an empty ARR `is null`
 ?TABLE2.COL=OP.VAL
 ?TABLE2.and|or=(COL.OP.VAL,...)
-?TABLE2.order=...                 #Same, but for a joined TABLE2
+?TABLE2.order=...
+?order=TABLE2(COL)                #Same, but for a joined TABLE2
 ?TABLE2.offset|limit=NUM          #Can be deep
 
 ?order=COL,...                    #order by COL,...
@@ -249,11 +286,11 @@ Prefer: return=STR [C]            #Whether to:
                                   #  - 'none|minimal': return nothing
                                   #  - 'headers-only': return primary key in Location [S]
                                   #  - 'representation': return updated|deleted ROW_ARR in body
+                                  #      - can use ?select
                                   #With POST|PATCH|DELETE
 
-Prefer: missing=default [C]
-Preference-Applied:               #Missing values are `default` instead of null
- missing=default [S]              #With POST|PATCH
+Prefer: missing=default [C]       #Missing values are `default` instead of null
+                                  #With POST|PATCH
 
 Prefer:                           #insert on conflict do nothing
  resolution=ignore-duplicates [C] #With POST
@@ -263,9 +300,28 @@ Prefer:                           #insert on conflict do update set, i.e. upsert
 
 ERROR_RESP                        #Error response
 ERROR_RESP.code                   #STR. sqlstate
+                                  #Errors from Postgrest (not Postgres) start with 'PGRST'
 ERROR_RESP.message                #STR. sqlerrm
 ERROR_RESP.details                #STR|null. pg_exception_detail
 ERROR_RESP.hint                   #STR|null. pg_exception_hint
+
+ERROR STATUS CODE ==>             #Set based on sqlstate. Main ones:
+                                  #  - 300: ambiguous overloaded FUNC
+                                  #  - 400: `raise` in FUNC (unless overridden), invalid query parameters
+                                  #  - 401: authentication, or missing PRIVILEGE + anonymous ROLE
+                                  #  - 403: authorization
+                                  #  - 404: unknown TABLE|FUNC
+                                  #  - 405: `read only` transaction
+                                  #  - 406: unknown SCHEMA
+                                  #  - 409: foreign key, unique CONSTRAINT
+                                  #  - 413: too many COLs, ARGs, statements
+                                  #  - 415: invalid Content-Type [C]
+                                  #  - 416: invalid Range [C]
+                                  #  - 500: invalid SCONF.response.headers
+                                  #  - 503: connection issue, resources limit
+                                  #  - 504: CONF.db-pool-acquisition-timeout
+                                  #  - 400|500: others
+                                  #Can also set status code XXX with sqlstate 'PTXXX'
 
 ROLE                              #CONF.db-uri decides the "authenticator" ROLE, i.e. the one used to connect postgrest to postgres
                                   #Clients use (in order):
@@ -285,6 +341,7 @@ WWW-Authenticate: Bearer [S]      #
 
 JWT.ENVLOP.alg                    #Must be 'HS256'
 JWT.PAYLOAD.role                  #"ROLE" to authenticate with
+                                  #Def: CONF.db-anon-role
 JWT.PAYLOAD.exp                   #DATE_NUM
 
 CONF.jwt-secret                   #STR (def: ''). JWT private key
@@ -299,13 +356,39 @@ CONF.db-anon-role                 #"ROLE". "Anonymous ROLE" to use for unauthent
 
 CONF.db-pre-request               #"SCHEMA.FUNC" called after any client authentication
                                   #No arguments nor return value
-                                  #Meant to throw on authorization error
+                                  #Meant to throw on authorization error, set SCONF.response.*, etc.
 
-SCONF.*                           #Those are available inside FUNCs like CONF.db-pre-request
+SCONF.*                           #Those are available inside FUNCs like /rpc/FUNC, CONF.db-pre-request, etc.
+
 SCONF.request.jwt.claims          #'OBJ_JSON'|null of JWT.PAYLOAD.*
+current_role
 SCONF.role                        #'ROLE'
+
 SCONF.request.path                #'/PATH' of HTTP request
 SCONF.request.method              #'GET|...' HTTP method
 SCONF.request.headers             #'OBJ_JSON' of HTTP headers
 SCONF.request.cookies             #'OBJ_JSON' of Cookie [C]
+
 SCONF.app.settings.*              #Set using CONF.app.settings.*
+
+SCONF.response.status             #'NUM' of HTTP response, to set
+SCONF.response.headers            #'OBJ_ARR' of HTTP headers, to set. Each OBJ has a single property
+
+TRANSACTION ==>                   #Each request runs in a transaction
+begin readonly                    #Used when either:
+                                  #  - GET|HEAD
+                                  #  - POST /rpc/FUNC on a stable|immutable FUNC
+Prefer: tx=commit|rollback [C]    #Make the request's transaction:
+                                  #  - commit at the end (def)
+                                  #  - rollback: for a dry run
+                                  #     - including with `explain`
+CONF.db-tx-end                    #Whether to allow using Prefer: tx=commit|rollback [C], among:
+                                  #  - 'commit' (def): does not allow
+                                  #  - 'commit-allow-override': allows
+                                  #  - 'rollback[-allow-override]': same but defaults to always rolling back
+
+CONF.db-pool                      #Max NUM (def: 10) of sockets to keep in pool
+                                  #Must be <= PCONF.max_connections
+CONF.db-pool-acquisition-timeout  #NUM (def: 10) of secs to wait for a socket in pool
+CONF.db-pool-max-idletime         #NUM (def: 30s) of secs to keep unused sockets in pool
+CONF.db-pool-max-lifetime         #NUM (def: 30min) of secs to keep sockets in pool (used or not)
