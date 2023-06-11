@@ -1623,6 +1623,10 @@ generate_series
 pg_sleep(FLOAT)                   #Sleeps FLOATS seconds
                                   #Time resolution is OS-specific, often 10ms
 
+moddatetime("COL")                #TFUNC which sets TABLE."COL" = current_timestamp
+                                  #Must be `before update` + `for each row`
+                                  #Part of spi EXTENSION
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -2842,6 +2846,9 @@ pg_constraint.conpfeqop           #REGOPERATOR_ARR of the = OPs used to compare 
 pg_constraint.conppeqop           #Same with REGOPERATOR_ARR of the = OPs used to compare current keys with itself
 pg_constraint.conffeqop           #Same with REGOPERATOR_ARR of the = OPs used to compare foreign keys with itself
 
+check_primary_key()               #TFUNCs implementing foreign key. Not useful since can use foreign key CONSTRAINT
+check_foreign_key()               #Part of spi EXTENSION
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -3313,6 +3320,11 @@ alter sequence "SEQUENCE" ...     #Same syntax as create sequence ...
                                   #Auto-dependency child of its COL
 "COL" smallserial|serial2 ...     #Same with TYPE int2
 "COL" bigserial|serial8 ...       #Same with TYPE int8
+
+autoinc("COL", "SEQUENCE")        #TFUNC which sets TABLE."COL" = nextval(SEQUENCE)
+                                  #Must be `before insert [or update]` + `for each row`
+                                  #Unlike `serial` TYPE, works on `update`
+                                  #Part of spi EXTENSION
 
 discard sequences                 #Discard SEQUENCE cache for current session
 
@@ -7557,6 +7569,10 @@ set session authorization default #Sets current_role + session_user to initial_s
 
 set local|session role|session ...#Same as set local|session CONFVAR ...
 
+insert_usernames("COL")           #TFUNC which sets TABLE."COL" = current_role
+                                  #Must be `before insert or update` + `for each row`
+                                  #Part of spi EXTENSION
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -8731,7 +8747,7 @@ pg_transform.trftosql             #REGPROC of FUNC2, or 0
 
 
 create foreign data wrapper "FDW" #Creates a FDW, i.e. virtualization of DATABASE|TABLEs
-                                  #E.g. to use another DBMS, files, etc. as regular TABLEs
+                                  #E.g. to use a foreign source FSOURCE (another DBMS, files, etc.) as regular TABLEs
                                   #Can be slow and not optimized.
                                   #Must be superuser.
                                   #Parent dependency of FSERVER|FTABLE
@@ -8741,12 +8757,20 @@ create|alter ... "FDW"
  handler FUNC                     #Main FUNC
 create|alter ... "FDW" no handler #Must be in LANGUAGE C
 
-fdw_handler                       #TYPE to return from handler FUNC
+fdw_handler                       #TYPE to return from handler FUNC. Is a STRUCT with pointers towards many FUNCs including:
+                                  #  - `explain` helpers: estimate query number of ROWs, access paths, plan, joins
+                                  #  - analyze
+                                  #  - query: start|end, iterate, join, batch, ROW locks, parallel
+                                  #  - insert|update|delete|truncate
+                                  #  - import foreign schema
+                                  #Can get FDW_OPTS|FSERVER_OPTS|FTABLE_OPTS|FCOL_OPTS|FUSERMAP_OPTS|FIMPORT_OPTS
+                                  #Not documented yet
 
-create|alter ... "FDW"            #FUNC('VAR=VAL'_ARR, ENTITY_OID) validating
+create|alter ... "FDW"            #FUNC('VAR=VAL'_ARR, ENTITY_CATALOG_OID) validating
  validator FUNC                   #FDW_OPTS|FSERVER_OPTS|FTABLE_OPTS|FCOL_OPTS|FUSERMAP_OPTS|FIMPORT_OPTS
 create|alter ... "FDW"            #Must be in LANGUAGE C
  no validator                     #Errors should call ereport('MESSAGE')
+                                  #Not documented yet
 
 create|alter ... "FDW"
  options (FDW_OPTS)
@@ -8864,7 +8888,7 @@ alter foreign table "FTABLE"
 
 [not] null
 default VAL                       #FCONSTRAINTs
-generated always as (VAL) stored  #Enforced by FDW's underlying source (if supported), not by FDW nor FTABLE itself
+generated always as (VAL) stored  #Enforced by FSOURCE (if supported), not by FDW nor FTABLE itself
 
 check(BOOL_EXPR) [no inherit]     #FCONSTRAINT|FCOL_ARG
 
@@ -8877,8 +8901,8 @@ pg_foreign_table.ftrelid          #OID
 pg_foreign_table.ftserver         #FSERVER_OID
 pg_foreign_table.ftoptions        #'FSERVER_OPT=VAL'_ARR
 
-SCONF.enable_async_append         #BOOL (def: true). Allow parallel queries on multiple FTABLEs
-                                  #Mostly meant when partitioning FTABLEs
+SCONF.enable_async_append         #BOOL (def: true). Allow queries on multiple FTABLEs to query them in parallel
+                                  #Only when multiple FTABLEs due to `union` or partitioning
 
 
                                              /=+===============================+=\
@@ -8909,7 +8933,9 @@ import foreign schema ...
 
 
 postgres_fdw                      #EXTENSION adding a FDW for other DBMSs
-                                  #`read committed` transactions are run as `repeatable read` instead
+                                  #Any FUNC (e.g. through TFUNC, RULE, etc.) uses SCONF.search_path with only `pg_catalog`
+
+FCOL                              #Must match the COLs of the FSOURCE
 
 FSERVER_OPT.*                     #Like LIBPQ.* (which can be used too), except:
                                   #  - user|password|sslpassword|sslkey|sslcert -> FUSERMAP.* instead
@@ -8919,11 +8945,42 @@ FSERVER_OPT.*                     #Like LIBPQ.* (which can be used too), except:
                                   #  - fallback_application_name -> always 'postgres_fdw'
 
 FTABLE_OPT.schema_name|table_name
- |column_name                     #STR (def: same as underlying source)
+ |column_name                     #STR (def: same as FSOURCE)
 
-FSERVER_OPT|FTABLE_OPT.updatable  #BOOL (def: true). Read-write
+FSERVER_OPT|FTABLE_OPT.updatable  #BOOL (def: true). Allow insert|update|delete
+FSERVER_OPT|FTABLE_OPT.truncatable#BOOL (def: true). Allow truncate
 
-FCOL                              #Must match the COLs of the underlying source
+FSERVER_OPT|FTABLE_OPT
+ .use_remote_estimate             #BOOL (def: false). Call `explain` to get cost estimate
+FSERVER_OPT.fdw_startup_cost      #NUM (def: 100). Network cost of starting a Foreign Scan
+FSERVER_OPT.fdw_tuple_cost        #NUM (def: .01). Network cost of reading|writing a ROW in a Foreign Scan
+
+FSERVER_OPT|FTABLE_OPT.fetch_size #INT4 (def: 100). Number of ROWs to read in one batch
+FSERVER_OPT|FTABLE_OPT.batch_size #INT4 (def: 1). Number of ROWs to write in one batch
+
+FSERVER_OPT.extensions            #'EXTENSION,...' installed on the FSOURCE
+                                  #I.e. can let FSOURCE do `where VAL OP VAL2` with an OP defined by those EXTENSIONs,
+                                  #instead of doing it locally
+                                  #Reason: performance, reducing number of ROWs sent over the network
+
+FSERVER_OPT|FTABLE_OPT
+ .async_capable                   #BOOL (def: false). Like SCONF.enable_async_append
+FSERVER_OPT.parallel_commit       #BOOL (def: false). Allow multiple FSERVER to run in parallel inside the same transaction
+
+FIMPORT_OPT.import_not_null       #BOOL (def: true). Import not null CONSTRAINTs
+FIMPORT_OPT.import_default        #BOOL (def: false). Import COLs' `default` VALs
+FIMPORT_OPT.import_generated      #BOOL (def: true). Import COLs' `generated` VALs
+FIMPORT_OPT.import_collate        #BOOL (def: true). Import COLs' COLLATIONs
+
+FSERVER_OPT.keep_connections      #BOOL (def: true). Pool connection sockets
+                                  #Closed at end of session
+
+postgres_fdw_get_connections()
+ ->ROW_SET                        #ROW: server_name 'FSERVER', valid BOOL
+postgres_fdw_disconnect('FSERVER')
+ ->BOOL                           #
+postgres_fdw_disconnect_all()
+ ->BOOL                           #
 
 
                                              /=+===============================+=\
@@ -8942,6 +8999,26 @@ FTABLE_OPT.format|header|delimiter
  |quote|escape|null|encoding      #Like `copy`
 
 FCOL_OPT.force[_not]_null         #Like `copy`
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:           WRAPPERS            :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+supabase/wrappers                 #Rust framework to write FDWs
+                                  #Uses PGRX
+                                  #Only need to define some CRUD event handlers
+                                  #Not documented yet
+
+AVAILABLE WRAPPERS ==>            #  - S3: read-only from CSV or JSON lines
+                                  #  - Stripe: read-only except customers, products, subscriptions
+                                  #  - Firebase: read-only
+                                  #  - BigQuery: read-write
+                                  #  - Airtable
+                                  #  - Clickhouse: read-write
 
 
                                              /=+===============================+=\
