@@ -15,7 +15,8 @@ postgrest CONF_PATH               #PATH to CONF
                                   #INI format
 postgrest --dump-config           #Print CONF
 
-CONF.db-channel                   #"CHANNEL" (def: "pgrst"). Reload CONF when "CHANNEL" is notified
+SIGUSR1                           #Reloads information cached at server start: CONF and any DDL
+CONF.db-channel                   #"CHANNEL" (def: "pgrst"). Like SIGUSR1 when "CHANNEL" is notified
 CONF.db-channel-enabled           #BOOL (def: true). Enable CONF.db-channel
 
 CONF.db-uri                       #'LIBPQ' connection (def: 'postgresql://') to the postgres server
@@ -32,12 +33,16 @@ CONF.server-unix-socket-mode      #STR (def: '600'). Permissions of Unix socket
 CONF.admin-server-port            #NUM (def: none). Port of admin server used for checks
 
 CONF.db-schemas                   #"SCHEMA,..." (def: "public") being exposed in REST routes
+Accept-Profile: SCHEMA [C]        #Specifies SCHEMA, when CONF.db-schemas has multiple ones
+                                  #Def: CONF.db-schemas[0]
+                                  #Always added to SCONF.search_path
+                                  #For GET|HEAD
+Content-Profile: SCHEMA [C]       #Same but for POST|PATCH|PUT|DELETE
+
 CONF.db-extra-search-path         #"SCHEMA" (def: "public") to prepend to SCONF.search_path
 
 CONF.db-pre-config                #"FUNC" used for in-database configuration
 CONF.db-config                    #BOOL (def: true). Enable CONF.db-pre-config
-
-CONF.db-root-spec                 #STR (def: '')
 
 Accept:
  application/vnd.pgrst.plan [C]   #Runs `explain` on GET
@@ -60,26 +65,36 @@ CONF.db-tx-end                    #Whether to allow using Prefer: tx=commit|roll
 CONF.log-level                    #Among: 'crit', 'error' (def), 'warn', 'info'
                                   #Sets SCONF.client_min_messages
 
-CONF.openapi-mode                 #Whether OpenAPI route is:
+CONF.openapi-mode                 #Generates a URL which produces OpenAPI 2.0 JSON definition.
+                                  #Can be:
                                   #  - 'disabled'
                                   #  - 'follow-provileges' (def): enabled
                                   #  - 'ignore-privileges': same but does not take into account ROLE PRIVILEGEs
-                                  #Served as JSON
-                                  #OpenAPI version 2.0
+                                  #Includes COMMENTs on ENTITYs (e.g. SCHEMA, TABLE, COL)
+                                  #  - can include newlines
+                                  #  - first line on SCHEMA is used as API title
 CONF.openapi-server-proxy-uri     #'URL' (def: '', i.e. root) of OpenAPI route
-CONF.openapi-security-active      #BOOL (def: false)
+CONF.openapi-security-active      #BOOL (def: false). Include `security[Definitions]` in response
+
+CONF.db-root-spec                 #'FUNC' (def: '') to manually set OpenAPI response
+                                  #Must be a PGSQL FUNC()->JSON calling: openapi json = '{...}'
 
 CONF.raw-media-types              #'MIME,...' (def: '') of raw output
 
 CONF.server-trace-header          #STR (def: '')
 
-application/json [C|S]
-application/                      #Request|response JSON payload
- vnd.pgrst.object+json [C|S]      #TABLEs are cast as JSON
-application/x-www-form-urlencoded
- [C|S]                            #Request|response urlencoded payload
-text/csv [C|S]                    #Request|response CSV payload
+Accept: MIME [C]                  #
+Content-Type: MIME [C|S]          #
+application/json
+application/
+ vnd.pgrst.object+json            #JSON
+application/x-www-form-urlencoded #urlencoded
+text/csv                          #CSV
                                   #Empty fields are null
+application/geo+json              #GeoJSON for geometry TYPEs
+text/plain                        #STR, only for /rpc/FUNC
+application/octet-stream          #Binary from BYTEA, only for /rpc/FUNC
+text/xml                          #XML, only for /rpc/FUNC
 
 Transfer-Encoding: chunked [S]    #Can be used
 
@@ -102,15 +117,32 @@ PATCH /TABLE                      #update TABLE [where ...]
                                   #Request: ROW
                                   #Response: empty
 
+PUT /TABLE                        #Like PATCH but forces single ROW update
+
 DELETE /TABLE                     #delete from TABLE [where ...]
                                   #Request body: empty
                                   #Response: empty
 
-GET /rpc/FUNC                     #Call SQL FUNC(...)
-                                  #Request: ?VAR=VAL...
+POST /rpc/FUNC                    #Call SQL FUNC(...)
+                                  #Request: OBJ
                                   #Response: return value
                                   #Only if FUNC has named parameters
-POST /rpc/FUNC                    #Same using request body OBJ
+                                  #Variadic ARGs can be called by their name
+                                  #If returns ROW_SET, can use same query variables as GET /TABLE (?COL, etc.)
+                                  #Overloaded FUNCs are supported if their arguments differ by name or arity (not only by TYPE)
+
+GET /rpc/FUNC                     #Same using query variables ?VAR=VAL,... and with a `read only` transaction
+                                  #VAL must be URL encoded
+                                  #VAL can use '...' UNKNOWN, e.g. {VAL,...} for ARR
+                                  #Variadic ARGs must be repeated
+                                  #The above also applies to POST with x-www-form-urlencoded [C]
+
+Content-Type: text/plain [C]      #Can be used to call /rpc/FUNC with a single positional STR argument, i.e. FUNC(STR)
+Content-Type:
+ application/octet-stream [C]     #Same with BYTEA
+Content-Type: application/json [C]#Same with JSON[B]
+Content-Type: text/xml [C]        #Same with XML
+Prefer: params=single-object [C]  #Can be used to call /rpc/FUNC with a single JSON argument, i.e. FUNC(JSON)
 
 OPTIONS ...                       #Can be used for CORS
 Access-Control-Allow-Origin: * [S]
@@ -173,6 +205,8 @@ VARR                              #Can use:
 ?order=COL.nullsfirst|nullslast   #order by COL nullsfirst|nullslast
 
 PAGINATION ==>                    #With GET
+                                  #Can also be used with PATCH|DELETE to limit number of updated|deleted ROWs
+                                  #  - uses: with (select ... offset|limit) update|delete ...
 ?offset=NUM                       #SQL `offset`
 ?limit=NUM                        #SQL `limit`
 Content-Range: NUM-NUM2/* [S]     #
@@ -187,12 +221,10 @@ Prefer: count=exact [C]           #Use count(*)
 Prefer: count=planned [C]         #Use `explain`
 Prefer: count=estimated [C]       #'exact' if < CONF.db-max-rows, 'planned' if >=
 
+Accept: application/              #Return response as OBJ (using ARR[0]) instead of OBJ_ARR
+ vnd.pgrst.object+json [C]        #406 if OBJ_ARR.length 0
+
 ?columns=COL,...                  #Like ?select but for POST, i.e. ignore non-matching COLs
-
-?on_conflict=STR                  #
-
-Prefer: single-object [C]         #
-                                  #With GET|POST /rpc/FUNC
 
 Prefer: return=STR [C]            #Whether to:
                                   #  - 'none|minimal': return nothing
@@ -204,13 +236,11 @@ Prefer: missing=default [C]
 Preference-Applied:               #Missing values are `default` instead of null
  missing=default [S]              #With POST|PATCH
 
-Prefer:
- resolution=ignore-duplicates [C] #Ignore ROWs where primary key CONSTRAINT fails
-Prefer:
- resolution=merge-duplicates [C]
- ignore|merge-duplicates [C]      #With POST
-Prefer: resolution=               #If 'merge-duplicates', upserts
- ignore|merge-duplicates [C]      #With POST
+Prefer:                           #insert on conflict do nothing
+ resolution=ignore-duplicates [C] #With POST
+Prefer:                           #insert on conflict do update set, i.e. upserts
+ resolution=merge-duplicates [C]  #With POST
+?on_conflict=VARR                 #Allow Prefer: resolution=merge-duplicates to work on COLs with `unique` CONSTRAINT, not only primary key
 
 ERROR_RESP                        #Error response
 ERROR_RESP.code                   #STR. sqlstate
