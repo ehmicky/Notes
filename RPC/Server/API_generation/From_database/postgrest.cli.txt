@@ -9,6 +9,26 @@
 VERSION ==>                       #11.1.0
                                   #Proxies postgres server to expose it as a REST API
 
+Server: postgrest/X.Y.Z [S]       #
+
+SUMMARY ==>                       #Config: file, ENVVAR, custom logic, reload
+                                  #Connection: status check, pool
+                                  #Roles: schemas, authenticator, anonymous, user/JWT
+                                  #MIMEs: JSON, urlencoded, CSV, GeoJSON, BYTEA, XML, raw
+                                  #Request: UNKNOWN, JSON body, VARR, virtual COL
+                                  #Errors: sqlstate|sqlerrm|details|hint, status code
+                                  #Routes: GET|HEAD|POST|PATCH|PUT|DELETE, CORS, write return, upsert, RPC
+                                  #Filter: VARR, not|or|and, any|all, = <> < <= > >=, in, is distinct from, is, [i]like, ~[*], @> <@ && << >> &< &> -|-, @@
+                                  #Sort
+                                  #Pagination: offset, limit, total
+                                  #Select: *, VARR, alias, cast, write body
+                                  #Populate: 1|n-1|n, [M]VIEW|FUNC, deep, spread, virtual COL, inner join
+                                  #Transaction: read only, dry run
+                                  #Explain
+                                  #Custom logic: HTTP request|response params
+                                  #OpenAPI
+                                  #Logging
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -17,29 +37,27 @@ VERSION ==>                       #11.1.0
                                              \=+===============================+=/
 
 
-postgrest CONF_PATH               #PATH to CONF
-                                  #INI format
-ENVVAR PGRST_*                    #Sets CONF.*
-SCONF.pgrst.*                     #CONF.*
-                                  #Not for:
-                                  #  - CONF that cannot be reloaded
-                                  #  - db-config
-                                  #  - db-channel*
-                                  #  - app.settings.*
+CONF                              #Either:
+                                  #  - postgrest CONF_PATH: INI format
+                                  #  - ENVVAR PGRST_*
+                                  #  - TCONF.pgrst.*, but not for:
+                                  #     - CONF that cannot be reloaded
+                                  #     - db-config, db-channel*, app.settings.*
 
 postgrest --dump-config           #Print CONF
 
+SCONF|PCONF                       #Postgres's SCONF|PCONF, not postgrest
+
 CONF.db-pre-config                #"SCHEMA.FUNC" called as FUNC() on server start
-                                  #Meant to set SCONF.pgrst.*
+                                  #Meant to set TCONF.pgrst.*
 CONF.db-config                    #BOOL (def: true). Enable CONF.db-pre-config
 
 SIGUSR1
 notify "pgrst", 'reload schema'   #Reloads DDL, which is cached at server start
 SIGUSR2                           #Reloads CONF
 notify "pgrst", 'reload config'   #Cannot reload:
-                                  #  - connection parameters: db-uri, admin-server-port, db-pool-*, server-*
-                                  #  - log-level
-                                  #  - db-tx-end
+                                  #  - db-uri, admin-server-port, db-pool-*, server-*
+                                  #  - log-level, db-tx-end
 CONF.db-channel-enabled           #BOOL (def: true). Enable `notify "pgrst"`
 CONF.db-channel                   #"CHANNEL" (def: "pgrst") to override name
 
@@ -92,6 +110,10 @@ CONF.db-pool-acquisition-timeout  #NUM (def: 10) of secs to wait for a socket in
 CONF.db-pool-max-idletime         #NUM (def: 30s) of secs to keep unused sockets in pool
 CONF.db-pool-max-lifetime         #NUM (def: 30min) of secs to keep sockets in pool (used or not)
 
+CONF.db-prepared-statements       #BOOL (def: true). Create PREPs under-the-hood, for performance
+                                  #Must disable if using an external connection pooler (like pgBouncer)
+                                  #  - can only pool sessions, not statements
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -100,7 +122,7 @@ CONF.db-pool-max-lifetime         #NUM (def: 30min) of secs to keep sockets in p
                                              \=+===============================+=/
 
 
-CONF.db-schemas                   #"SCHEMA,..." (def: "public") being exposed in REST routes
+CONF.db-schemas                   #"SCHEMA,..." (def: "public") available in URL routes
 
 Accept-Profile: SCHEMA [C]        #Specifies SCHEMA, when CONF.db-schemas has multiple ones
                                   #Def: CONF.db-schemas[0]
@@ -109,6 +131,49 @@ Accept-Profile: SCHEMA [C]        #Specifies SCHEMA, when CONF.db-schemas has mu
 Content-Profile: SCHEMA [C]       #Same but for POST|PATCH|PUT|DELETE
 
 CONF.db-extra-search-path         #"SCHEMA" (def: "public") to prepend to SCONF.search_path
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:             ROLE              :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+ROLE                              #Clients use (in order):
+                                  #  - user ROLE, if set by Authorization [C]
+                                  #  - anonymous ROLE, if set in CONF
+                                  #  - authenticator ROLE
+
+AUTHENTICATOR ROLE ==>            #ROLE set by CONF.db-uri, i.e. initial session ROLE
+                                  #Switches to user|anonymous ROLE using `set role 'ROLE'`
+                                  #  - i.e. must be a member of it
+                                  #  - also means other ROLEs can be `nologin`
+                                  #Should itself have low PRIVILEGEs
+                                  #  - e.g. noinherit, nocreatedb, nocreaterole, nosuperuser
+                                  #But should have `login` PRIVILEGE
+
+CONF.db-anon-role                 #"ROLE". "Anonymous ROLE" to use for unauthenticated clients
+
+Authorization: Bearer JWT [C]
+WWW-Authenticate: Bearer [S]      #Authentication as a user ROLE
+
+JWT.ENVLOP.alg                    #Must be 'HS256'
+JWT.PAYLOAD.role                  #"ROLE" to authenticate with
+                                  #Def: CONF.db-anon-role
+JWT.PAYLOAD.exp                   #DATE_NUM
+
+CONF.jwt-secret                   #STR (def: ''). JWT private key
+                                  #Can be '@PATH' to a file
+                                  #Min 32 chars
+                                  #Can also be 'JSON' of JWK|JWKS
+CONF.jwt-secret-is-base64         #BOOL (def: false)
+CONF.jwt-aud                      #STR (def: ''). Require JWT.PAYLOAD.aud to match
+CONF.jwt-role-claim-key           #'.VARR' (def: '.role'). Customize attribute name of JWT.PAYLOAD.role
+
+TCONF.request.jwt.claims          #'OBJ_JSON'|null of JWT.PAYLOAD.*
+current_role
+TCONF.role                        #'ROLE'
 
 
                                              /=+===============================+=\
@@ -140,7 +205,9 @@ Content-Type: text/xml [C]        #Same with XML
 Prefer: params=single-object [C]  #Can be used to call /rpc/FUNC with a single JSON argument, i.e. FUNC(JSON)
 
 CONF.raw-media-types              #'MIME,...' (def: '').
-                                  #Prevents converting to JSON when using `Accept: MIME [C]` with BYTEA or with /rpc/FUNC
+                                  #Prevents converting to JSON when using `Accept: MIME [C]` with either:
+                                  #  - /rpc/FUNC
+                                  #  - ?select on a BYTEA COL
 
 Transfer-Encoding: chunked [S]    #Can be used
 
@@ -158,18 +225,18 @@ URL ENCODING ==>                  #Must be used like any URL
                                   #E.g. {VAL,...} for ARR, etc.
 
 JSON REQUEST BODY ==>             #Can contain:
-                                  #  - NUM|BOOL|STR: TYPE as is
+                                  #  - NUM|BOOL|STR|null: TYPE as is
                                   #  - ARR: TYPE[]
                                   #  - OBJ: JSON or ROW
                                   #  - '...': UNKNOWN, like ?VAR=VAL
 
-VARR                              #Can use:
-                                  #  - JSON[B]->[>]KEY
-                                  #  - ROW|ARR|HJSON->[>]KEY: using to_jsonb(ROW|ARR|HJSON)->[>]KEY
-                                  #     - works for any TYPE which explicit cast to JSON
-                                  #Can use "virtual COLs", i.e. "FUNC" with a SQL FUNC(ROW)
-                                  #  - can be indexed too, as any other EXPR
-                                  #  - if `create function ... returns setof TYPE rows 1`, VAL not ARR
+VARR                              #Can use following
+JSON[B]->[>]KEY                   #
+VAL->[>]KEY                       #to_jsonb(VAL)->[>]KEY
+                                  #E.g. with ROW|ARR|HJSON
+FUNC                              #"virtual COLs", i.e. SQL FUNC(ROW)
+                                  #Can be indexed too, as any other EXPR
+                                  #If `create function ... returns setof TYPE rows 1`, VAL not ARR
 
 
                                              /=+===============================+=\
@@ -198,11 +265,146 @@ ERROR STATUS CODE ==>             #Set based on sqlstate. Main ones:
                                   #  - 413: too many COLs, ARGs, statements
                                   #  - 415: invalid Content-Type [C]
                                   #  - 416: invalid Range [C]
-                                  #  - 500: invalid SCONF.response.headers
+                                  #  - 500: invalid TCONF.response.headers
                                   #  - 503: connection issue, resources limit
                                   #  - 504: CONF.db-pool-acquisition-timeout
                                   #  - 400|500: others
                                   #Can also set status code XXX with sqlstate 'PTXXX'
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:             REST              :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+GET /TABLE                        #select [COL,...] from TABLE [where ...]
+                                  #Request body: empty
+                                  #Response: ROW_ARR
+
+HEAD /TABLE                       #Same as GET, but empty response
+
+POST /TABLE                       #insert into TABLE
+                                  #Request: ROW[_ARR]
+                                  #Response: empty
+
+PATCH /TABLE                      #update TABLE [where ...]
+                                  #Request: ROW
+                                  #Response: empty
+
+PUT /TABLE                        #Like PATCH but forces single ROW update
+
+DELETE /TABLE                     #delete from TABLE [where ...]
+                                  #Request body: empty
+                                  #Response: empty
+
+OPTIONS ...                       #Can be used for CORS
+Access-Control-Allow-Origin: * [S]
+Allow: OPTIONS,GET,HEAD,POST,
+ PATCH,DELETE [S]                 #
+
+Prefer: return=STR [C]            #Whether to return:
+                                  #  - 'none|minimal': nothing
+                                  #  - 'headers-only': primary key in Location [S]
+                                  #  - 'representation': updated|deleted ROW_ARR in body
+                                  #      - can use ?select
+                                  #With POST|PATCH|DELETE
+
+Prefer:                           #insert on conflict do nothing
+ resolution=ignore-duplicates [C] #With POST
+Prefer:                           #insert on conflict do update set, i.e. upserts
+ resolution=merge-duplicates [C]  #With POST
+?on_conflict=VARR                 #Allow Prefer: resolution=merge-duplicates to work on COLs with `unique` CONSTRAINT, not only primary key
+
+Prefer: missing=default [C]       #Missing values are `default` instead of null
+                                  #With POST|PATCH
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:              RPC              :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+POST /rpc/FUNC                    #Call SQL FUNC(...)
+                                  #Request: OBJ
+                                  #Response: return value
+                                  #Only if FUNC has named parameters
+                                  #Variadic ARGs can be called by their name
+                                  #If FUNC()->ROW_SET, can use same query variables as GET /TABLE (?COL, etc.)
+                                  #Overloaded FUNCs are supported if their arguments differ by name or arity (not only by TYPE)
+
+GET /rpc/FUNC                     #Same using query variables ?VAR=VAL,... and with a `read only` transaction
+                                  #Variadic ARGs must be repeated
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:            FILTER             :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+?COL=OP.VAL                       #where COL OP VAL [and ...]
+                                  #With GET|PATCH|DELETE
+
+?VARR=...                         #where VARR ...
+
+?COL=not.OP.VAL                   #not
+?or=(COL.OP.VAL,...)
+?and=(COL.OP.VAL,...)             #or|and. Can be nested
+
+?COL=OP(any).ARR                  #OP any (ARR)
+?COL=OP(all).ARR                  #OP all (ARR)
+
+?COL=eq.VAL                       #= VAL
+?COL=neq.VAL                      #<> VAL
+?COL=gt.VAL                       #> VAL
+?COL=gte.VAL                      #>= VAL
+?COL=lt.VAL                       #< VAL
+?COL=lte.VAL                      #<= VAL
+
+?COL=in.(VAL,...)                 #in (VAL,...)
+?COL=isdistinct.VAL               #is distinct from VAL
+?COL=is.null|true|false|unknown   #is null|true|false|unknown
+
+?COL=like.GLOB                    #like GLOB. Can use * instead of % (to make it URL-friendlier)
+?COL=ilike.GLOB                   #ilike GLOB. Can also use *
+?COL=match.REGEXP                 #~ REGEXP
+?COL=imatch.REGEXP                #~* REGEXP
+
+?COL=cs.VAL                       #@> VAL
+?COL=cd.VAL                       #<@ VAL
+?COL=ov.VAL                       #&& VAL
+?COL=sl.VAL                       #<< VAL
+?COL=sr.VAL                       #>> VAL
+?COL=nxr.VAL                      #&< VAL
+?COL=nxl.VAL                      #&> VAL
+?COL=adj.VAL                      #-|- VAL
+
+?COL=fts.STR                      #@@ to_tsquery(STR)
+?COL=plfts.STR                    #@@ plainto_tsquery(STR)
+?COL=phfts.STR                    #@@ phraseto_tsquery(STR)
+?COL=wfts.STR                     #@@ websearch_to_tsquery(STR)
+?COL=*ts(REGCONFIG).STR           #@@ *to_tsquery(REGCONFIG, STR)
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:             SORT              :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+?order=COL,...                    #order by COL,...
+                                  #With GET
+
+?order=VARR                       #order by VARR
+
+?order=COL.asc|desc               #order by COL asc|desc
+?order=COL.nullsfirst|nullslast   #order by COL nullsfirst|nullslast
 
 
                                              /=+===============================+=\
@@ -212,13 +414,14 @@ ERROR STATUS CODE ==>             #Set based on sqlstate. Main ones:
                                              \=+===============================+=/
 
 
-PAGINATION ==>                    #With GET
-                                  #Can also be used with PATCH|DELETE to limit number of updated|deleted ROWs
-                                  #  - uses: with (select ... offset|limit) update|delete ...
+PAGINATION METHODS ==>            #Either:
+                                  #  - GET
+                                  #  - PATCH|DELETE:
+                                  #     - limits the number of updated|deleted ROWs
+                                  #     - uses: with (select ... offset|limit) update|delete ...
 
 ?offset=NUM                       #SQL `offset`
 ?limit=NUM                        #SQL `limit`
-Content-Range: NUM-NUM2/* [S]     #
 Range: NUM-[NUM2] [C]             #SQL `offset` + `limit`
 Range-Unit: STR [C]               #Def: 'items'
 
@@ -230,6 +433,93 @@ Prefer: count=none [C]            #Def: always '*'
 Prefer: count=exact [C]           #Use count(*)
 Prefer: count=planned [C]         #Use `explain`
 Prefer: count=estimated [C]       #'exact' if < CONF.db-max-rows, 'planned' if >=
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:            SELECT             :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+?select=COL,...                   #select COL,...
+                                  #With GET
+
+?select=*                         #select *
+?select=VARR                      #select VARR
+
+?select=COL_ALIAS:COL             #select COL as "COL_ALIAS"
+
+?select=COL::TYPE                 #select COL::TYPE (explicit cast)
+
+?columns=COL,...                  #Like ?select but for POST, filtering request body
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:           POPULATE            :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+?select=TABLE2(COL,...)           #select TABLE2.COL,... from TABLE left outer join ...
+                                  #  - n-1 (OBJ):
+                                  #     - TABLE2 on TABLE2.PRIMARY_KEY = TABLE.FOREIGN_KEY
+                                  #     - i.e. current TABLE has foreign key
+                                  #  - 1-n (OBJ_ARR):
+                                  #     - TABLE2 on TABLE2.FOREIGN_KEY = TABLE.PRIMARY_KEY
+                                  #     - i.e. other TABLE2 has foreign key to current TABLE
+                                  #  - 1-1 (OBJ):
+                                  #     - same as 1-n but FOREIGN_KEY has a unique or primary key CONSTRAINT
+                                  #  - n-n (OBJ_ARR):
+                                  #     - TABLE3 on TABLE3.FOREIGN_KEY = TABLE.PRIMARY_KEY join TABLE2 on TABLE3.FOREIGN_KEY2 = TABLE2.PRIMARY_KEY
+                                  #     - i.e. TABLE3 has foreign key to both TABLE[2]
+                                  #Works also on [M]VIEWs or FUNCs when they return the foreign keys as is
+                                  #  - e.g. `create view as select FOREIGN_KEY from TABLE`
+
+?select=CONSTRAINT(...)           #Same but using the foreign key "CONSTRAINT" name instead of the referenced "TABLE2" name
+?select=TABLE2!COL(...)           #Same but specifies the referenced COL. Only needed to avoid ambiguity in some edge cases
+
+?select=TABLE2(TABLE3(...),...)   #Can be deep
+
+?select=...TABLE2(...)            #`...` spreads to the parent OBJ, i.e. like { ...OBJ } in JavaScript
+
+?select=FUNC(COL,...)             #Virtual COL, i.e. FUNC(ROW)->ROW2_SET
+
+?select=TABLE2!inner(...)         #select ... inner join ...
+                                  #I.e. exclude TABLE ROWs where TABLE.TABLE2 is empty ARR
+                                  #  - i.e. did not join to anything
+                                  #  - including to a ?TABLE2.COL filter
+?TABLE2=[not.]is.null             #Similar result than ?select=TABLE2!inner, since an empty ARR `is null`
+
+?TABLE2.COL=OP.VAL
+?TABLE2.and|or=(COL.OP.VAL,...)
+?TABLE2.order=...
+?order=TABLE2(COL)
+?TABLE2.offset|limit=NUM          #Same, but for a joined TABLE2. Can be deep
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:          TRANSACTION          :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+TRANSACTION ==>                   #Each request runs in a transaction
+
+begin readonly                    #Used when either:
+                                  #  - GET|HEAD
+                                  #  - POST /rpc/FUNC on a stable|immutable FUNC
+
+Prefer: tx=commit|rollback [C]    #Make the request's transaction:
+                                  #  - commit at the end (def)
+                                  #  - rollback: for a dry run
+                                  #     - including with `explain`
+CONF.db-tx-end                    #Whether to allow using Prefer: tx=commit|rollback [C], among:
+                                  #  - 'commit' (def): does not allow
+                                  #  - 'commit-allow-override': allows
+                                  #  - 'rollback[-allow-override]': same but defaults to always rolling back
 
 
                                              /=+===============================+=\
@@ -257,12 +547,36 @@ CONF.db-plan-enabled              #BOOL (def: false). Allows application/vnd.pgr
 
                                              /=+===============================+=\
                                             /  :                               :  \
+                                            )==:         CUSTOM LOGIC          :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+CONF.db-pre-request               #"SCHEMA.FUNC" called after any authentication, but before request
+                                  #No arguments nor return value
+                                  #Meant to throw on authorization error, set TCONF.response.*, etc.
+
+TCONF.*                           #Those are Postgres SCONF.* available inside FUNCs like /rpc/FUNC, CONF.db-pre-request, etc.
+
+TCONF.app.settings.*              #Set using CONF.app.settings.*
+
+TCONF.request.path                #'/PATH' of HTTP request
+TCONF.request.method              #'GET|...' HTTP method
+TCONF.request.headers             #'OBJ_JSON' of HTTP headers
+TCONF.request.cookies             #'OBJ_JSON' of Cookie [C]
+
+TCONF.response.status             #'NUM' of HTTP response, to set
+TCONF.response.headers            #'OBJ_ARR' of HTTP headers, to set. Each OBJ has a single property
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
                                             )==:            OPENAPI            :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
-CONF.openapi-mode                 #Generates a URL which produces OpenAPI 2.0 JSON definition.
+CONF.openapi-mode                 #Generates a URL which responds with an OpenAPI 2.0 JSON definition.
                                   #Can be:
                                   #  - 'disabled'
                                   #  - 'follow-provileges' (def): enabled
@@ -278,9 +592,13 @@ CONF.openapi-security-active      #BOOL (def: false). Include `security[Definiti
 CONF.db-root-spec                 #'FUNC' (def: '') to manually set OpenAPI response
                                   #Must be a PGSQL FUNC()->JSON calling: openapi json = '{...}'
 
-CONF.db-prepared-statements       #BOOL (def: true). Create PREPs under-the-hood, for performance
-                                  #Must disable if using an external connection pooler (like pgBouncer)
-                                  #  - can only pool sessions, not statements
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:           LOG/DEBUG           :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
 
 CONF.log-level                    #For Postgrest messages, among:
                                   #  - 'crit': connection errors
@@ -293,199 +611,7 @@ CONF.log-level                    #For Postgrest messages, among:
 
 CONF.server-trace-header          #'HEADER' (def: ''). Request header to repeat in response, e.g. 'X-Request-Id'
 
-Server: postgrest/X.Y.Z [S]       #
-
 Content-Location:
  /TABLE[?VAR=VAL,...] [S]         #
 
 Preference-Applied: ... [S]       #Set when Prefer: ... [C] was used
-
-GET /TABLE                        #select [COL,...] from TABLE [where ...] [order by ...]
-                                  #Request body: empty
-                                  #Response: ROW_ARR
-
-HEAD /TABLE                       #
-
-POST /TABLE                       #insert into TABLE
-                                  #Request: ROW[_ARR]
-                                  #Response: empty
-
-PATCH /TABLE                      #update TABLE [where ...]
-                                  #Request: ROW
-                                  #Response: empty
-
-PUT /TABLE                        #Like PATCH but forces single ROW update
-
-DELETE /TABLE                     #delete from TABLE [where ...]
-                                  #Request body: empty
-                                  #Response: empty
-
-POST /rpc/FUNC                    #Call SQL FUNC(...)
-                                  #Request: OBJ
-                                  #Response: return value
-                                  #Only if FUNC has named parameters
-                                  #Variadic ARGs can be called by their name
-                                  #If returns ROW_SET, can use same query variables as GET /TABLE (?COL, etc.)
-                                  #Overloaded FUNCs are supported if their arguments differ by name or arity (not only by TYPE)
-
-GET /rpc/FUNC                     #Same using query variables ?VAR=VAL,... and with a `read only` transaction
-                                  #Variadic ARGs must be repeated
-                                  #The above also applies to POST with x-www-form-urlencoded [C]
-
-OPTIONS ...                       #Can be used for CORS
-Access-Control-Allow-Origin: * [S]
-Allow: OPTIONS,GET,HEAD,POST,
- PATCH,DELETE [S]                 #
-
-?COL=OP.VAL                       #where COL OP VAL [and ...]
-                                  #With GET|PATCH|DELETE
-?VARR=...                         #VARR OP ...
-?COL=not.OP.VAL                   #not
-?or=(COL.OP.VAL,...)
-?and=(COL.OP.VAL,...)             #or|and. Can be nested
-?COL=OP(any).ARR                  #OP any (ARR)
-?COL=OP(all).ARR                  #OP all (ARR)
-?COL=eq.VAL                       #= VAL
-?COL=neq.VAL                      #<> VAL
-?COL=gt.VAL                       #> VAL
-?COL=gte.VAL                      #>= VAL
-?COL=lt.VAL                       #< VAL
-?COL=lte.VAL                      #<= VAL
-?COL=in.(VAL,...)                 #in (VAL,...)
-?COL=isdistinct.VAL               #is distinct from VAL
-?COL=is.null|true|false|unknown   #is null|true|false|unknown
-?COL=like.GLOB                    #like GLOB. Can use * instead of % (to make it URL-friendlier)
-?COL=ilike.GLOB                   #ilike GLOB. Can also use *
-?COL=match.REGEXP                 #~ REGEXP
-?COL=imatch.REGEXP                #~* REGEXP
-?COL=cs.VAL                       #@> VAL
-?COL=cd.VAL                       #<@ VAL
-?COL=ov.VAL                       #&& VAL
-?COL=sl.VAL                       #<< VAL
-?COL=sr.VAL                       #>> VAL
-?COL=nxr.VAL                      #&< VAL
-?COL=nxl.VAL                      #&> VAL
-?COL=adj.VAL                      #-|- VAL
-?COL=fts.STR                      #@@ to_tsquery(STR)
-?COL=plfts.STR                    #@@ plainto_tsquery(STR)
-?COL=phfts.STR                    #@@ phraseto_tsquery(STR)
-?COL=wfts.STR                     #@@ websearch_to_tsquery(STR)
-?COL=*ts(REGCONFIG).STR           #@@ *to_tsquery(REGCONFIG, STR)
-
-?select=COL,...                   #select COL,...
-                                  #With GET
-?select=*                         #select *
-?select=VARR                      #select VARR
-?select=COL_ALIAS:COL             #select COL as "COL_ALIAS"
-?select=COL::TYPE                 #select COL::TYPE
-
-?select=TABLE2(COL,...)           #select TABLE2.COL,... from TABLE left outer join ...
-                                  #  - n-1 (OBJ): TABLE2 on TABLE2.PRIMARY_KEY = TABLE.FOREIGN_KEY
-                                  #  - 1-n (OBJ_ARR): TABLE2 on TABLE2.FOREIGN_KEY = TABLE.PRIMARY_KEY
-                                  #  - 1-1 (OBJ): same but FOREIGN_KEY has a unique or primary key CONSTRAINT
-                                  #  - n-n (OBJ_ARR): TABLE3 on TABLE3.FOREIGN_KEY = TABLE.PRIMARY_KEY join TABLE2 on TABLE3.FOREIGN_KEY2 = TABLE2.PRIMARY_KEY
-                                  #Works also on [M]VIEWs or FUNCs when they return the foreign keys as is
-                                  #  - e.g. `create view as select FOREIGN_KEY from TABLE`
-?select=CONSTRAINT(...)           #Same but using the foreign key "CONSTRAINT" name instead of the referenced "TABLE2" name
-?select=TABLE2!COL(...)           #Same but specifies the referenced COL. Only needed to avoid ambiguity in some edge cases
-?select=TABLE2(TABLE3(...),...)   #Can be deep
-?select=...TABLE2(...)            #Spreads to parent OBJ, i.e. like { ...OBJ } in JavaScript
-?select=FUNC(COL,...)             #Virtual COL, i.e. FUNC(ROW)->ROW2_SET
-?select=TABLE2!inner(...)         #select ... inner join ...
-                                  #I.e. exclude TABLE ROWs where TABLE.TABLE2 is empty ARR
-                                  #  - i.e. did not join to anything
-                                  #  - including to a ?TABLE2.COL filter
-?TABLE2=[not.]is.null             #Similar result than ?select=TABLE2!inner, since an empty ARR `is null`
-?TABLE2.COL=OP.VAL
-?TABLE2.and|or=(COL.OP.VAL,...)
-?TABLE2.order=...
-?order=TABLE2(COL)                #Same, but for a joined TABLE2
-?TABLE2.offset|limit=NUM          #Can be deep
-
-?order=COL,...                    #order by COL,...
-                                  #With GET
-?order=VARR                       #order by VARR
-?order=COL.asc|desc               #order by COL asc|desc
-?order=COL.nullsfirst|nullslast   #order by COL nullsfirst|nullslast
-
-?columns=COL,...                  #Like ?select but for POST, i.e. ignore non-matching COLs
-
-Prefer: return=STR [C]            #Whether to:
-                                  #  - 'none|minimal': return nothing
-                                  #  - 'headers-only': return primary key in Location [S]
-                                  #  - 'representation': return updated|deleted ROW_ARR in body
-                                  #      - can use ?select
-                                  #With POST|PATCH|DELETE
-
-Prefer: missing=default [C]       #Missing values are `default` instead of null
-                                  #With POST|PATCH
-
-Prefer:                           #insert on conflict do nothing
- resolution=ignore-duplicates [C] #With POST
-Prefer:                           #insert on conflict do update set, i.e. upserts
- resolution=merge-duplicates [C]  #With POST
-?on_conflict=VARR                 #Allow Prefer: resolution=merge-duplicates to work on COLs with `unique` CONSTRAINT, not only primary key
-
-ROLE                              #CONF.db-uri decides the "authenticator" ROLE, i.e. the one used to connect postgrest to postgres
-                                  #Clients use (in order):
-                                  #  - user ROLE, if set by Authorization [C]
-                                  #  - anonymous ROLE, if set in CONF
-                                  #  - authenticator ROLE
-
-AUTHENTICATOR ROLE ==>            #Switches to user|anonymous ROLE using `set role 'ROLE'`
-                                  #  - i.e. must be a member of it
-                                  #  - also means other ROLE can be `nologin`
-                                  #Should itself have low PRIVILEGEs
-                                  #  - e.g. noinherit, nocreatedb, nocreaterole, nosuperuser
-                                  #But should have `login` PRIVILEGE
-
-Authorization: Bearer JWT [C]     #Authentication as a "user" ROLE
-WWW-Authenticate: Bearer [S]      #
-
-JWT.ENVLOP.alg                    #Must be 'HS256'
-JWT.PAYLOAD.role                  #"ROLE" to authenticate with
-                                  #Def: CONF.db-anon-role
-JWT.PAYLOAD.exp                   #DATE_NUM
-
-CONF.jwt-secret                   #STR (def: ''). JWT private key
-                                  #Can be '@PATH' to a file
-                                  #Min 32 chars
-                                  #Can also be 'JSON' of JWK|JWKS
-CONF.jwt-secret-is-base64         #BOOL (def: false)
-CONF.jwt-aud                      #STR (def: ''). Require JWT.PAYLOAD.aud to match
-CONF.jwt-role-claim-key           #'.VARR' (def: '.role'). Customize attribute name of JWT.PAYLOAD.role
-
-CONF.db-anon-role                 #"ROLE". "Anonymous ROLE" to use for unauthenticated clients
-
-CONF.db-pre-request               #"SCHEMA.FUNC" called after any client authentication
-                                  #No arguments nor return value
-                                  #Meant to throw on authorization error, set SCONF.response.*, etc.
-
-SCONF.*                           #Those are available inside FUNCs like /rpc/FUNC, CONF.db-pre-request, etc.
-
-SCONF.request.jwt.claims          #'OBJ_JSON'|null of JWT.PAYLOAD.*
-current_role
-SCONF.role                        #'ROLE'
-
-SCONF.request.path                #'/PATH' of HTTP request
-SCONF.request.method              #'GET|...' HTTP method
-SCONF.request.headers             #'OBJ_JSON' of HTTP headers
-SCONF.request.cookies             #'OBJ_JSON' of Cookie [C]
-
-SCONF.app.settings.*              #Set using CONF.app.settings.*
-
-SCONF.response.status             #'NUM' of HTTP response, to set
-SCONF.response.headers            #'OBJ_ARR' of HTTP headers, to set. Each OBJ has a single property
-
-TRANSACTION ==>                   #Each request runs in a transaction
-begin readonly                    #Used when either:
-                                  #  - GET|HEAD
-                                  #  - POST /rpc/FUNC on a stable|immutable FUNC
-Prefer: tx=commit|rollback [C]    #Make the request's transaction:
-                                  #  - commit at the end (def)
-                                  #  - rollback: for a dry run
-                                  #     - including with `explain`
-CONF.db-tx-end                    #Whether to allow using Prefer: tx=commit|rollback [C], among:
-                                  #  - 'commit' (def): does not allow
-                                  #  - 'commit-allow-override': allows
-                                  #  - 'rollback[-allow-override]': same but defaults to always rolling back
