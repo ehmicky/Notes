@@ -4,6 +4,13 @@
             
 
 
+
+TODO:
+  - continue going through this doc, refreshing it. Stopped at `psql`
+  - go through all `???` in this doc
+  - read full official docs, and compare with this doc
+
+
                                              /=+===============================+=\
                                             /  :                               :  \
                                             )==:            VERSION            :==(
@@ -868,7 +875,7 @@ vacuumlo DATABASE...              #CLI. Remove LARGEOBJs which OIDs does not exi
 --port|-p PORT
 --username|-U USER
 --no-password|-w
---password|-W                     #
+--password|-W                     #LIBPQ connection
 
 
                                              /=+===============================+=\
@@ -6687,6 +6694,9 @@ pg_current_xact_id_if_assigned()  #Current transaction's XID8
  ->XID8                           #If in a readonly statement|transaction, returns null
 age(XID)->UINT                    #Difference between current session's XID2 and XID
 
+pg_xact_commit_timestamp(XID)
+ ->TIMESTAMPTZ                    #Transaction's timestamp
+
 ROW VISIBILITY ==>                #Cannot see ROWs creations|deletions of other transactions if either:
                                   #  - other is uncommitted
                                   #  - current is uncommitted, and other is later, i.e. ROWs with xmin > current session XID
@@ -7454,6 +7464,7 @@ pg_has_role(["ROLE"|ROLE_OID,]
 
 ENVVAR PGUSER                     #"Initial session ROLE", i.e. ROLE that starts the session
 LIBPQ.user                        #Def: same name as CLIENT_USER
+psql DATABASE ROLE
 psql --username|-u ROLE           #Used to check for permission to `set session authorization`
 
 session_user                      #ROLE that can be changed by `set session authorization`
@@ -8670,7 +8681,7 @@ CLUSTER-WIDE ENTITYS ==>          #The following ENTITYs are cluster-wide, not D
                                   #  - TABLESPACE
                                   #  - ROLE (including ACL, security label)
                                   #  - LANGUAGE
-                                  #  - logical replication (including SUBSCRIPTION)
+                                  #  - logical replication (including PUB, SUB, SLOT)
                                   #Also cluster-wide:
                                   #  - dependencies
                                   #  - COMMENTs
@@ -8748,6 +8759,7 @@ pg_database.datallowconn          #BOOL. create database ... allow_connections
 
 ENVVAR PGDATABASE
 LIBPQ.dbname                      #DATABASE to connect to
+psql DATABASE
 psql --database|-d DATABASE       #Def: same name as CLIENT_USER
 
 HCONF.db_user_namespace           #BOOL (def: false). Require ROLE to end with either:
@@ -8906,7 +8918,7 @@ pg_isready                        #Returns server status, according to exit code
 --host|-h
 --port|-p
 --username|-U
---dbname|-d                       #Like psql
+--dbname|-d                       #LIBPQ connection
 --timeout|-t NUM                  #NUM (in secs, def 3). 0 to disable
 --quiet|-q                        #
 
@@ -10613,8 +10625,6 @@ OPTS.disable_on_error             #BOOL (def: false). Disable if any internal er
 
 OPTS.connect                      #BOOL. If false (def: true), do not start until `refresh publication`
 
-SLOT                              #How publisher keeps track of a SUB
-
 OPTS.create_slot                  #BOOL. If true (def):
                                   #  - automatically create SLOT
                                   #  - cannot be in a transaction
@@ -10721,7 +10731,24 @@ HCONF.                            #NUM (def: 2). Max amount of parallel workers 
  max_sync_workers_per_subscription#Max 1 per TABLE
                                   #Must be <= PCONF.max_logical_replication_workers
 
-SCONF.logical_decoding_work_mem   #NUM|STR (def: 64MB). Max buffer used by PUB|SUB before flushing to disk
+SCONF.logical_decoding_work_mem   #NUM|STR (def: 64MB). Size of in-memory buffer used by SLOTs
+                                  #Once full, swaps on-disk instead ("spill")
+
+pg_stat_replication_slots         #TABLE with all SLOTs statistics
+pg_stat_replication_slots
+ .slot_name                       #"SLOT" name
+pg_stat_replication_slots
+ .spill_txns                      #INT8. NUM of transactions spilled
+pg_stat_replication_slots
+ .spill_count                     #INT8. NUM of times transactions were spilled
+pg_stat_replication_slots
+ .spill_bytes                     #INT8. Amount of bytes spilled
+pg_stat_replication_slots
+ .stream_*                        #Like spill_* but for transactions sent to consumer without spilling
+pg_stat_replication_slots
+ .total_*                         #Like spill_* + stream_*
+pg_stat_replication_slots
+ .stats_reset                     #TIMESTAMPTZ of last update of pg_stat_replication_slots
 
 
                                              /=+===============================+=\
@@ -10750,12 +10777,38 @@ pg_rewrite.ev_enabled             #Same for RULE
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:      LOGICAL REPLICATION      :==(
+                                            )==:       LOGICAL DECODING        :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
-REPPLUG                           #Logical decoding "output plugin"
+STREAMING REPLICATION PROTOCOL ==>#Binary protocol used for physical|logical replication
+                                  #Client sends replication commands, instead of SQL commands
+                                  #Replication commands are not documented yet, but similar to:
+                                  #  - get machine ID and WAL location
+                                  #  - `show` CONFVAR
+                                  #  - get timeline history file
+                                  #  - create|delete, read, enable|disable SLOT
+                                  #  - base backup
+
+LIBPQ.replication                 #Start a connection using the streaming replication protocol among:
+                                  #  - false (def)
+                                  #  - true: physical replication
+                                  #  - 'database': logical replication
+
+LOGICAL DECODING ==>              #Using the streaming replication protocol for logical replication,
+                                  #but with pg_*logical*(...) FUNC calls instead of PUB|SUB
+                                  #I.e. more flexible but harder to use
+
+SLOT                              #Current position (PG_LSN) in the WAL
+                                  #Represents a SUB's current logical replication state
+                                  #Stored in the publisher's CLUSTER
+                                  #Position is only persisted in WAL checkpoints
+                                  #  - i.e. might go back in case of a crash
+                                  #  - PUB handles the potential for getting same transaction twice
+                                  #     - usually by keeping track of last PG_LSN received
+                                  #WAL entries not consumed prevent dead ROWs vacuuming or xmin wraparound
+                                  #  - i.e. should read SLOTs and delete them when not needed anymore
 
 pg_create_logical_replication_slot#Create a SLOT
  ("SLOT", "REPPLUG"[,BOOL, BOOL2])#BOOL (def: false) is whether temporary, i.e. dropped at end of session, or on error
@@ -10765,10 +10818,31 @@ ROW.lsn                           #PG_LSN
 
 pg_drop_replication_slot("SLOT")  #Delete a SLOT
 
+pg_copy_logical_replication_slot
+ ("SLOT", "SLOT2"[, BOOL])->ROW   #Like pg_create_logical_replication_slot() but cloned from another SLOT
+
+pg_replication_slot_advance
+ ("SLOT", PG_LSN)->ROW            #Move forward current position PG_LSN of SLOT
+ROW.slot_name                     #"SLOT"
+ROW.end_lsn                       #PG_LSN
+
+pg_logical_slot_get_changes       #Like pg_replication_slot_advance(), but also returns those transactions
+ ("SLOT", PG_LSN, INT4)->ROW_SET  #Only ones before PG_LSN, unless null
+                                  #Only up to INT4 ROWs, unless null
+ROW.lsn                           #PG_LSN
+ROW.xid                           #XID
+ROW.data                          #STR. Transaction's command
+                                  #Format not documented yet
+
+pg_logical_slot_get_binary_changes
+ (...)->ROW_SET                   #Same but ROW.data is BYTEA
+
+pg_logical_slot_peek_*
+ (...)->ROW_SET                   #Like pg_logical_slot_get_*(...) but does not move current position
+
 pg_replication_slots              #TABLE with all SLOTs
 pg_replication_slots.slot_name    #"SLOT" name
 pg_replication_slots.slot_type    #Type of replication among: 'physical', 'logical'
-pg_replication_slots.plugin       #"REPPLUG" name. null if physical replication
 pg_replication_slots.datoid       #pg_database.oid of SLOT
                                   #null if physical replication
 pg_replication_slots.database     #"DATABASE" name of SLOT
@@ -10790,21 +10864,81 @@ pg_replication_slots.wal_status   #How SUB is catching up WAL files, among:
                                   #  - 'lost': above HCONF.max_slot_wal_keep_size, and WAL files have been removed, and "SLOT" is now disabled
 pg_replication_slots.safe_wal_size#INT8. Number of bytes to write to WAL without wal_status being 'lost'
 
-https://www.postgresql.org/docs/current/functions-admin.html#FUNCTIONS-REPLICATION-TABLE ???
-
-pg_xact_commit_timestamp() ???
-
-pg_xact_commit_timestamp_origin() ???
-
-pg_last_committed_xact() ???
-
+DATADIR/pg_logical                #DIRs used by logical decoding
 pg_ls_logicalmapdir()->ROW_SET    #Returns files in pg_logical/mappings DIR
                                   #ROW: name STR, size INT8, modification TIMESTAMPTZ
 pg_ls_logicalsnapdir()->ROW_SET   #Returns files in pg_logical/snapshots DIR
                                   #ROW: name STR, size INT8, modification TIMESTAMPTZ
 
-TOPTS.user_catalog_table          #BOOL. Whether logical decoding plugins can read this TABLE,
-                                  #even if not being the one replicated.
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:        PG_RECVLOGICAL         :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+pg_recvlogical                    #CLI around pg_*logical*()
+--dbname|-d
+--host|-h
+--port|-p
+--username|-U
+--[no-]password|-w|-W             #LIBPQ connection options
+
+--create-slot                     #Like pg_create_logical_replication_slot()
+--if-not-exists                   #With --create-slot, do not fail if already exists
+--two-phase|-t                    #With --create-slot, OPTS.two_phase
+
+--drop-slot                       #Like pg_drop_logical_replication_slot()
+
+--start                           #Like pg_logical_slot_get_changes(), streamed to output
+--startpos|-I                     #PG_LSN. With --start, starts at that transaction
+--endpos|-E                       #PG_LSN. With --start, stops at that transaction
+
+--slot|-S                         #"SLOT"
+
+--file|-f                         #'PATH' of output, or '-' for stdout (def)
+--fsync-interval|-F               #NUM (in secs). How often to flush output to disk
+
+--no-loop|-n                      #Unless set, reconnect when connection is lost
+--status-interval|-s              #NUM (in secs, def 10). How often to ping the connection
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:         OUTPUT PLUGIN         :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+REPPLUG                           #"Output plugin"
+                                  #Handles and transforms transactions consumed from a SLOT
+                                  #Optional
+                                  #C addon. Full interface not documented yet
+
+pg_create_logical_replication_slot
+ ("SLOT", "REPPLUG", ...)->ROW_SET#
+
+pg_copy_logical_replication_slot
+ (..., "REPPLUG")->ROW_SET        #
+
+pg_recvlogical --plugin|-P        #"REPPLUG"
+
+REPPLUGOPT                        #Option passed to REPPLUGs
+
+pg_logical_slot_*_changes
+ (..., 'REPPLUGOPT=VAL'_ARR)
+ ->ROW_SET                        #
+
+pg_recvlogical --option-name|-o   #'REPPLUGOPT=VAL'
+
+pg_replication_slots.plugin       #"REPPLUG" name. null if physical replication
+
+pg_logical_emit_message           #Sends REPPLUG-specific message to REPPLUG
+ (BOOL, STR, STR2|BYTEA)->PG_LSN  #BOOL is whether should be part of current transaction (true) or be its own transaction (false)
+                                  #STR is message prefix
+
+TOPTS.user_catalog_table          #BOOL. Allow REPPLUGs to read this TABLE, even if not being the one replicated.
                                   #Def: true for pg_catalog.*, false otherwise
 
 
@@ -10815,209 +10949,55 @@ TOPTS.user_catalog_table          #BOOL. Whether logical decoding plugins can re
                                              \=+===============================+=/
 
 
-pg_replication_origin_*(): must be superuser
+pg_replication_origin_*()         #Must be superuser
+                                  #"Replication origin" is how a SUB can keep track of the last PG_LSN read from a PUB
+                                  #This allows re-consuming any transaction not flushed to disk if SUB crashes
+                                  #This is automatically by SUBs, i.e. only needed when using logical decoding pg_*(...) directly
 
-pg_replication_origin             #???
-pg_replication_origin_status      #???
+pg_replication_origin_create
+ ("RORIGIN")->RORIGIN_OID         #
+pg_replication_origin_drop
+ ("RORIGIN")                      #
+pg_replication_origin_oid
+ ("RORIGIN")->RORIGIN_OID|null    #
+
+pg_replication_origin_
+ session_setup("RORIGIN")         #Use RORIGIN in current session
+pg_replication_origin_
+ session_reset()                  #Unset RORIGIN from current session
+pg_replication_origin_
+ session_is_setup()->BOOL         #
+
+pg_replication_origin_progress    #Get position of SLOT in any RORIGIN
+ ("RORIGIN", BOOL)->PG_LSN        #BOOL is whether must wait for it to be flushed on-disk
+pg_replication_origin_
+ session_progress(BOOL)->PG_LSN   #Same but in current session's RORIGIN
+pg_replication_origin_advance
+ ("RORIGIN", PG_LSN)              #Manually set position of SLOT in RORIGIN
+
+pg_replication_origin_xact_setup
+ (PG_LSN, TIMESTAMPTZ)            #Set position of SLOT in consumer
+pg_replication_origin_xact_reset()#Undo pg_replication_origin_xact_setup()
+
+pg_replication_origin             #TABLE with all RORIGINs
+pg_replication_origin.roident     #RORIGIN_OID
+pg_replication_origin.roname      #"RORIGIN" name
+
+pg_replication_origin_status      #TABLE with all RORIGINs status
                                   #Visible only to superuser
+pg_replication_origin_status
+ .local_id                        #RORIGIN_OID
+pg_replication_origin_status
+ .external_id                     #"RORIGIN" name
+pg_replication_origin_status
+ .remote_lsn                      #PG_LSN. SLOT position in any RORIGIN
+pg_replication_origin_status
+ .local_lsn                       #PG_LSN. SLOT position in current session's RORIGIN
 
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:     FOREIGN DATA WRAPPER      :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-create foreign data               #Creates a FDW, i.e. functions that permits using another DBMS inside PostgreSQL.
-wrapper FDW                       #Can be slow and not optimized.
-[handler FUNC]                    #Based on a standard implemented by other DBMS, including noSQL.
-[validator FUNC2]                 #FUNC and FUNC2: see doc. on how to create them.
-[options (VAR STR ...)]           #Must be superuser.
-                                  #Available ones (as EXTENSION):
-                                  #  - postgres_fdw: for PostgreSQL to other DBMS
-                                  #     - FSERVER options (can also use LIBPQ.*)
-                                  #        - host STR
-                                  #        - dbname STR
-                                  #        - port STR
-                                  #     - user mapping options:
-                                  #        - user STR
-                                  #        - password STR
-                                  #        - client_encoding STR (def: SCONF.client_encoding)
-                                  #     - FTABLE options:
-                                  #        - schema|table|column_name STR: if name is different
-                                  #     - FSERVER or FTABLE options!
-                                  #        - updatable BOOL (def: true): read-write
-                                  #     - details:
-                                  #        - transaction read committed -> repeatable read
-                                  #  - file_fdw: for CSV file (or other formats of copy COMMAND), read-only:
-                                  #     - FTABLE options:
-                                  #        - filename STR: absolute path
-                                  #        - ...: same options as copy COMMAND, except force* and oids
-                                  #Parent dependency of foreign table and server
-alter foreign data wrapper FDW
-[no handler|handler FUNC]         #
-[no validator|validator FUNC]     #
-options
- ([add|set|drop] VAR VAL ...)     #
-
-pg_foreign_data_wrapper           #All FDW. ???
-pg_attribute.attfdwoptions text[] Attribute-level foreign data wrapper options, as “keyword=value” strings ???
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:        FOREIGN SERVER         :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-create server FSERVER [type STR]
-[version STR2]                    #Creates a FSERVER, i.e. a connection to a specific DATABASE using a FDW.
-foreign data wrapper FDW          #STR are all FDW-dependent options. They usually specify the connection details
-[options (VAR STR3...)]           #(host and port, database name, etc.)
-
-alter server FSERVER
-[version STR]
-[options
- ([add|set|drop] VAR STR2...)]    #
-
-pg_foreign_server                 #All FSERVER. ???
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:         USER MAPPING          :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-create user mapping
- for RROLE|public server FSERVER  #Specify authentication details on FSERVER for ROLE.
-                                  #Child dependency of server
-[options (VAR STR ...)]           #STR are all FDW-dependent options.
-alter user mapping ...
-[options ([add|set|drop] ... )]   #
-
-pg_user_mapping[s]                #All USERMAPPING. With s, leaves out the option field when user should not see it
-                                  #Visible only to superuser
-                                  #???
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:         FOREIGN TABLE         :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-create foreign table "FTABLE"
- ("COL" TYPE
- [options (VAR STR ...)]
- CONSTRAINT|not null|
- default VAL ...)                 #Creates a FTABLE (can be used as a TABLE) while connected to a FSERVER.
-server FSERVER                    #TABLE, COL, TYPE, CONSTRAINT, etc. should be same as on FSERVER, unless specified in the options.
-[options (VAR STR2 ...)]          #But can only select some of the foreign COL.
-
-alter foreign table "FTABLE"
- rename "COL" to "COL2"           #
-
-alter foreign table "FTABLE"
- add COL_ARG                      #
-
-alter foreign table "FTABLE"
- drop [if exists] "COL"
- [restrict|cascade]               #
-
-alter foreign table "FTABLE"
- alter "COL" type TYPE            #
-
-alter foreign table "FTABLE"
- alter "COL" set|drop
- not null|default [VAL]           #Same as alter table ...
-
-alter foreign table "FTABLE"
- [alter "COL"] options
- ([add|set|drop] VAR VAL ...)     #
-
-pg_foreign_table                  #All FTABLE. ???
-
-import foreign schema ???
-
-SCONF.enable_async_append, and asynchronous appends ???
-
-"Foreign Scan" when using explain ???
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:          EFFICIENCY           :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-WRITING ==>                       #Best way to write a big amount of data fast:
-                                  #  - put in only one transaction/statement
-                                  #  - use copy or (if copy not possible) prepare, if possible on an empty TABLE
-                                  #  - create the INDEX and foreign keys constraints after the data has been put into
-                                  #  - less checkpoints (increasing HCONF.checkpoint_timeout)
-                                  #  - temporarily disabling WAL or replication
-                                  #Should run analyze afterwards.
-
-PERFORMANCE ==>                   #Can:
-                                  #  - disable durability, by:
-                                  #      - putting HCONF.fsync and HCONF.full_page_writes off (risky)
-                                  #      - putting SCONF.synchronous_commit off (more durable and almost same performance gain)
-                                  #  - less checkpoints (see below)
-
-PERFORMANCE TUNING ==>            #CONF:
-                                  #  - SCONF.work_mem (def: 1MB): max memory used by a single command for each of its sort operations and hash
-                                  #    tables, before writing temp files to disk.
-                                  #    Average total memory taken will be average_number_of_hash/sort_operations_by_command *
-                                  #    number_of_connections * SCONF.work_mem. Should not be more than RAM taken by:
-                                  #      kernel + other applications + PCONF.shared_buffers + let memory for kernel buffer
-                                  #    Can also be set with postgres -S NUM
-                                  #  - PCONF.wal_buffers (def: -1, which auto-select a value): memory used for caching WAL, i.e. number of
-                                  #    WAL segments (16MB) that can be cached for all sessions before flushing them.
-                                  #    If high number of transactions, might consider increasing for better performance.
-                                  #    Best is 16MB.
-                                  #  - ZSCONF.max_stack_depth (def: 2MB):
-                                  #     - higher can provoke stack overflow (crashing the server) if higher than the kernel limit, with
-                                  #       a safety margin of 2MB
-                                  #       current OS limit can be seen with ulimit -s (8MB)
-                                  #     - lower can cancel complex queries requiring more stack.
-                                  #  - ZSCONF.temp_file_limit (def: -1, unlim): max memory for temp files, in KB
-                                  #  - PCONF.max_files_per_processes (def: 1000): max opened files per session (see limit with ulimit -S|H -n)
-                                  #    Def on Linux: 1024, so that's good.
-                                  #  - SCONF|AOPTS.effective_io_concurrency: when using several disks at same time (e.g. RAID), number of disks that
-                                  #    can write at same time
-                                  #  - SCONF|AOPTS.maintenance_io_concurrency
-                                  #  - PCONF.shared_buffers (def: 128MB): memory for shared buffers (def: 128MB).
-                                  #    Good value is 25% of RAM (if > 1GB total RAM)
-                                  #    Can also be set by postgres -B NUM
-                                  #Look at amount of memory taken with pgcluu or pgbadger
-
-HARDWARE ==>                      #  - more RAM -> more cache
-                                  #  - good hard drives. RAID0 or RAID1 is good idea
-                                  #  - CPU less important, but still important for complex functions
-
-PCONF.max_worker_processes ???
-SCONF.hash_mem_multiplier ???
-
-HCONF.bgwriter_delay ???
-HCONF.bgwriter_flush_after ???
-HCONF.bgwriter_lru_maxpages ???
-HCONF.bgwriter_lru_multiplier ???
-
-PCONF.min_dynamic_shared_memory ???
-PCONF.shared_memory_type ???
-PCONF.dynamic_shared_memory_type ???
-ICONF.shared_memory_size ???
-ICONF.shared_memory_size_in_huge_pages ???
-PCONF.huge_pages ???
-PCONF.huge_pages_size ???
-
-pg_prewarm EXTENSION ???
+pg_xact_commit_timestamp_origin   #Transaction's timestamp and RORIGIN
+ (XID)->ROW                       #ROW: timestamp TIMESTAMPTZ, roident RORIGIN_OID
+pg_last_committed_xact()->ROW     #Last transaction's XID, timestamp and RORIGIN
+                                  #ROW: xid XID, timestamp TIMESTAMPTZ, roident RORIGIN_OID
 
 
                                              /=+===============================+=\
@@ -11027,12 +11007,11 @@ pg_prewarm EXTENSION ???
                                              \=+===============================+=/
 
 
-psql                              #Starts interactive commands while connecting to a DATABASE
-                                  #Read from standard input, so <<<"STR" or <FILE are possible.
-                                  #Use readline so can use a .inputrc
-                                  #The five first options are connection-related, and shared by other commands.
+psql                              #CLI client
+                                  #Commands are from stdin
+READLINE ==>                      #Used, i.e. can use an .inputrc
 
--c STR
+-c STR                            #
 -f FILE                           #Redirect input from STR or FILE (non-interactive shell)
 -o FILE                           #Redirect output to FILE
 -L FILE                           #Prints queries to FILE (logging)
@@ -11247,6 +11226,929 @@ PGAGENT ==>                       #  - SQL "cron", inside pgadmin3
                                   #         - or "batch" (shell commands, run as root, must start with #!/bin/bash)
                                   #     - schedules are when it is done
                                   #  - monitor with check_postgres
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:           PGMODELER           :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+PGMODELER ==>                     #GUI modelling tool:
+                                  #  - goal is to create/modify the DDL of a database, using a GUI.
+                                  #     - can import DDL from existing database (of objects the user has permissions to query).
+                                  #  - outputs SQL commands (or send to a database) or PNG image.
+                                  #  - can validate DDL and issue warnings (requires connection to a database)
+                                  #  - most DDL is available except foreign wrapper, etc., materialized views, event triggers,
+                                  #    dictionaries, unlogged|temp tables, reference to VIEW COL
+                                  #  - relationships: generalization is inherits, copy is create table like, others are foreign keys (with proper uniqueness)
+                                  #  - there is a tree to go through object on the right panel
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:           PGBOUNCER           :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+pgbouncer PGBFILE                 #Does connection pooling: maintains a single connection to be reused for each DATABASE+USER pair.
+                                  #Goal is to lower connection time.
+                                  #Can be much faster when connection time is important (small sessions).
+                                  #Disadvantages:
+                                  #  - requires more fds, so might needs lower max_client_conn than PostgreSQL's server
+                                  #  - hides original host+port information in logs (all traffic goes though pgbouncer)
+                                  #  - cannot implement all authentication method
+                                  #Act as layer of abstraction: connection to pgbouncer DATABASE can be redirected to DATABASE of
+                                  #other names, or of different clusters/machines.
+                                  #Should be run as same OS_USER as the server.
+                                  #Should be installed:
+                                  #  - on database server, if lot of web servers connect to it (because it is the center of all
+                                  #    connections that should be pooled)
+                                  #  - on web server, if connects to lot of database servers
+                                  #Each pool (DATABASE+USER) has:
+                                  #  - clients (to pgBouncer) and servers (connection of pgBouncer to PostgreSQL).
+                                  #    1 client = 0|1 server: 0 server when client just connected (session pool_mode) or is not issuing
+                                  #    a request (transaction pool_mode)
+                                  #  - cl_active (from show pool, see below) is number of clients on a pool.
+                                  #    If more than pool size, clients will be cl_waiting instead until cl_active is lower.
+                                  #    Pool size is determined by:
+                                  #      - [default_]pool_size: cluster-wide and database-specific pool size.
+                                  #      - min_pool_size: at first client, opens at least NUM idle servers, to make it more responsive
+                                  #        in the first requests.
+                                  #      - reserver_pool_size: extra pool size used for clients waiting (cl_waiting) for more than
+                                  #        reserve_pool_timeout
+                                  #  - max_client_conn is max number of cl_active for all pools together.
+                                  #    When reached, clients don't wait, they crash.
+                                  #  - Optimize limits:
+                                  #     - number of file descriptors used = 2 + 1 per client (max_client_conn) + 1 per server
+                                  #       (pool_size * number of users * number of databases)
+                                  #         - pool_size should be at max without creating more servers than PCONF.max_connections
+                                  #         - max_client_conn should be max number of servers + expected number of idle clients
+                                  #         - total should not exceed max number of file descriptors
+                                  #Pool mode:
+                                  #  - when server is not used anymore, returns back to pool (sv_active -> sv_idle|used)
+                                  #  - it is done according to pool_mode, either after each session (def), transaction or query (avoid).
+                                  #    transaction doesn't support session states, i.e. [re]set CONFVAR, listen|notify, with hold CURSOR,
+                                  #    PREP, load, user-defined volatile FUNC
+                                  #    Use transaction if lot of idle times in sessions, or if long queries.
+                                  #Look at check_postgres for monitoring.
+-d                                #Run in background.
+                                  #Needs to give pidfile = FILE in [pgbouncer] in PGBFILE (FILE is created with the PID)
+-R                                #Online restart: closes current running pgbouncer and inherits its connections without interrupting
+                                  #anything (current running pgbouncer will be closed). Useful to upgrade without interrupting anything.
+-q                                #Quiet mode
+-v                                #Verbosity (can do several times)
+
+PGBFILE ==>                       #Usually called pgbouncer.ini
+                                  #Has two parts, each started with [databases], then [pgbouncer] on a single line, and separated by
+                                  #blank line.
+                                  #Each part has VAR = VAL ... (STR don't have any quoting)
+
+                                  #[databases]:
+DATABASE                          #STR, LIBPQ string, but with only:
+                                  #  - dbname: def. is same as DATABASE
+                                  #  - host: def. is using Unix socket.
+                                  #  - port: def. 5432
+                                  #  - user: def. is same user
+                                  #  - password
+                                  #When client asks PgBouncer to connect on DATABASE, will use STR to connect to server.
+                                  #Can also specify:
+                                  #  - pool_size: Per-database pool size
+                                  #  - connect_query: query done at connection start.
+                                  #    For connection end (not DATABASE-specific), use server_reset_query (def: "discard all")
+                                  #Can use * DATABASE to mean "any other database"
+
+                                  #[pgbouncer]:
+listen_port                       #Proxy port (which client should connect to in order to reach server)
+listen_addr                       #Same for proxy address. Can be *
+unix_socket_dir|mode|             #Like PCONF.unix_socket_directories|permissions|group
+group                             #Def. are /tmp, 0777 and ""
+auth_type                         #Similar as in pg_hba.conf. Can be md5 (def), plain (like password in pg_hba.conf), trust or any.
+                                  #any is like trust, except that users are not even remembered which means:
+                                  #  - all DATABASE must specify user=VAL in their LIBPQ STR
+                                  #  - control with admin_users is not effective
+auth_file                         #"USER" "PASSWORD" ...
+                                  #Necessary (only USER with a line in it will be able to connect)
+admin_users                       #USER... (pgBouncer USER) allowed to connect to pgBouncer and issue statements on it.
+stats_users                       #Same but can only use show CONFVARs (except show fds)
+
+logfile                           #Redirect stderr to FILE, without stopping stderr
+log_[dis]connections              #Logs them (def: 1)
+log_pooler_errors                 #Logs errors sent to client (def: 1)
+stats_period                      #Logs stats every NUM seconds (def: 60)
+syslog[_ident|facility]           #
+
+pool_mode                         #See above (def: session)
+                                  #If transaction, server_reset_query should be ""
+max_client_conn                   #(def: 100)
+default_pool_size                 #(def: 20)
+min_pool_size                     #(def: 0)
+reserve_pool_size|
+timeout                           #(def: 0 and 5 seconds)
+
+server_check_delay                #After NUM seconds (def: 30), goes from sv_idle to sv_used, i.e. run sanity check query on server
+                                  #connections when going from idle to active.
+server_lifetime                   #Closes server connections opened for more than NUM seconds (def: 3600)
+server_idle_timeout               #Same but for idle server connections (def: 600)
+server_connect_timeout            #Same but for connecting time (def: 15)
+client_login_timeout              #If client connects but does not login before NUM seconds (def: 60), drops it.
+autodb_idle_timeout               #Closes pools (using * in [databases]) that have been unused for more than NUM seconds (def: 3600)
+
+server_login_retry                #Waits NUM seconds (def: 15) after each failed authentification.
+dns_max_ttl                       #DNS (host resolution) cache time in seconds (def: 15)
+max_packet_size                   #Max packet size between PostgreSQL and pgBouncer, in bytes (def: 2GB)
+
+server_round_robin                #If 0 (def), reuse connections in LIFO manner. If 1, in a random manner (better if TCP round-robin
+                                  #distributing load between servers)
+
+pgbouncer DATABASE ==>            #Virtual DATABASE, where only show CONFVARs is allowed, with some commands:
+reload                            #Reload PGBFILE (can also use SIGHUP)
+pause [DATABASE]                  #Safest way to stop pgBouncer: wait for clients to complete. Can also use SIGINT (CTRL-C)
+shutdown                          #Like pause, but exit pgBouncer completely. Can also use SIGTERM
+suspend                           #Drop clients, but flush buffers
+kill DATABASE                     #Least saft way to stop DATABASE
+resume [DATABASE]                 #Resume from pause|resume
+
+                                  #Can also show the following CONVARs:
+lists                             #Snapshot of all other info
+databases                         #DATABASE: connection+pool_size
+stats                             #DATABASE:
+servers                           #
+clients                           #
+pools                             #
+fds                               #File descriptors
+users                             #All users in auth_file
+config                            #PGBFILE info
+dns_hosts
+dns_zones                         #Host resolution
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:     FOREIGN DATA WRAPPER      :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+create foreign data               #Creates a FDW, i.e. functions that permits using another DBMS inside PostgreSQL.
+wrapper FDW                       #Can be slow and not optimized.
+[handler FUNC]                    #Based on a standard implemented by other DBMS, including noSQL.
+[validator FUNC2]                 #FUNC and FUNC2: see doc. on how to create them.
+[options (VAR STR ...)]           #Must be superuser.
+                                  #Available ones (as EXTENSION):
+                                  #  - postgres_fdw: for PostgreSQL to other DBMS
+                                  #     - FSERVER options (can also use LIBPQ.*)
+                                  #        - host STR
+                                  #        - dbname STR
+                                  #        - port STR
+                                  #     - user mapping options:
+                                  #        - user STR
+                                  #        - password STR
+                                  #        - client_encoding STR (def: SCONF.client_encoding)
+                                  #     - FTABLE options:
+                                  #        - schema|table|column_name STR: if name is different
+                                  #     - FSERVER or FTABLE options!
+                                  #        - updatable BOOL (def: true): read-write
+                                  #     - details:
+                                  #        - transaction read committed -> repeatable read
+                                  #  - file_fdw: for CSV file (or other formats of copy COMMAND), read-only:
+                                  #     - FTABLE options:
+                                  #        - filename STR: absolute path
+                                  #        - ...: same options as copy COMMAND, except force* and oids
+                                  #Parent dependency of foreign table and server
+alter foreign data wrapper FDW
+[no handler|handler FUNC]         #
+[no validator|validator FUNC]     #
+options
+ ([add|set|drop] VAR VAL ...)     #
+
+pg_foreign_data_wrapper           #All FDW. ???
+pg_attribute.attfdwoptions text[] Attribute-level foreign data wrapper options, as “keyword=value” strings ???
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:        FOREIGN SERVER         :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+create server FSERVER [type STR]
+[version STR2]                    #Creates a FSERVER, i.e. a connection to a specific DATABASE using a FDW.
+foreign data wrapper FDW          #STR are all FDW-dependent options. They usually specify the connection details
+[options (VAR STR3...)]           #(host and port, database name, etc.)
+
+alter server FSERVER
+[version STR]
+[options
+ ([add|set|drop] VAR STR2...)]    #
+
+pg_foreign_server                 #All FSERVER. ???
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:         USER MAPPING          :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+create user mapping
+ for RROLE|public server FSERVER  #Specify authentication details on FSERVER for ROLE.
+                                  #Child dependency of server
+[options (VAR STR ...)]           #STR are all FDW-dependent options.
+alter user mapping ...
+[options ([add|set|drop] ... )]   #
+
+pg_user_mapping[s]                #All USERMAPPING. With s, leaves out the option field when user should not see it
+                                  #Visible only to superuser
+                                  #???
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:         FOREIGN TABLE         :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+create foreign table "FTABLE"
+ ("COL" TYPE
+ [options (VAR STR ...)]
+ CONSTRAINT|not null|
+ default VAL ...)                 #Creates a FTABLE (can be used as a TABLE) while connected to a FSERVER.
+server FSERVER                    #TABLE, COL, TYPE, CONSTRAINT, etc. should be same as on FSERVER, unless specified in the options.
+[options (VAR STR2 ...)]          #But can only select some of the foreign COL.
+
+alter foreign table "FTABLE"
+ rename "COL" to "COL2"           #
+
+alter foreign table "FTABLE"
+ add COL_ARG                      #
+
+alter foreign table "FTABLE"
+ drop [if exists] "COL"
+ [restrict|cascade]               #
+
+alter foreign table "FTABLE"
+ alter "COL" type TYPE            #
+
+alter foreign table "FTABLE"
+ alter "COL" set|drop
+ not null|default [VAL]           #Same as alter table ...
+
+alter foreign table "FTABLE"
+ [alter "COL"] options
+ ([add|set|drop] VAR VAL ...)     #
+
+pg_foreign_table                  #All FTABLE. ???
+
+import foreign schema ???
+
+SCONF.enable_async_append, and asynchronous appends ???
+
+"Foreign Scan" when using explain ???
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:          DURABILITY           :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+DURABILITY ==>                    #PostgreSQL has durability: write operations will succeed even after a crash.
+                                  #A crash will lead to:
+                                  #  1) an inconsistent state if transaction was half written because of:
+                                  #     - cache:
+                                  #        - HCONF.fsync (def: 'on'): don't use cache, i.e. flush WAL records as they are written.
+                                  #          Can be disabled at server startup with postgres -F
+                                  #           - when setting from false to true, should re-sync using: initdb --sync-only|-S
+                                  #        - HCONF.wal_sync_method tells which OS command to use to flush cache (when using fsync):
+                                  #          open_datasync, fdatasync, fsync, fsync_writethrough or open_sync (def: fdatasync). Best one
+                                  #          can be determined with:
+                                  #             pg_test_fsync -f FILE (FILE must be on same filesystem than DATADIR)
+                                  #        - HDD cache on Linux:
+                                  #           - queried with: hdparm -I /dev/FILE | grep "Write cache" (* at beginning if cache enabled)
+                                  #           - disabled with: hdparm -W 0 /dev/FILE
+                                  #        - Filesystem caching through journaling: disable it with mount options (e.g. data=writeback
+                                  #          on ext3).
+                                  #     - partial writes, controlled by HCONF.full_page_writes (def: 'on').
+                                  #       Putting to 'off' can improve performance.
+                                  #  2) lost transactions (but no inconsistency) because of:
+                                  #     - no synchronous commit: doesn't wait for the WAL to be written to report success of operation.
+                                  #       SCONF.synchronous_commit can be activated (local|remote_write|on (def)) or not ('off')
+                                  #     - WAL is written after ZSCONF.commit_delay (def: 0ms) in hope several operations will happen in
+                                  #       the delay, which will then use a single flush. Best value is half the time of a single
+                                  #       8kB write, as reported by last line of pg_test_fsync
+                                  #       Only happens when min. SCONF.commit_siblings (def: 5) transactions are currently opened.
+                                  #     - HCONF.wal_writer_delay (INT in ms, def: 200) too high: delay between each WAL writes
+                                  #1) is dangerous: database could not be restared without a restore.
+                                  #2) gives similar performance gain without that problem.
+                                  #Putting DATADIR in a RAM disk is hardcore non-durable, and limits space to RAM space, but highly
+                                  #efficient.
+
+PCONF.data_sync_retry ???
+postgres -P
+LCONF.ignore_system_indexes ???
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:            PG_DUMP            :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+BACKUP VS HIGH                    #Backup strategy (saving data) is different from, but should be combined with high availability
+AVAILABILITY ==>                  #strategy (quick restore of system if a node falls down)
+
+BACKUPS ==>                       #Either:
+                                  #  - pg_dump: more stable from one PostgreSQL version to another, or from one architecture to another.
+                                  #  - WAL archiving: provides continuous archiving and PITR
+                                  #Best: do both too (do a pg_dumpall after each base backup).
+                                  #Good idea to compress backups
+                                  #Backups methods are all hot backups.
+
+pg_dump [DATABASE]                #Def DATABASE: PGDATABASE or CLIENT_USER
+                                  #Must be connect as superuser ROLE (for both backups and restores).
+                                  #Unless "all", doesn't backup cluster-specific information. Remember then to restore them before
+                                  #psql <FILE.
+                                  #template1-specific information are backuped too: remember to restore from template0.
+                                  #"INT" ON_ERROR_STOP should be set.
+                                  #Recommendations for restore:
+                                  #  - psql --single can be used to make everything rollback if error
+                                  #  - Make sure tablespace DIR are good
+                                  #  - should analyze restored databases.
+-F p|c|d|t                        #Format of the output:
+                                  #  - p (def): sql command in text format
+                                  #  - c: custom compressed format (must be restored with pg_restore)
+                                  #  - d -f DIR: put in a directory DIR (must be restored with pg_restore) with one file by TABLE, and a
+                                  #    table of content file
+                                  #  - t -f DIR: same but use tar (not compressed). Limit of GB per table.
+-a                                #Don't save SCHEMAs (save only data)
+-s                                #Save only SCHEMAs (not data)
+-n SREGEXP                        #Only VAR... in SCHEMA matching SREGEXP (see psql). Can be specified several times.
+                                  #Caution: doesn't dump VAR of other SCHEMA2... that SCHEMA might depend on.
+-N                                #Inverse: SCHEMA not matching SREGEXP
+-t SREGEXP                        #Same for TABLE matching SREGEXP. Incompatible with -n or -N
+-T SREGEXP                        #Inverse: TABLE not matching SREGEXP.
+--exclude-table-data=
+SREGEXP                           #Same but only exclude TABLE data, not definition
+-b                                #Include large objects, which is the default unless -n, -s or -t is used
+-o                                #Includes OID
+-O                                #Don't save ROLE ownership (with -F p). Will be able to restore backups without being superuser, but
+                                  #restorer will get ownership of all objects.
+-x                                #Don't save privileges (grant/revoke)
+--no-tablespaces                  #Save everything in same, default tablespace.
+--no-unlogged-table-data          #Don't save content of unlogged TABLEs
+--no-security-labels              #Don't save seLINUX labels (when using it)
+-c                                #Put cleaning commands first (drop VAR before trying to create it)
+-C                                #Create the database in the beginning (otherwise need to create it).
+--[column-]inserts                #Use insert instead of copy (slower). With column, put "COL" names instead of using positions. Is
+                                  #much slower.
+--serializable-deferrable         #Execute command in a serializable deferrable transaction (useful only when dumping to clone to
+                                  #another machine)
+--disable-dollar-quoting          #Use standard SQL quoting ' ' instead of $$ $$
+--disable-triggers                #Create commands (with -F p) which disable triggers on tables before dump is restored.
+-E STR                            #Encoding (def: PGCLIENTENCODING)
+-j NUM                            #Use several threads in same time (faster but uses more resources). Make sure PCONF.max_connections
+                                  #is high enough. Doesn't work if any exclusive lock is being requested meanwhile.
+--lock-wait-timeout=NUM           #Wait for NUM seconds when asking for locks (def: unlim)
+-d -h -p -U -w|W                  #Connection options (see psql)
+--role=ROLE                       #ROLE when getting the dump data
+
+pg_dumpall                        #Same as pg_dump, but for the whole cluster (except template0)
+                                  #Use same options as pg_dump, except ones that are irrelevant, and selection options (like -T).
+                                  #All databases must already exist.
+-g                                #Only saves cluster-wide objects
+-t                                #Only saves tablespaces
+-r                                #Only saves ROLE
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:          PG_RESTORE           :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+pg_restore [FILE]                 #Restore a backup produced by pg_dump -F (except for normal format, which should be restored with psql).
+                                  #Def FILE is stdin. If no -d DATABASE is specified, print a text version of the restoration instead.
+-a
+-c
+-C
+-F c|d|t
+-j NUM
+-n SCHEMA
+-O
+-s
+-S ROLE
+-t SREGEXP
+-x
+--disable-triggers
+--no-tablespaces
+--no-security-labels
+-d -h -p -U -w|W                  #Like pg_dump
+-e                                #Sets SCONF.exit_on_error
+-1                                #Put in only one transaction
+-L FILE                           #Restore only objects present in FILE (can be produced with pg_restore -l, then manipulated)
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:              WAL              :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+WAL ==>                           #Write-ahead logs. Logs that store every operation on the cluster before they are performed.
+                                  #Goal:
+                                  #  - when starting the server, if the last operations of the WAL have not been applied to the data
+                                  #    (i.e. if the DATADIR data don't match the WAL), last operations are performed.
+                                  #    Goal is to recover from crash.
+                                  #  - can also be used for backups (see below)
+                                  #Only WAL log are garanteed to be flushed (faster), not real operations, to ensure durability.
+                                  #Structure:
+                                  #  - Use 16MB segments. A log "line" is a "record".
+                                  #    Every write on the cluster adds a new record on the last segment.
+                                  #    New segments are automatically added and rotated.
+                                  #    Are in DATADIR/pg_xlog/ but could be moved to a faster storage using symlinks.
+                                  #  - initdb --waldir|-X WALDIR
+                                  #  - initdb --wal-segsize=NUM
+                                  #Checkpoints are when operations recorded by WAL are flushed to the disk (as opposed to flushing
+                                  #the WAL itself, which is controlled by fsync, etc.):
+                                  #  - last one is where to restart in crash recovery
+                                  #  - are performed at min. time between CONF.checkpoint_segments (number of segments, def 3) and
+                                  #    HCONF.checkpoint_timeout (time between checkpoints, def '5min').
+                                  #    Increasing it will improve performance but increase crash recovery time (values between 32 to 256
+                                  #    are often used for checkpoint_segments, and HCONF.checkpoint_timeout can be one day)
+                                  #    If HCONF.checkpoint_warning (def: '30s') is less than the time between checkpoints, but more
+                                  #    than HCONF.checkpoint_timeout, a warning will be issued to the server log.
+                                  #  - can also issue SQL command `checkpoint` to do it
+                                  #     - must be superuser or member of built-in ROLE pg_checkpoint
+                                  #  - flushes performed by a checkpoints are spread to the next checkpoint. The spread is
+                                  #    HCONF.checkpoint_completion_target, i.e. percentage of size spread for the free time allowed
+                                  #    between checkpoints (def: 0.5, best is 0.9). Can go up to 0.9 will improve performance, but
+                                  #    increase recovery time. Can only be set at server start.
+pg_xlogdump [FILE]                #Show a WAL file in human readable format
+                                  #When in DATADIR, can also use FILE FILE2 to go from FILE to FILE2
+pg_resetxlog                      #To use when WAL is corrupted. Look at online doc
+pg_controldata DATADIR            #Show debug info for WAL
+
+pg_ls_waldir()->ROW_SET           #Returns files in WAL DIR
+                                  #ROW: name STR, size INT8, modification TIMESTAMPTZ
+pg_ls_archive_statusdir()->ROW_SET#Returns files in pg_wal/archive_status
+                                  #ROW: name STR, size INT8, modification TIMESTAMPTZ
+
+SCONF.backend_flush_after ???
+HCONF.checkpoint_flush_after ???
+HCONF.wal_writer_flush_after ???
+ZSCONF.wal_compression ???
+ZSCONF.wal_consistency_checking ???
+ZSCONF.wal_init_zero ???
+ZSCONF.wal_recycle ???
+SCONF.wal_skip_threshold ???
+
+HCONF.min_wal_size ???
+HCONF.max_wal_size ???
+ICONF.wal_block_size ???
+ICONF.wal_segment_size ???
+PCONF.wal_decode_buffer_size ???
+PCONF.wal_log_hints ???
+HCONF.max_slot_wal_keep_size ???
+HCONF.wal_keep_size ???
+PCONF.ignore_invalid_pages ???
+ZSCONF.zero_damaged_pages ???
+
+create unlogged table|sequence ...#TABLE|SEQUENCE is not written to WAL
+alter table "TABLE" set [un]logged#Faster, but truncated on unclean shutdown
+select ... into unlogged table ...#Also, cannot use replication to standby servers
+
+create database "DATABASE"        #Whether to:
+ strategy wal_log|file_copy       #  - wal_log (def): record each heap page to WAL
+                                  #  - file_copy:
+                                  #     - record all heap pages to WAL once at start and then at end
+                                  #     - requires a checkpoint at start and end
+
+SEQUENCE.log_cnt                  #0-32 (def: 0). Decrements at each setval|nextval() then cycles to 32.
+                                  #When at 0, writes SEQUENCE to WAL.
+                                  #I.e. only every 32 new value of SEQUENCEs are written to WAL, for performance
+
+pg_walinspect EXTENSION ???
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:         WAL ARCHIVING         :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+WAL ARCHIVING /                   #  - goals:
+ONLINE BACKUP ==>                 #     - "continuous archiving". Just need to archive new WAL segments.
+                                  #     - point in time recovery (PITR): instead of single snapshots, can recover to specific time in
+                                  #       past
+                                  #  - enabled by PCONF.wal_level to 'archive|hot_standby' (def: 'minimal') and PCONF.archive_mode to 'on'
+                                  #  - backing up WAL segments continuously, and DATADIR at regular times:
+                                  #     - backup in different folders, let's call them DIR1 and DIR2
+                                  #     - events since the last DATADIR since the crash are then restored thanks to the archived WAL
+                                  #       segments
+                                  #  - backup of WAL segments:
+                                  #     - each time a new WAL segment is about to be erased (because of rotation),
+                                  #       HCONF.archive_command STR is fired to back it up:
+                                  #        - can include %p for its path and %f for its filename, e.g.:
+                                  #            '[ ! -f "DIR1/%f" ] && cp -a "%p" "DIR1/%f"'
+                                  #        - should give exit code != 0 if error, so that it retries it
+                                  #        - should not allow overwritting files
+                                  #        - on Linux, use sh, not Bash
+                                  #        - should be faster than the speed at which WAL segments appear
+                                  #        - check permissions of server daemon to execute command
+                                  #     - new segments are automatically made. But can be created manually by:
+                                  #        - running pg_switch_xlog()
+                                  #        - can be made every max. every HCONF.archive_timeout (def: 0, in seconds). Should not be
+                                  #          under 60s.
+                                  #          Goal is for databases with low traffic: new segments are rarely created but still want to
+                                  #          archive the little traffic.
+                                  #     - archived WAL segments before the last "base backup" can be erased to save space, up until when
+                                  #       we want to do a PITR
+                                  #     - Can also use command pg_receivexlog -D DIR, which archive WAL segments to DIR, according to
+                                  #       connection options (see psql) -d -h -p -U -w|W
+                                  #  - backup of DATADIR ("base backups"):
+                                  #     - manually, steps are:
+                                  #        - connect to any DATABASE of the cluster and fire pg_start_backup(STR) as superuser.
+                                  #          STR should be the number of this unique backup
+                                  #           - creates a text file DATADIR/pg_xlog/FILE.*.backup, where FILE is the last WAL segment
+                                  #             archived, with information used by the recovery process (e.g. last WAL segment of
+                                  #             current DATADIR)
+                                  #           - creates DATADIR/backup_label, which is a very similar file
+                                  #        - backup DATADIR with any command (such as cp -a) to DIR2:
+                                  #           - don't include postmaster.* nor pg_xlog/*
+                                  #           - don't forget directories that might be elsewhere, e.g. tablespaces or directories using
+                                  #             symlinks postgresql.conf, pg_hba.conf, pg_ident.conf could also be put somewhere else
+                                  #             with PCONF.config|hba|ident_file
+                                  #           - copy might issue warnings because DATADIR files change on the fly (since cluster is
+                                  #             running): it's fine
+                                  #        - fire pg_stop_backup() as superuser.
+                                  #           - removes backup_label file
+                                  #        - utilities (not necessarily needed):
+                                  #           - pg_is_in_backup(), pg_backup_start_time()
+                                  #           - pg_start|stop_backup() returns the WAL segment as STR:
+                                  #              - must be superuser
+                                  #              - to translate into filenames:
+                                  #                 - pg_xlogfile_name[_offset](STR)
+                                  #                 - pg_xlog_location_diff(STR, STR2)
+                                  #     - pg_basebackup:
+                                  #        - automate all this. Options are:
+                                  #            -h -p -U -w      Connection options
+                                  #            -D DIR           DIR to copy to. Can be - (stdout) for tar mode
+                                  #            -F p|t           If p, do a simple copy. Files pointed by symlinks (such as tablespaces),
+                                  #                             will be copied to the destination using the same absolute path
+                                  #                             If t, will tar it under the filename base.tar (symlinks files are tar'd
+                                  #                             too, under their abs. path)
+                                  #                             Can also use -z to gzip it and -Z 1-9 for the compression level (def: 6)
+                                  #            -R               Put a recovery.conf sample if the backup
+                                  #            -X s             Includes first WAL segment in the backup (def: doesn't include any WAL
+                                  #                             segment).
+                                  #                             Will use two clients in PCONF.max_wal_senders
+                                  #            -l STR           Label used in backup_label (def: 'pg_basebackup base backup')
+                                  #            -c fast|spread   Change HCONF.checkpoint_completion_target (def: spread)
+                                  #            -P               Progress bar
+                                  #        - use same privileges as streaming replication (PCONF.max_wal_senders, replication privilege, etc.)
+                                  #        - basebackup_to_shell EXTENSION???
+                                  #     - in all cases, need to be done regularly, e.g. with a cron script
+                                  #        - more regular base backups require more storage, but make faster recoveries
+                                  #  - recovery:
+                                  #     - steps:
+                                  #        - stop server
+                                  #        - replace DATADIR by DIR2, but keeping the WAL segments:
+                                  #           - move DATADIR/* to temporary DIR3 (including tablespaces, etc., see above)
+                                  #           - copy DIR2/* to DATADIR (including tablespaces, etc., see above), with right ownership
+                                  #             and permissions
+                                  #           - replace DATADIR/pg_xlog/* by DIR3/pg_xlog/*, with right ownership|permissions
+                                  #             (in case some WAL segments were not archived but still present in DATADIR)
+                                  #        - copy archived WAL segments from DIR1 to DATADIR:
+                                  #           - create DATADIR/recovery.conf (its presence instructs server start to be in recovery mode)
+                                  #              - can copy template SHAREDIR/recovery.conf.sample
+                                  #              - must set:
+                                  #                 - HCONF.restore_command STR: just like HCONF.archive_command, but to copy the WAL segments from
+                                  #                   DIR1 to DATADIR/pg_xlog/
+                                  #                   Should overwrite existing ones.
+                                  #                   Will emit warnings because try to copy files that might not exist.
+                                  #                   Ex: 'cp -a "DIR1/%f" "%p"'
+                                  #              - can recover to a specific time (PITR):
+                                  #                 - by setting (in recovery.conf) any of:
+                                  #                    - PCONF.recovery_target_time TIMESTAMP
+                                  #                    - PCONF.recovery_target_xid STR: the transaction ID
+                                  #                    - PCONF.recovery_target_name STR: STR is a restore point, which must have been
+                                  #                      previously created by pg_create_restore_point(STR)
+                                  #                       - must be superuser
+                                  #                    - PCONF.recovery_target ???
+                                  #                    - PCONF.recovery_target_action ???
+                                  #                    - PCONF.recovery_target_lsn ???
+                                  #                 - time must be after the creation time of DIR2/*
+                                  #                 - recover just before|after according to variable (in recovery.conf)
+                                  #                   PCONF.recovery_target_inclusive (def: true, i.e. after)
+                                  #                 - will stop (unless variable pause_at_recovery_target is set to false or if
+                                  #                   hot_standby mode), so we can check if the state is fine. Can resume by firing
+                                  #                   pg_xlog_replay_resume()
+                                  #                 - must remove WAL segments that have been archived after that time, to restart
+                                  #                   archiving them normally
+                                  #           - start the server in single user mode
+                                  #           - recovery will happen: when done, recovery.conf will be recovery.done
+                                  #        - make sure everything is ok, then restart the server normally
+                                  #     - timelines:
+                                  #        - each time a recovery suceeds, it increments the first number of the WAL segment files, e.g
+                                  #          00...00100..0034 to 00...00200..0034
+                                  #        - the first number is the timeline ID. Goal it that following WAL archives doesn't overwrite
+                                  #          previous WAL archives created between the recovery and the crash, in case we want to come
+                                  #          back to that point.
+                                  #        - by default, recover to the timeline that was used during the base backup, but can specify
+                                  #          PCONF.recovery_target_timeline STR with "latest" in recovery.conf, or with the specified
+                                  #          timeline ID
+
+HCONF.recovery_init_sync_method ???
+HCONF.recovery_min_apply_delay ???
+HCONF.recovery_prefetch ???
+
+HCONF.archive_library ???
+
+pg_stat_archiver                  #???
+pg_stat_recovery_prefetch         #???
+pg_stat_progress_basebackup       #TABLE with ongoing base backups. ???
+pg_stat_wal                       #???
+pg_stat_wal_receiver              #???
+
+pg_lsn                            #TYPE holding an address in the WAL
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:         LOG SHIPPING          :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+HIGH AVAILABILITY ==>             #Can use:
+                                  #  - log shipping: master ships WAL to a DIR, then standby gets it from DIR
+                                  #  - streaming replication: ships directly WAL from master to slave. Probably better.
+                                  #     - async. (better performance) or sync. (better availability)
+                                  #Any standby can also be a hot standby (makes more sense for a streaming replication one) to improve
+                                  #load balancing (watch out precautions)
+
+LOG SHIPPING /                    #  - Goal: not backup (but can be combined with backup) but to maintain a copy of the master server, so
+WARM STANDBY ==>                  #    a switchover to the standby can happen quickly if there is a problem with the master
+                                  #  - Idea: the standby machine keeps on reading the WAL archive (master must do WAL archiving) and
+                                  #    applies them right away.
+                                  #  - How:
+                                  #     - start a cluster with a base backup, with a recovery.conf file in it.
+                                  #       recovery.conf variable standby_mode should be on.
+                                  #     - will continuously call recovery.conf HCONF.restore_command (same format as HCONF.archive_command)
+                                  #       to copy WAL archive DIR1 to its own pg_xlog/, e.g. 'cp -a "DIR1/%f" "%p"'
+                                  #        - will show error messages for next WAL segment, and .history file -> it's normal
+                                  #     - Put PCONF.recovery_target_timeline to "latest" (to stay sync. with the timeline chosen by the master)
+                                  #     - If don't want to use DIR1 for backup purpose, clean every WAL archive that has been copied by
+                                  #       setting variable HCONF.archive_cleanup_command:
+                                  #        - %r is the filename (not path) of the first WAL file to keep
+                                  #        - pg_archivecleanup is a command line often used:
+                                  #            - pg_archivecleanup "DIR" "%r"
+                                  #            - flags are -d (verbose), -x STR (use it if WAL segments have this extension,
+                                  #              e.g. -x .gz) and -n (dry-run)
+                                  #     - Can stop standby mode and become a master:
+                                  #        - by creating file specified by recovery.conf variable trigger_file, or firing
+                                  #          pg_ctl promote.
+                                  #           - change recovery.conf to recovery.done
+                                  #        - never two masters at same time:
+                                  #           - should turn off former master shortly before
+                                  #           - before restarting, former master should become the new slave
+                                  #        - good idea to prepare already the slave to become a master by setting up WAL archiving, etc.
+                                  #        - JCONF.recovery_end_command STR will be fired (%r is the same as HCONF.archive_cleanup_command)
+                                  #        - automatic failover is only possible using external packages.
+                                  #  - Precautions:
+                                  #     - DIR1 should not be on the master machine.
+                                  #     - WAL segments are sent async (don't wait for shipping to execute), so there's a window for data
+                                  #       loss, that can be reduce by lowering HCONF.archive_timeout
+                                  #     - standby and master should have similar config:
+                                  #        - logically, e.g. symlinks (including table spaces)
+                                  #        - software-wise
+                                  #        - hardware wise. CPU architecture must be same.
+                                  #     - switchover is manual: should have own mechanism to notify when the primary server is down, and
+                                  #       to automatically failover
+
+pg_promote()???
+  - must be superuser
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:  ASYNC STREAMING REPLICATION  :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+ASYNC. STREAMING                  #  - Goal: like log shipping, but smaller delay between master and slave state (still small one)
+REPLICATION ==>                   #  - Idea: like log shipping, but doesn't use WAL archive DIR1 (nor HCONF.restore_command,
+                                  #    PCONF.recovery_target_timeline, HCONF.archive_cleanup_command), but directly get WAL from the server (over
+                                  #    TCP connection).
+                                  #  - How:
+                                  #     - Set recovery.conf variable zHCONF.primary_conninfo (as "LIBPQ_VAR=VAL ...") for how to connect to the master.
+                                  #     - Same as above for PCONF.recovery_target_timeline
+                                  #     - Must have privileges:
+                                  #        - to connect to "replication" virtual DATABASE (in pg_hba.conf)
+                                  #        - replication and login privileges (better to create a ROLE than to set up as superuser).
+                                  #        - max number of connections is PCONF.max_wal_senders (def: 0).
+                                  #     - slave must keep up with the pace:
+                                  #        - can increase CONF.wal_keep_segments on the master (number of segments that should be
+                                  #          recycled but are kept, def: 0)
+                                  #        - can use log shipping in parallel.
+                                  #        - If fall behind, can redo a base backup.
+                                  #        - Can tell by:
+                                  #           - comparing pg_current_xlog_[insert_]location() on the master (current WAL),
+                                  #             pg_last_xlog_receive|replay_location|timestamp() on the slave
+                                  #           - use pg_stat_replication system view
+                                  #        - Connection waits only for HCONF.wal_receiver_timeout (def:60s) from slave to master, and
+                                  #          SCONF.wal_sender_timeout (def: 0, turned off) from master to slave.
+                                  #     - Cascading replication:
+                                  #        - Just use replication from downstream to upstream servers.
+                                  #        - Goal: to reduce cost for master, but introduces more delay for other standbies.
+                                  #        - sync. replication doesn't work for downstream servers.
+
+PCONF.track_commit_timestamp ???
+HCONF.primary_slot_name ???
+
+HCONF.wal_receiver_create_temp_slot ???
+HCONF.wal_receiver_status_interval ???
+HCONF.wal_retrieve_retry_interval ???
+
+pg_create_physical_replication_slot() ???
+pg_copy_physical_replication_slot() ???
+
+pg_stat_replication               #WAL sender processes.
+pg_stat_database_conflicts        #DATABASE, with query cancelled due to recovery on standby servers.
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:  SYNC STREAMING REPLICATION   :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+SYNC. STREAMING                   #  - Goal: like async. streaming replication, but reduces data loss window to nothing (at expense of
+REPLICATION ==>                   #    performance): every write transaction returns only after WAL is sent to standby ("2-safe
+                                  #    replication").
+                                  #  - How:
+                                  #     - Master must set HCONF.synchronous_standby_names with standbies:
+                                  #        - comma-separated-list, only picks the first connected in the list
+                                  #        - names must match SCONF.application_name in zHCONF.primary_conninfo
+                                  #           - can be * for any SCONF.application_name
+                                  #        - def is walreceiver
+                                  #     - Actually waits according to SCONF.synchronous_commit:
+                                  #        - on (received and flushed to disk on slave), remote_write (only received) or local|off
+                                  #          (nothing).
+                                  #        - Makes it possible to set SCONF.synchronous_commit specific values for databases, users or
+                                  #          transactions, for different durability/performance tradeoff.
+                                  #  - Precautions:
+                                  #     - If last standby loses connection, will wait forever
+                                  #        - if last standby needs to be down, must first put SCONF.synchronous_commit to off in a
+                                  #          pg_start|stop_backup() block
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:          HOT STANDBY          :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+HOT STANDBY ==>                   #  - Goal: use a standby server (streaming replication or log shipping) for readonly queries (load
+                                  #    balancing).
+                                  #  - How:
+                                  #     - Must set PCONF.hot_standby to on on standby and PCONF.wal_level to hot_standby for master
+                                  #     - Must start with a new base backup (if switching from non hot standby to hot standby)
+                                  #  - Precautions:
+                                  #     - Watch out for the delay between master write and ability to read it in standby. If an arriving
+                                  #       WAL archive is conflicting with a current query (e.g. if master dropped a table while standby
+                                  #       is querying it), it will wait HCONF.max_standby_archive|streaming_delay (for streaming
+                                  #       replication mode or not) (def: 30000 ms, -1 for unlim) then cancel
+                                  #        - low value provokes more cancels, but standby and master are more in sync: good if goal is
+                                  #          more High availability, bad if goal is more load balancing
+                                  #        - could be set at approx max time of queries.
+                                  #        - Can also increase HCONF.vacuum_defer_cleanup_age if lot of vacuum-related conflicts.
+                                  #          Cancels can be seen on system view pg_stat_database_conflicts.
+                                  #     - Hot standby stops at startup when standby tries to catch up servers WAL segments. During that
+                                  #       period, there might be seemingly weird behavior.
+                                  #       pg_is_in_recovery() will return true.
+                                  #     - those CONFVARs must be superior or equal on the standby than the master: PCONF.max_connections,
+                                  #       PCONF.max_prepared_transactions, PCONF.max_locks_per_transaction
+                                  #     - advisory locks can't be shared between master and slave
+                                  #     - isolation level serializable not available
+
+ENVVAR PGTARGETSESSIONATTRS
+LIBPQ.target_session_attrs ???
+
+ICONF.in_hot_standby ???
+HCONF.hot_standby_feedback ???
+HCONF.promote_trigger_file ???
+HCONF.trace_recovery_messages ???
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:            REPMGR             :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+repmgr                            #Must have rsync, pg_ctl and pg_config in $PATH. Must be installed from source (see online doc).
+                                  #Actions can be:
+                                  #  - standby clone "NODE": make it possible to put as standby (do a base backup).
+                                  #  - master|standby register: put as master|standby (master should be done first)
+                                  #  - standby promote|follow: in case of a failover, automatical new master to promoted, and followers
+                                  #    will replicate from it. Automatical or manual???
+-d -h -p -U                       #Connection options
+-D DATADIR                        #Cluster to target
+-f DIR                            #repmgr.conf DIR (def: same as executable).
+                                  #repmgr has three lines: cluster STR, node number INT, libpq_conninfo STR
+--force                           #Do with standby clone when a master is up again after having being down, to get back the changes
+                                  #since then from the new master.
+
+repmgrd                           #Daemon doing automatic failover.
+                                  #Needs to do all the standby register first.
+-f DIR                            #
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:          EFFICIENCY           :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+WRITING ==>                       #Best way to write a big amount of data fast:
+                                  #  - put in only one transaction/statement
+                                  #  - use copy or (if copy not possible) prepare, if possible on an empty TABLE
+                                  #  - create the INDEX and foreign keys constraints after the data has been put into
+                                  #  - less checkpoints (increasing HCONF.checkpoint_timeout)
+                                  #  - temporarily disabling WAL or replication
+                                  #Should run analyze afterwards.
+
+PERFORMANCE ==>                   #Can:
+                                  #  - disable durability, by:
+                                  #      - putting HCONF.fsync and HCONF.full_page_writes off (risky)
+                                  #      - putting SCONF.synchronous_commit off (more durable and almost same performance gain)
+                                  #  - less checkpoints (see below)
+
+PERFORMANCE TUNING ==>            #CONF:
+                                  #  - SCONF.work_mem (def: 1MB): max memory used by a single command for each of its sort operations and hash
+                                  #    tables, before writing temp files to disk.
+                                  #    Average total memory taken will be average_number_of_hash/sort_operations_by_command *
+                                  #    number_of_connections * SCONF.work_mem. Should not be more than RAM taken by:
+                                  #      kernel + other applications + PCONF.shared_buffers + let memory for kernel buffer
+                                  #    Can also be set with postgres -S NUM
+                                  #  - PCONF.wal_buffers (def: -1, which auto-select a value): memory used for caching WAL, i.e. number of
+                                  #    WAL segments (16MB) that can be cached for all sessions before flushing them.
+                                  #    If high number of transactions, might consider increasing for better performance.
+                                  #    Best is 16MB.
+                                  #  - ZSCONF.max_stack_depth (def: 2MB):
+                                  #     - higher can provoke stack overflow (crashing the server) if higher than the kernel limit, with
+                                  #       a safety margin of 2MB
+                                  #       current OS limit can be seen with ulimit -s (8MB)
+                                  #     - lower can cancel complex queries requiring more stack.
+                                  #  - ZSCONF.temp_file_limit (def: -1, unlim): max memory for temp files, in KB
+                                  #  - PCONF.max_files_per_processes (def: 1000): max opened files per session (see limit with ulimit -S|H -n)
+                                  #    Def on Linux: 1024, so that's good.
+                                  #  - SCONF|AOPTS.effective_io_concurrency: when using several disks at same time (e.g. RAID), number of disks that
+                                  #    can write at same time
+                                  #  - SCONF|AOPTS.maintenance_io_concurrency
+                                  #  - PCONF.shared_buffers (def: 128MB): memory for shared buffers (def: 128MB).
+                                  #    Good value is 25% of RAM (if > 1GB total RAM)
+                                  #    Can also be set by postgres -B NUM
+                                  #Look at amount of memory taken with pgcluu or pgbadger
+
+HARDWARE ==>                      #  - more RAM -> more cache
+                                  #  - good hard drives. RAID0 or RAID1 is good idea
+                                  #  - CPU less important, but still important for complex functions
+
+PCONF.max_worker_processes ???
+SCONF.hash_mem_multiplier ???
+
+HCONF.bgwriter_delay ???
+HCONF.bgwriter_flush_after ???
+HCONF.bgwriter_lru_maxpages ???
+HCONF.bgwriter_lru_multiplier ???
+
+PCONF.min_dynamic_shared_memory ???
+PCONF.shared_memory_type ???
+PCONF.dynamic_shared_memory_type ???
+ICONF.shared_memory_size ???
+ICONF.shared_memory_size_in_huge_pages ???
+PCONF.huge_pages ???
+PCONF.huge_pages_size ???
+
+pg_prewarm EXTENSION ???
 
 
                                              /=+===============================+=\
@@ -11729,716 +12631,6 @@ pg_top [NUM]                      #Show info about running PostgreSQL clients an
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:          DURABILITY           :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-DURABILITY ==>                    #PostgreSQL has durability: write operations will succeed even after a crash.
-                                  #A crash will lead to:
-                                  #  1) an inconsistent state if transaction was half written because of:
-                                  #     - cache:
-                                  #        - HCONF.fsync (def: 'on'): don't use cache, i.e. flush WAL records as they are written.
-                                  #          Can be disabled at server startup with postgres -F
-                                  #           - when setting from false to true, should re-sync using: initdb --sync-only|-S
-                                  #        - HCONF.wal_sync_method tells which OS command to use to flush cache (when using fsync):
-                                  #          open_datasync, fdatasync, fsync, fsync_writethrough or open_sync (def: fdatasync). Best one
-                                  #          can be determined with:
-                                  #             pg_test_fsync -f FILE (FILE must be on same filesystem than DATADIR)
-                                  #        - HDD cache on Linux:
-                                  #           - queried with: hdparm -I /dev/FILE | grep "Write cache" (* at beginning if cache enabled)
-                                  #           - disabled with: hdparm -W 0 /dev/FILE
-                                  #        - Filesystem caching through journaling: disable it with mount options (e.g. data=writeback
-                                  #          on ext3).
-                                  #     - partial writes, controlled by HCONF.full_page_writes (def: 'on').
-                                  #       Putting to 'off' can improve performance.
-                                  #  2) lost transactions (but no inconsistency) because of:
-                                  #     - no synchronous commit: doesn't wait for the WAL to be written to report success of operation.
-                                  #       SCONF.synchronous_commit can be activated (local|remote_write|on (def)) or not ('off')
-                                  #     - WAL is written after ZSCONF.commit_delay (def: 0ms) in hope several operations will happen in
-                                  #       the delay, which will then use a single flush. Best value is half the time of a single
-                                  #       8kB write, as reported by last line of pg_test_fsync
-                                  #       Only happens when min. SCONF.commit_siblings (def: 5) transactions are currently opened.
-                                  #     - HCONF.wal_writer_delay (INT in ms, def: 200) too high: delay between each WAL writes
-                                  #1) is dangerous: database could not be restared without a restore.
-                                  #2) gives similar performance gain without that problem.
-                                  #Putting DATADIR in a RAM disk is hardcore non-durable, and limits space to RAM space, but highly
-                                  #efficient.
-
-PCONF.data_sync_retry ???
-postgres -P
-LCONF.ignore_system_indexes ???
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:            PG_DUMP            :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-BACKUP VS HIGH                    #Backup strategy (saving data) is different from, but should be combined with high availability
-AVAILABILITY ==>                  #strategy (quick restore of system if a node falls down)
-
-BACKUPS ==>                       #Either:
-                                  #  - pg_dump: more stable from one PostgreSQL version to another, or from one architecture to another.
-                                  #  - WAL archiving: provides continuous archiving and PITR
-                                  #Best: do both too (do a pg_dumpall after each base backup).
-                                  #Good idea to compress backups
-                                  #Backups methods are all hot backups.
-
-pg_dump [DATABASE]                #Def DATABASE: PGDATABASE or CLIENT_USER
-                                  #Must be connect as superuser ROLE (for both backups and restores).
-                                  #Unless "all", doesn't backup cluster-specific information. Remember then to restore them before
-                                  #psql <FILE.
-                                  #template1-specific information are backuped too: remember to restore from template0.
-                                  #"INT" ON_ERROR_STOP should be set.
-                                  #Recommendations for restore:
-                                  #  - psql --single can be used to make everything rollback if error
-                                  #  - Make sure tablespace DIR are good
-                                  #  - should analyze restored databases.
--F p|c|d|t                        #Format of the output:
-                                  #  - p (def): sql command in text format
-                                  #  - c: custom compressed format (must be restored with pg_restore)
-                                  #  - d -f DIR: put in a directory DIR (must be restored with pg_restore) with one file by TABLE, and a
-                                  #    table of content file
-                                  #  - t -f DIR: same but use tar (not compressed). Limit of GB per table.
--a                                #Don't save SCHEMAs (save only data)
--s                                #Save only SCHEMAs (not data)
--n SREGEXP                        #Only VAR... in SCHEMA matching SREGEXP (see psql). Can be specified several times.
-                                  #Caution: doesn't dump VAR of other SCHEMA2... that SCHEMA might depend on.
--N                                #Inverse: SCHEMA not matching SREGEXP
--t SREGEXP                        #Same for TABLE matching SREGEXP. Incompatible with -n or -N
--T SREGEXP                        #Inverse: TABLE not matching SREGEXP.
---exclude-table-data=
-SREGEXP                           #Same but only exclude TABLE data, not definition
--b                                #Include large objects, which is the default unless -n, -s or -t is used
--o                                #Includes OID
--O                                #Don't save ROLE ownership (with -F p). Will be able to restore backups without being superuser, but
-                                  #restorer will get ownership of all objects.
--x                                #Don't save privileges (grant/revoke)
---no-tablespaces                  #Save everything in same, default tablespace.
---no-unlogged-table-data          #Don't save content of unlogged TABLEs
---no-security-labels              #Don't save seLINUX labels (when using it)
--c                                #Put cleaning commands first (drop VAR before trying to create it)
--C                                #Create the database in the beginning (otherwise need to create it).
---[column-]inserts                #Use insert instead of copy (slower). With column, put "COL" names instead of using positions. Is
-                                  #much slower.
---serializable-deferrable         #Execute command in a serializable deferrable transaction (useful only when dumping to clone to
-                                  #another machine)
---disable-dollar-quoting          #Use standard SQL quoting ' ' instead of $$ $$
---disable-triggers                #Create commands (with -F p) which disable triggers on tables before dump is restored.
--E STR                            #Encoding (def: PGCLIENTENCODING)
--j NUM                            #Use several threads in same time (faster but uses more resources). Make sure PCONF.max_connections
-                                  #is high enough. Doesn't work if any exclusive lock is being requested meanwhile.
---lock-wait-timeout=NUM           #Wait for NUM seconds when asking for locks (def: unlim)
--d -h -p -U -w|W                  #Connection options (see psql)
---role=ROLE                       #ROLE when getting the dump data
-
-pg_dumpall                        #Same as pg_dump, but for the whole cluster (except template0)
-                                  #Use same options as pg_dump, except ones that are irrelevant, and selection options (like -T).
-                                  #All databases must already exist.
--g                                #Only saves cluster-wide objects
--t                                #Only saves tablespaces
--r                                #Only saves ROLE
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:          PG_RESTORE           :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-pg_restore [FILE]                 #Restore a backup produced by pg_dump -F (except for normal format, which should be restored with psql).
-                                  #Def FILE is stdin. If no -d DATABASE is specified, print a text version of the restoration instead.
--a
--c
--C
--F c|d|t
--j NUM
--n SCHEMA
--O
--s
--S ROLE
--t SREGEXP
--x
---disable-triggers
---no-tablespaces
---no-security-labels
--d -h -p -U -w|W                  #Like pg_dump
--e                                #Sets SCONF.exit_on_error
--1                                #Put in only one transaction
--L FILE                           #Restore only objects present in FILE (can be produced with pg_restore -l, then manipulated)
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:              WAL              :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-WAL ==>                           #Write-ahead logs. Logs that store every operation on the cluster before they are performed.
-                                  #Goal:
-                                  #  - when starting the server, if the last operations of the WAL have not been applied to the data
-                                  #    (i.e. if the DATADIR data don't match the WAL), last operations are performed.
-                                  #    Goal is to recover from crash.
-                                  #  - can also be used for backups (see below)
-                                  #Only WAL log are garanteed to be flushed (faster), not real operations, to ensure durability.
-                                  #Structure:
-                                  #  - Use 16MB segments. A log "line" is a "record".
-                                  #    Every write on the cluster adds a new record on the last segment.
-                                  #    New segments are automatically added and rotated.
-                                  #    Are in DATADIR/pg_xlog/ but could be moved to a faster storage using symlinks.
-                                  #  - initdb --waldir|-X WALDIR
-                                  #  - initdb --wal-segsize=NUM
-                                  #Checkpoints are when operations recorded by WAL are flushed to the disk (as opposed to flushing
-                                  #the WAL itself, which is controlled by fsync, etc.):
-                                  #  - last one is where to restart in crash recovery
-                                  #  - are performed at min. time between CONF.checkpoint_segments (number of segments, def 3) and
-                                  #    HCONF.checkpoint_timeout (time between checkpoints, def '5min').
-                                  #    Increasing it will improve performance but increase crash recovery time (values between 32 to 256
-                                  #    are often used for checkpoint_segments, and HCONF.checkpoint_timeout can be one day)
-                                  #    If HCONF.checkpoint_warning (def: '30s') is less than the time between checkpoints, but more
-                                  #    than HCONF.checkpoint_timeout, a warning will be issued to the server log.
-                                  #  - can also issue SQL command `checkpoint` to do it
-                                  #     - must be superuser or member of built-in ROLE pg_checkpoint
-                                  #  - flushes performed by a checkpoints are spread to the next checkpoint. The spread is
-                                  #    HCONF.checkpoint_completion_target, i.e. percentage of size spread for the free time allowed
-                                  #    between checkpoints (def: 0.5, best is 0.9). Can go up to 0.9 will improve performance, but
-                                  #    increase recovery time. Can only be set at server start.
-pg_xlogdump [FILE]                #Show a WAL file in human readable format
-                                  #When in DATADIR, can also use FILE FILE2 to go from FILE to FILE2
-pg_resetxlog                      #To use when WAL is corrupted. Look at online doc
-pg_controldata DATADIR            #Show debug info for WAL
-
-pg_ls_waldir()->ROW_SET           #Returns files in WAL DIR
-                                  #ROW: name STR, size INT8, modification TIMESTAMPTZ
-pg_ls_archive_statusdir()->ROW_SET#Returns files in pg_wal/archive_status
-                                  #ROW: name STR, size INT8, modification TIMESTAMPTZ
-
-SCONF.backend_flush_after ???
-HCONF.checkpoint_flush_after ???
-HCONF.wal_writer_flush_after ???
-ZSCONF.wal_compression ???
-ZSCONF.wal_consistency_checking ???
-ZSCONF.wal_init_zero ???
-ZSCONF.wal_recycle ???
-SCONF.wal_skip_threshold ???
-
-HCONF.min_wal_size ???
-HCONF.max_wal_size ???
-ICONF.wal_block_size ???
-ICONF.wal_segment_size ???
-PCONF.wal_decode_buffer_size ???
-PCONF.wal_log_hints ???
-HCONF.max_slot_wal_keep_size ???
-HCONF.wal_keep_size ???
-PCONF.ignore_invalid_pages ???
-ZSCONF.zero_damaged_pages ???
-
-create unlogged table|sequence ...#TABLE|SEQUENCE is not written to WAL
-alter table "TABLE" set [un]logged#Faster, but truncated on unclean shutdown
-select ... into unlogged table ...#Also, cannot use replication to standby servers
-
-create database "DATABASE"        #Whether to:
- strategy wal_log|file_copy       #  - wal_log (def): record each heap page to WAL
-                                  #  - file_copy:
-                                  #     - record all heap pages to WAL once at start and then at end
-                                  #     - requires a checkpoint at start and end
-
-SEQUENCE.log_cnt                  #0-32 (def: 0). Decrements at each setval|nextval() then cycles to 32.
-                                  #When at 0, writes SEQUENCE to WAL.
-                                  #I.e. only every 32 new value of SEQUENCEs are written to WAL, for performance
-
-pg_walinspect EXTENSION ???
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:         WAL ARCHIVING         :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-WAL ARCHIVING /                   #  - goals:
-ONLINE BACKUP ==>                 #     - "continuous archiving". Just need to archive new WAL segments.
-                                  #     - point in time recovery (PITR): instead of single snapshots, can recover to specific time in
-                                  #       past
-                                  #  - enabled by PCONF.wal_level to 'archive|hot_standby' (def: 'minimal') and PCONF.archive_mode to 'on'
-                                  #  - backing up WAL segments continuously, and DATADIR at regular times:
-                                  #     - backup in different folders, let's call them DIR1 and DIR2
-                                  #     - events since the last DATADIR since the crash are then restored thanks to the archived WAL
-                                  #       segments
-                                  #  - backup of WAL segments:
-                                  #     - each time a new WAL segment is about to be erased (because of rotation),
-                                  #       HCONF.archive_command STR is fired to back it up:
-                                  #        - can include %p for its path and %f for its filename, e.g.:
-                                  #            '[ ! -f "DIR1/%f" ] && cp -a "%p" "DIR1/%f"'
-                                  #        - should give exit code != 0 if error, so that it retries it
-                                  #        - should not allow overwritting files
-                                  #        - on Linux, use sh, not Bash
-                                  #        - should be faster than the speed at which WAL segments appear
-                                  #        - check permissions of server daemon to execute command
-                                  #     - new segments are automatically made. But can be created manually by:
-                                  #        - running pg_switch_xlog()
-                                  #        - can be made every max. every HCONF.archive_timeout (def: 0, in seconds). Should not be
-                                  #          under 60s.
-                                  #          Goal is for databases with low traffic: new segments are rarely created but still want to
-                                  #          archive the little traffic.
-                                  #     - archived WAL segments before the last "base backup" can be erased to save space, up until when
-                                  #       we want to do a PITR
-                                  #     - Can also use command pg_receivexlog -D DIR, which archive WAL segments to DIR, according to
-                                  #       connection options (see psql) -d -h -p -U -w|W
-                                  #  - backup of DATADIR ("base backups"):
-                                  #     - manually, steps are:
-                                  #        - connect to any DATABASE of the cluster and fire pg_start_backup(STR) as superuser.
-                                  #          STR should be the number of this unique backup
-                                  #           - creates a text file DATADIR/pg_xlog/FILE.*.backup, where FILE is the last WAL segment
-                                  #             archived, with information used by the recovery process (e.g. last WAL segment of
-                                  #             current DATADIR)
-                                  #           - creates DATADIR/backup_label, which is a very similar file
-                                  #        - backup DATADIR with any command (such as cp -a) to DIR2:
-                                  #           - don't include postmaster.* nor pg_xlog/*
-                                  #           - don't forget directories that might be elsewhere, e.g. tablespaces or directories using
-                                  #             symlinks postgresql.conf, pg_hba.conf, pg_ident.conf could also be put somewhere else
-                                  #             with PCONF.config|hba|ident_file
-                                  #           - copy might issue warnings because DATADIR files change on the fly (since cluster is
-                                  #             running): it's fine
-                                  #        - fire pg_stop_backup() as superuser.
-                                  #           - removes backup_label file
-                                  #        - utilities (not necessarily needed):
-                                  #           - pg_is_in_backup(), pg_backup_start_time()
-                                  #           - pg_start|stop_backup() returns the WAL segment as STR:
-                                  #              - must be superuser
-                                  #              - to translate into filenames:
-                                  #                 - pg_xlogfile_name[_offset](STR)
-                                  #                 - pg_xlog_location_diff(STR, STR2)
-                                  #     - pg_basebackup:
-                                  #        - automate all this. Options are:
-                                  #            -h -p -U -w      Connection options
-                                  #            -D DIR           DIR to copy to. Can be - (stdout) for tar mode
-                                  #            -F p|t           If p, do a simple copy. Files pointed by symlinks (such as tablespaces),
-                                  #                             will be copied to the destination using the same absolute path
-                                  #                             If t, will tar it under the filename base.tar (symlinks files are tar'd
-                                  #                             too, under their abs. path)
-                                  #                             Can also use -z to gzip it and -Z 1-9 for the compression level (def: 6)
-                                  #            -R               Put a recovery.conf sample if the backup
-                                  #            -X s             Includes first WAL segment in the backup (def: doesn't include any WAL
-                                  #                             segment).
-                                  #                             Will use two clients in PCONF.max_wal_senders
-                                  #            -l STR           Label used in backup_label (def: 'pg_basebackup base backup')
-                                  #            -c fast|spread   Change HCONF.checkpoint_completion_target (def: spread)
-                                  #            -P               Progress bar
-                                  #        - use same privileges as streaming replication (PCONF.max_wal_senders, replication privilege, etc.)
-                                  #        - basebackup_to_shell EXTENSION???
-                                  #     - in all cases, need to be done regularly, e.g. with a cron script
-                                  #        - more regular base backups require more storage, but make faster recoveries
-                                  #  - recovery:
-                                  #     - steps:
-                                  #        - stop server
-                                  #        - replace DATADIR by DIR2, but keeping the WAL segments:
-                                  #           - move DATADIR/* to temporary DIR3 (including tablespaces, etc., see above)
-                                  #           - copy DIR2/* to DATADIR (including tablespaces, etc., see above), with right ownership
-                                  #             and permissions
-                                  #           - replace DATADIR/pg_xlog/* by DIR3/pg_xlog/*, with right ownership|permissions
-                                  #             (in case some WAL segments were not archived but still present in DATADIR)
-                                  #        - copy archived WAL segments from DIR1 to DATADIR:
-                                  #           - create DATADIR/recovery.conf (its presence instructs server start to be in recovery mode)
-                                  #              - can copy template SHAREDIR/recovery.conf.sample
-                                  #              - must set:
-                                  #                 - HCONF.restore_command STR: just like HCONF.archive_command, but to copy the WAL segments from
-                                  #                   DIR1 to DATADIR/pg_xlog/
-                                  #                   Should overwrite existing ones.
-                                  #                   Will emit warnings because try to copy files that might not exist.
-                                  #                   Ex: 'cp -a "DIR1/%f" "%p"'
-                                  #              - can recover to a specific time (PITR):
-                                  #                 - by setting (in recovery.conf) any of:
-                                  #                    - PCONF.recovery_target_time TIMESTAMP
-                                  #                    - PCONF.recovery_target_xid STR: the transaction ID
-                                  #                    - PCONF.recovery_target_name STR: STR is a restore point, which must have been
-                                  #                      previously created by pg_create_restore_point(STR)
-                                  #                       - must be superuser
-                                  #                    - PCONF.recovery_target ???
-                                  #                    - PCONF.recovery_target_action ???
-                                  #                    - PCONF.recovery_target_lsn ???
-                                  #                 - time must be after the creation time of DIR2/*
-                                  #                 - recover just before|after according to variable (in recovery.conf)
-                                  #                   PCONF.recovery_target_inclusive (def: true, i.e. after)
-                                  #                 - will stop (unless variable pause_at_recovery_target is set to false or if
-                                  #                   hot_standby mode), so we can check if the state is fine. Can resume by firing
-                                  #                   pg_xlog_replay_resume()
-                                  #                 - must remove WAL segments that have been archived after that time, to restart
-                                  #                   archiving them normally
-                                  #           - start the server in single user mode
-                                  #           - recovery will happen: when done, recovery.conf will be recovery.done
-                                  #        - make sure everything is ok, then restart the server normally
-                                  #     - timelines:
-                                  #        - each time a recovery suceeds, it increments the first number of the WAL segment files, e.g
-                                  #          00...00100..0034 to 00...00200..0034
-                                  #        - the first number is the timeline ID. Goal it that following WAL archives doesn't overwrite
-                                  #          previous WAL archives created between the recovery and the crash, in case we want to come
-                                  #          back to that point.
-                                  #        - by default, recover to the timeline that was used during the base backup, but can specify
-                                  #          PCONF.recovery_target_timeline STR with "latest" in recovery.conf, or with the specified
-                                  #          timeline ID
-
-HCONF.recovery_init_sync_method ???
-HCONF.recovery_min_apply_delay ???
-HCONF.recovery_prefetch ???
-
-HCONF.archive_library ???
-
-pg_stat_archiver                  #???
-pg_stat_recovery_prefetch         #???
-pg_stat_progress_basebackup       #TABLE with ongoing base backups. ???
-pg_stat_wal                       #???
-pg_stat_wal_receiver              #???
-
-pg_lsn                            #TYPE holding an address in the WAL
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:         LOG SHIPPING          :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-HIGH AVAILABILITY ==>             #Can use:
-                                  #  - log shipping: master ships WAL to a DIR, then standby gets it from DIR
-                                  #  - streaming replication: ships directly WAL from master to slave. Probably better.
-                                  #     - async. (better performance) or sync. (better availability)
-                                  #Any standby can also be a hot standby (makes more sense for a streaming replication one) to improve
-                                  #load balancing (watch out precautions)
-
-LOG SHIPPING /                    #  - Goal: not backup (but can be combined with backup) but to maintain a copy of the master server, so
-WARM STANDBY ==>                  #    a switchover to the standby can happen quickly if there is a problem with the master
-                                  #  - Idea: the standby machine keeps on reading the WAL archive (master must do WAL archiving) and
-                                  #    applies them right away.
-                                  #  - How:
-                                  #     - start a cluster with a base backup, with a recovery.conf file in it.
-                                  #       recovery.conf variable standby_mode should be on.
-                                  #     - will continuously call recovery.conf HCONF.restore_command (same format as HCONF.archive_command)
-                                  #       to copy WAL archive DIR1 to its own pg_xlog/, e.g. 'cp -a "DIR1/%f" "%p"'
-                                  #        - will show error messages for next WAL segment, and .history file -> it's normal
-                                  #     - Put PCONF.recovery_target_timeline to "latest" (to stay sync. with the timeline chosen by the master)
-                                  #     - If don't want to use DIR1 for backup purpose, clean every WAL archive that has been copied by
-                                  #       setting variable HCONF.archive_cleanup_command:
-                                  #        - %r is the filename (not path) of the first WAL file to keep
-                                  #        - pg_archivecleanup is a command line often used:
-                                  #            - pg_archivecleanup "DIR" "%r"
-                                  #            - flags are -d (verbose), -x STR (use it if WAL segments have this extension,
-                                  #              e.g. -x .gz) and -n (dry-run)
-                                  #     - Can stop standby mode and become a master:
-                                  #        - by creating file specified by recovery.conf variable trigger_file, or firing
-                                  #          pg_ctl promote.
-                                  #           - change recovery.conf to recovery.done
-                                  #        - never two masters at same time:
-                                  #           - should turn off former master shortly before
-                                  #           - before restarting, former master should become the new slave
-                                  #        - good idea to prepare already the slave to become a master by setting up WAL archiving, etc.
-                                  #        - JCONF.recovery_end_command STR will be fired (%r is the same as HCONF.archive_cleanup_command)
-                                  #        - automatic failover is only possible using external packages.
-                                  #  - Precautions:
-                                  #     - DIR1 should not be on the master machine.
-                                  #     - WAL segments are sent async (don't wait for shipping to execute), so there's a window for data
-                                  #       loss, that can be reduce by lowering HCONF.archive_timeout
-                                  #     - standby and master should have similar config:
-                                  #        - logically, e.g. symlinks (including table spaces)
-                                  #        - software-wise
-                                  #        - hardware wise. CPU architecture must be same.
-                                  #     - switchover is manual: should have own mechanism to notify when the primary server is down, and
-                                  #       to automatically failover
-
-pg_promote()???
-  - must be superuser
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:  ASYNC STREAMING REPLICATION  :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-ASYNC. STREAMING                  #  - Goal: like log shipping, but smaller delay between master and slave state (still small one)
-REPLICATION ==>                   #  - Idea: like log shipping, but doesn't use WAL archive DIR1 (nor HCONF.restore_command,
-                                  #    PCONF.recovery_target_timeline, HCONF.archive_cleanup_command), but directly get WAL from the server (over
-                                  #    TCP connection).
-                                  #  - How:
-                                  #     - Set recovery.conf variable zHCONF.primary_conninfo (as "LIBPQ_VAR=VAL ...") for how to connect to the master.
-                                  #     - Same as above for PCONF.recovery_target_timeline
-                                  #     - Must have privileges:
-                                  #        - to connect to "replication" virtual DATABASE (in pg_hba.conf)
-                                  #        - replication and login privileges (better to create a ROLE than to set up as superuser).
-                                  #        - max number of connections is PCONF.max_wal_senders (def: 0).
-                                  #     - slave must keep up with the pace:
-                                  #        - can increase CONF.wal_keep_segments on the master (number of segments that should be
-                                  #          recycled but are kept, def: 0)
-                                  #        - can use log shipping in parallel.
-                                  #        - If fall behind, can redo a base backup.
-                                  #        - Can tell by:
-                                  #           - comparing pg_current_xlog_[insert_]location() on the master (current WAL),
-                                  #             pg_last_xlog_receive|replay_location|timestamp() on the slave
-                                  #           - use pg_stat_replication system view
-                                  #        - Connection waits only for HCONF.wal_receiver_timeout (def:60s) from slave to master, and
-                                  #          SCONF.wal_sender_timeout (def: 0, turned off) from master to slave.
-                                  #     - Cascading replication:
-                                  #        - Just use replication from downstream to upstream servers.
-                                  #        - Goal: to reduce cost for master, but introduces more delay for other standbies.
-                                  #        - sync. replication doesn't work for downstream servers.
-
-PCONF.track_commit_timestamp ???
-HCONF.primary_slot_name ???
-
-HCONF.wal_receiver_create_temp_slot ???
-HCONF.wal_receiver_status_interval ???
-HCONF.wal_retrieve_retry_interval ???
-
-pg_create_physical_replication_slot() ???
-pg_copy_physical_replication_slot() ???
-
-pg_stat_replication               #WAL sender processes.
-pg_stat_replication_slots         #???
-pg_stat_database_conflicts        #DATABASE, with query cancelled due to recovery on standby servers.
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:  SYNC STREAMING REPLICATION   :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-SYNC. STREAMING                   #  - Goal: like async. streaming replication, but reduces data loss window to nothing (at expense of
-REPLICATION ==>                   #    performance): every write transaction returns only after WAL is sent to standby ("2-safe
-                                  #    replication").
-                                  #  - How:
-                                  #     - Master must set HCONF.synchronous_standby_names with standbies:
-                                  #        - comma-separated-list, only picks the first connected in the list
-                                  #        - names must match SCONF.application_name in zHCONF.primary_conninfo
-                                  #           - can be * for any SCONF.application_name
-                                  #        - def is walreceiver
-                                  #     - Actually waits according to SCONF.synchronous_commit:
-                                  #        - on (received and flushed to disk on slave), remote_write (only received) or local|off
-                                  #          (nothing).
-                                  #        - Makes it possible to set SCONF.synchronous_commit specific values for databases, users or
-                                  #          transactions, for different durability/performance tradeoff.
-                                  #  - Precautions:
-                                  #     - If last standby loses connection, will wait forever
-                                  #        - if last standby needs to be down, must first put SCONF.synchronous_commit to off in a
-                                  #          pg_start|stop_backup() block
-
-LIBPQ.replication ???
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:          HOT STANDBY          :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-HOT STANDBY ==>                   #  - Goal: use a standby server (streaming replication or log shipping) for readonly queries (load
-                                  #    balancing).
-                                  #  - How:
-                                  #     - Must set PCONF.hot_standby to on on standby and PCONF.wal_level to hot_standby for master
-                                  #     - Must start with a new base backup (if switching from non hot standby to hot standby)
-                                  #  - Precautions:
-                                  #     - Watch out for the delay between master write and ability to read it in standby. If an arriving
-                                  #       WAL archive is conflicting with a current query (e.g. if master dropped a table while standby
-                                  #       is querying it), it will wait HCONF.max_standby_archive|streaming_delay (for streaming
-                                  #       replication mode or not) (def: 30000 ms, -1 for unlim) then cancel
-                                  #        - low value provokes more cancels, but standby and master are more in sync: good if goal is
-                                  #          more High availability, bad if goal is more load balancing
-                                  #        - could be set at approx max time of queries.
-                                  #        - Can also increase HCONF.vacuum_defer_cleanup_age if lot of vacuum-related conflicts.
-                                  #          Cancels can be seen on system view pg_stat_database_conflicts.
-                                  #     - Hot standby stops at startup when standby tries to catch up servers WAL segments. During that
-                                  #       period, there might be seemingly weird behavior.
-                                  #       pg_is_in_recovery() will return true.
-                                  #     - those CONFVARs must be superior or equal on the standby than the master: PCONF.max_connections,
-                                  #       PCONF.max_prepared_transactions, PCONF.max_locks_per_transaction
-                                  #     - advisory locks can't be shared between master and slave
-                                  #     - isolation level serializable not available
-
-ENVVAR PGTARGETSESSIONATTRS
-LIBPQ.target_session_attrs ???
-
-ICONF.in_hot_standby ???
-HCONF.hot_standby_feedback ???
-HCONF.promote_trigger_file ???
-HCONF.trace_recovery_messages ???
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:            REPMGR             :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-repmgr                            #Must have rsync, pg_ctl and pg_config in $PATH. Must be installed from source (see online doc).
-                                  #Actions can be:
-                                  #  - standby clone "NODE": make it possible to put as standby (do a base backup).
-                                  #  - master|standby register: put as master|standby (master should be done first)
-                                  #  - standby promote|follow: in case of a failover, automatical new master to promoted, and followers
-                                  #    will replicate from it. Automatical or manual???
--d -h -p -U                       #Connection options
--D DATADIR                        #Cluster to target
--f DIR                            #repmgr.conf DIR (def: same as executable).
-                                  #repmgr has three lines: cluster STR, node number INT, libpq_conninfo STR
---force                           #Do with standby clone when a master is up again after having being down, to get back the changes
-                                  #since then from the new master.
-
-repmgrd                           #Daemon doing automatic failover.
-                                  #Needs to do all the standby register first.
--f DIR                            #
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:           PGBOUNCER           :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-pgbouncer PGBFILE                 #Does connection pooling: maintains a single connection to be reused for each DATABASE+USER pair.
-                                  #Goal is to lower connection time.
-                                  #Can be much faster when connection time is important (small sessions).
-                                  #Disadvantages:
-                                  #  - requires more fds, so might needs lower max_client_conn than PostgreSQL's server
-                                  #  - hides original host+port information in logs (all traffic goes though pgbouncer)
-                                  #  - cannot implement all authentication method
-                                  #Act as layer of abstraction: connection to pgbouncer DATABASE can be redirected to DATABASE of
-                                  #other names, or of different clusters/machines.
-                                  #Should be run as same OS_USER as the server.
-                                  #Should be installed:
-                                  #  - on database server, if lot of web servers connect to it (because it is the center of all
-                                  #    connections that should be pooled)
-                                  #  - on web server, if connects to lot of database servers
-                                  #Each pool (DATABASE+USER) has:
-                                  #  - clients (to pgBouncer) and servers (connection of pgBouncer to PostgreSQL).
-                                  #    1 client = 0|1 server: 0 server when client just connected (session pool_mode) or is not issuing
-                                  #    a request (transaction pool_mode)
-                                  #  - cl_active (from show pool, see below) is number of clients on a pool.
-                                  #    If more than pool size, clients will be cl_waiting instead until cl_active is lower.
-                                  #    Pool size is determined by:
-                                  #      - [default_]pool_size: cluster-wide and database-specific pool size.
-                                  #      - min_pool_size: at first client, opens at least NUM idle servers, to make it more responsive
-                                  #        in the first requests.
-                                  #      - reserver_pool_size: extra pool size used for clients waiting (cl_waiting) for more than
-                                  #        reserve_pool_timeout
-                                  #  - max_client_conn is max number of cl_active for all pools together.
-                                  #    When reached, clients don't wait, they crash.
-                                  #  - Optimize limits:
-                                  #     - number of file descriptors used = 2 + 1 per client (max_client_conn) + 1 per server
-                                  #       (pool_size * number of users * number of databases)
-                                  #         - pool_size should be at max without creating more servers than PCONF.max_connections
-                                  #         - max_client_conn should be max number of servers + expected number of idle clients
-                                  #         - total should not exceed max number of file descriptors
-                                  #Pool mode:
-                                  #  - when server is not used anymore, returns back to pool (sv_active -> sv_idle|used)
-                                  #  - it is done according to pool_mode, either after each session (def), transaction or query (avoid).
-                                  #    transaction doesn't support session states, i.e. [re]set CONFVAR, listen|notify, with hold CURSOR,
-                                  #    PREP, load, user-defined volatile FUNC
-                                  #    Use transaction if lot of idle times in sessions, or if long queries.
-                                  #Look at check_postgres for monitoring.
--d                                #Run in background.
-                                  #Needs to give pidfile = FILE in [pgbouncer] in PGBFILE (FILE is created with the PID)
--R                                #Online restart: closes current running pgbouncer and inherits its connections without interrupting
-                                  #anything (current running pgbouncer will be closed). Useful to upgrade without interrupting anything.
--q                                #Quiet mode
--v                                #Verbosity (can do several times)
-
-PGBFILE ==>                       #Usually called pgbouncer.ini
-                                  #Has two parts, each started with [databases], then [pgbouncer] on a single line, and separated by
-                                  #blank line.
-                                  #Each part has VAR = VAL ... (STR don't have any quoting)
-
-                                  #[databases]:
-DATABASE                          #STR, LIBPQ string, but with only:
-                                  #  - dbname: def. is same as DATABASE
-                                  #  - host: def. is using Unix socket.
-                                  #  - port: def. 5432
-                                  #  - user: def. is same user
-                                  #  - password
-                                  #When client asks PgBouncer to connect on DATABASE, will use STR to connect to server.
-                                  #Can also specify:
-                                  #  - pool_size: Per-database pool size
-                                  #  - connect_query: query done at connection start.
-                                  #    For connection end (not DATABASE-specific), use server_reset_query (def: "discard all")
-                                  #Can use * DATABASE to mean "any other database"
-
-                                  #[pgbouncer]:
-listen_port                       #Proxy port (which client should connect to in order to reach server)
-listen_addr                       #Same for proxy address. Can be *
-unix_socket_dir|mode|             #Like PCONF.unix_socket_directories|permissions|group
-group                             #Def. are /tmp, 0777 and ""
-auth_type                         #Similar as in pg_hba.conf. Can be md5 (def), plain (like password in pg_hba.conf), trust or any.
-                                  #any is like trust, except that users are not even remembered which means:
-                                  #  - all DATABASE must specify user=VAL in their LIBPQ STR
-                                  #  - control with admin_users is not effective
-auth_file                         #"USER" "PASSWORD" ...
-                                  #Necessary (only USER with a line in it will be able to connect)
-admin_users                       #USER... (pgBouncer USER) allowed to connect to pgBouncer and issue statements on it.
-stats_users                       #Same but can only use show CONFVARs (except show fds)
-
-logfile                           #Redirect stderr to FILE, without stopping stderr
-log_[dis]connections              #Logs them (def: 1)
-log_pooler_errors                 #Logs errors sent to client (def: 1)
-stats_period                      #Logs stats every NUM seconds (def: 60)
-syslog[_ident|facility]           #
-
-pool_mode                         #See above (def: session)
-                                  #If transaction, server_reset_query should be ""
-max_client_conn                   #(def: 100)
-default_pool_size                 #(def: 20)
-min_pool_size                     #(def: 0)
-reserve_pool_size|
-timeout                           #(def: 0 and 5 seconds)
-
-server_check_delay                #After NUM seconds (def: 30), goes from sv_idle to sv_used, i.e. run sanity check query on server
-                                  #connections when going from idle to active.
-server_lifetime                   #Closes server connections opened for more than NUM seconds (def: 3600)
-server_idle_timeout               #Same but for idle server connections (def: 600)
-server_connect_timeout            #Same but for connecting time (def: 15)
-client_login_timeout              #If client connects but does not login before NUM seconds (def: 60), drops it.
-autodb_idle_timeout               #Closes pools (using * in [databases]) that have been unused for more than NUM seconds (def: 3600)
-
-server_login_retry                #Waits NUM seconds (def: 15) after each failed authentification.
-dns_max_ttl                       #DNS (host resolution) cache time in seconds (def: 15)
-max_packet_size                   #Max packet size between PostgreSQL and pgBouncer, in bytes (def: 2GB)
-
-server_round_robin                #If 0 (def), reuse connections in LIFO manner. If 1, in a random manner (better if TCP round-robin
-                                  #distributing load between servers)
-
-pgbouncer DATABASE ==>            #Virtual DATABASE, where only show CONFVARs is allowed, with some commands:
-reload                            #Reload PGBFILE (can also use SIGHUP)
-pause [DATABASE]                  #Safest way to stop pgBouncer: wait for clients to complete. Can also use SIGINT (CTRL-C)
-shutdown                          #Like pause, but exit pgBouncer completely. Can also use SIGTERM
-suspend                           #Drop clients, but flush buffers
-kill DATABASE                     #Least saft way to stop DATABASE
-resume [DATABASE]                 #Resume from pause|resume
-
-                                  #Can also show the following CONVARs:
-lists                             #Snapshot of all other info
-databases                         #DATABASE: connection+pool_size
-stats                             #DATABASE:
-servers                           #
-clients                           #
-pools                             #
-fds                               #File descriptors
-users                             #All users in auth_file
-config                            #PGBFILE info
-dns_hosts
-dns_zones                         #Host resolution
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
                                             )==:             PGTAP             :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -12758,24 +12950,6 @@ datafiller.py [FILE]              #Script printing commands filling randomly som
 --null FLOAT
 --mangle                          #Sets VAR
 -T                                #Put in a single transaction (normal isolation level)
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:           PGMODELER           :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-PGMODELER ==>                     #GUI modelling tool:
-                                  #  - goal is to create/modify the DDL of a database, using a GUI.
-                                  #     - can import DDL from existing database (of objects the user has permissions to query).
-                                  #  - outputs SQL commands (or send to a database) or PNG image.
-                                  #  - can validate DDL and issue warnings (requires connection to a database)
-                                  #  - most DDL is available except foreign wrapper, etc., materialized views, event triggers,
-                                  #    dictionaries, unlogged|temp tables, reference to VIEW COL
-                                  #  - relationships: generalization is inherits, copy is create table like, others are foreign keys (with proper uniqueness)
-                                  #  - there is a tree to go through object on the right panel
 
 
                                              /=+===============================+=\
