@@ -76,7 +76,10 @@ CONF.server-trace-header          #STR (def: '')
 application/json [C|S]
 application/                      #Request|response JSON payload
  vnd.pgrst.object+json [C|S]      #TABLEs are cast as JSON
+application/x-www-form-urlencoded
+ [C|S]                            #Request|response urlencoded payload
 text/csv [C|S]                    #Request|response CSV payload
+                                  #Empty fields are null
 
 Transfer-Encoding: chunked [S]    #Can be used
 
@@ -92,7 +95,7 @@ GET /TABLE                        #select [COL,...] from TABLE [where ...] [orde
 HEAD /TABLE                       #
 
 POST /TABLE                       #insert into TABLE
-                                  #Request: ROW
+                                  #Request: ROW[_ARR]
                                   #Response: empty
 
 PATCH /TABLE                      #update TABLE [where ...]
@@ -104,8 +107,9 @@ DELETE /TABLE                     #delete from TABLE [where ...]
                                   #Response: empty
 
 GET /rpc/FUNC                     #Call SQL FUNC(...)
-                                  #Request: ?VAR=VAL... (named parameters)
+                                  #Request: ?VAR=VAL...
                                   #Response: return value
+                                  #Only if FUNC has named parameters
 POST /rpc/FUNC                    #Same using request body OBJ
 
 OPTIONS ...                       #Can be used for CORS
@@ -113,15 +117,22 @@ Access-Control-Allow-Origin: * [S]
 Allow: OPTIONS,GET,HEAD,POST,
  PATCH,DELETE [S]                 #
 
+VARR                              #Can use:
+                                  #  - JSON[B]->[>]KEY
+                                  #  - ROW|ARR->[>]KEY: using to_jsonb(ROW|ARR)->[>]KEY
+                                  #Can use "virtual COLs", i.e. "FUNC" with a SQL FUNC(ROW)
+                                  #  - can be indexed too, as any other EXPR
+
 ?COL=OP.VAL                       #where COL OP VAL [and ...]
                                   #With GET|PATCH|DELETE
                                   #VAL can be written '...' UNKNOWN
                                   #  - including {VAL,...} for ARR, [...] (...) [...) for RANGE, etc.
+?VARR=...                         #VARR OP ...
 ?COL=not.OP.VAL                   #not
 ?or=(COL.OP.VAL,...)
 ?and=(COL.OP.VAL,...)             #or|and. Can be nested
-?COL=all.VAL                      #ALL comparison matches all the values in the list, see Logical operators
-?COL=any.VAL                      #ANY comparison matches any value in the list, see Logical operators
+?COL=OP(any).ARR                  #OP any (ARR)
+?COL=OP(all).ARR                  #OP all (ARR)
 ?COL=eq.VAL                       #= VAL
 ?COL=neq.VAL                      #<> VAL
 ?COL=gt.VAL                       #> VAL
@@ -135,10 +146,6 @@ Allow: OPTIONS,GET,HEAD,POST,
 ?COL=ilike.GLOB                   #ilike GLOB. Can also use *
 ?COL=match.REGEXP                 #~ REGEXP
 ?COL=imatch.REGEXP                #~* REGEXP
-?COL=fts.STR                      #@@ to_tsquery(STR)
-?COL=plfts.STR                    #@@ plainto_tsquery(STR)
-?COL=phfts.STR                    #@@ phraseto_tsquery(STR)
-?COL=wfts.STR                     #@@ websearch_to_tsquery(STR)
 ?COL=cs.VAL                       #@> VAL
 ?COL=cd.VAL                       #<@ VAL
 ?COL=ov.VAL                       #&& VAL
@@ -147,34 +154,62 @@ Allow: OPTIONS,GET,HEAD,POST,
 ?COL=nxr.VAL                      #&< VAL
 ?COL=nxl.VAL                      #&> VAL
 ?COL=adj.VAL                      #-|- VAL
+?COL=fts.STR                      #@@ to_tsquery(STR)
+?COL=plfts.STR                    #@@ plainto_tsquery(STR)
+?COL=phfts.STR                    #@@ phraseto_tsquery(STR)
+?COL=wfts.STR                     #@@ websearch_to_tsquery(STR)
+?COL=*ts(REGCONFIG).STR           #@@ *to_tsquery(REGCONFIG, STR)
 
-?select=COL,...                   #`select COL,...`
-                                  #With GET|POST
-
-?order=COL,...                    #`order by COL,...`
+?select=COL,...                   #select COL,...
                                   #With GET
+?select=VARR                      #select VARR
+?select=COL_ALIAS:COL             #select COL as "COL_ALIAS"
+?select=COL::TYPE                 #select COL::TYPE
 
-?on_conflict=STR                  #
+?order=COL,...                    #order by COL,...
+                                  #With GET
+?order=VARR                       #order by VARR
+?order=COL.asc|desc               #order by COL asc|desc
+?order=COL.nullsfirst|nullslast   #order by COL nullsfirst|nullslast
 
 PAGINATION ==>                    #With GET
 ?offset=NUM                       #SQL `offset`
 ?limit=NUM                        #SQL `limit`
 Content-Range: NUM-NUM2/* [S]     #
-Range: STR [C]                    #
+Range: NUM-[NUM2] [C]             #SQL `offset` + `limit`
 Range-Unit: STR [C]               #Def: 'items'
 CONF.db-max-rows                  #Max NUM (def: unlimited) for `limit`
+
+Content-Range: NUM-NUM2/NUM3 [S]  #
+Prefer: count=STR [C]             #Set NUM3 total amount of ROWs
+Prefer: count=none [C]            #Def: always '*'
+Prefer: count=exact [C]           #Use count(*)
+Prefer: count=planned [C]         #Use `explain`
+Prefer: count=estimated [C]       #'exact' if < CONF.db-max-rows, 'planned' if >=
+
+?columns=COL,...                  #Like ?select but for POST, i.e. ignore non-matching COLs
+
+?on_conflict=STR                  #
 
 Prefer: single-object [C]         #
                                   #With GET|POST /rpc/FUNC
 
-Prefer: return=                   #Whether to:
- representation|minimal|none [C]  #  - 'none|minimal': return nothing
-                                  #  - 'representation': return updated|deleted ROW_ARR
+Prefer: return=STR [C]            #Whether to:
+                                  #  - 'none|minimal': return nothing
+                                  #  - 'headers-only': return primary key in Location [S]
+                                  #  - 'representation': return updated|deleted ROW_ARR in body
                                   #With POST|PATCH|DELETE
 
-Prefer: count=none [C]            #With GET
+Prefer: missing=default [C]
+Preference-Applied:               #Missing values are `default` instead of null
+ missing=default [S]              #With POST|PATCH
 
-Prefer: resolution=
+Prefer:
+ resolution=ignore-duplicates [C] #Ignore ROWs where primary key CONSTRAINT fails
+Prefer:
+ resolution=merge-duplicates [C]
+ ignore|merge-duplicates [C]      #With POST
+Prefer: resolution=               #If 'merge-duplicates', upserts
  ignore|merge-duplicates [C]      #With POST
 
 ERROR_RESP                        #Error response
