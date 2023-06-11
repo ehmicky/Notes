@@ -266,6 +266,13 @@ SCONF.search_path                 #'SCHEMA,...' used as default. Leftmost has pr
 current_schemas(BOOL)             #Show SCONF.search_path
  ->'SCHEMA'_ARR                   #If false, do not include pg_catalog and pg_temp*
 
+SEARCH PATH ATTACK ==>            #Creating ENTITYs in a non-rightmost SCHEMA to in order to shadow ENTITYs in other SCHEMAs
+                                  #Can prevent by either:
+                                  #  - not specifying shared SCHEMAs in SCONF.search_path
+                                  #     - i.e. using only ROLE-specific ("$user") or session-specific (pg_temp) SCHEMAs
+                                  #  - put one shared SCHEMA as rightmost
+                                  #  - restrict `create` PRIVILEGE on shared SCHEMAs
+
 set schema 'SCHEMA,...'           #Same as: set SCONF.search_path to 'SCHEMA,...'
 
 DEFAULT CREATE SCHEMA ==>         #When creating a new ENTITY, use the leftmost SCHEMA of SCONF.search_path, except "$user"
@@ -3454,7 +3461,6 @@ select ... from FROM              #Name of each ROW to use in:
                                   #     - including as FUNC("ROW_ALIAS") argument
                                   #  - any next `from FROM`
                                   #(SUBQUERY) can use "ROW_ALIAS" defined by a previous FROM, but:
-                                  #  - not in its own `from ...`
                                   #  - must specify `lateral`
                                   #  - i.e. will behave as a REXPR
                                   #Parent query cannot use "ROW_ALIAS" defined by a (SUBQUERY)
@@ -3469,12 +3475,9 @@ select ... [as]                   #Rename "ROW_ALIAS"."COL"
  "ROW_ALIAS"("FCOL_ALIAS",...)    #Omitted ones are not renamed
 
 select ... from ROW_SET [as]
- "ROWALIAS"("FCOL_ALIAS" TYPE,...)
-select ... from ROW_SET as
- ("FCOL_ALIAS" TYPE,...)          #Define ROW_TYPE
-select ... from                   #Each COL must be defined
- rows from(ROW_SET,... as         #Not with `from (SUBQUERY)` nor `from "TABLE"`
- ("FCOL_ALIAS" TYPE,...))         #If `with ordinality`, `rows from(...)` must be used
+ "ROWALIAS"("FCOL_ALIAS" TYPE,...)#Define ROW_TYPE
+select ... from ROW_SET as        #Each COL must be defined
+ ("FCOL_ALIAS" TYPE,...)          #Not with `from (SUBQUERY)` nor `from "TABLE"`
 
 select ... from ROW_SET
  with ordinality
@@ -3590,7 +3593,7 @@ select ... fetch next ...         #Same as: select ... fetch first ...
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:           JOIN ROWS           :==(
+                                            )==:       CONCATENATE ROWS        :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
@@ -3618,17 +3621,33 @@ SCONF.enable_parallel_append      #"Parallel append"
 
                                              /=+===============================+=\
                                             /  :                               :  \
+                                            )==:      CONCATENATE COLUMNS      :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+select ...                        #Concatenates each SET as a COL
+ from rows from(SET,...)          #Smaller SETs are filled with nulls
+
+select ...
+ from rows from(ROW_SET,...)      #ROW_SETs are concatenated as multiple COLs
+
+select ...
+ from rows from(RECORD_SET
+ as ("FCOL_ALIAS" TYPE, ...),...) #RECORDs (i.e. no specific ROW_TYPE) must use `as (...)`
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
                                             )==:         JOIN COLUMNS          :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
-select ...                        #Concatenates COLs of each ROW_SET
- from rows from(ROW_SET,...)      #Smaller ROW_SETs are filled with nulls
-
-select ... from FROM, FROM2
 select ... from FROM              #Concatenates COLs of FROM and FROM2
  cross join FROM2                 #ROWs are cartesian product of FROM and FROM2
+                                  #Parenthesis can be used to force order
+select ... from FROM, FROM2       #Like `cross join` except right-side cannot refer to FROM if it uses a BOOL_REXPR
 select ... from FROM
  [inner] join FROM2
  on BOOL_REXPR                    #Like `cross join` but ignores ROWs where BOOL is false
@@ -3636,7 +3655,6 @@ select ... from FROM
 select ... from FROM              #Like `cross join` but:
  left [outer] join FROM2          #  - if a FROM ROW has BOOL false with every FROM2 ROW
  on BOOL_REXPR                    #  - it is kept as a single ROW, with nulls in FROM2 COLs
-                                  #Parenthesis can be used to force order
 select ... from FROM
  right [outer] join FROM2
  on BOOL_REXPR                    #Like `left join` but with FROM2 ROWs instead
@@ -3719,12 +3737,18 @@ SCONF.join_collapse_limit         #NUM (def: same as SCONF.from_collapse_limit)
                                   #Higher value allow planner to optimize better, but take longer planning time
                                   #Can be 1 (combined with `join` keyword) to force a specific join order
 
-OUTER JOIN STRATEGY ==>           #Outer joins force order:
-                                  #  - left|right join:
-                                  #     - must first perform any FROM that is a parenthesized sub-join
-                                  #     - e.g. FROM left join (FROM2 join FROM3)
-                                  #     - e.g. FROM left join (select * from FROM2 join FROM3)
-                                  #  - full join:
+OUTER JOIN STRATEGY ==>           #Joins order:
+                                  #  - cross|inner join:
+                                  #     - can re-order parenthesis
+                                  #     - e.g. FROM join (FROM2 join FROM3) -> (FROM join FROM2) join FROM3
+                                  #  - comma-only join:
+                                  #     - can re-order parenthesis, but right-side cannot refer to left-side in join condition
+                                  #     - e.g. FROM, FROM2 join FROM3 on BOOL_REXPR -> BOOL_REXPR cannot refer to FROM
+                                  #  - left|right outer join:
+                                  #     - must keep and follow parenthesis order, but can re-order otherwise
+                                  #     - e.g. FROM left join FROM2 left join FROM3 -> FROM left join (FROM2 left join FROM3) or (FROM left join FROM2) left join FROM3
+                                  #     - e.g. FROM left join (FROM2 left join FROM3) -> kept as is
+                                  #  - full outer join:
                                   #     - must join both sides together directly
                                   #     - e.g. FROM full join FROM2 join FROM3 -> (FROM full join FROM2) join FROM3
 SCONF.from_collapse_limit         #NUM (def: 8). Parenthesized sub-join ignore parentheses if:
@@ -7598,10 +7622,7 @@ create|alter function|procedure   #Uses ROLE of:
  security invoker|definer         #  - security definer: FUNC owner
                                   #If `security definer`:
                                   #  - forbids `set role`
-                                  #  - should set FUNC-specific SCONF.search_path
-                                  #     - should not include any SCHEMA writable by untrusted ROLEs
-                                  #     - otherwise, they could shadow VARs
-                                  #     - e.g. pg_temp should be put at the end
+                                  #  - should protect against SCONF.search_path attacks
 
 
                                              /=+===============================+=\
