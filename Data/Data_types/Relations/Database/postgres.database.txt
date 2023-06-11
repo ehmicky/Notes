@@ -726,9 +726,8 @@ VARIABLE UNBOUNDED LENGTH TYPES   #One of:
                                   #  - ROW_TYPE
                                   #  - any other TYPE built from variable '...': json[b]|jsonpath, xml, hstore,
                                   #    ltree|l[txt]query, query_int, path|polygon, inet|cidr, tsvector|tsquery
-                                  #Start with 4 bytes indicating length too
-ICONF.segment_size                #1.3e6. Max amount of page heaps in variable unbounded length types.
-                                  #I.e. max size 1GB
+
+PHYSICAL SIZE ==>                 #Additional 1|4|18 bytes, max 1GB (see TOAST)
 
 SIZING CAST ==>                   #Type cast to same type
                                   #Used to enforce size of variable bounded length TYPEs
@@ -776,9 +775,9 @@ TOAST ==>                         #Large variable length TYPE values are split t
                                   #  - compression, to save space
 IN-LINE TOAST ==>                 #Keeps data as is but possibly compress it
                                   #Requires 1|4 additional bytes
-                                  #If <127 bytes
+                                  #If <127 bytes (after compression)
 OUT-OF-LINE TOAST ==>             #Replace data with 18 bytes pointer to pg_toast_OID TABLE
-                                  #If >127 bytes
+                                  #If >127 bytes (after compression)
 pg_class.reltoastrelid            #REGCLASS of the RELATION's pg_toast_OID "TABLE". 0 if none
 pg_toast.*                        #SCHEMA with out-of-line data
 pg_toast.pg_toast_OID             #"TABLE" with TOAST out-of-line data
@@ -787,6 +786,9 @@ pg_toast.pg_toast_OID.chunk_seq   #Data chunk serial NUM
 pg_toast.pg_toast_OID.chunk_data  #BYTEA with the data
 pg_toast_temp_NUM.*               #Same with TEMP TABLEs
                                   #Same special behavior as pg_temp_NUM
+
+ICONF.segment_size                #1.3e6 (i.e. 1GB). Max amount of heap pages in a TOASTED type.
+                                  #I.e. max size of any TYPE value, especially variable unbounded length ones.
 
 SCONF.default_toast_compression   #Compress TOASTed values (in-line or out-of-line) among:
                                   #  - 'pglz' (def): Postgres-specific LZMA-like, optimized for speed (not space)
@@ -1142,13 +1144,12 @@ INT2 <=-> INT4 <=-> INT8
  <=-> NUMERIC                     #When cast as smaller TYPE, fails if beyond max size.
  <=-> FLOAT4 <=-> FLOAT8          #When cast from FLOAT to INT, rounds nearest, then towards 0
 
-money: like int8, but with NUM decimals (fixed point)
-  - '...' can include currency signs, thousands separator
-
 money                             #TYPE. Fixed point INT8
                                   #NUM of decimlals depends on lc_monetary, but is often 2
                                   #Max value: 1e17
                                   #Avoid because 2 decimals is usually not enough
+'NUM'                             #MONEY_UNKNWON can include currency signs and thousands separator
+                                  #Depends on lc_monetary
 MONEY <=> NUMERIC
 INT4|8 => MONEY                   #Type cast
 
@@ -1312,7 +1313,9 @@ l|rpad(STR, UINT[, STR2])->STR3   #Pads STR with STR2 (def: ' ') to length UINT.
                                              \=+===============================+=/
 
 
-"char"                            #TYPE. Like char(1)
+"char"                            #TYPE. Like char(1) except:
+                                  #  - no \0 delimiter, i.e. only 1 byte
+                                  #  - no ENCODING (always ASCII)
                                   #Must be double-quoted, otherwise it is interpreted as BPCHAR
 
 'CHAR'                            #CHAR_UNKNOWN
@@ -1444,6 +1447,12 @@ pg_enum.enumtypid                 #REGTYPE of ENUM_TYPE
 
 
 BSTR                              #BIT|VARBIT
+                                  #Unlike STR, meant for binary data, not textual data:
+                                  #  - can include \0
+                                  #  - not impacted by ENCODING
+                                  #     - faster
+                                  #     - can include sequences forbidden by ENCODING
+                                  #  - not impacted by locales
 
 bit[(NUM)]                        #TYPE. BIT, i.e. like STR, but bit-wise
                                   #Def NUM: 1
@@ -1479,13 +1488,21 @@ set_bit(BSTR|BYTEA, UINT, 0|1)
 bytea                             #TYPE. Like BSTR but byte-wise
                                   #0-based indices
 
-'...'                             #BYTEA_UNKNOWN, using server ENCODING
-'\x...'                           #If starting with \x, ... is hex only
-                                  #Only way to include \x00
+'...'                             #BYTEA_UNKNOWN
+                                  #Can use either:
+                                  #  - character as is, if [[:print:]]
+                                  #  - octal \NNN
+                                  #  - '' for '
+                                  #  - \\ for \
+'\x...'                           #BYTEA_UNKNOWN
+                                  #Only hex characters
+                                  #Case insensitive
+                                  #Ignore whitespaces between bytes
+                                  #Faster
 
 encode(BYTEA, STR)->STR2          #Converts to format STR:
-                                  #  - 'hex': hex only
-                                  #  - 'escape': octal \NNN only if not [[:print:]]
+                                  #  - 'escape': like '...'
+                                  #  - 'hex': like '\x...', but without leading '\x'
                                   #  - 'base64'
 decode(STR, STR2)->BYTEA          #Inverse
 
