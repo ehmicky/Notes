@@ -338,7 +338,7 @@ POST /rpc/FUNC                    #Call SQL FUNC(...)
                                   #If FUNC()->ROW_SET, can use same query variables as GET /TABLE (?COL, etc.)
                                   #Overloaded FUNCs are supported if their arguments differ by name or arity (not only by TYPE)
 
-GET /rpc/FUNC                     #Same using query variables ?VAR=VAL,... and with a `read only` transaction
+GET|HEAD /rpc/FUNC                #Same using query variables ?VAR=VAL,... and with a `read only` transaction
                                   #Variadic ARGs must be repeated
 
 
@@ -390,7 +390,7 @@ GET /rpc/FUNC                     #Same using query variables ?VAR=VAL,... and w
 ?COL=plfts.STR                    #@@ plainto_tsquery(STR)
 ?COL=phfts.STR                    #@@ phraseto_tsquery(STR)
 ?COL=wfts.STR                     #@@ websearch_to_tsquery(STR)
-?COL=*ts(REGCONFIG).STR           #@@ *to_tsquery(REGCONFIG, STR)
+?COL=*fts(REGCONFIG).STR          #@@ *to_tsquery(REGCONFIG, STR)
 
 
                                              /=+===============================+=\
@@ -532,7 +532,7 @@ CONF.db-tx-end                    #Whether to allow using Prefer: tx=commit|roll
 
 
 Accept: application/
- vnd.pgrst.plan [C]               #Runs `explain` on GET
+ vnd.pgrst.plan[+text] [C]        #Runs `explain` on GET
 
 Accept: application/
  vnd.pgrst.plan+json [C]          #`explain` format 'json'
@@ -629,29 +629,97 @@ Preference-Applied: ... [S]       #Set when Prefer: ... [C] was used
 @supabase/postgrest-js            #Node.js, browsers, Deno
                                   #Version 1.7.1
 
-new PostgrestClient('URL')        #CLIENT
-                                  #URL is postgrest server
+new PostgrestClient               #CLIENT
+ ('URL'[, POPTS])                 #URL is postgrest server
 
-OPTS.fetch                        #Def: cross-fetch
+POPTS.fetch                       #Def: cross-fetch
                                   #To support Deno, must pass global `fetch`
+POPTS.headers                     #OBJ. HTTP request headers
+POPTS.schema                      #'SCHEMA'. Accept|Content-Profile: SCHEMA [C]
 
-CLIENT.rpc('FUNC')->RES           #Call SQL FUNC
+X-Client-Info:
+ postgres-js/X.Y.Z [C]            #
 
-CLIENT.from('TABLE')->CLIENT      #
+CLIENT.abortSignal(ABORT_SIGNAL)  #
 
-CLIENT....->RES                   #GET ...
+CLIENT.*(...)->CLIENT             #Most methods return CLIENT
+                                  #Except: csv|geojson, single|maybeSingle, throwOnError, explain
+                                  #First method must be CLIENT.rpc|from(...)
+await CLIENT                      #RES
+SUCCESS_RES.data                  #OBJ[_ARR]
+                                  #STR with non-JSON MIME
+SUCCESS_RES.count                 #NUM|null. From Content-Range: .../NUM3 [S]
+RES.status                        #NUM. HTTP status
+RES.statusText                    #STR
+ERROR_RES.error                   #ERROR_RESP OBJ
 
-CLIENT.insert(OBJ_ARR[, OPTS])
- ->RES                            #POST ...
-OPTS.upsert true                  #Prefer: resolution=merge-duplicates [C]
+CLIENT.throwOnError()             #Throw ERROR_RESP OBJ instead of returning it as RES.error
 
-CLIENT.update(OBJ)->CLIENT        #PATCH ...
+CLIENT.returns<TYPE>()            #Overrides return TypeScript TYPE
 
-DELETE REST_DOMAIN/TABLE[?FILTERS]#
-CLIENT.delete()->CLIENT           #DELETE ...
+CLIENT.single()                   #Accept: application/vnd.pgrst.object+json [C]
+CLIENT.maybeSingle()              #Same but, if empty response, sets SUCCESS_RES.data null instead of failing
 
-CLIENT.select(STR)->CLIENT        #?select=STR
+CLIENT.csv()                      #Accept: text/csv [C]
+CLIENT.geojson()                  #Accept: application/geo+json [C]
 
-CLIENT.range(NUM, NUM2)->CLIENT   #Range: NUM-NUM2 [C]
+CLIENT.rpc('FUNC'[, OBJ][, ROPTS])#POST /rpc/FUNC
 
-CLIENT.OP('COL', VAL)->CLIENT     #?VAR=OP.VAL
+CLIENT.from('TABLE')              #GET|POST|PATCH|DELETE /TABLE
+
+SOPTS|ROPTS.head                  #BOOL (def: false). HEAD ...
+
+CLIENT.insert(OBJ[_ARR][, IOPTS]) #POST ...
+
+CLIENT.upsert(OBJ[_ARR][, XOPTS]) #POST ... + Prefer: resolution=merge-duplicates [C]
+
+CLIENT.update(OBJ[, UOPTS])       #PATCH ...
+
+CLIENT.delete([DOPTS])            #DELETE ...
+
+XOPTS.ignoreDuplicates            #BOOL (def: false). Prefer: resolution=ignore-duplicates [C]
+XOPTS.onConflict                  #STR. ?on_conflict=STR
+
+IOPTS|XOPTS.defaultToNull         #BOOL (def: false). Prefer: missing=default [C]
+
+CLIENT.filter
+ ('COL', '[not.]OP', VAL)         #?COL=OP.VAL
+CLIENT.OP('COL', VAL)             #VAL can be ARR
+CLIENT.not('COL', 'OP', VAL)      #?COL=not.OP.VAL
+CLIENT.or('...')                  #?or=(...)
+CLIENT.OPAllOf('COL', ARR)        #?COL=OP(all).ARR, only for OPs: [i]like
+CLIENT.OPAnyOf('COL', ARR)        #?COL=OP(any).ARR, with same OPs
+CLIENT.match({ COL: VAL, ... })   #?COL=eq.VAL&...
+CLIENT.contains('COL', VAL)       #?COL=cs.VAL
+CLIENT.containedBy('COL', VAL)    #?COL=cd.VAL
+CLIENT.rangeGt('COL', VAL)        #?COL=sr.VAL
+CLIENT.rangeGte('COL', VAL)       #?COL=nxl.VAL
+CLIENT.rangeLt('COL', VAL)        #?COL=sl.VAL
+CLIENT.rangeLte('COL', VAL)       #?COL=nxr.VAL
+CLIENT.rangeAdjacent('COL', VAL)  #?COL=adj.VAL
+CLIENT.overlaps('COL', VAL)       #?COL=ov.VAL
+CLIENT.textSearch                 #?COL=*fts.VAL
+ ('COL', VAL[, OPTS])             #OPTS: type 'plain|phrase|webseearch', config 'REGCONFIG'
+
+CLIENT.order(STR[, OPTS])         #?order=STR
+                                  #OPTS: ascending BOOL, nullsFirst BOOL
+
+CLIENT.limit(NUM)                 #?limit=NUM
+
+CLIENT.range(NUM, NUM2[, OPTS])   #?offset=NUM&limit=NUM2-NUM+1
+
+ROPTS|SOPTS|IOPTS|XOPTS|UOPTS
+ |DOPTS.count                     #STR. Prefer: count=STR [C]
+
+CLIENT.select(STR[, SOPTS])       #?select=STR
+                                  #Must be after any CLIENT.OP(...)
+                                  #Ignores whitespaces|newlines except "-quoted
+                                  #With POST|PATCH|DELETE: also Prefer: return=representation [C]
+
+OPTS.foreignTable                 #'TABLE2'. ?TABLE2.... instead of ?... (population)
+                                  #For: CLIENT.or|order|limit|range()
+
+CLIENT.rollback()                 #Prefer: tx=rollback [C]
+
+CLIENT.explain([OPTS])            #Accept: application/vnd.pgrst.plan [C]
+                                  #OPTS: format 'json|text', analyze|verbose|settings|buffers|wal BOOL
