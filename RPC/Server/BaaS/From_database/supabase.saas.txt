@@ -103,7 +103,7 @@ ENVVAR random_page_cost           #1.1 (instead of 4)
 ENVVAR max_replication_slots      #5 (instead of 10)
 ENVVAR wal_level                  #'logical'
 
-ENVVAR statement_timeout          #Def: 8s if authenticated, 3s if none
+ENVVAR statement_timeout          #Def: 8s if ROLE authenticated, 3s if ROLE anon
                                   #Max: 2m
                                   #Can be changed
 
@@ -119,10 +119,23 @@ ENVVAR log_destination            #'csvlog'
 ENVVAR log_line_prefix            #Also includes %h (host)
 ENVVAR log_rotation*              #0
 
-EXPOSED SCHEMAS ==>               #Available to public APIs
-                                  #Def: public, graphql_public, storage
 
-ENVVAR search_path                #$user, "public", "extensions"
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:            SCHEMA             :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+CLUSTER                           #'main'
+DATABASE                          #'postgres'
+
+EXPOSED SCHEMAS ==>               #Available to public APIs
+                                  #Also full PRIVILEGEs with anon|authenticated|service_role ROLEs
+                                  #Def: public, graphql_public, storage, supabase_functions
+
+ENVVAR search_path                #$user, "public"
+                                  #Also "extensions", if postgres ROLE
 
 
                                              /=+===============================+=\
@@ -132,7 +145,6 @@ ENVVAR search_path                #$user, "public", "extensions"
                                              \=+===============================+=/
 
 
-CLUSTER                           #'main'
 DATABASE_URL                      #db.PROJECT_DOMAIN:5432
 DATABASE_NAME                     #'postgres'
 DATABASE_USER                     #'postgres'
@@ -187,6 +199,15 @@ PITR BACKUPS ==>                  #Per-second backup
 
 DATA MIGRATIONS ==>               #
 
+supabase_migrations               #SCHEMA
+supabase_migrations
+ .schema_migrations               #TABLE with all migration versions
+supabase_migrations
+ .schema_migrations.version       #STR
+
+auth|storage|supabase_functions
+ .migrations                      #TABLE with migrations done by Supabase on auth|storage|supabase_functions.*
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -229,30 +250,49 @@ PGBOUNCER_LOGS.event_message      #STR
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:         PG EXTENSIONS         :==(
+                                            )==:          EXTENSIONS           :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
-PG EXTENSIONS ==>                 #Uses PG private SCHEMA 'extensions'
-                                  #Automatically enabled:
+EXTENSIONS ==>                    #Automatically enabled:
                                   #  - uuid-ossp
                                   #  - pg_stat_statements
                                   #     - also shown in UI "Reports > Query performance"
-                                  #  - pg_jwt
+                                  #  - pgjwt
                                   #  - pgcrypto, pgsodium
                                   #  - pg_net
+                                  #     - used by webhooks
                                   #  - pg_graphql
                                   #  - supabase_vault
-C ADDONS ==>                      #Automatically enabled:
-                                  #  - supautils
-                                  #  - pg_stat_monitor
+                                  #Also available (on top of ones automatically available with Postgres):
+                                  #  - address_standardizer[_data_us]
+                                  #  - http
+                                  #  - hypopg
                                   #  - pgaudit
-                                  #  - plpgsql_check
                                   #  - pg_cron
-                                  #  - timescaledb
-                                  #  - auto_explain
+                                  #  - pg_hashids
+                                  #  - pg_jsonschema
+                                  #  - pg_repack
+                                  #  - pgroonga[_database]
+                                  #  - pgrouting
+                                  #  - pg_stat_monitor
+                                  #  - pgtap
                                   #  - pg_tle
+                                  #  - plcoffee
+                                  #  - plls
+                                  #  - plpgsql_check
+                                  #  - plv8
+                                  #  - postgis*
+                                  #  - rum
+                                  #  - supautils
+                                  #  - timescaledb
+                                  #  - vector
+                                  #  - wrappers
+                                  #Document all ???
+
+extensions                        #SCHEMA with some EXTENSIONs, e.g. pg_stat_statements
+                                  #Some EXTENSIONs have own SCHEMAs, e.g. pgbouncer, pgsodium, pgtle, vault, net
 
 PG_HASHIDS ==>                    #Extension transforming serial INT into short, unique, non-serial STR
 id_encode(INT)->STR               #SQL FUNC
@@ -270,8 +310,6 @@ PG_SAFEUPDATE ==>                 #Extension enabled by default
                                   #Makes SQL UPDATE|DELETE fail without a WHERE clause
 
 TIMESCALE ==>                     #Extension to add time-series
-
-SUPABASE VAULT ==>                #PG extension to encrypt and store secrets
 
 WRAPPERS ==>                      #Extension that allow accessing some common REST APIs from SQL
                                   #Supports:
@@ -317,8 +355,8 @@ WEBHOOKS ==>                      #Call either:
                                   #Based on PG triggers
                                   #  - triggered on INSERT|UPDATE|DELETE
                                   #  - of a given TABLE
-                                  #Uses PG extension "pg_net"
-                                  #Uses PG private SCHEMA 'net'
+
+supabase_functions.hooks          #TABLE with all webhooks. Document ???
 
 
                                              /=+===============================+=\
@@ -366,22 +404,72 @@ REFRESH TOKENS ==>                #To extend expiration
                                              \=+===============================+=/
 
 
-PUBLIC_API_KEY                    #TOKEN for unprivileged anonymous requests
-ACCESS_TOKEN                      #TOKEN for unprivileged authenticated requests
+PUBLIC_API_KEY                    #TOKEN for anon ROLE
+ACCESS_TOKEN                      #TOKEN for authenticated ROLE
                                   #Created either:
                                   #  - through login endpoints
                                   #  - through UI, for CLI login, etc.
-PRIVATE_API_KEY                   #TOKEN for privileged requests
+PRIVATE_API_KEY                   #TOKEN for service_role ROLE
 
 API_KEY                           #Any TOKEN used for AUTH
 apikey: API_KEY [C]
 Authorization: Bearer API_KEY [C] #Must specify both
 ?apikey=API_KEY                   #Alternative
 
-ROLE                              #PG ROLE. One of:
-                                  #  - 'anon': with PUBLIC_API_KEY
-                                  #  - 'authenticated': with ACCESS_TOKEN
-                                  #  - 'service_role': with PRIVATE_API_KEY
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:             ROLES             :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+AUTHENTICATION ==>                #scram-sha-256 password
+                                  #Exception: anon|authenticated|service_role|dashboard_user ROLEs
+                                  #  - those have no `login` PRIVILEGE
+                                  #  - they are set from initial session ROLE "authenticator"
+
+PRIVILEGES ==>                    #No ROLE has `admin option` PRIVILEGE
+
+authenticator                     #Initial session ROLE in API requests
+                                  #Managed by Postgrest
+                                  #No `inherit` PRIVILEGE
+anon                              #ROLE for anonymous API requests
+                                  #`usage` PRIVILEGEs on all SCHEMAs, except realtime|vault|supabase_migrations
+authenticated                     #ROLE for authenticated API requests, for users
+                                  #`usage` PRIVILEGEs on all SCHEMAs, except realtime|vault|supabase_migrations
+service_role                      #ROLE for privileged API requests, for users
+                                  #`usage` PRIVILEGEs on all SCHEMAs, except realtime|vault|supabase_migrations
+dashboard_user                    #ROLE for API requests made through UI
+                                  #`createrole`, `createdb`, `replication` PRIVILEGEs
+                                  #Full PRIVILEGEs on DATABASE and on extensions|storage|auth SCHEMAs
+                                  #No PRIVILEGEs on other SCHEMAs
+
+postgres                          #ROLE for programmatic access, for users
+                                  #Owner of DATABASE
+                                  #`createrole`, `createdb`, `replication`, `bypassrls` PRIVILEGEs
+                                  #Not superuser ROLE
+                                  #Full PRIVILEGEs on public|extensions|storage|auth|supabase_migrations SCHEMAs
+                                  #`usage` PRIVILEGEs on other SCHEMAs
+                                  #Can set itself to ROLEs: anon|authenticated|service_role or supabase_*_admin
+
+supabase_*                        #ROLEs meant for support or built-in features
+supabase_admin                    #Only superuser ROLE
+                                  #Full access to everything
+supabase_read_only_user           #ROLE member of pg_read_all_data
+                                  #`bypassrls` PRIVILEGE
+supabase_auth_admin               #ROLE owning auth SCHEMA|ENTITYs
+                                  #No `inherit` PRIVILEGE, but `createrole`
+supabase_functions_admin          #ROLE owning Edge functions SCHEMA|ENTITYs
+                                  #No `inherit` PRIVILEGE, but `createrole`
+supabase_storage_admin            #ROLE owning storage SCHEMA|ENTITYs
+                                  #No `inherit` PRIVILEGE, but `createrole`
+                                  #Can set itself to ROLEs: anon|authenticated|service_role
+supabase_replication_admin        #ROLE for logical replication features
+                                  #`replication` PRIVILEGE
+
+POLICY                            #Row-level security enabled by default on TABLEs of exposed SCHEMAs
+                                  #`service_role` ROLE has `bypassrls` PRIVILEGE
 
 
                                              /=+===============================+=\
@@ -392,8 +480,10 @@ ROLE                              #PG ROLE. One of:
 
 
 AUTH ==>                          #Max USERs: 5e4 (free), 1e5 then 1$ per 300 USERs (pro)
-                                  #Uses PG private SCHEMA 'auth'
                                   #Uses library "gotrue" (fork of Netlify Gotrue)
+
+auth                              #SCHEMA with auth features
+                                  #TODO: document its TABLEs???
 
 AUTH_PROVIDERS ==>                #Configured from the UI
                                   #  - enabling
@@ -570,18 +660,6 @@ AUTH.onAuthStateChange
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:            POLICY             :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-PG POLICY ==>                     #Row-level security
-                                  #Does not apply to "service_level" ROLE
-                                  #Applies to STORAGE too
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
                                             )==:           AUTH LOGS           :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -633,11 +711,6 @@ COPTS.db.schema                   #Forwards to POPTS.schema
 
 POSTGREST_CONF.db-max-rows        #Def: 1e3, max: 1e6
 
-ROLES ==>                         #Uses:
-                                  #  - user ROLE: 'authenticated'
-                                  #  - anonymous ROLE: 'anon'
-                                  #  - authenticator ROLE: 'service_role'
-
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -648,7 +721,6 @@ ROLES ==>                         #Uses:
 
 DATABASE GRAPHQL ==>              #Automatic GraphQL CRUD endpoints
                                   #Includes introspection
-                                  #Uses PG private SCHEMA 'graphql[_public]'
                                   #Uses PG extension "pg_graphql"
                                   #The extension uses itself postgREST, i.e. similar features as REST API
 
@@ -662,6 +734,10 @@ query                             #Automatically populates foreign keys
 query.TABLECollection.edges       #OBJ_ARR:
                                   #  - node OBJ: row
 
+graphql_public                    #SCHEMA with GraphQL???
+
+graphql                           #SCHEMA with GraphQL???
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -671,7 +747,6 @@ query.TABLECollection.edges       #OBJ_ARR:
 
 
 EDGE FUNCTION ==>                 #Built on Deno Subhosting
-                                  #Uses PG private SCHEMA 'supabase_functions'
                                   #Compared to SQL FUNC:
                                   #  - pros:
                                   #     - low-latency
@@ -682,6 +757,8 @@ EDGE FUNCTION ==>                 #Built on Deno Subhosting
                                   #Max requests per month: 5e5 (free), 2e6 then 1$ per 5e5 (pro)
                                   #Max size per EDGE_FUNC: 2MB (free), 10MB (pro)
                                   #Max count: 10 (free), 100 then 1$ per 10 (pro)
+
+supabase_functions                #SCHEMA with Edge functions features
 
 CLIENT.functions                  #FUNCTIONS
 
@@ -733,6 +810,10 @@ FUNCTION_LOGS.event_message       #STR
                                              \=+===============================+=/
 
 
+SUPABASE VAULT ==>                #PG extension to encrypt and store secrets
+
+vault                             #SCHEMA for vault. Document ???
+
 SECRETS ==>                       #Environment variables set for a given PROJECT
 supabase secrets list             #Values only show checksums
 supabase secrets set ENVVAR=VAL   #
@@ -758,6 +839,9 @@ ENVVAR VERIFY_JWT_SECRET          #'true|false'
 
 
 REALTIME ==>                      #Repository "supabase/realtime"
+                                  #Uses logical replication
+
+realtime                          #SCHEMA with realtime features
 
 CHANNEL                           #Namespace for events
                                   #Max CHANNELs: 500 for all CLIENTs, 100 per CLIENT
@@ -826,7 +910,7 @@ EVENT_TYPE 'postgres_changes'     #Database row change
                                   #Must:
                                   #  - have a `messages` TABLE with a specific format (see online doc)
                                   #  - have a PG publication 'supabase_realtime' looking for `messages` inserts
-                                  #  - this is automatically done from the UI, in PG private SCHEMA 'realtime'
+                                  #  - this is automatically done from the UI, in SCHEMA 'realtime'
                                   #EVENT: 'INSERT|UPDATE|DELETE|TRUNCATE'
                                   #OPTS:
                                   #  - schema 'SCHEMA'
@@ -892,12 +976,13 @@ COPTS.realtime.log_level          #Set to 'info' to log joins|leaves of CLIENTs|
 
 
 STORAGE ==>                       #For big files
-                                  #Uses PG private SCHEMA 'storage'
                                   #Not included in backups
                                   #  - see online doc for how to manually backup|restore, by using API calls on SCHEMA 'storage'
                                   #Max size: 1GB (free), 100GB then 1$/50GB (pro)
                                   #Max egress: 2GB (free), 200GB then 1$/100GB (pro)
                                   #Repository "supabase/storage-api"
+
+storage                           #SCHEMA with STORAGE information
 
 
                                              /=+===============================+=\
@@ -908,8 +993,9 @@ STORAGE ==>                       #For big files
 
 
 BUCKET                            #Main directory
-SQL_BUCKET                        #Row in storage.buckets TABLE
+SQL_BUCKET                        #ROW in storage.buckets TABLE
 SQL_BUCKET.id|name                #'NAME'
+SQL_BUCKET.owner                  #REGROLE
 SQL_BUCKET.created|updated_at     #TIMESTAMPTZ
 SQL_BUCKET.public                 #BOOL (def: true)
                                   #If false, can still download, but not create URL
@@ -924,10 +1010,11 @@ FNAME                             #'[FOLDER/]NAME'
 OBJECT                            #Single file
 OBJECT_CONTENT                    #BLOB|FILE|FORMDATA|ARRBUFFER
                                   #Max size: 50MB (free), 5GB (pro)
-SQL_OBJECT                        #Row in storage.objects TABLE
+SQL_OBJECT                        #ROW in storage.objects TABLE
 SQL_OBJECT.id                     #'UUID'
 SQL_OBJECT.bucket_id              #SQL_BUCKET.id
 SQL_OBJECT.name                   #'FNAME'
+SQL_OBJECT.owner                  #REGROLE
 storage.filename('FNAME')         #SQL FUNC to return 'NAME.EXT'
 storage.extension('FNAME')        #SQL FUNC to return 'EXT'
 SQL_OBJECT.path_tokens            #[...FOLDER, 'NAME']
@@ -942,6 +1029,7 @@ SQL_OBJECT.metadata               #JSONB of OBJ:
                                   #  - cacheControl STR: HTTP Cache-Control [S]
                                   #  - lastModified 'DATE'
                                   #  - httpStatusCode NUM
+SQL_OBJECT.version                #STR
 
 
                                              /=+===============================+=\
