@@ -56,16 +56,16 @@ MANIFEST.description              #STR
 MANIFEST.redirect_url             #"MCALLBACK_URL"
 
 ?callback_urls
-MANIFEST.callback_urls            #"CALLBACK_URL"_ARR
+MANIFEST.callback_urls            #"CALLBACK_URL"_ARR (e.g. one per environment)
 
 ?setup_url                        #"SETUP_URL", redirected on after installation (or on update)
 MANIFEST.setup_url                #Meant for docs
 ?setup_on_update
 MANIFEST.setup_on_update          #BOOL (def: false). Redirect to SETUP_URL also when app is being updated
 
-?PERMISSION
-MANIFEST                          #STR
- .default_permissions.PERMISSION  #Changing permissions must be approved by ORG|USER (depending on permission)
+?APP_PERMISSION
+MANIFEST.default_permissions      #STR
+ .APP_PERMISSION                  #Changing permissions must be approved by ORG|USER (depending on permission)
 ?request_oauth_on_install
 MANIFEST.request_oauth_on_install #BOOL (def: false). Ask to both "install" and "authorize"
 
@@ -139,6 +139,56 @@ SUSPENSION ==>                    #Pausing APP. No permissions during that time
 
                                              /=+===============================+=\
                                             /  :                               :  \
+                                            )==:          AUTH COMMON          :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+@octokit/auth-app                 #Version 5.0.6
+                                  #Node/Deno
+                                  #Handles APP_JWT, Basic auth, IAT, UAT
+createAppAuth(AAOPTS)->AAPP       #
+AAPP(AOPTS)->>JWT_INFO|BASIC_INFO
+ |INSTALL_INFO|UAT_INFO           #
+AAOPTS.appId|privateKey           #Required, even if not used by the specific flow
+AAOPTS.log                        #OBJ with `warn` method (def: console)
+                                  #Used to log time skew errors, or HTTP retries
+
+@octokit/auth-oauth-app           #Version 6.0.1
+                                  #Node/Deno
+                                  #Handles APP_JWT, UAT
+createOAuthAppAuth(PPOPTS)->PAPP  #
+PAPP(POPTS)->>OBJ                 #
+
+@octokit/auth-oauth-user          #Version 3.0.1
+                                  #Node/Deno
+                                  #Handles UAT
+
+@octokit/auth-app
+@octokit/auth-oauth-app
+@octokit/auth-oauth-user
+createOAuthUserAuth(UUOPTS)->UAPP #
+UAPP(UOPTS)->>UAT_INFO            #Forwards to exchangeWebFlowCode|createOAuthDeviceAuth()
+                                  #Cached, i.e. only done once
+
+octokit-auth-NAME.js/X.Y.Z
+ BROWSER_USER_AGENT [C]           #NAME depends on module used: app, oauth-app, oauth-device
+
+AAPP|PAPP|DAPP|UAPP               #Like REQUEST(...) (see @octokit/request)
+ .hook(REQUEST, ...)->>RET        #But using the right Authorization [C] depending on the request.
+                                  #With APP_JWT, handles time skew errors
+                                  #With IAT, retries with exponential backoff since newly created IAT sometimes need it
+                                  #Can be used as REQUEST's UUOPTS.request.hook
+
+FOPTS|EOPTS|VOPTS|[D]DOPTS|MOPTS
+ |NOPTS|AAOPTS|[P]POPTS|UUOPTS
+ .request                         #REQUEST (from @octokit/request)
+
+AOPTS|POPTS.factory               #FUNC. Calls and returns FUNC([A]AOPTS|[P]POPTS)
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
                                             )==:            APP JWT            :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -186,8 +236,8 @@ JWT_INFO|JWT_RES.token            #'APP_JWT'
 
 
 Authorization: Basic
- BASE64(CLIENT_ID:CLIENT_SECRET)  #Required with a few endpoints, documented here
- [C]                              #Only used for specific GitHub app-related API calls, documented below
+ BASE64(CLIENT_ID:CLIENT_SECRET)
+ [C]                              #Alternative to APP_JWT. Used with a different set of API calls
 
 AOPTS.type 'oauth-app'            #Forwards to @octokit/auth-oauth-app with POPTS.type 'oauth-app'
                                   #Returns BASIC_INFO
@@ -234,9 +284,9 @@ AAOPTS
  .installationId                  #'INSTALLATION_ID'
 
 AOPTS|INSTALL_INFO
- .permissions.API_PERMISSION
+ .permissions.TOKEN_PERMISSION
 REQ|RES
- .permissions.API_PERMISSION      #STR. Restrict to specific permissions (def: all)
+ .permissions.TOKEN_PERMISSION    #STR. Restrict to specific permissions (def: all)
 AOPTS|INSTALL_INFO.repositoryIds
 REQ.repository_ids                #REPO_ID_ARR (def: all) which can be accessed
 AOPTS|INSTALL_INFO.repositoryNames
@@ -288,9 +338,8 @@ INPUTS.repository                 #'USER/REPO' (def: current one)
 INPUTS.permissions                #'OBJ_JSON'
 INPUTS.github_api_url             #'URL' of GitHub API (for GitHub enterprise)
 
-SECRET_OUTPUTS.token              #'JWT' (IAT)
-                                  #Created using POST /app/installations/INSTALLATION_ID/access_tokens
-                                  #  - while authenticated using a APP_JWT created by @octokit/auth-app createAppAuth() with type 'app'
+SECRET_OUTPUTS.token              #'IAT'. Created using POST /app/installations/INSTALLATION_ID/access_tokens
+                                  #While authenticated using a APP_JWT created by @octokit/auth-app createAppAuth() with type 'app'
 
 
                                              /=+===============================+=\
@@ -301,11 +350,12 @@ SECRET_OUTPUTS.token              #'JWT' (IAT)
 
 
 Authorization:                    #Authenticate as a GitHub app user ("user-to-server")
- Bearer ACCESS_TOKEN [C]          #Permissions on behalf of user
+ Bearer ACCESS_TOKEN [C]          #Alternative to IAT, but with permissions on behalf of user
                                   #  - including access other things than repo|org
                                   #  - i.e. some actions available with ACCESS_TOKEN but not IAT
                                   #Actions are shown as done by user, with additional hint it's been done through an app
                                   #Restricted by permissions of both app and user
+                                  #Obtained either through web flow or device flow
 
 OAUTH ==>                         #Used to get|refresh ACCESS_TOKEN ("user access token", UAT)
                                   #User must first have "authorized" the app
@@ -321,7 +371,7 @@ OAUTH ==>                         #Used to get|refresh ACCESS_TOKEN ("user acces
 
 WEB FLOW ==>                      #Must be used when client is a browser
 
-GET /login/oauth/authorize        #Can either:
+GET /login/oauth/authorize        #Start web flow. Can either:
                                   #  - redirect user manually to it
                                   #  - redirect at installation time
                                   #     - CALLBACK_URL must always use default value
@@ -342,8 +392,8 @@ FOPTS.baseUrl                     #'BASE_URL' (def: 'https://github.com')
 ?client_id
 FOPTS|FIRST_INFO.clientId         #'CLIENT_ID'
 ?redirect_uri                     #'CALLBACK_URL' (def: none)
-FOPTS|FIRST_INFO.redirectUrl      #Must be among ones specified in App settings (e.g. one for local, one for production)
-                                  #Def: first of those ones
+FOPTS|FIRST_INFO.redirectUrl      #Must be among MANIFEST.callback_urls
+                                  #Def: MANIFEST.callback_urls[0]
 ?scope                            #Not present
 ?state                            #'STATE' (def: none)
 FOPTS|FIRST_INFO.state            #'STATE' (def: random 10 chars base36'd)
@@ -373,7 +423,7 @@ POPTS.type 'oauth-user'           #Forwards to @octokit/auth-oauth-user UAPP()
 UAPP(UOPTS)->>UAT_INFO            #Forwards to exchangeWebFlowCode()
                                   #Cached, i.e. only done once
 
-POST /login/oauth/access_token    #Second step, to do inside CALLBACK_URL handler
+POST /login/oauth/access_token    #Second step of web flow, to do inside CALLBACK_URL handler
 REQ.grant_type                    #Not present
 RES.scope                         #Always empty
 RES.state                         #'STATE'
@@ -423,7 +473,7 @@ UAT_INFO.invalid                  #undefined|true. true if token was reset|delet
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:          UAT DEVICE           :==(
+                                            )==:       UAT DEVICE FIRST        :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
@@ -446,7 +496,7 @@ createOAuthDeviceAuth(DDOPTS)
  ->DAPP
 DAPP(DOPTS)->>UAT_INFO            #Does createDeviceCode() then poll with exchangeDeviceCode()
 
-POST /login/device/code           #First step
+POST /login/device/code           #First step of device flow
 REQ.client_id                     #CLIENT_ID
 
 @octokit/oauth-methods
@@ -459,7 +509,19 @@ RES|RET.device_code               #'DEVICE_CODE'
 RES|RET.user_code                 #'USER_CODE'
 RES|RET.expires_in                #NUM (in secs, always 15m). For DEVICE_CODE|USER_CODE
 
-POST /login/oauth/access_token    #Second step, to poll
+PPOPTS|UUOPTS|DDOPTS|NOPTS
+ .clientType                      #'APP_TYPE'
+UUOPTS|NOPTS.clientSecret         #'CLIENT_SECRET'. Only used if UOPTS.type defined
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:       UAT DEVICE SECOND       :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+POST /login/oauth/access_token    #Second step of device flow, to poll
 RES.*                             #Like web flow
 RES.error                         #'NAME' among:
                                   #  - 'authorization_pending': user has not entered USER_CODE yet
@@ -471,6 +533,7 @@ RES.error                         #'NAME' among:
                                   #  - 'unsupported_grant_type': invalid ?grant_type
                                   #  - 'device_flow_disabled': device flow not enabled in settings
 
+@octokit/oauth-methods
 exchangeDeviceCode(NOPTS)->>RET   #POST /login/oauth/access_token
 RET.*                             #Like exchangeWebFlowCode()
 
@@ -481,10 +544,6 @@ REQ.device_code
 NOPTS.code                        #'DEVICE_CODE'
 REQ.grant_type                    #Always 'urn:ietf:params:oauth:grant-type:device_code'
 REQ.repository_id                 #REPO_ID. Restrict permissions to only this REPO
-
-PPOPTS|UUOPTS|DDOPTS|NOPTS
- .clientType                      #'APP_TYPE'
-UUOPTS|NOPTS.clientSecret         #'CLIENT_SECRET'. Only used if UOPTS.type defined
 
 AOPTS|POPTS|UUOPTS|DDOPTS         #FUNC(RET)[->>] called with createDeviceCode() response
  .onVerification                  #User must input 'USER_CODE' in VERIFY_URL
@@ -622,8 +681,8 @@ scopeToken(VOPTS)->>VRET          #POST /applications/CLIENT_ID/token/scoped
 
 VOPTS.accessToken
 REQ.access_token                  #'ACCESS_TOKEN'
-VOPTS.permissions.API_PERMISSION
-REQ.permissions.API_PERMISSION    #STR.
+VOPTS.permissions.TOKEN_PERMISSION
+REQ.permissions.TOKEN_PERMISSION  #STR.
 VOPTS.target
 REQ.target                        #Restrict only to that 'USER|ORG'
 VOPTS.targetId
@@ -674,65 +733,17 @@ deleteAuthorization(VOPTS)->>RET  #DELETE /applications/CLIENT_ID/grant
 VOPTS|REQ.access_token            #'ACCESS_TOKEN'
 
 
+
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:          AUTH COMMON          :==(
+                                            )==:        APP PERMISSIONS        :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
-@octokit/auth-app                 #Version 5.0.6
-                                  #Node/Deno
-                                  #Handles UAT, APP_JWT, Basic auth, IAT
-createAppAuth(AAOPTS)->AAPP       #
-AAPP(AOPTS)->>JWT_INFO|BASIC_INFO
- |INSTALL_INFO|UAT_INFO           #
-AAOPTS.appId|privateKey           #Required, even if not used by the specific flow
-AAOPTS.log                        #OBJ with `warn` method (def: console)
-                                  #Used to log time skew errors, or HTTP retries
-
-@octokit/auth-oauth-app           #Version 6.0.1
-                                  #Node/Deno
-                                  #Handles UAT, APP_JWT
-createOAuthAppAuth(PPOPTS)->PAPP  #
-PAPP(POPTS)->>OBJ                 #
-
-@octokit/auth-oauth-user          #Version 3.0.1
-                                  #Node/Deno
-                                  #Handles UAT
-
-@octokit/auth-app
-@octokit/auth-oauth-app
-@octokit/auth-oauth-user
-createOAuthUserAuth(UUOPTS)->UAPP #
-UAPP(UOPTS)->>UAT_INFO            #Forwards to exchangeWebFlowCode|createOAuthDeviceAuth()
-                                  #Cached, i.e. only done once
-
-octokit-auth-NAME.js/X.Y.Z
- BROWSER_USER_AGENT [C]           #NAME depends on module used: app, oauth-app, oauth-device
-
-AAPP|PAPP|DAPP|UAPP               #Like REQUEST(...) (see @octokit/request)
- .hook(REQUEST, ...)->>RET        #But using the right Authorization [C] depending on the request.
-                                  #With APP_JWT, handles time skew errors
-                                  #With IAT, retries with exponential backoff since newly created IAT sometimes need it
-                                  #Can be used as REQUEST's UUOPTS.request.hook
-
-FOPTS|EOPTS|VOPTS|[D]DOPTS|MOPTS
- |NOPTS|AAOPTS|[P]POPTS|UUOPTS
- .request                         #REQUEST (from @octokit/request)
-
-AOPTS|POPTS.factory               #FUNC. Calls and returns FUNC([A]AOPTS|[P]POPTS)
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:          PERMISSIONS          :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-PERMISSIONS ==>                   #Can be 'read', 'write' or 'admin'
+APP PERMISSIONS ==>               #Can be 'read', 'write' or 'admin'
                                   #Can be for an ORG, a REPO or a USER
+
 ORG PERMISSIONS ==>               #
 administration                    #ORG CRUD|settings
 blocking_users                    #ORG banned users
@@ -797,15 +808,16 @@ watching                          #
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:        API PERMISSIONS        :==(
+                                            )==:       TOKEN PERMISSIONS       :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
-API PERMISSIONS ==>               #Can be:
+TOKEN PERMISSIONS ==>             #Can be:
                                   #  - 'read': not with workflows
                                   #  - 'write': not with organization_plan
                                   #  - 'admin': only with repository|organization_projects
+
 contents                          #Repo git contents and metadata (commits, branches, releases, etc.)
 single_file                       #Repo git single file
 administration                    #Repo CRUD|settings|teams
@@ -847,7 +859,9 @@ organization_self_hosted_runners  #ORG self-hosted CI runners
                                              \=+===============================+=/
 
 
-cleanup OAuth docs???
+Finish documenting octokit
+
+Document probot
 
 Finish docs, stopped at https://docs.github.com/en/apps/publishing-apps-to-github-marketplace/github-marketplace-overview/about-github-marketplace-for-apps ???
 
