@@ -439,6 +439,32 @@ SECRET_OUTPUTS.token              #'JWT' (IAT)
 
                                              /=+===============================+=\
                                             /  :                               :  \
+                                            )==:   UNIVERSAL-GITHUB-APP-JWT    :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+universal-github-app-jwt          #Version 1.1.1
+                                  #Node/Deno/browsers
+
+githubAppJwt(JOPTS)->>JWT_INFO    #Create APP_JWT
+
+JOPTS.privateKey                  #'APP_PRIVATE_KEY'
+                                  #In browsers/Deno, must first convert from PKCS#1 to PKCS#8
+                                  #  openssl pkcs8 -topk8 -inform PEM -outform PEM -nocrypt -in OLD_APP_PRIVATE_KEY.pem -out NEW_APP_PRIVATE_KEY.key
+JWT_INFO.token                    #'APP_JWT'
+
+JOPTS.now                         #NUM (in secs, def: now)
+                                  #Used as JWT_PAYLOAD.iat, minus 30 (for time clock drift)
+JWT_INFO.expiration               #JWT_PAYLOAD.exp
+                                  #10 minutes from JWT_PAYLOAD.iat
+
+JOPTS.id
+JWT_INFO.appId                    #'APP_ID', used as JWT_PAYLOAD.iss
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
                                             )==:           AUTH-APP            :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -453,18 +479,18 @@ octokit-auth-app.js/X.Y.Z
 
 createOAuthUserAuth(...)          #Forwards to @octokit/auth-oauth-user
 
-createAppAuth(OPTS)->AAPP         #
+createAppAuth(AAOPTS)->AAPP       #
 AAPP(AOPTS)->>AUTH_STATE          #
-OPTS.appId                        #APP_ID_NUM
-OPTS.privateKey                   #'APP_PRIVATE_KEY'
-                                  #In Deno, same issue as universal-github-app-jwt
-OPTS.installationId               #'INSTALLATION_ID'
-OPTS.log                          #OBJ with `warn` method (def: console)
+AAOPTS.appId|privateKey           #Required, even if not used by the specific flow
+AAOPTS.log                        #OBJ with `warn` method (def: console)
                                   #Used to log time skew errors, or HTTP retries
-OPTS.request                      #REQUEST (from @octokit/request)
+AAOPTS.request                    #REQUEST (from @octokit/request)
 
 AOPTS.type 'app'                  #Create APP_JWT. Forwards to universal-github-app-jwt
-OPTS.timeDifference               #NUM (def: 0)
+AAOPTS.appId                      #APP_ID_NUM
+AAOPTS.privateKey                 #'APP_PRIVATE_KEY'
+                                  #In Deno, same issue as universal-github-app-jwt
+AAOPTS.timeDifference             #NUM (def: 0)
 AUTH_STATE.type                   #Always 'app'
 AUTH_STATE.token                  #'APP_JWT'
 AUTH_STATE.appId                  #APP_ID_NUM
@@ -473,19 +499,20 @@ AUTH_STATE.expiresAt              #'DATE'
 AOPTS.type 'installation'         #Create IAT
                                   #Calls POST /app/installations/INSTALLATION_ID/access_tokens
                                   #Authenticated with a APP_JWT
-OPTS.timeDifference               #Same as above
-[A]OPTS.installationId            #'INSTALLATION_ID'
+AAOPTS
+ .appId|privateKey|timeDifference #Like AOPTS.type 'app'
+[A]AOPTS.installationId           #'INSTALLATION_ID'
 AOPTS.permissions|repositoryIds
  |repositoryNames                 #REQ.*
 AOPTS.refresh                     #BOOL. If false (def), caches IAT
-OPTS.cache                        #Customize cache
+AAOPTS.cache                      #Customize cache
                                   #OBJ: get('KEY')->'IAT', set('KEY', 'IAT')
                                   #Def:
                                   #  - lru-cache (see its doc)
                                   #  - in-memory
                                   #  - max 15e3 items
                                   #  - max 1 hour (same as IAT expiration time)
-AOPTS.factory                     #FUNC. Calls and returns FUNC([A]OPTS)
+AOPTS.factory                     #FUNC. Calls and returns FUNC([A]AOPTS)
 AUTH_STATE.type                   #Always 'token'
 AUTH_STATE.tokenType              #'installation'
 AUTH_STATE.token                  #'IAT'
@@ -496,14 +523,23 @@ AUTH_STATE.permissions
  |singleFileName|createdAt
  |expiresAt                       #From HTTP RES
 
-AOPTS.type 'oauth-user'           #Forwards to @octokit/auth-oauth-app createOAuthAppAuth(OPTS)(AOPTS)
+AOPTS.type 'oauth-user'           #Forwards to @octokit/auth-oauth-app createOAuthAppAuth(AAOPTS)({ ...AOPTS, type: 'oauth-user' })
                                   #I.e. second step of UAT
-                                  #clientType always 'github-app'
-OPTS.clientId|clientSecret
-AOPTS.code|redirectUrl|factory
+[A]AOPTS.clientId|clientSecret
+AOPTS.code|redirectUrl|factory    #If web flow
+[A]AOPTS.clientId
+AOPTS.onVerification|auth.refresh
+ |factory                         #If device flow
+[A]AOPTS.clientId
+AOPTS.clientSecret|token
+ |refreshToken|expiresAt
+ |refreshTokenExpiresAt|factory   #Re-use previous token
 AUTH_STATE.*                      #Like createOAuthAppAuth()
 
-AOPTS.type 'oauth-app'            #Same with type 'oauth-app', i.e. Authorization: Basic [C]
+AOPTS.type 'oauth-app'            #Forwards to @octokit/auth-oauth-app createOAuthAppAuth(AAOPTS)({ ...AOPTS, type: 'oauth-app' })
+                                  #I.e. Authorization: Basic [C]
+AAOPTS.clientId|clientSecret
+AUTH_STATE.*                      #Like createOAuthAppAuth()
 
 AAPP.hook(REQUEST, ...)->>RES     #Like REQUEST(...) (see @octokit/request) but using:
                                   #  - Authorization: APP_JWT [C]
@@ -517,31 +553,6 @@ AAPP.hook(REQUEST, ...)->>RES     #Like REQUEST(...) (see @octokit/request) but 
                                   #     - if /applications/APP/token|grant
                                   #Can be used as REQUEST's OPTS.request.hook
 
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:   UNIVERSAL-GITHUB-APP-JWT    :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-universal-github-app-jwt          #Version 1.1.1
-                                  #Node/Deno/browsers
-
-githubAppJwt(OPTS)->>JWT_INFO     #Create APP_JWT
-
-OPTS.privateKey                   #'APP_PRIVATE_KEY'
-                                  #In browsers/Deno, must first convert from PKCS#1 to PKCS#8
-                                  #  openssl pkcs8 -topk8 -inform PEM -outform PEM -nocrypt -in OLD_APP_PRIVATE_KEY.pem -out NEW_APP_PRIVATE_KEY.key
-OBJ.token                         #'APP_JWT'
-
-OPTS.now                          #NUM (in secs, def: now)
-                                  #Used as JWT_PAYLOAD.iat, minus 30 (for time clock drift)
-OBJ.expiration                    #JWT_PAYLOAD.exp
-                                  #10 minutes from JWT_PAYLOAD.iat
-
-OPTS.id
-OBJ.appId                         #'APP_ID', used as JWT_PAYLOAD.iss
 
 
                                              /=+===============================+=\
@@ -559,27 +570,30 @@ octokit-auth-oauth-app.js/X.Y.Z
 
 createOAuthUserAuth(...)          #Forwards to @octokit/auth-oauth-user
 
-createOAuthAppAuth(OPTS)->OAPP    #
-OPTS.*                            #Like createOAuthUserAuth()
+createOAuthAppAuth(PPOPTS)->PAPP  #
+PAPP(POPTS)->>OBJ                 #
 
-OAPP(AOPTS)->>AUTH_STATE          #
-AOPTS.type                        #Either:
-                                  #  - 'oauth-user':
-                                  #     - for second server-side step of UAT
-                                  #     - return AUTH_STATE from @octokit/auth-oauth-user
-                                  #  - 'oauth-app':
-                                  #     - for Authorization: Basic [C]
-                                  #     - return OAPP_RESP
-AOPTS.factory                     #FUNC. Calls and returns FUNC({ ...OPTS, ...AOPTS })
+POPTS.type 'oauth-user'           #For second server-side step of UAT
+                                  #Forwards to @octokit/auth-oauth-user and returns its AUTH_STATE
+[P]POPTS.request                  #REQUEST (from @octokit/request)
+POPTS.factory                     #FUNC. Calls and returns FUNC({ ...PPOPTS, ...POPTS })
+PPOPTS.clientType
+[P]POPTS.clientId|clientSecret
+POPTS.redirectUrl|code            #If web flow
+PPOPTS.clientType
+[P]POPTS.clientId
+POPTS.onVerification|auth.refresh #If device flow
 
-OAPP_RESP.type|clientType
- |clientId|clientSecret           #From OPTS.*
-OAPP_RESP.headers.authorization   #'basic BASE64(CLIENT_ID:CLIENT_SECRET)'
+POPTS.type 'oauth-app'            #For Authorization: Basic [C]
+                                  #Return PAPP_RESP
+PPOPTS|PAPP_RESP.type|clientType
+ |clientId|clientSecret           #
+PAPP_RESP.headers.authorization   #'basic BASE64(CLIENT_ID:CLIENT_SECRET)'
 
-OAPP.hook(REQUEST, ...)->>RES     #Like REQUEST(...) (see @octokit/request) but using:
+PAPP.hook(REQUEST, ...)->>RES     #Like REQUEST(...) (see @octokit/request) but using:
                                   #  Authorization: Basic BASE64(CLIENT_ID:CLIENT_SECRET) [C]
                                   #Only if /applications/APP/token|grant
-                                  #Can be used as REQUEST's OPTS.request.hook
+                                  #Can be used as REQUEST's PPOPTS.request.hook
 
 
                                              /=+===============================+=\
@@ -592,12 +606,22 @@ OAPP.hook(REQUEST, ...)->>RES     #Like REQUEST(...) (see @octokit/request) but 
 @octokit/auth-oauth-user          #Version 3.0.1
                                   #Node/Deno
 
-createOAuthUserAuth(OPTS)->OUAPP  #
-OPTS.*                            #Like exchangeWebFlowCode()
-OPTS.onTokenCreated               #FUNC(AUTH_STATE, { type: OPTS.type }) called by OUAPP(OPTS) on creation|refresh|reset
+createOAuthUserAuth(UUOPTS)->UAPP #
+UUOPTS.clientType|clientId
+ |clientSecret|redirectUrl|code   #If web flow, like exchangeWebFlowCode()
+UUOPTS.onVerification|clientType
+ |clientId|clientSecret           #If device flow, like createOAuthDeviceAuth()
+ |auth.refresh                    #UUOPTS.clientSecret only used if UOPTS.type defined
+UUOPTS.request                    #REQUEST (from @octokit/request)
+UUOPTS.onTokenCreated             #FUNC(AUTH_STATE, { type: UUOPTS.type }) called by UAPP(UUOPTS) on:
+                                  #  - creation (only with web flow)
+                                  #  - refresh (UOPTS.type 'refresh')
+                                  #  - reset (UOPTS.type 'reset')
 
-OUAPP(OPTS)->>AUTH_STATE          #Call exchangeWebFlowCode() from @octokit/oauth-methods
-OPTS.type                         #Can be:
+UAPP(UOPTS)->>AUTH_STATE          #Call exchangeWebFlowCode|createOAuthDeviceAuth() from @octokit/oauth-methods
+                                  #Cached, i.e. only done once
+UOPTS.type                        #Action on the token, among:
+                                  #  - 'get' (def): none
                                   #  - 'refresh': if ACCESS_TOKEN `expiresAt` old, call refreshToken()
                                   #  - 'check': call checkToken()
                                   #  - 'reset': call resetToken()
@@ -608,11 +632,12 @@ AUTH_STATE.tokenType              #Always 'oauth'
 AUTH_STATE.clientType|clientId
  |clientSecret|token|refreshToken
  |expiresAt|refreshTokenExpiresAt #Like RES.* from exchangeWebFlowCode()
+AUTH_STATE.invalid                #undefined|true. true if token was reset|deleted
 
-OUAPP.hook(REQUEST, ...)->>RES    #Like REQUEST(...) (see @octokit/request) but using:
-                                  #  - Authorization: Bearer ACCESS_TOKEN [C] (using OAUTH())
+UAPP.hook(REQUEST, ...)->>RES     #Like REQUEST(...) (see @octokit/request) but using:
+                                  #  - Authorization: Bearer ACCESS_TOKEN [C] (using UAPP())
                                   #  - Authorization: Basic BASE64(CLIENT_ID:CLIENT_SECRET) [C] (if /applications/APP/token|grant)
-                                  #Can be used as REQUEST's OPTS.request.hook
+                                  #Can be used as REQUEST's UUOPTS.request.hook
 
 
                                              /=+===============================+=\
@@ -628,23 +653,24 @@ OUAPP.hook(REQUEST, ...)->>RES    #Like REQUEST(...) (see @octokit/request) but 
 octokit-auth-oauth-device.js/X.Y.Z
  BROWSER_USER_AGENT [C]           #
 
-createOAuthDeviceAuth(OPTS)->DAPP #Get UAT with device flow
+createOAuthDeviceAuth(DDOPTS)
+ ->DAPP                           #Get UAT with device flow
 DAPP(DOPTS)->>AUTH_STATE          #Uses @octokit/oauth-methods createDeviceCode() and exchangeDeviceCode()
                                   #Automatically polls
 
-OPTS.clientType
-OPTS.clientId
-[D]OPTS.request                   #Like createDeviceCode()
-OPTS.onVerification               #FUNC(RES)[->>] called with createDeviceCode() response
+DDOPTS.clientType
+DDOPTS.clientId
+[D]DOPTS.request                  #Like createDeviceCode()
+DDOPTS.onVerification             #FUNC(RES)[->>] called with createDeviceCode() response
                                   #User must input 'USER_CODE' in VERIFY_URL
                                   #E.g. should print|show instructions
-OPTS.auth.refresh                 #BOOL (def: false). Forces re-using it even when calling DAPP() several times
+DDOPTS.auth.refresh               #BOOL (def: false). Forces re-using it even when calling DAPP() several times
 
 AUTH_STATE.*                      #Like auth-oauth-user
 
 DAPP.hook(REQUEST, ...)->>RES     #Like REQUEST(...) (see @octokit/request) but using:
                                   #  Authorization: Bearer ACCESS_TOKEN [C] (using DAPP())
-                                  #Can be used as REQUEST's OPTS.request.hook
+                                  #Can be used as REQUEST's DDOPTS.request.hook
 
 
                                              /=+===============================+=\
@@ -662,13 +688,13 @@ getWebFlowAuthorizationUrl        #Forwards to @octokit/oauth-authorization-url
  (OPTS)->RES                      #I.e. gets AUTH_URL to start flow for UAT
 OPTS.request                      #REQUEST (@octokit/request)
 
-exchangeWebFlowCode(OPTS)->>RES   #POST /login/oauth/access_token, i.e. second server-side step for UAT
-OPTS.clientType
-OPTS.clientId
-OPTS.redirectUrl
-OPTS.request                      #Like getWebFlowAuthorizationUrl()
-OPTS.clientSecret                 #'CLIENT_SECRET'
-OPTS.code                         #'CODE'
+exchangeWebFlowCode(EOPTS)->>RES  #POST /login/oauth/access_token, i.e. second server-side step for UAT
+EOPTS.clientType
+EOPTS.clientId
+EOPTS.redirectUrl
+EOPTS.request                     #Like getWebFlowAuthorizationUrl()
+EOPTS.clientSecret                #'CLIENT_SECRET'
+EOPTS.code                        #'CODE'
 
 RES.authentication.token          #'ACCESS_TOKEN'
 RES.refresh_token                 #'REFRESH_TOKEN'
@@ -676,6 +702,15 @@ RES.expiresAt                     #DATE
 RES.refreshTokenExpiresAt         #DATE
 RES.authentication.
  clientType|clientId|clientSecret #Like OPTS.*
+
+createDeviceCode(OPTS)->>RES      #POST /login/device/code
+OPTS.clientId|request             #
+RES.*                             #Response from that API method
+
+exchangeDeviceCode(OPTS)->>RES    #POST /login/oauth/access_token
+OPTS.*                            #Like exchangeWebFlowCode() but no code
+OPTS.clientSecret                 #Not used, but sets RES.authentication.clientSecret
+RES.*                             #Like exchangeWebFlowCode()
 
 refreshToken(OPTS)->>RES          #POST /login/oauth/access_token, for refresh
 OPTS.*                            #Like exchangeWebFlowCode(), but no code
@@ -702,15 +737,6 @@ RES.*                             #Response from that API method
 deleteAuthorization(OPTS)->>RES   #DELETE /applications/CLIENT_ID/grant
 OPTS.*                            #Like checkToken()
 RES.*                             #Response from that API method
-
-createDeviceCode(OPTS)->>RES      #POST /login/device/code
-OPTS.clientId|request             #
-RES.*                             #Response from that API method
-
-exchangeDeviceCode(OPTS)->>RES    #POST /login/oauth/access_token
-OPTS.*                            #Like exchangeWebFlowCode() but no code
-OPTS.clientSecret                 #Not used, but sets RES.authentication.clientSecret
-RES.*                             #Like exchangeWebFlowCode()
 
 
                                              /=+===============================+=\
@@ -742,8 +768,6 @@ RES.url                           #'BASE_URL/login/oauth/authorize?VARs' using O
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
-
-See how auth-oauth-device is used in other modules, e.g. in auth-oauth-user, auth-oauth-app, etc. ???
 
 cleanup OAuth docs???
 
