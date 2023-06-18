@@ -189,7 +189,8 @@ https://x-access-token:IAT
                                              \=+===============================+=/
 
 
-OAUTH ==>                         #Used to get|refresh ACCESS_TOKEN ("user access token", UAT) (see OAuth doc)
+OAUTH ==>                         #Used to get|refresh ACCESS_TOKEN ("user access token", UAT)
+                                  #See OAuth doc for flow and signification of some variables
                                   #ACCESS_TOKEN always start with ghu_*
                                   #REFRESH_TOKEN always start with ghr_*
                                   #Alternative flow if mobile app (instead of browser), not documented yet
@@ -207,11 +208,6 @@ TOKEN_URL                         #/login/oauth/access_token
                                   #Expiration must be opted in
                                   #Always 8h for ACCESS_TOKEN, 6 months for REFRESH_TOKEN
 
-REVOKE_URL                        #DELETE /applications/CLIENT_ID/token
-                                  #Can also be done by user through UI
-github_app_authorization          #Webhook triggered by REVOKE_URL
-                                  #Should undo the app logic for that user
-
 ?response_type|grant_type|scope   #Not present
 
 ?login=USER                       #Prompt user to login
@@ -222,8 +218,28 @@ github_app_authorization          #Webhook triggered by REVOKE_URL
 
 REQ.repository_id                 #REPO_ID. Only give permissions to this REPO
                                   #In POST AUTH_URL request body
-RES.refresh_token_expires_in      #NUM (in secs). REFRESH_TOKEN expiration time
-                                  #In POST AUTH_URL response body
+
+DEVICE FLOW ==>                   #Must be used when client is not a browser, e.g. a CLI or mobile|desktop app
+                                  #Must be enabled in settings (beta feature)
+DEVICE_AUTH_URL                   #/login/device/code
+VERIFY_URL                        #/login/device
+DEVICE_TOKEN_URL                  #/login/oauth/access_token
+DEVICE_TOKEN_RES.interval         #5s
+DEVICE_TOKEN_RES.expires_in       #15m
+DEVICE_TOKEN_POLL.grant_type      #'urn:ietf:params:oauth:grant-type:device_code'
+DEVICE_TOKEN_POLL.repository_id   #REPO_ID. Restrict permissions to only this REPO
+DEVICE_ACCESS_TOKENS.error        #'NAME' among:
+                                  #  - 'authorization_pending': user has not entered USER_CODE yet
+                                  #  - 'access_denied': user clicked cancel
+                                  #  - 'expired_token': DEVICE_CODE expired
+                                  #  - 'slow_down': polling too fast
+                                  #  - 'incorrect_client_credentials': invalid CLIENT_ID
+                                  #  - 'incorrect_device_code': invalid DEVICE_CODE
+                                  #  - 'unsupported_grant_type': invalid ?grant_type
+                                  #  - 'device_flow_disabled': device flow not enabled in settings
+
+ACCESS_TOKENS
+ .refresh_token_expires_in        #NUM (in secs). REFRESH_TOKEN expiration time
 
 Authorization:                    #Authenticate as a GitHub app user ("user-to-server")
  Bearer ACCESS_TOKEN [C]          #Permissions on behalf of user
@@ -272,6 +288,11 @@ RES.*                             #Like POST /applications/CLIENT_ID/token, exce
 DELETE
  /applications/CLIENT_ID/grant    #Delete an APP "authorization" for a given install
 REQ.access_token                  #'ACCESS_TOKEN'
+
+REVOKE_URL                        #DELETE /applications/CLIENT_ID/token
+                                  #Can also be done by user through UI
+github_app_authorization          #Webhook triggered by REVOKE_URL
+                                  #Should undo the app logic for that user
 
 
                                              /=+===============================+=\
@@ -596,6 +617,38 @@ OUAPP.hook(REQUEST, ...)->>RES    #Like REQUEST(...) (see @octokit/request) but 
 
                                              /=+===============================+=\
                                             /  :                               :  \
+                                            )==:       AUTH-OAUTH-DEVICE       :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+@octokit/auth-oauth-device        #Version 5.0.2
+                                  #Node/Deno/browsers
+
+octokit-auth-oauth-device.js/X.Y.Z
+ BROWSER_USER_AGENT [C]           #
+
+createOAuthDeviceAuth(OPTS)->DAPP #Get UAT with device flow
+DAPP(DOPTS)->>AUTH_STATE          #Uses @octokit/oauth-methods createDeviceCode() and exchangeDeviceCode()
+                                  #Automatically polls
+
+OPTS.clientType
+OPTS.clientId
+[D]OPTS.request                   #Like createDeviceCode()
+OPTS.onVerification               #FUNC(RES)[->>] called with createDeviceCode() response
+                                  #User must input 'USER_CODE' in VERIFY_URL
+                                  #E.g. should print|show instructions
+OPTS.auth.refresh                 #BOOL (def: false). Forces re-using it even when calling DAPP() several times
+
+AUTH_STATE.*                      #Like auth-oauth-user
+
+DAPP.hook(REQUEST, ...)->>RES     #Like REQUEST(...) (see @octokit/request) but using:
+                                  #  Authorization: Bearer ACCESS_TOKEN [C] (using DAPP())
+                                  #Can be used as REQUEST's OPTS.request.hook
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
                                             )==:         OAUTH-METHODS         :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -650,7 +703,14 @@ deleteAuthorization(OPTS)->>RES   #DELETE /applications/CLIENT_ID/grant
 OPTS.*                            #Like checkToken()
 RES.*                             #Response from that API method
 
-hook
+createDeviceCode(OPTS)->>RES      #POST /login/device/code
+OPTS.clientId|request             #
+RES.*                             #Response from that API method
+
+exchangeDeviceCode(OPTS)->>RES    #POST /login/oauth/access_token
+OPTS.*                            #Like exchangeWebFlowCode() but no code
+OPTS.clientSecret                 #Not used, but sets RES.authentication.clientSecret
+RES.*                             #Like exchangeWebFlowCode()
 
 
                                              /=+===============================+=\
@@ -683,6 +743,10 @@ RES.url                           #'BASE_URL/login/oauth/authorize?VARs' using O
                                              \=+===============================+=/
 
 
+See how auth-oauth-device is used in other modules, e.g. in auth-oauth-user, auth-oauth-app, etc. ???
+
+cleanup OAuth docs???
+
 Finish docs, stopped at https://docs.github.com/en/apps/publishing-apps-to-github-marketplace/github-marketplace-overview/about-github-marketplace-for-apps ???
 
 Marketplace:
@@ -694,12 +758,4 @@ Marketplace:
   - logo
   - can set a price
 
-https://docs.github.com/en/rest/apps/apps?apiVersion=2022-11-28 ???
-
-learn the device flow, because it is needed for CLIs ???
-  - including:
-     - API:
-        - POST /login/device/code
-        - POST /login/oauth/access_token with REQ.device_code|grant_type
-     - @octokit/auth-oauth-device
-     - @octokit/oauth-methods: createDeviceCode(), exchangeDeviceCode()
+Document https://docs.github.com/en/rest/apps/apps?apiVersion=2022-11-28 ???
