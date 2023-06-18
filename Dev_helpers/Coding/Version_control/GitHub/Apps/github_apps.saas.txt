@@ -51,26 +51,26 @@ Webhooks:
   - prefer https
 
 APP_ID
-  - ID of app
+  - ID of app, secret
   - can get with GET /app
 
+APP_PRIVATE_KEY
+  - app secret
+  - PEM format (PKCS#1 RSAPrivateKey)
+  - not stored by GitHub, i.e. only shown once
+
 CLIENT_ID
-  - secret meant to generate UATs
+  - OAuth CLIENT_ID, public
   - can get from app settings UI
 
-Authorization flow:
-  - client secrets:
-     - one per user, private
-     - used to generate user access tokens
-  - callback URL:
-     - redirected to on installation
-     - meant to generate user access tokens
-     - can|should specify multiple ones
-  - setup URL:
-     - redirected on after installation
-        - or on update
-     - meant for docs
-     - cannot be done together callback URL
+CLIENT_SECRET
+  - OAuth CLIENT_SECRET, private
+  - can get from app settings UI
+
+Setup URL:
+  - redirected on after installation
+     - or on update
+  - meant for docs
 
 Installation:
   - single installation of an app
@@ -83,10 +83,6 @@ Installation:
         - GET /repos/USER/REPO/installation
 
 Authentication:
-  - private key
-     - of the app itself, not visible to users
-     - PEM format (PKCS#1 RSAPrivateKey)
-     - not stored by GitHub, i.e. only shown once
   - as the app
      - using a JWT
         - creation:
@@ -96,13 +92,16 @@ Authentication:
               - iat DATE_NUM
               - exp DATE_NUM: max iat + 10min
               - iss 'APP_ID'
-           - JWT private key is app private key
+           - JWT private key is APP_PRIVATE_KEY
         - passed to Authorization: Bearer JWT [C]
   - as the app installation
      - also called "server-to-server"
      - requires an app "install"
      - read|write access a repo|org
      - actions shown as done by app
+     - can be restricted to:
+        - specific repositories
+        - specific permissions
      - use installation access token (IAT)
         - creation:
            - POST /app/installations/INSTALLATION_ID/access_tokens
@@ -111,31 +110,66 @@ Authentication:
            - for HTTP-based git, use: https://x-access-token:JWT@github.com/USER/REPO.git
         - only valid 1 hour, no refresh, but can re-create
         - not restricted by user permissions
-        - can be restricted to:
-           - specific repositories
-           - specific permissions
   - as the user
      - also called "user-to-server"
      - requires an app "authorize"
      - act on behalf of user, for other things than repo|org
         - i.e. some actions only available like this
      - shown as done by user, with additional hint it's been done through an app
+     - restricted by user permissions
      - use user access token (UAT)
         - uses OAuth
-        - flows:
-           - in the browser:
-              - GET https://github.com/login/oauth/authorize
-                 - ?client_id=CLIENT_ID
-                 - ?redirect_uri=CALLBACK_URL
-                 - ?state=OBJ
-        - expiration:
-           - expire every 8h
-           - can refresh
-           - refresh tokens expire every 6 months
-        - users can revoke it
+        - alternative flow if mobile app (instead of browser)
+        - flow (see OAuth doc):
+           - AUTH_URL: https://github.com/login/oauth/authorize
+           - no response_type|grant_type parameters
+           - no scope parameters, always '' in response
+           - CALLBACK_URL:
+              - def: ones specified in App settings
+              - can|should specify multiple ones
+           - additional parameters to GET AUTH_URL:
+              - ?login=USER: prompt user to login
+              - ?allow_signup=BOOL (def: true): allow unauthenticated users to signup, not only login
+           - additional parameters to POST AUTH_URL:
+              - repository_id REPO_ID: only permissions for this REPO
+           - additional response from POST AUTH_URL:
+              - refresh_token_expires_in
+           - ACCESS_TOKEN start with ghu_*, REFRESH_TOKEN with ghr_*
+        - can choose wheter to do it at installation time, instead of at first usage time
+           - installation redirects to GET https://github.com/login/oauth/authorize
+           - CALLBACK_URL: always use default one
+           - no ?state
+        - refreshing
+           - expiration must be opted in
+           - always 8h for ACCESS_TOKEN, 6 months for REFRESH_TOKEN
+           - flow (see OAuth doc): TOKEN_URL https://github.com/login/oauth/access_token
+        - revoking:
+           - DELETE /applications/CLIENT_ID/token
+           - can also be done by user
            - triggers 'github_app_authorization' webhook
-           - should undo the app logic for that user
-        - restricted by user permissions
+              - should undo the app logic for that user
+        - passed as Authorization: Bearer ACCESS_TOKEN [C]
+
+Stopped at: https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/making-authenticated-api-requests-with-a-github-app-in-a-github-actions-workflow
+
+tidbex/github-app-token           #GitHub action to get a currently installed GitHub app's IAT
+                                  #Goal: use it instead of current GITHUB_TOKEN
+                                  #Only needed when current GITHUB_TOKEN is missing permissions that GitHub app has
+                                  #  - including access to other repos
+                                  #Version 1.8.0
+                                  #Checked internal code ???
+INPUTS.app_id                     #APP_ID (should use secrets)
+INPUTS.private_key                #APP_PRIVATE_KEY (should use secrets), base64'd or not
+INPUTS.installation_id            #INSTALLATION_ID
+INPUTS.repository                 #'USER/REPO' (def: current one)
+INPUTS.permissions                #'OBJ_JSON'
+INPUTS.github_api_url             #'URL' of GitHub API (for GitHub enterprise)
+OUTPUTS.token                     #'JWT' (IAT)
+
+@octokit/auth-app                 #???
+
+@octokit/auth-oauth-app           #Node.js or Deno (through esm.sh)
+                                  #Version 6.0.1
 
 Registering:
   - by user or org
