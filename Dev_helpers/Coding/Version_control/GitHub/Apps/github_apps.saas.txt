@@ -77,9 +77,8 @@ MANIFEST.default_permissions      #STR
 MANIFEST.request_oauth_on_install #BOOL (def: false). Ask to both "install" and "authorize"
 
 ?webhook_active                   #BOOL (def: false). Trigger webhooks
-MANIFEST.hook_attributes.active   #See GitHub webhooks doc, including:
-                                  #  - EVENTs github_app_authorization, installation[_repositories|target], marketplace_purchase
-                                  #  - PAYLOAD.installation, XWEBHOOK_DELIVERY.installation_id
+MANIFEST.hook_attributes.active   #See GitHub webhooks doc
+                                  #  - including PAYLOAD.installation, XWEBHOOK_DELIVERY.installation_id
 ?webhook_url
 MANIFEST.hook_attributes.url      #"WEBHOOK_URL". Uses POST. Prefer https
 ?events
@@ -159,11 +158,28 @@ XINSTALLATION.html_url
 /organizations/github/settings
  /installations/INSTALLATION_ID   #App URL in the UI
 
+installation.created|deleted      #Webhook SUBEVENT. GitHub app [un]install
+PAYLOAD.repository                #REPO which installed it
+PAYLOAD.repositories              #REPO_ARR from XINSTALLATION.repository_selection
+PAYLOAD.requester                 #USER|ORG|null
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:        INSTALL SUSPEND        :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
 PUT|DELETE /app/installations     #[Un]pause APP. No permissions when paused
  /INSTALLATION_ID/suspended       #Empty RES
                                   #Must authenticate with APP_JWT
 XINSTALLATION.suspended_at        #'DATE'|null
 XINSTALLATION.suspended_by        #USER|null
+
+installation.[un]suspend          #Webhook SUBEVENT
+PAYLOAD.repository|repositories
+ |requester                       #Same as above
 
 
                                              /=+===============================+=\
@@ -203,6 +219,23 @@ GET /installations/repositories   #Must authenticate with IAT
 
 GET /user/installations           #REPO_ARR using this APP installation
  /INSTALLATION_ID/repositories    #Must authenticate with UAT
+
+installation_repositories
+ .added|removed                   #Webhook SUBEVENT. Adding|removing more REPOs to a GitHub app installation
+PAYLOAD.repository                #REPO
+PAYLOAD.repository_selection      #'all|selected' like XINSTALLATION.repository_selection
+PAYLOAD.requester                 #USER|ORG|null
+PAYLOAD.repository_added|removed  #CHANGED_REPO_ARR
+CHANGED_REPO.id                   #NUM
+CHANGED_REPO.node_id              #'NODE_ID'
+CHANGED_REPO.name                 #STR
+CHANGED_REPO.full_name            #STR
+CHANGED_REPO.private              #BOOL. Whether REPO is private
+
+installation_target               #Webhook SUBEVENT. Renamed USER|ORG using a GitHub app
+PAYLOAD.changes.login|slug.from   #STR
+PAYLOAD.target_type               #'User|Organization'
+PAYLOAD.account                   #ACCOUNT
 
 
                                              /=+===============================+=\
@@ -938,6 +971,9 @@ deleteAuthorization(VOPTS)->>RET  #DELETE /applications/CLIENT_ID/grant
 
 VOPTS|REQ.access_token            #'ACCESS_TOKEN'
 
+github_app_authorization.revoked  #Webhook SUBEVENT. User revoked UAT of a GitHub app
+                                  #No specific PAYLOAD.*
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -959,6 +995,11 @@ APP_PERMISSIONS.APP_PERMISSION    #PERMISSION_ENDPOINTS
 PERMISSION_ENDPOINTS
  .read|write|admin                #'HTTP_METHOD /PATH'_ARR
 PERMISSION_ENDPOINTS.url          #'DOCS_URL'
+
+installation
+ .new_permissions_accepted        #Webhook SUBEVENT. User accepted new API_PERMISSIONs for GitHub app
+PAYLOAD.repository|repositories
+ |requester                       #Same as above
 
 
                                              /=+===============================+=\
@@ -1068,6 +1109,21 @@ unknownRouteResponse(REQ_OBJ)     #Used on unknown route
 
                                              /=+===============================+=\
                                             /  :                               :  \
+                                            )==:           WEBHOOKS            :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+WEBHOOKS ==>                      #See Webhooks doc for other events, and for general info about webhooks
+
+PAYLOAD.installation              #GitHub app INSTALLATION, if any
+                                  #For any EVENT related to GitHub apps
+
+XWEBHOOK_DELIVERY.installation_id #INSTALLATION_ID|null, if GitHub app
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
                                             )==:          MARKETPLACE          :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -1078,8 +1134,13 @@ MARKETPLACE ==>                   #List of:
                                   #     - can require purchase
                                   #  - GitHub actions (see its doc)
 
+REQUIREMENTS ==>                  #Must:
+                                  #  - be public (not invite-only nor beta)
+
 VERIFICATION ==>                  #"Verified account" badge|filter
                                   #Required if paid plan
+                                  #Must associate and verify a domain name and support email
+                                  #Done through the UI
 
 GET /marketplace_listing/plans    #Must authenticate with APP_JWT
 XMPLAN.url
@@ -1141,3 +1202,18 @@ GET /user/marketplace_purchases
  /stubbed
 GET /marketplace_listing
  /stubbed/...                     #Same but with stubbed data, for testing
+
+marketplace_purchase              #Webhook EVENT
+                                  #Handling it is required
+PAYLOAD.effective_date            #'DATE', like XMCHANGE.effective_date
+PAYLOAD
+ .[previous_]marketplace_purchase #XMPURCHASE
+PAYLOAD.repository                #XREPO
+
+marketplace_purchase.purchased    #Webhook SUBEVENT. Purchased a PLAN
+marketplace_purchase              #Webhook SUBEVENT. Downgrading|upgrading|cancelling a PLAN started.
+ .pending_change                  #Wait until next billing cycle.
+marketplace_purchase
+ .pending_change_cancelled        #Webhook SUBEVENT. Cancelled a `pending_change`
+marketplace_purchase.changed      #Webhook SUBEVENT. Downgrading|upgrading a PLAN.
+marketplace_purchase.cancelled    #Webhook SUBEVENT. Cancelling a PLAN.
