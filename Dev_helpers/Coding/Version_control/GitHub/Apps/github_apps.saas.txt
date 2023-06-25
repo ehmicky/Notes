@@ -49,10 +49,12 @@ OAPP.eachRepository([OPTS])       #Iterate over all REPOs using the APP, using G
 OAPP.createNodeMiddleware([OPTS]) #Combines createNodeMiddleware() of @octokit/oauth-app + @octokit/webhooks
  ->FUNC(REQ, RES, FUNC2)          #
 OPTS.log                          #Like OOPTS.log
-OPTS.pathPrefix                   #
+OPTS.pathPrefix                   #'/PATH' (def: '/api/github'). Appended with /oauth|webhooks
 ???
 
 @octokit/oauth-app                #Version 5.0.0
+                                  #Node/Deno
+                                  #Browsers too, but secrets should not be exposed to client code
 
 new OAuthApp(YOPTS)               #YAPP
 OAuthApp.defaults(YOPTS)->OAuthApp#
@@ -83,7 +85,7 @@ YEVENT token.created              #
 
 handleRequest(YAPP, OPTS, REQ_OBJ)#Middleware that is generic, using REQ_OBJ|RES_OBJ
  ->>[RES_OBJ]                     #400 on invalid request body or query variables
-OPTS.pathPrefix                   #'/api/github/oauth'
+OPTS.pathPrefix                   #'/PATH' (def: '/api/github/oauth')
                                   #If REQ_OBJ.url does not start with it, returns undefined
 REQ_OBJ.method                    #'HTTP_METHOD'
 REQ_OBJ.url                       #'URL'
@@ -97,26 +99,35 @@ Access-Control-Allow-Methods:
 Access-Control-Allow-Headers:
  Content-Type, User-Agent,
  Authorization [S]                #
-GET PATH_PREFIX/login             #Forwards to YAPP.getWebFlowAuthorizationUrl(QUERY)
-                                  #302, empty RES, Location: CALLBACK_URL [S]
-GET PATH_PREFIX/callback          #
-POST PATH_PREFIX/token            #
-GET PATH_PREFIX/token             #
-PATCH PATH_PREFIX/token           #
-PATCH PATH_PREFIX/refresh-token   #
-POST PATH_PREFIX/token/scoped     #
-DELETE PATH_PREFIX/token          #
-DELETE PATH_PREFIX/grant          #
+GET PATH_PREFIX/login             #First UAT step, web flow
+                                  #Redirects (302 + Location [S]) to CALLBACK_URL
+                                  #CALLBACK_URL is YAPP.getWebFlowAuthorizationUrl() with QUERY.redirectUrl|state|allowSignup
+GET PATH_PREFIX/callback          #Second UAT step, web flow, as HTML
+                                  #Creates ACCESS_TOKEN with YAPP.createToken() with QUERY.code
+                                  #Can include QUERY.error[_description] STR
+POST PATH_PREFIX/token            #Second UAT step, web flow, as JSON
+                                  #Returns YAPP.createToken() with REQ.code|redirectUrl
+GET PATH_PREFIX/token             #Returns YAPP.checkToken(), using Authentication: token ACCESS_TOKEN [C]
+PATCH PATH_PREFIX/token           #Returns YAPP.resetToken(), using Authentication: token ACCESS_TOKEN [C]
+PATCH PATH_PREFIX/refresh-token   #Returns YAPP.refreshToken(), using Authentication: token ACCESS_TOKEN [C]
+POST PATH_PREFIX/token/scoped     #Returns YAPP.scopeToken(REQ), using Authentication: token ACCESS_TOKEN [C]
+DELETE PATH_PREFIX/token          #Returns YAPP.deleteToken(), using Authentication: token ACCESS_TOKEN [C]
+DELETE PATH_PREFIX/grant          #Returns YAPP.deleteAuthorization(), using Authentication: token ACCESS_TOKEN [C]
 
 unknownRouteResponse(REQ_OBJ)     #Used on unknown route
  ->RES_OBJ                        #404 with body 'Unknown route: HTTP_METHOD /PATH'
 
-createNodeMiddleware(???)
-sendResponse(???)
+createNodeMiddleware(YAPP[, OPTS])#Calls handleRequest(YAPP, OPTS), but as Express-style middleware
+ ->FUNC(REQ, RES, FUNC2)          #Uses Node.js APIs: REQ.url|method|headers, REQ ISTREAM and RES.writeHead|end()
 
-createWebWorkerHandler(???)
+createWebWorkerHandler            #FUNC() calls handleRequest(YAPP, OPTS), meant for Deno, Cloudflare workers, etc.
+ (YAPP[, OPTS])->FUNC(REQ)->>[RES]#RES is undefined if OPTS.pathPrefix does not match
+                                  #Uses Web APIs: REQ.url|method|headers|text and new Response()
 
-createAWSLambdaAPIGatewayV2Handler(???)
+createAWSLambdaAPIGatewayV2Handler#FUNC() calls handleRequest(YAPP, OPTS), meant for AWS Lambda through API Gateway
+ (YAPP[, OPTS])                   #RES is undefined if OPTS.pathPrefix does not match
+ ->FUNC(API_GATEWAY_REQ)          #Uses API_GATEWAY_REQ.requestContext.http.method, rawPath, requestContext.stage, rawQueryString, headers, body
+ ->>[API_GATEWAY_RES]             #Returns { statusCode, headers, body }
 
 
                                              /=+===============================+=\
@@ -441,7 +452,7 @@ BASIC_INFO|PAPP_RESP
 
 
 Authorization: Bearer IAT [C]     #Authenticate as a GitHub app, for a specific installation ("server-to-server")
-                                  #Read|write access a repo|org
+Authorization: token IAT [C]      #Read|write access a repo|org
                                   #Unrelated to user, i.e. not restricted by user permissions
                                   #Actions are shown as done by app
 https://x-access-token:IAT
@@ -529,8 +540,8 @@ SECRET_OUTPUTS.token              #'IAT'. Created using POST /app/installations/
 
 Authorization:                    #Authenticate as a GitHub app user ("user-to-server")
  Bearer ACCESS_TOKEN [C]          #Alternative to IAT, but with permissions on behalf of user
-                                  #  - including access other things than repo|org
-                                  #  - i.e. some actions available with ACCESS_TOKEN but not IAT
+Authorization:                    #  - including access other things than repo|org
+ token ACCESS_TOKEN [C]           #  - i.e. some actions available with ACCESS_TOKEN but not IAT
                                   #Actions are shown as done by user, with additional hint it's been done through an app
                                   #Restricted by permissions of both app and user
                                   #Obtained either through web flow or device flow
