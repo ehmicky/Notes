@@ -1061,6 +1061,7 @@ join ... on BOOL_REXPR            #null -> false
                                   #  - ignored by inner join
                                   #  - kept as single ROWs by outer join
 if BOOL ...                       #null -> false (PL/PGSQL)
+JSONPATH JBEXPR                   #null -> false
 
 distinct
 union|intersect|except distinct
@@ -1930,6 +1931,8 @@ jsonb_set(OBJ|ARR_JSONB,          #Sets OBJ|ARR_JSONB['PROP'|NUM]... = JSONB2
  ->OBJ|ARR_JSONB                  #Noop if any non-last PROP does not exist
                                   #If NUM too low|high, prepends|appends
 
+json[b]_typeof(JSON[B])->STR      #'string|number|boolean|null|object|array'
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -1938,8 +1941,100 @@ jsonb_set(OBJ|ARR_JSONB,          #Sets OBJ|ARR_JSONB['PROP'|NUM]... = JSONB2
                                              \=+===============================+=/
 
 
+jsonpath                          #TYPE
+                                  #0-based indices
+                                  #Also called "SQL/JSON"
 
-jsonpath ???
+'...'                             #JSONPATH_UNKNOWN
+JVAL                              #Value in JSONPATH
+
+'lax|strict ...'                  #Whether lax (def) or not
+                                  #If strict:
+                                  #  - fails if:
+                                  #     - OBJ_JVAL.VAR2 missing
+                                  #     - ARR_JVAL[INTL] out-of-bound
+                                  #  - no automatic cast of [NON_]ARR_JVAL
+                                  #?(JBEXPR) and exists(VAL) are always `lax`
+jsonb_path_*(..., BOOL)           #Forces lax (true) or strict mode (false).
+                                  #`true` also allows invalid operations:
+                                  #  - invalid type, e.g. 5 / "5"
+                                  #  - errors, e.g. 5 / 0
+                                  #Always true with @? and @@
+
+$                                 #Top-level JVAL
+
+OBJ_JVAL.VAR2
+OBJ_JVAL."VAR2"                   #Get OBJ field
+OBJ_JVAL.*                        #Get all OBJ fields
+OBJ_JVAL.**                       #Include all of: leaves, branches, roots
+OBJ_JVAL.**{[INTL to] INTL2}      #Same but only specific depth levels
+                                  #INTL means INT or `last`
+
+ARR_JVAL[INTL]                    #Get ARR item
+ARR_JVAL[*]                       #
+ARR_JVAL[INTL to INTL2]           #Slice
+ARR_JVAL -> ARR_JVAL[*]           #Automatic cast when needed, e.g. ARR_JVAL.VAR2
+                                  #With **, this creates duplicate values
+NON_ARR_JVAL -> [ARR_JVAL]        #Automatic cast when needed, e.g. OBJ_JVAL[0]
++ARR_JVAL
+-ARR_JVAL
+ARR_JVAL.FUNC(...)                #Applied on each ARR item
+
+ARR ?(JBEXPR)                     #Filter when JBEXPR evaluates to false
+@                                 #Each ARR item, inside JBEXPR
+
+BOOL FUNCTIONS ==>                #FUNC|OPs returning BOOL:
+                                  #  - inside JBEXPR: required, and applied on each item
+                                  #  - outside JBEXPR: applied only on first item
+
+STR|NUM|BOOL|null                 #Must use JSON syntax, not SQL
+                                  #Can only use ARR|OBJ through $ @ or $VAR
+
+VAL == <> < <= > >= VAL2          #BOOL, or null if different types
+VAL is unknown                    #BOOL. VAL is result of FUNC|OP with wrong argument types
+                                  #E.g. (5 > "5") is unknown
+exists(VAL)->BOOL                 #BOOL. VAL <> undefined
+JVAL.type()->STR                  #json_typeof(VAR)
+
+BOOL && || BOOL2                  #
+!BOOL                             #
+
+NUM_JVAL + - / * % NUM            #
+'NUM'|NUM_JVAL.double()->NUM      #Cast to NUM
+NUM_JVAL.ceiling|floor|abs()->NUM #ceil|floor|abs(NUM)
+
+STR starts with STR2              #Like starts_with(STR, STR2)
+STR like_regex "REGEXP"           #Like STR ~ REGEXP
+ [flags "FLAGS"]                  #Flags: i s m q
+                                  #q flag: quote REGEXP, i.e. simple string comparison
+
+JVAL.size()->INT                  #json_array_length(ARR), or 1 if not ARR
+
+OBJ_JVAL.keyvalue()->OBJ2_ARR     #Iterates over entries, as OBJ2: key 'KEY', value JSONB, id NUM (unique ID for that OBJ)
+
+STR_JVAL.datetime(['TEMPLATE'])
+ ->[DATE][TIME][TZ]               #to_timestamp(STR)
+
+jsonb_path_query
+ (JSONB, JSONPATH)->JSONB_SET     #Evaluates JSONPATH, with JSONB as $
+jsonb_path_query_array
+ (JSONB, JSONPATH)->ARR_JSONB     #Same but returns as ARR_JSONB
+jsonb_path_query_first
+ (JSONB, JSONPATH)->JSONB         #Same but only returns first element
+
+JSONB @? JSONPATH
+jsonb_path_exists
+ (JSONB, JSONPATH)->BOOL          #True if does not evaluate to undefined
+
+JSONB @@ JSONPATH
+jsonb_path_match
+ (JSONB, JSONPATH)->BOOL          #True if evaluates to true
+
+jsonb_path_*(..., OBJ_JSONB)      #{ VAR: VAL, ... } allowing to use $VAR inside JSONPATH
+                                  #Only used as value, not variable names (e.g. no $.$VAR)
+
+jsonb_path_*_tz(...)              #Parses ambiguous TIME[STAMP]_UNKNOWN (with no time zone specified) as TIME[STAMP]TZ
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
