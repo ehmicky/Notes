@@ -15,6 +15,8 @@ GET /versions                     #Returns 'YYYY-MM-DD'_ARR
 GITHUB MAIN|WEBHOOKS|APPS
  |ACTIONS ==>                     #See other GitHub docs
 
+GITHUB ENTERPRISE ==>             #Not documented yet
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -227,6 +229,12 @@ Accept: application/              #When returning comments with Markdown, FORMAT
                                   #  - 'html', under `body_html`
                                   #  - 'full', all
 
+Accept:                           #When returning REPO files, FORMAT can be:
+ application/vnd.github.FORMAT [C]#  - 'raw': as is
+                                  #     - only one supported if contents >1MB
+                                  #  - 'html': as HTML, if Markdown
+                                  #  - 'object': as an API RES
+
 POST /markdown                    #Render Markdown as HTML
 REQ.text                          #'MARKDOWN'
 REQ.mode                          #'markdown' (def) or 'gfm'
@@ -377,26 +385,26 @@ query.rateLimit.nodeCount         #Max amount of RESOURCEs in current query
 @octokit/plugin-throttling        #6.1.0
                                   #Node/Deno/browsers
 throttling                        #PLUGIN
-                                  #Uses Retry-After [S] and X-RateLimit-* [S]
+                                  #Uses X-RateLimit-* [S] and Retry-After [S]
 
-Groups:
-  - global: 10 maxConcurrent
-  - search requests: 1 maxConcurrent, minTime 2000
-  - write requests: 1 maxConcurrent, minTime 1000
-  - endpoints that trigger email notifications: 1 maxConcurrent, minTime 3000
+KOPTS.throttle.onRateLimit        #Required. Fired when hitting rate limit.
+ (FUNC(NUM, KOPTS, OCORE, NUM2)   #If returning false, fails the request.
+ ->BOOL)                          #Otherwise, retry it after NUM seconds.
+                                  #NUM2 is number of times it's been retried through onRateLimit()
+                                  #  - should avoid returning true unless NUM2 is 0
+KOPTS.throttle
+ .onSecondaryRateLimit(...)       #Required. Same but for secondary rate limit
 
-KOPTS.throttling.enabled          #BOOL (def: true)
-KOPTS.throttling.id               #'ID' (def: 'no-id')
-KOPTS.throttling.timeout          #NUM (in ms, def: 2m)
-KOPTS.throttling
+KOPTS.throttle.enabled            #BOOL (def: true)
+KOPTS.throttle
  .fallbackSecondaryRateRetryAfter #NUM (in sec, def: 1m). Fallback when Retry-After [S] not set
-KOPTS.throttling
- .retryAfterBaseValue             #NUM (in ms, def: 1s)
-KOPTS.throttling.connection       #
-KOPTS.throttling.Bottleneck       #Custom options using underlying Bottleneck library (not documented yet)
+KOPTS.throttle.retryAfterBaseValue#NUM. Multiply amounf of time to wait by NUM/1000
+KOPTS.throttle.timeout            #NUM (def: 2m). Stops retrying after NUMms
 
-KOPTS.throttling.onRateLimit(...)
-KOPTS.throttling.onSecondaryRateLimit(...)
+KOPTS.throttle.connection         #Allows "clustering", i.e. sharing rate limits between multiple clients, through Redis.
+                                  #Not documented yet
+KOPTS.throttle.id                 #'ID' (def: 'no-id'), to group clustering clients
+KOPTS.throttle.Bottleneck         #Custom options using underlying Bottleneck library (not documented yet)
 
 
                                              /=+===============================+=\
@@ -718,8 +726,6 @@ new Octokit([KOPTS])              #OCORE
 Octokit.defaults(KOPTS[(KOPTS2)])
  ->Octokit                        #
 
-OCORE|KOPTS.log                   #LOGS_OBJ
-
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -742,9 +748,6 @@ OREQUEST                          #Make an HTTP request to GitHub API
 
 REQ_OPTS.request.*                #fetch() REQQ, e.g. signal ABORT_SIGNAL or (Node only) agent AGENT
 REQ_OPTS.request.fetch            #FUNC (def: globalThis.fetch)
-REQ_OPTS.request.log              #LOGS_OBJ
-                                  #Def: console, but debug|info is noop
-                                  #Only used to log deprecated endpoints
 
 RES.status                        #NUM
 RES.url                           #'URL'
@@ -826,6 +829,23 @@ REQ_OPTS.request.hook             #Middleware FUNC(OREQUEST, NREQ_OPTS)->OREQUES
 
                                              /=+===============================+=\
                                             /  :                               :  \
+                                            )==:            LOGGING            :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+OCORE|KOPTS.log                   #LOGS_OBJ
+REQ_OPTS.request.log              #Def: console, but debug|info is noop
+                                  #Only used to log deprecated endpoints
+
+@octokit/plugin-request-log       #Version 3.0.0
+                                  #Node/Deno/browsers
+requestLog                        #PLUGIN
+                                  #Calls LOGS_OBJ.info('METHOD /PATH - HTTP_STATUS in DURATION') after each call
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
                                             )==:            PLUGINS            :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -846,22 +866,55 @@ KOPTS.*                           #Used to pass PLUGIN options
                                   #Should usually namespace with PLUGIN name
 
 DEFAULT PLUGINS ==>               #  - paginate-rest: @octokit/octokit, @octokit/action, @actions/github, @octokit/rest
-                                  #  - rest-endpoint-methods (not legacy): @octokit/octokit, @actions/github
-                                  #  - rest-endpoint-methods (legacy): @octokit/action, @octokit/rest
+                                  #  - rest-endpoint-methods:
+                                  #     - not legacy: @octokit/octokit, @actions/github
+                                  #     - legacy: @octokit/action, @octokit/rest
                                   #  - retry, throttling: @octokit/octokit
-                                  #     - also passes options to rate limit plugin???
                                   #  - request-log: @octokit/rest
 
+GET RREPO/contents/PATH           #Retrieve either:
+                                  #  - file contents
+                                  #     - max 100MB
+                                  #  - DIR's files
+                                  #     - max 1000: if more, should use Git trees endpoints instead
+                                  #Def PATH: root
+?ref=COMMIT|BRANCH|TAG            #Def: REPO's default BRANCH
 
+RES.path                          #'PATH'
+RES.name                          #'FILENAME'
+RES.size                          #NUM (in bytes). 0 if DIR
+RES.sha                           #'OBJECT_HASH'
+RES._links.self
+RES.url                           #'RREPO/contents/PATH'
+RES._links.html
+RES.html_url                      #'RREPO/contents/blob/BRANCH/PATH'
+RES._links.git
+RES.git_url                       #'RREPO/contents/git/blobs/OBJECT_HASH'
+RES.download_url                  #'https://raw.githubusercontent.com/USER/REPO/BRANCH/PATH'
+
+RES.type                          #'file|dir|symlink|submodule'
+FILE_RES.content                  #STR
+FILE_RES.encoding                 #'base64'
+DIR_RES.entries                   #RES_ARR
+SYMLINK_RES.target                #'PATH'
+SUBMODULE_RES.submodule_git_url   #'git://...'
+
+PUT RREPO/contents/PATH           #
+
+@octokit/                         #Version 3.0.2
+ plugin-create-or-update-text-file#Node/Deno/browsers
+createOrUpdateTextFile            #PLUGIN
+OCORE.createOrUpdateTextFile
+ (OPTS)->>RES
+                                  #Calls and returns PUT RREPO/contents/PATH
+composeCreateOrUpdateTextFile
+ (OCORE, OPTS)->>RES              #Same but does not require adding the PLUGIN to OCORE
+RES.updated                       #BOOL
+RES.deleted                       #BOOL
+RES.content                       #STR
 
 TODO ???
-  - plugins:
-     - https://github.com/octokit/plugin-throttling.js
-     - https://github.com/octokit/plugin-request-log.js
-     - https://github.com/octokit/plugin-create-or-update-text-file.js
-     - https://github.com/octokit/plugin-enterprise-server.js
-     - https://github.com/octokit/plugin-enterprise-compatibility.js
-     - https://github.com/octokit/plugin-enterprise-cloud.js
+  - https://github.com/octokit/plugin-create-or-update-text-file.js
   - https://github.com/octokit/fixtures
      - https://github.com/octokit/fixtures-server
   - ensure I am following every octokit repo
@@ -872,6 +925,7 @@ TODO ???
         - allow users to install apps
         - logo
         - can set a price
+  - add summaries on GitHub API, apps, webhooks docs
   - probot
   - GitHub CLI
   - to_learn projects with GitHub
