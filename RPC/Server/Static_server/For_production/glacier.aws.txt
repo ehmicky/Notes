@@ -29,16 +29,6 @@ S3 ==>                            #Can use Lifecycle with S3 to create|restore G
                                   #but has less features than using Glacier directly (no control on how long to restore, etc.)
                                   #Should use Glacier for objects that don't need to use S3 in the first place.
 
-LIMITS ==>                        #Vault:
-                                  #  - 1000 vaults
-                                  #  - unlimited archives
-                                  #  - Name [[:alnum:]_-.]
-                                  #Archive:
-                                  #  - 4GB size, 40TB if Multipart write.
-
-ARN ==>                           #  - vault: "arn:aws:glacier:REGION:ACCOUNT_ID:vaults/VAULT" (can include *)
-                                  #  - archive: none. But can assign Archive permissions (e.g. deleteArchive) to a vault.
-
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -52,16 +42,6 @@ REST ==>                          #Characteristics:
                                   #  - Uses JSON not XML.
                                   #  - Sometimes uses request|response headers (like S3)
                                   #Domain: https://glacier[.REGION].amazonaws.com/ACCOUNT_ID/vaults/
-                                  #Resources:
-                                  #  - Archive:
-                                  #     - like S3 object
-                                  #     - /VAULT/archives/ARCHIVE_MID
-                                  #  - MultipartUpload:
-                                  #     - In-process multipart write
-                                  #     - /VAULT/multipart-uploads/UPLOAD_MID
-                                  #  - Job:
-                                  #     - In-process retrieval or listing operation (not normal|multipart write)
-                                  #     - /VAULT/jobs/JOB_ID
                                   #Multipart write, retrieving an archive, listing a vault is async (takes several hours)
                                   #Uses x-amz-glacier-version [C]
                                   #waitFor() STATE:
@@ -70,12 +50,13 @@ REST ==>                          #Characteristics:
 JAVASCRIPT SDK ==>                #Must use REQ_OBJ:
                                   #  - vaultName VAULT (for all resources, except listVaults())
                                   #  - archiveId ARCHIVE_MID (for Archive resource)
-                                  #  - jobId JOB_ID (for Job resource)
+                                  #  - jobId JOB_MID (for Job resource)
                                   #Request body requires an extra englobbing OBJ name in JavaScript SDK, written directly in this doc.
 
 PAGINATION ==>                    #Uses query variables:
                                   #  - limit NUM (max|def: 1000) (like max-keys in S3)
                                   #  - marker STR, also returned as Marker STR (null if no pagination)
+                                  #IJOB_PARAMS: Limit|Marker
 
 
                                              /=+===============================+=\
@@ -86,7 +67,7 @@ PAGINATION ==>                    #Uses query variables:
 
 
 PUT /VAULT                        #Req: empty
-createVault()                     #Res: only Location [S]
+createVault()                     #Res: Location [S]
 GET /VAULT                        #Req: empty
 describeVault()                   #Res: VAULT
 GET /                             #Req: empty
@@ -95,15 +76,14 @@ DELETE /VAULT                     #Req: empty
 deleteVault()                     #Res: empty
 
 VAULT                             #Like S3 BUCKET, but for Glacier
+                                  #Max 1000
 VAULT.VaultARN                    #VAULT_ARN. 'arn:aws:glacier:REGION:ACCOUNT_ID:vaults/VAULT'
                                   #Can use wildcard *
 VAULT.VaultName                   #'VAULT'
+                                  #Must be [[:alnum:].-]
 Location:
  /ACCOUNT_ID/vaults/VAULT [S]     #
 VAULT.CreationDate                #'DATE'
-VAULT.LastInventoryDate           #'DATE'|null
-VAULT.NumberOfArchives            #NUM. 0 if LastIventoryDate null
-VAULT.SizeInBytes                 #NUM. 0 if LastIventoryDate null
 
 
                                              /=+===============================+=\
@@ -118,6 +98,9 @@ uploadArchive()                   #Res: ARCHIVE
 DELETE /VAULT/archives/ARCHIVE_MID#Req: empty
 deleteArchive()                   #Res: empty
 
+ARCHIVE                           #Like S3 object, but for Glacier
+                                  #No limit per VAULT
+                                  #Max 4GB
 ARCHIVE.archiveId                 #ARCHIVE_MID
 ARCHIVE.location                  #/ACCOUNT_ID/vaults/VAULT/archives/ARCHIVE_MID
 x-amz-archive-description:
@@ -158,12 +141,13 @@ DELETE /VAULT/multipart-uploads
  /UPLOAD_MID                      #Req: empty
 abortMultipartUpload()            #Res: empty
 
-UPLOAD                            #Like ARCHIVE, but in several requests (PART)
-                                  #Should be used if total size > 100MB
-
+UPLOAD                            #Like ARCHIVE, but in several requests (PARTs)
+                                  #Max 40TB for total ARCHIVE instead of 4GB
+                                  #  - should be used if > 100MB
+                                  #Valid 24h
 x-amz-multipart-upload-id:
  UPLOAD_MID [S]
-UPLOAD.MultipartUploadId          #UPLOAD_MID. Valid 24h
+UPLOAD.MultipartUploadId          #UPLOAD_MID
 UPLOAD.VaultARN                   #VAULT_ARN
 Location: /ACCOUNT_ID
  /vaults/VAULT
@@ -191,77 +175,105 @@ x-amz-sha256-tree-hash: STR [C|S] #Like simple upload
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:        READING ARCHIVE        :==(
+                                            )==:           READ JOB            :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
-
-POST /VAULT/jobs                  #Initiate a job. Request OBJ.jobParameters depends on OBJ.jobParameters.Type:
-initiateJob()                     #"archive-retrieval" (read an archive):
-                                  #  - Type "archive-retrieval"
-                                  #  - Description JOB_DESC_STR
-                                  #  - SNSTopic TOPIC_SNS_ARN:
-                                  #     - to notify the completion (same as setVaultNotifications() but on a job-basis
-                                  #  - ArchiveId ARCHIVE_MID
-                                  #  - RetrievalByteRange STR:
-                                  #     - same as Range [C] syntax
-                                  #     - goal is to spread out retrieval time (for pricing purpose)
-                                  #     - part size must be integer in MB
-                                  #"inventory-retrieval" (list archives):
-                                  #  - Type "inventory-retrieval"
-                                  #  - Description JOB_DESC_STR
-                                  #  - SNSTopic TOPIC_SNS_ARN:
-                                  #  - Format "CSV|JSON" (def: "JSON")
-                                  #  - InventoryRetrievalParameters:
-                                  #     - StartDate|EndDate DATE_STR: for archives created then (optional)
-                                  #     - Limit|Marker: paginates
-                                  #Listing is according to last listing, which is done every 24 hours
-                                  #Returns response headers:
-                                  #  - Location /ACCOUNT_ID/vaults/VAULT/jobs/JOB_ID [S]
-                                  #  - x-amz-job-id JOB_ID [S]
-GET /VAULT/jobs                   #Can use request parameters:
-listJobs()                        #  - completed BOOL: only return [non-]completed jobs
-                                  #  - statuscode "InProgress|Succeeded|Failed": only return jobs with this StatusCode
+POST /VAULT/jobs                  #Req: jobParameters JOB_REQ
+initiateJob()                     #Res: Location [S], x-amz-job-id [S]
+GET /VAULT/jobs                   #Req: JOB
+listJobs()                        #  - only Completed, StatusCode
                                   #Res: JobList JOB_ARR
-GET /VAULT/jobs/JOB_ID
-describeJob()                     #Returns JOB_OBJ
-GET /VAULT/jobs/JOB_ID/output     #Returns result of a job (if it completed). JOB_ID expires 24 hours after it completed.
-getJobOutput()                    #If "archive-retrieval" or CSV "inventory-retrieval", returns raw response body.
-                                  #If JSON "inventory-retrieval", returns:
-                                  #  - VaultARN ARN
-                                  #  - InventoryDate DATE_STR
-                                  #  - ArchiveList OBJ_ARR:
-                                  #     - ArchiveId ARCHIVE_MID
-                                  #     - ArchiveDescription ARCHIVE_DESC_STR
-                                  #     - CreationDate DATE_STR
-                                  #     - Size NUM
-                                  #     - SHA256TreeHash STR
-                                  #Can ask for Range [C]. Will return response headers:
-                                  #  - Content-Range [S]
-                                  #  - x-amz-sha256-tree-hash [S] (OBJ.checksum in JavaScript SDK)
-                                  #  - Status code is 200 if last part, 206 if not (can use OBJ.status in JavaScript SDK)
-                                  #Set Content-Type [S] to "application/octet-stream", "text/csv" or "application/json"
+GET /VAULT/jobs/JOB_MID           #Req: empty
+describeJob()                     #Res: JOB
+GET /VAULT/jobs/JOB_MID/output    #Req: empty
+getJobOutput()                    #Res: ARCHIVE_CONTENTS (for AJOB) or IJOB_RES
 
-JOB.Action "ArchiveRetrieval|InventoryRetrieval"
-JOB.Completed BOOL
-JOB.StatusCode "InProgress|Succeeded|Failed"
-JOB.StatusMessage STR
-JOB.VaultARN ARN
-JOB.JobId JOB_ID
-JOB.CreationDate DATE_STR
-JOB.JobDescription JOB_DESC_STR (instead of Description)
-JOB.RetrievalByteRange STR
+JOB_REQ.Type                      #'archive-retrieval' or 'inventory-retrieval'
+JOB_REQ.Description               #'JOB_DESC'
 
-AJOB                              #JOB with Action 'ArchiveRetrieval'
-AJOB.ArchiveId ARCHIVE_MID
-AJOB.ArchiveSizeInBytes NUM
-AJOB.[Archive]SHA256TreeHash STR
-AJOB.CompletionDate DATE_STR
+Location: /ACCOUNT_ID/vaults/VAULT
+ /jobs/JOB_MID [S]                #
+x-amz-job-id: JOB_MID [S]         #
 
-IJOB                              #JOB with Action 'InventoryRetrieval'
-IJOB.InventorySizeInBytes NUM
-IJOB.InventoryRetrievalParameters (only if pagination)
+JOB.JobId                         #JOB_MID
+JOB.VaultARN                      #VAULT_ARN
+JOB.Action                        #'ArchiveRetrieval' or 'InventoryRetrieval'
+JOB.Completed                     #BOOL
+JOB.StatusCode                    #'InProgress|Succeeded|Failed'
+JOB.StatusMessage                 #STR
+JOB.JobDescription                #'JOB_DESC'
+JOB.CreationDate                  #'DATE'
+
+JOB_RES                           #Only available after JOB completes
+                                  #Once completed, JOB expires after 24h
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:         READ ARCHIVE          :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+AJOB[_REQ|RES]                    #JOB[_REQ|RES] with Type 'archive-retrieval'
+                                  #Get an ARCHIVE_CONTENT
+
+AJOB_REQ.ArchiveId                #ARCHIVE_MID
+
+Range: STR [C]                    #STR. Goal is to spread out retrieval time (for pricing purpose)
+AJOB_REQ.RetrievalByteRange       #Part size must be integer in MB
+                                  #Status code is 206 for non-last part, 200 for last part
+Content-Range: STR [S]            #
+x-amz-sha256-tree-hash [S]        #Like simple upload
+
+AJOB.ArchiveId                    #ARCHIVE_MID
+AJOB.ArchiveSizeInBytes           #NUM
+AJOB.RetrievalByteRange           #STR
+AJOB.SHA256TreeHash               #STR
+AJOB.ArchiveSHA256TreeHash        #STR
+AJOB.CompletionDate               #'DATE'
+
+AJOB_RES                          #ARCHIVE_CONTENT
+Content-Type:
+ application/octet-stream [S]     #
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:         LIST ARCHIVES         :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+VAULT.LastInventoryDate           #'DATE'|null of last "inventory", i.e. ARCHIVEs listing, done once per day
+VAULT.NumberOfArchives            #NUM. 0 if LastIventoryDate null
+VAULT.SizeInBytes                 #NUM. 0 if LastIventoryDate null
+
+IJOB[_REQ|RES]                    #JOB[_REQ|RES] with Type 'inventory-retrieval'
+                                  #List ARCHIVEs
+
+IJOB_REQ.Format                   #'JSON' (def) or 'CSV'
+Content-Type:
+ 'application/json' [S]           #
+Content-Type: 'text/csv' [S]      #
+IJOB_REQ
+ .InventoryRetrievalParameters    #IJOB_PARAMS
+IJOB_PARAMS.StartDate|EndDate     #'DATE_STR'. IJOB_ARCHIVE.CreationDate
+
+IJOB.InventorySizeInBytes         #NUM
+IJOB.InventoryRetrievalParameters #IJOB_PARAMS
+
+IJOB_RES.VaultARN                 #ARN
+IJOB_RES.InventoryDate            #'DATE'
+IJOB_RES.ArchiveList              #IJOB_ARCHIVE_ARR
+IJOB_ARCHIVE.ArchiveId            #ARCHIVE_MID
+IJOB_ARCHIVE.ArchiveDescription   #'ARCHIVE_DESC'
+IJOB_ARCHIVE.CreationDate         #'DATE'
+IJOB_ARCHIVE.Size                 #NUM
+IJOB_ARCHIVE.SHA256TreeHash       #STR
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -285,3 +297,5 @@ VAULT_NOTIF.SNSTopic              #TOPIC_ARN
 VAULT_NOTIF.Events                #'EVENT'_ARR, among:
                                   #  - 'ArchiveRetrievalCompleted'
                                   #  - 'InventoryRetrievalCompleted'
+
+JOB_REQ.SNSTopic                  #TOPIC_ARN. Like VAULT_NOTIF, but for a single JOB
