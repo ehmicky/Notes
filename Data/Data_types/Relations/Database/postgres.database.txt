@@ -2398,6 +2398,7 @@ OPTS.canonical                    #FUNC2(VAL)->VAL (def: noop) transforming each
 '[VAL, VAL2)'                     #Def VAL[2]: null
 '(VAL, VAL2]'                     #  - noted as empty, not `null`
 '(VAL, VAL2)'                     #If TYPE is discrete, VAL2] is normalized to VAL2+1)
+                                  #Escaping of VALs: like ARR_UNKNOWN but { } -> ( ) [ ]
 RANGE_TYPE(VAL, VAL2[, STR])
  ->RANGE                          #Same. STR is e.g. '[)' (def) or '()'
 
@@ -2452,7 +2453,8 @@ pg_range.rngsubopc                #pg_opclass.oid of OPTS.subtype_opclass
 
 MULTIRANGE ==>                    #Combination of multiple RANGEs
                                   #Behaves like a RANGE with potential gaps
-                                  #If RANGEs overlapped, normalized by being merged
+                                  #Normalizes overlapping RANGEs to a single one
+                                  #Empty RANGEs are ignored
 
 int4multirange
 int8multirange
@@ -2485,33 +2487,47 @@ unnest(MULTIRANGE)->RANGE_SET     #
 
 TYPE[]                            #TYPE2 with 0-n values of same TYPE
 _TYPE                             #Dimensions are defined at write-time.
-                                  #Underlying TYPE can be another ARR for multidimensional ARRs.
                                   #1-based indices
                                   #Max length 1.3e8
 array
 any[compatible]array              #TYPE. Any TYPE2[]
 any[compatible]nonarray           #TYPE.
 
+TYPE[NUM]
+array[NUM]                        #Same as TYPE|array[], i.e. NUM is only for documentation
+
 array[VAL...]                     #ARR literal value.
 '{VAL,...}'                       #ARR_UNKNOWN
-'[UINT[:UINT2]]...={VAL,...}'     #Same but with specific:
-                                  #  - lower bound UINT (included)
+                                  #VAL can be null
+                                  #Escaping of VALs:
+                                  #  - " or \ for:
+                                  #     - { } , whitespaces
+                                  #     - empty STR, "null" STR
+                                  #  - \ for: " \
+'[INT[:INT2]]...={VAL,...}'       #Same but with specific:
+                                  #  - lower bound INT (included)
                                   #     - def: 0
-                                  #  - upper bound UINT2 (included)
-                                  #     - def: UINT
-                                  #     - must be UINT + ARR.length - 1, i.e. cannot truncate|extend
+                                  #  - upper bound INT2 (included)
+                                  #     - def: INT
+                                  #     - must be INT + ARR.length - 1, i.e. cannot truncate|extend
+                                  #Both can be negative
                                   #One [...] per dimension
+
+array[[...],...]
+'{{...},...}'                     #Underlying TYPE can be another ARR for multidimensional ARRs
 
 _TYPE '...'                       #When type casting with this syntax, must use _TYPE instead of TYPE[]
 
 array_agg(SET)->ARR               #AFUNC. Converts to ARR
 
-ARR[UINT]                         #VAL. null if out-of-bound.
-ARR[UINT:UINT2]                   #ARR2, from UINT (included) to UINT2 (included)
-                                  #Uses max(UINT2, ARR.length)
-                                  #Empty if UINT2 < UINT, or if UINT > ARR.length
-ARR[UINT:]                        #Same as ARR[UINT:ARR.length]
-ARR[:UINT2]                       #Same as ARR[0:UINT2]
+ARR[INT]                          #VAL. null if out-of-bound, or if ARR|INT null
+ARR[INT:INT2]                     #ARR2, from INT (included) to INT2 (included)
+                                  #Uses max(INT2, ARR.length)
+                                  #Empty if INT2 < INT, or if INT > ARR.length
+ARR[INT:]                         #Same as ARR[INT:ARR.length]
+ARR[:INT2]                        #Same as ARR[0:INT2]
+ARR[...]                          #Can be set, e.g. with `update`
+                                  #If out-of-bound, fills with nulls
 
 ARR = <> ARR2                     #BOOL. Done deeply
 ARR < <= > >= ARR2                #BOOL, with first item compared first, etc.
@@ -2523,9 +2539,9 @@ ARR <@ ARR2                       #BOOL. Is subset|equal
 ARR && ARR2                       #BOOL. Overlaps, i.e. at least one item equal
 
 array_ndims(ARR)->UINT|null       #NUM of dimensions. null if empty ARR
-array_dims(ARR)->'[UINT:UINT2]...'#Each dimensions lower|upper bound
+array_dims(ARR)->'[INT:INT2]...'  #Each dimensions lower|upper bound
 generate_subscripts(ARR, UINT3)
- ->[UINT, UINT2]_SET              #Dimension UINT3 lower|upper bound
+ ->[INT, INT2]_SET                #Dimension UINT3 lower|upper bound
 array_lower(ARR, UINT3)->UINT     #Dimension UINT3 lower bound
 array_upper(ARR, UINT3)->UINT2    #Dimension UINT3 upper bound
 array_length(ARR, UINT3)->UINT    #array_upper - array_lower
@@ -2545,9 +2561,14 @@ string_to_array                   #Inverse
  (STR, 'DELIM'|null[, 'NULL'])    #If DELIM is null, split each character.
  ->ARR                            #If DELIM is '', returns STR as ARR with single item
 
+array_position
+ (ARR, VAL[, UINT2])->UINT|null   #Find first VAL index, starting at index UINT2 (def: 1), using `is not distinct from`
+array_positions
+ (ARR, VAL)->UINT_ARR             #Find all VAL indices
+
 array_fill                        #ARR where all values are VAL
- (VAL, UINT_ARR[, UINT_ARR2])->ARR#Number of dimensions is UINT_ARR[2].length
-                                  #UINT_ARR are upper bounds, UINT_ARR2 lower bounds (def: {1,...})
+ (VAL, INT_ARR[, INT_ARR2])->ARR  #Number of dimensions is INT_ARR[2].length
+                                  #INT_ARR are upper bounds, INT_ARR2 lower bounds (def: {1,...})
 
 array_remove(ARR, VAL)->ARR       #Filter out any element = VAL
                                   #ARR must be one-dimensional
@@ -2617,12 +2638,27 @@ alter type "ROW"
                                   #"row" is necessary only if only one VAL
 '(VAL,...)'                       #Same as ROW_UNKNOWN
                                   #Can cast to ROW_TYPE but not to record
+                                  #VAL can be omitted (i.e. null)
+                                  #Escaping of VALs: like ARR_UNKNOWN but { } -> ( )
 
 ROW."COL"
 "COL"(ROW)                        #VAL
 
 ROW."FUNC"                        #"Virtual COL". Same as FUNC(ROW)
                                   #I.e. can be used to emulate a dynamic COL
+
+ROW.*                             #Expanded to ROW."COL", ROW."COL2", ...
+                                  #Only expanded in `select VALs`, `returning`, `values()`, `row()`
+                                  #Otherwise, same as just `ROW`
+                                  #  - but can be used to avoid ambiguity, making it clear it is a ROW
+                                  #When expanded, ROW is evaluated once per COL
+                                  #  - e.g. (FUNC()->ROW).* evaluates FUNC() multiple times
+                                  #  - can put FUNC() as a FROM instead to prevent this
+
+(ROW)."COL"                       #Parenthesis often needed to avoid ambiguity, e.g.:
+(ROW)."FUNC"                      #  - anywhere a ROW_ALIAS is also valid
+(ROW).*                           #     - even if none defined with that name
+                                  #  - when ROW is return value of a FUNC
 
 ROW = <> ROW2                     #BOOL. Done deeply
                                   #Must have same amount of COLs, but names do not need to match
@@ -3714,10 +3750,8 @@ select ... from FROM              #Name of each ROW to use in:
                                   #Parent query cannot use "ROW_ALIAS" defined by a (SUBQUERY)
                                   #Def: FUNC(...) name
                                   #Required with `from (SUBQUERY)`
-["ROW_ALIAS".]"COL"               #COL
+["ROW_ALIAS".]"COL"|*             #Like ROW.COL|*
                                   #"ROW_ALIAS" can be omitted if there is a single "COL" named like this among all FROMs
-["ROW_ALIAS".]*                   #Same as ["ROW_ALIAS".]"COL", ["ROW_ALIAS".]"COL2", ...
-                                  #Only in `select VALs` or inside row(...)
 
 select ... [as]                   #Rename "ROW_ALIAS"."COL"
  "ROW_ALIAS"("FCOL_ALIAS",...)    #Omitted ones are not renamed
