@@ -1333,11 +1333,15 @@ marketplace_purchase.cancelled    #Webhook SUBEVENT. Cancelling a PLAN.
 @probot/probot                    #Version 12.3.1
                                   #Node only
 
-run(FUNC(PROBOT)[->>]|STR_ARR[, OPTS])->>WSERVER
-                                  #Calls WSERVER.start()
-                                  #FUNC is runned before start
+run(FUNC(PROBOT)[->>]|STR_ARR     #Calls WSERVER.start()
+ [, OPTS])->>WSERVER              #FUNC is runned before start
                                   #Pass WSOPTS: STR_ARR (CLI flags) and ENVVARs (OPTS.env)
-OPTS.env                          #ENVVARs (def: process.env), documented as WCENVVARs
+                                  #Unless FUNC set:
+                                  #  - GET /[probot]: shows application version
+                                  #  - last STR_ARR is 'PATH' to Node.js file exporting FUNC(PROBOT)[->>] to call before start
+                                  #     - can also use pkg-conf with name `probot`, apps 'PATH'_ARR
+OPTS.env                          #ENVVARs, documented as WCENVVARs
+                                  #Def: process.env, or `dotenv` file
 
 
                                              /=+===============================+=\
@@ -1358,8 +1362,10 @@ WSERVER.load                      #Calls FUNC()
  (FUNC(PROBOT, OBJ)[->>])         #OBJ.getRouter(...) forwards to WSERVER.router(...)
 
 WSERVER.expressApp                #Express APP
+--port|-p
 WCENVVAR PORT
 WSOPTS.port                       #NUM (def: 3000)
+--host|-H
 WCENVVAR HOST
 WSOPTS.host                       #STR (def: 'localhost')
 
@@ -1367,31 +1373,6 @@ WSERVER.router(['/PATH'])->ROUTER #APP.use('/PATH', EXPRESS.Router())
                                   #Def '/PATH': '/'
 
 GET /ping                         #Response: 'PONG'
-
-APP|RES.render('PATH'[, OBJ])     #Renders VIEWs
-                                  #They are all HTML/CSS, with favicon and some <head>
-/probot/static/...                #Static contents used by VIEWs, using EXPRESS.static()
-setup                             #VIEW to create a GitHub App
-                                  #OBJ:
-                                  #  - pkg:
-                                  #     - name 'APP_NAME'
-                                  #     - version 'X.Y.Z'
-                                  #     - description STR: shown as first sentence
-                                  #  - createAppUrl 'URL': main button action
-                                  #  - manifest 'MANIFEST_JSON': request payload
-import                            #VIEW:
-                                  #  - shows instruction to use WSOPTS.webhookProxy
-                                  #  - use a <form> that:
-                                  #     - POST { appId, pem: 'APP_PRIVATE_KEY', webhook_secret } to self???
-                                  #     - redirect to success VIEW
-                                  #OBJ:
-                                  #  - pkg: name 'APP_NAME'
-                                  #  - WEBHOOK_PROXY_URL WSOPTS.webhookProxy
-                                  #  - GH_HOST 'URL': GitHub baseUrl
-success                           #VIEW that shows success message
-                                  #OBJ: pkg: name 'APP_NAME'
-probot                            #VIEW that shows app name and Probot version
-                                  #OBJ: like OBJ.pkg in setup VIEW
 
 
                                              /=+===============================+=\
@@ -1417,6 +1398,36 @@ PROBOT.load
 
                                              /=+===============================+=\
                                             /  :                               :  \
+                                            )==:         PROBOT SETUP          :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+CWD/app.yml                       #MANIFEST, used by GET /probot/...
+MANIFEST.name                     #Def: package.json name
+MANIFEST.version                  #Def: 'v1'
+MANIFEST.description              #Def: package.json description
+MANIFEST.url                      #Def: package.json homepage|repository
+MANIFEST.hook_attributes.url      #Created using smee-client as WCENVVAR WEBHOOK_PROXY_URL
+                                  #Saved to CWD/.env
+MANIFEST.redirect_url             #Def: /probot/setup
+
+GET /probot                       #HTML page to create a GitHub app
+                                  #Only available with run() if appId|privateKey not set yet
+                                  #Calls POST [/organizations/ORG]/settings/apps/new with MANIFEST
+                                  #Can use WCENVVAR GH_ORG 'ORG'
+
+GET /probot/setup                 #Second step after GET /probot
+                                  #Calls POST /app-manifests/CODE/conversions
+                                  #Saves WCENVVARs to CWD/.env: APP_ID, PRIVATE_KEY, WEBHOOK_SECRET, GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET
+                                  #Redirects to GitHub page of the app
+
+GET /probot/import                #Alternative way to setup a GitHub app.
+                                  #HTML page to manually set WCENVVARs to CWD/.env for: APP_ID, PRIVATE_KEY, WEBHOOK_SECRET
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
                                             )==:        PROBOT WEBHOOKS        :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -1430,8 +1441,10 @@ WNOPTS.probot                     #PROBOT
 POST WEBHOOK_PATH                 #With new Server() or createNodeMiddleware()
                                   #Uses @octokit/webhooks createNodeMiddleware() (see its doc)
                                   #I.e. validate signature and triggers PROBOT.on*(...)
+--webhook-path|-w
 WCENVVAR WEBHOOK_PATH
 WNOPTS|WSOPTS.webhookPath         #'WEBHOOK_PATH' (def: '/')
+--webhook-proxy|-W
 WCENVVAR WEBHOOK_PROXY_URL
 WSOPTS.webhookProxy               #'URL' to WEBHOOK_PATH, in production
                                   #Uses smee-client to redirect calls to localhost instead, for local testing
@@ -1441,6 +1454,7 @@ PROBOT.webhooks                   #WHOOKS (from @octokit/webhooks)
                                   #Uses BOPTS.type 'event-octokit'
                                   #  - i.e. WCONTEXT.octokit is authenticated with IAT using WEVENT.event.payload.installation.id
 PROBOT.on[Any|Error]|receive      #Forwards to PROBOT.webhooks.on[Any|Error]|receive
+--secret|-s
 W[C]ENVVAR WEBHOOK_SECRET
 WOPTS.secret                      #'WEBHOOK_SECRET' (def: 'development')
 
@@ -1469,17 +1483,21 @@ ProbotOctokit                     #Octokit class
                                   #Plugins: rest-endpoint-methods (legacy), paginate-rest, retry, throttling
 
 WOPTS.githubToken                 #'TOKEN', when using TAPP
+--app|-a
 W[C]ENVVAR APP_ID
 WOPTS.appId                       #AAOPTS.appId, when using AAPP
 W[C]ENVVAR PRIVATE_KEY
+--private-key|-P PATH
 W[C]ENVVAR PRIVATE_KEY_PATH
 CWD/*.pem
 WOPTS.privateKey                  #AAOPTS.privateKey, when using AAPP
 WOPTS.cache                       #AAOPTS.cache, when using AAPP
 
 W[C]ENVVAR GHE_HOST|GHE_PROTOCOL
+--base-url
 WOPTS.baseUrl                     #KOPTS.baseUrl
 
+--redis-url
 W[C]ENVVAR REDIS_URL              #`ioredis` options, used with @octokit/plugin-throttling
 WOPTS.redisConfig                 #Redis errors are logged with LOGGER
 
@@ -1523,6 +1541,7 @@ Logger                            #From pino (see its doc)
 WSERVER|PROBOT|WCONTEXT
  .log[.LEVEL](...)                #Calls LOGGER.LEVEL(...) (def LEVEL: 'info')
 
+--log-level|-L
 W[C]ENVVAR LOG_LEVEL              #'LEVEL' passed to pino OPTS.level
 WOPTS.logLevel                    #Def: 'info' with new Probot(), 'warn' with createProbot()
 
@@ -1555,9 +1574,9 @@ WSOPTS.loggingOptions             #Options to pass to `pino-http`, which is used
 getTransformStream([OPTS])
  ->TSTREAM                        #Returns TSTREAM to pass as second argument to pino(...)
 
-W[C]ENVVAR LOG_FORMAT             #Either:
-OPTS.logFormat                    #  - 'pretty':
-                                  #     - uses pino-pretty
+--log-format                      #Either:
+W[C]ENVVAR LOG_FORMAT             #  - 'pretty':
+OPTS.logFormat                    #     - uses pino-pretty
                                   #     - uses options:
                                   #        - ignore 'time', 'pid', 'hostname'
                                   #        - ignore 'req', 'res', 'responseTime' (from pino-http)
@@ -1567,6 +1586,7 @@ OPTS.logFormat                    #  - 'pretty':
                                   #Def is:
                                   #  - 'json' if using run() + WCENVVAR NODE_END 'production'
                                   #  - 'pretty' otherwise
+--log-level-in-string
 W[C]ENVVAR LOG_LEVEL_IN_STRING    #BOOL (def: false)
 OPTS.logLevelInString             #With OPTS.logFormat 'json', include `level: 'LEVEL'`
 
@@ -1578,9 +1598,9 @@ OPTS.logLevelInString             #With OPTS.logFormat 'json', include `level: '
                                              \=+===============================+=/
 
 
-W[C]ENVVAR SENTRY_DSN             #'URL' to Sentry (def: none)
-OPTS.sentryDsn                    #Send to sentry using @sentry/node
-                                  #Only for LEVELs error|fatal
+--sentry-dsn                      #'URL' to Sentry (def: none)
+W[C]ENVVAR SENTRY_DSN             #Send to sentry using @sentry/node
+OPTS.sentryDsn                    #Only for LEVELs error|fatal
                                   #Includes:
                                   #  - level: 'LEVEL'
                                   #  - extra: 'event', 'status', 'headers', 'request', then reduces:
