@@ -249,6 +249,25 @@ RAW_OBJECT                        #OBJECT, as is
 
                                              /=+===============================+=\
                                             /  :                               :  \
+                                            )==:        OBJECT TORRENT         :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+GET /BUCKET/OBJECT?torrent        #Req: empty
+getObjectTorrent()                #Res: OBJECT_TORRENT
+
+OBJECT_TORRENT                    #OBJECT as Content-Type: application/x-bittorrent [S]
+                                  #Reading torrent requires PACTION s3:GetObject
+                                  #Goal: readers upload to each other:
+                                  #  - less server egress
+                                  #  - faster download speed
+Content-Disposition: attachment;
+ filename=OBJECT.torrent; [S]     #
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
                                             )==:          OBJECT LIST          :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -292,15 +311,6 @@ COMMON_PREFIX.Prefix              #Prefix + 'OBJECT' until next Delimiter (inclu
 PUT /BUCKET/OBJECT                #Req: RAW_OBJECT, Expect [C], Content-Type [C], Content-Encoding [C], Content-Language [C], Expires [C],
 putObject()                       # Cache-Control [C], Content-Disposition [C], x-amz-meta-* [C]
                                   #Res: NEW_OBJECT_RES
-PUT /BUCKET/OBJECT                #Req: like putObject(), also x-amz-copy-source* [C], x-amz-metadata-directive [C]
-copyObject()                      #Res: CopyObjectResult NEW_OBJECT_RES
-
-x-amz-copy-source:                #Copy OBJECT
- /BUCKET/OBJECT [C]               #New OBJECT's ACL is 'private'
-x-amz-metadata-directive:         #If 'COPY' (def):
- COPY|REPLACE [C]                 #  - only allows setting request headers related to server-side encryption,
-                                  #    storage class and x-amz-website-redirect-location [C]
-                                  #  - those headers are erased if not specified
 
 Expect: "100-continue" [C]        #See HTTP doc
 
@@ -337,6 +347,103 @@ FORM_OBJECT_REQ.AWSAccessKeyId    #ACCESS_KEY_ID
 
                                              /=+===============================+=\
                                             /  :                               :  \
+                                            )==:    OBJECT UPLOAD MULTIPART    :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+POST /BUCKET/OBJECT?uploads       #Req: same headers as putObject()
+createMultipartUpload()           #Res: MUPLOAD_INIT, same headers as putObject()
+PUT /BUCKET/OBJECT                #Req: RAW_OBJECT_PART, RAW_OBJECT_PART_REQ (query variables), Expect [C]
+uploadPart()                      #Res: ETag [S]
+
+MUPLOAD_INIT.Bucket               #'BUCKET'
+MUPLOAD_INIT.Key                  #'OBJECT'
+
+RAW_OBJECT_PART                   #OBJECT part, as is
+RAW_OBJECT_PART.partNumber        #NUM. 1-based index.
+                                  #Max 1e4
+
+MUPLOAD_INIT.UploadId
+RAW_OBJECT_PART_REQ.uploadId      #MUPLOAD_MID
+
+GET /BUCKET/OBJECT                #Req: MUPLOAD_PARTS_REQ
+listParts()                       #Res: MUPLOAD_PARTS_RES
+                                  #Paginates MUPLOAD_PARTS_RES.Parts with RES.PartNumberMarker, RES.MaxParts
+MUPLOAD_PARTS_REQ.uploadId        #MUPLOAD_MID
+MUPLOAD_PARTS_RES.Bucket          #'BUCKET'
+MUPLOAD_PARTS_RES.Key             #'OBJECT'
+MUPLOAD_PARTS_RES.UploadId        #MUPLOAD_MID
+MUPLOAD_PARTS_RES.Initiator|Owner #
+                                  #     - ID USER_IAM_ARN
+                                  #     - DisplayName USER_STR
+MUPLOAD_PARTS_RES.StorageClass    #STR
+MUPLOAD_PARTS_RES.Parts           #MUPLOAD_PART_ARR
+MUPLOAD_PART.PartNumber           #NUM
+MUPLOAD_PART.Size                 #NUM
+MUPLOAD_PART.LastModified         #'DATE'
+MUPLOAD_PART.ETag                 #STR
+
+GET /BUCKET                       #Uses pagination with KEY "UploadId" and KEY "" (alphabetical order).
+listMultipartUploads()            #Uses max-uploads instead of max-keys
+                                  #Req:
+                                  #  - delimiter|prefix STR: see listObjects()
+                                  #Res:
+                                  #  - Bucket BUCKET
+                                  #  - Delimiter|Prefix STR
+                                  #  - CommonPrefixes OBJ_ARR:
+                                  #     - Prefix STR
+                                  #  - Upload OBJ_ARR:
+                                  #     - Key OBJECT
+                                  #     - UploadId MUPLOAD_MID
+                                  #     - Initiator|Owner
+                                  #        - ID USER_IAM_ARN
+                                  #        - DisplayName USER_STR
+                                  #     - StorageClass STR
+                                  #     - Initiated DATE_STR
+POST /BUCKET/OBJECT               #Req: MultipartUpload OBJ:
+ ?uploadId=MUPLOAD_MID            #  - Parts OBJ_ARR
+completeMultipartUpload()         #     - PartNumber NUM
+                                  #     - ETag STR
+                                  #Res:
+                                  #  - Location URL
+                                  #  - Bucket BUCKET
+                                  #  - Key OBJECT
+                                  #  - ETag STR
+DELETE /BUCKET/OBJECT
+ ?uploadId=MUPLOAD_MID
+abortMultipartUpload()            #
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:          OBJECT COPY          :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+PUT /BUCKET/OBJECT                #Req: like putObject(), also x-amz-copy-source* [C], x-amz-metadata-directive [C]
+copyObject()                      #Res: CopyObjectResult NEW_OBJECT_RES
+
+PUT /BUCKET/OBJECT                #Req: like uploadPart(), also x-amz-copy-source* [C]
+uploadPartCopy()                  #Res: CopyObjectResult NEW_OBJECT_RES
+
+x-amz-copy-source:                #Copy OBJECT
+ /BUCKET/OBJECT [C]               #New OBJECT's ACL is 'private'
+x-amz-metadata-directive:         #If 'COPY' (def):
+ COPY|REPLACE [C]                 #  - only allows setting request headers related to server-side encryption,
+                                  #    storage class and x-amz-website-redirect-location [C]
+                                  #  - those headers are erased if not specified
+
+x-amz-copy-source-HEADER: STR [C] #Same as [x-amz-]HEADER: STR [C] but using x-amz-copy-source [C]
+                                  #For HEADERs:
+                                  #  - If-[Un]modified-Since [C], If-[None-]Match [C], Range [C],
+                                  #    x-amz-server-side-encryption-customer-* [C]
+                                  #  - called x-amz-source-HEADER instead: x-amz-expected-bucket-owner [C]
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
                                             )==:         OBJECT DELETE         :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -347,7 +454,7 @@ deleteObject()                    #Res: empty
 POST /BUCKET?delete               #Req: Delete OBJECTS_DELETE_REQ
 deleteObjects()                   #Res: OBJECTS_DELETE_RES
 
-OBJECTS_DELETE_REQ.Object         #OBJECT_DELETE_REQ_ARR
+OBJECTS_DELETE_REQ.Objects        #OBJECT_DELETE_REQ_ARR
 OBJECTS_DELETE_REQ|RES.Key        #'OBJECT'
 
 OBJECTS_DELETE_RES.Deleted        #OBJECT_DELETE_RES_ARR
@@ -378,8 +485,8 @@ BUCKET_REQ.LocationConstraint     #Can differ from REGION of API endpoint
 
 BUCKETS_LIST|OBJECT_LIST_ITEM
  .Owner                           #OWNER
-OWNER.ID                          #STR
-OWNER.DisplayName                 #'USER'
+OWNER.ID                          #Either: USER_ARN (if USER), ACCOUNT_ID (if ACCOUNT)
+OWNER.DisplayName                 #'USER' (if USER)
 
 x-amz-expected-bucket-owner:
  ACCOUNT_ID [C]                   #403 if BUCKET's owner is different
@@ -400,14 +507,11 @@ Cache-Control: STR [C|S]          #See HTTP doc
 NEW_OBJECT_RES|OBJECT_LIST_ITEM
  .LastModified                    #'DATE'
 If-[Un]modified-Since: DATE [C]   #See HTTP doc
-x-amz-copy-source-if-
- [un]modified-since: DATE [C]     #Same but with x-amz-copy-source [C]
 
 FORM_OBJECT_RES|NEW_OBJECT_RES
- |OBJECT_LIST_ITEM.ETag           #'ETAG'
+ |OBJECT_LIST_ITEM.ETag
+ETag: ETAG [S]                    #'ETAG'
 If-[None-]Match: STR [C]          #See HTTP doc
-x-amz-copy-source-if-[none-]match:
- STR [C]                          #Same but with x-amz-copy-source [C]
 
 
                                              /=+===============================+=\
@@ -451,97 +555,6 @@ Response-Content-Language: STR [C]
 Content-Language: STR [C|S]       #See HTTP doc
 
 x-amz-meta-*: STR [C|S]           #Arbitrary metadata
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:            TORRENT            :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-GET /BUCKET/OBJECT?torrent        #Req: empty
-getObjectTorrent()                #Res: OBJECT_TORRENT
-
-OBJECT_TORRENT                    #OBJECT as Content-Type: application/x-bittorrent [S]
-                                  #Reading torrent requires PACTION s3:GetObject
-Content-Disposition: attachment;
- filename=OBJECT.torrent; [S]     #
-
-                                  #  - if lot of people downloading same file, will increase their download speed, and also
-                                  #    cost less (because download between themselves, not only S3 endpoint)
-                                  #  - using getObjectTorrent, only if s3:GetObject allowed for anonymous access
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:        MULTIPART WRITE        :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-MULTIPART WRITE ==>               #For large objects write.
-                                  #Steps:
-                                  #  - createMultipartUploads()
-                                  #  - several uploadPart[Copy]()
-                                  #  - final complete|abortMultipartUpload()
-POST /BUCKET/OBJECT?uploads       #Can use same request headers as putObject()
-createMultipartUpload()           #Res:
-                                  #  - UploadId UPLOAD_ID
-                                  #  - Bucket BUCKET
-                                  #  - Key OBJECT
-PUT /BUCKET/OBJECT                #Must use query variable partNumber NUM (position from 1 to 10000)
- ?uploadId=UPLOAD_ID              #Can use Expect [C]
-uploadPart[Copy]()                #Response header ETag STR [S]
-                                  #uploadPartCopy use instead:
-                                  #  - x-amz-copy-*: see copyObject()
-                                  #  - x-amz-copy-source-range STR: same STR as in Range [C]
-                                  #Response is instead:
-                                  #  - ETag STR
-                                  #  - LastModified STR
-POST /BUCKET/OBJECT               #Req: MultipartUpload OBJ:
- ?uploadId=UPLOAD_ID              #  - Parts OBJ_ARR
-completeMultipartUpload()         #     - PartNumber NUM
-                                  #     - ETag STR
-                                  #Res:
-                                  #  - Location URL
-                                  #  - Bucket BUCKET
-                                  #  - Key OBJECT
-                                  #  - ETag STR
-DELETE /BUCKET/OBJECT
- ?uploadId=UPLOAD_ID
-abortMultipartUpload()            #
-GET /BUCKET/OBJECT                #Uses pagination with KEY "PartNumber"
- ?uploadId=UPLOAD_ID              #Res:
-listParts()                       #  - Bucket BUCKET
-                                  #  - Key OBJECT
-                                  #  - UploadId UPLOAD_ID
-                                  #  - Initiator|Owner:
-                                  #     - ID USER_IAM_ARN
-                                  #     - DisplayName USER_STR
-                                  #  - StorageClass STR
-                                  #  - Parts OBJ_ARR:
-                                  #     - PartNumber NUM
-                                  #     - LastModified DATE_STR
-                                  #     - ETag STR
-                                  #     - Size NUM
-GET /BUCKET                       #Uses pagination with KEY "UploadId" and KEY "" (alphabetical order).
-listMultipartUploads()            #Uses max-uploads instead of max-keys
-                                  #Req:
-                                  #  - delimiter|prefix STR: see listObjects()
-                                  #Res:
-                                  #  - Bucket BUCKET
-                                  #  - Delimiter|Prefix STR
-                                  #  - CommonPrefixes OBJ_ARR:
-                                  #     - Prefix STR
-                                  #  - Upload OBJ_ARR:
-                                  #     - Key OBJECT
-                                  #     - UploadId UPLOAD_ID
-                                  #     - Initiator|Owner
-                                  #        - ID USER_IAM_ARN
-                                  #        - DisplayName USER_STR
-                                  #     - StorageClass STR
-                                  #     - Initiated DATE_STR
 
 
                                              /=+===============================+=\
