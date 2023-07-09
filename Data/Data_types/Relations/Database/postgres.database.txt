@@ -2104,6 +2104,72 @@ JSONB ~> BOOL|NUM|STR             #Type cast. Fail if top-level value is not BOO
                                   #null is cast to null::text
 jsonb_pretty(JSONB)->STR          #Type cast, prettified
 
+json[b]_typeof(JSON[B])->STR      #'string|number|boolean|null|object|array'
+
+CONVERSION ==>                    #ARR <-> ARR|SET
+                                  #OBJ <-> ROW
+                                  #STR|NUM|BOOL <-> STR|NUM|BOOL
+                                  #Use json type casting if exists for a given TYPE
+                                  #Otherwise serialize as STR
+
+to_json[b](VAL)->JSON[B]          #
+
+array_to_json
+ (ARR[, BOOL])->ARR_JSON          #BOOL (def: false) is prettify
+json[b]_build_array
+ (VAL,...)->ARR_JSON[B]           #
+json[b]_agg(SET)->ARR_JSON[B]     #AFUNC. Converts to ARR_JSON[B]
+
+row_to_json(ROW)->OBJ_JSON        #BOOL (def: false) is prettify
+json[b]_object
+ ('KEY'_ARR, 'VAL'_ARR)
+ ->OBJ_JSON[B]                    #
+json[b]_object
+ ({'KEY', 'VAL'}_ARR)->OBJ_JSON[B]#
+json[b]_object
+ ({'KEY', 'VAL',...})->OBJ_JSON[B]#
+json[b]_build_object
+ (KEY, VAL,...)->OBJ_JSON[B]      #
+json[b]_object_agg
+ ('KEY'_SET, VAL_SET)->OBJ_JSON[B]#AFUNC. Converts to OBJ_JSON[B]
+
+json[b]_array_elements
+ (ARR_JSON)->JSON[B]_SET          #Converts ARR_JSON to JSON[B]_SET
+json[b]_array_elements_text
+ (ARR_JSON)->STR_SET              #Converts ARR_JSON to STR_SET
+json[b]_array_length
+ (ARR_JSON[B])->UINT              #ARR.length
+
+json[b]_populate_record
+ (null::ROW_TYPE, OBJ_JSON[B])    #Converts OBJ_JSONB to ROW
+ ->ROW                            #OBJ keys not in ROW_TYPE are omitted
+json[b]_populate_recordset
+ (null::ROW_TYPE, OBJ_ARR_JSON[B])
+ ->ROW_SET                        #Converts OBJ_ARR_JSONB to ROW_SET
+
+json[b]_each
+ (OBJ_JSON[B])->ROW_SET           #Each OBJ entry -> ROW with COLs: key STR, value JSON[B]
+json[b]_each_text
+ (OBJ_JSON[B])->ROW_SET           #Same but with COLs: key STR, value STR
+json[b]_object_keys
+ (OBJ_JSON[B])->'KEY'_SET         #
+
+JSONB ? STR                       #BOOL. Check if:
+                                  #  - OBJ: key exists
+                                  #  - ARR: value exists
+                                  #  - STR|NUM|BOOL|null: identical
+JSONB ?& STR_ARR                  #Same as JSONB ? STR and ...
+JSONB ?| STR_ARR                  #Same as JSONB ? STR or ...
+
+JSONB @> JSONB2                   #BOOL. Is superset|subset
+JSONB <@ JSONB2                   #With OBJ|ARR:
+                                  #  - deeply
+                                  #     - OBJ: against another OBJ2
+                                  #     - ARR: against either another ARR2, or an ARR item
+                                  #  - unordered
+                                  #  - ignore duplicates
+                                  #With STR|NUM|BOOL|null: must be identical
+
 JSONB['KEY'|NUM]                  #OBJ['KEY'|NUM] as JSON[B]2|null
 JSON[B]->'KEY'|NUM                #Non-OBJ|ARR JSONB return null
                                   #  - including null, i.e. can do multiple ['KEY'|NUM]
@@ -2124,61 +2190,29 @@ JSON[B]#>>'KEY|NUM'_ARR           #Same but returns as STR|null
 jsonb_set(OBJ|ARR_JSONB,          #Sets OBJ|ARR_JSONB['KEY'|NUM]... = JSONB2
  'KEY|NUM'_ARR, JSONB2[, BOOL])   #If BOOL false (def: true), noop if last KEYs does not already exist
  ->OBJ|ARR_JSONB                  #Noop if any non-last KEY does not exist
+                                  #NUM can be negative
                                   #If NUM too low|high, prepends|appends
+                                  #If JSONB2 null, returns null
+jsonb_set_lax                     #Same as jsonb_set(...) except if JSONB2 null, depending on STR:
+ (...[, STR])->OBJ|ARR_JSONB      #  - 'use_json_null' (def): set value as null
+                                  #  - 'delete_key'
+                                  #  - 'return_target': noop
+                                  #  - 'raise_exception'
+jsonb_insert(OBJ|ARR_JSONB,       #Like jsonb_set(..., true) except if value is ARR item, inserts instead of setting.
+ 'KEY|NUM'_ARR, JSONB2[, BOOL])   #BOOL is whether inserted after (true) or before (false, def)
+                                  #Also, fails if not ARR item and last KEY already exists
 
-JSONB @> JSONB2                   #BOOL. Is superset|subset
-JSONB <@ JSONB2                   #With OBJ|ARR:
-                                  #  - deeply
-                                  #     - OBJ: against another OBJ2
-                                  #     - ARR: against either another ARR2, or an ARR item
-                                  #  - unordered
-                                  #  - ignore duplicates
-                                  #With STR|NUM|BOOL|null: must be identical
+JSONB || JSONB2                   #JSONB3. If:
+                                  #  - ARRs: shallow concatenate
+                                  #  - OBJs: shallow merge
+                                  #  - otherwise: [JSONB, JSONB2]
 
-JSONB ? STR                       #BOOL. Check if:
-                                  #  - OBJ: key exists
-                                  #  - ARR: value exists
-                                  #  - STR|NUM|BOOL|null: identical
-JSONB ?& STR_ARR                  #Same as JSONB ? STR and ...
-JSONB ?| STR_ARR                  #Same as JSONB ? STR or ...
-
-json[b]_typeof(JSON[B])->STR      #'string|number|boolean|null|object|array'
-
-CONVERSION ==>                    #ARR item <-> SET element
-                                  #OBJ <-> ROW
-                                  #OBJ key <-> COL
-                                  #STR|NUM|BOOL <-> STR|NUM|BOOL
-                                  #Use json type casting if exists for a given TYPE
-                                  #Otherwise serialize as STR
-
-to_json[b](VAL)->JSON[B]          #
-array_to_json
- (ARR[, BOOL])->ARR_JSON          #BOOL (def: false) is prettify
-row_to_json(ROW)->OBJ_JSON        #BOOL (def: false) is prettify
-
-json[b]_agg(SET)->ARR_JSON[B]     #AFUNC. Converts to ARR_JSON[B]
-json[b]_object_agg
- ('KEY'_SET, VAL_SET)->OBJ_JSON[B]#AFUNC. Converts to OBJ_JSON[B]
-
-json[b]_array_elements
- (ARR_JSON)->JSON[B]_SET          #Converts ARR_JSON to JSON[B]_SET
-json[b]_array_elements_text
- (ARR_JSON)->STR_SET              #Converts ARR_JSON to STR_SET
-json[b]_array_length
- (ARR_JSON[B])->UINT              #ARR.length
-json[b]_populate_record
- (null::ROW_TYPE, OBJ_JSON[B])    #Converts OBJ_JSONB to ROW
- ->ROW                            #OBJ keys not in ROW_TYPE are omitted
-json[b]_populate_recordset
- (null::ROW_TYPE, OBJ_ARR_JSON[B])
- ->ROW_SET                        #Converts OBJ_ARR_JSONB to ROW_SET
-
-json[b]_each
- (OBJ_JSON[B])->ROW_SET           #Each OBJ entry -> ROW with COLs: key STR, value JSON[B]
-json[b]_each_text
- (OBJ_JSON[B])->ROW_SET           #Same but with COLs: key STR, value STR
-json[b]_object_keys
- (OBJ_JSON[B])->'KEY'_SET         #
+ARR_JSONB - 'VAL'[_ARR]           #ARR_JSONB2. Omit VALs
+ARR_JSONB - INT4                  #ARR_JSONB2. Omit index
+OBJ_JSONB - 'KEY'[_ARR]           #OBJ_JSONB2. Omit KEYs
+JSONB #- 'KEY|NUM'_ARR            #JSONB2. Omit OBJ KEY or ARR index at JSONB#>ARR
+json[b]_strip_nulls
+ (JSON[B])->JSON[B]               #Omit OBJ VALs that are null, recursively
 
 
                                              /=+===============================+=\
