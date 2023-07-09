@@ -29,7 +29,7 @@ FORMAT ==>                        #JSON REST, with X-Amz-Glacier-Version: VERSIO
 DOMAIN ==>                        #SERVICE_FULL_DOMAIN/ACCOUNT_ID
                                   #ACCOUNT_ID can be -, to use the one from Authorization [C]
 
-PAGINATION ==>                    #Req: Marker STR, Limit NUM (def|max: 1e2 with VAULT, 1e4 with others)
+PAGINATION ==>                    #Req: Marker STR, Limit NUM (def|max: 50 with UPLOAD|PART, 100 with VAULT, 1e4 with others)
                                   #Res: Marker STR
 
 ERRORS ==>                        #Uses ERROR_RES
@@ -131,21 +131,22 @@ POST /vaults/VAULT
 initiateMultipartUpload()         #Res: Location [S], x-amz-multipart-upload-id [S]
 PUT /vaults/VAULT
  /multipart-uploads/UPLOAD_MID    #Req: PART_CONTENTS, Content-Range [C], x-amz-content-sha256 [C], x-amz-sha256-tree-hash [C]
-uploadMultipartPart()             #Res: empty
-GET /vaults/VAULT                 #Req: empty
- /multipart-uploads               #Res: UploadsList UPLOAD_ARR
-listMultipartUploads()            #  - no Parts
+uploadMultipartPart()             #Res: x-amz-sha256-tree-hash [S]
 GET /vaults/VAULT
  /multipart-uploads/UPLOAD_MID    #Req: empty
 listParts()                       #Res: UPLOAD
+GET /vaults/VAULT                 #Req: empty
+ /multipart-uploads               #Res: UploadsList UPLOAD_ARR
+listMultipartUploads()            #  - no Parts
 POST /vaults/VAULT
- /multipart-uploads/UPLOAD_MID    #Req: only x-amz-sha256-tree-hash [C], x-amz-archive-size [C]
-completeMultipartUpload()         #Res: ARCHIVE
+ /multipart-uploads/UPLOAD_MID    #Req: x-amz-sha256-tree-hash [C], x-amz-archive-size [C]
+completeMultipartUpload()         #Res: x-amz-archive-id [S]
 DELETE /vaults/VAULT
  /multipart-uploads/UPLOAD_MID    #Req: empty
 abortMultipartUpload()            #Res: empty
 
 UPLOAD                            #Like ARCHIVE, but in several requests (PARTs)
+                                  #Max 1e4 PARTs
                                   #Max 40TB for total ARCHIVE instead of 4GB
                                   #  - should be used if > 100MB
                                   #Once complete, valid 24h
@@ -157,7 +158,7 @@ Location: /vaults/VAULT
  /multipart-uploads/UPLOAD_MID [S]#
 x-amz-archive-description:
  ARCHIVE_DESC [C]
-UPLOAD.ArchiveDescription         #'ARCHIVE_DESC'
+UPLOAD.ArchiveDescription         #'ARCHIVE_DESC'|null
 UPLOAD.CreationDate               #'DATE'
 
 PART_CONTENTS                     #PART contents, as is
@@ -168,14 +169,15 @@ x-amz-part-size: NUM [C]          #NUM. PART size, in bytes.
 UPLOAD.PartSizeInBytes            #Min 1MiB, max 4GiB. Must be power of 2
                                   #Each PART must have same size, except last one
 
+Content-Range:                    #Start|end indices of the PART
+ bytes NUM-NUM2/* [C]             #Can upload PARTs in:
+                                  #  - random order
+                                  #  - parallel
 UPLOAD.Parts                      #PART_ARR
-                                  #Max 1e4
-PART.RangeInBytes                 #STR
-Content-Range: STR [C]            #Same format as Range [C]
-                                  #Unit: MiB
+PART.RangeInBytes                 #'NUM-NUM2'
 
 x-amz-content-sha256: HASH [C]    #Like simple upload
-PART.SHA256TreeHash               #
+PART.SHA256TreeHash
 x-amz-sha256-tree-hash: HASH [C|S]#Like simple upload
 
 
@@ -197,7 +199,7 @@ GET /vaults/VAULT/jobs/JOB_MID
  /output                          #Req: empty
 getJobOutput()                    #Res: ARCHIVE_CONTENTS (for AJOB) or IJOB_RES
 
-JOB_REQ.Type                      #'archive-retrieval' or 'inventory-retrieval'
+JOB_REQ.Type                      #'archive-retrieval', 'inventory-retrieval', 'select'
 JOB_REQ.Description               #'JOB_DESC'
 
 Location: /vaults/VAULT
@@ -206,13 +208,23 @@ x-amz-job-id: JOB_MID [S]         #
 
 JOB.JobId                         #JOB_MID
 JOB.VaultARN                      #VAULT_ARN
-JOB.Action                        #'ArchiveRetrieval' or 'InventoryRetrieval'
+JOB.Action                        #'ArchiveRetrieval', 'InventoryRetrieval', 'Select'
+JOB.JobDescription                #'JOB_DESC'
+JOB.CreationDate                  #'DATE'
+JOB.CompletionDate                #'DATE'|null
 JOB.Completed                     #BOOL
                                   #Slow: min 5 hours
 JOB.StatusCode                    #'InProgress|Succeeded|Failed'
 JOB.StatusMessage                 #STR
-JOB.JobDescription                #'JOB_DESC'
-JOB.CreationDate                  #'DATE'
+
+JOB.OutputPath                    #'PATH'???
+JOB.OutputLocation.S3             #S3_OUTPUT
+S3_OUTPUT.AccessControlList       #S3_ACL_ARR
+S3_ACL                            #S3 ACCESS_CONTROL_LIST
+S3_ACL.Grantee                    #S3_GRANTEE
+S3_GRANTEE.Type                   #'CanonicalUser|Group|AmazonCustomerByEmail'
+S3_GRANTEE.ID|EmailAddress|URI    #STR, depending on S3_GRANTEE.Type
+S3_GRANTEE.DisplayName            #STR
 
 JOB_RES                           #Only available after JOB completes
                                   #Once completed, JOB expires after 24h
@@ -240,8 +252,7 @@ AJOB.ArchiveId                    #ARCHIVE_MID
 AJOB.ArchiveSizeInBytes           #NUM
 AJOB.RetrievalByteRange           #STR
 AJOB.SHA256TreeHash               #STR
-AJOB.ArchiveSHA256TreeHash        #STR
-AJOB.CompletionDate               #'DATE'
+AJOB.ArchiveSHA256TreeHash        #'HASH'
 
 AJOB_RES                          #ARCHIVE_CONTENT
 Content-Type:
@@ -282,6 +293,20 @@ IJOB_ARCHIVE.ArchiveDescription   #'ARCHIVE_DESC'
 IJOB_ARCHIVE.CreationDate         #'DATE'
 IJOB_ARCHIVE.Size                 #NUM
 IJOB_ARCHIVE.SHA256TreeHash       #STR
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:            SELECT             :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+SJOB[_REQ|RES]                    #JOB[_REQ|RES] with Type 'select'
+
+SJOB.ArchiveId
+SJOB.ArchiveSizeInBytes
+SJOB.ArchiveSHA256TreeHash        #Like AJOB
 
 
                                              /=+===============================+=\
