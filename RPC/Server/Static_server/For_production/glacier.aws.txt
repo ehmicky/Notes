@@ -47,7 +47,7 @@ PRICING ==>                       #The following is compared to S3
                                   #  - when reading contents: additional 1$/100GB
                                   #     - free with tier "bulk", 3x more expensive with tier "expedited"
                                   #     - free: first 10GB/month
-                                  #  - when using 'select':
+                                  #  - when using 'Select':
                                   #     - input: 4x more expensive
                                   #        - 2x cheaper with tier "bulk", 10x more expensive with tier "expedited"
                                   #     - output: 14x more expensive
@@ -215,16 +215,25 @@ ARCHIVE_CHECKSUMS.treeHash        #'HASH'. Markle tree of each ARCHIVE_CONTENT's
                                              \=+===============================+=/
 
 
-POST /vaults/VAULT/jobs           #Req: jobParameters JOB_REQ
-InitiateJob()                     #Res: Location [S], x-amz-job-id [S], x-amz-job-output-path [S]
+POST /vaults/VAULT/jobs           #Req: jobParameters JOB
+InitiateJob()                     #  - no JobId, VaultARN, CreationDate, CompletionDate, Completed, StatusCode, StatusMessage
+                                  #  - Action 'ArchiveRetrieval|...' -> Type 'archive-retrieval|...'
+                                  #  - JobDescription -> Description
+                                  #  - (for AJOB) no *TreeHash, ArchiveSizeInBytes
+                                  #  - (for IJOB) no InventorySizeInBytes
+                                  #  - (for SJOB) no OutputPath
+                                  #Res: Location [S], x-amz-job-id [S], x-amz-job-output-path [S]
 GET /vaults/VAULT/jobs            #Req: JOB
 ListJobs()                        #  - only Completed, StatusCode
                                   #Res: JobList JOB_ARR
 GET /vaults/VAULT/jobs/JOB_MID    #Req: empty
 DescribeJob()                     #Res: JOB
+                                  #  - no SNSTopic
+                                  #  - (for IJOB) no Format
 GET /vaults/VAULT/jobs/JOB_MID
- /output                          #Req: Range [C]
-GetJobOutput()                    #Res: ARCHIVE_CONTENTS (for AJOB) or IJOB_RES, x-amz-sha256-tree-hash [S]
+ /output                          #Req: (for AJOB) Range [C]
+GetJobOutput()                    #Res: JOB_RES
+                                  #  - (for IJOB) x-amz-sha256-tree-hash [S]
 
 x-amz-job-id: JOB_MID [S]
 JOB.JobId                         #JOB_MID
@@ -232,9 +241,7 @@ Location: /vaults/VAULT
  /jobs/JOB_MID [S]
 JOB.VaultARN                      #VAULT_ARN
 
-JOB_REQ.Type                      #'archive-retrieval', 'inventory-retrieval', 'select'
 JOB.Action                        #'ArchiveRetrieval', 'InventoryRetrieval', 'Select'
-JOB_REQ.Description
 JOB.JobDescription                #'JOB_DESC'
 
 JOB.CreationDate                  #'DATE'
@@ -270,7 +277,7 @@ VAULT_NOTIF.Events                #'EVENT'_ARR, among:
                                   #  - 'ArchiveRetrievalCompleted'
                                   #  - 'InventoryRetrievalCompleted'
 
-JOB_REQ.SNSTopic                  #TOPIC_ARN. Like VAULT_NOTIF, but for a single JOB
+JOB.SNSTopic                      #TOPIC_ARN. Like VAULT_NOTIF, but for a single JOB
 
 
                                              /=+===============================+=\
@@ -280,20 +287,20 @@ JOB_REQ.SNSTopic                  #TOPIC_ARN. Like VAULT_NOTIF, but for a single
                                              \=+===============================+=/
 
 
-AJOB[_REQ|RES]                    #JOB[_REQ|RES] with Type 'archive-retrieval'
+AJOB                              #JOB with Action 'ArchiveRetrieval'
                                   #Get an ARCHIVE_CONTENT
 
-AJOB[_REQ].ArchiveId              #ARCHIVE_MID
+AJOB.ArchiveId                    #ARCHIVE_MID
 
 Range: bytes=NUM-NUM2 [C]
 --range
-AJOB[_REQ].RetrievalByteRange     #'NUM-NUM2'. Same as Range [C] when uploading, but for downloading, i.e. only download a PART
+AJOB.RetrievalByteRange           #'NUM-NUM2'. Same as Range [C] when uploading, but for downloading, i.e. only download a PART
 Content-Range:                    #Goal: streaming
  bytes NUM-NUM2/NUM3 [S]          #Status code is 206 for non-last part, 200 for last part
 
 AJOB.ArchiveSizeInBytes           #NUM, i.e. size of whole archive
 
-AJOB[_REQ].Tier                   #Duration, among:
+AJOB.Tier                         #Duration, among:
                                   #  - 'Expedited': 1-5m, longer if >250MB
                                   #  - 'Standard' (def): 3-5h
                                   #  - 'Bulk': 5-15h
@@ -358,15 +365,14 @@ VAULT.NumberOfArchives            #NUM. 0 if LastIventoryDate null
 IJOB.InventorySizeInBytes
 VAULT.SizeInBytes                 #NUM. Total of all ARCHIVE sizes, including 40KB metadata. 0 if LastIventoryDate null
 
-IJOB[_REQ|RES]                    #JOB[_REQ|RES] with Type 'inventory-retrieval'
+IJOB                              #JOB with Action 'InventoryRetrieval'
                                   #List ARCHIVEs
 
-IJOB[_REQ]
- .InventoryRetrievalParameters    #IJOB_PARAMS
+IJOB.InventoryRetrievalParameters #IJOB_PARAMS
 IJOB_PARAMS                       #Can be paginated
 IJOB_PARAMS.StartDate|EndDate     #'DATE_STR'. IJOB_ARCHIVE.CreationDate
 
-IJOB_REQ.Format                   #'JSON' (def) or 'CSV'
+IJOB.Format                       #'JSON' (def) or 'CSV'
 Content-Type: MIME [S]            #'application/json' or 'text/csv'
 
 IJOB_RES.VaultARN                 #ARN
@@ -384,12 +390,12 @@ IJOB_ARCHIVE.Size                 #NUM
                                              \=+===============================+=/
 
 
-SJOB[_REQ]                        #JOB[_REQ] with Type 'select'
+SJOB                              #JOB with Action 'Select'
                                   #Transforms a CSV ARCHIVE using SQL, then outputs to S3
 
-SJOB[_REQ].*                      #Like AJOB[_REQ].*, except no RetrievalByteRange|SHA256TreeHash
+SJOB.*                            #Like AJOB.*, except no RetrievalByteRange|SHA256TreeHash
 
-SJOB[_REQ].SelectParameters       #SJOB_PARAMS
+SJOB.SelectParameters             #SJOB_PARAMS
 SJOB_PARAMS.ExpressionType        #Always 'SQL'
 SJOB_PARAMS.Expression            #STR. SQL expression, same syntax as S3 select
                                   #Max 1.3e5 chars
@@ -406,7 +412,7 @@ SJOB_CSV.Comments                 #'CHAR' (like #) used to comment a line
 
 x-amz-job-output-path: STR [S]
 SJOB.OutputPath                   #'OBJECT' path
-SJOB[_REQ].OutputLocation.S3      #S3_OUTPUT
+SJOB.OutputLocation.S3            #S3_OUTPUT
 S3_OUTPUT.BucketName              #'BUCKET'
 S3_OUTPUT.Prefix                  #STR
 
