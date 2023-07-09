@@ -203,23 +203,37 @@ aws s3 website S3BUCKET
                                              \=+===============================+=/
 
 
-PUT /BUCKET                       #Req: CreateBucketConfiguration BUCKET_REQ
-x-amz-acl [C], x-amz-grant-read[-acp]|write[-acp]|full-control [C], x-amz-bucket-object-lock-enabled [C], x-amz-object-ownership [C]
-createBucket()                    #Res: Location [S]
+PUT /BUCKET                       #Req: CreateBucketConfiguration BUCKET_REQ, x-amz-acl [C], x-amz-grant-read[-acp]|write[-acp]|full-control [C],
+createBucket()                    # x-amz-bucket-object-lock-enabled [C], x-amz-object-ownership [C]
+                                  #Res: Location [S]
 HEAD /BUCKET                      #Req: empty
 headBucket()                      #Res: x-amz-bucket-region [S], x-amz-access-point-alias [S]
 GET /                             #Req: empty
-listBuckets()                     #Res: Buckets BUCKET_ARR, Owner OWNER
+listBuckets()                     #Res: BUCKETS_LIST
+                                  #No pagination
 DELETE /BUCKET                    #Req: x-amz-expected-bucket-owner [C]
 deleteBucket()                    #Res: empty
 
+BUCKETS_LIST.Buckets              #BUCKET_ARR
 BUCKET                            #Like a folder
+
 Location: /BUCKET [S]
 BUCKET.Name                       #'BUCKET'
 BUCKET.CreationDate               #'DATE'
 
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:             OWNER             :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+BUCKETS_LIST|OBJECT_LIST_ITEM
+ .Owner                           #OWNER
 OWNER.ID                          #STR
 OWNER.DisplayName                 #'USER'
+
 x-amz-expected-bucket-owner:
  ACCOUNT_ID [C]                   #403 if BUCKET's owner is different
 
@@ -257,26 +271,27 @@ copyObject()                      #Res: CopyObjectResult NEW_OBJECT_RES
 POST /BUCKET                      #Req: FORM_OBJECT_REQ, same headers as putObject()
 postObject()                      #Res: FORM_OBJECT_RES, same headers as putObject()
                                   #Like putObject() but meant to be performed by a <form> submit
-                                  #Same request|response headers as putObject() but:
-FORM_OBJECT_REQ.file              #STR. Content
-                                  #Must be last field.
-FORM_OBJECT_REQ.key               #'OBJECT'
-FORM_OBJECT_REQ
- .success_action_redirect         #URL to redirect to when response code is success_action_status NUM
-FORM_OBJECT_REQ
- .success_action_status           #NUM
-FORM_OBJECT_REQ.x-amz-algorithm|credential|date|security-token|signature
-FORM_OBJECT_REQ.Policy OBJ, as Base64:
-                                  #        - expiration DATE_STR
-                                  #        - conditions OBJ_ARR2_ARR:
-                                  #           - ARR2 is [ STR, STR2, STR3 ], according to STR:
-                                  #              - "eq": STR2 == STR3, can also use { STR2: STR3 } instead of ARR2
-                                  #              - "starts-with": STR3 can be ""
-                                  #              - "content-length-range" NUM2 NUM3
-                                  #          - STR2 can be "acl", "bucket", "content-length-range" or any field name
-                                  #          - can use $FIELDNAME for any field name (e.g. [ "start-with", "$key", "user1/" ])
-FORM_OBJECT_REQ.acl 'ACL'
-FORM_OBJECT_REQ.AWSAccessKeyId ACCESS_KEY_ID
+GET /BUCKET                       #Req: OBJECT_LIST_REQ
+listObjectsV2()                   #Res: OBJECT_LIST_REQ
+                                  #Paginates OBJECT_LIST_RES.Contents with RES.ContinuationToken, RES.MaxKeys, RES.KeyCount
+DELETE /BUCKET/OBJECT             #Req: empty
+deleteObject()                    #Res: empty
+POST /BUCKET?delete               #Req: Delete OBJECTS_DELETE_REQ
+deleteObjects()                   #Res: OBJECTS_DELETE_RES
+
+OBJECTS_DELETE_REQ.Quiet          #BOOL
+OBJECTS_DELETE_REQ.Objects        #OBJECT_DELETE_REQ_ARR:
+OBJECT_DELETE_REQ|RES|ERROR_DELETE
+ .Key                             #'OBJECT'
+OBJECT_DELETE_REQ|RES|ERROR_DELETE
+ .VersionId                       #VERSION_ID. Optional
+OBJECTS_DELETE_RES.Deleted        #OBJECT_DELETE_RES_ARR
+OBJECT_DELETE_RES.DeleteMarker    #BOOL
+OBJECT_DELETE_RES
+ .DeleteMarkerVersionId           #VERSION_ID
+OBJECTS_DELETE_RES.Errors         #ERROR_DELETE_ARR
+ERROR_DELETE.Code                 #STR
+ERROR_DELETE.Message              #STR
 
 OBJECT                            #Like a file
 'OBJECT'                          #OBJECT's name. Also named "key".
@@ -286,16 +301,34 @@ OBJECT                            #Like a file
                                   #  - as opposed to serial integer, timestamp, etc.
 
 RAW_OBJECT                        #OBJECT, as is
-
 FORM_OBJECT_REQ                   #Must use multipart/form-data
+FORM_OBJECT_REQ.file              #STR. Content
+                                  #Must be last field.
 
-FORM_OBJECT_RES.Bucket            #'BUCKET'
-FORM_OBJECT_RES.Key               #'OBJECT'
+FORM_OBJECT_RES.Bucket
+OBJECT_LIST_RES.Name              #'BUCKET'
+FORM_OBJECT_REQ|RES
+ |OBJECT_LIST_ITEM.Key            #'OBJECT'
 FORM_OBJECT_RES.Location          #'.../BUCKET/OBJECT' URL
+OBJECT_LIST_REQ.encoding-type     #'url'. Percent encode the OBJECT_LIST_RES.* with value 'OBJECT'
+OBJECT_LIST_RES.EncodingType      #I.e. for Key|StartAfter|Prefix|Delimiter
 
-FORM_OBJECT_RES|NEW_OBJECT_RES
- .ETag                            #'ETAG'
-NEW_OBJECT_RES.LastModified       #'DATE'
+OBJECT_LIST_REQ.start-after
+OBJECT_LIST_RES.StartAfter        #STR. Only include if 'OBJECT' is STR, or lexicographically after
+OBJECT_LIST_REQ.prefix
+OBJECT_LIST_RES.Prefix            #STR. Only include if 'OBJECT' start with STR
+OBJECT_LIST_REQ.delimiter         #STR separating 'OBJECT' "subfolders". This is usually '/'
+OBJECT_LIST_RES.Delimiter         #When specified, distinguishes between:
+                                  #  - pseudo-regular files:
+                                  #     - 'OBJECT' start with Prefix, but does not include Delimiter
+                                  #     - returned in OBJECT_LIST_RES.Contents
+                                  #  - pseudo-directories:
+                                  #     - 'OBJECT' start with Prefix, but includes Delimiter
+                                  #     - returned in OBJECT_LIST_RES.CommonPrefixes
+OBJECT_LIST_RES.Contents          #OBJECT_LIST_ITEM_ARR
+OBJECT_LIST_RES.CommonPrefixes    #Unique COMMON_PREFIX_ARR
+                                  #Max 1000
+COMMON_PREFIX.Prefix              #Prefix + 'OBJECT' until next Delimiter (included)
 
 x-amz-copy-source:                #Copy OBJECT
  /BUCKET/OBJECT [C]               #New OBJECT's ACL is 'private'
@@ -308,12 +341,19 @@ Expect: "100-continue" [C]        #See HTTP doc
 
 Range: STR [C]                    #See HTTP doc
 
-If-[None-]Match: STR [C]
+OBJECT_LIST_ITEM.Size             #NUM, in bytes
+
+NEW_OBJECT_RES|OBJECT_LIST_ITEM
+ .LastModified                    #'DATE'
 If-[Un]modified-Since: DATE [C]   #See HTTP doc
-x-amz-copy-source-if-[none-]match:
- STR [C]
 x-amz-copy-source-if-
  [un]modified-since: DATE [C]     #Same but with x-amz-copy-source [C]
+
+FORM_OBJECT_RES|NEW_OBJECT_RES
+ |OBJECT_LIST_ITEM.ETag           #'ETAG'
+If-[None-]Match: STR [C]          #See HTTP doc
+x-amz-copy-source-if-[none-]match:
+ STR [C]                          #Same but with x-amz-copy-source [C]
 
 Response-Content-Type: STR [C]
 Content-Type: STR [C|S]           #See HTTP doc
@@ -330,42 +370,35 @@ Response-Content-Disposition:
 Content-Disposition: STR [C|S]    #See HTTP doc
 x-amz-meta-*: STR [C|S]           #Arbitrary metadata
 
-GET /BUCKET                       #Uses pagination with KEY "". Marker is the start prefix, by alphabetical order.
-listObjects()                     #Req:
-                                  #  - prefix STR: only OBJECT that start with STR
-                                  #  - delimiter STR: group OBJECT according to STR (usually "/")
-                                  #Res:
-                                  #  - Name BUCKET
-                                  #  - Prefix STR
-                                  #  - Delimiter STR
-                                  #  - CommonPrefix STR: common prefix of all returned OBJECT, up to last Delimiter of the prefix
-                                  #  - Contents:
-                                  #     - Key OBJECT
-                                  #     - LastModified DATE_STR
-                                  #     - ETag STR
-                                  #     - Size NUM
-                                  #     - StorageClass STR
-                                  #     - Owner:
-                                  #        - ID USER_IAM_ARN
-                                  #        - DisplayName USER_STR
-DELETE /BUCKET/OBJECT
-deleteObject()                    #
-POST /BUCKET?delete               #Delete several OBJECT. Request body: Delete OBJ:
-deleteObjects()                   #  - Quiet BOOL
-                                  #  - Objects OBJ_ARR:
-                                  #     - Key OBJECT
-                                  #     - VersionId VERSION_ID (optional)
-                                  #Res:
-                                  #  - Deleted OBJ_ARR:
-                                  #     - Key OBJECT
-                                  #     - VersionId VERSION_ID (optional)
-                                  #     - DeleteMarker BOOL
-                                  #     - DeleteMarkerVersionId VERSION_ID
-                                  #  - Errors OBJ_ARR:
-                                  #     - Key OBJECT
-                                  #     - VersionId VERSION_ID (optional)
-                                  #     - Code STR
-                                  #     - Message STR
+OBJECT_LIST_ITEM.StorageClass     #STR
+
+FORM_OBJECT_REQ
+ .success_action_redirect         #URL to redirect to when response code is success_action_status NUM
+FORM_OBJECT_REQ
+ .success_action_status           #NUM
+
+FORM_OBJECT_REQ.x-amz-algorithm|
+ credential|signed-headers|
+ signature|security-token|date    #Like authorization headers
+FORM_OBJECT_REQ.AWSAccessKeyId    #ACCESS_KEY_ID
+FORM_OBJECT_REQ.acl               #'ACL'
+
+FORM_OBJECT_REQ.Policy            #OBJECT_POLICY, as Base64
+OBJECT_POLICY.expiration          #'DATE'
+OBJECT_POLICY.conditions          #ARR of either:
+                                  #  - ['OP', 'KEY', 'VAL2']
+                                  #  - { KEY: 'VAL2' }: same as ['eq', 'KEY', 'VAL2']
+KEY                               #Points to a VAL1
+                                  #Can be any field name???
+                                  #Can use $FIELDNAME for any field name (e.g. [ "start-with", "$key", "user1/" ])???
+                                  #Can contain ${filename}???
+KEY 'acl'                         #'ACL'
+KEY 'bucket'                      #'BUCKET'
+KEY 'content-length-range'        #[MIN_NUM, MAX_NUM] for Content-Length [S]
+OP                                #
+OP 'eq'                           #VAL1 == VAL2
+OP 'starts-with'                  #VAL1 starts with VAL2 (can be '')
+OP 'content-length-range'         #VAL1 <= Content-Length [S] <= VAL2
 
 
                                              /=+===============================+=\
