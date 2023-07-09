@@ -6,7 +6,7 @@
 
 
 TO DOCUMENT:
-  - https://docs.aws.amazon.com/amazonglacier/latest/dev/checksum-calculations-range.html
+  - "select" chapter???
   - checksums automatically computed with CLI and JS client???
 
 VERSION ==>                       #2022-11-15
@@ -29,7 +29,7 @@ FORMAT ==>                        #JSON REST, with X-Amz-Glacier-Version: VERSIO
 DOMAIN ==>                        #SERVICE_FULL_DOMAIN/ACCOUNT_ID
                                   #ACCOUNT_ID can be -, to use the one from Authorization [C]
 
-PAGINATION ==>                    #Req: Marker STR, Limit NUM (def|max: 50 with UPLOAD|PART, 100 with VAULT, 1e4 with others)
+PAGINATION ==>                    #Req: Marker STR, Limit NUM (def|max: 50 with UPLOAD|PART|JOB, 100 with VAULT)
                                   #Res: Marker STR
 
 ERRORS ==>                        #Uses ERROR_RES
@@ -189,48 +189,33 @@ x-amz-sha256-tree-hash: HASH [C|S]#Like simple upload
 
 
 POST /vaults/VAULT/jobs           #Req: jobParameters JOB_REQ
-initiateJob()                     #Res: Location [S], x-amz-job-id [S]
+initiateJob()                     #Res: Location [S], x-amz-job-id [S], x-amz-job-output-path [S]
 GET /vaults/VAULT/jobs            #Req: JOB
 listJobs()                        #  - only Completed, StatusCode
                                   #Res: JobList JOB_ARR
 GET /vaults/VAULT/jobs/JOB_MID    #Req: empty
 describeJob()                     #Res: JOB
 GET /vaults/VAULT/jobs/JOB_MID
- /output                          #Req: empty
-getJobOutput()                    #Res: ARCHIVE_CONTENTS (for AJOB) or IJOB_RES
+ /output                          #Req: Range [C]
+getJobOutput()                    #Res: ARCHIVE_CONTENTS (for AJOB) or IJOB_RES, x-amz-sha256-tree-hash [S]
 
 JOB_REQ.Type                      #'archive-retrieval', 'inventory-retrieval', 'select'
 JOB_REQ.Description               #'JOB_DESC'
 
-Location: /vaults/VAULT
- /jobs/JOB_MID [S]                #
-x-amz-job-id: JOB_MID [S]         #
-
+x-amz-job-id: JOB_MID [S]
 JOB.JobId                         #JOB_MID
+Location: /vaults/VAULT
+ /jobs/JOB_MID [S]
 JOB.VaultARN                      #VAULT_ARN
+
 JOB.Action                        #'ArchiveRetrieval', 'InventoryRetrieval', 'Select'
 JOB.JobDescription                #'JOB_DESC'
+
 JOB.CreationDate                  #'DATE'
 JOB.CompletionDate                #'DATE'|null
 JOB.Completed                     #BOOL
-                                  #Slow: min 5 hours
 JOB.StatusCode                    #'InProgress|Succeeded|Failed'
 JOB.StatusMessage                 #STR
-
-JOB.OutputPath                    #'PATH'???
-JOB.OutputLocation.S3             #S3_OUTPUT
-S3_OUTPUT.BucketName              #'BUCKET'
-S3_OUTPUT.Prefix                  #STR
-S3_OUTPUT.StorageClass            #'STANDARD[_IA]|REDUCED_REDUNDANCY'
-S3_OUTPUT.Tagging.TAG             #STR
-S3_OUTPUT.CannedACL               #S3 'ACL' shortcut, e.g. 'private-read'
-S3_OUTPUT.AccessControlList       #S3_ACL_ARR
-S3_ACL                            #S3 ACCESS_CONTROL_LIST
-S3_ACL.Permission                 #'READ[_ACP]|WRITE[_ACP]|FULL_CONTROL'
-S3_ACL.Grantee                    #S3_GRANTEE
-S3_GRANTEE.Type                   #'CanonicalUser|Group|AmazonCustomerByEmail'
-S3_GRANTEE.ID|EmailAddress|URI    #STR, depending on S3_GRANTEE.Type
-S3_GRANTEE.DisplayName            #STR
 
 JOB_RES                           #Only available after JOB completes
                                   #Once completed, JOB expires after 24h
@@ -246,19 +231,24 @@ JOB_RES                           #Only available after JOB completes
 AJOB[_REQ|RES]                    #JOB[_REQ|RES] with Type 'archive-retrieval'
                                   #Get an ARCHIVE_CONTENT
 
-AJOB_REQ.ArchiveId                #ARCHIVE_MID
+AJOB[_REQ].ArchiveId              #ARCHIVE_MID
 
-Range: STR [C]                    #STR. Goal is to spread out retrieval time (for pricing purpose)
-AJOB_REQ.RetrievalByteRange       #Part size must be integer in MB
+Range: bytes=NUM-NUM2 [C]         #'NUM-NUM2'. Same as Range [C] when uploading, but for downloading, i.e. only download a PART
+AJOB[_REQ].RetrievalByteRange     #Goal is either:
+Content-Range:                    #  - streaming
+ bytes NUM-NUM2/NUM3 [S]          #  - spreading out retrieval time for pricing purpose
                                   #Status code is 206 for non-last part, 200 for last part
-Content-Range: STR [S]            #
-x-amz-sha256-tree-hash: HASH [S]  #Like simple upload
 
-AJOB.ArchiveId                    #ARCHIVE_MID
-AJOB.ArchiveSizeInBytes           #NUM
-AJOB.RetrievalByteRange           #STR
-AJOB.SHA256TreeHash               #STR
-AJOB.ArchiveSHA256TreeHash        #'HASH'
+AJOB.ArchiveSizeInBytes           #NUM, i.e. size of whole archive
+
+AJOB.ArchiveSHA256TreeHash        #Like simple upload, i.e. 'HASH' of whole archive
+AJOB.SHA256TreeHash
+x-amz-sha256-tree-hash: HASH [S]  #Like simple upload, i.e. 'HASH' of PART
+
+AJOB[_REQ].Tier                   #Among:
+                                  #  - 'Expedited': 1-5m, longer if >250MB
+                                  #  - 'Standard' (def): 3-5h
+                                  #  - 'Bulk': 5-15h
 
 AJOB_RES                          #ARCHIVE_CONTENT
 Content-Type:
@@ -273,26 +263,28 @@ Content-Type:
 
 
 VAULT.LastInventoryDate           #'DATE'|null of last "inventory", i.e. ARCHIVEs listing, done once per day
+                                  #Not updated if no changes in VAULT
 VAULT.NumberOfArchives            #NUM. 0 if LastIventoryDate null
 VAULT.SizeInBytes                 #NUM. Total of all ARCHIVE sizes, including 40KB metadata. 0 if LastIventoryDate null
 
 IJOB[_REQ|RES]                    #JOB[_REQ|RES] with Type 'inventory-retrieval'
                                   #List ARCHIVEs
 
-IJOB_REQ.Format                   #'JSON' (def) or 'CSV'
-Content-Type:
- 'application/json' [S]           #
-Content-Type: 'text/csv' [S]      #
-IJOB_REQ
+IJOB[_REQ]
  .InventoryRetrievalParameters    #IJOB_PARAMS
 IJOB_PARAMS                       #Can be paginated
 IJOB_PARAMS.StartDate|EndDate     #'DATE_STR'. IJOB_ARCHIVE.CreationDate
 
+IJOB_REQ.Format                   #'JSON' (def) or 'CSV'
+Content-Type:
+ 'application/json' [S]           #
+Content-Type: 'text/csv' [S]      #
+
 IJOB.InventorySizeInBytes         #NUM
-IJOB.InventoryRetrievalParameters #IJOB_PARAMS
 
 IJOB_RES.VaultARN                 #ARN
 IJOB_RES.InventoryDate            #'DATE'
+
 IJOB_RES.ArchiveList              #IJOB_ARCHIVE_ARR
 IJOB_ARCHIVE.ArchiveId            #ARCHIVE_MID
 IJOB_ARCHIVE.ArchiveDescription   #'ARCHIVE_DESC'
@@ -312,7 +304,47 @@ SJOB[_REQ|RES]                    #JOB[_REQ|RES] with Type 'select'
 
 SJOB.ArchiveId
 SJOB.ArchiveSizeInBytes
-SJOB.ArchiveSHA256TreeHash        #Like AJOB
+SJOB.ArchiveSHA256TreeHash
+SJOB.Tier                         #Like AJOB
+
+SJOB[_REQ].SelectParameters       #SJOB_PARAMS
+SJOB_PARAMS.ExpressionType        #Always 'SQL'
+SJOB_PARAMS.Expression            #STR. SQL expression
+                                  #Max 1.3e5 chars
+SJOB_PARAMS
+ .InputSerialization.CSV          #SJOB_CSV
+SJOB_PARAMS
+ .OutputSerialization.CSV         #SJOB_CSV, but no FileHeaderInfo|Comments
+SJOB_CSV.FileHeaderInfo           #Whether first line is header: 'Use', 'Ignore', 'None'
+SJOB_CSV.RecordDelimiter          #'CHAR' (like \n)
+SJOB_CSV.FieldDelimiter           #'CHAR' (def: ,)
+SJOB_CSV.QuoteCharacter           #'CHAR' (like \)
+SJOB_CSV.QuoteEscapeCharacter     #'CHAR' (like ")
+SJOB_CSV.Comments                 #'CHAR' (like #) used to comment a line
+
+x-amz-job-output-path: STR [S]
+SJOB.OutputPath                   #'OBJECT' path
+SJOB[_REQ].OutputLocation.S3      #S3_OUTPUT
+S3_OUTPUT.BucketName              #'BUCKET'
+S3_OUTPUT.Prefix                  #STR
+
+S3_OUTPUT.StorageClass            #'STANDARD[_IA]|REDUCED_REDUNDANCY'
+S3_OUTPUT.Tagging.TAG             #STR
+S3_OUTPUT.UserMetadata.VAR        #'VAL'
+
+S3_OUTPUT.Encryption              #S3_ENCRYPTION
+S3_ENCRYPTION.Encryption          #'aws:kms' or 'AES256'
+S3_ENCRYPTION.KMSKeyId            #KMS_KEY_MID
+S3_ENCRYPTION.KMSContext          #STR
+
+S3_OUTPUT.CannedACL               #S3 'ACL' shortcut, e.g. 'private-read'
+S3_OUTPUT.AccessControlList       #S3_ACL_ARR
+S3_ACL                            #S3 ACCESS_CONTROL_LIST
+S3_ACL.Permission                 #'READ[_ACP]|WRITE[_ACP]|FULL_CONTROL'
+S3_ACL.Grantee                    #S3_GRANTEE
+S3_GRANTEE.Type                   #'CanonicalUser|Group|AmazonCustomerByEmail'
+S3_GRANTEE.ID|EmailAddress|URI    #STR, depending on S3_GRANTEE.Type
+S3_GRANTEE.DisplayName            #STR
 
 
                                              /=+===============================+=\
@@ -332,7 +364,7 @@ DELETE /vaults/VAULT
  /notification-configuration      #Req: empty
 deleteVaultNotifications()        #Res: empty
 
-VAULT_NOTIF                       #SNS notification when async job is done
+VAULT_NOTIF                       #SNS notification when JOB succeeds|fails
 VAULT_NOTIF.SNSTopic              #TOPIC_ARN
 VAULT_NOTIF.Events                #'EVENT'_ARR, among:
                                   #  - 'ArchiveRetrievalCompleted'
