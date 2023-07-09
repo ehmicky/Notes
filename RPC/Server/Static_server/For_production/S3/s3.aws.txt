@@ -281,6 +281,7 @@ OBJECT_LIST_RES.Name              #'BUCKET'
 
 OBJECT_LIST_REQ.encoding-type     #'url'. Percent encode the OBJECT_LIST_RES.* with value 'OBJECT'
 OBJECT_LIST_RES.EncodingType      #I.e. for Key|StartAfter|Prefix|Delimiter
+                                  #Needed if contains characters not allowed by XML 1.0
 
 OBJECT_LIST_REQ.start-after
 OBJECT_LIST_RES.StartAfter        #STR. Only include if 'OBJECT' is STR, or lexicographically after
@@ -353,22 +354,33 @@ FORM_OBJECT_REQ.AWSAccessKeyId    #ACCESS_KEY_ID
 
 
 POST /BUCKET/OBJECT?uploads       #Req: same headers as putObject()
-createMultipartUpload()           #Res: MUPLOAD_INIT, same headers as putObject()
+createMultipartUpload()           #Res: MUPLOAD, same headers as putObject()
+                                  #  - no Initiated, Initiator, Owner, StorageClass, ChecksumAlgorithm, Location, ETag, Checksum*
 PUT /BUCKET/OBJECT                #Req: RAW_OBJECT_PART, RAW_OBJECT_PART_REQ (query variables), Expect [C]
 uploadPart()                      #Res: ETag [S]
 GET /BUCKET/OBJECT                #Req: MUPLOAD_PARTS_REQ
 listParts()                       #Res: MUPLOAD_PARTS_RES
                                   #Paginates MUPLOAD_PARTS_RES.Parts with RES.PartNumberMarker, RES.MaxParts
+GET /BUCKET                       #Req: MUPLOADS_REQ
+listMultipartUploads()            #Res: MUPLOADS_RES
+                                  #  - with MUPLOADS_RES.Upload MUPLOAD_ARR
+                                  #     - no Location, ETag, Checksum*
+                                  #  - MUPLOAD.Bucket -> MUPLOAD_RES.Bucket
+                                  #Paginates MUPLOADS_RES.Upload with RES.UploadIdMarker + RES.KeyMarker, RES.MaxUploads
+POST /BUCKET/OBJECT               #Req: ???
+completeMultipartUpload()         #Res: MUPLOAD
+                                  #  - no UploadId, Initiated, Initiator, Owner, StorageClass, ChecksumAlgorithm
+DELETE /BUCKET/OBJECT             #Req: MUPLOAD
+abortMultipartUpload()            #  - only uploadId
+                                  #Res: empty
 
 RAW_OBJECT_PART_REQ
  |MUPLOAD_PARTS_REQ.uploadId
-MUPLOAD_INIT|MUPLOAD_PARTS_RES
- .UploadId                        #MUPLOAD_MID
+MUPLOAD|MUPLOAD_PARTS_RES.UploadId#MUPLOAD_MID
 
-MUPLOAD_INIT|MUPLOAD_PARTS_RES
- .Bucket                          #'BUCKET'
-MUPLOAD_INIT|MUPLOAD_PARTS_RES
- .Key                             #'OBJECT'
+MUPLOAD|MUPLOAD_PARTS_RES.Bucket  #'BUCKET'
+MUPLOAD|MUPLOAD_PARTS_RES.Key     #'OBJECT'
+MUPLOAD.Location                  #'.../BUCKET/OBJECT' URL
 
 RAW_OBJECT_PART                   #OBJECT part, as is
 
@@ -376,35 +388,21 @@ MUPLOAD_PARTS_RES.Parts           #MUPLOAD_PART_ARR
 RAW_OBJECT_PART.partNumber        #NUM. 1-based index.
 MUPLOAD_PART.PartNumber           #Max 1e4
 
-GET /BUCKET                       #Uses pagination with KEY "UploadId" and KEY "" (alphabetical order).
-listMultipartUploads()            #Uses max-uploads instead of max-keys
-                                  #Req:
-                                  #  - delimiter|prefix STR: see listObjects()
-                                  #Res:
-                                  #  - Bucket BUCKET
-                                  #  - Delimiter|Prefix STR
-                                  #  - CommonPrefixes OBJ_ARR:
-                                  #     - Prefix STR
-                                  #  - Upload OBJ_ARR:
-                                  #     - Key OBJECT
-                                  #     - UploadId MUPLOAD_MID
-                                  #     - Initiator|Owner
-                                  #        - ID USER_IAM_ARN
-                                  #        - DisplayName USER_STR
-                                  #     - StorageClass STR
-                                  #     - Initiated DATE_STR
-POST /BUCKET/OBJECT               #Req: MultipartUpload OBJ:
- ?uploadId=MUPLOAD_MID            #  - Parts OBJ_ARR
-completeMultipartUpload()         #     - PartNumber NUM
-                                  #     - ETag STR
+MUPLOAD.Initiated                 #'DATE'
+
+MUPLOADS_REQ.encoding-type|prefix
+ |delimiter
+MUPLOADS_RES.EncodingType|Prefix
+ |Delimiter|CommonPrefixes        #Like OBJECT_LIST_REQ|RES, except Contents -> Uploads
+
+POST /BUCKET/OBJECT               #Req: Parts OBJ_ARR
+ ?uploadId=MUPLOAD_MID            #  - PartNumber NUM
+completeMultipartUpload()         #  - ETag STR
                                   #Res:
                                   #  - Location URL
                                   #  - Bucket BUCKET
                                   #  - Key OBJECT
                                   #  - ETag STR
-DELETE /BUCKET/OBJECT
- ?uploadId=MUPLOAD_MID
-abortMultipartUpload()            #
 
 
                                              /=+===============================+=\
@@ -476,8 +474,9 @@ BUCKET_REQ.LocationConstraint     #Can differ from REGION of API endpoint
 
 
 BUCKETS_LIST|OBJECT_LIST_ITEM
- |MUPLOAD_PARTS_RES.Owner         #OWNER
-MUPLOAD_PARTS_RES.Initiator       #OWNER
+ |MUPLOAD_PARTS_RES|MUPLOAD.Owner #OWNER
+MUPLOAD_PARTS_RES|MUPLOAD
+ .Initiator                       #OWNER
 OWNER.ID                          #Either: USER_ARN (if USER), ACCOUNT_ID (if ACCOUNT)
 OWNER.DisplayName                 #'USER' (if USER)
 
@@ -502,7 +501,8 @@ NEW_OBJECT_RES|OBJECT_LIST_ITEM
 If-[Un]modified-Since: DATE [C]   #See HTTP doc
 
 FORM_OBJECT_RES|NEW_OBJECT_RES
- |OBJECT_LIST_ITEM|MUPLOAD_PART
+ |OBJECT_LIST_ITEM|MUPLOAD
+ |MUPLOAD_PART
  .ETag                            #STR
 ETag: ETAG [S]                    #'ETAG'
 If-[None-]Match: STR [C]          #See HTTP doc
@@ -550,6 +550,17 @@ Response-Content-Language: STR [C]
 Content-Language: STR [C|S]       #See HTTP doc
 
 x-amz-meta-*: STR [C|S]           #Arbitrary metadata
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:           CHECKSUM            :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+MUPLOAD
+ .ChecksumCRC32[C]|SHA1|SHA256    #
 
 
                                              /=+===============================+=\
@@ -696,7 +707,7 @@ DELETE /BUCKET?lifecycle
 deleteBucketLifecycle()           #
 
 OBJECT_LIST_ITEM|MUPLOAD_PARTS_RES
- .StorageClass                    #STR
+ |MUPLOAD.StorageClass            #STR
 
 
                                              /=+===============================+=\
