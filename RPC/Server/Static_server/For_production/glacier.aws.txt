@@ -6,7 +6,6 @@
 
 
 TO DOCUMENT:
-  - "select" chapter???
   - checksums automatically computed with CLI and JS client???
 
 VERSION ==>                       #2022-11-15
@@ -86,6 +85,11 @@ VAULT.VaultName                   #'VAULT'
 Location: /vaults/VAULT [S]       #
 VAULT.CreationDate                #'DATE'
 
+x-amz-archive-description:        #Must be only [:print:]
+ ARCHIVE_DESC [C]                 #Max 1024 chars
+UPLOAD.ArchiveDescription         #'ARCHIVE_DESC'|null
+IJOB_ARCHIVE.ArchiveDescription   #'ARCHIVE_DESC'
+
 POST /vaults/VAULT/tags           #Req: Tags TAGS
  ?operation=add                   #Res: empty
 GET /vaults/VAULT/tags            #Req: empty
@@ -113,17 +117,8 @@ ARCHIVE                           #Like S3 object, but for Glacier
 x-amz-archive-id: ARCHIVE_MID [S] #
 Location: /vaults/VAULT
  /archives/ARCHIVE_MID [S]        #
-x-amz-archive-description:        #Must be only [:print:]
- ARCHIVE_DESC [C]                 #Max 1024 chars
 
 ARCHIVE_CONTENTS                  #ARCHIVE contents, as is
-
-CLIENT.computeChecksums
- (BUFFER|STR)->ARCHIVE_CHECKSUMS  #
-x-amz-content-sha256: HASH [C]
-ARCHIVE_CHECKSUMS.linearHash      #'HASH'. Hash of whole ARCHIVE_CONTENT
-x-amz-sha256-tree-hash: HASH [C|S]
-ARCHIVE_CHECKSUMS.treeHash        #'HASH'. Markle tree of each ARCHIVE_CONTENT's 1MB parts
 
 
                                              /=+===============================+=\
@@ -163,9 +158,6 @@ UPLOAD.MultipartUploadId          #UPLOAD_MID
 UPLOAD.VaultARN                   #VAULT_ARN
 Location: /vaults/VAULT
  /multipart-uploads/UPLOAD_MID [S]#
-x-amz-archive-description:
- ARCHIVE_DESC [C]
-UPLOAD.ArchiveDescription         #'ARCHIVE_DESC'|null
 UPLOAD.CreationDate               #'DATE'
 
 PART_CONTENTS                     #PART contents, as is
@@ -182,10 +174,6 @@ Content-Range:                    #Start|end indices of the PART
                                   #  - parallel
 UPLOAD.Parts                      #PART_ARR
 PART.RangeInBytes                 #'NUM-NUM2'
-
-x-amz-content-sha256: HASH [C]    #Like simple upload
-PART.SHA256TreeHash
-x-amz-sha256-tree-hash: HASH [C|S]#Like simple upload
 
 
                                              /=+===============================+=\
@@ -248,10 +236,6 @@ Content-Range:                    #  - streaming
 
 AJOB.ArchiveSizeInBytes           #NUM, i.e. size of whole archive
 
-AJOB.ArchiveSHA256TreeHash        #Like simple upload, i.e. 'HASH' of whole archive
-AJOB.SHA256TreeHash
-x-amz-sha256-tree-hash: HASH [S]  #Like simple upload, i.e. 'HASH' of PART
-
 AJOB[_REQ].Tier                   #Among:
                                   #  - 'Expedited': 1-5m, longer if >250MB
                                   #  - 'Standard' (def): 3-5h
@@ -260,6 +244,48 @@ AJOB[_REQ].Tier                   #Among:
 AJOB_RES                          #ARCHIVE_CONTENT
 Content-Type:
  application/octet-stream [S]     #
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:     PROVISIONED CAPACITY      :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+POST /provisioned-capacity        #Req: empty
+                                  #Res: x-amz-capacity-id [S]
+GET /provisioned-capacity         #Req: empty
+                                  #Res: ProvisionedCapacityList CAPACITY
+
+CAPACITY                          #Ensures at least 3 AJOBs with Tier 'Expedited' every 5m, with up to 150MB/s
+                                  #Max 2 per ACCOUNT
+x-amz-capacity-id:
+ CAPACITY_MID [S]
+CAPACITY.CapacityId               #CAPACITY_MID
+CAPACITY.StartDate                #'DATE'
+CAPACITY.ExpirationDate           #End 'DATE', one month later
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:       RETRIEVAL LIMITS        :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+PUT /policies/data-retrieval      #Req: RETRIEVAL_LIMITS
+                                  #Res: empty
+GET /policies/data-retrieval      #Req: empty
+                                  #Res: RETRIEVAL_LIMITS
+
+RETRIEVAL_LIMITS.Policy.Rules     #RETRIEVAL_RULE_ARR
+RETRIEVAL_RULE                    #Sets max download bytes per hour|day of AJOBs
+RETRIEVAL_RULE.Strategy           #One of:
+                                  #  - 'None' (def): no restriction
+                                  #  - 'FreeTier': only allow 0.16% daily free tier
+                                  #  - 'BytesPerHour': use RETRIEVAL_RULE.BytesPerHour
+RETRIEVAL_RULE.BytesPerHour       #NUM (in bytes). Max download per hour
 
 
                                              /=+===============================+=\
@@ -294,10 +320,8 @@ IJOB_RES.InventoryDate            #'DATE'
 
 IJOB_RES.ArchiveList              #IJOB_ARCHIVE_ARR
 IJOB_ARCHIVE.ArchiveId            #ARCHIVE_MID
-IJOB_ARCHIVE.ArchiveDescription   #'ARCHIVE_DESC'
 IJOB_ARCHIVE.CreationDate         #'DATE'
 IJOB_ARCHIVE.Size                 #NUM
-IJOB_ARCHIVE.SHA256TreeHash       #STR
 
 
                                              /=+===============================+=\
@@ -307,21 +331,19 @@ IJOB_ARCHIVE.SHA256TreeHash       #STR
                                              \=+===============================+=/
 
 
-SJOB[_REQ|RES]                    #JOB[_REQ|RES] with Type 'select'
+SJOB[_REQ]                        #JOB[_REQ] with Type 'select'
+                                  #Transforms a CSV ARCHIVE using SQL, then outputs to S3
 
-SJOB.ArchiveId
-SJOB.ArchiveSizeInBytes
-SJOB.ArchiveSHA256TreeHash
-SJOB.Tier                         #Like AJOB
+SJOB[_REQ].*                      #Like AJOB[_REQ].*, except no RetrievalByteRange|SHA256TreeHash
 
 SJOB[_REQ].SelectParameters       #SJOB_PARAMS
 SJOB_PARAMS.ExpressionType        #Always 'SQL'
-SJOB_PARAMS.Expression            #STR. SQL expression
+SJOB_PARAMS.Expression            #STR. SQL expression, same syntax as S3 select
                                   #Max 1.3e5 chars
 SJOB_PARAMS
- .InputSerialization.CSV          #SJOB_CSV
-SJOB_PARAMS
- .OutputSerialization.CSV         #SJOB_CSV, but no FileHeaderInfo|Comments
+ .InputSerialization.CSV          #SJOB_CSV. For parsing ARCHIVE
+SJOB_PARAMS                       #SJOB_CSV, but no FileHeaderInfo|Comments
+ .OutputSerialization.CSV         #For serializing filtered ARCHIVE
 SJOB_CSV.FileHeaderInfo           #Whether first line is header: 'Use', 'Ignore', 'None'
 SJOB_CSV.RecordDelimiter          #'CHAR' (like \n)
 SJOB_CSV.FieldDelimiter           #'CHAR' (def: ,)
@@ -353,6 +375,28 @@ S3_GRANTEE.Type                   #'CanonicalUser|Group|AmazonCustomerByEmail'
 S3_GRANTEE.ID|EmailAddress|URI    #STR, depending on S3_GRANTEE.Type
 S3_GRANTEE.DisplayName            #STR
 
+SJOB_RES                          #None
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:           CHECKSUMS           :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+x-amz-content-sha256: HASH [C]
+AJOB.ArchiveSHA256TreeHash
+ARCHIVE_CHECKSUMS.linearHash      #'HASH'. Hash of whole ARCHIVE_CONTENT
+
+x-amz-sha256-tree-hash: HASH [C|S]
+PART|AJOB|IJOB_ARCHIVE
+ .SHA256TreeHash
+ARCHIVE_CHECKSUMS.treeHash        #'HASH'. Markle tree of each ARCHIVE_CONTENT's 1MB parts
+
+CLIENT.computeChecksums
+ (BUFFER|STR)->ARCHIVE_CHECKSUMS  #
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -382,7 +426,29 @@ JOB_REQ.SNSTopic                  #TOPIC_ARN. Like VAULT_NOTIF, but for a single
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:            TO SORT            :==(
+                                            )==:         ACCESS POLICY         :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+PUT /vaults/VAULT/access-policy   #Req: ACCESS_POLICY
+                                  #Res: empty
+GET /vaults/VAULT/access-policy   #Req: empty
+                                  #Res: ACCESS_POLICY
+DELETE /vaults/VAULT/access-policy#Req: empty
+                                  #Res: empty
+
+ACCESS_POLICY.Policy              #'POLICY_DOC'
+                                  #Resource-based POLICY, with resource-level permission on a VAULT
+                                  #Only one per VAULT
+                                  #Max 20KB
+
+glacier:ArchiveAgeInDays          #NUM CONDITION_KEY
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:             LOCK              :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
@@ -399,21 +465,11 @@ POST /vaults/VAULT                #Req: empty
 DELETE /vaults/VAULT/lock-policy  #Req: empty
                                   #Res: empty
 
+LOCK                              #Like ACCESS_POLICY, but becomes readonly once 'Locked'
 x-amz-lock-id: LOCK_MID [S]       #
-LOCK.Policy                       #'POLICY_DOC'
-                                  #Resource-based POLICY, with resource-level permission on a VAULT
-LOCK.State                        #'InProgress' or 'Locked'
+LOCK.Policy                       #Like ACCESS_POLICY.Policy
+LOCK.State                        #Whether Policy can be changed, either 'InProgress' (yes) or 'Locked' (no)
 LOCK.CreationDate                 #'DATE'
-LOCK.ExpirationDate               #'DATE'. null if State 'Locked'
-
-glacier:ArchiveAgeInDays          #NUM CONDITION_KEY
-
-PUT /vaults/VAULT/access-policy   #
-GET /vaults/VAULT/access-policy   #
-DELETE /vaults/VAULT/access-policy#
-
-GET /policies/data-retrieval      #
-PUT /policies/data-retrieval      #
-
-GET /provisioned-capacity         #
-POST /provisioned-capacity        #
+LOCK.ExpirationDate               #Max 'DATE' to set State 'Locked', otherwise deletes LOCK
+                                  #null when State 'Locked'
+                                  #24h after CreationDate
