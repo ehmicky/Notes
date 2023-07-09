@@ -28,7 +28,7 @@ FORMAT ==>                        #JSON REST, with X-Amz-Glacier-Version: VERSIO
 DOMAIN ==>                        #SERVICE_FULL_DOMAIN/ACCOUNT_ID
                                   #ACCOUNT_ID can be -, to use the one from Authorization [C]
 
-PAGINATION ==>                    #Req: Marker STR, Limit NUM (def|max: 50 with UPLOAD|PART|JOB, 100 with VAULT)
+PAGINATION ==>                    #Req: Marker STR, Limit NUM (def|max: 100 with VAULT, 50 with others)
                                   #Res: Marker STR
 
 ERRORS ==>                        #Uses ERROR_RES
@@ -36,23 +36,28 @@ ERRORS ==>                        #Uses ERROR_RES
 REQ_ID                            #X-Amzn-RequestId [S]
 
 PRICING ==>                       #The following is compared to S3
-                                  #3x cheaper storage
+                                  #6x cheaper storage
                                   #  - but metadata is 40KB/object, compared to 8KB for S3
                                   #     - i.e. better for multiple files tar'd, or single big files
                                   #  - always pay first 3 months, even if deleted during that time
                                   #     - i.e. better for long-kept files
                                   #Transfer: same price
-                                  #Writes 10x more expensive
-                                  #  - i.e. better for read-only files
-                                  #Reading metadata: same price
-                                  #Reading contents
-                                  #  - 300x more expensive
+                                  #  - when reading contents: additional 1$/100GB
+                                  #     - free with tier "bulk", 3x more expensive with tier "expedited"
+                                  #     - free: first 10GB/month
+                                  #  - when using 'select':
+                                  #     - input: 4x more expensive
+                                  #        - 2x cheaper with tier "bulk", 10x more expensive with tier "expedited"
+                                  #     - output: 14x more expensive
+                                  #        - 3x more expensive with tier "bulk", 40x more expensive with tier "expedited"
+                                  #Requests:
+                                  #  - read|write metadata: same price
+                                  #  - write contents: 6x more expensive
+                                  #     - i.e. better for read-only files
+                                  #  - read contents: 75x more expensive
+                                  #     - free with tier "bulk", 300x more expensive with tier "expedited"
                                   #     - i.e. better for backups
-                                  #  - additional cost GB/highestDay
-                                  #     - highestDay is day of the month with highest GB
-                                  #        - i.e. should spread over time as much as possible
-                                  #     - free: 0.16% of total
-                                  #        - i.e. free is spread over 2 years???
+                                  #CAPACITY: 100$/month
 
 
                                              /=+===============================+=\
@@ -151,7 +156,7 @@ UPLOAD                            #Like ARCHIVE, but in several requests (PARTs)
                                   #Max 1e4 PARTs
                                   #Max 40TB for total ARCHIVE instead of 4GB
                                   #  - should be used if > 100MB
-                                  #Once complete, valid 24h
+                                  #Once complete, expires within 24h
 x-amz-multipart-upload-id:
  UPLOAD_MID [S]
 UPLOAD.MultipartUploadId          #UPLOAD_MID
@@ -194,16 +199,15 @@ GET /vaults/VAULT/jobs/JOB_MID
  /output                          #Req: Range [C]
 getJobOutput()                    #Res: ARCHIVE_CONTENTS (for AJOB) or IJOB_RES, x-amz-sha256-tree-hash [S]
 
-JOB_REQ.Type                      #'archive-retrieval', 'inventory-retrieval', 'select'
-JOB_REQ.Description               #'JOB_DESC'
-
 x-amz-job-id: JOB_MID [S]
 JOB.JobId                         #JOB_MID
 Location: /vaults/VAULT
  /jobs/JOB_MID [S]
 JOB.VaultARN                      #VAULT_ARN
 
+JOB_REQ.Type                      #'archive-retrieval', 'inventory-retrieval', 'select'
 JOB.Action                        #'ArchiveRetrieval', 'InventoryRetrieval', 'Select'
+JOB_REQ.Description
 JOB.JobDescription                #'JOB_DESC'
 
 JOB.CreationDate                  #'DATE'
@@ -213,7 +217,7 @@ JOB.StatusCode                    #'InProgress|Succeeded|Failed'
 JOB.StatusMessage                 #STR
 
 JOB_RES                           #Only available after JOB completes
-                                  #Once completed, JOB expires after 24h
+                                  #Once completed, JOB expires within 24h
 
 
                                              /=+===============================+=\
@@ -228,15 +232,14 @@ AJOB[_REQ|RES]                    #JOB[_REQ|RES] with Type 'archive-retrieval'
 
 AJOB[_REQ].ArchiveId              #ARCHIVE_MID
 
-Range: bytes=NUM-NUM2 [C]         #'NUM-NUM2'. Same as Range [C] when uploading, but for downloading, i.e. only download a PART
-AJOB[_REQ].RetrievalByteRange     #Goal is either:
-Content-Range:                    #  - streaming
- bytes NUM-NUM2/NUM3 [S]          #  - spreading out retrieval time for pricing purpose
-                                  #Status code is 206 for non-last part, 200 for last part
+Range: bytes=NUM-NUM2 [C]
+AJOB[_REQ].RetrievalByteRange     #'NUM-NUM2'. Same as Range [C] when uploading, but for downloading, i.e. only download a PART
+Content-Range:                    #Goal: streaming
+ bytes NUM-NUM2/NUM3 [S]          #Status code is 206 for non-last part, 200 for last part
 
 AJOB.ArchiveSizeInBytes           #NUM, i.e. size of whole archive
 
-AJOB[_REQ].Tier                   #Among:
+AJOB[_REQ].Tier                   #Duration, among:
                                   #  - 'Expedited': 1-5m, longer if >250MB
                                   #  - 'Standard' (def): 3-5h
                                   #  - 'Bulk': 5-15h
@@ -283,7 +286,7 @@ RETRIEVAL_LIMITS.Policy.Rules     #RETRIEVAL_RULE_ARR
 RETRIEVAL_RULE                    #Sets max download bytes per hour|day of AJOBs
 RETRIEVAL_RULE.Strategy           #One of:
                                   #  - 'None' (def): no restriction
-                                  #  - 'FreeTier': only allow 0.16% daily free tier
+                                  #  - 'FreeTier': only allow within free tier
                                   #  - 'BytesPerHour': use RETRIEVAL_RULE.BytesPerHour
 RETRIEVAL_RULE.BytesPerHour       #NUM (in bytes). Max download per hour
 
@@ -295,9 +298,10 @@ RETRIEVAL_RULE.BytesPerHour       #NUM (in bytes). Max download per hour
                                              \=+===============================+=/
 
 
-VAULT.LastInventoryDate           #'DATE'|null of last "inventory", i.e. ARCHIVEs listing, done once per day
-                                  #Not updated if no changes in VAULT
+IJOB_RES.InventoryDate            #'DATE'|null of last "inventory", i.e. ARCHIVEs listing, done once per day
+VAULT.LastInventoryDate           #Not updated if no changes in VAULT
 VAULT.NumberOfArchives            #NUM. 0 if LastIventoryDate null
+IJOB.InventorySizeInBytes
 VAULT.SizeInBytes                 #NUM. Total of all ARCHIVE sizes, including 40KB metadata. 0 if LastIventoryDate null
 
 IJOB[_REQ|RES]                    #JOB[_REQ|RES] with Type 'inventory-retrieval'
@@ -309,14 +313,9 @@ IJOB_PARAMS                       #Can be paginated
 IJOB_PARAMS.StartDate|EndDate     #'DATE_STR'. IJOB_ARCHIVE.CreationDate
 
 IJOB_REQ.Format                   #'JSON' (def) or 'CSV'
-Content-Type:
- 'application/json' [S]           #
-Content-Type: 'text/csv' [S]      #
-
-IJOB.InventorySizeInBytes         #NUM
+Content-Type: MIME [S]            #'application/json' or 'text/csv'
 
 IJOB_RES.VaultARN                 #ARN
-IJOB_RES.InventoryDate            #'DATE'
 
 IJOB_RES.ArchiveList              #IJOB_ARCHIVE_ARR
 IJOB_ARCHIVE.ArchiveId            #ARCHIVE_MID
