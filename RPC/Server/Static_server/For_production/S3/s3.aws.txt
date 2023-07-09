@@ -26,18 +26,6 @@ TODO ==>
 
 VERSION ==>                       #2014-06-12
 
-CONCEPTS ==>                      #  - Bucket: virtual folder
-                                  #  - Object: virtual file
-                                  #     - can use PATH, giving impression of subfolder
-                                  #       - should avoid using a sequence (e.g. serial or timestamp) in beginning of PATH:
-                                  #         it impacts performance (how S3 internally stores object).
-                                  #         Should prefix with random STR.
-                                  #     - has metadata
-                                  #     - has subresources: versioning, policy, acl, torrent, lifecycle, website, cors
-                                  #Other functions: StorageClass (Glacier, ReducedRedundancy), lifecycle, LocationConstraint,
-                                  #custom metadata, custom headers (caching, content-type, etc.), versioning, torrent, static
-                                  #website, CORS, multipart upload, bucket logging, encryption, payment, pre-signed URL.
-
 ARN ==>                           #  - arn:aws:s3:::BUCKET
                                   #  - arn:aws:s3:::BUCKET/OBJECT
 
@@ -225,6 +213,7 @@ listBuckets()                     #Res: Buckets BUCKET_ARR, Owner OWNER
 DELETE /BUCKET                    #Req: x-amz-expected-bucket-owner [C]
 deleteBucket()                    #Res: empty
 
+BUCKET                            #Like a folder
 Location: /BUCKET [S]
 BUCKET.Name                       #'BUCKET'
 BUCKET.CreationDate               #'DATE'
@@ -260,38 +249,71 @@ getObject()                       # Response-Content-Encoding [C], Response-Cont
                                   # Expires [S], Cache-Control [S], Content-Disposition [S], x-amz-meta-* [S]
 HEAD /BUCKET/OBJECT               #Req: like getObject()
 headObject()                      #Res: like getObject()
+PUT /BUCKET/OBJECT                #Req: RAW_OBJECT, Expect [C], Content-Type [C], Content-Encoding [C], Content-Language [C], Expires [C],
+putObject()                       # Cache-Control [C], Content-Disposition [C], x-amz-meta-* [C]
+                                  #Res: NEW_OBJECT_RES
+PUT /BUCKET/OBJECT                #Req: like putObject(), also x-amz-copy-source* [C], x-amz-metadata-directive [C]
+copyObject()                      #Res: CopyObjectResult NEW_OBJECT_RES
+POST /BUCKET                      #Req: FORM_OBJECT_REQ, same headers as putObject()
+postObject()                      #Res: FORM_OBJECT_RES, same headers as putObject()
+                                  #Like putObject() but meant to be performed by a <form> submit
+                                  #Same request|response headers as putObject() but:
+FORM_OBJECT_REQ.file              #STR. Content
+                                  #Must be last field.
+FORM_OBJECT_REQ.key               #'OBJECT'
+FORM_OBJECT_REQ
+ .success_action_redirect         #URL to redirect to when response code is success_action_status NUM
+FORM_OBJECT_REQ
+ .success_action_status           #NUM
+FORM_OBJECT_REQ.x-amz-algorithm|credential|date|security-token|signature
+FORM_OBJECT_REQ.Policy OBJ, as Base64:
+                                  #        - expiration DATE_STR
+                                  #        - conditions OBJ_ARR2_ARR:
+                                  #           - ARR2 is [ STR, STR2, STR3 ], according to STR:
+                                  #              - "eq": STR2 == STR3, can also use { STR2: STR3 } instead of ARR2
+                                  #              - "starts-with": STR3 can be ""
+                                  #              - "content-length-range" NUM2 NUM3
+                                  #          - STR2 can be "acl", "bucket", "content-length-range" or any field name
+                                  #          - can use $FIELDNAME for any field name (e.g. [ "start-with", "$key", "user1/" ])
+FORM_OBJECT_REQ.acl 'ACL'
+FORM_OBJECT_REQ.AWSAccessKeyId ACCESS_KEY_ID
+
+OBJECT                            #Like a file
+'OBJECT'                          #OBJECT's name. Also named "key".
+                                  #Is a file path, allows virtual "subfolders".
+                                  #Due to internal storage details:
+                                  #  - more performant when start with a random value
+                                  #  - as opposed to serial integer, timestamp, etc.
 
 RAW_OBJECT                        #OBJECT, as is
 
-Range: STR [C]                    #See HTTP doc
-If-Match [C]
-If-Unmodified-Since [C]           #See HTTP doc
+FORM_OBJECT_REQ                   #Must use multipart/form-data
 
-PUT /BUCKET/OBJECT                #Creates an OBJECT
-putObject|copyObject()            #Uses eventual consistency:
-                                  #  - writes take some time to complete
-                                  #  - take time to propagate, so different clients might return different results
-                                  #Req: Expect [C], Content-Type [C], Content-Encoding [C], Content-Language [C], Expires [C],
-                                  # Cache-Control [C], Content-Disposition [C], x-amz-meta-* [C]
-                                  #Res: NEW_OBJECT_RES
-                                  #copyObject() is when using x-amz-copy-source [C] that get the request body from another OBJECT:
-                                  #  - x-amz-copy-source STR [C]:
-                                  #     - STR is /BUCKET/OBJECT
-                                  #  - conditional copy:
-                                  #     - x-amz-copy-source-if-[none-]match STR [C]
-                                  #     - x-amz-copy-source-if-[un]modified-since DATE_STR [C]
-                                  #  - can use all request|response headers of putObject() except Generic headers:
-                                  #     - x-amz-metadata-directive "COPY|REPLACE":
-                                  #        - "REPLACE": replace all headers [C] specified
-                                  #        - "COPY" (def): only replace server-side-encryption, storage-class and
-                                  #          website-redirect-location [C] (if not specified, erase them)
-                                  #     - ACL is recreated private
-                                  #Res: CopyObjectResult NEW_OBJECT_RES
+FORM_OBJECT_RES.Bucket            #'BUCKET'
+FORM_OBJECT_RES.Key               #'OBJECT'
+FORM_OBJECT_RES.Location          #'.../BUCKET/OBJECT' URL
 
-NEW_OBJECT_RES.ETag               #'ETAG'
+FORM_OBJECT_RES|NEW_OBJECT_RES
+ .ETag                            #'ETAG'
 NEW_OBJECT_RES.LastModified       #'DATE'
 
+x-amz-copy-source:                #Copy OBJECT
+ /BUCKET/OBJECT [C]               #New OBJECT's ACL is 'private'
+x-amz-metadata-directive:         #If 'COPY' (def):
+ COPY|REPLACE [C]                 #  - only allows setting request headers related to server-side encryption,
+                                  #    storage class and x-amz-website-redirect-location [C]
+                                  #  - those headers are erased if not specified
+
 Expect: "100-continue" [C]        #See HTTP doc
+
+Range: STR [C]                    #See HTTP doc
+
+If-[None-]Match: STR [C]
+If-[Un]modified-Since: DATE [C]   #See HTTP doc
+x-amz-copy-source-if-[none-]match:
+ STR [C]
+x-amz-copy-source-if-
+ [un]modified-since: DATE [C]     #Same but with x-amz-copy-source [C]
 
 Response-Content-Type: STR [C]
 Content-Type: STR [C|S]           #See HTTP doc
@@ -308,31 +330,6 @@ Response-Content-Disposition:
 Content-Disposition: STR [C|S]    #See HTTP doc
 x-amz-meta-*: STR [C|S]           #Arbitrary metadata
 
-POST /BUCKET                      #Like putObject() but:
-postObject()                      #  - uses multipart/form-data request body
-                                  #  - client-side communicates directly with Amazon, so less load on server
-                                  #  - client-side must include a policy and acl, signed (like signedUrl)
-                                  #Same request|response headers as putObject() but:
-                                  #  - uses request params:
-                                  #     - file STR: content (must be last field)
-                                  #     - key OBJECT: can be used as ${filename} in policy OBJ
-                                  #     - success_action_status NUM or success_action_redirect URL
-                                  #     - x-amz-algorithm|credential|date|security-token|signature
-                                  #     - Policy OBJ, as Base64:
-                                  #        - expiration DATE_STR
-                                  #        - conditions OBJ_ARR2_ARR:
-                                  #           - ARR2 is [ STR, STR2, STR3 ], according to STR:
-                                  #              - "eq": STR2 == STR3, can also use { STR2: STR3 } instead of ARR2
-                                  #              - "starts-with": STR3 can be ""
-                                  #              - "content-length-range" NUM2 NUM3
-                                  #          - STR2 can be "acl", "bucket", "content-length-range" or any field name
-                                  #          - can use $FIELDNAME for any field name (e.g. [ "start-with", "$key", "user1/" ])
-                                  #     - acl 'ACL'
-                                  #     - AWSAccessKeyId ACCESS_KEY_ID
-                                  #  - returns:
-                                  #     - Bucket|Key BUCKET|OBJECT
-                                  #     - Location URL
-                                  #     - ETag STR
 GET /BUCKET                       #Uses pagination with KEY "". Marker is the start prefix, by alphabetical order.
 listObjects()                     #Req:
                                   #  - prefix STR: only OBJECT that start with STR
