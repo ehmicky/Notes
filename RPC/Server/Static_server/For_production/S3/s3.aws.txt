@@ -512,24 +512,6 @@ BUCKET.LocationConstraint         #Can differ from REGION of API endpoint
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:             OWNER             :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-x-amz-object-ownership [C]
-  - see description in https://docs.aws.amazon.com/AmazonS3/latest/API/API_CreateBucket.html ???
-
-BUCKETS_LIST|OBJECT|MUPLOAD.Owner #OWNER
-OWNER.ID                          #Either: USER_ARN (if USER), ACCOUNT_ID (if ACCOUNT)
-OWNER.DisplayName                 #'USER' (if USER)
-
-x-amz-expected-bucket-owner:
- ACCOUNT_ID [C]                   #403 if BUCKET's owner is different
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
                                             )==:            CACHING            :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -768,7 +750,7 @@ RESTORE_ENCRYPTION.KMSContext     #STR
 
 RESTORE_OUTPUT.CannedACL          #'ACL' shortcut, e.g. 'private-read'
 RESTORE_OUTPUT.AccessControlList  #RESTORE_ACL_ARR
-RESTORE_ACL                       #ACCESS_CONTROL_LIST
+RESTORE_ACL                       #ACLLIST
 RESTORE_ACL.Permission            #'READ[_ACP]|WRITE[_ACP]|FULL_CONTROL'
 RESTORE_ACL.Grantee               #RESTORE_GRANTEE
 RESTORE_GRANTEE.Type              #'CanonicalUser|Group|AmazonCustomerByEmail'
@@ -879,61 +861,114 @@ GetBucketLifecycleConfiguration() #Res: LIFECYCLE
 DELETE /BUCKET?lifecycle          #Req: empty
 DeleteBucketLifecycle()           #Res: empty
 
-LIFECYCLE                         #
+LIFECYCLE                         #Delete an OBJECT or sets its StorageClass after a specific time
 LIFECYCLE.Rules                   #RULE_ARR. If an OBJECT match multiple ones, use only last one
-RULE.Id                           #RULE_MID
+                                  #Max 1e3
+RULE.Id                           #'RULE'. Max 255 chars.
 RULE.Status                       #'Enabled' (def) or 'Disabled'
 
-RULE.Prefix                       #STR. Only if 'OBJECT' start with STR
 RULE.Filter                       #FILTER. Only apply to matching OBJECTs
 FILTER.Prefix                     #STR. Only if 'OBJECT' start with STR
 FILTER.Tag                        #TAGS. Only if TAGS match
 FILTER.ObjectSizeGreater|LessThan #NUM (in bytes)
 FILTER.And                        #FILTER_ARR
 
-RULE.Transitions                  #TRANSITION_ARR. Sets StorageClass to TRANSITION.StorageClass
-                                  #Applies only to current VERSION
-RULE.NonCurrentVersionTransitions #NTRANSITION_ARR. Same but applies to all VERSIONs except current one
-[N]TRANSITION.StorageClass        #StorageClass, among 'GLACIER'
+RULE.Transitions                  #TRANSITION_ARR. Sets StorageClass to TRANSITION.StorageClass, after a specific time
+[N]TRANSITION.StorageClass        #Same values as OBJECT.StorageClass, except no 'STANDARD|REDUCED_REDUNDANCY|SNOW|OUTPOSTS'
+TRANSITION|EXPIRATION.Days        #NUM days from OBJECT creation
+TRANSITION|EXPIRATION.Date        #Specific 'DATE'
 
-RULE.Expiration                   #EXPIRATION. Delete OBJECT
-                                  #Applies only to current VERSION, i.e. delete without a versionId
-RULE.NonCurrentVersionExpiration  #NEXPIRATION. Same but applies to all VERSIONs except current one
-                                  #I.e. delete with a versionId, i.e. permanent delete
-EXPIRATION
- .ExpiredObjectDeleteMarker       #BOOL???
+RULE.Expiration                   #EXPIRATION. Delete OBJECT, after a specific time
+EXPIRATION                        #BOOL (def: false). Permanent delete OBJECT as soon as it has only one VERSION
+ .ExpiredObjectDeleteMarker       #and that VERSION is a delete marker.
+                                  #Cannot be specified together with EXPIRATION.Days|Date
 x-amz-expiration:
  expiry-date=DATE,
- rule-id=RULE_MID [S]             #Set by EXPIRATION
+ rule-id=RULE [S]                 #Set by EXPIRATION
 
 RULE
  .AbortIncompleteMultipartUpload
  .DaysAfterInitiation             #NUM. Delete MUPLOADs if not completed within NUM days
 
-TRANSITION|EXPIRATION.Days        #NUM days from OBJECT creation
+RULE.NonCurrentVersionTransitions #NTRANSITION_ARR. Same but applies to all VERSIONs except current one
+                                  #As opposed to RULE.Transitions, which only applies to current VERSION
+RULE.NonCurrentVersionExpiration  #NEXPIRATION. Same but applies to all VERSIONs except current one
+                                  #Delete with a versionId, i.e. permanent delete
+                                  #As opposed to RULE.Expiration, which only applies to current VERSION, and delete without a versionId
 NTRANSITION|NEXPIRATION
- .NoncurrentDays                  #NUM days from OBJECT becoming not the current VERSION anymore
-TRANSITION|EXPIRATION.Date        #Same but using a 'DATE'
+ .NoncurrentDays                  #NUM days from OBJECT not being the current VERSION anymore
+NTRANSITION|NEXPIRATION
+ .NewerNoncurrentVersions         #Applies to all VERSIONs except NUM+1 most recent (including current one)
 
-NTRANSITION|NEXPIRATION
- .NewerNoncurrentVersions         #NUM???
 
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:         POLICY / ACL          :==(
+                                            )==:            POLICY             :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
-PUT /BUCKET?policy                #Resource-based policy, at bucket-level:
-PutBucketPolicy()                 #  - object owner are creators, not necessarily bucket owner
-                                  #  - only applies to objects created by bucket owner
-                                  #Request parameter: Policy POLICY_JSON_STR
-DELETE /BUCKET?policy
-DeleteBucketPolicy()              #
-GET /BUCKET?policy
-GetBucketPolicy()                 #Returns POLICY_OBJ
+PUT /BUCKET?policy                #Req: POLICY_DOC
+PutBucketPolicy()                 #Res: empty
+DELETE /BUCKET?policy             #Req: empty
+DeleteBucketPolicy()              #Res: empty
+GET /BUCKET?policy                #Req: empty
+GetBucketPolicy()                 #Res: POLICY_DOC
+
+POLICY_DOC                        #IAM POLICY_DOC, as OBJ. Resource-based POLICY on BUCKET, with resource-level permissions
+                                  #Does not apply to OBJECTs not created by BUCKET OWNER
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:              ACL              :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+PUT /BUCKET?acl                   #Req: ACL
+PutBucketAcl()                    #Res: empty
+GET /BUCKET?acl                   #Req: empty
+GetBucketAcl()                    #Res: ACL
+PUT /BUCKET/OBJECT?acl            #Req: ACL
+PutObjectAcl()                    #Res: empty
+GET /BUCKET/OBJECT?acl            #Req: empty
+GetObjectAcl()                    #Res: ACL
+
+check RESTORE_OUTPUT.AccessControlList???
+
+ACL.Owner                         #OWNER of OBJECT
+ACL.AccessControlList             #ACLLIST_ARR
+                                  #Max 100
+ACLLIST.Grant                     #GRANT
+GRANT.Grantee                     #OWNER
+GRANT.Permission                  #If BUCKET:
+                                  #  - "READ": s3:ListBucket[MultipartUploads], s3:ListBucketVersions
+                                  #  - "WRITE": s3:PutObject, s3:DeleteObject, (if bucket owner), s3:DeleteObject[Version]
+                                  #  - "READ_ACP": s3:GetBucketAcl
+                                  #  - "WRITE_ACP": s3:PutBucketAcl
+                                  #  - "FULL_CONTROL": "READ" + "READ|WRITE_ACP"
+                                  #If OBJECT:
+                                  #  - "READ": s3:GetObject[Torrent|Version]
+                                  #  - "WRITE": nothing
+                                  #  - "READ_ACP": s3:GetObject[Version]Acl
+                                  #  - "WRITE_ACP": s3:PutObject[Version]Acl
+                                  #  - "FULL_CONTROL": "READ" + "READ|WRITE_ACP"
+
+'ACL'                             #Shortcut for ACL
+'ACL' private                     #BUCKET|OBJECT_OWNER: FULL_CONTROL
+'ACL' public-read[-write]         #BUCKET|OBJECT_OWNER: FULL_CONTROL
+                                  #AllUsers: READ [and WRITE]
+'ACL' authenticated-read          #BUCKET|OBJECT_OWNER: FULL_CONTROL
+                                  #AuthenticatedUsers: READ
+'ACL' bucket-owner-full-control   #BUCKET|OBJECT_OWNER: FULL_CONTROL
+                                  #Only for OBJECTs
+'ACL' bucket-owner-read           #OBJECT_OWNER: FULL_CONTROL
+                                  #BUCKET_OWNER: READ
+                                  #Only for OBJECTs
+'ACL' log-delivery-write          #LogDelivery: WRITE and READ_ACP
+                                  #Only for BUCKETs
 
 ACL ==>                           #What:
                                   #  - limited sets of permissions, that apply on top of resource-based policy
@@ -944,51 +979,6 @@ ACL ==>                           #What:
                                   #      - additional rights use ACL
                                   #      - def. ACL for new objects will grant FULL_CONTROL to BUCKET_OWNER, but object owner can
                                   #        override, unless a conditional policy forbids it
-                                  #Structure
-                                  #  - ACL_OBJ:
-                                  #     - Owner:
-                                  #        - ID CANONICAL_ACCOUNT_ID|ACCOUNT_EMAIL or URL among:
-                                  #           - http://acs.amazonaws.com/groups/global/AuthenticatedUsers: any authenticated
-                                  #             request
-                                  #           - http://acs.amazonaws.com/groups/global/AllUsers: any request
-                                  #           - http://acs.amazonaws.com/groups/s3/LogDelivery: logger (see below)
-                                  #        - DisplayName
-                                  #     - AccessControlList OBJ_ARR:
-                                  #        - Grant:
-                                  #           - Grantee:
-                                  #              - ID CANONICAL_ACCOUNT_ID|ACCOUNT_EMAIL|URL
-                                  #              - DisplayName
-                                  #           - Permission (depends if on a BUCKET or OBJECT):
-                                  #              - "READ":
-                                  #                 - s3:ListBucket[MultipartUploads], s3:ListBucketVersions
-                                  #                 - s3:GetObject[Torrent|Version]
-                                  #              - "WRITE":
-                                  #                 - s3:PutObject, s3:DeleteObject, (if bucket owner)
-                                  #                   s3:DeleteObject[Version]
-                                  #                 - nothing
-                                  #              - "READ_ACP":
-                                  #                 - s3:GetBucketAcl
-                                  #                 - s3:GetObject[Version]Acl
-                                  #              - "WRITE_ACP":
-                                  #                 - s3:PutBucketAcl
-                                  #                 - s3:PutObject[Version]Acl
-                                  #              - "FULL_CONTROL": "READ" + "READ|WRITE_ACP"
-                                  #  - 'ACL' (shortcut):
-                                  #     - private:
-                                  #        - BUCKET|OBJECT_OWNER FULL_CONTROL
-                                  #     - public-read[-write]:
-                                  #        - BUCKET|OBJECT_OWNER FULL_CONTROL
-                                  #        - AllUsers READ [and WRITE]
-                                  #     - authenticated-read:
-                                  #        - BUCKET|OBJECT_OWNER FULL_CONTROL
-                                  #        - AuthenticatedUsers READ
-                                  #     - bucket-owner-full-control (for OBJECT)
-                                  #       - BUCKET|OBJECT_OWNER FULL_CONTROL
-                                  #     - bucket-owner-read (for OBJECT):
-                                  #        - OBJECT_OWNER FULL_CONTROL
-                                  #        - BUCKET_OWNER READ
-                                  #     - log-delivery-write (for BUCKET):
-                                  #        - LogDelivery WRITE and READ_ACP
                                   #How:
                                   #  - x-amz-acl 'ACL':
                                   #     - write [C] by putObject[Acl](), createBucket(), putBucketAcl()
@@ -998,14 +988,7 @@ ACL ==>                           #What:
                                   #        - emailAddress=ACCOUNT_EMAIL
                                   #        - uri=URL
                                   #     - write [C] by putObject[Acl](), createBucket(), putBucketAcl()
-PUT /BUCKET/OBJECT?acl            #  - write [C] by putObject|BucketAcl() with ACL_OBJ in request body
-PutObjectAcl()
-PUT /BUCKET?acl
-PutBucketAcl()                    #
-GET /BUCKET/OBJECT?acl
-GetObjectAcl()
-GET /BUCKET?acl
-GetBucketAcl()                    #Returns ACL_OBJ
+                                  #  - write [C] by putObject|BucketAcl() with ACL in request body
 
 TO DOCUMENT: GetObjectAcl|PutObjectAcl() usage of versionId. ACL are at the version-level
 
@@ -1039,7 +1022,29 @@ CONDITION_KEYs ==>                #  - s3:x-amz-acl|x-amz-grant-* STR
                                   #  - s3:max-keys STR
                                   #  - s3:LocationConstraint REGION: for s3:CreateBucket only STR
 
-LIMITS ==>                        #ACL: max 100 Grants
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:             OWNER             :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+x-amz-object-ownership [C]
+  - see description in https://docs.aws.amazon.com/AmazonS3/latest/API/API_CreateBucket.html ???
+
+BUCKETS_LIST|OBJECT|MUPLOAD.Owner #OWNER
+OWNER.ID                          #Either:
+                                  #  - USER_ARN (if USER)
+                                  #  - CANONICAL_ACCOUNT_ID (if ACCOUNT)
+                                  #  - URL:
+                                  #     - http://acs.amazonaws.com/groups/global/AuthenticatedUsers: anyone authenticated
+                                  #     - http://acs.amazonaws.com/groups/global/AllUsers: anyone
+                                  #     - http://acs.amazonaws.com/groups/s3/LogDelivery: logger (see above)
+OWNER.DisplayName                 #'USER' (if USER)
+
+x-amz-expected-bucket-owner:
+ ACCOUNT_ID [C]                   #403 if BUCKET's owner is different
 
 
                                              /=+===============================+=\
@@ -1119,7 +1124,7 @@ PutBucketLogging()                #Different from CloudTrail.
                                   #     - LoggingEnabled (none to disable):
                                   #        - TargetBucket BUCKET: where to store the logs
                                   #        - TargetPrefix PREFIX: prefix to the log OBJECTs
-                                  #        - TargetGrants OBJ: same as Grant OBJ in ACL_OBJ, except using Type
+                                  #        - TargetGrants OBJ: same as Grant OBJ in ACL, except using Type
                                   #          "CanonicalUser|AmazonCustomerByEmail|Group" and ID|EmailAddress|DisplayName
                                   #Log lines are (space-delimited):
                                   #  - owner CANONICAL_ACCOUNT_ID
