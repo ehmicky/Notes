@@ -192,6 +192,8 @@ U&"VAR2"                          #Make VAR case-sensitive
                                   #Some commands allow specifying OPTS both in (...) and as keywords
                                   #  - prefer (...) as keywords tend to be deprecated then
 (VAR [VAL], ...)                  #ZOPTS. Same without = sign
+pg_options_to_table
+ ('VAR=VAL'_ARR)->ROW_SET         #Parses as ROW: option_name 'VAR', option_value 'VAL'
 
 DDL                               #"Data Definition Language"
                                   #Statements operating on entities themselves
@@ -241,6 +243,21 @@ SCONF.quote_all_identifiers       #BOOL (def: false). Quote all "VAR" in output
 
 TEXT <-> NAME
 VARCHAR|BPCHAR <=-> NAME          #Type casting
+
+pg_get_keywords()->ROW_SET        #All SQL keywords
+ROW.word                          #'KEYWORD'
+ROW.catcode                       #CHAR among:
+                                  #  - 'U': can be used by any NAME
+                                  #     - due to being used only in unambiguous places
+                                  #     - e.g. any ENTITY
+                                  #  - 'C': cannot be used as TYPE|FUNC NAME
+                                  #     - due to already being a TYPE|FUNC
+                                  #  - 'T': cannot be used as COL NAME
+                                  #     - due to ambiguity in SELECT query
+                                  #  - 'R': cannot be used as COL|TYPE|FUNC NAME
+ROW.catdesc                       #Like catcode, but as longer STR
+ROW.barelabel                     #BOOL. If false, requires `as VAR`
+ROW.baredesc                      #Like barecode, but as longer STR
 
 
                                              /=+===============================+=\
@@ -400,6 +417,27 @@ for RPROLE server SERVER          #For user mapping
 
 ENTITY_CATALOG                    #pg_* TABLE listing ENTITYs of a given kind
 
+ENTITY ID ==>                     #The following three properties are often used to identify any ENTITY
+class[o]id                        #REGCLASS of the ENTITY_CATALOG
+obj[o]id                          #OID of the ENTITY within its ENTITY_CATALOG
+objsubid                          #INT4. "COL" number. 0 if classid is not pg_class
+
+pg_describe_object
+ (classid, objid, objsubid)->STR  #'ENTITY NAME [of RELATION NAME2]'
+pg_identify_object
+ (classid, objid, objsubid)->ROW  #
+ROW.type                          #'ENTITY'
+ROW.schema                        #'SCHEMA'|null
+ROW.name                          #'NAME'|null
+ROW.identity                      #'SCHEMA.NAME[.COL]'
+pg_identify_object_as_address
+ (classid, objid, objsubid)->ROW  #
+ROW.type                          #'ENTITY'
+ROW.object_names                  #{SCHEMA,NAME[,COL]}
+ROW.object_args                   #STR_ARR. Arguments passed to some ENTITYs
+pg_get_object_address('ENTITY',
+ {SCHEMA,NAME[,COL]},STR_ARR)->ROW#ROW: classid, objid, objsubid
+
 alter ENTITY ... "ENTITY" ...     #Sets ENTITY options after creation
                                   #Not for ENTITY: access method, cast, transform
                                   #Several ENTITYs allow combining several `alter ...` into a single statement
@@ -446,12 +484,12 @@ drop ENTITY ... restrict|cascade  #If there are dependency child objects
                                   #     - not allowed for database|tablespace|role|user mapping
 
 pg_[sh]depend                     #TABLE with child|parent dependencies between [cluster-wide] ENTITYs
-pg_[sh]depend.classid             #REGCLASS of the ENTITY_CATALOG
-pg_[sh]depend.objid               #OID of the ENTITY within its ENTITY_CATALOG
-pg_[sh]depend.objsubid            #INT4. "COL" number. 0 if classid is not pg_class
+pg_[sh]depend.classid
+pg_[sh]depend.objid
+pg_[sh]depend.objsubid            #ENTITY
 pg_[sh]depend.refclassid
 pg_[sh]depend.refobjid
-pg_[sh]depend.refobjsubid         #Same for the ENTITY it depends on
+pg_[sh]depend.refobjsubid         #ENTITY it depends on
 pg_shdepend.dbid                  #pg_database.oid of DATABASE
 pg_depend.deptype                 #'CHAR' for the type of dependence among:
                                   #  - 'n' ("normal"): delete child with `cascade`
@@ -491,9 +529,9 @@ col_description
 \d*                               #Print comments under `description` column
 
 pg_description                    #TABLE with all COMMENTs on DATABASE-wide ENTITYs
-pg_description.classoid           #Like pg_depend.classid
-pg_description.objoid             #Like pg_depend.objid
-pg_description.objsubid           #Like pg_depend.objsubid
+pg_description.classoid
+pg_description.objoid
+pg_description.objsubid           #ENTITY
 pg_description.description        #'COMMENT'
 
 pg_shdescription                  #TABLE with all COMMENTs on cluster-wide ENTITYs
@@ -645,7 +683,7 @@ pg_constraint.contypid            #REGTYPRE of CONSTRAINT's DOMAIN.
                                              \=+===============================+=/
 
 
-pg_typeof(VAL)->'TYPE'            #TYPE as a STR
+pg_typeof(VAL)->REGTYPE           #
 
 cast(VAL as TYPE)
 VAL::TYPE                         #Explicit casting
@@ -1084,6 +1122,9 @@ BTREE DEDUPLICATION ==>           #null = null
 order by ... nulls first|last
 create index ...
  (...  nulls first|last,...)      #Def: nulls first for desc, nulls last for asc
+pg_index_column_has_property
+ (REGCLASS, COL_INT,
+ 'nulls_first|last')->BOOL        #
 
 create|alter function ... strict  #Returns null directly if any argument is null
                                   #For variadic argument, whole variadic ARR must be null, not just an item
@@ -3261,6 +3302,9 @@ pg_constraint.conrelid            #REGCLASS of TABLE. 0 if DOMAIN CONSTRAINT.
 pg_constraint.conindid            #REGCLASS of INDEX. 0 if check|trigger
 pg_constraint.conkey              #ARR of pg_attribute.attnum. COLs using the CONSTRAINT.
 
+pg_get_constraintdef              #Returns 'CONSTRAINT' as it was created
+ (CONSTRAINT_OID[, BOOL])->STR    #BOOL (def: false) is prettify
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -3795,8 +3839,11 @@ VOPTS.security_barrier            #Ensure ROWs are no visible in `where BOOL_REX
 create recursive view ...         #Allows recursion like in `with recursive ...` CTE
 
 pg_views                          #TABLE with all VIEWs
-pg_views.definition               #'SUBQUERY'
+pg_views.definition               #'SUBQUERY', using pg_get_viewdef()
 pg_views.viewname                 #"VIEW" name
+
+pg_get_viewdef                    #Returns 'SUBQUERY' of [M]VIEW.
+ ([M]VIEW_OID[, BOOL|INT4])->STR  #BOOL (def: false) is prettify. INT4 is terminal width for wrapping.
 
 
                                              /=+===============================+=\
@@ -3959,6 +4006,9 @@ pg_sequences.cache_size
 pg_sequence.seqcache              #INT8. Cache size
 pg_sequences.cycle
 pg_sequence.seqcycle              #BOOL. Whether `cycle`
+
+pg_get_serial_sequence
+ ('TABLE', 'COL')->"SEQUENCE"     #COL's SEQUENCE or null if none
 
 
                                              /=+===============================+=\
@@ -4167,6 +4217,9 @@ select ... order by COL_REXPR     #Sort ROWs
                                   #Unless used, ROWs are unordered
                                   #  - including union|intersect|except result
  [asc|desc]                       #Sorting order (def: asc)
+pg_index_column_has_property
+ (REGCLASS, COL_INT, 'asc|desc')
+ ->BOOL                           #
 
 select ... order by ...,...       #Multiple sort values
 
@@ -5900,11 +5953,13 @@ pg_indexes.tablename              #"TABLE" name
 pg_indexes.indexname              #"INDEX" name
 pg_indexes.indexdef               #STR from pg_get_indexdef()
 
-pg_get_indexdef(REGCLASS)->STR    #Returns 'CREATE ...' statement that created INDEX
-
 pg_class.relhasindex              #BOOL. Whether RELATION has INDEXs
 pg_tables.hasindexes              #BOOL. Whether TABLE has INDEXs
 pg_matviews.hasindexes            #BOOL. Whether MVIEW has INDEXs
+
+pg_get_indexdef
+ (REGCLASS[, COL_INT4[, BOOL]])   #Returns 'CREATE INDEX ...' statement
+ ->STR                            #BOOL (def: false) is prettify
 
 
                                              /=+===============================+=\
@@ -6251,6 +6306,50 @@ pg_am.amhandler                   #REGPROC of handler
 
 pg_class.relam                    #pg_am.oid of the RELATION's ACCESS_METHOD
                                   #0 if SEQUENCE|VIEW|ROW_TYPE
+
+pg_indexam_has_property
+ (ACCESS_METHOD_OID, 'can_order')
+ ->BOOL                           #Supports order by
+pg_index_column_has_property
+ (REGCLASS, COL_INT, 'orderable')
+ ->BOOL                           #Supports ordered scan, i.e. order by "COL"|COL_REXPR
+pg_index_has_property
+ (REGCLASS, 'backward_scan')->BOOL#Supports backward scan
+pg_index_column_has_property
+ (REGCLASS, COL_INT,
+ 'distance_orderable')->BOOL      #Supports ordering OP, i.e. order by VAL OP VAL2 (e.g. <->)
+pg_index_column_has_property
+ (REGCLASS, COL_INT,
+ 'search_nulls')->BOOL            #Supports is [not] null (in BOOL_REXPR)
+pg_index_column_has_property
+ (REGCLASS, COL_INT,
+ 'search_array')->BOOL            #Supports VAL OP any|all (ARR)
+pg_indexam_has_property
+ (ACCESS_METHOD_OID,
+ 'can_exclude')->BOOL             #Supports exclude CONSTRAINT
+pg_indexam_has_property
+ (ACCESS_METHOD_OID, 'can_unique')
+ ->BOOL                           #Supports unique
+pg_indexam_has_property
+ (ACCESS_METHOD_OID,
+ 'can_multi_col')->BOOL           #Supports multi-COL
+pg_index_has_property
+ (REGCLASS, 'index_scan')->BOOL   #Supports plain index scan
+pg_index_has_property
+ (REGCLASS, 'bitmap_scan')->BOOL  #Supports bitmap index scan
+pg_index_column_has_property
+ (REGCLASS, COL_INT, 'returnable')
+ ->BOOL                           #Supports index-only scan
+pg_indexam_has_property
+ (ACCESS_METHOD_OID,
+ 'can_include')->BOOL             #Supports non-key COLs
+pg_index_has_property
+ (REGCLASS, 'clusterable')->BOOL  #Supports cluster
+
+pg_index_column_has_property
+ (REGCLASS, COL_INT, STR)->BOOL
+pg_index_has_property
+ (REGCLASS, STR)->BOOL            #ACCESS_METHODs can add custom property STR, but none currently does
 
 
                                              /=+===============================+=\
@@ -6856,7 +6955,8 @@ ZOPTS.wal                         #BOOL (def: false)
                                   #Requires ZOPTS.analyze true
 
 ZOPTS.settings                    #BOOL (def: false)
-                                  #Whether to print relevant CONF which value was changed
+                                  #Whether to print EXPLAIN-related CONF (like enable_hashjoin, etc.)
+                                  #Only if their default value was changed
 
 SCONF.enable_*                    #Whether specific query optimizations are enabled
                                   #All BOOL with true by default, except enable_partitionwise_*
@@ -7297,6 +7397,9 @@ pg_dependencies                   #TYPE to store functional dependencies
 PG_DEPENDENCIES ~> STR            #
 
 pg_statistic                      #TYPE
+
+pg_get_statisticsobjdef           #Returns 'CREATE ...' statement that created STATISTICS
+ (STATISTICS_OID[, BOOL])->STR    #BOOL (def: false) is prettify
 
 
                                              /=+===============================+=\
@@ -7897,7 +8000,7 @@ pg_locks.page                     #INT4. Heap page number
 pg_locks.tuple                    #INT2. Index ROW being locked within its heap page
 pg_locks.classid
 pg_locks.objid
-pg_locks.objsubid                 #Same syntax as pg_depend.*, but for ENTITY with locktype 'object'
+pg_locks.objsubid                 #ENTITY with locktype 'object'
 pg_locks.virtualxid               #STR. Virtual ID if locktype 'virtualxid'
 pg_locks.virtualtransaction       #STR. Virtual ID of the other transaction
 pg_locks.transactionid            #XID of transaction, if locktype 'transactionid'
@@ -8093,6 +8196,7 @@ pg_authid.rolpassword             #STR|null. create role ... password
 pg_authid.rolvaliduntil           #TIMESTAMPTZ|null. create role ... valid until
 
 regrole                           #TYPE to cast pg_authid.oid as "ROLE" name
+pg_get_userbyid(ROLE_OID)->'ROLE' #
 
 pg_roles                          #Higher-level VIEW on pg_authid
                                   #pg_roles blanks out the password
@@ -8467,9 +8571,9 @@ INITIAL PRIVILEGES ==>            #PRIVILEGEs granted either by:
                                   #  - `grant` inside an EXTENSION's SQLMAIN
 
 pg_init_privs                     #TABLE with initial privileges
-pg_init_privs.objoid
 pg_init_privs.classoid
-pg_init_privs.objsubid            #Like pg_depend.*
+pg_init_privs.objoid
+pg_init_privs.objsubid            #ENTITY
 pg_init_privs.privtype            #'i' if granted by initdb, 'e' if by EXTENSION
 pg_init_privs.initprivs           #ACLITEM_ARR
 
@@ -9180,7 +9284,7 @@ security label for "PROVIDER"     #Name of PROVIDER
 pg_seclabel                       #TABLE with all SECURITY_LABELs
 pg_seclabel.classoid
 pg_seclabel.objoid
-pg_seclabel.objsubid              #Like pg_depend.*
+pg_seclabel.objsubid              #ENTITY
 pg_seclabel.provider              #'PROVIDER'
 pg_seclabel.label                 #'SECURITY_LABEL'
 
@@ -9960,6 +10064,12 @@ pg_tables.tablespace              #pg_tablespace.spcname of TABLE
 pg_indexes.tablespace             #pg_tablespace.spcname of INDEX
 pg_matviews.tablespace            #pg_tablespace.spcname of MVIEW
 
+pg_tablespace_databases
+ (TABLESPACE_OID)
+ ->DATABASE_OID_SET               #null with pg_global
+pg_tablespace_location
+ (TABLESPACE_OID)->'DIR'          #null with pg_global|pg_default
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -10151,7 +10261,7 @@ zCONF                             #CONF that can only be set|get by a superuser 
                                   #Can also get if member of built-in ROLE pg_read_all_settings
 
 ICONF                             #"Internal" CONF that never changes
-PCONF                             #"Postmaster" CONF that is sets on server start (CONF file, `postgres` CLI flags)
+PCONF                             #"Postmaster" CONF that is set on server start (CONF file, `postgres` CLI flags)
 HCONF                             #CONF that is also set on reload (SIGHUP, etc.)
 LCONF                             #CONF that is also set at session start (LIBPQ)
 SCONF                             #CONF that is also set during session (`set ...`)
@@ -10164,6 +10274,18 @@ pg_conf_load_time()->TIMESTAMPTZ  #
 
 postgres -c CONFVAR=VAL
 postgres --CONFVAR=VAL            #Set CONF for CLUSTER
+
+pg_settings_get_flags             #Returns whether CONFVAR is:
+ ('CONFVAR')->STR_ARR             #  - EXPLAIN: EXPLAIN-related, i.e. shown with ZOPTS.settings
+                                  #  - RUNTIME_COMPUTED: computed on-the-fly, only for some ICONF.*
+                                  #  - NO_SHOW_ALL:
+                                  #     - not shown by `show all`
+                                  #     - only a few like ICONF.is_superuser
+                                  #  - NO_RESET_ALL:
+                                  #     - not changed by `reset all`
+                                  #     - only a few like ICONF.is_superuser and
+                                  #       SCONF.transaction_deferrable|isolation|read_only
+                                  #  - NOT_IN_SAMPLE: not present in example CONF file
 
 
                                              /=+===============================+=\
@@ -10615,6 +10737,15 @@ pg_proc.proargmodes               #'CHAR'_ARR of arguments + `[in]out` ones amon
 
 regproc                           #TYPE to cast pg_proc.oid as "FUNC" name
 regprocedure                      #TYPE to cast pg_proc.oid as "FUNC(TYPE,...)" name
+
+pg_get_functiondef
+ (REGPROCEDURE)->STR              #Returns 'CREATE ...' statement that created FUNC
+pg_get_function_identity_arguments
+ (REGPROCEDURE)->STR              #Returns 'FUNC_ARG,...' used in REGPROCEDURE::text, i.e. to distinguish from other REGPROCEDUREs
+pg_get_function_arguments
+ (REGPROCEDURE)->STR              #Returns 'FUNC_ARG,...' specified in 'CREATE ...' statement that created FUNC
+pg_get_function_result
+ (REGPROCEDURE)->STR              #Same for return 'TYPE'
 
 
                                              /=+===============================+=\
@@ -11422,6 +11553,9 @@ pg_trigger.tgargs                 #BYTEA of arguments passed to FUNC
 pg_class.relhastriggers           #BOOL. Whether RELATION has TFUNCs
 pg_tables.hastriggers             #BOOL. Whether TABLE has TFUNCs
 
+pg_get_triggerdef                 #Returns 'CREATE ...' statement that created TFUNC
+ (TFUNC_OID[, BOOL])->STR         #BOOL (def: false) is prettify
+
 suppress_redundant_updates        #TFUNC which prevents updates that set COL with its current value, i.e. do not change anything
  _trigger()                       #Must be `before update` + `for each row`
                                   #Meant as a performance optimization on TABLEs where this happens often
@@ -11466,7 +11600,7 @@ pg_event_trigger_ddl_commands()
  ->ROW_SET                        #In EFUNC with EVENT 'ddl_command_end', returns current ENTITYs
 ROW.classid
 ROW.objid
-ROW.objsubid                      #Like pg_depend.*
+ROW.objsubid                      #ENTITY
 ROW.object_type                   #'ENTITY'
 ROW.schema_name                   #'SCHEMA'|null
 ROW.object_identity               #'SCHEMA.NAME'
@@ -11562,6 +11696,9 @@ pg_rewrite.ev_qual                #PG_NODE_TREE of `where BOOL_REXPR`
 
 pg_class.relhasrules              #BOOL. Whether TABLE|VIEW has RULEs
 pg_tables.hasrules                #BOOL. Whether TABLE has RULEs
+
+pg_get_ruledef                    #Returns 'CREATE RULE ...' statement
+ (RULE_OID[, BOOL])->STR          #BOOL (def: false) is prettify
 
 
                                              /=+===============================+=\
@@ -12867,6 +13004,11 @@ pg_lsn                            #TYPE holding an address in the WAL
 PG_LSN - PG_LSN2                  #NUMERIC
 PG_LSN + NUMERIC
 PG_LSN - NUMERIC                  #PG_LSN2
+
+pg_control_checkpoint()->ROW???
+pg_control_system()->ROW???
+pg_control_init()->ROW???
+pg_control_recovery()->ROW???
 
 
                                              /=+===============================+=\
