@@ -2853,8 +2853,6 @@ ARR && ARR2                       #BOOL. Overlaps, i.e. at least one item equal
 
 array_ndims(ARR)->UINT|null       #NUM of dimensions. null if empty ARR
 array_dims(ARR)->'[INT:INT2]...'  #Each dimensions lower|upper bound
-generate_subscripts(ARR, UINT3)
- ->[INT, INT2]_SET                #Dimension UINT3 lower|upper bound
 array_lower(ARR, UINT3)->UINT     #Dimension UINT3 lower bound
 array_upper(ARR, UINT3)->UINT2    #Dimension UINT3 upper bound
 array_length(ARR, UINT3)->UINT    #array_upper - array_lower
@@ -2884,6 +2882,9 @@ array_position
  (ARR, VAL[, UINT2])->UINT|null   #Find first VAL index, starting at index UINT2 (def: 1), using `is not distinct from`
 array_positions
  (ARR, VAL)->UINT_ARR             #Find all VAL indices
+
+generate_subscripts               #Indices from min|max for dimension UINT3
+ (ARR, UINT3[, BOOL])->INT4_SET   #If BOOL true (def: false), in reverse
 
 width_bucket(VAL, ARR)->INT4      #1-based index of VAL inside sorted ARR
                                   #Returns 0 if < first ARR value
@@ -2992,6 +2993,10 @@ ROW = <> ROW2                     #BOOL. Done deeply
 ROW < <= > >= ROW2                #BOOL, with first COL compared first, etc.
 ROW OP (SUBQUERY)                 #BOOL. Like ROW OP ROW2, using ROW2 returned by SUBQUERY
                                   #Fails if SUBQUERY does not return exactly one ROW2
+ROW *= *<> *< *<= *> *>= ROW2     #Like ROW = <> < <= > >= ROW2 except does binary equality instead of logical equality
+                                  #E.g. -0 = 0 but -0 *<> 0
+                                  #Intended for ROW with TYPEs missing = or < OPs
+                                  #Requires record_image_ops OPCLASS
 
 pg_type.typrelid                  #REGCLASS of a ROW_TYPE. 0 if ROW_TYPE is not related to a RELATION
 
@@ -6392,6 +6397,7 @@ DATA STRUCTURE ==>                #Uses b-tree
 
 TYPES/OPS ==>                     #For any TYPE with < <= = >= > <>
                                   #Except TYPEs without those OPs: HSTORE (except =), POINT|BOX|CIRCLE|POLYGON, CID|XID, ACLITEM
+                                  #Also ROW with *< *<= *= *>= *<> (requires record_image_ops OPCLASS)
 
 STR like '...%'                   #Can also be used
 STR ~ '^...'                      #No glob|REGEXP characters in ...
@@ -7838,6 +7844,11 @@ pg_advisory_*(INT4, INT4)         #Same with two INT4s instead of a INT8
                                              \=+===============================+=/
 
 
+
+pg_blocking_pids(BPID)->BPID2_ARR #Preventing BPID from acquiring a lock
+pg_safe_snapshot_blocking_pids
+ (BPID)->BPID2_ARR                #Blocking BPID's `begin ... deferrable`
+
 pg_locks                          #TABLE with all locks
                                   #Most of them are null if not relevant for the given locktype
 
@@ -8360,14 +8371,14 @@ grant|revoke ... granted by RROLE #Requires current_user to be RROLE
 
 has_ENTITY_privilege
  (["ROLE"|ROLE_OID, ]
- 'ENTITY'|ENTITY_OID, 'PRIVILEGE')
- ->BOOL                           #Whether ROLE (def: current_role) has PRIVILEGE in ENTITY
+ 'ENTITY'|ENTITY_OID,
+ 'PRIVILEGE,...')->BOOL           #Whether ROLE (def: current_role) has PRIVILEGE (or any of them) in ENTITY
 has_any_column_privilege
  (...)->BOOL                      #Same as has_table_privilege(...) but for any of its COLs
 has_column_privilege
  (["ROLE"|ROLE_OID, ]
  'ENTITY'|ENTITY_OID,
- "COL"|COL_NUM, 'PRIVILEGE')
+ "COL"|COL_NUM, 'PRIVILEGE,...')
  ->BOOL                           #Same for a single COL
 
 
@@ -8515,11 +8526,11 @@ update                            #PRIVILEGE on LARGEOBJ, with ACL: w
 select                            #PRIVILEGE on RELATION|SEQUENCE, with ACL: r
                                   #Reading ROWs
                                   #Including in clauses like `where` or `returning`
-                                  #Including through FUNCs, e.g. currval()
+                                  #Including through FUNCs, e.g. currval|lastval()
 update                            #PRIVILEGE on RELATION|SEQUENCE, with ACL: w
                                   #Updating ROWs
                                   #Including `select ... for ...`
-                                  #Including through FUNCs, e.g. setval()
+                                  #Including through FUNCs, e.g. setval|nextval()
 insert                            #PRIVILEGE on RELATION, with ACL: a
                                   #Adding ROWs
 delete                            #PRIVILEGE on RELATION, with ACL: d
@@ -8537,7 +8548,8 @@ temp[orary]                       #PRIVILEGE on DATABASE, with ACL: T
                                   #Create a TEMP RELATION
 
 usage                             #PRIVILEGE on SEQUENCE, with ACL: U
-                                  #Using *val()
+                                  #Using nextval|currval|lastval() (not setval())
+                                  #  - or'd with select|update PRIVILEGEs, e.g. only needs either select or usage PRIVILEGE to use currval()
 
 usage                             #PRIVILEGE on LANGUAGE, with ACL: U
                                   #Create FUNC with this LANGUAGE
@@ -10672,6 +10684,8 @@ regoperator                       #TYPE to cast pg_operator.oid as "OP(TYPE,...)
 
 SCONF.jit                         #BOOL. If true (def), compile SQL clauses in bytecode to speed them up
                                   #In: `select VALs`, `where BOOL_REXPR`, AFUNCs
+pg_jit_available()->BOOL          #SCONF.jit true and JIT is supported
+
 SCONF.jit_above_cost              #NUM (def: 1e5). When a query's `explain` cost >= NUM, perform JIT
 SCONF.jit_inline_above_cost       #NUM (def: 5e5). When a query's `explain` cost >= NUM, inline FUNC bodies
                                   #Only for FUNCs with LANGUAGE C
