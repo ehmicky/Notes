@@ -756,7 +756,6 @@ VARIABLE BOUNDED LENGTH TYPES     #One of:
                                   #  - varchar|bpchar(...)
                                   #  - bit(...)
                                   #  - time[stamp][tz]|interval(...)
-                                  #Internally start with 4 bytes indicating length
 
 VARIABLE UNBOUNDED LENGTH TYPES   #One of:
  ==>                              #  - numeric
@@ -783,6 +782,11 @@ pg_type.typlen                    #INT2 of YOPTS.internallength. Can be:
                                   #  - -2: cstring|unknown
                                   #  - -1: variable bounded|unbounded TYPE
 pg_attribute.attlen               #Same for COL
+
+pg_column_size(VAL)->INT4         #Size of VAL, in bytes, including:
+                                  #  - additional 1|4|8 bytes
+                                  #  - TOAST
+                                  #  - compression
 
 YOPTS.alignment                   #'CHAR' specifying how many bytes to align the values when stored, i.e. padding them if necessary.
 pg_type.typalign                  #Can be:
@@ -815,11 +819,12 @@ TOAST ==>                         #Large variable length TYPE values are split t
                                   #Goals:
                                   #  - fit in a single 8KB heap page, so that computation can happen in-memory only, which is faster
                                   #  - compression, to save space
+                                  #Not used by non-persisted data ("on-disk TOAST"), except in few specific cases ("in-memory TOAST").
 IN-LINE TOAST ==>                 #Keeps data as is but possibly compress it
-                                  #Requires 1|4 additional bytes
-                                  #If <127 bytes (after compression)
+                                  #Requires 1 (if <127 bytes) or 4 additional bytes
+                                  #Used if <2005 bytes
 OUT-OF-LINE TOAST ==>             #Replace data with 18 bytes pointer to pg_toast_OID TABLE
-                                  #If >127 bytes (after compression)
+                                  #Used if >=2005 bytes
 pg_class.reltoastrelid            #REGCLASS of the RELATION's pg_toast_OID "TABLE". 0 if none
 pg_toast.*                        #SCHEMA with out-of-line data
 pg_toast.pg_toast_OID             #"TABLE" with TOAST out-of-line data
@@ -842,6 +847,7 @@ alter table "TABLE"
  alter [column] "COL"
  set compression ENUM             #Sets compression, like SCONF.default_toast_compression
 pg_attribute.attcompression       #'CHAR' of compression among '\0' (default_toast_compression), 'p' (pglz), 'l' (lz4)
+pg_column_compression(VAL)->STR   #Returns compression 'pglz|lz4' or null
 
 alter [foreign] table "TABLE"     #Sets TOAST behavior among:
  alter [column] "COL"             #  - plain
@@ -2111,7 +2117,7 @@ uuid                              #TYPE. 16-byte long
 'nnnn-nnnn-nnnn-nnnn-nnnn-        #UUID_UNKNOWN. Dashes all optional
  nnnn-nnnn-nnnn'                  #Case-insensitive
 
-get_random_uuid()->UUID           #UUID v4
+gen_random_uuid()->UUID           #UUID v4
 
 uuid-ossp                         #Trusted postgres extension, required for the following
 
@@ -2572,14 +2578,14 @@ LTREE_ARR ?@ LTXTQUERY            #LTREE|null. First LTREE that @ LTXTQUERY
 
 
 inet                              #TYPE for an IP address
-                                  #7 (IPv4) or 19 bytes-long (IPv6)
+                                  #10 (IPv4) or 22 bytes-long (IPv6)
 'IP[/NNUM]'                       #INET_UNKNOWN
                                   #Cannot omit last 0 bits
                                   #Can include non-0 bits in host identifier
                                   #Def NNUM: max
 
 cidr                              #TYPE for a IP subnet
-                                  #7 (IPv4) or 19 bytes-long (IPv6)
+                                  #10 (IPv4) or 22 bytes-long (IPv6)
 'IP[/NNUM]'                       #CIDR_UNKNOWN
                                   #Can omit last 0 bits
                                   #Cannot include non-0 bits in host identifier
@@ -3931,7 +3937,7 @@ discard temp[orary]               #Discard TEMP data of current session
 HCONF
  .remove_temp_files_after_crash   #BOOL (def: true). If false, keep TEMP data after a crash, for debugging
 
-pg_ls_tempdir([TABLESPACE_OID])   #Returns files in TEMP data DIR
+pg_ls_tmpdir([TABLESPACE_OID])    #Returns files in TEMP data DIR
  ->ROW_SET                        #ROW: name STR, size INT8, modification TIMESTAMPTZ
                                   #Def TABLESPACE: pg_default
 
@@ -6700,7 +6706,7 @@ IOPTS.fastupdate                  #BOOL (def: true)
                                   #  - SCONF|IOPTS.gin_pending_list_limit INT (in KB) (def: 4MB)
                                   #     - higher values happens less often, but take longer
                                   #  - vacuum|analyze
-                                  #  - gin_clean_pending_list()
+                                  #  - gin_clean_pending_list(REGCLASS)->INT8
                                   #Pro: faster inserts
                                   #Con: slower reads|updates, since pending list must be queried too
 
@@ -7457,6 +7463,7 @@ TOPTS|IOPTS.fillfactor            #10-100. Keep 1-INT% additional free space on 
                                   #  - increase changes of Heap-Only Tuples
 
 pageinspect EXTENSION ???
+pgstattuple EXTENSION ???
 
 
                                              /=+===============================+=\
@@ -9994,6 +10001,35 @@ pg_relation_filenode(REGCLASS)
 pg_filenode_relation
  (TABLESPACE_OID, REGCLASS_OID)
  ->REGCLASS                       #TABLESPACE_OID can be 0 to use DATABASE's default TABLESPACE
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:             SIZE              :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+pg_relation_size                  #Size (in bytes) of a TABLE (including TOAST), INDEX, SEQUENCE
+ (REGCLASS[, STR])->INT8          #On-disk, using DBDIR|CLUSTERDIR/REGCLASS_OID*
+                                  #STR is "fork", i.e. one of:
+                                  #  - 'main' (def): REGCLASS_OID
+                                  #  - 'vm': REGCLASS_OID_vm
+                                  #  - 'fsm': REGCLASS_OID_fsm
+                                  #  - 'init': REGCLASS_OID_init
+pg_table_size(REGCLASS)->INT8     #On-disk size but including all of REGCLASS_OID* + TOAST tables
+pg_indexes_size(REGCLASS)->INT8   #On-disk size of TABLE's INDEXs
+pg_total_relation_size
+ (REGCLASS)->INT8                 #pg_table_size() + pg_indexes_size()
+
+pg_database_size
+ (DATABASE_OID|"DATABASE")->INT8  #On-disk size of DATABASE, i.e. of DBDIR
+pg_tablespace_size
+ (TABLESPACE_OID|"TABLESPACE")
+ ->INT8                           #On-disk size of TABLESPACE's DIR
+
+pg_size_pretty(INT8|NUMERIC)->STR #Convert a bytes size into human-friendly STR, adding unit 'bytes|kB|MB|GB|TB|GB'
+pg_size_bytes(STR)->INT8          #Inverse
 
 
                                              /=+===============================+=\
@@ -12853,6 +12889,10 @@ create unlogged table|sequence ...#TABLE|SEQUENCE is not written to WAL
 alter table "TABLE" set [un]logged#Faster, but truncated on unclean shutdown
 select ... into unlogged table ...#Also, cannot use replication to standby servers
 
+DBDIR|CLUSTERDIR/REGCLASS_OID_init#"Initialization fork".
+                                  #Copy of unlogged TABLE|INDEX|SEQUENCE, without any data.
+                                  #Used when truncating it on unclean shutdown, by copying it over.
+
 create database "DATABASE"        #Whether to:
  strategy wal_log|file_copy       #  - wal_log (def): record each heap page to WAL
                                   #  - file_copy:
@@ -13008,7 +13048,7 @@ pg_stat_wal                       #???
 pg_stat_wal_receiver              #???
 
 pg_lsn                            #TYPE holding an address in the WAL
-                                  #2 * 32 bytes INTs
+                                  #2 * 4 bytes INTs
 'XXXXXXXX/XXXXXXXX'               #PG_LSN_UNKNOWN, using hex chars
 PG_LSN - PG_LSN2                  #NUMERIC
 PG_LSN + NUMERIC
@@ -13132,6 +13172,8 @@ HCONF.wal_retrieve_retry_interval ???
 
 pg_create_physical_replication_slot() ???
 pg_copy_physical_replication_slot() ???
+
+pg_ls_replslotdir()???
 
 pg_stat_replication               #WAL sender processes.
 pg_stat_database_conflicts        #DATABASE, with query cancelled due to recovery on standby servers.
@@ -13478,26 +13520,6 @@ pg_stat_monitor ???
 
 pg_buffercache EXTENSION ???
 
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:             SIZE              :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-OBJECT SIZES ==>                  #Can also look at pg_class.relpages (a page is 8KB)
-pg_column_size(VAL)               #
-pg_database_size(OID|STR)         #
-pg_tablespace_size(OID|STR)
-pg_indexes_size(OID|STR)
-pg_relation_size(OID|STR[, STR2]) #Size in bytes. Can be a TABLE, INDEX or TOAST.
-                                  #STR2 can be 'main' (def), 'vm' of 'fsm'
-pg_total_relation_size(OID|STR)   #Same but with INDEX included
-pg_table_size(OID|STR)            #Same with INDEX excluded and only for TABLE
-pg_size_pretty(UINT)              #Convert a bytes size into human readable STR.
-
-pgstattuple EXTENSION ???
 
                                              /=+===============================+=\
                                             /  :                               :  \
