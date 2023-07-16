@@ -217,8 +217,8 @@ aws s3 website S3BUCKET
 
 PUT /BUCKET                       #Req: CreateBucketConfiguration BUCKET
 CreateBucket()                    #  - no Name, CreationDate
-                                  #  - x-amz-acl [C], x-amz-grant-read[-acp]|write[-acp]|full-control [C],
-                                  #    x-amz-bucket-object-lock-enabled [C], x-amz-object-ownership [C]
+                                  #  - x-amz-acl [C], x-amz-grant-PERMISSION [C], x-amz-object-ownership [C]
+                                  #    x-amz-bucket-object-lock-enabled [C]
                                   #Res: Location [S]
 HEAD /BUCKET                      #Req: empty
 HeadBucket()                      #Res: x-amz-bucket-region [S], x-amz-access-point-alias [S]
@@ -346,7 +346,8 @@ COMMON_PREFIX.Prefix              #Prefix + 'OBJECT' until next Delimiter (inclu
 
 
 PUT /BUCKET/OBJECT                #Req: RAW_OBJECT, Expect [C], Content-Type [C], Content-Encoding [C], Content-Language [C], Expires [C],
-PutObject()                       # Cache-Control [C], Content-Disposition [C], x-amz-meta-* [C], x-amz-storage-class [C]
+PutObject()                       # Cache-Control [C], Content-Disposition [C], x-amz-meta-* [C], x-amz-storage-class [C],
+                                  # x-amz-acl [C], x-amz-grant-PERMISSION [C]
                                   #Res: ETag [S], x-amz-version-id [S], x-amz-expiration [S]
 
 Expect: "100-continue" [C]        #See HTTP doc
@@ -425,7 +426,7 @@ MUPLOAD.UploadId                  #MUPLOAD_MID
 MUPLOAD.Bucket                    #'BUCKET'
 MUPLOAD.Key                       #'OBJECT'
 MUPLOAD.Initiated                 #'DATE'
-MUPLOAD.Initiator                 #OWNER
+MUPLOAD.Initiator                 #PRINCIPAL
 
 RAW_MPART                         #OBJECT part, as is
                                   #Min 5MB, max 5GB
@@ -664,7 +665,7 @@ x-amz-mfa:
 
 
 x-amz-storage-class: STR [C]
-OBJECT|MUPLOAD.StorageClass       #STR, among the ones below
+OBJECT|MUPLOAD.StorageClass       #'STORAGE_CLASS', among the ones below
 
 StorageClass 'STANDARD'           #"Frequent access". Default value
 
@@ -739,8 +740,8 @@ RESTORE.OutputLocation.S3         #RESTORE_OUTPUT
 RESTORE_OUTPUT.BucketName         #'BUCKET'
 RESTORE_OUTPUT.Prefix             #STR
 
-RESTORE_OUTPUT.StorageClass       #Like OBJECT.StorageClass
-RESTORE_OUTPUT.Tagging.TAG        #STR
+RESTORE_OUTPUT.StorageClass       #'STORAGE_CLASS'
+RESTORE_OUTPUT.Tagging            #TAGS
 RESTORE_OUTPUT.UserMetadata.VAR   #'VAL'
 
 RESTORE_OUTPUT.Encryption         #RESTORE_ENCRYPTION
@@ -748,15 +749,9 @@ RESTORE_ENCRYPTION.EncryptionType #'aws:kms[:dsse]' or 'AES256'
 RESTORE_ENCRYPTION.KMSKeyId       #KMS_KEY_MID
 RESTORE_ENCRYPTION.KMSContext     #STR
 
-RESTORE_OUTPUT.CannedACL          #'ACL' shortcut, e.g. 'private-read'
-RESTORE_OUTPUT.AccessControlList  #RESTORE_ACL_ARR
-RESTORE_ACL                       #ACLLIST
-RESTORE_ACL.Permission            #'READ[_ACP]|WRITE[_ACP]|FULL_CONTROL'
-RESTORE_ACL.Grantee               #RESTORE_GRANTEE
-RESTORE_GRANTEE.Type              #'CanonicalUser|Group|AmazonCustomerByEmail'
-RESTORE_GRANTEE
- .ID|EmailAddress|URI             #STR, depending on RESTORE_GRANTEE.Type
-RESTORE_GRANTEE.DisplayName       #STR
+RESTORE_OUTPUT.CannedACL          #'ACL'
+RESTORE_OUTPUT
+ .AccessControlList.Grants        #GRANT_ARR
 
 
                                              /=+===============================+=\
@@ -901,6 +896,32 @@ NTRANSITION|NEXPIRATION
  .NewerNoncurrentVersions         #Applies to all VERSIONs except NUM+1 most recent (including current one)
 
 
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:             OWNER             :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+x-amz-object-ownership [C]
+  - see description in https://docs.aws.amazon.com/AmazonS3/latest/API/API_CreateBucket.html ???
+
+BUCKETS_LIST|OBJECT|MUPLOAD.Owner #PRINCIPAL
+
+x-amz-expected-bucket-owner:
+ ACCOUNT_ID [C]                   #403 if BUCKET's owner is different
+
+GRANTEE.Type                      #'CanonicalUser|Group|AmazonCustomerByEmail'
+GRANTEE|PRINCIPAL.ID              #Either:
+                                  #  - USER_ARN (if USER)
+                                  #  - CANONICAL_ACCOUNT_ID (if ACCOUNT)
+GRANTEE.URI                       #One of:
+                                  #  - http://acs.amazonaws.com/groups/global/AuthenticatedUsers: anyone authenticated
+                                  #  - http://acs.amazonaws.com/groups/global/AllUsers: anyone
+                                  #  - http://acs.amazonaws.com/groups/s3/LogDelivery: logger (see above)
+GRANTEE.EmailAddress              #STR, if Type 'AmazonCustomerByEmail'
+GRANTEE|PRINCIPAL.DisplayName     #'USER' (if USER)
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -919,98 +940,6 @@ GetBucketPolicy()                 #Res: POLICY_DOC
 POLICY_DOC                        #IAM POLICY_DOC, as OBJ. Resource-based POLICY on BUCKET, with resource-level permissions
                                   #Does not apply to OBJECTs not created by BUCKET OWNER
 
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:              ACL              :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-PUT /BUCKET?acl                   #Req: ACL
-PutBucketAcl()                    #Res: empty
-GET /BUCKET?acl                   #Req: empty
-GetBucketAcl()                    #Res: ACL
-PUT /BUCKET/OBJECT?acl            #Req: ACL
-PutObjectAcl()                    #Res: empty
-GET /BUCKET/OBJECT?acl            #Req: empty
-GetObjectAcl()                    #Res: ACL
-
-check RESTORE_OUTPUT.AccessControlList???
-
-ACL.Owner                         #OWNER of OBJECT
-ACL.AccessControlList             #ACLLIST_ARR
-                                  #Max 100
-ACLLIST.Grant                     #GRANT
-GRANT.Grantee                     #OWNER
-GRANT.Permission                  #If BUCKET:
-                                  #  - "READ": s3:ListBucket[MultipartUploads], s3:ListBucketVersions
-                                  #  - "WRITE": s3:PutObject, s3:DeleteObject, (if bucket owner), s3:DeleteObject[Version]
-                                  #  - "READ_ACP": s3:GetBucketAcl
-                                  #  - "WRITE_ACP": s3:PutBucketAcl
-                                  #  - "FULL_CONTROL": "READ" + "READ|WRITE_ACP"
-                                  #If OBJECT:
-                                  #  - "READ": s3:GetObject[Torrent|Version]
-                                  #  - "WRITE": nothing
-                                  #  - "READ_ACP": s3:GetObject[Version]Acl
-                                  #  - "WRITE_ACP": s3:PutObject[Version]Acl
-                                  #  - "FULL_CONTROL": "READ" + "READ|WRITE_ACP"
-
-'ACL'                             #Shortcut for ACL
-'ACL' private                     #BUCKET|OBJECT_OWNER: FULL_CONTROL
-'ACL' public-read[-write]         #BUCKET|OBJECT_OWNER: FULL_CONTROL
-                                  #AllUsers: READ [and WRITE]
-'ACL' authenticated-read          #BUCKET|OBJECT_OWNER: FULL_CONTROL
-                                  #AuthenticatedUsers: READ
-'ACL' bucket-owner-full-control   #BUCKET|OBJECT_OWNER: FULL_CONTROL
-                                  #Only for OBJECTs
-'ACL' bucket-owner-read           #OBJECT_OWNER: FULL_CONTROL
-                                  #BUCKET_OWNER: READ
-                                  #Only for OBJECTs
-'ACL' log-delivery-write          #LogDelivery: WRITE and READ_ACP
-                                  #Only for BUCKETs
-
-ACL ==>                           #What:
-                                  #  - limited sets of permissions, that apply on top of resource-based policy
-                                  #  - at bucket or object-level
-                                  #  - only useful at the object-level and (for the bucket-level) for LogDelivery
-                                  #  - bucket owner has only those rights on objects not owned, in a bucket owned: control ACL,
-                                  #    delete, archive|restore:
-                                  #      - additional rights use ACL
-                                  #      - def. ACL for new objects will grant FULL_CONTROL to BUCKET_OWNER, but object owner can
-                                  #        override, unless a conditional policy forbids it
-                                  #How:
-                                  #  - x-amz-acl 'ACL':
-                                  #     - write [C] by putObject[Acl](), createBucket(), putBucketAcl()
-                                  #  - x-amz-grant-private|read[-acp]|write[-acp]|full-control VAL,...:
-                                  #     - VAL can be:
-                                  #        - id=CANONICAL_ACCOUNT_ID
-                                  #        - emailAddress=ACCOUNT_EMAIL
-                                  #        - uri=URL
-                                  #     - write [C] by putObject[Acl](), createBucket(), putBucketAcl()
-                                  #  - write [C] by putObject|BucketAcl() with ACL in request body
-
-TO DOCUMENT: GetObjectAcl|PutObjectAcl() usage of versionId. ACL are at the version-level
-
-BUPLOAD.acl                       #'ACL'
-
-BUPLOAD.Policy                    #OBJECT_POLICY, as Base64
-OBJECT_POLICY.expiration          #'DATE'
-OBJECT_POLICY.conditions          #ARR of either:
-                                  #  - ['OP', 'KEY', 'VAL2']
-                                  #  - { KEY: 'VAL2' }: same as ['eq', 'KEY', 'VAL2']
-KEY                               #Points to a VAL1
-                                  #Can be any field name???
-                                  #Can use $FIELDNAME for any field name (e.g. [ "start-with", "$key", "user1/" ])???
-                                  #Can contain ${filename}???
-KEY 'acl'                         #'ACL'
-KEY 'bucket'                      #'BUCKET'
-KEY 'content-length-range'        #[MIN_NUM, MAX_NUM] for Content-Length [S]
-OP                                #
-OP 'eq'                           #VAL1 == VAL2
-OP 'starts-with'                  #VAL1 starts with VAL2 (can be '')
-OP 'content-length-range'         #VAL1 <= Content-Length [S] <= VAL2
-
 CONDITION_KEYs ==>                #  - s3:x-amz-acl|x-amz-grant-* STR
                                   #  - s3:x-amz-copy-source STR
                                   #  - s3:x-amz-server-side-encryption STR
@@ -1025,26 +954,104 @@ CONDITION_KEYs ==>                #  - s3:x-amz-acl|x-amz-grant-* STR
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:             OWNER             :==(
+                                            )==:           ACL MAIN            :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
-x-amz-object-ownership [C]
-  - see description in https://docs.aws.amazon.com/AmazonS3/latest/API/API_CreateBucket.html ???
+PUT /BUCKET?acl                   #Req: ACL, x-amz-acl [C], x-amz-grant-PERMISSION [C]
+PutBucketAcl()                    #Res: empty
+GET /BUCKET?acl                   #Req: empty
+GetBucketAcl()                    #Res: ACL
+PUT /BUCKET/OBJECT?acl            #Req:
+PutObjectAcl()                    #  - ACL
+                                  #  - x-amz-acl [C], x-amz-grant-PERMISSION [C]
+                                  #  - query variables: OBJECT.versionId
+                                  #Res: x-amz-version-id [S]
+GET /BUCKET/OBJECT?acl            #Req: OBJECT
+GetObjectAcl()                    #  - only versionId
+                                  #Res: ACL, x-amz-version-id [S]
 
-BUCKETS_LIST|OBJECT|MUPLOAD.Owner #OWNER
-OWNER.ID                          #Either:
-                                  #  - USER_ARN (if USER)
-                                  #  - CANONICAL_ACCOUNT_ID (if ACCOUNT)
-                                  #  - URL:
-                                  #     - http://acs.amazonaws.com/groups/global/AuthenticatedUsers: anyone authenticated
-                                  #     - http://acs.amazonaws.com/groups/global/AllUsers: anyone
-                                  #     - http://acs.amazonaws.com/groups/s3/LogDelivery: logger (see above)
-OWNER.DisplayName                 #'USER' (if USER)
+x-amz-grant-PERMISSION:           #PERMISSION is 'read[-acp]', 'write[-acp]', 'full-control' (GRANT.Permission) or 'private'
+ GRANTEE,... [C]                  #GRANTEE is VAR=VAL (GRANT.Grantee) with VAR id|emailAddress|uri
 
-x-amz-expected-bucket-owner:
- ACCOUNT_ID [C]                   #403 if BUCKET's owner is different
+ACL                               #Like resource-based POLICY but:
+                                  #  - either on BUCKET|OBJECT
+                                  #  - can filter by BUCKET OWNER
+                                  #  - simpler
+                                  #OBJECT is on a specific VERSION (def: current)
+ACL.Owner                         #BUCKET OWNER
+ACL.AccessControlList.Grants      #GRANT_ARR
+                                  #Max 100
+GRANT.Grantee                     #GRANTEE
+GRANT.Permission                  #If BUCKET:
+                                  #  - "READ": s3:ListBucket[MultipartUploads], s3:ListBucketVersions
+                                  #  - "WRITE": s3:PutObject, s3:DeleteObject, (if bucket owner), s3:DeleteObject[Version]
+                                  #  - "READ_ACP": s3:GetBucketAcl
+                                  #  - "WRITE_ACP": s3:PutBucketAcl
+                                  #  - "FULL_CONTROL": all of above
+                                  #If OBJECT:
+                                  #  - "READ": s3:GetObject[Torrent|Version]
+                                  #  - "WRITE": does not exist
+                                  #  - "READ_ACP": s3:GetObject[Version]Acl
+                                  #  - "WRITE_ACP": s3:PutObject[Version]Acl
+                                  #  - "FULL_CONTROL": all of above
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:          ACL CANNED           :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+x-amz-acl: 'ACL' [C]              #
+
+'ACL'                             #Shortcut for ACL
+                                  #Default for any BUCKET|OBJECT: private
+'ACL' private                     #BUCKET|OBJECT OWNER: FULL_CONTROL
+'ACL' public-read[-write]         #BUCKET|OBJECT OWNER: FULL_CONTROL
+                                  #AllUsers: READ [and WRITE]
+'ACL' authenticated-read          #BUCKET|OBJECT OWNER: FULL_CONTROL
+                                  #AuthenticatedUsers: READ
+'ACL' bucket-owner-full-control   #BUCKET|OBJECT OWNER: FULL_CONTROL
+                                  #Only for OBJECTs
+'ACL' bucket-owner-read           #OBJECT OWNER: FULL_CONTROL
+                                  #BUCKET OWNER: READ
+                                  #Only for OBJECTs
+'ACL' log-delivery-write          #LogDelivery: WRITE and READ_ACP
+                                  #Only for BUCKETs
+'ACL' aws-exec-read               #BUCKET|OBJECT OWNER: FULL_CONTROL
+                                  #EC2: READ (only to GET an AMI)
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:     POLICY BROWSER UPLOAD     :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+BUPLOAD.acl                       #'ACL'
+
+BUPLOAD.Policy                    #OBJECT_POLICY, as Base64
+OBJECT_POLICY.expiration          #'DATE'
+OBJECT_POLICY.conditions          #ARR of either:
+                                  #  - ['OP', 'KEY', 'VAL2']
+                                  #  - { KEY: 'VAL2' }: same as ['eq', 'KEY', 'VAL2']
+
+KEY                               #Points to a VAL1
+                                  #Can be any field name???
+                                  #Can use $FIELDNAME for any field name (e.g. [ "start-with", "$key", "user1/" ])???
+                                  #Can contain ${filename}???
+KEY 'acl'                         #'ACL'
+KEY 'bucket'                      #'BUCKET'
+KEY 'content-length-range'        #[MIN_NUM, MAX_NUM] for Content-Length [S]
+
+OP                                #
+OP 'eq'                           #VAL1 == VAL2
+OP 'starts-with'                  #VAL1 starts with VAL2 (can be '')
+OP 'content-length-range'         #VAL1 <= Content-Length [S] <= VAL2
 
 
                                              /=+===============================+=\
