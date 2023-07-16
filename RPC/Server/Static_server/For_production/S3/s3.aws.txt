@@ -1182,6 +1182,33 @@ RESTORE_OUTPUT.CannedACL          #'ACL'
 
                                              /=+===============================+=\
                                             /  :                               :  \
+                                            )==:        PRE-SIGNED URL         :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+PRE-SIGNED URL ==>                #Allow anonymous to do a specific S3 ACTION for specific BUCKET|OBJECT.
+                                  #BUCKET or OBJECT can be non-existing if write operation.
+                                  #Is time-limited (uses expiration). Uses STS under the hood.
+                                  #Must use JavaScript SDK:
+                                  #  - S3.getSignedUrl(ACTION_STR, REQ_OBJ, FUNC(ERROR, URL))
+                                  #     - REQ_OBJ can have member Expires NUM too
+                                  #If using SSE, request must include x-server-side-encryption-* [C]
+
+@aws-sdk/s3-request-presigner     #
+getSignedUrl
+ (CLIENT, COMMAND[, SOPTS])
+ ->>'URL'
+SOPTS.expiresIn                   #NUM (in secs, def: 15m)
+
+new S3RequestPresigner([COPTS])   #
+COPTS.signingName                 #STR
+PRESIGNER.presign
+ (HTTP_REQ[, OPTS])->>HTTP_REQ    #
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
                                             )==:        STATIC WEBSITE         :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -1328,7 +1355,7 @@ LOG_LINE[24]                      #ACCESS_POINT_ARN. - if none
 LOG_LINE[25]                      #Yes|No. Whether an ACL was needed
 
 PERMISSIONS ==>                   #Must allow PutObject|GetBucketAcl PACTIONs to S3 logger SERVICE
-logging.s3.amazonaws.com          #SERVICE_DOMAIN used as POLICY_DOC Principal.Service for S3 logger
+logging.s3.amazonaws.com          #SERVICE_DOMAIN used as POLICY_DOC Principal.Service for S3 logger (SERVICE_ASYNC_ACTION)
 http://acs.amazonaws.com
  /groups/s3/LogDelivery           #Same but as GRANTEE.URI, for ACLs
 'ACL' log-delivery-write          #LogDelivery: WRITE and READ_ACP
@@ -1336,8 +1363,6 @@ http://acs.amazonaws.com
 
 LOG_CONF.TargetGrants             #GRANT_ARR of LOG_FILE, to grant permissions to others than BUCKET_OWNER
                                   #Target BUCKET must not disable ACLs with BUCKET_OWNERSHIP_RULE.ObjectOwnership 'BucketOwnerEnforced'
-
-https://docs.aws.amazon.com/AmazonS3/latest/userguide/ServerLogs.html
 
 
                                              /=+===============================+=\
@@ -1347,30 +1372,50 @@ https://docs.aws.amazon.com/AmazonS3/latest/userguide/ServerLogs.html
                                              \=+===============================+=/
 
 
-x-amz-server-side-encryption:     #Encrypt OBJECT before writing, decrypt before reading
- AES256 [C|S]                     #Default behavior
-                                  #Uses AWS KMS to generate one data key per OBJECT
-                                  #  - 'aws/s3' KMS_KEY, managed by AWS, automatically rotated ("SSE-S3")
+SERVER-SIDE ENCRYPTION ==>        #Encrypt OBJECT before writing, decrypt before reading
+                                  #"SSE", "encryption at rest"
+                                  #Uses AES256 GCM
+                                  #Cannot be disabled, but can configured algorithm and key
+
+x-amz-server-side-encryption:     #"SSE-S3". Default behavior: uses AWS KMS to generate one data key per OBJECT
+ AES256 [C|S]                     #'aws/s3' KMS_KEY, managed by AWS, automatically rotated
                                   #Other ACCOUNTs cannot access OBJECTs
 
-x-amz-server-side-encryption:     #Like SSE-S3 but specifying the KSM_KEY ("[D]SSE-KMS")
- aws:kms[:dsse] [C|S]             #dsse: with dual-side encryption
+x-amz-server-side-encryption:     #"SSE-KMS". Like SSE-S3 but with a specific KMS_KEY
+ aws:kms [C|S]                    #By default, use 'aws/s3' (like SSE-S3)
                                   #Induce cost for traffic between S3 and KMS
-                                  #For other ACCOUNTs to access OBJECTs, must have permission to access KSM_KEY
-x-amz-server-side-encryption
- -aws-kms-key-id:
- KMS_KEY_MID|ARN [C|S]            #Prefer KMS_KEY_ARN over KMS_KEY_MID
-x-amz-server-side-encryption      #BOOL (def: false). Use a BUCKET-specific KSM_KEY, stored in S3, automatically rotated
- -bucket-key-enabled: true [C]    #Goal: reduce traffic between S3 and KMS
-x-amz-server-side-encryption
- -context: STR [C|S]              #'JSON_BASE64' of { VAR: VAL,... } of context???
+                                  #  - on write: get a data key
+                                  #  - on read: request KMS to send decrypted OBJECT full contents
+                                  #In addition to encrypting the data, also encrypts the checksums
+                                  #For other ACCOUNTs to access OBJECTs, must:
+                                  #  - use x-amz-server-side-encryption-aws-kms-key-id [C]
+                                  #  - have permission to access KMS_KEY
+x-amz-server-side-encryption:     #"DSSE-KMS". Like "SSE-KMS" but with dual-layer encryption
+ aws:kms:dsse [C|S]               #I.e. encrypt|decrypt twice:
+                                  #  - same algorithm, but different implementation
+                                  #  - same KMS_KEY, but different data keys
+x-amz-server-side-encryption      #"Customer managed key". Use a specific KMS_KEY
+ -aws-kms-key-id:                 #KMS_KEY must be in same REGION as BUCKET
+ KMS_KEY_MID|ARN [C|S]            #Should prefer KMS_KEY_ARN over KMS_KEY_MID
+x-amz-server-side-encryption      #BOOL (def: false). Use a KMS_KEY:
+ -bucket-key-enabled: true [C]    #  - BUCKET-specific
+                                  #  - requester-specific
+                                  #     - also ROLE session-specific
+                                  #     - i.e. cheaper when fewer requesters
+                                  #  - stored in S3
+                                  #  - automatically rotated
+                                  #Goal: reduce traffic between S3 and KMS
+x-amz-server-side-encryption      #'JSON_BASE64' of { VAR: VAL,... } of KMS EncryptionContext
+ -context: STR [C|S]              #I.e. metadata stored and not encrypted
+                                  #Always added: { aws:s3:arn: OBJECT_ARN }
+                                  #  - if x-amz-server-side-encryption-bucket-key-enabled, BUCKET_ARN instead
 
-x-amz-server-side-encryption      #Like SSE-S3 but using client-provided key ("SSE-C")
+x-amz-server-side-encryption      #"SSE-C". Use a client-provided key
  -customer-algorithm: AES256 [C|S]#For other ACCOUNTs to access OBJECTs, must have the key
 x-amz-server-side-encryption      #'BASE64' of key. Discarded after usage.
  -customer-key: STR [C]           #Unlike AWS-provided keys, this must be supplied each time OBJECT is read|written
 x-amz-server-side-encryption
- -customer-MD5: STR [C|S]         #'MD5_HASH' of key
+ -customer-MD5: STR [C|S]         #'MD5_HASH_BASE64' of key
 
 PUT /BUCKET?encryption            #Req: BUCKET_ENCRYPTION
 PutBucketEncryption()             #Res: empty
@@ -1383,14 +1428,14 @@ BUCKET_ENCRYPTION                 #Default SSE for OBJECTs in a BUCKET
 BUCKET_ENCRYPTION.Rules           #BUCKET_ENCRYPTION_RULE_ARR
 BUCKET_ENCRYPTION_RULE.Apply
  ServerSideEncryptionByDefault    #BUCKET_SSE
-BUCKET_SSE.SSEAlgorithm           #'AES256|aws:kms[:dsse]', like x-amz-server-side-encryption [C]
-BUCKET_SSE.KMSMasterKeyID         #KMS_KEY_MID|ARN, like x-amz-server-side-encryption-aws-kms-key-id [C]
+BUCKET_SSE.SSEAlgorithm           #STR, like x-amz-server-side-encryption [C]
+BUCKET_SSE.KMSMasterKeyID         #STR, like x-amz-server-side-encryption-aws-kms-key-id [C]
 BUCKET_ENCRYPTION_RULE
  .BucketKeyEnabled                #BOOL, like x-amz-server-side-encryption-bucket-key-enabled [C]
 
 RESTORE_OUTPUT.Encryption         #RESTORE_ENCRYPTION
-RESTORE_ENCRYPTION.EncryptionType #'AES256|aws:kms[:dsse]', like x-amz-server-side-encryption [C]
-RESTORE_ENCRYPTION.KMSKeyId       #KMS_KEY_MID|ARN, like x-amz-server-side-encryption-aws-kms-key-id [C]
+RESTORE_ENCRYPTION.EncryptionType #STR, like x-amz-server-side-encryption [C]
+RESTORE_ENCRYPTION.KMSKeyId       #STR, like x-amz-server-side-encryption-aws-kms-key-id [C]
 RESTORE_ENCRYPTION.KMSContext     #STR, like x-amz-server-side-encryption-context [C]
 
 
@@ -1449,22 +1494,6 @@ GetBucketNotification()           #Returns NOTIF_OBJ
 
 GetBucketNotificationConfiguration()???
 PutBucketNotificationConfiguration()???
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:        PRE-SIGNED URL         :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-PRE-SIGNED URL ==>                #Allow anonymous to do a specific S3 ACTION for specific BUCKET+OBJECT.
-                                  #BUCKET or OBJECT can be non-existing if write operation.
-                                  #Is time-limited (uses expiration). Uses STS under the hood.
-                                  #For example: private URL for a GetObject(), or to create a file with PutObject()
-                                  #Must use JavaScript SDK:
-                                  #  - S3.getSignedUrl(ACTION_STR, REQ_OBJ, FUNC(ERROR, URL))
-                                  #     - REQ_OBJ can have member Expires NUM too
 
 
                                              /=+===============================+=\
