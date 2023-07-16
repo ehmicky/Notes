@@ -2364,7 +2364,7 @@ SCONF.xmlbinary                   #'base64' (def) or 'hex'. How to show binary d
 enum_first|last(ENUM_VAL)         #First|last ENUM_VAL of the same type
  ->ENUM_VAL2                      #null::ENUM_TYPE can be used as argument
 
-xml_agg(SET)->XML                 #AFUNC. Converts to XML
+xmlagg(XML_SET)->XML              #AFUNC. Concatenates
 
 
                                              /=+===============================+=\
@@ -2841,7 +2841,8 @@ ARR[...]                          #Can be set, e.g. with `update`
 ARR = <> ARR2                     #BOOL. Done deeply
 ARR < <= > >= ARR2                #BOOL, with first item compared first, etc.
 
-VAL OP any|all (ARR)              #BOOL. Whether VAL OP any|all ARR item
+VAL OP any|some (ARR)             #BOOL. Whether VAL OP any ARR item
+VAL OP all (ARR)                  #BOOL. Whether VAL OP all ARR item
 
 ARR @> ARR2                       #BOOL. Is superset|equal
                                   #Ignores duplicates
@@ -2989,6 +2990,8 @@ ROW.*                             #Expanded to ROW."COL", ROW."COL2", ...
 ROW = <> ROW2                     #BOOL. Done deeply
                                   #Must have same amount of COLs, but names do not need to match
 ROW < <= > >= ROW2                #BOOL, with first COL compared first, etc.
+ROW OP (SUBQUERY)                 #BOOL. Like ROW OP ROW2, using ROW2 returned by SUBQUERY
+                                  #Fails if SUBQUERY does not return exactly one ROW2
 
 pg_type.typrelid                  #REGCLASS of a ROW_TYPE. 0 if ROW_TYPE is not related to a RELATION
 
@@ -3043,7 +3046,8 @@ REXPR                             #Expression which:
 exists(SUBQUERY)->BOOL            #Whether SUBQUERY has at least one ROW
                                   #Since SUBQUERY values are not used, `select 1 ...` is often used
 
-ROW OP any|all SUBQUERY           #BOOL. Whether ROW OP any|all SUBQUERY_ROW
+ROW OP any|some SUBQUERY          #BOOL. Whether ROW OP any SUBQUERY_ROW
+ROW OP all SUBQUERY               #BOOL. Whether ROW OP all SUBQUERY_ROW
 ROW [not] in SUBQUERY             #Same as ROW =|<> any SUBQUERY
 
 
@@ -4960,21 +4964,23 @@ AFUNC(...) over                   #Exclude specific ROWs in current window, base
                                              \=+===============================+=/
 
 
-count(SET)->UINT                  #AFUNC. Number of values, excluding nulls
-count(*)->UINT                    #AFUNC. Number of values, including nulls
+count(SET)->INT8                  #AFUNC. Number of values, excluding nulls
+count(*)->INT8                    #AFUNC. Number of values, including nulls
 
-rank(ZSET, VAL)->UINT             #AFUNC. 1-based index of VAL in sorted ZSET
+rank(ZSET, VAL)->INT8             #AFUNC. 1-based index of VAL in sorted ZSET
                                   #If equal value, same index, but increments index for next value
-dense_rank(ZSET, VAL)->UINT       #Same as rank() but if equal value, does not increment index for next value
+dense_rank(ZSET, VAL)->INT8       #Same as rank() but if equal value, does not increment index for next value
                                   #I.e. like removing duplicates first
-percent_rank(ZSET, VAL)->FLOAT    #Same as rank() but returns as 0-1 percentage
-cume_dist(ZSET, VAL)->FLOAT       #AFUNC. Cumulative distribution, i.e. rank() / count()
+percent_rank(ZSET, VAL)->FLOAT8   #Same as rank() but returns as 0-1 percentage
+cume_dist(ZSET, VAL)->FLOAT8      #AFUNC. Cumulative distribution, i.e. rank() / count()
 
 mode(ZSET)->VAL                   #AFUNC. Mode
 
-percentile_cont(ZSET, FLOAT[_ARR])#AFUNC. Percentile value[s], with interpolation
- ->VAL[_ARR]                      #AFUNC. FLOAT is 0-1 percentage
-percentile_disc(...)              #AFUNC. Percentile value[s], without interpolation
+percentile_cont
+ (FLOAT8|INTERVAL_ZSET,           #AFUNC. Percentile value[s], with interpolation
+ FLOAT8[_ARR])->VAL[_ARR]         #FLOAT is 0-1 percentage
+percentile_disc
+ (ZSET, FLOAT8[_ARR])->VAL[_ARR]  #AFUNC. Percentile value[s], without interpolation
 
 
                                              /=+===============================+=\
@@ -4984,19 +4990,19 @@ percentile_disc(...)              #AFUNC. Percentile value[s], without interpola
                                              \=+===============================+=/
 
 
-row_number(SET)->UINT             #WFUNC. Current 1-based index within window
+row_number(SET)->INT8             #WFUNC. Current 1-based index within window
 
-nth_value(SET, COL_REXPR, UINT)
- ->VAL|null                       #WFUNC. Returns COL_REXPR value at index UINT within window
+nth_value(SET, COL_REXPR, INT4)
+ ->VAL|null                       #WFUNC. Returns COL_REXPR value at index INT4 within window
 first|last_value(SET, COL_REXPR)
  ->VAL                            #WFUNC. Returns COL_REXPR value at first|last index within window
 
-lead(SET, COL_REXPR, UINT[, VAL]) #WFUNC. Returns COL_REXPR value at index row_number() + UINT within window
+lead(SET, COL_REXPR, INT4[, VAL]) #WFUNC. Returns COL_REXPR value at index row_number() + INT4 within window
  ->VAL                            #If none, returns VAL (def: null)
-lag(...)->VAL                     #Same as lead but using -UINT
+lag(...)->VAL                     #Same as lead but using -INT4
 
-ntile(SET, UINT)->UINT2           #Returns 1 for first index, UINT for last index, and interpolated values in-between.
-                                  #If SET length >= UINT, returns row_number() instead
+ntile(SET, INT4)->INT             #Returns 1 for first index, INT4 for last index, and interpolated values in-between.
+                                  #If SET length >= INT4, returns row_number() instead
 
 
                                              /=+===============================+=\
@@ -5006,16 +5012,17 @@ ntile(SET, UINT)->UINT2           #Returns 1 for first index, UINT for last inde
                                              \=+===============================+=/
 
 
-variance|var_samp(NUM_SET)->NUM   #AFUNC. Variance using n-1
-var_pop(NUM_SET)->NUM             #AFUNC. Variance using n
-stddev[_samp](NUM_SET)->NUM
-stddev_pop(NUM_SET)               #AFUNC. Standard deviation
-covar_samp(NUM_SET)->NUM
-covar_pop(NUM_SET)                #AFUNC. Covariance
+variance|var_samp(NUM_SET)->FLOAT #AFUNC. Variance using n-1
+var_pop(NUM_SET)->FLOAT           #AFUNC. Variance using n
+stddev[_samp](NUM_SET)->FLOAT
+stddev_pop(NUM_SET)->FLOAT        #AFUNC. Standard deviation
+covar_samp(NUM_SET)->FLOAT8
+covar_pop(NUM_SET)->FLOAT8        #AFUNC. Covariance
 
-corr(FLOAT_SET, FLOAT_SET2)->FLOAT#AFUNC. r
+corr
+ (FLOAT8_SET, FLOAT8_SET2)->FLOAT8#AFUNC. r
 regr_r2
- (FLOAT_SET, FLOAT_SET2)->FLOAT   #AFUNC. r₂
+ (FLOAT8_SET, FLOAT8_SET2)->FLOAT8#AFUNC. r₂
 
 regr_*(...)                       #AFUNC. Linear regression. Not documented yet
 
