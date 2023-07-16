@@ -78,20 +78,6 @@ PERMISSIONS ==>                   #Some unusual:
                                   #  - ListMultipartUploads -> ListMultipartUploadParts
                                   #  - Get|PutRequestPayment -> Get|PutBucketRequestPayment
 
-PRICING ==>                       #Storage space, per byte
-                                  #  - 20% cheaper for RSS
-                                  #  - each object has 8KB of metadata
-                                  #In|out traffic, per GB:
-                                  #  - Internet -> S3: free
-                                  #  - S3 -> Internet:
-                                  #     - reduced prices after 10|40|100|350TB
-                                  #  - S3 -> another region / same region CloudFront:
-                                  #     - 6 times cheaper than out
-                                  #     - must be done explicitly (e.g. copying OBJECT)
-                                  #  - S3 -> same region EC2: free
-                                  #Number of requests:
-                                  #  - GET: 10 times cheaper than other methods
-                                  #  - DELETE: free
 
 
                                              /=+===============================+=\
@@ -626,20 +612,86 @@ x-amz-mfa:
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:            STORAGE            :==(
+                                            )==:         STORAGE CLASS         :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
-x-amz-storage-class: STR [C]      #Can be:
-OBJECT|MUPLOAD.StorageClass       #  - 'STANDARD' (def)
-                                  #     - 1/1e11 loss a year
-                                  #  - 'REDUCED_REDUNDANCY' (RRS):
-                                  #     - 1/1e5 loss a year, but cheaper
-                                  #     - 405 if lost
-                                  #  - 'GLACIER'
+x-amz-storage-class: STR [C]      #Can be (most to least expensive):
+OBJECT|MUPLOAD.StorageClass       #  - 'STANDARD' ("frequent access") (def)
+                                  #  - 'STANDARD_IA' ("infrequent access")
+                                  #     - lower availability
+                                  #     - min 30 days, 128KB per OBJECT
+                                  #  - 'ONEZONE_IA':
+                                  #     - like STANDARD_IA, but replicates in only 1 AZ, instead of 3 for all other StorageClasses
+                                  #  - 'GLACIER_IR' ("instant retrieval")
+                                  #     - like STANDARD_IA, but min 90 days
+                                  #  - 'GLACIER' ("S3 Glacier")
                                   #     - storage|cost of Glacier, but must be manipulated with S3
                                   #     - cannot be read|write, i.e. must RestoreObject()
+                                  #     - min 90 days
+                                  #  - 'DEEP_ARCHIVE'
+                                  #     - cannot be read|write, i.e. must RestoreObject()
+                                  #     - min 180 days
+                                  #     - cannot use Tier 'expedited'
+                                  #Can also be:
+                                  #  - 'INTELLIGENT_TIERING'
+                                  #     - automatically switch between STANDARD, STANDARD_IA and GLACIER_IR
+                                  #        - if OBJECT <128KB, always STANDARD
+                                  #     - manual switch to any of them, or also GLACIER or DEEP_ARCHIVE
+                                  #  - 'SNOW'
+                                  #  - 'OUTPOSTS'
+                                  #  - 'REDUCED_REDUNDANCY' (RRS):
+                                  #     - 1/1e5 loss a year, instead of 1/1e11 for all other StorageClasses
+                                  #     - 405 if lost
+                                  #     - deprecated, and same cost, i.e. not useful
+
+PRICING ==>                       #Storage space, per byte
+                                  #  - 1$/43GB
+                                  #     - 4% cheaper after 50TB, 9% cheaper after 500TB
+                                  #  - cheaper StorageClass:
+                                  #     - STANDARD_IA: 2x
+                                  #     - ONEZONE_IA: 2.3x
+                                  #     - GLACIER_IR: 5.7x
+                                  #     - GLACIER: 6.4x
+                                  #     - DEEP_ARCHIVE: 23x
+                                  #  - INTELLIGENT_TIERING: 1$/4e5 OBJECTs (with >128KB)
+                                  #  - min metdata per OBJECT:
+                                  #     - 8KB, always with StorageClass STANDARD
+                                  #     - 32KB more if GLACIER[_IR]|DEEP_ARCHIVE, with that StorageClass
+                                  #In|out traffic, per GB:
+                                  #  - Internet -> S3: free
+                                  #  - S3 -> Internet:
+                                  #     - reduced prices after 10|40|100|350TB
+                                  #     - free: 100GB
+                                  #  - S3 -> another region:
+                                  #     - 6 times cheaper than out
+                                  #     - must be done explicitly (e.g. copying OBJECT)
+                                  #  - S3 -> CloudFront: free
+                                  #  - S3 -> same region: free
+                                  #Max 500 TB/month (flexible)
+                                  #Number of requests:
+                                  #  - 1$/2e6 requests
+                                  #  - per type:
+                                  #     - delete: free
+                                  #     - list|write: 10x more expensive
+                                  #     - read|restore contents, additional:
+                                  #        - STANDARD: free
+                                  #        - STANDARD_IA|ONEZONE_IA: 1$/100GB
+                                  #        - GLACIER_IR: 1$/33GB
+                                  #        - GLACIER:
+                                  #           - Bulk: free
+                                  #           - Standard: 1$/2e4 requests, 1$/100GB
+                                  #           - Expedited: 1$/1e2 requests, 1$/33GB
+                                  #        - DEEP_ARCHIVE:
+                                  #           - Bulk: 1$/4e4 requests, 1$/400GB
+                                  #           - Standard: 1$/1e4 requests, 1$/50GB
+                                  #  - more expensive StorageClass:
+                                  #     - STANDARD_IA|ONEZONE_IA: 2x for list|write, 2.5x for read
+                                  #     - GLACIER_IR: 4x for list|write, 25x for read
+                                  #     - GLACIER: 6x for list|write, 1x for read
+                                  #     - DEEP_ARCHIVE: 10x for list|write, 1x for read
+                                  #CAPACITY: 100$/month
 
 POST /BUCKET/OBJECT?restore       #Req:
 RestoreObject()                   #  - RESTORE
@@ -649,6 +701,8 @@ RestoreObject()                   #  - RESTORE
 RESTORE                           #With StorageClass from 'GLACIER', copy OBJECT but with StorageClass 'STANDARD'
 RESTORE.Description               #'JOB_DESC'. Like Glacier JOB.JobDescription
 RESTORE.OutputLocation            #Like SJOB.OutputLocation
+x-amz-restore-output-path:
+ OBJECT [S]                       #Like SJOB.OutputPath
 RESTORE
  [.GlacierJobParameters].Tier     #STR. Like AJOB.Tier
 x-amz-restore: NUM [S]
