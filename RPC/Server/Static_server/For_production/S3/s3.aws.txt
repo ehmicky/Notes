@@ -78,7 +78,7 @@ PERMISSIONS ==>                   #Some unusual:
                                   #  - ListMultipartUploads -> ListMultipartUploadParts
                                   #  - Get|PutRequestPayment -> Get|PutBucketRequestPayment
 
-AmazonS3FullAccess                #AWS managed POLICY. Grants all CloudWatch PACTIONs
+AmazonS3FullAccess                #AWS managed POLICY. Grants all s3[-object-lambda] PACTIONs
 AmazonS3ReadOnlyAccess            #Same but readonly
 
 PRICING ==>                       #Storage space, per byte
@@ -229,7 +229,7 @@ GET /                             #Req: empty
 ListBuckets()                     #Res: BUCKETS_LIST
                                   #  - no BUCKET.LocationConstraint
                                   #No pagination
-DELETE /BUCKET                    #Req: x-amz-expected-bucket-owner [C]
+DELETE /BUCKET                    #Req: empty
 DeleteBucket()                    #Res: empty
                                   #BUCKET must be empty first
 
@@ -906,23 +906,25 @@ NTRANSITION|NEXPIRATION
                                              \=+===============================+=/
 
 
-PUT /BUCKET?ownershipControls     #Req: BUCKET_OWNERSHIP, x-amz-expected-bucket-owner [C]
+BUCKETS_LIST.Owner                #PRINCIPAL. BUCKET_OWNER, ACCOUNT that called CreateBucket()
+
+x-amz-expected-bucket-owner:      #403 if BUCKET_OWNER is different
+ ACCOUNT_ID [C]                   #On all API endpoints except: CreateBucket(), ListBuckets(), WriteGetObjectResponse()
+
+PUT /BUCKET?ownershipControls     #Req: BUCKET_OWNERSHIP
 PutBucketOwnershipControls()      #Res: empty
-GET /BUCKET?ownershipControls     #Req: x-amz-expected-bucket-owner [C]
+GET /BUCKET?ownershipControls     #Req: empty
 GetBucketOwnershipControls()      #Res: BUCKET_OWNERSHIP
-DELETE /BUCKET?ownershipControls  #Req: x-amz-expected-bucket-owner [C]
+DELETE /BUCKET?ownershipControls  #Req: empty
 DeleteBucketOwnershipControls()   #Res: empty
 
 BUCKET_OWNERSHIP.Rule             #BUCKET_OWNERSHIP_RULE_ARR
 BUCKET_OWNERSHIP_RULE             #Who is OBJECT_OWNER, among:
  .ObjectOwnership                 #  - 'BucketOwnerEnforced' (def): BUCKET_OWNER
 x-amz-object-ownership: STR [C]   #     - also disables ACLs (but not POLICYs)
-                                  #  - 'BucketOwnerPreferred': BUCKET_OWNER if 'ACL' bucket-owner-full-control, uploading PRINCIPAL otherwise
-                                  #  - 'ObjectWriter': uploading PRINCIPAL
-
-BUCKETS_LIST.Owner                #PRINCIPAL. BUCKET_OWNER, ACCOUNT that called CreateBucket()
-x-amz-expected-bucket-owner:
- ACCOUNT_ID [C]                   #403 if BUCKET_OWNER is different
+                                  #  - 'BucketOwnerPreferred': BUCKET_OWNER if 'ACL' bucket-owner-full-control,
+                                  #    PRINCIPAL uploading the OBJECT otherwise
+                                  #  - 'ObjectWriter': PRINCIPAL uploading the OBJECT
 
 OBJECTS.FetchOwner                #BOOL (def: false). Whether to return OBJECT.Owner
 OBJECT|MUPLOAD.Owner              #PRINCIPAL. OBJECT_OWNER.
@@ -933,9 +935,10 @@ PRINCIPAL.ID                      #CANONICAL_ACCOUNT_ID
 GRANTEE.DisplayName               #'GRANTEE' shown in UI
 GRANTEE.Type                      #One of:
                                   #  - 'CanonicalUser': GRANTEE.ID
-                                  #  - 'Group': GRANTEE.URI
                                   #  - 'AmazonCustomerByEmail': GRANTEE.EmailAddress
+                                  #  - 'Group': GRANTEE.URI
 GRANTEE.ID                        #CANONICAL_ACCOUNT_ID
+GRANTEE.EmailAddress              #'EMAIL' (of ACCOUNT)
 GRANTEE.URI                       #One of:
                                   #  - http://acs.amazonaws.com/groups/global/AuthenticatedUsers: anyone authenticated
                                   #  - http://acs.amazonaws.com/groups/global/AllUsers: anyone
@@ -943,7 +946,6 @@ GRANTEE.URI                       #One of:
                                   #     - CANONICAL_ACCOUNT_ID '65a011a29cdf8ec533ec3d1ccaae921c'
                                   #  - http://acs.amazonaws.com/groups/s3/LogDelivery: logger (see above)
                                   #     - same as in POLICY_DOC: Principal.Service 'logging.s3.amazonaws.com'
-GRANTEE.EmailAddress              #'EMAIL' (from ACCOUNT)
 
 
                                              /=+===============================+=\
@@ -960,17 +962,22 @@ DeleteBucketPolicy()              #Res: empty
 GET /BUCKET?policy                #Req: empty
 GetBucketPolicy()                 #Res: POLICY_DOC
 
-POLICY_DOC                        #IAM POLICY_DOC, as OBJ. Resource-based POLICY, with resource-level permissions
-                                  #Applies to a BUCKET, including:
-                                  #  - if Deny STATEMENTS: all its OBJECTs
-                                  #  - if Allow STATEMENTS: only OBJECTs owned by BUCKET_OWNER
-                                  #If OBJECT_OWNER is not BUCKET_OWNER, it can only manage OBJECT's permissions with ACLs
+POLICY_DOC                        #IAM POLICY_DOC, as OBJ. "Bucket policy"
+                                  #Resource-based POLICY, with resource-level permissions
+                                  #Applies to a BUCKET, including all its OBJECTs
+                                  #OBJECTs not owned by BUCKET_OWNER:
+                                  #  - ignored by Allow STATEMENTs (but not Deny STATEMENTs)
+                                  #  - OBJECT_OWNER must use ACLs instead
                                   #OWNERs are ACCOUNTs
                                   #  - to allow their USERs, ACCOUNTs must create user-based POLICYs
                                   #  - user-based POLICYs cannot be used for cross-ACCOUNT permissions
+                                  #     - but can setup ROLEs for other ACCOUNTs to assume
                                   #Allow by default:
-                                  #  - any PACTION on BUCKET|OBJECT by its OWNER
-                                  #  - DeleteObject[s]() on any OBJECT by BUCKET_OWNER, even if not owned by it
+                                  #  - any PACTION on:
+                                  #     - BUCKET by BUCKET_OWNER
+                                  #     - OBJECT by OBJECT_OWNER
+                                  #  - DeleteObject[s]() on any OBJECT by BUCKET_OWNER
+                                  #     - even if not owned by it
                                   #Max 20KB
 
 x-amz-confirm-remove-self-
@@ -1000,16 +1007,17 @@ GetObjectAcl()                    #  - only versionId
 x-amz-grant-PERMISSION:           #PERMISSION is 'read[-acp]', 'write[-acp]', 'full-control' (GRANT.Permission) or 'private'
  GRANTEE,... [C]                  #GRANTEE is VAR=VAL (GRANT.Grantee) with VAR id|emailAddress|uri
 
-ACL                               #Like resource-based POLICY but:
+ACL                               #Like BUCKET POLICY but:
                                   #  - pros:
                                   #     - on OBJECT (not BUCKET)
-                                  #        - although this is possible with POLICY, using CONDITION_KEYs
+                                  #        - although this is possible with BUCKET POLICY, using CONDITION_KEYs
                                   #     - can use logic based on OBJECT_OWNER
                                   #     - can allow permissions on OBJECTs not owned by BUCKET_OWNER
                                   #     - simpler
                                   #  - cons:
-                                  #     - less flexible
+                                  #     - less flexible: no Deny, CONDITION_KEY, etc.
                                   #     - give broader permissions
+                                  #     - PRINCIPAL type is only ACCOUNT, not USER|SERVICE
                                   #Generally discouraged except when:
                                   #  - need one of the pros above
                                   #  - cannot use user-based POLICY
@@ -1019,8 +1027,9 @@ ACL.AccessControlList.Grants      #GRANT_ARR
                                   #Max 100
 GRANT.Grantee                     #GRANTEE
 GRANT.Permission                  #If BUCKET:
-                                  #  - "READ": s3:ListBucket[MultipartUploads], s3:ListBucketVersions
-                                  #  - "WRITE": s3:PutObject, s3:DeleteObject, (if BUCKET_OWNER), s3:DeleteObject[Version]
+                                  #  - "READ": s3:ListBucket*
+                                  #  - "WRITE": s3:PutObject
+                                  #     - if BUCKET_OWNER|OBJECT_OWNER: s3:DeleteObject*
                                   #  - "READ_ACP": s3:GetBucketAcl
                                   #  - "WRITE_ACP": s3:PutBucketAcl
                                   #  - "FULL_CONTROL": all of above
@@ -1142,6 +1151,8 @@ GET /BUCKET?cors
 GetBucketCors()                   #Returns CORS_OBJ
 DELETE /BUCKET?cors
 DeleteBucketCors()                #
+
+https://docs.aws.amazon.com/AmazonS3/latest/userguide/cors.html
 
 
                                              /=+===============================+=\
@@ -1368,6 +1379,12 @@ CONDITION_KEYs ==>                #  - s3:x-amz-acl|x-amz-grant-* STR
                                   #  - s3:max-keys STR
                                   #  - s3:LocationConstraint REGION: for s3:CreateBucket only STR
                                   #Also: https://docs.aws.amazon.com/AmazonS3/latest/userguide/list_amazons3.html???
+
+Block public access:
+  - https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
+
+S3 Object Lambda:
+  - https://docs.aws.amazon.com/aws-managed-policy/latest/reference/AmazonS3ObjectLambdaExecutionRolePolicy.html
 
 Storage Lens:
   - POLICYs: https://docs.aws.amazon.com/AmazonS3/latest/userguide/using-service-linked-roles.html
