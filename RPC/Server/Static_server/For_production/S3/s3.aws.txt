@@ -713,7 +713,7 @@ StorageClass 'OUTPOSTS'           #AWS Outposts
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:            RESTORE            :==(
+                                            )==:         RESTORE MAIN          :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
@@ -724,27 +724,98 @@ RestoreObject()                   #  - RESTORE
                                   #Res: empty
                                   #Max 1000/sec
 
-RESTORE                           #With StorageClass 'GLACIER|DEEP_ARCHIVE', copy OBJECT but with StorageClass 'STANDARD'
-RESTORE.Description               #'JOB_DESC'. Like Glacier JOB.JobDescription
-RESTORE.OutputLocation            #Like SJOB.OutputLocation
-x-amz-restore-output-path:
- OBJECT [S]                       #Like SJOB.OutputPath
-RESTORE
- [.GlacierJobParameters].Tier     #STR. Like AJOB.Tier
+RESTORE                           #With StorageClass 'GLACIER|DEEP_ARCHIVE':
+                                  #  - without INTELLIGENT_TIERING: copy OBJECT but with StorageClass 'STANDARD'
+                                  #  - with INTELLIGENT_TIERING: set current OBJECT StorageClass to 'STANDARD'
+RESTORE.Description               #'JOB_DESC'
+
+RESTORE                           #Duration, among:
+ [.GlacierJobParameters].Tier     #  - 'Expedited': 1-5m, longer if >250MB
+                                  #  - 'Standard' (def): 3-5h (12h with StorageClass DEEP_ARCHIVE)
+                                  #  - 'Bulk': 5-12h (48h with StorageClass DEEP_ARCHIVE)
 x-amz-restore: NUM [S]
 OBJECT.RestoreStatus              #RESTORE_STATUS
 RESTORE_STATUS.IsRestoreInProgress#BOOL
 
-RESTORE.Type                      #Either:
-                                  #  - not defined (def): use Glacier AJOB
-                                  #  - 'SELECT': use Glacier SJOB
-
 RESTORE.Days                      #NUM of days before copy expires
-                                  #Not with Type 'SELECT'
+                                  #Not with Type 'SELECT', nor INTELLIGENT_TIERING
 RESTORE_STATUS.RestoreExpiryDate  #'DATE' when copy expires
 
-RESTORE.SelectParameters          #Like SJOB.SelectParameters
-                                  #Only with Type 'SELECT'
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:        RESTORE OUTPUT         :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+x-amz-restore-output-path:
+ OBJECT [S]                       #'OBJECT'
+RESTORE.OutputLocation.S3         #RESTORE_OUTPUT
+RESTORE_OUTPUT.BucketName         #'BUCKET'
+RESTORE_OUTPUT.Prefix             #STR
+
+RESTORE_OUTPUT.StorageClass       #Like OBJECT.StorageClass
+RESTORE_OUTPUT.Tagging.TAG        #STR
+RESTORE_OUTPUT.UserMetadata.VAR   #'VAL'
+
+RESTORE_OUTPUT.Encryption         #RESTORE_ENCRYPTION
+RESTORE_ENCRYPTION.EncryptionType #'aws:kms[:dsse]' or 'AES256'
+RESTORE_ENCRYPTION.KMSKeyId       #KMS_KEY_MID
+RESTORE_ENCRYPTION.KMSContext     #STR
+
+RESTORE_OUTPUT.CannedACL          #'ACL' shortcut, e.g. 'private-read'
+RESTORE_OUTPUT.AccessControlList  #RESTORE_ACL_ARR
+RESTORE_ACL                       #ACCESS_CONTROL_LIST
+RESTORE_ACL.Permission            #'READ[_ACP]|WRITE[_ACP]|FULL_CONTROL'
+RESTORE_ACL.Grantee               #RESTORE_GRANTEE
+RESTORE_GRANTEE.Type              #'CanonicalUser|Group|AmazonCustomerByEmail'
+RESTORE_GRANTEE
+ .ID|EmailAddress|URI             #STR, depending on RESTORE_GRANTEE.Type
+RESTORE_GRANTEE.DisplayName       #STR
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:        RESTORE SELECT         :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+RESTORE.Type                      #Whether can use SelectParameters: not (def) or 'SELECT'
+RESTORE.SelectParameters          #SELECT_PARAMS. Transforms OBJECT being restored, using SQL
+                                  #OBJECT must be CSV|JSON
+
+SELECT_PARAMS.ExpressionType      #Always 'SQL'
+SELECT_PARAMS.Expression          #STR. SQL expression
+                                  #Max 1.3e5 chars
+
+SELECT_PARAMS
+ .InputSerialization              #SELECT_INPUT. For parsing ARCHIVE
+SELECT_PARAMS                     #SELECT_OUTPUT. For serializing filtered ARCHIVE
+ .OutputSerialization             #No JSON.Type, CSV.AllowQuotedRecordDelimiter|FileHeaderInfo|Comments
+SELECT_INPUT.CompressionType      #'NONE' (def), 'GZIP' or 'BZIP2'
+
+SELECT_INPUT.Parquet              #OBJ. Use Apache Parquet
+
+SELECT_INPUT|OUTPUT.JSON          #SELECT_JSON
+SELECT_JSON.Type                  #Either:
+                                  #  - 'DOCUMENT': JSON OBJ_ARR
+                                  #  - 'LINES': ndjson
+
+SELECT_INPUT|OUTPUT.CSV           #SELECT_CSV
+SELECT_CSV.FileHeaderInfo         #Whether first line is header:
+                                  #  - 'USE': yes, and can use as "COL" in SQL
+                                  #  - 'IGNORE': yes, but cannot use as "COL" in SQL, only "_NUM"
+                                  #  - 'NONE': no
+SELECT_CSV|JSON.RecordDelimiter   #'CHAR' (def: \n)
+SELECT_CSV
+ .AllowQuotedRecordDelimiter      #BOOL (def: false). Allow quoting RecordDelimiter. Slower
+SELECT_CSV.FieldDelimiter         #'CHAR' (def: ,)
+SELECT_CSV.QuoteCharacter         #'CHAR' (def: ") for quoting
+SELECT_CSV.QuoteEscapeCharacter   #'CHAR' (def: ") for escaping QuoteCharacter
+SELECT_CSV.QuoteFields            #Whether to quote, among 'ASNEEDED' (def) or 'ALWAYS'
+SELECT_CSV.Comments               #'CHAR' (def: #) used to comment a line
 
 
                                              /=+===============================+=\
@@ -754,17 +825,38 @@ RESTORE.SelectParameters          #Like SJOB.SelectParameters
                                              \=+===============================+=/
 
 
-PutBucketIntelligentTieringConfiguration()
-GetBucketIntelligentTieringConfiguration()
-ListBucketIntelligentTieringConfigurations()
-DeleteBucketIntelligentTieringConfiguration()
+PutBucketIntelligentTiering       #Req: INTELLIGENT_TIERING
+ Configuration()                  #  - also query variables: ITELLIGENT_TIERING.id
+                                  #Res: empty
+GetBucketIntelligentTiering       #Req: INTELLIGENT_TIERING
+ Configuration()                  #  - only id
+                                  #Res: INTELLIGENT_TIERING
+ListBucketIntelligentTiering      #Req: empty
+ Configurations()                 #Res: IntelligentTieringConfiguration INTELLIGENT_TIERING_ARR
+                                  #Paginates with ContinuationToken
+DeleteBucketIntelligentTiering    #Req: INTELLIGENT_TIERING
+ Configuration()                  #  - only id
+                                  #Res: empty
 
-                                  #Switch between:
+INTELLIGENT_TIERING               #Automatically set StorageClass to:
                                   #  - STANDARD: always used if OBJECT <128KB
                                   #  - STANDARD_IA: when not read for 30 days
                                   #  - GLACIER_IR: when not read for 90 days
-                                  #  - GLACIER (opt-in): when not read for 90 days
-                                  #  - DEEP_GLACIER (opt-in): when not read for 180 days
+                                  #  - GLACIER: when not read for NUM days (min 90, max 730)
+                                  #  - DEEP_GLACIER: when not read for NUM days (min 180, max 730)
+                                  #Only impacts effective StorageClass: the one reported is always 'INTELLIGENT_TIERING'
+
+INTELLIGENT_TIERING.Id            #INTELLIGENT_TIERING_MID
+INTELLIGENT_TIERING.Status        #'Enabled' (def) or 'Disabled'
+
+INTELLIGENT_TIERING.Tiering       #TIERING_CONF_ARR (def: empty, i.e. does not use '[DEEP_]GLACIER')
+TIERING_CONF.AccessTier           #StorageClass, among '[DEEP_]ARCHIVE_ACCESS' (for '[DEEP_]GLACIER')
+TIERING_CONF.Days                 #NUM. After OBJECT not read for NUM days, sets StorageClass to TIERING_CONF.AccessTier
+
+INTELLIGENT_TIERING.Filter        #INTELLIGENT_FILTER. Only apply INTELLIGENT_TIERING to matching OBJECTs.
+INTELLIGENT_FILTER.Prefix         #STR. Only if 'OBJECT' start with STR
+INTELLIGENT_FILTER.Tag            #TAGS
+INTELLIGENT_FILTER.And            #INTELLIGENT_FILTER_ARR
 
 
                                              /=+===============================+=\
