@@ -254,7 +254,7 @@ GET /BUCKET/OBJECT                #Req: READ_OBJECT, Range [C], If-[None-]Match 
 GetObject()                       #Res: RAW_OBJECT, Content-Range [S], Accept-Range [S], Content-Type [S],
                                   # Content-Encoding [S], Content-Language [S], Expires [S], Cache-Control [S],
                                   # Content-Disposition [S], x-amz-meta-* [S], x-amz-version-id [S], x-amz-delete-marker [S],
-                                  # x-amz-restore [S]
+                                  # x-amz-restore [S], x-amz-restore-request-date [S], x-amz-archive-status [S]
 HEAD /BUCKET/OBJECT               #Req: like getObject()
 HeadObject()                      #Res: like getObject()
 
@@ -334,7 +334,7 @@ OBJECTS.Delimiter                 #STR separating 'OBJECT' "subfolders". This is
 OBJECTS.Contents                  #OBJECT_ARR
                                   #  - no Bucket, Location, ChecksumCRC|SHA*, VersionId, IsLatest
 OBJECTS.CommonPrefixes            #Unique COMMON_PREFIX_ARR
-                                  #Max 1000
+                                  #Max 1e3
 COMMON_PREFIX.Prefix              #Prefix + 'OBJECT' until next Delimiter (included)
 
 
@@ -489,7 +489,7 @@ DeleteObjects()                   #  - no Errors, DeleteMarker*
                                   #  - Objects -> Deleted
 
 DELETE_OBJECTS.Objects            #DELETE_OBJECT_ARR
-                                  #Max 1000
+                                  #Max 1e3
 DELETE_OBJECT.Key                 #'OBJECT'
 
 DELETE_OBJECTS.Quiet              #BOOL. If true (def: false), only return OBJECTs which errored
@@ -722,7 +722,7 @@ POST /BUCKET/OBJECT?restore       #Req:
 RestoreObject()                   #  - RESTORE
                                   #  - query variables: OBJECT.VersionId
                                   #Res: empty
-                                  #Max 1000/sec
+                                  #Max 1e3/sec
 
 RESTORE                           #With StorageClass 'GLACIER|DEEP_ARCHIVE':
                                   #  - without INTELLIGENT_TIERING: copy OBJECT but with StorageClass 'STANDARD'
@@ -735,6 +735,8 @@ RESTORE                           #Duration, among:
                                   #  - 'Bulk': 5-12h (48h with StorageClass DEEP_ARCHIVE)
 x-amz-restore: NUM [S]
 OBJECT.RestoreStatus              #RESTORE_STATUS
+x-amz-restore-request-date:
+ DATE [S]                         #
 RESTORE_STATUS.IsRestoreInProgress#BOOL
 
 RESTORE.Days                      #NUM of days before copy expires
@@ -840,50 +842,30 @@ DeleteBucketIntelligentTiering    #Req: INTELLIGENT_TIERING
 
 INTELLIGENT_TIERING               #Automatically set StorageClass to:
                                   #  - STANDARD: always used if OBJECT <128KB
-                                  #  - STANDARD_IA: when not read for 30 days
-                                  #  - GLACIER_IR: when not read for 90 days
-                                  #  - GLACIER: when not read for NUM days (min 90, max 730)
-                                  #  - DEEP_GLACIER: when not read for NUM days (min 180, max 730)
+                                  #  - STANDARD_IA: when not used for 30 days
+                                  #  - GLACIER_IR: when not used for 90 days
+                                  #  - GLACIER: when not used for NUM days (min 90, max 730)
+                                  #  - DEEP_GLACIER: when not used for NUM days (min 180, max 730)
+                                  #"Used" means any of:
+                                  #  - content read|write: GetObject(), CopyObject|UploadPartCopy(), RestoreObject(),
+                                  #    PutObject|CompleteMultipartUpload|ListParts()
+                                  #  - SelectObjectContent(), only for [DEEP_]GLACIER
+                                  #  - but not metadata read|write: ListObjectsV2(), HeadObject(), etc.
                                   #Only impacts effective StorageClass: the one reported is always 'INTELLIGENT_TIERING'
+                                  #Max 1e3 per BUCKET
 
 INTELLIGENT_TIERING.Id            #INTELLIGENT_TIERING_MID
 INTELLIGENT_TIERING.Status        #'Enabled' (def) or 'Disabled'
 
 INTELLIGENT_TIERING.Tiering       #TIERING_CONF_ARR (def: empty, i.e. does not use '[DEEP_]GLACIER')
+x-amz-archive-status: STR [S]
 TIERING_CONF.AccessTier           #StorageClass, among '[DEEP_]ARCHIVE_ACCESS' (for '[DEEP_]GLACIER')
 TIERING_CONF.Days                 #NUM. After OBJECT not read for NUM days, sets StorageClass to TIERING_CONF.AccessTier
 
 INTELLIGENT_TIERING.Filter        #INTELLIGENT_FILTER. Only apply INTELLIGENT_TIERING to matching OBJECTs.
 INTELLIGENT_FILTER.Prefix         #STR. Only if 'OBJECT' start with STR
-INTELLIGENT_FILTER.Tag            #TAGS
+INTELLIGENT_FILTER.Tag            #TAGS. Only if TAGS match
 INTELLIGENT_FILTER.And            #INTELLIGENT_FILTER_ARR
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:         NOTIFICATIONS         :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-PUT /BUCKET?notification          #Send SNS notification if RRS object lost.
-PutBucketNotification()           #Request body NOTIF_OBJ:
-                                  #  - NotificationConfiguration (none if disabling):
-                                  #     - TopicConfiguration:
-                                  #        - Event "s3:ReducedRedundancyLostObject"
-                                  #        - Topic TOPIC_SNS_ARN
-                                  #First send a test notification. Returns x-amz-sns-test-message-id ID [S]
-                                  #Message is:
-                                  #  - Service "Amazon S3"
-                                  #  - Event "s3:ReducedRedundancyLostObject"
-                                  #  - Time "TIMESTAMP"
-                                  #  - Bucket BUCKET
-                                  #  - Key OBJECT
-                                  #  - VersionId VERSION_MID
-                                  #  - RequestId ID
-                                  #  - HostId: ID identifying requester host
-GET /BUCKET?notification
-GetBucketNotification()           #Returns NOTIF_OBJ
 
 
                                              /=+===============================+=\
@@ -1206,6 +1188,33 @@ DELETE /BUCKET?tagging
 DeleteBucketTagging()             #
 GET /BUCKET?tagging
 GetBucketTagging()                #Returns TAG_OBJ
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:         NOTIFICATIONS         :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+PUT /BUCKET?notification          #Send SNS notification if RRS object lost.
+PutBucketNotification()           #Request body NOTIF_OBJ:
+                                  #  - NotificationConfiguration (none if disabling):
+                                  #     - TopicConfiguration:
+                                  #        - Event "s3:ReducedRedundancyLostObject"
+                                  #        - Topic TOPIC_SNS_ARN
+                                  #First send a test notification. Returns x-amz-sns-test-message-id ID [S]
+                                  #Message is:
+                                  #  - Service "Amazon S3"
+                                  #  - Event "s3:ReducedRedundancyLostObject"
+                                  #  - Time "TIMESTAMP"
+                                  #  - Bucket BUCKET
+                                  #  - Key OBJECT
+                                  #  - VersionId VERSION_MID
+                                  #  - RequestId ID
+                                  #  - HostId: ID identifying requester host
+GET /BUCKET?notification
+GetBucketNotification()           #Returns NOTIF_OBJ
 
 
                                              /=+===============================+=\
