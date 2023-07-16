@@ -257,7 +257,8 @@ GET /BUCKET/OBJECT                #Req: READ_OBJECT, Range [C], If-[None-]Match 
 GetObject()                       #Res: RAW_OBJECT, Content-Range [S], Accept-Range [S], Content-Type [S],
                                   # Content-Encoding [S], Content-Language [S], Expires [S], Cache-Control [S],
                                   # Content-Disposition [S], x-amz-meta-* [S], x-amz-version-id [S], x-amz-delete-marker [S],
-                                  # x-amz-restore [S], x-amz-restore-request-date [S], x-amz-archive-status [S], x-amz-expiration [S]
+                                  # x-amz-restore [S], x-amz-restore-request-date [S], x-amz-archive-status [S],
+                                  # x-amz-expiration [S], x-amz-missing-meta [S]
 HEAD /BUCKET/OBJECT               #Req: like getObject()
 HeadObject()                      #Res: like getObject()
 
@@ -348,9 +349,12 @@ COMMON_PREFIX.Prefix              #Prefix + 'OBJECT' until next Delimiter (inclu
                                              \=+===============================+=/
 
 
-PUT /BUCKET/OBJECT                #Req: RAW_OBJECT, Expect [C], Content-Type [C], Content-Encoding [C], Content-Language [C], Expires [C],
-PutObject()                       # Cache-Control [C], Content-Disposition [C], x-amz-meta-* [C], x-amz-storage-class [C],
-                                  # x-amz-acl [C], x-amz-grant-PERMISSION [C]
+PUT /BUCKET/OBJECT                #Req:
+PutObject()                       #  - RAW_OBJECT
+                                  #  - Expect [C], Content-Type [C], Content-Encoding [C], Content-Language [C], Expires [C],
+                                  #    Cache-Control [C], Content-Disposition [C], x-amz-meta-* [C], x-amz-storage-class [C],
+                                  #    x-amz-acl [C], x-amz-grant-PERMISSION [C]
+                                  #  - max 8KB request headers
                                   #Res: ETag [S], x-amz-version-id [S], x-amz-expiration [S]
 
 Expect: "100-continue" [C]        #See HTTP doc
@@ -366,25 +370,32 @@ Expect: "100-continue" [C]        #See HTTP doc
 POST /BUCKET                      #Req: BUPLOAD
 PostObject()                      #  - BUPLOAD.HEADER: any putObject() request header
                                   #     - strip x-amz-* prefix for: x-amz-acl [C], x-amz-tagging [C]
-                                  #Res: OBJECT, same headers as putObject()
-                                  #  - only Bucket, Key, Location, ETag
+                                  #Res:
+                                  #  - OBJECT
+                                  #     - only Bucket, Key, Location
+                                  #  - same headers as putObject()
+                                  #  - success_action_redirect [S], Redirect [S]
                                   #Not available in JavaScript SDK
 
 BUPLOAD                           #Like putObject() but meant to be performed by a <form> submit (i.e. client-side)
                                   #Must use Content-Type: multipart/form-data [C]
+                                  #Max 20KB
+BUPLOAD.key                       #'OBJECT'
 BUPLOAD.file                      #RAW_OBJECT
                                   #Must be last field
-BUPLOAD.key                       #'OBJECT'
+${filename}                       #Anywhere in BUPLOAD, replaced by FILENAME from BUPLOAD.file, i.e.:
+                                  #  - Content-Disposition: form-data; name="file"; filename="FILENAME"
+                                  #  - filename used in <form>
 
+BUPLOAD.x-amz-signature|algorithm #Authenticate request (see AWS signature version 4 doc)
+ |credential|security-token|date  #If not set, anonymous request
 BUPLOAD.AWSAccessKeyId            #ACCESS_KEY_ID of BUCKET_OWNER
-BUPLOAD.x-amz-algorithm|
- credential|signed-headers|
- signature|security-token|date    #Like authorization headers
+                                  #Required if BUPLOAD.policy set
 
-BUPLOAD.policy???
-
-BUPLOAD.success_action_redirect   #URL to redirect to when response code is success_action_status NUM
-BUPLOAD.success_action_status     #NUM
+BUPLOAD.success_action_redirect
+success_action_redirect: URL [S]
+Redirect: URL [S]                 #URL to redirect to when response code is success_action_status NUM
+BUPLOAD.success_action_status     #200, 201 or 204 (def)
 
 
                                              /=+===============================+=\
@@ -394,25 +405,25 @@ BUPLOAD.success_action_status     #NUM
                                              \=+===============================+=/
 
 
-BUPLOAD.acl                       #'ACL'
+BUPLOAD.policy                    #BUPLOAD_POLICY, as Base64 JSON
+                                  #Required with authenticated requests
+BUPLOAD_POLICY.expiration         #'DATE'. After this, BUPLOAD_POLICY denies all.
+BUPLOAD_POLICY.conditions         #ARR of either:
+                                  #  - ['OP', 'PROP', 'VAL2']
+                                  #  - { PROP: 'VAL2' }: same as ['eq', 'PROP', 'VAL2']
+                                  #Must include at least one for each BUPLOAD.PROP
+                                  #  - except BUPLOAD: file, x-amz-signature, AWSAccessKeyId, policy
+                                  #  - also except BUPLOAD.x-ignore-PROP: behaves like BUPLOAD.PROP otherwise
 
-BUPLOAD.Policy                    #OBJECT_POLICY, as Base64
-OBJECT_POLICY.expiration          #'DATE'
-OBJECT_POLICY.conditions          #ARR of either:
-                                  #  - ['OP', 'KEY', 'VAL2']
-                                  #  - { KEY: 'VAL2' }: same as ['eq', 'KEY', 'VAL2']
+PROP                              #Value of BUPLOAD.PROP. Can also be:
+                                  #  - bucket 'BUCKET'
+$PROP                             #Can be included anywhere, to use its value, e.g. ["start-with", "$key", "user1/"]
 
-KEY                               #Points to a VAL1
-                                  #Can be any field name???
-                                  #Can use $FIELDNAME for any field name (e.g. [ "start-with", "$key", "user1/" ])???
-                                  #Can contain ${filename}???
-KEY 'acl'                         #'ACL'
-KEY 'bucket'                      #'BUCKET'
-KEY 'content-length-range'        #[MIN_NUM, MAX_NUM] for Content-Length [S]
-
-OP                                #
 OP 'eq'                           #VAL1 == VAL2
-OP 'starts-with'                  #VAL1 starts with VAL2 (can be '')
+OP 'starts-with'                  #VAL1 starts with VAL2
+                                  #Can use 'VAL1,...' with Content-Type [C]
+                                  #VAL2 can be '' to mean "always allow"
+                                  #Only with PROP: acl, Cache-Control, Content-*, Expires, key, success_action_redirect, x-amz-meta-*
 OP 'content-length-range'         #VAL1 <= Content-Length [S] <= VAL2
 
 
@@ -559,11 +570,12 @@ Expires: DATE [C|S]               #See HTTP doc
 READ_OBJECT.response-cache-control
 Cache-Control: STR [C|S]          #See HTTP doc
 
-OBJECT|MPART.LastModified         #'DATE'
+OBJECT|MPART.LastModified
+Last-Modified: DATE [S]           #'DATE'
 If-[Un]modified-Since: DATE [C]   #See HTTP doc
 
-OBJECT|MPART.ETag                 #STR
-ETag: ETAG [S]                    #'ETAG'
+OBJECT|MPART.ETag
+ETag: ETAG [S]                    #'ETAG'. By default, MD5 hash of data
 If-[None-]Match: STR [C]          #See HTTP doc
 
 
@@ -607,8 +619,12 @@ READ_OBJECT
  .response-content-language
 Content-Language: STR [C|S]       #See HTTP doc
 
-x-amz-meta-*: VAL [C|S]
-RESTORE_OUTPUT.UserMetadata.VAR   #'VAL'. Arbitrary metadata
+x-amz-meta-*: VAL [C|S]           #'VAL'. Arbitrary metadata
+RESTORE_OUTPUT.UserMetadata.VAR   #If set multiple times, joined as 'VAL,...'
+                                  #Key is lowercased
+                                  #Max 2KB
+
+x-amz-missing-meta: NUM [S]       #NUM of x-amz-meta-* with invalid keys
 
 
                                              /=+===============================+=\
@@ -621,7 +637,9 @@ RESTORE_OUTPUT.UserMetadata.VAR   #'VAL'. Arbitrary metadata
 OBJECT.ChecksumAlgorithm          #'CRC32[C]|SHA1|SHA256'
 
 OBJECT|MPART
- .ChecksumCRC32[C]|SHA1|SHA256    #'BASE64_HASH'
+ .ChecksumCRC32[C]|SHA1|SHA256
+x-amz-checksum-
+ crc32[c]|sha1|sha256 [S]         #'BASE64_HASH'
 
 
                                              /=+===============================+=\
@@ -769,7 +787,6 @@ x-amz-restore-output-path:
 RESTORE.OutputLocation.S3         #RESTORE_OUTPUT
 RESTORE_OUTPUT.BucketName         #'BUCKET'
 RESTORE_OUTPUT.Prefix             #STR
-RESTORE_OUTPUT.Tagging            #TAGS
 
 
                                              /=+===============================+=\
@@ -882,7 +899,6 @@ RULE.Status                       #'Enabled' (def) or 'Disabled'
 
 RULE.Filter                       #FILTER. Only apply to matching OBJECTs
 FILTER.Prefix                     #STR. Only if 'OBJECT' start with STR
-FILTER.Tag                        #TAGS. Only if TAGS match
 FILTER.ObjectSizeGreater|LessThan #NUM (in bytes)
 FILTER.And                        #FILTER_ARR
 
@@ -1241,6 +1257,14 @@ DEVPAY ==>                        #Goal:
                                   #  - if client-side, client should not access SECRET_ACCESS_KEY, so needs to derive a second
                                   #    SECRET_ACCESS_KEY2
 
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:             TAGS              :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
 PUT /BUCKET?tagging               #Apply tags to BUCKET
 PutBucketTagging()                #Request body TAG_OBJ:
                                   #  - Tagging:
@@ -1251,6 +1275,12 @@ DELETE /BUCKET?tagging
 DeleteBucketTagging()             #
 GET /BUCKET?tagging
 GetBucketTagging()                #Returns TAG_OBJ
+
+x-amz-tagging: STR [C]            #
+
+RESTORE_OUTPUT.Tagging            #TAGS
+
+FILTER.Tag                        #TAGS. Only if TAGS match
 
 
                                              /=+===============================+=\
