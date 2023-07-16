@@ -79,7 +79,7 @@ PERMISSIONS ==>                   #Some unusual:
                                   #  - Get|PutRequestPayment -> Get|PutBucketRequestPayment
 
 PRICING ==>                       #Storage space, per byte
-                                  #  - 20% cheaper for "reduced redundancy"
+                                  #  - 20% cheaper for RSS
                                   #  - each object has 8KB of metadata
                                   #In|out traffic, per GB:
                                   #  - Internet -> S3: free
@@ -203,7 +203,8 @@ BUCKET.CreationDate               #'DATE'
 GET /BUCKET/OBJECT                #Req: READ_OBJECT, Range [C], If-[None-]Match [C], If-[Un]modified-Since [C], x-amz-meta-* [C]
 GetObject()                       #Res: RAW_OBJECT, Content-Range [S], Accept-Range [S], Content-Type [S],
                                   # Content-Encoding [S], Content-Language [S], Expires [S], Cache-Control [S],
-                                  # Content-Disposition [S], x-amz-meta-* [S], x-amz-version-id [C]
+                                  # Content-Disposition [S], x-amz-meta-* [S], x-amz-version-id [S], x-amz-delete-marker [S],
+                                  # x-amz-restore [S]
 HEAD /BUCKET/OBJECT               #Req: like getObject()
 HeadObject()                      #Res: like getObject()
 
@@ -295,7 +296,7 @@ COMMON_PREFIX.Prefix              #Prefix + 'OBJECT' until next Delimiter (inclu
 
 
 PUT /BUCKET/OBJECT                #Req: RAW_OBJECT, Expect [C], Content-Type [C], Content-Encoding [C], Content-Language [C], Expires [C],
-PutObject()                       # Cache-Control [C], Content-Disposition [C], x-amz-meta-* [C]
+PutObject()                       # Cache-Control [C], Content-Disposition [C], x-amz-meta-* [C], x-amz-storage-class [C]
                                   #Res: ETag [S], x-amz-version-id [S]
 
 Expect: "100-continue" [C]        #See HTTP doc
@@ -430,7 +431,7 @@ x-amz-copy-source-HEADER: STR [S] #Reflects same request header [C]
 
 DELETE /BUCKET/OBJECT             #Req: OBJECT, x-amz-mfa [C]
 DeleteObject()                    #  - only versionId
-                                  #Res: x-amz-version-id [S]
+                                  #Res: x-amz-version-id [S], x-amz-delete-marker [S]
 POST /BUCKET?delete               #Req: Delete DELETE_OBJECTS, x-amz-mfa [C]
 DeleteObjects()                   #  - no Errors, DeleteMarker*
                                   #Res: DELETE_OBJECTS
@@ -438,6 +439,7 @@ DeleteObjects()                   #  - no Errors, DeleteMarker*
                                   #  - Objects -> Deleted
 
 DELETE_OBJECTS.Objects            #DELETE_OBJECT_ARR
+                                  #Max 1000
 DELETE_OBJECT.Key                 #'OBJECT'
 
 DELETE_OBJECTS.Quiet              #BOOL. If true (def: false), only return OBJECTs which errored
@@ -574,8 +576,8 @@ VERSIONING                        #Make OBJECTs:
                                   #  - writes update latest VERSION, keep previous VERSIONs
                                   #  - reads show latest VERSION
                                   #To restore a previous VERSION, either:
-                                  #  - copy previous version to latest one
-                                  #  - delete latest versions
+                                  #  - copy previous VERSION to latest one
+                                  #  - delete latest VERSIONs
                                   #To retrieve, must be BUCKET OWNER
 VERSIONING.Status                 #One of:
                                   #  - 'Disabled' (def): cannot be set once unset
@@ -592,17 +594,27 @@ OBJECT_VERSIONS.Versions          #OBJECT_ARR
 OBJECT_VERSIONS.EncodingType
  |Prefix|Delimiter|CommonPrefixes #Like OBJECTS, except Contents -> Versions
 
+DELETE_OBJECT|DELETE_ERROR        #VERSION_MID
+ .VersionId                       #When versioning enabled and VERSION_MID not specified:
+                                  #  - current VERSION is kept but not current anymore
+                                  #  - a new current VERSION is added ("delete marker"):
+                                  #     - no data|metadata, except 'OBJECT' name
+                                  #        - i.e. results in 404
+                                  #     - its VERSION_MID is not set in VersionId (null) but in DeleteMarkerVersionId instead
+                                  #When versioning disabled, or when enabled but VERSION_MID specified:
+                                  #  - permanent delete
+                                  #  - if targets a delete marker, restores previous version
+x-amz-delete-marker: true [S]
+DELETE_OBJECT.DeleteMarker        #BOOL. True if OBJECT is a delete marker
+DELETE_OBJECT
+ .DeleteMarkerVersionId           #VERSION_MID
 OBJECT_VERSIONS.DeleteMarkers     #OBJECT_ARR
                                   #  - only VersionId, IsLatest, Key, LastModified, Owner
-DELETE_OBJECT|DELETE_ERROR
- .VersionId                       #VERSION_MID. Optional
-DELETE_OBJECT.DeleteMarker        #BOOL. True if OBJECT is versioned, i.e. is soft-deleted instead
-DELETE_OBJECT
- .DeleteMarkerVersionId           #VERSION_MID before deletion
+                                  #VERSIONs that are delete markers
 
 VERSIONING.MfaDelete              #'Disabled' (def) or 'Enabled'
                                   #When enabled:
-                                  #  - requires deleteObject[s]|GetBucketVersioning() to use x-amz-mfa [C]
+                                  #  - requires deleteObject[s]|*BucketVersioning() to use x-amz-mfa [C]
                                   #  - cannot use lifecycle
                                   #Can only be set if all of:
                                   #  - VERSIONING.Status 'Enabled'
@@ -610,13 +622,6 @@ VERSIONING.MfaDelete              #'Disabled' (def) or 'Enabled'
                                   #  - BUCKET OWNER
 x-amz-mfa:
  MFA_DEVICE_MID TOKEN [C]         #
-
-                                  #Deletion:
-                                  #  - when deleting object, previous versions still here and can be retrieved, but last
-                                  #    VERSION_MID is null and has x-amz-delete-marker true
-                                  #  - can do a permanent delete of specific previous versions though
-                                  #  - see deleteObject[s]() doc???
-                                  #  - Use x-amz-delete-marker BOOL [C|S]
 
 
                                              /=+===============================+=\
@@ -626,24 +631,48 @@ x-amz-mfa:
                                              \=+===============================+=/
 
 
-STORAGE CLASS ==>                 #Can specify with:
-                                  #  - non-GLACIER: x-amz-storage-class STR [C] with putObject()
-                                  #  - GLACIER: putBucketLifecycle()
-                                  #STR can be:
-                                  #  - "STANDARD" (def)
-                                  #  - "REDUCED_REDUNDANCY" (RRS):
-                                  #     - less durability (1/1e5 deletes a year instead of 1/1e11) but 20% cheaper
-                                  #     - returns 405 if lost
-                                  #  - "GLACIER":
-                                  #     - put on same cost/storage as AWS Glacier, but must be manipulated with S3
-                                  #        - getObject, copyObject() doesn't work unless restored by restoreObject() with request
-                                  #          body params:
-POST /BUCKET/OBJECT?restore       #           - RestoreRequest:
-RestoreObject()                   #              - Days NUM
-                                  #        - creates a copy as "STANDARD", that will expire in NUM days (doesn't delete "GLACIER"
-                                  #          archive)
-                                  #        - can retrieve status with x-amz-restore [S] returned by getObject()
-                                  #        - cannot specify how long to retrieve the archive (typically 3-5 hours)
+x-amz-storage-class: STR [C]      #Can be:
+OBJECT|MUPLOAD.StorageClass       #  - 'STANDARD' (def)
+                                  #     - 1/1e11 loss a year
+                                  #  - 'REDUCED_REDUNDANCY' (RRS):
+                                  #     - 1/1e5 loss a year, but cheaper
+                                  #     - 405 if lost
+                                  #  - 'GLACIER'
+                                  #     - storage|cost of Glacier, but must be manipulated with S3
+                                  #     - cannot be read|write, i.e. must RestoreObject()
+
+POST /BUCKET/OBJECT?restore       #Req:
+RestoreObject()                   #  - RESTORE
+                                  #  - query variables: OBJECT.VersionId
+                                  #Res: empty
+
+RESTORE                           #With StorageClass from 'GLACIER', copy OBJECT but with StorageClass 'STANDARD'
+RESTORE.Description               #'JOB_DESC'. Like Glacier JOB.JobDescription
+RESTORE.OutputLocation            #Like SJOB.OutputLocation
+RESTORE
+ [.GlacierJobParameters].Tier     #STR. Like AJOB.Tier
+x-amz-restore: NUM [S]
+OBJECT.RestoreStatus              #RESTORE_STATUS
+RESTORE_STATUS.IsRestoreInProgress#BOOL
+
+RESTORE.Type                      #Either:
+                                  #  - not defined (def): use Glacier AJOB
+                                  #  - 'SELECT': use Glacier SJOB
+
+RESTORE.Days                      #NUM of days before copy expires
+                                  #Not with Type 'SELECT'
+RESTORE_STATUS.RestoreExpiryDate  #'DATE' when copy expires
+
+RESTORE.SelectParameters          #Like SJOB.SelectParameters
+                                  #Only with Type 'SELECT'
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:         NOTIFICATIONS         :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
 
 PUT /BUCKET?notification          #Send SNS notification if RRS object lost.
 PutBucketNotification()           #Request body NOTIF_OBJ:
@@ -663,6 +692,14 @@ PutBucketNotification()           #Request body NOTIF_OBJ:
                                   #  - HostId: ID identifying requester host
 GET /BUCKET?notification
 GetBucketNotification()           #Returns NOTIF_OBJ
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:           LIFECYCLE           :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
 
 PUT /BUCKET?lifecycle             #Lifecycle:
 PutBucketLifecycle()              #  - applied to all objects matching a Prefix
@@ -692,10 +729,6 @@ GET /BUCKET?lifecycle
 GetBucketLifecycle()              #Returns LIFECYCLE_OBJ
 DELETE /BUCKET?lifecycle
 DeleteBucketLifecycle()           #
-
-OBJECT|MUPLOAD.StorageClass       #STR
-
-OBJECT.RestoreStatus              #STR
 
 
                                              /=+===============================+=\
