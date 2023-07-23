@@ -363,7 +363,7 @@ Range: bytes=NUM-NUM2 [C]
 Content-Range:
  bytes NUM-NUM2/NUM3 [S]
 Accept-Ranges: bytes [S]          #See HTTP doc
-READ_OBJECT.partNumber            #NUM, 1-based index, max 1e4
+READ_OBJECT.partNumber            #NUM, 1-based index, max 1e4, size 5MiB
 x-amz-mp-parts-count: NUM3 [S]    #Total NUM3 of parts
 
 RAW_OBJECT                        #OBJECT, as is
@@ -3349,7 +3349,8 @@ DELETE /accesspointforobjectlambda
  /LACCESSPOINT                    #Req: empty
 DeleteAccessPointForObjectLambda()#Res: empty
 
-LACCESSPOINT                      #Like ACCESSPOINT, but transforms responses by a Lambda FUNC
+LACCESSPOINT                      #Like ACCESSPOINT, but transforms requests|responses with a Lambda FUNC
+                                  #Only transforms GetObject|HeadObject|ListObjectsV2()
 LACCESSPOINT
  .ObjectLambdaAccessPointArn      #LACCESSPOINT_ARN
 LACCESSPOINT.Name                 #'LACCESSPOINT'
@@ -3363,8 +3364,10 @@ arn:aws:s3-object-lambda
 LACCESSPOINT_ARN/object/OBJECT    #OBJECT in LACCESSPOINT
                                   #Can be used as an OBJECT_ARN
 
+LBUCKET_ALIAS
+ .s3-object-lambda.amazonaws.com  #Like BUCKET.s3.amazonaws.com, but through LACCESSPOINT
 LACCESSPOINT-ACCOUNT_ID
- .s3-accesspoint.amazonaws.com    #Like BUCKET.s3.amazonaws.com, but through LACCESSPOINT
+ .s3-accesspoint.amazonaws.com    #Same
 
 
                                              /=+===============================+=\
@@ -3421,34 +3424,103 @@ S3LAMBDA.AllowedFeatures          #STR_ARR among:
                                   #  - 'GetObject-Range': allow Range [C]
                                   #  - 'GetObject-PartNumber': allow READ_OBJECT.partNumber
                                   #  - 'HeadObject-*': like GetObject-* but for HeadObject()
+                                  #When using Range [C] or READ_OBJECT.partNumber:
+                                  #  - performed on the transformed response, not the original one
+                                  #  - if FUNC does not transform (or does not change byte-to-byte relation),
+                                  #    it can forward those to ACCESSPOINT
+                                  #  - otherwise, it must retrieved full OBJECT and perform the slice after transformation
 
 S3LAMBDA
  .TransformationConfigurations    #S3TRANSFORM_ARR
 S3TRANSFORM.Actions               #'ACTION'_ARR among 'GetObject', 'HeadObject', 'ListObjectsV2'
                                   #Only transform if one of those ACTIONs
-                                  #Other ACTIONs allowed by MACCESSPOINT are also allowed but not transformed
+                                  #Other ACTIONs allowed by MACCESSPOINT:
+                                  #  - also allowed by LACCESSPOINT
+                                  #  - but not transformed
 S3TRANSFORM.ContentTransformation
  .AwsLambda                       #S3CTRANSFORM
 S3CTRANSFORM.FunctionArn          #FUNC_ARN. Transforms both input and output
-S3CTRANSFORM.FunctionPayload      #'OBJ_JSON' payload passed to FUNC
+
+S3CTRANSFORM.FunctionPayload      #STR payload passed to FUNC. Usually JSON.
+REQ_CONF.payload                  #STR
 
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:          LAMBDA CALL          :==(
+                                            )==:        LAMBDA REQUEST         :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
-POST /WriteGetObjectResponse      #Req: x-amz-fwd-* [C], x-amz-request-* [C], x-amz-meta-* [C]
+HANDLER                           #FUNC HANDLER. Usually, it must:
+                                  #  - forward request params to ACCESSPOINT, to fetch OBJECT
+                                  #  - transform response OBJECT|headers
+                                  #     - requires recomputing Content-Length [S], ETag [S]
+                                  #  - forward them otherwise
+                                  #See aws-samples/amazon-s3-object-lambda-default-configuration for an example
+
+REQ                               #Passed to FUNC
+REQ.xAmzrequestId                 #REQ_ID
+REQ.getObjectContext              #REQ_GET. Only if GetObject()
+REQ.headObjectContext             #REQ_HEAD. Only if HeadObject()
+REQ.listObjectsV2Context          #REQ_LIST. Only if ListObjectsV2()
+REQ.configuration                 #REQ_CONF
+
+REQ_CONF.accessPointArn           #LACCESSPOINT_ARN
+REQ.userRequest.url               #'URL' to LACCESSPOINT, including query variables
+REQ.userRequest.headers           #OBJ. Request headers passed to LACCESSPOINT
+REQ.protocolVersion               #STR
+
+REQ_CONF.supportingAccessPointArn #ACCESSPOINT_ARN
+REQ_GET|HEAD|LIST.inputS3Url      #'URL' to ACCESSPOINT, pre-signed
+
+REQ.userIdentity                  #REQ_IDENTITY
+REQ_IDENTITY.type                 #STR
+REQ_IDENTITY.principalId          #PRINCIPAL ID
+REQ_IDENTITY.arn                  #STR
+REQ_IDENTITY.accounId             #ACCOUNT_ID
+REQ_IDENTITY.accessKeyId          #ACCESS_KEY_ID
+REQ_IDENTITY.userName             #'USER'
+REQ_IDENTITY.invokedBy            #STR
+REQ_IDENTITY.sessionContext       #REQ_SESSION
+REQ_SESSION.attributes            #OBJ
+REQ_SESSION.sessionIssuer         #OBJ
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:        LAMBDA RESPONSE        :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+HANDLER RESPONSE ==>              #For:
+                                  #  - GetObject(): call and return WriteGetObjectResponse()
+                                  #  - HeadObject(): return HEAD_RES
+                                  #  - ListObjectsV2(): return LIST_RES
+
+POST /WriteGetObjectResponse      #Req: RAW_OBJECT, x-amz-fwd-* [C], x-amz-request-* [C], x-amz-meta-* [C]
 WriteGetObjectResponse()          #Res: empty
 
-x-amz-fwd-header-HEADER: STR [C]  #Same as any response HEADER [S] from GetObject()
-x-amz-fwd-status: NUM [C]         #
-x-amz-fwd-error-code: STR [C]     #
-x-amz-fwd-error-message: STR [C]  #
-x-amz-request-route: STR [C]      #
-x-amz-request-token: STR [C]      #
+REQ_GET.outputToken
+x-amz-request-token: STR [C]      #Must pass REQ_GET.outputToken, for authentication
+REQ_GET.outputRoute
+x-amz-request-route: STR [C]      #Same with REQ_GET.outputRoute
+
+RAW_OBJECT                        #STR. Response body for GetObject()
+LIST_RES.listResultXml            #'XML'. Response body for ListObjectsV2()
+
+HEAD_RES.headers                  #OBJ. Response headers
+x-amz-fwd-header-HEADER: STR [C]  #Only allows same ones as GetObject|HeadObject()
+HEAD_RES.metadata
+x-amz-meta-*: STR [C]             #OBJ. x-amz-meta-* [S]
+
+HEAD|LIST_RES.statusCode
+x-amz-fwd-status: NUM [C]         #NUM. Status code
+HEAD|LIST_RES.errorCode
+x-amz-fwd-error-code: STR [C]     #STR. ERROR_RES.Code
+HEAD|LIST_RES.errorMessage
+x-amz-fwd-error-message: STR [C]  #STR. ERROR_RES.Message
 
 
                                              /=+===============================+=\
@@ -3460,16 +3532,20 @@ x-amz-request-token: STR [C]      #
 
 S3LAMBDA.CloudWatchMetricsEnabled #BOOL (def: false). Enables following METRICs
                                   #Also enables:
-                                  #  - AWS/S3: *Requests, *Errors, BytesUploaded|Downloaded, *Latency
+                                  #  - AWS/S3ObjectLambda: like AWS/S3/* for *Requests, *Errors, BytesUploaded|Downloaded, *Latency
                                   #  - only for requests using LACCESSPOINT
 
-AWS/S3/ProxiedRequests            #Like AllRequests, but only when used a LACCESSPOINT but no FUNC was called
-AWS/S3/InvokedLambda              #Like AllRequests, but only when used a LACCESSPOINT and called a FUNC
-AWS/S3/LambdaResponseRequests     #Like AllRequests, but when using WriteGetObjectResponse() instead of LACCESSPOINT
-AWS/S3/LambdaResponse4xx|5xx      #Like 4xx|5xxErrors, but when using WriteGetObjectResponse() instead of LACCESSPOINT
+AWS/S3ObjectLambda/ProxiedRequests#Like AllRequests, but only when used a LACCESSPOINT but no FUNC was called
+AWS/S3ObjectLambda/InvokedLambda  #Like AllRequests, but only when used a LACCESSPOINT and called a FUNC
+AWS/S3ObjectLambda
+ /LambdaResponseRequests          #NUM of WriteGetObjectResponse() calls
+AWS/S3ObjectLambda
+ /LambdaResponse4xx|5xx           #NUM of WriteGetObjectResponse() with 4**|5** status code
 
 DVAR AccessPointName              #'LACCESSPOINT'
-DVAR DataSourceARN                #ACCESSPOINT_ARN (S3LAMBDA.SupportingAccessPoint) or FUNC_ARN (S3CTRANSFORM.FunctionArn)
+DVAR DataSourceARN                #Either:
+                                  #  - if S3TRANSFORM: FUNC_ARN
+                                  #  - no S3TRANSFORM: ACCESSPOINT_ARN
 
 
                                              /=+===============================+=\
