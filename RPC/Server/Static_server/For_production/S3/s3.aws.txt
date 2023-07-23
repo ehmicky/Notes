@@ -460,8 +460,8 @@ BUPLOAD.success_action_status     #200, 201 or 204 (def)
 
 BUPLOAD.policy                    #BUPLOAD_POLICY, as Base64 JSON
                                   #Required with authenticated requests
-                                  #Validates values of BUPLOAD.*
-                                  #Since it can be modified client-side, I am not sure of purpose
+                                  #Enforces values|constraints for BUPLOAD.*
+                                  #  - so that client-side can upload, but not change intended request
 BUPLOAD_POLICY.expiration         #'DATE'. After this, BUPLOAD_POLICY denies all.
 BUPLOAD_POLICY.conditions         #ARR of either:
                                   #  - ['OP', 'VAL1', 'VAL2']
@@ -481,7 +481,8 @@ OP 'starts-with'                  #VAL1 starts with VAL2
                                   #Only with PROP: acl, Cache-Control, Content-*, Expires, key, success_action_redirect, x-amz-meta-*
 OP 'content-length-range'         #VAL1 <= Content-Length [S] <= VAL2
 
-x-amz-signature: STR [C]          #Unlike other ACTIONs, includes BUPLOAD_POLICY
+x-amz-signature: STR [C]          #Unlike other ACTIONs, request body is BUPLOAD_POLICY
+                                  #I.e. when authenticating with a pre-signed URL, client-side cannot modify BUPLOAD_POLICY
 
 
                                              /=+===============================+=\
@@ -726,9 +727,6 @@ OBJECT|MPART
  .ChecksumCRC32[C]|SHA1|SHA256
 x-amz-checksum-
  crc32[c]|sha1|sha256 [S]         #'BASE64_HASH'
-
-Content-MD5: STR [C]              #Like x-amz-content-sha256 [C], but deprecated
-x-amz-content-sha256: STR [C]     #See AWS signature doc
 
 
                                              /=+===============================+=\
@@ -1192,29 +1190,27 @@ RESTORE_OUTPUT.CannedACL          #'ACL'
                                              \=+===============================+=/
 
 
-PRE-SIGNED URL ==>                #Allow anonymous to do a specific S3 ACTION for specific BUCKET|OBJECT.
-                                  #BUCKET or OBJECT can be non-existing if write operation.
-                                  #Is time-limited (uses expiration). Uses STS under the hood.
-                                  #Must use JavaScript SDK:
-                                  #  - S3.getSignedUrl(ACTION_STR, REQ_OBJ, FUNC(ERROR, URL))
-                                  #     - REQ_OBJ can have member Expires NUM too
-                                  #If using SSE, request must include x-server-side-encryption-* [C]
+PRE-SIGNED URL ==>                #Computing the AWS signature of a specific REQ (path, query, headers, body) for a given ACTION
+                                  #Then sharing the URL with the AWS signature as query variables
+                                  #E.g. share a URL to GetObject() a private OBJECT
+                                  #If using SSE, the actual request must still include x-server-side-encryption-* [C]
+                                  #Cannot use x-amz-checksum-* [C]
 
-@aws-sdk/s3-request-presigner     #
+x-amz-expires: NUM [C]            #Can be used (see AWS signature doc). Mostly meant for pre-signed URLs
+                                  #Max depends on current authentication method
+                                  #  - INSTANCE_PROFILE: 6h
+                                  #  - STS: 36h
+                                  #  - otherwise: 7d
+
+x-amz-content-sha256: STR [C]     #Can be used for AWS signature (see its doc) to either:
+                                  #  - ignore request body (mostly meant for pre-signed URLs)
+                                  #  - use a chunked request body
+Content-MD5: STR [C]              #Like x-amz-content-sha256 [C], but deprecated
+
+@aws-sdk/s3-request-presigner     #Part of JavaScript SDK
 getSignedUrl
- (CLIENT, COMMAND[, SOPTS])
- ->>'URL'
-SOPTS.expiresIn                   #NUM (in secs, def: 15m)
-
-new S3RequestPresigner([COPTS])   #
-COPTS.signingName                 #STR
-PRESIGNER.presign
- (HTTP_REQ[, OPTS])->>HTTP_REQ    #
-
-x-amz-expires: NUM [C]            #NUM (in secs). Def: 1h, max: 7d
-                                  #See AWS signature doc
-automatically assert ACTION + REQ, since part of signature
-must use x-amz-signedheaders [C] to control HEADER values
+ (CLIENT, COMMAND[, OPTS])->>'URL'#Create pre-signed URL
+OPTS.expiresIn                    #NUM (in secs, def: 15m). x-amz-expires [C]
 
 
                                              /=+===============================+=\
