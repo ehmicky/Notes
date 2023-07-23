@@ -123,12 +123,13 @@ IN|OUT TRAFFIC ==>                #Internet -> S3: free
                                   #Max 500 TB/month (flexible)
 
 MULTI-REGION ACCESS POINT ==>     #Always: 1$/300GB
-                                  #S3 <-> same region: free
-                                  #S3 <-> another region: in|out traffic charge
+                                  #S3 <-> AWS: in|out traffic charge
                                   #S3 <-> internet:
+                                  #  - same continent:
+                                  #     - internet -> S3: 1$/400GB
+                                  #     - S3 -> internet: 1$/200GB
+                                  #     - ~4x more expensive in Asia, ~10x in South America
                                   #  - between continents: 1$/20GB
-                                  #  - same continent: 1$/400GB (internet -> S3), 1$/200GB (S3 -> internet)
-                                  #  - more expensive if client's REGION is not US|Europe
 
 ACCELERATE ==>                    #1$/25GB
                                   #For both in|out
@@ -1624,14 +1625,17 @@ PUT|GET|DELETE                    #Same but for all BUCKETs
  /configuration/publicAccessBlock #If BUCKET also has a PUBLIC_BLOCK, and'd, i.e. use most restrictive
 
 ACCESSPOINT
- .PublicAccessBlockConfiguration  #PUBLIC_BLOCK. Same for an ACCESSPOINT, except values are true by default
-MACCESSPOINT.PublicAccessBlock    #PUBLIC_BLOCK. Same for an MACCESSPOINT, except values are true by default
+ .PublicAccessBlockConfiguration  #PUBLIC_BLOCK
+MACCESSPOINT.PublicAccessBlock    #PUBLIC_BLOCK
+LACCESSPOINT
+ .PublicAccessBlockConfiguration  #PUBLIC_BLOCK
 
 PUBLIC_BLOCK                      #Any of the properties effected is reflected in GetBucketAcl|GetObjectAcl() too
-PUBLIC_BLOCK.BlockPublicAcls      #BOOL (def: false). Prevent new public ACLs (PutBucketAcl|PutObjectAcl())
-PUBLIC_BLOCK.IgnorePublicAcls     #BOOL (def: false). Ignore existing public ACLs
-PUBLIC_BLOCK.BlockPublicPolicy    #BOOL (def: false). Prevent PutBucketPolicy() with public POLICY STATEMENTs
-PUBLIC_BLOCK.RestrictPublicBuckets#BOOL (def: false). Ignore cross-account + public BUCKET POLICY STATEMENTs
+                                  #Def for all BOOLs: true if [M|L]ACCESSPOINT, false otherwise
+PUBLIC_BLOCK.BlockPublicAcls      #BOOL. Prevent new public ACLs (PutBucketAcl|PutObjectAcl())
+PUBLIC_BLOCK.IgnorePublicAcls     #BOOL. Ignore existing public ACLs
+PUBLIC_BLOCK.BlockPublicPolicy    #BOOL. Prevent PutBucketPolicy() with public POLICY STATEMENTs
+PUBLIC_BLOCK.RestrictPublicBuckets#BOOL. Ignore cross-account + public BUCKET POLICY STATEMENTs
 
 GET /BUCKET?policyStatus          #Req: empty
 GetBucketPolicyStatus()           #Res: POLICY_STATUS
@@ -1642,6 +1646,10 @@ GET /mrap/instances/MACCESSPOINT
  /policystatus
 GetMultiRegionAccessPoint         #Req: empty
  PolicyStatus()                   #Res: Established POLICY_STATUS
+GET /accesspointforobjectlambda
+ /LACCESSPOINT/policyStatus
+GetAccessPointPolicyStatus        #Req: empty
+ ForObjectLambda()                #Res: PolicyStatus POLICY_STATUS
 
 POLICY_STATUS.IsPublic            #BOOL. Whether has public STATEMENTs
 
@@ -2255,6 +2263,7 @@ REPLICATION_TIME.Time.Minutes     #NUM (must be 15). Ensures that REPLICATION ha
                                   #99.9% of times, covered by SLA
                                   #Does not cover replication of delete markers
                                   #Also emits the s3:Replication:* NOTIFICATION events
+                                  #Can also limit problems of delayed REPLICATION by using explicit VERSION_MIDs in requests
 
 REPLICATION_METRICS
  .EventThreshold.Minutes          #NUM (must be 15) used by s3:Replication:OperationMissedThreshold
@@ -3103,8 +3112,7 @@ ACCESSPOINT                       #Alias for a BUCKET
                                   #Can have own POLICY, PUBLIC_BLOCK, VPC
                                   #I.e. allows multiple settings for a single BUCKET
                                   #Max 1e4 per REGION (soft limit)
-ACCESSPOINT.AccessPointArn        #ACCESSPOINT_ARN. arn:aws:s3:REGION:ACCOUNT_ID:accesspoint/ACCESSPOINT
-                                  #OBJECT in ACCESSPOINT: ACCESSPOINT_ARN/object/OBJECT
+ACCESSPOINT.AccessPointArn        #ACCESSPOINT_ARN
 ACCESSPOINT.Name                  #'ACCESSPOINT'. Max 50 chars, [[:alnum:]-]
 ACCESSPOINT.BucketAccountId       #ACCOUNT_ID
 ACCESSPOINT.Bucket                #'BUCKET'
@@ -3116,6 +3124,11 @@ ACCESSPOINT.CreationDate          #'DATE'
 ACCESSPOINT.NetworkOrigin         #Whether can be accessed from 'Internet' (def) or 'VPC' (VpcConfiguration.VpcId)
 ACCESSPOINT.VpcConfiguration.VpcId#VPC_ID
 ACCESSPOINT.Endpoints             #OBJ. VPC endpoints
+
+arn:aws:s3:REGION:ACCOUNT_ID      #ACCESSPOINT_ARN
+ :accesspoint/ACCESSPOINT         #Can be used as a BUCKET_ARN
+ACCESSPOINT_ARN/object/OBJECT     #OBJECT in ACCESSPOINT
+                                  #Can be used as an OBJECT_ARN
 
 BUCKET_ALIAS.s3.amazonaws.com     #Like BUCKET.s3.amazonaws.com, but through ACCESSPOINT
 ACCESSPOINT-ACCOUNT_ID
@@ -3129,6 +3142,7 @@ ALLOWED ACTIONS ==>               #Can only use ACTIONs for:
                                   #     - including RestoreObject(), ACL, TAGS, OBJECT_LOCK, LEGAL_HOLD
                                   #     - including CopyObject(), UploadPartCopy(), but only if same-REGION
                                   #     - excluding HeadObject(), GetObjectAttributes(), GetObjectTorrent(), DeleteObjects(), SelectObjectContent()
+                                  #Requester must be authenticated
 
 
                                              /=+===============================+=\
@@ -3160,11 +3174,11 @@ ACCESSPOINT_POLICY.Policy         #IAM 'POLICY_DOC', as STR
                                   #Max 20KB
 
 CONDITION_KEY
- s3:DataAccessPointArn            #ACCESSPOINT_ARN
+ s3:DataAccessPointArn            #[M]ACCESSPOINT_ARN
 CONDITION_KEY
- s3:DataAccessPointAccount        #ACCESSPOINT owner's ACCOUNT_ID
+ s3:DataAccessPointAccount        #[M]ACCESSPOINT owner's ACCOUNT_ID
 CONDITION_KEY
- s3:AccessPointNetworkOrigin      #ACCESSPOINT.NetworkOrigin
+ s3:AccessPointNetworkOrigin      #[M]ACCESSPOINT.NetworkOrigin
 
 
                                              /=+===============================+=\
@@ -3187,13 +3201,18 @@ POST /async-requests/mrap/delete  #Req: MACCESSPOINT_REQ
 DeleteMultiRegionAccessPoint()    #  - only ClientToken, Details.Name
                                   #Res: MACCESSPOINT_JOB
 
-MACCESSPOINT                      #Like ACCESSPOINT, but with BUCKET in multiple REGIONs
+MACCESSPOINT                      #Like ACCESSPOINT, but with BUCKETs in multiple REGIONs
                                   #Requests are routed to the closest REGION
-                                  #Usually the BUCKETs use bidirectional REPLICATION
+                                  #Routing happens regardless of whether BUCKET in that REGION has the OBJECT or not
+                                  #  - i.e. usually the BUCKETs use REPLICATION
+                                  #  - if BUCKETs are written to through MACCESSPOINT (instead of directly),
+                                  #    must be bidirectional REPLICATION
                                   #Uses CloudFront network under the hood (like ACCELERATE)
-                                  #I.e. used to reduce latency
-                                  #  - like ACCELERATE, except route to closer, replicated BUCKETs
-                                  #    instead of to a single one
+                                  #Goals:
+                                  #  - reduce latency
+                                  #     - like ACCELERATE, except route to closer replicated BUCKETs instead of a single one
+                                  #  - increase availability, when one REGION is down
+                                  #Max 100
 MACCESSPOINT.Name                 #'MACCESSPOINT'. Max 50 chars, [[:alnum:]-]
 MACCESSPOINT.Alias                #'MBUCKET_ALIAS'. Is 'RANDOM_ID.mrap'.
 MACCESSPOINT.Status               #One of:
@@ -3209,12 +3228,23 @@ MACCESSPOINT_REGION
 MACCESSPOINT_REGION.Bucket        #'BUCKET'
 MACCESSPOINT_REGION.Region        #'REGION'. Cannot specify two different BUCKETs in same REGION
 
-arn:aws:s3::ACCOUNT_ID
- :accesspoint/MBUCKET_ALIAS       #MACCESSPOINT_ARN
-ACCESSPOINT_ARN//OBJECT           #OBJECT in MACCESSPOINT
+arn:aws:s3::ACCOUNT_ID            #MACCESSPOINT_ARN
+ :accesspoint/MBUCKET_ALIAS       #Can be used as a BUCKET_ARN
+MACCESSPOINT_ARN/object/OBJECT    #OBJECT in MACCESSPOINT
+                                  #Can be used as an OBJECT_ARN
 
 MBUCKET_ALIAS.accesspoint
  .s3-global.amazonaws.com         #Like BUCKET.s3.amazonaws.com, but through MACCESSPOINT
+
+ALLOWED ACTIONS ==>               #Same as ACCESSPOINT except:
+                                  #  - only on OBJECTs, not BUCKETs
+                                  #  - no CopyObject|UploadPartCopy()
+                                  #No IPv6
+
+REGIONS ==>                       #Must make call in us-west-2 REGION
+                                  #With MACCESSPOINT_ROUTE, can also use a few more: us-east-1, eu-west-1, ap-northeast-1, ap-southeast-2
+                                  #MACCESSPOINT_REGION|ROUTE.Region can be any REGION
+                                  #Actual calls to OBJECTs through MACCESSPOINT have no REGION
 
 
                                              /=+===============================+=\
@@ -3254,17 +3284,14 @@ GET /mrap/instances/MACCESSPOINT
  /routes                          #Req: empty
 GetMultiRegionAccessPointRoutes() #Res: Mrap MACCESSPOINT_ARN, Routes MACCESSPOINT_ROUTE_ARR
 
-MACCESSPOINT_ROUTE                #Percentage of traffic routed to each BUCKET|REGION
-                                  #Instead of using geographical proximity
+MACCESSPOINT_ROUTE                #Ignore specific BUCKET|REGIONs, for a given percentage of requests
                                   #Meant to use MACCESSPOINT for failovers
                                   #Can specify BUCKET, REGION or both
-                                  #Must make call in us-east-1 (and a few more REGIONs, see online doc)
-                                  #  - but MACCESSPOINT_ROUTE.Region can be anything
-                                  #Takes a few minutes
+                                  #Takes up to 2 minutes to update
 MACCESSPOINT_ROUTE.Bucket         #'BUCKET'
 MACCESSPOINT_ROUTE.Region         #'REGION'
 MACCESSPOINT_ROUTE
- .TrafficDialPercentage           #0-100. Percentage of requests to keep.
+ .TrafficDialPercentage           #0-100
 
 
                                              /=+===============================+=\
@@ -3292,7 +3319,7 @@ MACCESSPOINT_DETAILS
  .Regions                         #MACCESSPOINT_STATUS_REGION_ARR. Status in each REGION performing the job
 MACCESSPOINT_STATUS_REGION.Name   #'REGION'
 MACCESSPOINT_STATUS[_REGION]
- .RequestStatus                   #Like MACCESSPOINT.Status
+ .RequestStatus                   #One of: 'NEW', 'IN_PROGRESS', 'SUCCESS|FAILED'
 
 MACCESSPOINT_STATUS
  .RequestParameters.ACTION        #OBJ with request parameters
@@ -3304,31 +3331,153 @@ CLIENTTOKEN                       #STR. Idempotence token. Max 64 chars, no spac
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:         OBJECT LAMBDA         :==(
+                                            )==:   LAMBDA ACCESS POINT MAIN    :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
-WriteGetObjectResponse()
+PUT /accesspointforobjectlambda   #Req: Configuration S3LAMBDA
+ /LACCESSPOINT                    #Res: LACCESSPOINT
+CreateAccessPointForObjectLambda()#  - no Name, CreationDate, PublicAccessBlockConfiguration
+GET /accesspointforobjectlambda   #Req: empty
+ /LACCESSPOINT                    #Res: LACCESSPOINT
+GetAccessPointForObjectLambda()   #  - no ObjectLambdaAccessPointArn
+GET /accesspointforobjectlambda   #Req: empty
+ /LACCESSPOINT                    #Res: ObjectLambdaAccessPointList LACCESSPOINT_ARR
+ListAccessPointsForObjectLambda() #  - no CreationDate, PublicAccessBlockConfiguration
+DELETE /accesspointforobjectlambda
+ /LACCESSPOINT                    #Req: empty
+DeleteAccessPointForObjectLambda()#Res: empty
 
-CreateAccessPointForObjectLambda()
-GetAccessPointForObjectLambda()
-ListAccessPointsForObjectLambda()
-DeleteAccessPointForObjectLambda()
+LACCESSPOINT
+ .ObjectLambdaAccessPointArn      #LACCESSPOINT_ARN
+LACCESSPOINT.Name                 #'LACCESSPOINT'
+LACCESSPOINT.CreationDate         #'DATE'
+LACCESSPOINT.Alias.Value          #'LBUCKET_ALIAS'. Is 'LACCESSPOINT-RANDOM_ID--ol-s3'
+LACCESSPOINT.Alias.Status         #'PROVISIONING' or 'READY'
 
-PutAccessPointConfigurationForObjectLambda()
-GetAccessPointConfigurationForObjectLambda()
+arn:aws:s3-object-lambda
+ :REGION:ACCOUNT_ID               #LACCESSPOINT_ARN
+ :accesspoint/LACCESSPOINT        #Can be used as a BUCKET_ARN
+LACCESSPOINT_ARN/object/OBJECT    #OBJECT in LACCESSPOINT
+                                  #Can be used as an OBJECT_ARN
 
-PutAccessPointPolicyForObjectLambda()
-GetAccessPointPolicyForObjectLambda()
-DeleteAccessPointPolicyForObjectLambda()
+LACCESSPOINT-ACCOUNT_ID
+ .s3-accesspoint.amazonaws.com    #Like BUCKET.s3.amazonaws.com, but through LACCESSPOINT
 
-GetAccessPointPolicyStatusForObjectLambda()
+ALLOWED ACTIONS ==>               #Same as MACCESSPOINT
 
-https://docs.aws.amazon.com/aws-managed-policy/latest/reference/AmazonS3ObjectLambdaExecutionRolePolicy.html
 
-https://docs.aws.amazon.com/AmazonS3/latest/userguide/metrics-dimensions.html#olap-cloudwatch-metrics
-https://docs.aws.amazon.com/AmazonS3/latest/userguide/metrics-dimensions.html#olap-dimensions
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:  LAMBDA ACCESS POINT POLICY   :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+PUT /accesspointforobjectlambda
+ /LACCESSPOINT/policy
+PutAccessPointPolicy              #Req: LACCESSPOINT_POLICY
+ ForObjectLambda()                #Res: empty
+GET /accesspointforobjectlambda
+ /LACCESSPOINT/policy
+GetAccessPointPolicy              #Req: empty
+ ForObjectLambda()                #Res: LACCESSPOINT_POLICY
+DELETE /accesspointforobjectlambda
+ /LACCESSPOINT/policy
+DeleteAccessPointPolicy           #Req: empty
+ ForObjectLambda()                #Res: empty
+
+LACCESSPOINT_POLICY.Policy        #Like ACCESSPOINT_POLICY.Policy but for LACCESSPOINT
+
+PACTION s3-object-lambda:*        #PACTIONs performed through LACCESSPOINTs are s3-object-lambda:* instead of s3:*
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:       LAMBDA TRANSFORM        :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+PUT /accesspointforobjectlambda
+ /LACCESSPOINT/configuration
+PutAccessPointConfiguration       #Req: Configuration S3LAMBDA
+ ForObjectLambda()                #Res: empty
+GET /accesspointforobjectlambda
+ /LACCESSPOINT/configuration
+GetAccessPointConfiguration       #Req: empty
+ ForObjectLambda()                #Res: Configuration S3LAMBDA
+
+S3LAMBDA.SupportingAccessPoint    #ACCESSPOINT_ARN. Forward to it instead of to S3TRANSFORMs
+S3LAMBDA.AllowedFeatures          #STR_ARR among:
+                                  #  - 'GetObject-Range'
+                                  #  - 'GetObject-PartNumber'
+                                  #  - 'HeadObject-*': like GetObject-* but for HeadObject()
+
+S3LAMBDA
+ .TransformationConfigurations    #S3TRANSFORM_ARR
+S3TRANSFORM.Actions               #'ACTION'_ARR among 'GetObject|HeadObject|ListObjects'
+S3TRANSFORM.ContentTransformation
+ .AwsLambda                       #S3CTRANSFORM
+S3CTRANSFORM.FunctionArn          #FUNC_ARN
+S3CTRANSFORM.FunctionPayload      #'OBJ_JSON' payload passed to FUNC
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:          LAMBDA CALL          :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+POST /WriteGetObjectResponse      #
+WriteGetObjectResponse()          #
+
+no ?partsNumber, Range
+no If-[None-]Match [C], If-[Un]modified-Since [C]
+READ_OBJECT.response-* -> x-amz-fwd-header-* [C]
+READ_OBJECT.versionId -> x-amz-fwd-header-x-amz-version-id [C]
+
+GetObject()                       #  - READ_OBJECT
+                                  #     - READ_OBJECT.response-*: must be authenticated
+                                  #  - Range [C], If-[None-]Match [C], If-[Un]modified-Since [C],
+                                  #    x-amz-server-side-encryption-customer-* [C], x-amz-checksum-mode [C]
+                                  #Res:
+                                  #  - RAW_OBJECT
+                                  #  - Content-Range [S], Accept-Ranges [S], Content-Type [S], Content-Encoding [S],
+                                  #    Content-Language [S], ETag [S], Last-Modified [S], Expires [S], Cache-Control [S],
+                                  #    Content-Disposition [S], Content-Length [S], x-amz-meta-* [S], x-amz-version-id [S], x-amz-delete-marker [S],
+                                  #    x-amz-restore [S], x-amz-restore-request-date [S], x-amz-archive-status [S],
+                                  #    x-amz-expiration [S], x-amz-missing-meta [S], x-amz-website-redirect-location [S],
+                                  #    x-amz-tagging-count [S], x-amz-server-side-encryption-* [S], x-amz-checksum-ALGO [S],
+                                  #    x-amz-storage-class [S], x-amz-replication-status [S], x-amz-mp-parts-count [S]
+                                  #    x-amz-object-lock* [S]
+
+AmazonS3ObjectLambdaExecution     #AWS managed POLICY to that allows:
+ RolePolicy                       #  - s3-object-lambda:WriteGetObjectResponse
+                                  #  - logs:CreateLogGroup|CreateLogStream|PutLogEvents: needed by Lambda logging
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:        LAMBDA METRICS         :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+S3LAMBDA.CloudWatchMetricsEnabled #BOOL (def: false). Enables following METRICs
+                                  #Also enables:
+                                  #  - AWS/S3: *Requests, *Errors, BytesUploaded|Downloaded, *Latency
+                                  #  - only for requests using LACCESSPOINT
+
+AWS/S3/ProxiedRequests            #Like AllRequests, but only when used a LACCESSPOINT but no FUNC was called
+AWS/S3/InvokedLambda              #Like AllRequests, but only when used a LACCESSPOINT and called a FUNC
+AWS/S3/LambdaResponseRequests     #Like AllRequests, but when using WriteGetObjectResponse() instead of LACCESSPOINT
+AWS/S3/LambdaResponse4xx|5xx      #Like 4xx|5xxErrors, but when using WriteGetObjectResponse() instead of LACCESSPOINT
+
+DVAR AccessPointName              #'LACCESSPOINT'
+DVAR DataSourceARN                #ACCESSPOINT_ARN (S3LAMBDA.SupportingAccessPoint) or FUNC_ARN (S3CTRANSFORM.FunctionArn)
 
 
                                              /=+===============================+=\
@@ -3356,7 +3505,7 @@ BATCH replication: https://docs.aws.amazon.com/AmazonS3/latest/userguide/s3-batc
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:            TO SORT            :==(
+                                            )==:        CONDITION KEYS         :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
@@ -3373,6 +3522,7 @@ CONDITION_KEYs ==>                #  - s3:x-amz-acl|x-amz-grant-* STR
                                   #  - s3:LocationConstraint REGION: for s3:CreateBucket only STR
                                   #Also: https://docs.aws.amazon.com/AmazonS3/latest/API/bucket-policy-s3-sigv4-conditions.html
                                   #Also: https://docs.aws.amazon.com/AmazonS3/latest/userguide/list_amazons3.html???
+                                  #Also: https://docs.aws.amazon.com/service-authorization/latest/reference/list_amazons3objectlambda.html
                                   #Also: https://docs.aws.amazon.com/AmazonS3/latest/userguide/tagging-and-policies.html
 
 
