@@ -71,7 +71,7 @@ RES.[Next]PROPMarker              #Sometimes has multiple PROPs
 
 RES.IsTruncated                   #BOOL. Not with RES.NextToken
 
-REQ.maxResults                    #NUM (def: 100 with S3 Outputs, 1000 otherwise)
+REQ.maxResults                    #NUM (def: 100 with INVENTORY|ANALYTICS|S3_METRICS, 1000 otherwise)
 REQ.max-PROPs
 RES.MaxPROPs                      #NUM (def: 1000), alternative syntax for some ACTIONs
 RES.PROPCount                     #NUM. Only set with some ACTIONs, together with RES.MaxPROPs
@@ -147,6 +147,10 @@ PRICING ==>                       #Storage space, per byte
                                   #  - S3 -> another region:
                                   #     - 4x cheaper
                                   #     - must be done explicitly (e.g. copying OBJECT)
+                                  #  - ACCELERATION: 1$/25GB
+                                  #     - for both in|out
+                                  #     - regardless of whether from|to Internet|AWS
+                                  #     - 2x more expensive for Internet -> S3 if client's REGION is not US|Europe|Japan
                                   #Max 500 TB/month (flexible)
 
 
@@ -824,6 +828,34 @@ BUCKET.LocationConstraint         #Can differ from REGION of ACTION
 
                                              /=+===============================+=\
                                             /  :                               :  \
+                                            )==:          ACCELERATE           :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+PUT /BUCKET?accelerate            #Req: ACCELERATE
+PutBucketAccelerateConfiguration()#Res: empty
+GET /BUCKET?accelerate            #Req: empty
+GetBucketAccelerateConfiguration()#Res: ACCELERATE
+
+ACCELERATE.Status                 #undefined (def, i.e. disabled), 'Enabled' or 'Suspended'
+                                  #Enables BUCKET.s3-accelerate.amazonaws.com
+                                  #Takes up to 30m to change
+
+BUCKET.s3-accelerate.amazonaws.com#Like BUCKET.s3.amazonaws.com but faster
+                                  #Done by using CloudFront network to route requests instead of normal internet route
+                                  #Especially fast when clients are far from BUCKET's REGION
+                                  #Can benchmark speed at https://s3-accelerate-speedtest.s3-accelerate.amazonaws.com/en/accelerate-speed-comparsion.html
+                                  #  - test (from my location)
+                                  #     - same speed: Europe
+                                  #     - 25% faster: US East
+                                  #     - 50-200% faster: elsewhere
+                                  #Max 500TB/month (soft limit)
+                                  #'BUCKET' name must not contain dots
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
                                             )==:          VERSIONING           :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -1365,7 +1397,7 @@ PUBLIC_BLOCK                      #Any of the properties effected is reflected i
 PUBLIC_BLOCK.BlockPublicAcls      #BOOL (def: false). Prevent new public ACLs (PutBucketAcl|PutObjectAcl())
 PUBLIC_BLOCK.IgnorePublicAcls     #BOOL (def: false). Ignore existing public ACLs
 PUBLIC_BLOCK.BlockPublicPolicy    #BOOL (def: false). Prevent PutBucketPolicy() with public POLICY STATEMENTs
-PUBLIC_BLOCK.RestrictPublicBuckets#BOOL (def: false). Ignore cross-acount + public BUCKET POLICY STATEMENTs
+PUBLIC_BLOCK.RestrictPublicBuckets#BOOL (def: false). Ignore cross-account + public BUCKET POLICY STATEMENTs
 
 GET /BUCKET?policyStatus          #Req: empty
 GetBucketPolicyStatus()           #Res: POLICY_STATUS
@@ -1373,9 +1405,10 @@ GetBucketPolicyStatus()           #Res: POLICY_STATUS
 POLICY_STATUS.IsPublic            #BOOL. Whether has public STATEMENTs
 
 PUBLIC ACL ==>                    #ACL with GRANTEE AllUsers|AuthenticatedUsers
-PUBLIC POLICY STATEMENTS ==>      #BUCKET POLICY's STATEMENT using none of:
-                                  #  - PRINCIPAL, except '*', ACCOUNT, FEDERATED_USER
-                                  #  - CONDITION_KEYs:
+PUBLIC POLICY STATEMENTS ==>      #BUCKET POLICY's STATEMENT using neither:
+                                  #  - PRINCIPAL
+                                  #     - except '*', ACCOUNT, FEDERATED_USER
+                                  #  - one of following CONDITION_KEYs:
                                   #     - aws:SourceIp
                                   #        - at least /8 netmask for IPv4, /32 for IPv6
                                   #     - aws:SourceArn|Account
@@ -1688,6 +1721,65 @@ ACTIONS ==>                       #Only for following ACTIONs:
 
                                              /=+===============================+=\
                                             /  :                               :  \
+                                            )==:           INVENTORY           :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+PUT /BUCKET?inventory             #Req: INVENTORY
+PutBucketInventoryConfiguration() #  - query variable: INVENTORY.id
+                                  #Res: empty
+GET /BUCKET?inventory             #Req: empty
+GetBucketInventoryConfiguration() #Res: INVENTORY
+GET /BUCKET?inventory             #Req: empty
+ListBucketInventory               #Res: InventoryConfiguration INVENTORY_ARR
+ Configurations()                 #Paginates with ContinuationToken
+DELETE /BUCKET?inventory          #Req: INVENTORY
+DeleteBucketInventory             #  - only id
+ Configuration()                  #Res: empty
+
+INVENTORY                         #Max 1000 per BUCKET
+                                  #List OBJECTs and write result to an OBJECT
+INVENTORY.Id                      #'INVENTORY'
+INVENTORY.IsEnabled               #BOOL
+INVENTORY.IncludedObjectVersions  #BOOL
+INVENTORY.OptionalFields          #OBJ
+INVENTORY.Schedule.Frequency      #STR
+INVENTORY.Filter.Prefix           #STR
+INVENTORY
+ .Destination.S3BucketDestination #INVENTORY_DESTINATION
+INVENTORY_DESTINATION.AccountId   #ACCOUNT_ID
+INVENTORY_DESTINATION.Bucket      #'BUCKET'
+INVENTORY_DESTINATION.Prefix      #STR
+INVENTORY_DESTINATION.Format      #STR
+INVENTORY_DESTINATION.Encryption  #INVENTORY_ENCRYPTION
+INVENTORY_ENCRYPTION.SSE-S3       #Empty OBJ
+INVENTORY_ENCRYPTION.SSE-KMS.KeyId#KMS_KEY_ID|ARN
+
+INVENTORY_FILE                    #
+INVENTORY_LINE[0]                 #'BUCKET'
+INVENTORY_LINE[1]                 #'OBJECT'
+INVENTORY_LINE[2]                 #VERSION_MID
+INVENTORY_LINE[3]                 #BOOL. OBJECT.IsLatest
+INVENTORY_LINE[4]                 #BOOL. DELETE_OBJECT.DeleteMarker
+INVENTORY_LINE[5]                 #NUM. OBJECT.Size
+INVENTORY_LINE[6]                 #'DATE'. OBJECT.LastModified
+INVENTORY_LINE[7]                 #'ETAG'
+INVENTORY_LINE[8]                 #'STORAGE_CLASS'
+INVENTORY_LINE[9]                 #BOOL. Whether used a MUPLOAD
+INVENTORY_LINE[10]                #STR. x-amz-replication-status [S]
+INVENTORY_LINE[11]                #STR. OBJECT_RETENTION.RetainUntilDate
+INVENTORY_LINE[12]                #STR. OBJECT_RETENTION.Mode
+INVENTORY_LINE[13]                #STR. LEGAL_HOLD.Status
+INVENTORY_LINE[14]                #'STORAGE_CLASS' of TIERING_CONF.AccessTier
+INVENTORY_LINE[15]                #'ENABLED|DISABLED'. BUCKET_ENCRYPTION_RULE.BucketKeyEnabled
+INVENTORY_LINE[16]                #ALGO. OBJECT.ChecksumAlgorithm
+INVENTORY_LINE[17]                #'BASE64_JSON' of ACL
+INVENTORY_LINE[18]                #OBJECT_OWNER
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
                                             )==:         NOTIFICATIONS         :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -1856,19 +1948,6 @@ DeleteBucketAnalyticsConfiguration()
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:           INVENTORY           :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-PutBucketInventoryConfiguration()
-GetBucketInventoryConfiguration()
-ListBucketInventoryConfigurations()
-DeleteBucketInventoryConfiguration()
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
                                             )==:            METRICS            :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -1892,17 +1971,6 @@ GetBucketReplication()
 DeleteBucketReplication()
 
 x-amz-replication-status: COMPLETE|PENDING|FAILED|REPLICA [S]
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:         ACCELERATION          :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-PutBucketAccelerateConfiguration()
-GetBucketAccelerateConfiguration()
 
 
                                              /=+===============================+=\
