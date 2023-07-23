@@ -381,6 +381,77 @@ Content-Disposition: attachment;
 
                                              /=+===============================+=\
                                             /  :                               :  \
+                                            )==:            SELECT             :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+POST /BUCKET/OBJECT
+ ?select&select-type=2            #Req: SELECT_REQ, x-amz-server-side-encryption-customer-* [C]
+SelectObjectContent()             #Res: SELECT_RES
+
+SELECT_REQ                        #Transforms OBJECT, using SQL
+                                  #OBJECT must be CSV|JSON
+
+SELECT_REQ.ExpressionType         #Always 'SQL'
+SELECT_REQ.Expression             #STR. SQL expression
+                                  #Max 1.3e5 chars
+
+SELECT_REQ.ScanRange.Start|End    #NUM (in bytes) to only use part of OBJECT
+
+SELECT_REQ.InputSerialization     #SELECT_INPUT. For parsing ARCHIVE
+                                  #No CSV.QuoteFields
+SELECT_REQ.OutputSerialization    #SELECT_OUTPUT. For serializing filtered ARCHIVE
+                                  #No JSON.Type, CSV.AllowQuotedRecordDelimiter|FileHeaderInfo|Comments
+SELECT_INPUT.CompressionType      #'NONE' (def), 'GZIP', 'BZIP2'
+                                  #Not with Parquet
+
+SELECT_INPUT.Parquet              #OBJ. Use Apache Parquet
+
+SELECT_INPUT|OUTPUT.JSON          #SELECT_JSON
+SELECT_JSON.Type                  #Either:
+                                  #  - 'DOCUMENT': JSON OBJ_ARR
+                                  #  - 'LINES': ndjson
+
+SELECT_INPUT|OUTPUT.CSV           #SELECT_CSV
+SELECT_CSV.FileHeaderInfo         #Whether first line is header:
+                                  #  - 'USE': yes, and can use as "COL" in SQL
+                                  #  - 'IGNORE': yes, but cannot use as "COL" in SQL, only "_NUM"
+                                  #  - 'NONE': no
+SELECT_CSV|JSON.RecordDelimiter   #'CHAR' (def: \n)
+SELECT_CSV
+ .AllowQuotedRecordDelimiter      #BOOL (def: false). Allow quoting RecordDelimiter. Slower
+SELECT_CSV.FieldDelimiter         #'CHAR' (def: ,)
+SELECT_CSV.QuoteCharacter         #'CHAR' (def: ") for quoting
+SELECT_CSV.QuoteEscapeCharacter   #'CHAR' (def: ") for escaping QuoteCharacter
+SELECT_CSV.QuoteFields            #Whether to quote, among 'ASNEEDED' (def) or 'ALWAYS'
+SELECT_CSV.Comments               #'CHAR' (def: #) used to comment a line
+
+SELECT_RES                        #Result of SELECT_REQ
+                                  #Is a stream of SELECT_RES_EVENT
+SELECT_RES_EVENT.Records.Payload  #'BASE64' of chunk data
+SELECT_RES_EVENT.Cont             #Empty OBJ sent when not done
+SELECT_RES_EVENT.End              #Empty OBJ sent when done
+
+SELECT_REQ.RequestProgress.Enabled#BOOL (def: false). Sends SELECT_RES_EVENT with Progress
+SELECT_RES_EVENT.Progress.Details #SELECT_STATS when not done
+SELECT_RES_EVENT.Stats.Details    #SELECT_STATS when done
+SELECT_STATS.BytesScanned         #NUM of bytes as input before decompression
+SELECT_STATS.BytesProcessed       #NUM of bytes as input after decompression
+SELECT_STATS.BytesReturned        #NUM of bytes as output
+
+https://docs.aws.amazon.com/AmazonS3/latest/API/RESTSelectObjectAppendix.html ???
+
+AWS/S3/[Storage-Lens/]
+ SelectRequests                   #NUM of SELECT requests
+AWS/S3/[Storage-Lens/]
+ SelectBytesScanned               #NUM. SELECT_STATS.BytesScanned
+AWS/S3/[Storage-Lens/]
+ SelectBytesReturned              #NUM. SELECT_STATS.BytesReturned
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
                                             )==:          OBJECT LIST          :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -594,7 +665,7 @@ MUPLOAD.UploadId                  #MUPLOAD_MID
 MUPLOAD.Bucket                    #'BUCKET'
 MUPLOAD.Key                       #'OBJECT'
 MUPLOAD.Initiated                 #'DATE'
-MUPLOAD.Initiator                 #PRINCIPAL
+MUPLOAD.Initiator                 #S3_OWNER
 
 RAW_MPART                         #OBJECT part, as is
                                   #Min 5MB, max 5GB
@@ -864,6 +935,11 @@ BUCKET.s3-accelerate.amazonaws.com#Like BUCKET.s3.amazonaws.com but faster
                                   #Max 500TB/month (soft limit)
                                   #'BUCKET' name must not contain dots
 
+AWS/S3/Storage-Lens/Transfer
+ AccelerationEnabledBucketCount   #Like Buckets, but only with ACCELERATE enabled
+SLENS_METRIC % Transfer
+ Acceleration enabled buckets     #% of TransferAccelerationEnabledBucketCount/Buckets
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -916,6 +992,7 @@ DELETE_OBJECT|DELETE_ERROR        #VERSION_MID
                                   #When versioning disabled, or when enabled but VERSION_MID specified:
                                   #  - permanent delete
                                   #  - if targets a delete marker, restores previous version
+
 x-amz-delete-marker: true [S]
 DELETE_OBJECT.DeleteMarker        #BOOL. True if OBJECT is a delete marker
 DELETE_OBJECT
@@ -923,6 +1000,44 @@ DELETE_OBJECT
 OBJECT_VERSIONS.DeleteMarkers     #OBJECT_ARR
                                   #  - only VersionId, IsLatest, Key, LastModified, Owner
                                   #VERSIONs that are delete markers
+
+AWS/S3/Storage-Lens/
+ VersioningEnabledBucketCount     #Like Buckets, but only when VERSIONING enabled
+SLENS_METRIC
+ % versioning-enabled buckets     #% of VersioningEnabledBucketCount/Buckets
+
+AWS/S3/Storage-Lens/
+ CurrentVersionStorageBytes       #Like StorageBytes, but only for current VERSIONs
+AWS/S3/Storage-Lens/
+ NonCurrentVersionStorageBytes    #Like StorageBytes, but only for non-current VERSIONs
+AWS/S3/Storage-Lens/
+ CurrentVersionObjectCount        #Like ObjectCount, but only for current VERSIONs
+AWS/S3/Storage-Lens/
+ NonCurrentVersionObjectCount     #Like ObjectCount, but only for non-current VERSIONs
+SLENS_METRIC
+ % current version bytes          #% of CurrentVersionStorageBytes/StorageBytes
+SLENS_METRIC
+ % noncurrent version bytes       #% of NonCurrentVersionStorageBytes/StorageBytes
+SLENS_METRIC
+ % current version objects        #% of CurrentVersionObjectCount/ObjectCount
+SLENS_METRIC
+ % noncurrent version objects     #% of NonCurrentVersionObjectCount/ObjectCount
+
+AWS/S3/Storage-Lens/
+ DeleteMarkerStorageBytes         #Like StorateBytes, but only for delete markers
+AWS/S3/Storage-Lens/
+ DeleteMarkerObjectCount          #Like ObjectCount, but only for delete markers
+SLENS_METRIC % delete marker bytes#% of DeleteMarkerStorageBytes/StorageBytes
+SLENS_METRIC
+ % delete marker objects          #% of DeleteMarkerObjectCount/ObjectCount
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:          MFA DELETE           :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
 
 VERSIONING.MfaDelete              #'Disabled' (def) or 'Enabled'
                                   #When enabled:
@@ -934,6 +1049,11 @@ VERSIONING.MfaDelete              #'Disabled' (def) or 'Enabled'
                                   #  - BUCKET_OWNER
 x-amz-mfa:
  MFA_DEVICE_MID TOKEN [C]         #
+
+AWS/S3/Storage-Lens/
+ MFADeleteEnabledBucketCount      #Like Buckets, but only when VERSIONING.MfaDelete true
+SLENS_METRIC
+ % MFA delete-enabled buckets     #% of MFADeleteEnabledBucketCount/DistinctNumberOfBuckets
 
 
                                              /=+===============================+=\
@@ -983,11 +1103,12 @@ MAIN_METRICS DVAR StorageType     #Can be used on AWS/S3/BucketSizeBytes|NumberO
                                   #STORAGE_CLASS is:
                                   #  - Standard|StandardIA|OneZoneIA|GlacierInstantRetrieval|Glacier|DeepArchive
                                   #  - with INTELLIGENT_TIERING: FA|IA|(none)|AIA|AA|DAA
+SLENS DVAR storage_class          #'STORAGE_CLASS'
 
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:         RESTORE MAIN          :==(
+                                            )==:            RESTORE            :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
@@ -1023,48 +1144,8 @@ RESTORE.OutputLocation.S3         #RESTORE_OUTPUT
 RESTORE_OUTPUT.BucketName         #'BUCKET'
 RESTORE_OUTPUT.Prefix             #STR
 
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:        RESTORE SELECT         :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
 RESTORE.Type                      #Whether can use SelectParameters: not (def) or 'SELECT'
-RESTORE.SelectParameters          #SELECT_PARAMS. Transforms OBJECT being restored, using SQL
-                                  #OBJECT must be CSV|JSON
-
-SELECT_PARAMS.ExpressionType      #Always 'SQL'
-SELECT_PARAMS.Expression          #STR. SQL expression
-                                  #Max 1.3e5 chars
-
-SELECT_PARAMS
- .InputSerialization              #SELECT_INPUT. For parsing ARCHIVE
-SELECT_PARAMS                     #SELECT_OUTPUT. For serializing filtered ARCHIVE
- .OutputSerialization             #No JSON.Type, CSV.AllowQuotedRecordDelimiter|FileHeaderInfo|Comments
-SELECT_INPUT.CompressionType      #'NONE' (def), 'GZIP' or 'BZIP2'
-
-SELECT_INPUT.Parquet              #OBJ. Use Apache Parquet
-
-SELECT_INPUT|OUTPUT.JSON          #SELECT_JSON
-SELECT_JSON.Type                  #Either:
-                                  #  - 'DOCUMENT': JSON OBJ_ARR
-                                  #  - 'LINES': ndjson
-
-SELECT_INPUT|OUTPUT.CSV           #SELECT_CSV
-SELECT_CSV.FileHeaderInfo         #Whether first line is header:
-                                  #  - 'USE': yes, and can use as "COL" in SQL
-                                  #  - 'IGNORE': yes, but cannot use as "COL" in SQL, only "_NUM"
-                                  #  - 'NONE': no
-SELECT_CSV|JSON.RecordDelimiter   #'CHAR' (def: \n)
-SELECT_CSV
- .AllowQuotedRecordDelimiter      #BOOL (def: false). Allow quoting RecordDelimiter. Slower
-SELECT_CSV.FieldDelimiter         #'CHAR' (def: ,)
-SELECT_CSV.QuoteCharacter         #'CHAR' (def: ") for quoting
-SELECT_CSV.QuoteEscapeCharacter   #'CHAR' (def: ") for escaping QuoteCharacter
-SELECT_CSV.QuoteFields            #Whether to quote, among 'ASNEEDED' (def) or 'ALWAYS'
-SELECT_CSV.Comments               #'CHAR' (def: #) used to comment a line
+RESTORE.SelectParameters          #Apply SELECT_REQ (except ScanRange, RequestProgress) on OBJECT being restored
 
 
                                              /=+===============================+=\
@@ -1116,7 +1197,7 @@ FILTER.And                        #FILTER_ARR
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:           LIFECYCLE           :==(
+                                            )==:        LIFECYCLE MAIN         :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
@@ -1139,35 +1220,131 @@ LIFECYCLE_FILTER.*                #Like FILTER.*
 LIFECYCLE_FILTER
  .ObjectSizeGreater|LessThan      #NUM (in bytes)
 
+AWS/S3/Storage-Lens/
+ TotalLifecycleRuleCount          #NUM of LIFECYCLE_RULEs
+SLENS_METRIC Average lifecycle
+ rule count per bucket            #Average TotalLifecycleRuleCount per BUCKET
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:    LIFECYCLE STORAGE CLASS    :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
 LIFECYCLE_RULE.Transitions        #TRANSITION_ARR. Sets StorageClass to TRANSITION.StorageClass, after a specific time
 [N]TRANSITION.StorageClass        #Same values as OBJECT.StorageClass, except no 'STANDARD|REDUCED_REDUNDANCY|SNOW|OUTPOSTS'
-TRANSITION|EXPIRATION.Days        #NUM days from OBJECT creation
-TRANSITION|EXPIRATION.Date        #Specific 'DATE'
+TRANSITION.Days                   #NUM days from OBJECT creation
+TRANSITION.Date                   #Specific 'DATE'
+
+LIFECYCLE_RULE                    #NTRANSITION_ARR. Same but applies to all VERSIONs except current one
+ .NonCurrentVersionTransitions    #As opposed to LIFECYCLE_RULE.Transitions, which only applies to current VERSION
+NTRANSITION.NoncurrentDays        #NUM days from OBJECT not being the current VERSION anymore
+NTRANSITION
+ .NewerNoncurrentVersions         #Applies to all VERSIONs except NUM+1 most recent (including current one)
+
+AWS/S3/Storage-Lens/
+ TransitionLifecycleRuleCount     #Like TotalLifecycleRuleCount, but only with Transition set
+AWS/S3/Storage-Lens/
+ NoncurrentVersionTransition
+ LifecycleRuleCount               #Like TotalLifecycleRuleCount, but only with NonCurrentVersionTransition set
+SLENS_METRIC Average transition
+ lifecycle rules per bucket       #Average TransitionLifecycleRuleCount per BUCKET
+SLENS_METRIC Average noncurrent
+ version transition lifecycle
+ rules per bucket                 #Average NoncurrentVersionTransitionLifecycleRuleCount per BUCKET
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:     LIFECYCLE EXPIRATION      :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
 
 LIFECYCLE_RULE.Expiration         #EXPIRATION. Delete OBJECT, after a specific time
-EXPIRATION                        #BOOL (def: false). Permanent delete OBJECT as soon as it has only one VERSION
- .ExpiredObjectDeleteMarker       #and that VERSION is a delete marker.
-                                  #Cannot be specified together with EXPIRATION.Days|Date
+EXPIRATION.Days|Date              #Like TRANSITION.*
+
+LIFECYCLE_RULE                    #NEXPIRATION. Same but applies to all VERSIONs except current one
+ .NonCurrentVersionExpiration     #Delete with a versionId, i.e. permanent delete
+                                  #As opposed to LIFECYCLE_RULE.Expiration, which only applies to current VERSION, and delete without a versionId
+NEXPIRATION.NoncurrentDays
+ |NewerNoncurrentVersions         #Like NTRANSITION.*
+
 x-amz-expiration:
  expiry-date=DATE,
  rule-id=LIFECYCLE_RULE [S]       #Set by EXPIRATION
 
+AWS/S3/Storage-Lens/
+ ExpirationLifecycleRuleCount     #Like TotalLifecycleRuleCount, but only with Expiration set
+AWS/S3/Storage-Lens/
+ NoncurrentVersionExpiration
+ LifecycleRuleCount               #Like TotalLifecycleRuleCount, but only with NonCurrentVersionExpiration set and ExpiredObjectDeleteMarker false
+SLENS_METRIC Average expiration
+ lifecycle rules per bucket       #Average ExpirationLifecycleRuleCount per BUCKET
+SLENS_METRIC Average noncurrent
+ version expiration lifecycle
+ rules per bucket                 #Average NoncurrentVersionExpirationLifecycleRuleCount per BUCKET
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:    LIFECYCLE DELETE MARKER    :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+EXPIRATION                        #BOOL (def: false). Permanent delete OBJECT as soon as it has only one VERSION
+ .ExpiredObjectDeleteMarker       #and that VERSION is a delete marker.
+                                  #Cannot be specified together with EXPIRATION.Days|Date
+
+AWS/S3/Storage-Lens/ExpiredObject
+ DeleteMarkerLifecycleRuleCount   #Like TotalLifecycleRuleCount, but only with NonCurrentVersionExpiration set and ExpiredObjectDeleteMarker true
+SLENS_METRIC Average expired
+ object delete marker lifecycle
+ rules per bucket                 #Average ExpiredObjectDeleteMarkerLifecycleRuleCount per BUCKET
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:      LIFECYCLE MULTIPART      :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
 LIFECYCLE_RULE
  .AbortIncompleteMultipartUpload
  .DaysAfterInitiation             #NUM. Delete MUPLOADs if not completed within NUM days
+
 x-amz-abort-rule-id:
  LIFECYCLE_RULE [S]
 x-amz-abort-date: DATE [S]        #When aborted
 
-LIFECYCLE_RULE                    #NTRANSITION_ARR. Same but applies to all VERSIONs except current one
- .NonCurrentVersionTransitions    #As opposed to LIFECYCLE_RULE.Transitions, which only applies to current VERSION
-LIFECYCLE_RULE                    #NEXPIRATION. Same but applies to all VERSIONs except current one
- .NonCurrentVersionExpiration     #Delete with a versionId, i.e. permanent delete
-                                  #As opposed to LIFECYCLE_RULE.Expiration, which only applies to current VERSION, and delete without a versionId
-NTRANSITION|NEXPIRATION
- .NoncurrentDays                  #NUM days from OBJECT not being the current VERSION anymore
-NTRANSITION|NEXPIRATION
- .NewerNoncurrentVersions         #Applies to all VERSIONs except NUM+1 most recent (including current one)
+AWS/S3/Storage-Lens/Abort
+ IncompleteMPULifecycleRuleCount  #Like TotalLifecycleRuleCount, but only with AbortIncompleteMultipartUpload set
+SLENS_METRIC Average abort
+ incomplete multipart upload
+ lifecycle rules per bucket       #Average AbortIncompleteMPULifecycleRuleCount per BUCKET
+
+AWS/S3/Storage-Lens/Incomplete
+ MultipartUploadStorageBytes      #Like StorageBytes, but only for MPARTs
+AWS/S3/Storage-Lens/Incomplete
+ MPUStorageBytesOlderThan7Days    #Like IncompleteMultipartUploadStorageBytes, but only for MPARTs older than 7 days
+AWS/S3/Storage-Lens/Incomplete
+ MultipartUploadObjectCount       #Like ObjectCount, but only for MPARTs
+AWS/S3/Storage-Lens/Incomplete
+ MPUObjectCountOlderThan7Days     #Like IncompleteMultipartUploadCount, but only for MPARTs older than 7 days
+SLENS_METRIC % incomplete
+ multipart upload bytes           #% of IncompleteMultipartUploadStorageBytes/StorageBytes
+SLENS_METRIC % incomplete
+ multipart upload storage bytes
+ greater than 7 days old          #% of IncompleteMPUStorageBytesOlderThan7Days/StorageBytes
+SLENS_METRIC % incomplete
+ multipart upload objects         #% of IncompleteMultipartUploadObjectCount/ObjectCount
+SLENS_METRIC % incomplete
+ multipart upload object count
+ greater than 7 days old          #% of IncompleteMPUObjectCountOlderThan7Days/ObjectCount
 
 
                                              /=+===============================+=\
@@ -1190,14 +1367,6 @@ PutObjectRetention()              #  - OBJECT_RETENTION
 GET /BUCKET/OBJECT?retention      #Req: OBJECT
 GetObjectRetention()              #  - only versionId
                                   #Res: OBJECT_RETENTION
-
-PUT /BUCKET/OBJECT?legal-hold     #Req:
-PutObjectLegalHold()              #  - LEGAL_HOLD
-                                  #  - query variables: OBJECT.versionId
-                                  #Res: empty
-GET /BUCKET/OBKECT?legal-hold     #Req: OBJECT
-GetObjectLegalHold()              #  - only versionId
-                                  #Res: LEGAL_HOLD
 
 OBJECT_LOCK                       #Do not allow deleting OBJECT VERSIONs for a specific duration
                                   #Does not prevent new VERSIONs from being created for this OBJECT
@@ -1223,6 +1392,29 @@ DEFAULT_RETENTION|OBJECT_RETENTION#Whether x-amz-bypass-governance-retention [C]
 x-amz-bypass-governance-retention:#Required to call PutObjectRetention() on an OBJECT already locked
  BOOL [C]                         #Even for root
 
+AWS/S3/Storage-Lens/
+ ObjectLockEnabledStorageBytes    #Like StorageBytes, but only when OBJECT_LOCK enabled
+AWS/S3/Storage-Lens/
+ ObjectLockEnabledObjectCount     #Like ObjectCount, but only when OBJECT_LOCK enabled
+SLENS_METRIC % Object Lock bytes  #% of ObjectLockEnabledStorageBytes/StorageBytes
+SLENS_METRIC % Object Lock objects#% of ObjectLockEnabledObjectCount/ObjectCount
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:          LEGAL HOLD           :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+PUT /BUCKET/OBJECT?legal-hold     #Req:
+PutObjectLegalHold()              #  - LEGAL_HOLD
+                                  #  - query variables: OBJECT.versionId
+                                  #Res: empty
+GET /BUCKET/OBKECT?legal-hold     #Req: OBJECT
+GetObjectLegalHold()              #  - only versionId
+                                  #Res: LEGAL_HOLD
+
 LEGAL_HOLD                        #Like OBJECT_LOCK but:
                                   #  - no expiry DATE
                                   #  - can always be changed
@@ -1233,15 +1425,27 @@ LEGAL_HOLD.Status                 #'ON' or 'OFF' (def)
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:             OWNER             :==(
+                                            )==:         BUCKET OWNER          :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
-BUCKETS_LIST.Owner                #PRINCIPAL. BUCKET_OWNER, ACCOUNT that called CreateBucket()
+BUCKETS_LIST.Owner                #S3_OWNER. BUCKET_OWNER, ACCOUNT that called CreateBucket()
 
 x-amz-expected-bucket-owner:      #403 if BUCKET_OWNER is different
  ACCOUNT_ID [C]                   #On all ACTIONs except: CreateBucket(), ListBuckets(), WriteGetObjectResponse()
+
+S3_OWNER                          #BUCKET_OWNER|OBJECT_OWNER
+S3_OWNER.DisplayName              #'S3_OWNER' shown in UI
+S3_OWNER.ID                       #CANONICAL_ACCOUNT_ID
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:         OBJECT OWNER          :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
 
 PUT /BUCKET?ownershipControls     #Req: BUCKET_OWNERSHIP
 PutBucketOwnershipControls()      #Res: empty
@@ -1259,23 +1463,23 @@ x-amz-object-ownership: STR [C]   #     - also disables ACLs (but not POLICYs)
                                   #  - 'ObjectWriter': PRINCIPAL uploading the OBJECT
 
 OBJECTS.FetchOwner                #BOOL (def: false). Whether to return OBJECT.Owner
-OBJECT|MUPLOAD.Owner              #PRINCIPAL. OBJECT_OWNER.
+OBJECT|MUPLOAD.Owner              #S3_OWNER. OBJECT_OWNER.
 
-PRINCIPAL.DisplayName             #'PRINCIPAL' shown in UI
-PRINCIPAL.ID                      #CANONICAL_ACCOUNT_ID
-
-GRANTEE.DisplayName               #'GRANTEE' shown in UI
-GRANTEE.Type                      #One of:
-                                  #  - 'CanonicalUser': GRANTEE.ID
-                                  #  - 'AmazonCustomerByEmail': GRANTEE.EmailAddress
-                                  #  - 'Group': GRANTEE.URI
-GRANTEE.ID                        #CANONICAL_ACCOUNT_ID
-GRANTEE.EmailAddress              #'EMAIL' (of ACCOUNT)
-GRANTEE.URI                       #One of:
-                                  #  - http://acs.amazonaws.com/groups/global/AuthenticatedUsers: anyone authenticated
-                                  #  - http://acs.amazonaws.com/groups/global/AllUsers: anyone
-                                  #     - same as in POLICY_DOC: Principal '*'
-                                  #     - CANONICAL_ACCOUNT_ID '65a011a29cdf8ec533ec3d1ccaae921c'
+AWS/S3/Storage-Lens/
+ ObjectOwnershipBucketOwner
+ EnforcedBucketCount              #Like Buckets, but only with BucketOwnerEnforced
+AWS/S3/Storage-Lens/
+ ObjectOwnershipBucketOwner
+ PreferredBucketCount             #Like Buckets, but only with BucketOwnerPreferred
+AWS/S3/Storage-Lens/
+ ObjectOwnershipObjectWriter
+ BucketCount                      #Like Buckets, but only with ObjectWriter
+SLENS_METRIC % Object Ownership
+ bucket owner enforced buckets    #% of ObjectOwnershipBucketOwnerEnforcedBucketCount/Buckets
+SLENS_METRIC % Object Ownership
+ bucket owner preferred buckets   #% of ObjectOwnershipBucketOwnerPreferredBucketCount/Buckets
+SLENS_METRIC % Object Ownership
+ object writer buckets            #% of ObjectOwnershipObjectWriterBucketCount/Buckets
 
 
                                              /=+===============================+=\
@@ -1359,7 +1563,7 @@ ACL                               #Like BUCKET POLICY but:
 ACL.Owner                         #BUCKET_OWNER
 ACL|RESTORE_OUTPUT                #GRANT_ARR
  .AccessControlList.Grants        #Max 100
-GRANT.Grantee                     #GRANTEE
+
 GRANT.Permission                  #If BUCKET:
                                   #  - "READ": s3:ListBucket*
                                   #  - "WRITE": s3:PutObject
@@ -1373,6 +1577,20 @@ GRANT.Permission                  #If BUCKET:
                                   #  - "READ_ACP": s3:GetObject[Version]Acl
                                   #  - "WRITE_ACP": s3:PutObject[Version]Acl
                                   #  - "FULL_CONTROL": all of above
+
+GRANT.Grantee                     #GRANTEE
+GRANTEE.DisplayName               #'GRANTEE' shown in UI
+GRANTEE.Type                      #One of:
+                                  #  - 'CanonicalUser': GRANTEE.ID
+                                  #  - 'AmazonCustomerByEmail': GRANTEE.EmailAddress
+                                  #  - 'Group': GRANTEE.URI
+GRANTEE.ID                        #CANONICAL_ACCOUNT_ID
+GRANTEE.EmailAddress              #'EMAIL' (of ACCOUNT)
+GRANTEE.URI                       #One of:
+                                  #  - http://acs.amazonaws.com/groups/global/AuthenticatedUsers: anyone authenticated
+                                  #  - http://acs.amazonaws.com/groups/global/AllUsers: anyone
+                                  #     - same as in POLICY_DOC: Principal '*'
+                                  #     - CANONICAL_ACCOUNT_ID '65a011a29cdf8ec533ec3d1ccaae921c'
 
 
                                              /=+===============================+=\
@@ -1628,6 +1846,28 @@ RESTORE_ENCRYPTION.EncryptionType #STR, like x-amz-server-side-encryption [C]
 RESTORE_ENCRYPTION.KMSKeyId       #STR, like x-amz-server-side-encryption-aws-kms-key-id [C]
 RESTORE_ENCRYPTION.KMSContext     #STR, like x-amz-server-side-encryption-context [C]
 
+AWS/S3/Storage-Lens/
+ EncryptedStorageBytes            #Like StorageBytes, but only when using SSE
+AWS/S3/Storage-Lens/
+ UnencryptedStorageBytes          #Like StorageBytes, but not when using SSE
+AWS/S3/Storage-Lens/
+ EncryptedObjectCount             #Like ObjectCount, but only when using SSE
+AWS/S3/Storage-Lens/
+ UnencryptedObjectCount           #Like ObjectCount, but not when using SSE
+SLENS_METRIC % encrypted bytes    #% of EncryptedStorageBytes/StorageBytes
+SLENS_METRIC % unencrypted bytes  #% of UnencryptedStorageBytes/StorageBytes
+SLENS_METRIC % encrypted objects  #% of EncryptedObjectCount/ObjectCount
+SLENS_METRIC % unencrypted objects#% of UnencryptedStorageBytes/ObjectCount
+
+AWS/S3/Storage-Lens/
+ SSEKMSEnabledBucketCount         #Like Buckets, but only when SSE-KMS default
+AWS/S3/Storage-Lens/
+ AllSSEKMSRequests                #Like AllRequests, but only with SSE-KMS
+SLENS_METRIC
+ % SSE-KMS enabled buckets        #% of SSEKMSEnabledBucketCount/DistinctNumberOfBuckets
+SLENS_METRIC
+ % all SSE-KMS requests           #% of AllSSEKMSRequests/AllRequests
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -1857,7 +2097,7 @@ LOG_CONF.TargetGrants             #GRANT_ARR of LOG_FILE, to grant permissions t
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:            METRICS            :==(
+                                            )==:         METRICS MAIN          :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
@@ -1876,6 +2116,7 @@ DeleteBucketMetricsConfiguration()#Res: empty
 
 MAIN_METRICS                      #Main CloudWatch METRICs for S3 (as opposed to SLENS, which is more advanced)
                                   #Each MAIN_METRICS sends those METRICs but filtered per 'OBJECT' prefix, TAGs, ACCESS_POINT
+                                  #Only 2 METRICs are available without a MAIN_METRICS: AWS/S3/BucketSizeBytes|NumberOfObjects
                                   #Max 1000 per BUCKET
 MAIN_METRICS.Id                   #'MAIN_METRICS'. Max 64 chars, [[:alnum:].-_]
 MAIN_METRICS.Filter               #MAIN_METRICS_FILTER. Filters which OBJECTs to include
@@ -1885,23 +2126,40 @@ MAIN_METRICS_FILTER.AccessPointArn#ACCESS_POINT_ARN. Only in this ACCESS_POINT
 MAIN_METRICS DVAR FilterId        #'MAIN_METRICS'. To use on AWS/S3/*
 MAIN_METRICS DVAR BucketName      #'BUCKET'. To use on AWS/S3/*
 
-MANAGED METRICS ==>               #The following 2 METRICs are automatically available without MAIN_METRICS
-                                  #The other AWS/S3/* require a MAIN_METRICS
-AWS/S3/NumberOfObjects            #NUM of OBJECTs, including VERSIONs, delete markers, MPARTs
-AWS/S3/BucketSizeBytes            #NUM of bytes for OBJECT data|metadata, including VERSIONs, delete markets, MPARTs
 
-AWS/S3/AllRequests                #NUM of requests to OBJECT|MUPLOADs (not BUCKETs or other resources)
-AWS/S3/PutRequests                #Same for PUT
-AWS/S3/PostRequests               #Same for POST
-AWS/S3/GetRequests                #Same for GET (except list)
-AWS/S3/HeadRequests               #Same for HEAD
-AWS/S3/ListRequests               #Same for GET (list)
-AWS/S3/DeleteRequests             #Same for DELETE
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:         METRICS SIZE          :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
 
-AWS/S3/4xxErrors|5xxErrors        #NUM of 4**|5** responses
 
-AWS/S3/BytesDownloaded            #NUM of bytes to BUCKETs as input
-AWS/S3/BytesUploaded              #NUM of bytes to BUCKETs as output
+SLENS_METRIC Accounts             #NUM of ACCOUNTs
+
+SLENS_METRIC Buckets              #NUM of BUCKETs
+SLENS_METRIC Active buckets       #Like Buckets, but only with StorageBytes > 0
+
+AWS/S3/NumberOfObjects
+AWS/S3/Storage-Lens/ObjectCount   #NUM of OBJECTs, including VERSIONs, delete markets, MPARTs
+
+AWS/S3/BucketSizeBytes
+AWS/S3/Storage-Lens/StorageBytes  #NUM of bytes for OBJECT data|metadata, including VERSIONs, delete markers, MPARTs
+SLENS_METRIC Average object size  #Average StorageBytes per OBJECT
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:          METRICS I/O          :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+AWS/S3/[Storage-Lens/]
+ BytesDownloaded                  #NUM of bytes to BUCKETs as input
+AWS/S3/[Storage-Lens/]
+ BytesUploaded                    #NUM of bytes to BUCKETs as output
+SLENS_METRIC % retrieval rate     #Ratio of BytesDownloaded/StorageBytes
+SLENS_METRIC % ingest ratio       #Ratio of BytesUploaded/StorageBytes
 
 AWS/S3/FirstByteLatency           #NUM of ms between first byte request received -> last byte sent
 AWS/S3/TotalRequestLatency        #NUM of ms between last byte request received -> first byte sent
@@ -1909,7 +2167,66 @@ AWS/S3/TotalRequestLatency        #NUM of ms between last byte request received 
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:         STORAGE LENS          :==(
+                                            )==:       METRICS REQUESTS        :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+AWS/S3/[Storage-Lens/]AllRequests #NUM of requests to OBJECT|MUPLOADs (not BUCKETs or other resources)
+AWS/S3/[Storage-Lens/]PutRequests #Same for PUT
+AWS/S3/[Storage-Lens/]PostRequests#Same for POST
+AWS/S3/[Storage-Lens/]GetRequests #Same for GET (except list)
+AWS/S3/[Storage-Lens/]HeadRequests#Same for HEAD
+AWS/S3/[Storage-Lens/]ListRequests#Same for GET (list)
+AWS/S3/[Storage-Lens/]
+ DeleteRequests                   #Same for DELETE
+
+AWS/S3/Storage-Lens/
+ 200OKStatusCount                 #Like AllRequests, but only with 200 status code
+AWS/S3/Storage-Lens/
+ 206PartialContentStatusCount     #Same with 206
+AWS/S3/Storage-Lens/
+ 400BadRequestErrorCount          #Same with 400
+AWS/S3/Storage-Lens/
+ 403ForbiddenErrorCount           #Same with 403
+AWS/S3/Storage-Lens/
+ 404NotFoundErrorCount            #Same with 404
+AWS/S3/Storage-Lens/
+ 500InternalServerErrorCount      #Same with 500
+AWS/S3/Storage-Lens/
+ 503ServiceUnavailableErrorCount  #Same with 503
+SLENS_METRIC % 200 OK status      #% of 200OKStatusCount/AllRequests
+SLENS_METRIC
+ % 206 Partial Content status     #Same with 206
+SLENS_METRIC
+ % 400 Bad Request errors         #Same with 400
+SLENS_METRIC
+ % 403 Forbidden errors           #Same with 403
+SLENS_METRIC
+ % 404 Not Found errors           #Same with 404
+SLENS_METRIC
+ % 500 Internal Server Errors     #Same with 500
+SLENS_METRIC
+ % 503 Service Unavailable errors #Same with 503
+
+AWS/S3/[Storage-Lens/]4xxErrors   #Like AllRequests, but only with 4** status code
+AWS/S3/[Storage-Lens/]5xxErrors   #Like AllRequests, but only with 5** responses
+SLENS_METRIC Total errors         #4xxErrors + 5xxErrors
+SLENS_METRIC % error rate         #% of TotalErrors/AllRequests
+
+AWS/S3/Storage-Lens/
+ AllUnsupportedSignatureRequests  #Like AllRequests, but only with AWS signature with an old version
+AWS/S3/Storage-Lens/
+ AllUnsupportedTLSRequests        #Like AllRequests, but only with TLS with an old version
+SLENS_METRIC % all unsupported
+ signature requests               #% of AllUnsupportedSignatureRequests/AllRequests
+SLENS_METRIC
+ % all unsupported TLS requests   #% of AllUnsupportedTLSRequests/AllRequests
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:       STORAGE LENS MAIN       :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
@@ -1949,6 +2266,14 @@ SLENS.Id                          #'SLENS'. Max 64 chars, [[:alnum:].-_]
 SLENS.IsEnabled                   #BOOL
 SLENS.HomeRegion                  #'REGION' of SLENS itself
 
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:   STORAGE LENS FILTER/GROUP   :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
 SLENS.AwsOrg.Arn                  #ORG_ARN. Filter by ORG
                                   #Default SLENS: all
 SLENS.Include|Exclude.Regions     #'REGION'_ARR. Filter by REGION
@@ -1971,11 +2296,70 @@ SLENS_CRITERIA.Delimiter          #Like OBJECTS.Delimiter
 SLENS_CRITERIA
  .MinStorageBytesPercentage       #NUM (1-100). Only subfolder containing at least NUM% of StorageBytes
 
+SLENS DVAR configuration_id       #'SLENS'
+SLENS DVAR metrics_version        #Always '1.0'
+SLENS DVAR aws_region             #'REGION'
+SLENS DVAR record_type            #METRICs are sent once per group ("granularity"):
+                                  #  - ORGANIZATION: DVAR organization_id
+                                  #  - ACCOUNT: DVAR aws_account_number
+                                  #  - BUCKET: DVAR bucket_name
+                                  #     - not if SLENS.AwsOrg set
+SLENS DVAR organization_id        #ORG_ID
+SLENS DVAR aws_account_number     #ACCOUNT_ID
+SLENS DVAR bucket_name            #'BUCKET'
+
 TIME SERIES ==>                   #Can show METRICs as time series in UI console
 COMPARING ==>                     #Can compare grouped METRICs in UI console, as time series, histograms, x|y plots or sorted tables
 RECOMMENDATIONS ==>               #Based on METRICs. Only in UI console
                                   #Includes: suggestions, outliers, big increase|decrease
                                   #Only with ADVANCED_METRICS
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:     STORAGE LENS METRICS      :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+AWS/S3/Storage-Lens/*             #METRICs of SLENS
+SLENS_METRIC                      #Same but only available in UI console, not in CloudWatch nor SLENS_FILE
+                                  #Inferred from other METRICs
+
+CATEGORIES ==>                    #UI console groups METRICs per category:
+                                  #  - summary: StorageBytes, ObjectCount
+                                  #  - cost optimization: VERSIONING (per OBJECT), LIFECYCLE_RULEs, MPARTs
+                                  #  - date protection: VERSIONING (per BUCKET), SSE, OBJECT_LOCK, requests signature|TLS, REPLICATION
+                                  #  - activity: request count, in|out traffic
+                                  #  - detailed status code: response statuses
+                                  #  - access management: BUCKET_OWNERSHIP_RULE
+                                  #  - performance: ACCELERATE
+                                  #  - events: NOTIFICATION
+
+ADVANCED_METRICS                  #Enabled when any of IsEnabled BOOL below is true
+SLENS_ACCOUNT|BUCKET
+ .AdvancedCostOptimizationMetrics
+ .IsEnabled                       #BOOL (def: false). Enables METRICs related to LIFECYCLE_RULEs
+SLENS_ACCOUNT|BUCKET
+ .AdvancedDataProtectionMetrics
+ .IsEnabled                       #BOOL (def: false). Enables METRICs related to REPLICATION_RULEs and to requests signature|TLS
+SLENS_ACCOUNT|BUCKET
+ .ActivityMetrics.IsEnabled       #BOOL (def: false). Enables METRICs related to requests count and in|out traffic
+SLENS_ACCOUNT|BUCKET
+ .DetailedStatusCodesMetrics
+ .IsEnabled                       #BOOL (def: false). Enables METRICs related to response statuses
+
+SLENS_EXPORT                      #BOOL (def: false). Send METRICs to CloudWatch
+ .CloudWatchMetrics.IsEnabled     #Only if ADVANCED_METRICs
+                                  #1 day PERIOD
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:       STORAGE LENS FILE       :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
 
 SLENS.DataExport                  #SLENS_EXPORT. Export METRICs to a SLENS_FILE
 SLENS_EXPORT.S3BucketDestination  #SLENS_DESTINATION
@@ -2023,19 +2407,18 @@ SLENS_LINE.BucketName             #'BUCKET'
 SLENS_LINE.MetricName             #'METRIC'
 SLENS_LINE.MetricValue            #METRIC_DATUM value
 
-PUT /storagelens/SLENS/tagging
-PutStorageLensConfiguration       #Req: Tags TAG_PAIRS
- Tagging()                        #Res: empty
-GET /storagelens/SLENS/tagging
-GetStorageLensConfiguration       #Req: empty
- Tagging()                        #Res: Tags TAG_PAIRS
-DELETE /storagelens/SLENS/tagging
-DeleteStorageLensConfiguration    #Req: empty
- Tagging()                        #Res: empty
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:   STORAGE LENS PERMISSIONS    :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
 
 PERMISSIONS ==>                   #Like INVENTORY except:
                                   #  - Principal.Service 'storage-lens.s3.amazonaws.com'
                                   #  - CONDITION_KEY aws:SourceArn = SLENS_ARN
+
 ORGANIZATION PERMISSIONS ==>      #When ORGs are used:
                                   #  - must use AWSServiceRoleForS3StorageLens SERVICE_LINKED_ROLE (automatically done)
                                   #  - must EnableAWSServiceAccess() for 'storage-lens.s3.amazonaws.com'
@@ -2047,291 +2430,23 @@ AWSServiceRoleForS3StorageLens    #SERVICE_LINKED_ROLE used by SLENS to allow 's
                                   #Created by the first PutStorageLensConfiguration()
 S3StorageLensServiceRolePolicy    #AWS managed POLICY used by AWSServiceRoleForS3StorageLens
 
-AWS/S3/Storage-Lens/*             #METRICs of SLENS
-SLENS_METRIC                      #Same but only available in UI console, not in CloudWatch nor SLENS_FILE
-                                  #Inferred from other METRICs
 
-SLENS_EXPORT                      #BOOL (def: false). Send METRICs to CloudWatch
- .CloudWatchMetrics.IsEnabled     #Only if ADVANCED_METRICs. 1 day PERIOD
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:       STORAGE LENS TAGS       :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
 
-ADVANCED_METRICS                  #Enabled when any of IsEnabled BOOL below is true
-SLENS_ACCOUNT|BUCKET
- .AdvancedCostOptimizationMetrics
- .IsEnabled                       #BOOL (def: false). Enables METRICs related to LIFECYCLE_RULEs
-SLENS_ACCOUNT|BUCKET
- .AdvancedDataProtectionMetrics
- .IsEnabled                       #BOOL (def: false). Enables METRICs related to REPLICATION_RULEs and to requests signature|TLS
-SLENS_ACCOUNT|BUCKET
- .ActivityMetrics.IsEnabled       #BOOL (def: false). Enables METRICs related to requests count and in|out traffic
-SLENS_ACCOUNT|BUCKET
- .DetailedStatusCodesMetrics
- .IsEnabled                       #BOOL (def: false). Enables METRICs related to response statuses
 
-CATEGORIES ==>                    #UI console groups METRICs per category:
-                                  #  - summary: StorageBytes, ObjectCount
-                                  #  - cost optimization: VERSIONING (per OBJECT), LIFECYCLE_RULEs, MPARTs
-                                  #  - date protection: VERSIONING (per BUCKET), SSE, OBJECT_LOCK, requests signature|TLS, REPLICATION
-                                  #  - activity: request count, in|out traffic
-                                  #  - detailed status code: response statuses
-                                  #  - access management: BUCKET_OWNERSHIP_RULE
-                                  #  - performance: ACCELERATE
-                                  #  - events: NOTIFICATION
-
-SLENS DVAR configuration_id       #'SLENS'
-SLENS DVAR metrics_version        #Always '1.0'
-SLENS DVAR aws_region             #'REGION'
-SLENS DVAR organization_id        #ORG_ID
-SLENS DVAR aws_account_number     #ACCOUNT_ID
-SLENS DVAR bucket_name            #'BUCKET'
-SLENS DVAR record_type            #METRICs are sent once per group ("granularity"):
-                                  #  - ORGANIZATION: DVAR organization_id
-                                  #  - ACCOUNT: DVAR aws_account_number
-                                  #  - BUCKET: DVAR bucket_name
-                                  #     - not if SLENS.AwsOrg set
-SLENS DVAR storage_class          #'STORAGE_CLASS'
-
-AWS/S3/Storage-Lens/StorageBytes  #NUM of bytes for OBJECT data|metadata, including VERSIONs, delete markers, MPARTs
-SLENS_METRIC Accounts             #NUM of ACCOUNTs
-SLENS_METRIC Buckets              #NUM of BUCKETs
-SLENS_METRIC Active buckets       #Like Buckets, but only with StorageBytes > 0
-AWS/S3/Storage-Lens/ObjectCount   #NUM of OBJECTs, including VERSIONs, delete markets, MPARTs
-SLENS_METRIC Average object size  #Average StorageBytes per OBJECT
-
-AWS/S3/Storage-Lens/
- CurrentVersionStorageBytes       #Like StorageBytes, but only for current VERSIONs
-SLENS_METRIC
- % current version bytes          #% of CurrentVersionStorageBytes/StorageBytes
-AWS/S3/Storage-Lens/
- CurrentVersionObjectCount        #Like ObjectCount, but only for current VERSIONs
-SLENS_METRIC
- % current version objects        #% of CurrentVersionObjectCount/ObjectCount
-AWS/S3/Storage-Lens/
- NonCurrentVersionStorageBytes    #Like StorageBytes, but only for non-current VERSIONs
-SLENS_METRIC
- % noncurrent version bytes       #% of NonCurrentVersionStorageBytes/StorageBytes
-AWS/S3/Storage-Lens/
- NonCurrentVersionObjectCount     #Like ObjectCount, but only for non-current VERSIONs
-SLENS_METRIC
- % noncurrent version objects     #% of NonCurrentVersionObjectCount/ObjectCount
-AWS/S3/Storage-Lens/
- DeleteMarkerStorageBytes         #Like StorateBytes, but only for delete markers
-SLENS_METRIC % delete marker bytes#% of DeleteMarkerStorageBytes/StorageBytes
-AWS/S3/Storage-Lens/
- DeleteMarkerObjectCount          #Like ObjectCount, but only for delete markers
-SLENS_METRIC
- % delete marker objects          #% of DeleteMarkerObjectCount/ObjectCount
-AWS/S3/Storage-Lens/Incomplete
- MultipartUploadStorageBytes      #Like StorageBytes, but only for MPARTs
-SLENS_METRIC % incomplete
- multipart upload bytes           #% of IncompleteMultipartUploadStorageBytes/StorageBytes
-AWS/S3/Storage-Lens/Incomplete
- MultipartUploadObjectCount       #Like ObjectCount, but only for MPARTs
-SLENS_METRIC % incomplete
- multipart upload objects         #% of IncompleteMultipartUploadObjectCount/ObjectCount
-AWS/S3/Storage-Lens/Incomplete
- MPUStorageBytesOlderThan7Days    #Like IncompleteMultipartUploadStorageBytes, but only for MPARTs older than 7 days
-SLENS_METRIC % incomplete
- multipart upload storage bytes
- greater than 7 days old          #% of IncompleteMPUStorageBytesOlderThan7Days/StorageBytes
-AWS/S3/Storage-Lens/Incomplete
- MPUObjectCountOlderThan7Days     #Like IncompleteMultipartUploadCount, but only for MPARTs older than 7 days
-SLENS_METRIC % incomplete
- multipart upload object count
- greater than 7 days old          #% of IncompleteMPUObjectCountOlderThan7Days/ObjectCount
-AWS/S3/Storage-Lens/
- TotalLifecycleRuleCount          #NUM of LIFECYCLE_RULEs
-SLENS_METRIC Average lifecycle
- rule count per bucket            #Average TotalLifecycleRuleCount per BUCKET
-AWS/S3/Storage-Lens/
- TransitionLifecycleRuleCount     #Like TotalLifecycleRuleCount, but only with Transition set
-SLENS_METRIC Average transition
- lifecycle rules per bucket       #Average TransitionLifecycleRuleCount per BUCKET
-AWS/S3/Storage-Lens/
- ExpirationLifecycleRuleCount     #Like TotalLifecycleRuleCount, but only with Expiration set
-SLENS_METRIC Average expiration
- lifecycle rules per bucket       #Average ExpirationLifecycleRuleCount per BUCKET
-AWS/S3/Storage-Lens/
- NoncurrentVersionTransition
- LifecycleRuleCount               #Like TotalLifecycleRuleCount, but only with NonCurrentVersionTransition set
-SLENS_METRIC Average noncurrent
- version transition lifecycle
- rules per bucket                 #Average NoncurrentVersionTransitionLifecycleRuleCount per BUCKET
-AWS/S3/Storage-Lens/
- NoncurrentVersionExpiration
- LifecycleRuleCount               #Like TotalLifecycleRuleCount, but only with NonCurrentVersionExpiration set and ExpiredObjectDeleteMarker false
-SLENS_METRIC Average noncurrent
- version expiration lifecycle
- rules per bucket                 #Average NoncurrentVersionExpirationLifecycleRuleCount per BUCKET
-AWS/S3/Storage-Lens/ExpiredObject
- DeleteMarkerLifecycleRuleCount   #Like TotalLifecycleRuleCount, but only with NonCurrentVersionExpiration set and ExpiredObjectDeleteMarker true
-SLENS_METRIC Average expired
- object delete marker lifecycle
- rules per bucket                 #Average ExpiredObjectDeleteMarkerLifecycleRuleCount per BUCKET
-AWS/S3/Storage-Lens/Abort
- IncompleteMPULifecycleRuleCount  #Like TotalLifecycleRuleCount, but only with AbortIncompleteMultipartUpload set
-SLENS_METRIC Average abort
- incomplete multipart upload
- lifecycle rules per bucket       #Average AbortIncompleteMPULifecycleRuleCount per BUCKET
-
-AWS/S3/Storage-Lens/
- EncryptedStorageBytes            #Like StorageBytes, but only when using SSE
-SLENS_METRIC % encrypted bytes    #% of EncryptedStorageBytes/StorageBytes
-AWS/S3/Storage-Lens/
- EncryptedObjectCount             #Like ObjectCount, but only when using SSE
-SLENS_METRIC % encrypted objects  #% of EncryptedObjectCount/ObjectCount
-AWS/S3/Storage-Lens/
- UnencryptedStorageBytes          #Like StorageBytes, but not when using SSE
-SLENS_METRIC % unencrypted bytes  #% of UnencryptedStorageBytes/StorageBytes
-AWS/S3/Storage-Lens/
- UnencryptedObjectCount           #Like ObjectCount, but not when using SSE
-SLENS_METRIC % unencrypted objects#% of UnencryptedStorageBytes/ObjectCount
-AWS/S3/Storage-Lens/
- ReplicatedStorageBytesSource     #Like StorageBytes, but only when replicated as source
-SLENS_METRIC
- % replicated bytes source        #% of ReplicatedStorageBytesSource/StorageBytes
-AWS/S3/Storage-Lens/
- ReplicatedObjectCountSource      #Like ObjectCount, but only when replicated as source
-SLENS_METRIC
- % replicated objects source      #% of ReplicatedObjectCountSource/ObjectCount
-AWS/S3/Storage-Lens/
- ReplicatedStorageBytes           #Like StorageBytes, but only when replicated as destination
-SLENS_METRIC
- % replicated bytes destination   #% of ReplicatedStorageBytes/StorageBytes
-AWS/S3/Storage-Lens/
- ReplicatedObjectCount            #Like ObjectCount, but only when replicated as destination
-SLENS_METRIC
- % replicated objects destination #% of ReplicatedObjectCount/ObjectCount
-AWS/S3/Storage-Lens/
- ObjectLockEnabledStorageBytes    #Like StorageBytes, but only when OBJECT_LOCK enabled
-SLENS_METRIC % Object Lock bytes  #% of ObjectLockEnabledStorageBytes/StorageBytes
-AWS/S3/Storage-Lens/
- ObjectLockEnabledObjectCount     #Like ObjectCount, but only when OBJECT_LOCK enabled
-SLENS_METRIC % Object Lock objects#% of ObjectLockEnabledObjectCount/ObjectCount
-AWS/S3/Storage-Lens/
- VersioningEnabledBucketCount     #Like Buckets, but only when VERSIONING enabled
-SLENS_METRIC
- % versioning-enabled buckets     #% of VersioningEnabledBucketCount/Buckets
-AWS/S3/Storage-Lens/
- MFADeleteEnabledBucketCount      #Like Buckets, but only when VERSIONING.MfaDelete true
-SLENS_METRIC
- % MFA delete-enabled buckets     #% of MFADeleteEnabledBucketCount/DistinctNumberOfBuckets
-AWS/S3/Storage-Lens/
- SSEKMSEnabledBucketCount         #Like Buckets, but only when SSE-KMS default
-SLENS_METRIC
- % SSE-KMS enabled buckets        #% of SSEKMSEnabledBucketCount/DistinctNumberOfBuckets
-AWS/S3/Storage-Lens/
- AllUnsupportedSignatureRequests  #Like AllRequests, but only with AWS signature with an old version
-SLENS_METRIC % all unsupported
- signature requests               #% of AllUnsupportedSignatureRequests/AllRequests
-AWS/S3/Storage-Lens/
- AllUnsupportedTLSRequests        #Like AllRequests, but only with TLS with an old version
-SLENS_METRIC
- % all unsupported TLS requests   #% of AllUnsupportedTLSRequests/AllRequests
-AWS/S3/Storage-Lens/
- AllSSEKMSRequests                #Like AllRequests, but only with SSE-KMS
-SLENS_METRIC
- % all SSE-KMS requests           #% of AllSSEKMSRequests/AllRequests
-SLENS_METRIC
- Total replication rule count     #NUM of REPLICATION_RULEs
-SLENS_METRIC Average replication
- rule count per bucket            #Average REPLICATION_RULEs per BUCKET
-AWS/S3/Storage-Lens/
- CrossRegionReplicationRuleCount  #NUM of REPLICATION_RULEs that is cross-REGIONs
-SLENS_METRIC Average Cross-Region
- Replication rules per bucket     #Average CrossRegionReplicationRuleCount per BUCKET
-AWS/S3/Storage-Lens/
- SameRegionReplicationRuleCount   #NUM of REPLICATION_RULEs that is not cross-REGIONs
-SLENS_METRIC Average Same-Region
- Replication rules per bucket     #Average SameRegionReplicationRuleCount per BUCKET
-AWS/S3/Storage-Lens/
- SameAccountReplicationRuleCount  #NUM of REPLICATION_RULEs that is not cross-ACCOUNT
-SLENS_METRIC Average same-account
- replication rules per bucket     #Average SameAccountReplicationRuleCount per BUCKET
-AWS/S3/Storage-Lens/
- CrossAccountReplicationRuleCount #NUM of REPLICATION_RULEs that is cross-ACCOUNT
-SLENS_METRIC Average cross-account
- replication rules per bucket     #% of CrossAccountReplicationRuleCount per BUCKET
-AWS/S3/Storage-Lens/Invalid
- DestinationReplicationRuleCount  #NUM of REPLICATION_RULEs with invalid destination
-SLENS_METRIC Average invalid
- destination replication
- rules per bucket                 #Average InvalidReplicationRuleCount per BUCKET
-
-AWS/S3/Storage-Lens/
- ObjectOwnershipBucketOwner
- EnforcedBucketCount              #Like Buckets, but only with BucketOwnerEnforced
-SLENS_METRIC % Object Ownership
- bucket owner enforced buckets    #% of ObjectOwnershipBucketOwnerEnforcedBucketCount/Buckets
-AWS/S3/Storage-Lens/
- ObjectOwnershipBucketOwner
- PreferredBucketCount             #Like Buckets, but only with BucketOwnerPreferred
-SLENS_METRIC % Object Ownership
- bucket owner preferred buckets   #% of ObjectOwnershipBucketOwnerPreferredBucketCount/Buckets
-AWS/S3/Storage-Lens/
- ObjectOwnershipObjectWriter
- BucketCount                      #Like Buckets, but only with ObjectWriter
-SLENS_METRIC % Object Ownership
- object writer buckets            #% of ObjectOwnershipObjectWriterBucketCount/Buckets
-
-AWS/S3/Storage-Lens/Transfer
- AccelerationEnabledBucketCount   #Like Buckets, but only with ACCELERATE enabled
-SLENS_METRIC % Transfer
- Acceleration enabled buckets     #% of TransferAccelerationEnabledBucketCount/Buckets
-
-AWS/S3/Storage-Lens/Event
- NotificationEnabledBucketCount   #Like Buckets, but only with NOTIFICATION enabled
-SLENS_METRIC % Event Notification
- enabled buckets                  #% of EventNotificationEnabledBucketCount/Buckets
-
-AWS/S3/Storage-Lens/AllRequests
-AWS/S3/Storage-Lens/GetRequests
-AWS/S3/Storage-Lens/PutRequests
-AWS/S3/Storage-Lens/HeadRequests
-AWS/S3/Storage-Lens/DeleteRequests
-AWS/S3/Storage-Lens/ListRequests
-AWS/S3/Storage-Lens/PostRequests  #Like AWS/S3/*
-AWS/S3/Storage-Lens/SelectRequests
-AWS/S3/Storage-Lens/
- SelectScannedBytes
-AWS/S3/Storage-Lens/
- SelectReturnedBytes              #Like AWS/S3/*
-AWS/S3/Storage-Lens/
- BytesDownloaded
-AWS/S3/Storage-Lens/BytesUploaded #Like AWS/S3/*
-SLENS_METRIC % retrieval rate     #Ratio of BytesDownloaded/StorageBytes
-SLENS_METRIC % ingest ratio       #Ratio of BytesUploaded/StorageBytes
-AWS/S3/Storage-Lens/4xxErrors
-AWS/S3/Storage-Lens/5xxErrors     #Like AWS/S3/*
-SLENS_METRIC Total errors         #4xxErrors + 5xxErrors
-SLENS_METRIC % error rate         #% of TotalErrors/AllRequests
-
-AWS/S3/Storage-Lens/
- 200OKStatusCount                 #Like AllRequests, but only with 200 status code
-SLENS_METRIC % 200 OK status      #% of 200OKStatusCount/AllRequests
-AWS/S3/Storage-Lens/
- 206PartialContentStatusCount     #Like AllRequests, but only with 206 status code
-SLENS_METRIC
- % 206 Partial Content status     #% of 206PartialContentStatusCount/AllRequests
-AWS/S3/Storage-Lens/
- 400BadRequestErrorCount          #Like AllRequests, but only with 400 status code
-SLENS_METRIC
- % 400 Bad Request errors         #% of 400BadRequestErrorCount/AllRequests
-AWS/S3/Storage-Lens/
- 403ForbiddenErrorCount           #Like AllRequests, but only with 403 status code
-SLENS_METRIC
- % 403 Forbidden errors           #% of 403ForbiddenErrorCount/AllRequests
-AWS/S3/Storage-Lens/
- 404NotFoundErrorCount            #Like AllRequests, but only with 404 status code
-SLENS_METRIC
- % 404 Not Found errors           #% of 404NotFoundErrorCount/AllRequests
-AWS/S3/Storage-Lens/
- 500InternalServerErrorCount      #Like AllRequests, but only with 500 status code
-SLENS_METRIC
- % 500 Internal Server Errors     #% of 500InternalServerErrorCount/AllRequests
-AWS/S3/Storage-Lens/
- 503ServiceUnavailableErrorCount  #Like AllRequests, but only with 503 status code
-SLENS_METRIC
- % 503 Service Unavailable errors #% of 503ServiceUnavailableErrorCount/AllRequests
+PUT /storagelens/SLENS/tagging
+PutStorageLensConfiguration       #Req: Tags TAG_PAIRS
+ Tagging()                        #Res: empty
+GET /storagelens/SLENS/tagging
+GetStorageLensConfiguration       #Req: empty
+ Tagging()                        #Res: Tags TAG_PAIRS
+DELETE /storagelens/SLENS/tagging
+DeleteStorageLensConfiguration    #Req: empty
+ Tagging()                        #Res: empty
 
 
                                              /=+===============================+=\
@@ -2438,6 +2553,11 @@ GetBucketNotification()           #Returns NOTIF_OBJ
 GetBucketNotificationConfiguration()???
 PutBucketNotificationConfiguration()???
 
+AWS/S3/Storage-Lens/Event
+ NotificationEnabledBucketCount   #Like Buckets, but only with NOTIFICATION enabled
+SLENS_METRIC % Event Notification
+ enabled buckets                  #% of EventNotificationEnabledBucketCount/Buckets
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -2509,22 +2629,6 @@ The "access point" part in https://docs.aws.amazon.com/AmazonS3/latest/userguide
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:            SELECT             :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-SelectObjectContent()
-
-https://docs.aws.amazon.com/AmazonS3/latest/API/RESTSelectObjectAppendix.html
-
-AWS/S3/SelectRequests             #NUM of SELECT requests
-AWS/S3/SelectBytesScanned         #NUM of bytes as SELECT input
-AWS/S3/SelectBytesReturned        #NUM of bytes as SELECT output
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
                                             )==:             BATCH             :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -2556,6 +2660,49 @@ GetBucketReplication()
 DeleteBucketReplication()
 
 x-amz-replication-status: COMPLETE|PENDING|FAILED|REPLICA [S]
+
+AWS/S3/Storage-Lens/
+ ReplicatedStorageBytesSource     #Like StorageBytes, but only when replicated as source
+AWS/S3/Storage-Lens/
+ ReplicatedStorageBytes           #Like StorageBytes, but only when replicated as destination
+AWS/S3/Storage-Lens/
+ ReplicatedObjectCountSource      #Like ObjectCount, but only when replicated as source
+AWS/S3/Storage-Lens/
+ ReplicatedObjectCount            #Like ObjectCount, but only when replicated as destination
+SLENS_METRIC
+ % replicated bytes source        #% of ReplicatedStorageBytesSource/StorageBytes
+SLENS_METRIC
+ % replicated bytes destination   #% of ReplicatedStorageBytes/StorageBytes
+SLENS_METRIC
+ % replicated objects source      #% of ReplicatedObjectCountSource/ObjectCount
+SLENS_METRIC
+ % replicated objects destination #% of ReplicatedObjectCount/ObjectCount
+
+SLENS_METRIC
+ Total replication rule count     #NUM of REPLICATION_RULEs
+AWS/S3/Storage-Lens/
+ CrossRegionReplicationRuleCount  #NUM of REPLICATION_RULEs that is cross-REGIONs
+AWS/S3/Storage-Lens/
+ SameRegionReplicationRuleCount   #NUM of REPLICATION_RULEs that is not cross-REGIONs
+AWS/S3/Storage-Lens/
+ SameAccountReplicationRuleCount  #NUM of REPLICATION_RULEs that is not cross-ACCOUNT
+AWS/S3/Storage-Lens/
+ CrossAccountReplicationRuleCount #NUM of REPLICATION_RULEs that is cross-ACCOUNT
+AWS/S3/Storage-Lens/Invalid
+ DestinationReplicationRuleCount  #NUM of REPLICATION_RULEs with invalid destination
+SLENS_METRIC Average replication
+ rule count per bucket            #Average REPLICATION_RULEs per BUCKET
+SLENS_METRIC Average Cross-Region
+ Replication rules per bucket     #Average CrossRegionReplicationRuleCount per BUCKET
+SLENS_METRIC Average Same-Region
+ Replication rules per bucket     #Average SameRegionReplicationRuleCount per BUCKET
+SLENS_METRIC Average same-account
+ replication rules per bucket     #Average SameAccountReplicationRuleCount per BUCKET
+SLENS_METRIC Average cross-account
+ replication rules per bucket     #% of CrossAccountReplicationRuleCount per BUCKET
+SLENS_METRIC Average invalid
+ destination replication
+ rules per bucket                 #Average InvalidReplicationRuleCount per BUCKET
 
 https://docs.aws.amazon.com/AmazonS3/latest/userguide/metrics-dimensions.html#s3-cloudwatch-replication-metrics
   - see also https://docs.aws.amazon.com/AmazonS3/latest/userguide/cloudwatch-monitoring.html
