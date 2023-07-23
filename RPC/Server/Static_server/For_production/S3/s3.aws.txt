@@ -6,6 +6,7 @@
 
 
 TODO ==>
+  - https://aws.amazon.com/s3/faqs/
   - CLI:
      - aws s3|s3api|s3control ...
      - aws help topics s3-config
@@ -19,6 +20,7 @@ TODO ==>
      - https://www.pulumi.com/registry/packages/aws-static-website/
   - Glacier:
      - add comments on Glacier to describe difference between using Glacier directly, or through S3
+  - check https://aws.amazon.com/new for CloudWatch, Lambda, IAM, S3, etc.
 
 VERSION ==>                       #2023-06-13
 SVERSION                          #v20180820
@@ -305,10 +307,12 @@ GetObject()                       #  - READ_OBJECT
                                   #    x-amz-storage-class [S], x-amz-replication-status [S], x-amz-mp-parts-count [S]
                                   #    x-amz-object-lock* [S]
 HEAD /BUCKET/OBJECT               #Req: like GetObject()
-HeadObject()                      #Res: like GetObject()
+HeadObject()                      #  - no READ_OBJECT.response-*
+                                  #Res: like GetObject()
 GET /BUCKET/OBJECT?attributes     #Req:
 GetObjectAttributes()             #  - like GetObject()
                                   #     - only versionId, x-amz-server-side-encryption-customer-* [C]
+                                  #  - x-amz-object-attributes [C]
                                   #  - same pagination as ListParts(), but as x-amz-max-parts [C], x-amz-part-number-marker [C]
                                   #Res: OBJECT
                                   #  - only ETag, StorageClass, Size -> ObjectSize, ChecksumALGO -> Checksum.ChecksumALGO
@@ -396,6 +400,8 @@ COMMON_PREFIX.Prefix              #Prefix + 'OBJECT' until next Delimiter (inclu
 
 OBJECTS.Contents                  #OBJECT_ARR
                                   #  - no Bucket, Location, ChecksumALGO, VersionId, IsLatest
+x-amz-object-attributes:
+ VAR,... [C]
 x-amz-optional-object-attributes:
  VAR,... [C]                      #Only return OBJECT.VAR
 
@@ -409,17 +415,17 @@ x-amz-optional-object-attributes:
 
 PUT /BUCKET/OBJECT                #Req:
 PutObject()                       #  - RAW_OBJECT
-                                  #  - Expect [C], Content-Type [C], Content-Encoding [C], Content-Language [C], Expires [C],
+                                  #  - Expect [C], Content-Type [C], Content-Encoding [C], Content-Language [C], Expires [C], Content-Length [C],
                                   #    Cache-Control [C], Content-Disposition [C], x-amz-meta-* [C], x-amz-storage-class [C],
                                   #    x-amz-acl [C], x-amz-grant-PERMISSION [C], x-amz-website-redirect-location [C],
                                   #    x-amz-tagging [C], x-amz-server-side-encryption-* [C], x-amz-sdk-checksum-algorithm [C],
-                                  #    x-amz-checksum-ALGO [C], Content-MD5 [C]
+                                  #    x-amz-checksum-ALGO [C], Content-MD5 [C], x-amz-object-lock* [C]
                                   #  - max 8KB request headers
                                   #Res:
                                   #  - ETag [S], x-amz-version-id [S], x-amz-expiration [S], x-amz-server-side-encryption-* [S],
                                   #    x-amz-checksum-ALGO [S]
 
-Expect: "100-continue" [C]        #See HTTP doc
+Expect: 100-continue [C]          #See HTTP doc
 
 
                                              /=+===============================+=\
@@ -523,22 +529,27 @@ OBJ.url                           #'URL'
 
 
 POST /BUCKET/OBJECT?uploads       #Req: same headers as PutObject()
-CreateMultipartUpload()           #  - no x-amz-checksum-ALGO [C]
+CreateMultipartUpload()           #  - no x-amz-checksum-ALGO [C], Content-MD5 [C], Content-Length [C]
+                                  #  - x-amz-sdk-checksum-algorithm [C] -> x-amz-checksum-algorithm [C]
                                   #Res:
                                   #  - MUPLOAD
-                                  #     - no Parts, Initiated, Initiator, Owner, StorageClass, ChecksumAlgorithm
+                                  #     - only Bucket, Key, UploadId
                                   #  - same headers as PutObject()
-                                  #     - no x-amz-checksum-ALGO [S]
+                                  #     - no x-amz-version-id [S]
+                                  #     - x-amz-checksum-ALGO [S] -> x-amz-checksum-algorithm [S]
+                                  #  - x-amz-abort* [S]
 PUT /BUCKET/OBJECT                #Req:
 UploadPart()                      #  - RAW_MPART
                                   #  - Expect [C], x-amz-server-side-encryption-customer-* [C],
-                                  #    x-amz-sdk-checksum-algorithm [C], x-amz-checksum-ALGO [C], Content-MD5 [C]
+                                  #    x-amz-sdk-checksum-algorithm [C], x-amz-checksum-ALGO [C], Content-MD5 [C], Content-Length [C]
                                   #  - query variables: MUPLOAD.uploadId, MPART.partNumber
                                   #Res: ETag [S], x-amz-server-side-encryption-* [S], x-amz-checksum-ALGO [S]
 GET /BUCKET/OBJECT                #Req: MUPLOAD
 ListParts()                       #  - only uploadId, x-amz-server-side-encryption-customer-* [C]
-                                  #Res: MUPLOAD
-                                  #  - no Initiated
+                                  #Res:
+                                  #  - MUPLOAD
+                                  #     - no Initiated
+                                  #  - x-amz-abort* [S]
                                   #Paginates MUPLOAD.Parts with PartNumberMarker, MaxParts
 GET /BUCKET                       #Req: MUPLOADS
 ListMultipartUploads()            #  - CamelCase -> dash-case
@@ -590,27 +601,28 @@ MPART.Size                        #NUM
 
 PUT /BUCKET/OBJECT                #Req:
 CopyObject()                      #  - like PutObject()
-                                  #     - no x-amz-checksum-ALGO [C], Content-MD5 [C]
+                                  #     - no x-amz-checksum-ALGO [C], Content-MD5 [C], Content-Length [C]
                                   #     - x-amz-sdk-checksum-algorithm [C] -> x-amz-checksum-algorithm [C]
                                   #  - x-amz-copy-source* [C], x-amz-metadata-directive [C], x-amz-tagging-directive [C]
                                   #  - query variables: OBJECT.versionId (source)
                                   #Res:
                                   #  - OBJECT
                                   #     - only ETag, LastModified, ChecksumALGO
-                                  #  - x-amz-version-id [S], x-amz-expiration [S], x-amz-server-side-encryption-* [S]
+                                  #  - x-amz-version-id [S], x-amz-expiration [S], x-amz-server-side-encryption-* [S],
+                                  #    x-amz-copy-source* [S]
 PUT /BUCKET/OBJECT                #Req:
 UploadPartCopy()                  #  - like uploadPart()
-                                  #     - no x-amz-checksum-ALGO [C], x-amz-sdk-checksum-algorithm [C], Content-MD5 [C]
+                                  #     - no x-amz-checksum-ALGO [C], x-amz-sdk-checksum-algorithm [C], Content-MD5 [C], Content-Length [C]
                                   #  - x-amz-copy-source* [C]
                                   #  - query variables: OBJECT.versionId (source)
                                   #Res: like copyObject()
+                                  #  - no x-amz-expiration [S], x-version-id [S]
 
 x-amz-copy-source:                #Copy OBJECT
  /BUCKET/OBJECT [C]               #New OBJECT's ACL is 'private'
 
 x-amz-metadata-directive:         #If 'COPY' (def):
- COPY|REPLACE [C]                 #  - only allows setting request headers related to server-side encryption,
-                                  #    storage class and x-amz-website-redirect-location [C]
+ COPY|REPLACE [C]                 #  - only allows setting request headers related to SSE, storage class and x-amz-website-redirect-location [C]
                                   #  - those headers are erased if not specified
 x-amz-tagging-directive: STR [C]  #Same for TAGs
 
@@ -630,11 +642,15 @@ x-amz-copy-source-HEADER: STR [S] #Reflects same request header [C]
                                              \=+===============================+=/
 
 
-DELETE /BUCKET/OBJECT             #Req: OBJECT, x-amz-mfa [C]
-DeleteObject()                    #  - only versionId
+DELETE /BUCKET/OBJECT             #Req:
+DeleteObject()                    #  - OBJECT
+                                  #     - only versionId
+                                  #  - x-amz-mfa [C], x-amz-bypass-governance-retention [C]
                                   #Res: x-amz-version-id [S], x-amz-delete-marker [S]
-POST /BUCKET?delete               #Req: Delete DELETE_OBJECTS, x-amz-mfa [C]
-DeleteObjects()                   #  - no Errors, DeleteMarker*
+POST /BUCKET?delete               #Req:
+DeleteObjects()                   #  - DELETE_OBJECTS
+                                  #     - no Errors, DeleteMarker*
+                                  #  - x-amz-mfa [C], x-amz-bypass-governance-retention [C], x-amz-sdk-checksum-algorithm [C]
                                   #Res: DELETE_OBJECTS
                                   #  - no Quiet
                                   #  - Objects -> Deleted
@@ -771,13 +787,13 @@ x-amz-missing-meta: NUM [S]       #NUM of x-amz-meta-* with invalid keys
                                              \=+===============================+=/
 
 
-PUT /BUCKET/OBJECT?tagging        #Req: Tags TAG_PAIRS
-PutObjectTagging()                #Res: empty
+PUT /BUCKET/OBJECT?tagging        #Req: Tags TAG_PAIRS, x-amz-sdk-checksum-algorithm [C], Content-MD5 [C]
+PutObjectTagging()                #Res: x-amz-version-id [S]
                                   #Max 10 TAGs per OBJECT
 GET /BUCKET/OBJECT?tagging        #Req: empty
-GetObjectTagging()                #Res: Tags TAG_PAIRS
+GetObjectTagging()                #Res: Tags TAG_PAIRS, x-amz-version-id [S]
 DELETE /BUCKET/OBJECT?tagging     #Req: empty
-DeleteObjectTagging()             #Res: empty
+DeleteObjectTagging()             #Res: x-amz-version-id [S]
 
 x-amz-tagging: TAG=VAL&... [C]    #
 x-amz-tagging-count: NUM [S]      #
@@ -809,13 +825,14 @@ BUCKET.LocationConstraint         #Can differ from REGION of ACTION
                                              \=+===============================+=/
 
 
-PUT /BUCKET?versioning            #Req: VERSIONING
+PUT /BUCKET?versioning            #Req: VERSIONING, x-amz-sdk-checksum-algorithm [C], x-amz-mfa [C]
 PutBucketVersioning()             #Res: empty
 GET /BUCKET?versioning            #Req: empty
 GetBucketVersioning()             #Res: VERSIONING
 GET /BUCKET?versions              #Req: OBJECT_VERSIONS
 ListObjectVersions()              #  - CamelCase -> dash-case
                                   #  - only EncodingType, Prefix, Delimiter
+                                  #  - x-amz-optional-object-attributes [C]
                                   #Res: OBJECT_VERSIONS
                                   #  - Versions: no Bucket, Location, ChecksumALGO
                                   #Paginates OBJECTS.Versions with KeyMarker + VersionIdMarker, MaxKeys
@@ -921,7 +938,7 @@ POST /BUCKET/OBJECT?restore       #Req:
 RestoreObject()                   #  - RESTORE
                                   #  - x-amz-sdk-checksum-algorithm [C]
                                   #  - query variables: OBJECT.VersionId
-                                  #Res: empty
+                                  #Res: x-amz-restore-output-path [S]
                                   #Max 1e3/sec
 
 RESTORE                           #With StorageClass 'GLACIER|DEEP_ARCHIVE':
@@ -1045,7 +1062,7 @@ INTELLIGENT_TIERING.Filter        #FILTER (no ObjectSize*). Only apply INTELLIGE
                                              \=+===============================+=/
 
 
-PUT /BUCKET?lifecycle             #Req: LIFECYCLE
+PUT /BUCKET?lifecycle             #Req: LIFECYCLE, x-amz-sdk-checksum-algorithm [C]
 PutBucketLifecycleConfiguration() #Res: empty
 GET /BUCKET?lifecycle             #Req: empty
 GetBucketLifecycleConfiguration() #Res: LIFECYCLE
@@ -1079,6 +1096,8 @@ x-amz-expiration:
 RULE
  .AbortIncompleteMultipartUpload
  .DaysAfterInitiation             #NUM. Delete MUPLOADs if not completed within NUM days
+x-amz-abort-rule-id: RULE_MID [S]
+x-amz-abort-date: DATE [S]        #When aborted
 
 RULE.NonCurrentVersionTransitions #NTRANSITION_ARR. Same but applies to all VERSIONs except current one
                                   #As opposed to RULE.Transitions, which only applies to current VERSION
@@ -1103,7 +1122,7 @@ BUCKETS_LIST.Owner                #PRINCIPAL. BUCKET_OWNER, ACCOUNT that called 
 x-amz-expected-bucket-owner:      #403 if BUCKET_OWNER is different
  ACCOUNT_ID [C]                   #On all ACTIONs except: CreateBucket(), ListBuckets(), WriteGetObjectResponse()
 
-PUT /BUCKET?ownershipControls     #Req: BUCKET_OWNERSHIP
+PUT /BUCKET?ownershipControls     #Req: BUCKET_OWNERSHIP, Content-MD5 [C]
 PutBucketOwnershipControls()      #Res: empty
 GET /BUCKET?ownershipControls     #Req: empty
 GetBucketOwnershipControls()      #Res: BUCKET_OWNERSHIP
@@ -1145,12 +1164,14 @@ GRANTEE.URI                       #One of:
                                              \=+===============================+=/
 
 
-PUT /BUCKET?policy                #Req: POLICY_DOC, x-amz-confirm-remove-self-bucket-access [C]
+PUT /BUCKET?policy                #Req:
+                                  #  - POLICY_DOC
+                                  #  - x-amz-confirm-remove-self-bucket-access [C], x-amz-sdk-checksum-algorithm [C], Content-MD5 [C]
 PutBucketPolicy()                 #Res: empty
-DELETE /BUCKET?policy             #Req: empty
-DeleteBucketPolicy()              #Res: empty
 GET /BUCKET?policy                #Req: empty
 GetBucketPolicy()                 #Res: POLICY_DOC
+DELETE /BUCKET?policy             #Req: empty
+DeleteBucketPolicy()              #Res: empty
 
 POLICY_DOC                        #IAM POLICY_DOC, as OBJ. "Bucket policy"
                                   #Resource-based POLICY, with resource-level permissions
@@ -1599,17 +1620,18 @@ GetObjectLockConfiguration()
 
 x-amz-bucket-object-lock-enabled: BOOL [C]
   - see description in https://docs.aws.amazon.com/AmazonS3/latest/API/API_CreateBucket.html
-x-amz-object-lock-mode: GOVERNANCE|COMPLIANCE [S]
+x-amz-object-lock-mode: GOVERNANCE|COMPLIANCE [C|S]
+x-amz-bypass-governance-retention [C]
 
 PutObjectRetention()
 GetObjectRetention()
 
-x-amz-object-lock-retain-until-date: DATE [S]
+x-amz-object-lock-retain-until-date: DATE [C|S]
 
 PutObjectLegalHold()
 GetObjectLegalHold()
 
-x-amz-object-lock-legal-hold: ON|OFF [S]
+x-amz-object-lock-legal-hold: ON|OFF [C|S]
 
 
                                              /=+===============================+=\
