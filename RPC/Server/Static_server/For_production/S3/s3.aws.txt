@@ -6,7 +6,6 @@
 
 
 TODO ==>
-  - `select` SQL syntax
   - https://docs.aws.amazon.com/AmazonS3/latest/userguide/inventory-configure-bops.html
   - https://aws.amazon.com/s3/faqs/
   - CLI:
@@ -20,8 +19,6 @@ TODO ==>
      - @aws-sdk/lib-storage
   - Pulumi:
      - https://www.pulumi.com/registry/packages/aws-static-website/
-  - Glacier:
-     - add comments on Glacier to describe difference between using Glacier directly, or through S3
   - check https://aws.amazon.com/new for CloudWatch, Lambda, IAM, S3, etc.
 
 VERSION ==>                       #2023-06-13
@@ -149,12 +146,12 @@ SELECT ==>                        #Input: 1$/500GB
                                   #  - GLACIER + Bulk: 4x more expensive
                                   #  - DEEP_ARCHIVE: free
 
+OTHERS ==>                        #OBJECT TAGs: 1$/1e6 TAGs
                                   #ACCELERATE: 1$/25GB
                                   #  - for both in|out
                                   #  - regardless of whether from|to Internet|AWS
                                   #  - 2x more expensive for Internet -> S3 if client's REGION is not US|Europe|Japan
                                   #CAPACITY: 100$/month
-                                  #OBJECT TAGs: 1$/1e6 TAGs
                                   #INTELLIGENT_TIERING: 1$/4e5 OBJECTs (with >128KB)
                                   #INVENTORY: 1$/4e8 OBJECTs
                                   #LOGGING: free
@@ -377,212 +374,6 @@ TORRENT                           #OBJECT as Content-Type: application/x-bittorr
                                   #Max OBJECT content 5GB instead of 5TB
 Content-Disposition: attachment;
  filename=OBJECT.torrent; [S]     #
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:          SELECT MAIN          :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-POST /BUCKET/OBJECT
- ?select&select-type=2            #Req: SELECT_REQ, x-amz-server-side-encryption-customer-* [C]
-SelectObjectContent()             #Res: SELECT_RES
-
-SELECT_REQ                        #Reads OBJECT but transforms it using SQL
-                                  #OBJECT must be CSV, ndjson, or Parquet
-                                  #"Record": single CSV|JSON|Parquet line (max 1MB)
-
-SELECT_REQ.ScanRange.Start|End    #NUM (in bytes) to only use part of OBJECT
-                                  #If falls in the middle of a record, process whole record
-                                  #Not with SELECT_JSON.Type 'DOCUMENT' nor SELECT_CSV.AllowQuotedRecordDelimiter true
-
-AWS/S3/[Storage-Lens/]
- SelectRequests                   #NUM of SELECT requests
-AWS/S3/[Storage-Lens/]
- SelectBytesScanned               #NUM. SELECT_STATS.BytesScanned
-AWS/S3/[Storage-Lens/]
- SelectBytesReturned              #NUM. SELECT_STATS.BytesReturned
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:        SELECT FORMATS         :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-SELECT_REQ.InputSerialization     #SELECT_INPUT. Input format
-                                  #No CSV.QuoteFields
-SELECT_REQ.OutputSerialization    #SELECT_OUTPUT. Output format
-                                  #No JSON.Type, CSV.AllowQuotedRecordDelimiter|FileHeaderInfo|Comments
-
-SELECT_INPUT.CompressionType      #'NONE' (def), 'GZIP', 'BZIP2'
-                                  #Not with Parquet
-
-SELECT_INPUT|OUTPUT.JSON          #SELECT_JSON
-SELECT_JSON.Type                  #Either:
-                                  #  - 'DOCUMENT': JSON OBJ_ARR
-                                  #  - 'LINES': ndjson
-
-SELECT_INPUT|OUTPUT.CSV           #SELECT_CSV
-SELECT_CSV.FileHeaderInfo         #Whether first line is header:
-                                  #  - 'USE': yes, and can use as "COL" in SQL
-                                  #  - 'IGNORE': yes, but cannot use as "COL" in SQL, only "_NUM"
-                                  #  - 'NONE': no
-SELECT_CSV|JSON.RecordDelimiter   #'CHAR' (def: \n)
-SELECT_CSV
- .AllowQuotedRecordDelimiter      #BOOL (def: false). Allow quoting RecordDelimiter. Slower
-SELECT_CSV.FieldDelimiter         #'CHAR' (def: ,)
-SELECT_CSV.QuoteCharacter         #'CHAR' (def: ") for quoting
-SELECT_CSV.QuoteEscapeCharacter   #'CHAR' (def: ") for escaping QuoteCharacter
-SELECT_CSV.QuoteFields            #Whether to quote, among 'ASNEEDED' (def) or 'ALWAYS'
-SELECT_CSV.Comments               #'CHAR' (def: #) used to comment a line
-
-SELECT_INPUT.Parquet              #OBJ. Use Apache Parquet
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:        SELECT RESPONSE        :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-SELECT_RES                        #Result of SELECT_REQ
-                                  #Is a stream of SELECT_MESSAGE, using Transfer-Encoding: chunked [S]
-                                  #In a nutshell, it mostly just returns CSV|JSON|Parquet data, but in multiple chunks
-
-SELECT_MESSAGE                    #Structure:
-                                  #  - prelude:
-                                  #     - 4 bytes: message size
-                                  #     - 4 bytes: message headers size
-                                  #  - 4 bytes: CRC of prelude
-                                  #  - data:
-                                  #     - 0-n SELECT_HEADER
-                                  #     - payload
-                                  #  - 4 bytes: CRC of message, except this field itself
-
-SELECT_HEADER                     #Structure:
-                                  #  - 1 byte: name length
-                                  #  - name ':NAME'
-                                  #  - 1 byte: type, always 7
-                                  #  - 2 bytes: value length
-                                  #  - value
-SELECT_HEADER message-type 'event'#Always set except when message-type 'error'
-SELECT_HEADER content-type        #'MIME' of payload (not set if none).
-                                  #'application/octet-stream' for Records, 'text/xml' for Progress|Stats
-
-SELECT_HEADER event-type 'Records'#SELECT_MESSAGE with SELECT actual response
-                                  #Payload is 'BASE64' of CSV|JSON|Parquet 1-n records
-
-SELECT_HEADER event-type 'Cont'   #SELECT_MESSAGE with ping. No payload
-SELECT_HEADER event-type 'End'    #SELECT_MESSAGE at the end. No payload
-
-SELECT_HEADER message-type 'error'#SELECT_MESSAGE when there is an error. No payload
-SELECT_HEADER error-code          #'CODE'
-SELECT_HEADER error-message       #STR
-
-SELECT_REQ.RequestProgress.Enabled#BOOL (def: false). Enables event-type 'Progress'
-SELECT_HEADER
- event-type 'Progress'            #SELECT_MESSAGE with SELECT_RES_STATS payload, sent progressively
-SELECT_HEADER event-type 'Stats'  #SELECT_MESSAGE with SELECT_RES_STATS payload, sent at the end
-SELECT_RES_STATS.BytesScanned     #NUM of bytes as input before decompression
-SELECT_RES_STATS.BytesProcessed   #NUM of bytes as input after decompression
-SELECT_RES_STATS.BytesReturned    #NUM of bytes as output
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:          SELECT SQL           :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-SELECT_REQ.ExpressionType         #Always 'SQL'
-SELECT_REQ.Expression             #STR. SQL SELECT expression
-                                  #Max 1.3e5 chars
-
-SQL ==>                           #See Postgres for the syntax of most of what follows
-WHITESPACES ==>                   #Ignored, but cannot use newlines
-
-select VAL|* [as COL_ALIAS],...
- from S3Object                    #Operates record-wise
-select ... from S3Object.VARR     #Only if JSON
-                                  #OBJ: .VAR, ['VAR'], .*
-                                  #ARR: [NUM], [*]
-                                  #* creates one ROW per item
-                                  #Missing|empty VARs are silently skipped, including by SQL FUNCs
-                                  #Since JSON is always an ARR, always start with [*]
-select ... from S3Object          #Def ROW_ALIAS:
- [as] ROW_ALIAS                   #  - last VAR in VARR
-                                  #  - if *: _1
-select ... where BOOL_REXPR       #
-select ... limit NUM              #
-
-[ROW_ALIAS.]VARR                  #JSON: .VAR or [NUM]
-                                  #CSV: .VAR (using header) or ._NUM (1-based index)
-
-"NAME"                            #Make VARR case-sensitive. Also needed if reserved keyword
-
-VAL is [not] missing              #Missing|empty VARR
-VAL is [not] null                 #
-coalesce(VAL,...)->VAL            #
-nullif(VAL, VAL2)->VAL|null       #
-
-VAL = <> != VAL2                  #
-VAL in (VAL2,...)                 #
-case [VAL]
-when VAL2 then VAL3
-...
-[else VAL4]
-end                               #
-
-VAL < <= > >= VAL2                #
-VAL [not] between VAL2 and VAL3   #
-
-cast(VAL as TYPE)                 #Explicit type casting
-                                  #There is no implicit type casting
-
-bool                              #TYPE. true|false
-BOOL and BOOL2                    #
-BOOL or BOOL2                     #
-not BOOL                          #
-
-int[eger]                         #TYPE. 8 bytes, signed
-float                             #TYPE. 8 bytes
-decimal|numeric                   #TYPE. Fixed precision float. Max 38 significant digits, max 31 integer digits
-NUM + - * / NUM2                  #
--NUM                              #
-NUM % NUM2                        #
-
-string[(NUM)]                     #TYPE. Def NUM: 1. Max NUM: 2e9
-char[acter]_length(STR)->NUM      #
-lower|upper(STR)->STR             #
-trim([leading|trailing|both
- ['CHAR...'] from] STR)->STR      #
-substring
- (STR from NUM [for NUM2])->STR2  #NUM can be negative if NUM2 specified
-STR like 'GLOB' [escape 'CHAR']   #
-
-timestamp                         #TYPE. 'YYYY-MM-DDT[HH:MM[:SS[.SSS[SSS]]]][Z]'
-PERIOD                            #year, month, day, hour, minute, second
-                                  #Only with extract(): timezone_hour|minute
-to_timestamp(STR)->TIMESTAMP      #
-to_string
- (TIMESTAMP, 'FORMAT')->STR       #'FORMAT': see online doc
-extract
- (PERIOD from TIMESTAMP)->NUM     #
-date_add|date_diff
- (PERIOD, NUM, TIMESTAMP)
- ->TIMESTAMP2                     #
-utcnow()->TIMESTAMP               #
-
-count(SET)->NUM                   #
-min|max(NUM_SET)->NUM2            #
-sum(NUM_SET)->NUM2                #
-avg(NUM_SET)->NUM2                #
 
 
                                              /=+===============================+=\
@@ -1214,6 +1005,8 @@ StorageClass 'GLACIER_IR'         #"Instant retrieval". Like STANDARD_IA but:
 StorageClass 'GLACIER'            #"S3 Glacier". Cannot read|copy|write, i.e. must RestoreObject()
                                   #Min 90 days
                                   #Cheaper if can wait for restore
+CAPACITY ==>                      #Can be used for StorageClass 'GLACIER'
+                                  #Must use AWS Glacier, or through S3 console
 StorageClass 'DEEP_ARCHIVE'       #Like GLACIER but:
                                   #  - min 180 days
                                   #  - slower restore
@@ -2045,6 +1838,212 @@ ACTIONS ==>                       #Only for following ACTIONs:
 
                                              /=+===============================+=\
                                             /  :                               :  \
+                                            )==:          SELECT MAIN          :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+POST /BUCKET/OBJECT
+ ?select&select-type=2            #Req: SELECT_REQ, x-amz-server-side-encryption-customer-* [C]
+SelectObjectContent()             #Res: SELECT_RES
+
+SELECT_REQ                        #Reads OBJECT but transforms it using SQL
+                                  #OBJECT must be CSV, ndjson, or Parquet
+                                  #"Record": single CSV|JSON|Parquet line (max 1MB)
+
+SELECT_REQ.ScanRange.Start|End    #NUM (in bytes) to only use part of OBJECT
+                                  #If falls in the middle of a record, process whole record
+                                  #Not with SELECT_JSON.Type 'DOCUMENT' nor SELECT_CSV.AllowQuotedRecordDelimiter true
+
+AWS/S3/[Storage-Lens/]
+ SelectRequests                   #NUM of SELECT requests
+AWS/S3/[Storage-Lens/]
+ SelectBytesScanned               #NUM. SELECT_STATS.BytesScanned
+AWS/S3/[Storage-Lens/]
+ SelectBytesReturned              #NUM. SELECT_STATS.BytesReturned
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:        SELECT FORMATS         :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+SELECT_REQ.InputSerialization     #SELECT_INPUT. Input format
+                                  #No CSV.QuoteFields
+SELECT_REQ.OutputSerialization    #SELECT_OUTPUT. Output format
+                                  #No JSON.Type, CSV.AllowQuotedRecordDelimiter|FileHeaderInfo|Comments
+
+SELECT_INPUT.CompressionType      #'NONE' (def), 'GZIP', 'BZIP2'
+                                  #Not with Parquet
+
+SELECT_INPUT|OUTPUT.JSON          #SELECT_JSON
+SELECT_JSON.Type                  #Either:
+                                  #  - 'DOCUMENT': JSON OBJ_ARR
+                                  #  - 'LINES': ndjson
+
+SELECT_INPUT|OUTPUT.CSV           #SELECT_CSV
+SELECT_CSV.FileHeaderInfo         #Whether first line is header:
+                                  #  - 'USE': yes, and can use as "COL" in SQL
+                                  #  - 'IGNORE': yes, but cannot use as "COL" in SQL, only "_NUM"
+                                  #  - 'NONE': no
+SELECT_CSV|JSON.RecordDelimiter   #'CHAR' (def: \n)
+SELECT_CSV
+ .AllowQuotedRecordDelimiter      #BOOL (def: false). Allow quoting RecordDelimiter. Slower
+SELECT_CSV.FieldDelimiter         #'CHAR' (def: ,)
+SELECT_CSV.QuoteCharacter         #'CHAR' (def: ") for quoting
+SELECT_CSV.QuoteEscapeCharacter   #'CHAR' (def: ") for escaping QuoteCharacter
+SELECT_CSV.QuoteFields            #Whether to quote, among 'ASNEEDED' (def) or 'ALWAYS'
+SELECT_CSV.Comments               #'CHAR' (def: #) used to comment a line
+
+SELECT_INPUT.Parquet              #OBJ. Use Apache Parquet
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:        SELECT RESPONSE        :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+SELECT_RES                        #Result of SELECT_REQ
+                                  #Is a stream of SELECT_MESSAGE, using Transfer-Encoding: chunked [S]
+                                  #In a nutshell, it mostly just returns CSV|JSON|Parquet data, but in multiple chunks
+
+SELECT_MESSAGE                    #Structure:
+                                  #  - prelude:
+                                  #     - 4 bytes: message size
+                                  #     - 4 bytes: message headers size
+                                  #  - 4 bytes: CRC of prelude
+                                  #  - data:
+                                  #     - 0-n SELECT_HEADER
+                                  #     - payload
+                                  #  - 4 bytes: CRC of message, except this field itself
+
+SELECT_HEADER                     #Structure:
+                                  #  - 1 byte: name length
+                                  #  - name ':NAME'
+                                  #  - 1 byte: type, always 7
+                                  #  - 2 bytes: value length
+                                  #  - value
+SELECT_HEADER message-type 'event'#Always set except when message-type 'error'
+SELECT_HEADER content-type        #'MIME' of payload (not set if none).
+                                  #'application/octet-stream' for Records, 'text/xml' for Progress|Stats
+
+SELECT_HEADER event-type 'Records'#SELECT_MESSAGE with SELECT actual response
+                                  #Payload is 'BASE64' of CSV|JSON|Parquet 1-n records
+
+SELECT_HEADER event-type 'Cont'   #SELECT_MESSAGE with ping. No payload
+SELECT_HEADER event-type 'End'    #SELECT_MESSAGE at the end. No payload
+
+SELECT_HEADER message-type 'error'#SELECT_MESSAGE when there is an error. No payload
+SELECT_HEADER error-code          #'CODE'
+SELECT_HEADER error-message       #STR
+
+SELECT_REQ.RequestProgress.Enabled#BOOL (def: false). Enables event-type 'Progress'
+SELECT_HEADER
+ event-type 'Progress'            #SELECT_MESSAGE with SELECT_RES_STATS payload, sent progressively
+SELECT_HEADER event-type 'Stats'  #SELECT_MESSAGE with SELECT_RES_STATS payload, sent at the end
+SELECT_RES_STATS.BytesScanned     #NUM of bytes as input before decompression
+SELECT_RES_STATS.BytesProcessed   #NUM of bytes as input after decompression
+SELECT_RES_STATS.BytesReturned    #NUM of bytes as output
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:          SELECT SQL           :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+SELECT_REQ.ExpressionType         #Always 'SQL'
+SELECT_REQ.Expression             #STR. SQL SELECT expression
+                                  #Max 1.3e5 chars
+
+SQL ==>                           #See Postgres for the syntax of most of what follows
+WHITESPACES ==>                   #Ignored, but cannot use newlines
+
+select VAL|* [as COL_ALIAS],...
+ from S3Object                    #Operates record-wise
+select ... from S3Object.VARR     #Only if JSON
+                                  #OBJ: .VAR, ['VAR'], .*
+                                  #ARR: [NUM], [*]
+                                  #* creates one ROW per item
+                                  #Missing|empty VARs are silently skipped, including by SQL FUNCs
+                                  #Since JSON is always an ARR, always start with [*]
+select ... from S3Object          #Def ROW_ALIAS:
+ [as] ROW_ALIAS                   #  - last VAR in VARR
+                                  #  - if *: _1
+select ... where BOOL_REXPR       #
+select ... limit NUM              #
+
+[ROW_ALIAS.]VARR                  #JSON: .VAR or [NUM]
+                                  #CSV: .VAR (using header) or ._NUM (1-based index)
+
+"NAME"                            #Make VARR case-sensitive. Also needed if reserved keyword
+
+VAL is [not] missing              #Missing|empty VARR
+VAL is [not] null                 #
+coalesce(VAL,...)->VAL            #
+nullif(VAL, VAL2)->VAL|null       #
+
+VAL = <> != VAL2                  #
+VAL in (VAL2,...)                 #
+case [VAL]
+when VAL2 then VAL3
+...
+[else VAL4]
+end                               #
+
+VAL < <= > >= VAL2                #
+VAL [not] between VAL2 and VAL3   #
+
+cast(VAL as TYPE)                 #Explicit type casting
+                                  #There is no implicit type casting
+
+bool                              #TYPE. true|false
+BOOL and BOOL2                    #
+BOOL or BOOL2                     #
+not BOOL                          #
+
+int[eger]                         #TYPE. 8 bytes, signed
+float                             #TYPE. 8 bytes
+decimal|numeric                   #TYPE. Fixed precision float. Max 38 significant digits, max 31 integer digits
+NUM + - * / NUM2                  #
+-NUM                              #
+NUM % NUM2                        #
+
+string[(NUM)]                     #TYPE. Def NUM: 1. Max NUM: 2e9
+char[acter]_length(STR)->NUM      #
+lower|upper(STR)->STR             #
+trim([leading|trailing|both
+ ['CHAR...'] from] STR)->STR      #
+substring
+ (STR from NUM [for NUM2])->STR2  #NUM can be negative if NUM2 specified
+STR like 'GLOB' [escape 'CHAR']   #
+
+timestamp                         #TYPE. 'YYYY-MM-DDT[HH:MM[:SS[.SSS[SSS]]]][Z]'
+PERIOD                            #year, month, day, hour, minute, second
+                                  #Only with extract(): timezone_hour|minute
+to_timestamp(STR)->TIMESTAMP      #
+to_string
+ (TIMESTAMP, 'FORMAT')->STR       #'FORMAT': see online doc
+extract
+ (PERIOD from TIMESTAMP)->NUM     #
+date_add|date_diff
+ (PERIOD, NUM, TIMESTAMP)
+ ->TIMESTAMP2                     #
+utcnow()->TIMESTAMP               #
+
+count(SET)->NUM                   #
+min|max(NUM_SET)->NUM2            #
+sum(NUM_SET)->NUM2                #
+avg(NUM_SET)->NUM2                #
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
                                             )==:           INVENTORY           :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -2661,130 +2660,6 @@ PERMISSIONS ==>                   #Must grant permissions to S3 SERVICE_DOMAIN o
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:         NOTIFICATIONS         :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-PUT /BUCKET?notification          #Send SNS notification if RRS object lost.
-PutBucketNotification()           #Request body NOTIF_OBJ:
-                                  #  - NotificationConfiguration (none if disabling):
-                                  #     - TopicConfiguration:
-                                  #        - Event "s3:ReducedRedundancyLostObject"
-                                  #        - Topic TOPIC_SNS_ARN
-                                  #First send a test notification. Returns x-amz-sns-test-message-id ID [S]
-                                  #Message is:
-                                  #  - Service "Amazon S3"
-                                  #  - Event "s3:ReducedRedundancyLostObject"
-                                  #  - Time "TIMESTAMP"
-                                  #  - Bucket BUCKET
-                                  #  - Key OBJECT
-                                  #  - VersionId VERSION_MID
-                                  #  - RequestId ID
-                                  #  - HostId: ID identifying requester host
-GET /BUCKET?notification
-GetBucketNotification()           #Returns NOTIF_OBJ
-
-GetBucketNotificationConfiguration()???
-PutBucketNotificationConfiguration()???
-
-AWS/S3/Storage-Lens/Event
- NotificationEnabledBucketCount   #Like Buckets, but only with NOTIFICATION enabled
-SLENS_METRIC % Event Notification
- enabled buckets                  #% of EventNotificationEnabledBucketCount/Buckets
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:         OBJECT LAMBDA         :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-WriteGetObjectResponse()
-
-CreateAccessPointForObjectLambda()
-GetAccessPointForObjectLambda()
-ListAccessPointsForObjectLambda()
-DeleteAccessPointForObjectLambda()
-
-PutAccessPointConfigurationForObjectLambda()
-GetAccessPointConfigurationForObjectLambda()
-
-PutAccessPointPolicyForObjectLambda()
-GetAccessPointPolicyForObjectLambda()
-DeleteAccessPointPolicyForObjectLambda()
-
-GetAccessPointPolicyStatusForObjectLambda()
-
-https://docs.aws.amazon.com/aws-managed-policy/latest/reference/AmazonS3ObjectLambdaExecutionRolePolicy.html
-
-https://docs.aws.amazon.com/AmazonS3/latest/userguide/metrics-dimensions.html#olap-cloudwatch-metrics
-https://docs.aws.amazon.com/AmazonS3/latest/userguide/metrics-dimensions.html#olap-dimensions
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:         ACCESS POINT          :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-CreateAccessPoint()
-GetAccessPoint()
-ListAccessPoints()
-DeleteAccessPoint()
-
-PutAccessPointPolicy()
-GetAccessPointPolicy()
-DeleteAccessPointPolicy()
-
-GetAccessPointPolicyStatus()
-
-CreateMultiRegionAccessPoint()
-GetMultiRegionAccessPoint()
-ListMultiRegionAccessPoints()
-DeleteMultiRegionAccessPoint()
-
-GetMultiRegionAccessPointPolicy()
-PutMultiRegionAccessPointPolicy()
-
-GetMultiRegionAccessPointPolicyStatus()
-
-GetMultiRegionAccessPointRoutes()
-SubmitMultiRegionAccessPointRoutes()
-
-DescribeMultiRegionAccessPointOperation()
-
-x-amz-access-point-alias: BOOL [S]
-
-Endpoints in https://docs.aws.amazon.com/general/latest/gr/s3.html
-The "access point" part in https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html#access-control-block-public-access-policy-status
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:             BATCH             :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-CreateJob()
-UpdateJobPriority()
-UpdateJobStatus()
-DescribeJob()
-ListJobs()
-
-PUT /jobs/JOB_MID/tagging         #Req: Tags TAG_PAIRS
-PutJobTagging()                   #Res: empty
-GET /jobs/JOB_MID/tagging         #Req: empty
-GetJobTagging()                   #Res: Tags TAG_PAIRS
-DELETE /jobs/JOB_MID/tagging      #Req: empty
-DeleteJobTagging()                #Res: empty
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
                                             )==:          REPLICATION          :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -2841,6 +2716,130 @@ SLENS_METRIC Average invalid
 
 https://docs.aws.amazon.com/AmazonS3/latest/userguide/metrics-dimensions.html#s3-cloudwatch-replication-metrics
   - see also https://docs.aws.amazon.com/AmazonS3/latest/userguide/cloudwatch-monitoring.html
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:         ACCESS POINT          :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+CreateAccessPoint()
+GetAccessPoint()
+ListAccessPoints()
+DeleteAccessPoint()
+
+PutAccessPointPolicy()
+GetAccessPointPolicy()
+DeleteAccessPointPolicy()
+
+GetAccessPointPolicyStatus()
+
+CreateMultiRegionAccessPoint()
+GetMultiRegionAccessPoint()
+ListMultiRegionAccessPoints()
+DeleteMultiRegionAccessPoint()
+
+GetMultiRegionAccessPointPolicy()
+PutMultiRegionAccessPointPolicy()
+
+GetMultiRegionAccessPointPolicyStatus()
+
+GetMultiRegionAccessPointRoutes()
+SubmitMultiRegionAccessPointRoutes()
+
+DescribeMultiRegionAccessPointOperation()
+
+x-amz-access-point-alias: BOOL [S]
+
+Endpoints in https://docs.aws.amazon.com/general/latest/gr/s3.html
+The "access point" part in https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html#access-control-block-public-access-policy-status
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:         OBJECT LAMBDA         :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+WriteGetObjectResponse()
+
+CreateAccessPointForObjectLambda()
+GetAccessPointForObjectLambda()
+ListAccessPointsForObjectLambda()
+DeleteAccessPointForObjectLambda()
+
+PutAccessPointConfigurationForObjectLambda()
+GetAccessPointConfigurationForObjectLambda()
+
+PutAccessPointPolicyForObjectLambda()
+GetAccessPointPolicyForObjectLambda()
+DeleteAccessPointPolicyForObjectLambda()
+
+GetAccessPointPolicyStatusForObjectLambda()
+
+https://docs.aws.amazon.com/aws-managed-policy/latest/reference/AmazonS3ObjectLambdaExecutionRolePolicy.html
+
+https://docs.aws.amazon.com/AmazonS3/latest/userguide/metrics-dimensions.html#olap-cloudwatch-metrics
+https://docs.aws.amazon.com/AmazonS3/latest/userguide/metrics-dimensions.html#olap-dimensions
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:             BATCH             :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+CreateJob()
+UpdateJobPriority()
+UpdateJobStatus()
+DescribeJob()
+ListJobs()
+
+PUT /jobs/JOB_MID/tagging         #Req: Tags TAG_PAIRS
+PutJobTagging()                   #Res: empty
+GET /jobs/JOB_MID/tagging         #Req: empty
+GetJobTagging()                   #Res: Tags TAG_PAIRS
+DELETE /jobs/JOB_MID/tagging      #Req: empty
+DeleteJobTagging()                #Res: empty
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:         NOTIFICATIONS         :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+PUT /BUCKET?notification          #Send SNS notification if RRS object lost.
+PutBucketNotification()           #Request body NOTIF_OBJ:
+                                  #  - NotificationConfiguration (none if disabling):
+                                  #     - TopicConfiguration:
+                                  #        - Event "s3:ReducedRedundancyLostObject"
+                                  #        - Topic TOPIC_SNS_ARN
+                                  #First send a test notification. Returns x-amz-sns-test-message-id ID [S]
+                                  #Message is:
+                                  #  - Service "Amazon S3"
+                                  #  - Event "s3:ReducedRedundancyLostObject"
+                                  #  - Time "TIMESTAMP"
+                                  #  - Bucket BUCKET
+                                  #  - Key OBJECT
+                                  #  - VersionId VERSION_MID
+                                  #  - RequestId ID
+                                  #  - HostId: ID identifying requester host
+GET /BUCKET?notification
+GetBucketNotification()           #Returns NOTIF_OBJ
+
+GetBucketNotificationConfiguration()???
+PutBucketNotificationConfiguration()???
+
+AWS/S3/Storage-Lens/Event
+ NotificationEnabledBucketCount   #Like Buckets, but only with NOTIFICATION enabled
+SLENS_METRIC % Event Notification
+ enabled buckets                  #% of EventNotificationEnabledBucketCount/Buckets
 
 
                                              /=+===============================+=\
