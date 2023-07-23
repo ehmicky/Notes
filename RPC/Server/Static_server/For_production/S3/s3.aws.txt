@@ -394,8 +394,27 @@ SELECT_REQ                        #Transforms OBJECT, using SQL
                                   #OBJECT must be CSV|JSON
 
 SELECT_REQ.ExpressionType         #Always 'SQL'
-SELECT_REQ.Expression             #STR. SQL expression
+SELECT_REQ.Expression             #STR. SQL SELECT expression
                                   #Max 1.3e5 chars
+select VAL|* [as COL_ALIAS],...
+  - VAL can be [ROW_ALIAS.]VARR:
+     - JSON: .VAR and [NUM]
+     - CSV: .VAR (using header) and ._NUM (1-based index)
+from S3Object[.VARR] [[as] ROW_ALIAS]
+  - VARR:
+     - only if JSON
+     - OBJ: .VAR, ['VAR'], .*
+     - ARR: [NUM], [*]
+     - missing|empty VARs are silently skipped, including by SQL FUNCs
+     - * creates one ROW per item
+     - since JSON is always an ARR, always start with [*]
+  - def ROW_ALIAS: last VAR in VARR
+     - if *: _1
+where BOOL_REXPR
+  - VAL is not missing: missing|empty VARR
+  - can use same VAL as `select`
+limit NUM
+"NAME": case-sensitive for VARR. Also needed if reserved keyword
 
 SELECT_REQ.ScanRange.Start|End    #NUM (in bytes) to only use part of OBJECT
 
@@ -428,51 +447,44 @@ SELECT_CSV.QuoteFields            #Whether to quote, among 'ASNEEDED' (def) or '
 SELECT_CSV.Comments               #'CHAR' (def: #) used to comment a line
 
 SELECT_RES                        #Result of SELECT_REQ
-                                  #Is a stream of SELECT_RES_EVENT
-SELECT_RES_EVENT.Records.Payload  #'BASE64' of chunk data
-SELECT_RES_EVENT.Cont             #Empty OBJ sent when not done
-SELECT_RES_EVENT.End              #Empty OBJ sent when done
-
-Transfer-Encoding: chunked [S]
-                                  #Chunk:
+                                  #Is a stream of SELECT_MESSAGE, using Transfer-Encoding: chunked [S]
+                                  #In the end, it mostly just returns CSV|JSON|Parquet data, in multiple chunks
+SELECT_MESSAGE                    #Structure:
                                   #  - prelude:
-                                  #     - 4 bytes: chunk size
-                                  #     - 4 bytes: chunk headers size
+                                  #     - 4 bytes: message size
+                                  #     - 4 bytes: message headers size
                                   #  - 4 bytes: CRC of prelude
                                   #  - data:
-                                  #     - 0-n headers
+                                  #     - 0-n SELECT_HEADER
                                   #     - payload
-                                  #  - 4 bytes: CRC of chunk, except this field itself
-                                  #Header:
+                                  #  - 4 bytes: CRC of message, except this field itself
+SELECT_HEADER                     #Structure:
                                   #  - 1 byte: name length
                                   #  - name ':NAME'
                                   #  - 1 byte: type, always 7
                                   #  - 2 bytes: value length
                                   #  - value
-                                  #Headers:
-                                  #  - message-type 'event', 'error'
-                                  #  (only with message-type 'event')
-                                  #  - event-type 'Records', 'Cont', 'End', 'Progress', 'Stats'
-                                  #  (only if payload)
-                                  #  - content-type 'application/octet-stream' (Records), 'text/xml' (others)
-                                  #  (only with message-type 'error')
-                                  #  - error-code 'CODE'
-                                  #  - error-message STR
-                                  #Payload:
-                                  #  - 'Progress': SELECT_RES_EVENT.Progress
-                                  #  - 'Stats': SELECT_RES_EVENT.Stats
-                                  #  - 'Cont': none
-                                  #  - 'End': none
-                                  #  - 'error': none
+SELECT_HEADER message-type 'event'#Always set except when message-type 'error'
+SELECT_HEADER content-type        #'MIME' of payload (not set if none).
+                                  #'application/octet-stream' for Records, 'text/xml' for Progress|Stats
 
-SELECT_REQ.RequestProgress.Enabled#BOOL (def: false). Sends SELECT_RES_EVENT with Progress
-SELECT_RES_EVENT.Progress.Details #SELECT_STATS when not done
-SELECT_RES_EVENT.Stats.Details    #SELECT_STATS when done
-SELECT_STATS.BytesScanned         #NUM of bytes as input before decompression
-SELECT_STATS.BytesProcessed       #NUM of bytes as input after decompression
-SELECT_STATS.BytesReturned        #NUM of bytes as output
+SELECT_HEADER event-type 'Records'#SELECT_MESSAGE with SELECT actual response
+                                  #Payload is 'BASE64' of CSV|JSON|Parquet data
 
-https://docs.aws.amazon.com/AmazonS3/latest/API/RESTSelectObjectAppendix.html ???
+SELECT_HEADER event-type 'Cont'   #SELECT_MESSAGE with ping. No payload
+SELECT_HEADER event-type 'End'    #SELECT_MESSAGE at the end. No payload
+
+SELECT_HEADER message-type 'error'#SELECT_MESSAGE when there is an error. No payload
+SELECT_HEADER error-code          #'CODE'
+SELECT_HEADER error-message       #STR
+
+SELECT_REQ.RequestProgress.Enabled#BOOL (def: false). Enables event-type 'Progress'
+SELECT_HEADER
+ event-type 'Progress'            #SELECT_MESSAGE with SELECT_RES_STATS payload, sent progressively
+SELECT_HEADER event-type 'Stats'  #SELECT_MESSAGE with SELECT_RES_STATS payload, sent at the end
+SELECT_RES_STATS.BytesScanned     #NUM of bytes as input before decompression
+SELECT_RES_STATS.BytesProcessed   #NUM of bytes as input after decompression
+SELECT_RES_STATS.BytesReturned    #NUM of bytes as output
 
 AWS/S3/[Storage-Lens/]
  SelectRequests                   #NUM of SELECT requests
