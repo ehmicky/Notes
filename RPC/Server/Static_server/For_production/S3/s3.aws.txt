@@ -160,6 +160,9 @@ OTHERS ==>                        #OBJECT TAGs: 1$/1e6 TAGs
                                   #  - 20% cheaper if >2.5e10 OBJECTs
                                   #  - 40% cheaper if >1e11 OBJECTs
                                   #ANALYTICS: 1$/1e7 OBJECTs
+                                  #REPLICATION:
+                                  #  - free, except normal traffic|requests|storage cost of copying
+                                  #  - RTC: 1$/67GB
 
 
                                              /=+===============================+=\
@@ -2044,6 +2047,121 @@ avg(NUM_SET)->NUM2                #
 
                                              /=+===============================+=\
                                             /  :                               :  \
+                                            )==:          REPLICATION          :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+PUT /BUCKET?replication           #Req: REPLICATION, x-amz-bucket-object-lock-token [C]
+PutBucketReplication()            #Res: empty
+GET /BUCKET?replication           #Req: empty
+GetBucketReplication()            #Res: REPLICATION
+DELETE /BUCKET?replication        #Req: empty
+DeleteBucketReplication()         #Res: empty
+
+REPLICATION                       #Replicate OBJECTs from a source BUCKET to a target BUCKET
+                                  #Both BUCKETs must have VERSIONING enabled
+
+REPLICATION.Rule                  #REPLICATION_RULE_ARR. Max 1000
+REPLICATION_RULE.ID               #'REPLICATION_RULE'. Max 255 chars
+REPLICATION_RULE.Status           #'Enabled' or 'Disabled'
+REPLICATION_RULE.Filter           #FILTER. Only replicate those source OBJECTs
+                                  #Requires also setting Status, Priority, DeleteMarkerReplication
+REPLICATION_RULE.Priority         #NUM. If 2 REPLICATION_RULEs replicate to same target OBJECT, one with highest NUM prevails
+
+REPLICATION_RULE.Destination      #REPLICATION_DEST. Target BUCKET and configuration
+REPLICATION_DEST.Account          #ACCOUNT_ID
+REPLICATION_DEST.Bucket           #BUCKET_ARN
+                                  #Can be in same region ("SRR") or not ("CRR")
+REPLICATION_DEST.StorageClass     #'STORAGE_CLASS' (def: same as source)
+
+REPLICATION_RULE
+ .ExistingObjectReplication.Status#'Enabled' or 'Disabled' (def). Whether to replicate existing source OBJECTs, or only new ones
+REPLICATION_RULE                  #'Enabled' or 'Disabled' (def). Whether to replicate delete markers.
+ .DeleteMarkerReplication.Status  #Must be 'Disabled' if there is a REPLICATION_RULE.Filter by TAG
+REPLICATION_RULE
+ .SourceSelectionCriteria         #REPLICATION_SRC
+REPLICATION_SRC                   #'Enabled' or 'Disabled' (def). "Bidirectional"/"two-way" REPLICATION
+ .ReplicaModifications.Status     #Make target BUCKET also replicate to source BUCKET
+
+REPLICATION_SRC
+ .SseKmsEncryptedObjects.Status   #'Enabled' or 'Disabled' (def). Whether to replicate source OBJECTs that use SSE-KMS
+REPLICATION_DEST
+ .EncryptionConfiguration
+ .ReplicaKmsKeyID                 #KMS_KEY_ARN of the target BUCKET
+
+REPLICATION.Role                  #'ROLE' assumed by S3 to write target OBJECTs
+REPLICATION_DEST                  #Whether target OBJECT_OWNER should be:
+ .AccessControlTranslation.Owner  #  - def: source BUCKET_OWNER
+                                  #  - 'Destination': target BUCKET_OWNER ("owner override")
+
+x-amz-replication-status: STR [S] #If OBJECT is:
+                                  #  - source: 'PENDING|COMPLETE|FAILED'
+                                  #  - target: 'REPLICA'
+
+REPLICATION_DEST.ReplicationTime  #REPLICATION_TIME. "RTC"/"Replication Time Control"
+REPLICATION_TIME.Status           #'Enabled' or 'Disabled'
+REPLICATION_TIME.Time.Minutes     #NUM (def: 15). Ensures that REPLICATION happens within NUM minutes, 99.9% of times
+REPLICATION_METRICS
+ .EventThreshold.Minutes          #NUM (def: 15) used by s3:Replication:OperationMissedThreshold
+
+REPLICATION_DEST.Metrics          #REPLICATION_METRICS
+REPLICATION_METRICS.Status        #'Enabled' or 'Disabled' (def). Whether to enable:
+                                  #  - AWS/S3/* (except AWS/S3/Storage-Lens/*) related to REPLICATION
+                                  #  - s3:Replication:* NOTIFICATION events
+
+AWS/S3/ReplicationLatency         #NUM of secs of lag between source and target BUCKET
+AWS/S3/BytesPendingReplication    #NUM of bytes pending REPLICATION
+AWS/S3/
+ OperationsPendingReplication     #NUM of requests pending REPLICATION
+AWS/S3/OperationsFailedReplication#NUM of REPLICATION requests that failed
+
+AWS/S3/Storage-Lens/
+ ReplicatedStorageBytesSource     #Like StorageBytes, but only when replicated as source
+AWS/S3/Storage-Lens/
+ ReplicatedStorageBytes           #Like StorageBytes, but only when replicated as destination
+AWS/S3/Storage-Lens/
+ ReplicatedObjectCountSource      #Like ObjectCount, but only when replicated as source
+AWS/S3/Storage-Lens/
+ ReplicatedObjectCount            #Like ObjectCount, but only when replicated as destination
+SLENS_METRIC
+ % replicated bytes source        #% of ReplicatedStorageBytesSource/StorageBytes
+SLENS_METRIC
+ % replicated bytes destination   #% of ReplicatedStorageBytes/StorageBytes
+SLENS_METRIC
+ % replicated objects source      #% of ReplicatedObjectCountSource/ObjectCount
+SLENS_METRIC
+ % replicated objects destination #% of ReplicatedObjectCount/ObjectCount
+
+SLENS_METRIC
+ Total replication rule count     #NUM of REPLICATION_RULEs
+AWS/S3/Storage-Lens/
+ CrossRegionReplicationRuleCount  #NUM of REPLICATION_RULEs that is cross-REGIONs
+AWS/S3/Storage-Lens/
+ SameRegionReplicationRuleCount   #NUM of REPLICATION_RULEs that is not cross-REGIONs
+AWS/S3/Storage-Lens/
+ SameAccountReplicationRuleCount  #NUM of REPLICATION_RULEs that is not cross-ACCOUNT
+AWS/S3/Storage-Lens/
+ CrossAccountReplicationRuleCount #NUM of REPLICATION_RULEs that is cross-ACCOUNT
+AWS/S3/Storage-Lens/Invalid
+ DestinationReplicationRuleCount  #NUM of REPLICATION_RULEs with invalid destination
+SLENS_METRIC Average replication
+ rule count per bucket            #Average REPLICATION_RULEs per BUCKET
+SLENS_METRIC Average Cross-Region
+ Replication rules per bucket     #Average CrossRegionReplicationRuleCount per BUCKET
+SLENS_METRIC Average Same-Region
+ Replication rules per bucket     #Average SameRegionReplicationRuleCount per BUCKET
+SLENS_METRIC Average same-account
+ replication rules per bucket     #Average SameAccountReplicationRuleCount per BUCKET
+SLENS_METRIC Average cross-account
+ replication rules per bucket     #% of CrossAccountReplicationRuleCount per BUCKET
+SLENS_METRIC Average invalid
+ destination replication
+ rules per bucket                 #Average InvalidReplicationRuleCount per BUCKET
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
                                             )==:           INVENTORY           :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -2656,66 +2774,6 @@ ANALYTICS_LINE[12]
 
 PERMISSIONS ==>                   #Must grant permissions to S3 SERVICE_DOMAIN on target BUCKET
                                   #Same as INVENTORY (see below)
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:          REPLICATION          :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-PutBucketReplication()
-GetBucketReplication()
-DeleteBucketReplication()
-
-x-amz-replication-status: COMPLETE|PENDING|FAILED|REPLICA [S]
-
-AWS/S3/Storage-Lens/
- ReplicatedStorageBytesSource     #Like StorageBytes, but only when replicated as source
-AWS/S3/Storage-Lens/
- ReplicatedStorageBytes           #Like StorageBytes, but only when replicated as destination
-AWS/S3/Storage-Lens/
- ReplicatedObjectCountSource      #Like ObjectCount, but only when replicated as source
-AWS/S3/Storage-Lens/
- ReplicatedObjectCount            #Like ObjectCount, but only when replicated as destination
-SLENS_METRIC
- % replicated bytes source        #% of ReplicatedStorageBytesSource/StorageBytes
-SLENS_METRIC
- % replicated bytes destination   #% of ReplicatedStorageBytes/StorageBytes
-SLENS_METRIC
- % replicated objects source      #% of ReplicatedObjectCountSource/ObjectCount
-SLENS_METRIC
- % replicated objects destination #% of ReplicatedObjectCount/ObjectCount
-
-SLENS_METRIC
- Total replication rule count     #NUM of REPLICATION_RULEs
-AWS/S3/Storage-Lens/
- CrossRegionReplicationRuleCount  #NUM of REPLICATION_RULEs that is cross-REGIONs
-AWS/S3/Storage-Lens/
- SameRegionReplicationRuleCount   #NUM of REPLICATION_RULEs that is not cross-REGIONs
-AWS/S3/Storage-Lens/
- SameAccountReplicationRuleCount  #NUM of REPLICATION_RULEs that is not cross-ACCOUNT
-AWS/S3/Storage-Lens/
- CrossAccountReplicationRuleCount #NUM of REPLICATION_RULEs that is cross-ACCOUNT
-AWS/S3/Storage-Lens/Invalid
- DestinationReplicationRuleCount  #NUM of REPLICATION_RULEs with invalid destination
-SLENS_METRIC Average replication
- rule count per bucket            #Average REPLICATION_RULEs per BUCKET
-SLENS_METRIC Average Cross-Region
- Replication rules per bucket     #Average CrossRegionReplicationRuleCount per BUCKET
-SLENS_METRIC Average Same-Region
- Replication rules per bucket     #Average SameRegionReplicationRuleCount per BUCKET
-SLENS_METRIC Average same-account
- replication rules per bucket     #Average SameAccountReplicationRuleCount per BUCKET
-SLENS_METRIC Average cross-account
- replication rules per bucket     #% of CrossAccountReplicationRuleCount per BUCKET
-SLENS_METRIC Average invalid
- destination replication
- rules per bucket                 #Average InvalidReplicationRuleCount per BUCKET
-
-https://docs.aws.amazon.com/AmazonS3/latest/userguide/metrics-dimensions.html#s3-cloudwatch-replication-metrics
-  - see also https://docs.aws.amazon.com/AmazonS3/latest/userguide/cloudwatch-monitoring.html
 
 
                                              /=+===============================+=\
