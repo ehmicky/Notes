@@ -72,7 +72,7 @@ RES.[Next]PROPMarker              #Sometimes has multiple PROPs
 
 RES.IsTruncated                   #BOOL. Not with RES.NextToken
 
-REQ.maxResults                    #NUM (def: 100 with INVENTORY|ANALYTICS|S3_METRICS, 1000 otherwise)
+REQ.maxResults                    #NUM (def: 100 with INVENTORY|ANALYTICS|MAIN_METRICS, 1000 otherwise)
 REQ.max-PROPs
 RES.MaxPROPs                      #NUM (def: 1000), alternative syntax for some ACTIONs
 RES.PROPCount                     #NUM. Only set with some ACTIONs, together with RES.MaxPROPs
@@ -159,6 +159,7 @@ PRICING ==>                       #Storage space, per byte
                                   #INVENTORY: 1$/4e8 OBJECTs
                                   #LOGGING: free
                                   #ANALYTICS: 1$/1e7 OBJECTs
+                                  #MAIN_METRICS: free
                                   #ADVANCED_METRICS: 1$/5e6 OBJECTs per SLENS
                                   #  - 20% cheaper if >2.5e10 OBJECTs
                                   #  - 40% cheaper if >1e11 OBJECTs
@@ -972,7 +973,7 @@ StorageClass 'REDUCED_REDUNDANCY' #"RRS". 1/1e5 loss a year, instead of 1/1e11 f
 StorageClass 'SNOW'               #AWS Snowball
 StorageClass 'OUTPOSTS'           #AWS Outposts
 
-StorageType                       #CloudWatch DVAR that can be used on AWS/S3/BucketSizeBytes|NumberOfObjects
+MAIN_METRICS DVAR StorageType     #Can be used on AWS/S3/BucketSizeBytes|NumberOfObjects
                                   #One of:
                                   #  - [IntelligentTiering]{STORAGE_CLASS}Storage: main data
                                   #  - {STORAGE_CLASS}Overhead: metadata for STANDARD_IA|ONEZONE_IA|GLACIER_IR
@@ -1861,30 +1862,31 @@ LOG_CONF.TargetGrants             #GRANT_ARR of LOG_FILE, to grant permissions t
                                              \=+===============================+=/
 
 
-PUT /BUCKET?metrics               #Req: S3_METRICS
+PUT /BUCKET?metrics               #Req: MAIN_METRICS
 PutBucketMetricsConfiguration()   #  - query variables: id
                                   #Res: empty
-GET /BUCKET?metrics               #Req: S3_METRICS
+GET /BUCKET?metrics               #Req: MAIN_METRICS
 GetBucketMetricsConfiguration()   #  - only id
-                                  #Res: S3_METRICS
+                                  #Res: MAIN_METRICS
 GET /BUCKET?metrics               #Req: empty
-ListBucketMetricsConfigurations() #Res: MetricsConfigurations S3_METRICS_ARR
+ListBucketMetricsConfigurations() #Res: MetricsConfigurations MAIN_METRICS_ARR
                                   #Paginates with ContinuationToken
 DELETE /BUCKET?metrics            #Req: empty
 DeleteBucketMetricsConfiguration()#Res: empty
 
-S3_METRICS                        #CloudWatch METRICs for specific OBJECTs in a given BUCKET
+MAIN_METRICS                      #Main CloudWatch METRICs for S3 (as opposed to SLENS, which is more advanced)
+                                  #Each MAIN_METRICS sends those METRICs but filtered per 'OBJECT' prefix, TAGs, ACCESS_POINT
                                   #Max 1000 per BUCKET
-S3_METRICS.Id                     #'S3_METRICS'. Max 64 chars, [[:alnum:].-_]
-S3_METRICS.Filter                 #S3_METRICS_FILTER. Filters which OBJECTs to include
-S3_METRICS_FILTER.*               #Like FILTER.*
-S3_METRICS_FILTER.AccessPointArn  #ACCESS_POINT_ARN. Only in this ACCESS_POINT
+MAIN_METRICS.Id                   #'MAIN_METRICS'. Max 64 chars, [[:alnum:].-_]
+MAIN_METRICS.Filter               #MAIN_METRICS_FILTER. Filters which OBJECTs to include
+MAIN_METRICS_FILTER.*             #Like FILTER.*
+MAIN_METRICS_FILTER.AccessPointArn#ACCESS_POINT_ARN. Only in this ACCESS_POINT
 
-FilterId                          #'S3_METRICS'. CloudWatch DVAR to use on AWS/S3/*
-BucketName                        #'BUCKET'. CloudWatch DVAR to use on AWS/S3/*
+MAIN_METRICS DVAR FilterId        #'MAIN_METRICS'. To use on AWS/S3/*
+MAIN_METRICS DVAR BucketName      #'BUCKET'. To use on AWS/S3/*
 
-MANAGED METRICS ==>               #The following 2 METRICs are automatically available without S3_METRICS
-                                  #The other AWS/S3/* require a S3_METRICS
+MANAGED METRICS ==>               #The following 2 METRICs are automatically available without MAIN_METRICS
+                                  #The other AWS/S3/* require a MAIN_METRICS
 AWS/S3/NumberOfObjects            #NUM of OBJECTs, including VERSIONs, delete markers, MPARTs
 AWS/S3/BucketSizeBytes            #NUM of bytes for OBJECT data|metadata, including VERSIONs, delete markets, MPARTs
 
@@ -1925,13 +1927,18 @@ ListStorageLensConfigurations()   #Res: StorageLensConfigurationList SLENS_ARR
 DELETE /storagelens/SLENS         #Req: empty
 DeleteStorageLensConfiguration()  #Res: empty
 
-SLENS                             #S3 METRICs available:
+SLENS                             #CloudWatch METRICs under AWS/S3/Storage-Lens/*
+                                  #Compared to MAIN_METRICS, i.e. the others AWS/S3/*:
+                                  #  - many more of them
+                                  #  - superset to most of them
+                                  #  - not sent to CloudWatch for free
+                                  #Available:
                                   #  - in CloudWatch: SLENS_EXPORT.CloudWatchMetrics
                                   #  - as SLENS_FILE
                                   #  - as dashboard in UI console
                                   #Dashboard in UI console:
                                   #  - one per SLENS
-                                  #  - 'default-account-dashboard' SLENS also always available
+                                  #  - 'default-account-dashboard' SLENS always available
                                   #  - cannot view as ROOT
                                   #Data:
                                   #  - generated daily
@@ -1958,15 +1965,17 @@ SLENS_BUCKET                      #SLENS_OBJECTS. Group METRICs per OBJECT subfo
  .PrefixLevel.StorageMetrics      #Only if ADVANCED_METRICS
 SLENS_OBJECTS.IsEnabled           #BOOL
 SLENS_OBJECTS.SelectionCriteria   #SLENS_CRITERIA
-SLENS_CRITERIA.Delimiter          #Like OBJECTS.Delimiter
 SLENS_CRITERIA.MaxDepth           #NUM. Max subfolder depth to group by
-                                  #Def 1, max 10
+                                  #Def: 1, max: 10
+SLENS_CRITERIA.Delimiter          #Like OBJECTS.Delimiter
 SLENS_CRITERIA
  .MinStorageBytesPercentage       #NUM (1-100). Only subfolder containing at least NUM% of StorageBytes
 
-COMPARING ==>                     #Can compare METRICs in UI console, as time series or as x|y plots
-SORT GROUPS ==>                   #Can sort grouped METRICs in UI console
-CHARTS ==>                        #Can show grouped METRICs as histograms or tables in UI console
+TIME SERIES ==>                   #Can show METRICs as time series in UI console
+COMPARING ==>                     #Can compare grouped METRICs in UI console, as time series, histograms, x|y plots or sorted tables
+RECOMMENDATIONS ==>               #Based on METRICs. Only in UI console
+                                  #Includes: suggestions, outliers, big increase|decrease
+                                  #Only with ADVANCED_METRICS
 
 SLENS.DataExport                  #SLENS_EXPORT. Export METRICs to a SLENS_FILE
 SLENS_EXPORT.S3BucketDestination  #SLENS_DESTINATION
@@ -2027,6 +2036,10 @@ DeleteStorageLensConfiguration    #Req: empty
 PERMISSIONS ==>                   #Like INVENTORY except:
                                   #  - Principal.Service 'storage-lens.s3.amazonaws.com'
                                   #  - CONDITION_KEY aws:SourceArn = SLENS_ARN
+ORGANIZATION PERMISSIONS ==>      #When ORGs are used:
+                                  #  - must use AWSServiceRoleForS3StorageLens SERVICE_LINKED_ROLE (automatically done)
+                                  #  - must EnableAWSServiceAccess() for 'storage-lens.s3.amazonaws.com'
+                                  #  - can RegisterDelegatedAdministrator() for 'storage-lens.s3.amazonaws.com' (max 5)
 
 AWSServiceRoleForS3StorageLens    #SERVICE_LINKED_ROLE used by SLENS to allow 'storage-lens.s3.amazonaws.com' to access ORGs and their ACCOUNTs
                                   #Only when ORGs are used
@@ -2037,39 +2050,46 @@ S3StorageLensServiceRolePolicy    #AWS managed POLICY used by AWSServiceRoleForS
 AWS/S3/Storage-Lens/*             #METRICs of SLENS
 SLENS_METRIC                      #Same but only available in UI console, not in CloudWatch nor SLENS_FILE
                                   #Inferred from other METRICs
-RECOMMENDATIONS ==>               #Based on METRICs. Only in UI console
-                                  #Only with ADVANCED_METRICS
 
-ADVANCED_METRICS                  #Any of the METRICs below
+SLENS_EXPORT                      #BOOL (def: false). Send METRICs to CloudWatch
+ .CloudWatchMetrics.IsEnabled     #Only if ADVANCED_METRICs. 1 day PERIOD
+
+ADVANCED_METRICS                  #Enabled when any of IsEnabled BOOL below is true
 SLENS_ACCOUNT|BUCKET
  .AdvancedCostOptimizationMetrics
  .IsEnabled                       #BOOL (def: false). Enables METRICs related to LIFECYCLE_RULEs
 SLENS_ACCOUNT|BUCKET
  .AdvancedDataProtectionMetrics
- .IsEnabled                       #BOOL (def: false). Enables METRICs related to REPLICATION_RULEs and to requests signing|TLS
+ .IsEnabled                       #BOOL (def: false). Enables METRICs related to REPLICATION_RULEs and to requests signature|TLS
 SLENS_ACCOUNT|BUCKET
  .ActivityMetrics.IsEnabled       #BOOL (def: false). Enables METRICs related to requests count and in|out traffic
 SLENS_ACCOUNT|BUCKET
  .DetailedStatusCodesMetrics
- .IsEnabled                       #BOOL (def: false). Enables METRICs related to response status codes
+ .IsEnabled                       #BOOL (def: false). Enables METRICs related to response statuses
 
-SLENS_EXPORT                      #BOOL (def: false). Send ADVANCED_METRICs to CloudWatch, in addition to other METRICs
- .CloudWatchMetrics.IsEnabled     #1 day PERIOD
+CATEGORIES ==>                    #UI console groups METRICs per category:
+                                  #  - summary: StorageBytes, ObjectCount
+                                  #  - cost optimization: VERSIONING (per OBJECT), LIFECYCLE_RULEs, MPARTs
+                                  #  - date protection: VERSIONING (per BUCKET), SSE, OBJECT_LOCK, requests signature|TLS, REPLICATION
+                                  #  - activity: request count, in|out traffic
+                                  #  - detailed status code: response statuses
+                                  #  - access management: BUCKET_OWNERSHIP_RULE
+                                  #  - performance: ACCELERATE
+                                  #  - events: NOTIFICATION
 
-DVAR configuration_id             #'SLENS'
-DVAR metrics_version              #Always '1.0'
-DVAR aws_region                   #'REGION'
-DVAR organization_id              #ORG_ID
-DVAR aws_account_number           #ACCOUNT_ID
-DVAR bucket_name                  #'BUCKET'
-DVAR record_type                  #METRICs are sent once per group ("granularity"):
+SLENS DVAR configuration_id       #'SLENS'
+SLENS DVAR metrics_version        #Always '1.0'
+SLENS DVAR aws_region             #'REGION'
+SLENS DVAR organization_id        #ORG_ID
+SLENS DVAR aws_account_number     #ACCOUNT_ID
+SLENS DVAR bucket_name            #'BUCKET'
+SLENS DVAR record_type            #METRICs are sent once per group ("granularity"):
                                   #  - ORGANIZATION: DVAR organization_id
                                   #  - ACCOUNT: DVAR aws_account_number
                                   #  - BUCKET: DVAR bucket_name
                                   #     - not if SLENS.AwsOrg set
-DVAR storage_class                #'STORAGE_CLASS'
+SLENS DVAR storage_class          #'STORAGE_CLASS'
 
-SUMMARY ==>                       #
 AWS/S3/Storage-Lens/StorageBytes  #NUM of bytes for OBJECT data|metadata, including VERSIONs, delete markers, MPARTs
 SLENS_METRIC Accounts             #NUM of ACCOUNTs
 SLENS_METRIC Buckets              #NUM of BUCKETs
@@ -2077,7 +2097,6 @@ SLENS_METRIC Active buckets       #Like Buckets, but only with StorageBytes > 0
 AWS/S3/Storage-Lens/ObjectCount   #NUM of OBJECTs, including VERSIONs, delete markets, MPARTs
 SLENS_METRIC Average object size  #Average StorageBytes per OBJECT
 
-COST OPTIMIZATION ==>             #
 AWS/S3/Storage-Lens/
  CurrentVersionStorageBytes       #Like StorageBytes, but only for current VERSIONs
 SLENS_METRIC
@@ -2154,7 +2173,6 @@ SLENS_METRIC Average abort
  incomplete multipart upload
  lifecycle rules per bucket       #Average AbortIncompleteMPULifecycleRuleCount per BUCKET
 
-DATA PROTECTION ==>
 AWS/S3/Storage-Lens/
  EncryptedStorageBytes            #Like StorageBytes, but only when using SSE
 SLENS_METRIC % encrypted bytes    #% of EncryptedStorageBytes/StorageBytes
@@ -2239,7 +2257,6 @@ SLENS_METRIC Average invalid
  destination replication
  rules per bucket                 #Average InvalidReplicationRuleCount per BUCKET
 
-ACCESS MANAGEMENT ==>             #
 AWS/S3/Storage-Lens/
  ObjectOwnershipBucketOwner
  EnforcedBucketCount              #Like Buckets, but only with BucketOwnerEnforced
@@ -2256,19 +2273,16 @@ AWS/S3/Storage-Lens/
 SLENS_METRIC % Object Ownership
  object writer buckets            #% of ObjectOwnershipObjectWriterBucketCount/Buckets
 
-PERFORMANCE ==>                   #
 AWS/S3/Storage-Lens/Transfer
  AccelerationEnabledBucketCount   #Like Buckets, but only with ACCELERATE enabled
 SLENS_METRIC % Transfer
  Acceleration enabled buckets     #% of TransferAccelerationEnabledBucketCount/Buckets
 
-EVENTS ==>                        #
 AWS/S3/Storage-Lens/Event
  NotificationEnabledBucketCount   #Like Buckets, but only with NOTIFICATION enabled
 SLENS_METRIC % Event Notification
  enabled buckets                  #% of EventNotificationEnabledBucketCount/Buckets
 
-ACTIVITY ==>                      #
 AWS/S3/Storage-Lens/AllRequests
 AWS/S3/Storage-Lens/GetRequests
 AWS/S3/Storage-Lens/PutRequests
@@ -2291,7 +2305,6 @@ AWS/S3/Storage-Lens/5xxErrors     #Like AWS/S3/*
 SLENS_METRIC Total errors         #4xxErrors + 5xxErrors
 SLENS_METRIC % error rate         #% of TotalErrors/AllRequests
 
-DETAILED STATUS CODE ==>          #
 AWS/S3/Storage-Lens/
  200OKStatusCount                 #Like AllRequests, but only with 200 status code
 SLENS_METRIC % 200 OK status      #% of 200OKStatusCount/AllRequests
