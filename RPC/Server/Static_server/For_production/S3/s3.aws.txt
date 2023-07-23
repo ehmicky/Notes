@@ -15,8 +15,6 @@ TODO ==>
      - https://docs.aws.amazon.com/sdkref/latest/guide/feature-s3-mrap.html
   - JavaScript SDK:
      - @aws-sdk/lib-storage
-  - headers:
-      Server [S]                        #'AmazonS3'
   - Pulumi:
      - https://www.pulumi.com/registry/packages/aws-static-website/
   - Glacier:
@@ -35,16 +33,16 @@ VERSION ==>                       #2023-06-13
 NAME ==>                          #Simple Storage Service
 
 s3.amazonaws.com                  #SERVICE_DOMAIN for BUCKET-specific ACTIONs
-BUCKET.s3.amazonaws.com           #Same but using BUCKET as subdomain instead of /BUCKET as path. "Virtual hosting"
+BUCKET.s3.amazonaws.com           #"Virtual hosting". Same but using BUCKET as subdomain instead of /BUCKET as path.
+                                  #Preferred: /BUCKET path is deprecated
                                   #Allows BUCKET-specific:
                                   #  - CNAME
                                   #  - top-level files: robots.txt, favicon.ico, etc.
-                                  #  - same origin / CORS
+                                  #  - same origin, CORS
                                   #Requires:
                                   #  - specifying REGION in subdomain
                                   #     - 301 redirection if not in right REGION
                                   #  - CNAME == 'BUCKET' exactly, e.g. BUCKET called 'www.example.com'
-                                  #Preferred: /BUCKET path is deprecated
 BUCKET.ACCOUNT_ID.s3-control
  .amazonaws.com/v20180820
  /bucket/BUCKET                   #SERVICE_DOMAIN for BUCKET-specific ACTIONs on AWS Outposts
@@ -291,20 +289,20 @@ DeleteBucketTagging()             #Res: empty
 
 
 GET /BUCKET/OBJECT                #Req: READ_OBJECT, Range [C], If-[None-]Match [C], If-[Un]modified-Since [C], x-amz-meta-* [C],
-                                  # x-amz-server-side-encryption-customer-* [C]
+                                  # x-amz-server-side-encryption-customer-* [C], x-amz-checksum-mode [C]
 GetObject()                       #Res: RAW_OBJECT, Content-Range [S], Accept-Range [S], Content-Type [S],
                                   # Content-Encoding [S], Content-Language [S], ETag [S], Last-Modified [S], Expires [S], Cache-Control [S],
                                   # Content-Disposition [S], x-amz-meta-* [S], x-amz-version-id [S], x-amz-delete-marker [S],
                                   # x-amz-restore [S], x-amz-restore-request-date [S], x-amz-archive-status [S],
                                   # x-amz-expiration [S], x-amz-missing-meta [S], x-amz-website-redirect-location [S],
-                                  # x-amz-tagging-count [S], x-amz-server-side-encryption-* [S]
+                                  # x-amz-tagging-count [S], x-amz-server-side-encryption-* [S], x-amz-checksum-ALGO [S]
 HEAD /BUCKET/OBJECT               #Req: like GetObject()
 HeadObject()                      #Res: like GetObject()
 GET /BUCKET/OBJECT?attributes     #Req:
 GetObjectAttributes()             #  - like GetObject()
                                   #  - same pagination as ListParts(), but as x-amz-max-parts [C], x-amz-part-number-marker [C]
                                   #Res: OBJECT
-                                  #  - only ETag, StorageClass, Size -> ObjectSize, Checksum* -> Checksum.Checksum*
+                                  #  - only ETag, StorageClass, Size -> ObjectSize, ChecksumALGO -> Checksum.ChecksumALGO
                                   #  - only Last-Modified [S], x-amz-version-id [S], x-amz-delete-marker [S]
                                   #  - ObjectParts MUPLOAD: only Parts and pagination
 
@@ -387,7 +385,7 @@ OBJECTS.CommonPrefixes            #Unique COMMON_PREFIX_ARR
 COMMON_PREFIX.Prefix              #Prefix + 'OBJECT' until next Delimiter (included)
 
 OBJECTS.Contents                  #OBJECT_ARR
-                                  #  - no Bucket, Location, ChecksumCRC|SHA*, VersionId, IsLatest
+                                  #  - no Bucket, Location, ChecksumALGO, VersionId, IsLatest
 x-amz-optional-object-attributes:
  VAR,... [C]                      #Only return OBJECT.VAR
 
@@ -404,10 +402,12 @@ PutObject()                       #  - RAW_OBJECT
                                   #  - Expect [C], Content-Type [C], Content-Encoding [C], Content-Language [C], Expires [C],
                                   #    Cache-Control [C], Content-Disposition [C], x-amz-meta-* [C], x-amz-storage-class [C],
                                   #    x-amz-acl [C], x-amz-grant-PERMISSION [C], x-amz-website-redirect-location [C],
-                                  #    x-amz-tagging [C], x-amz-server-side-encryption-* [C]
+                                  #    x-amz-tagging [C], x-amz-server-side-encryption-* [C], x-amz-sdk-checksum-algorithm [C],
+                                  #    x-amz-checksum-ALGO [C], Content-MD5 [C]
                                   #  - max 8KB request headers
                                   #Res:
-                                  #  - ETag [S], x-amz-version-id [S], x-amz-expiration [S], x-amz-server-side-encryption-* [S]
+                                  #  - ETag [S], x-amz-version-id [S], x-amz-expiration [S], x-amz-server-side-encryption-* [S],
+                                  #    x-amz-checksum-ALGO [S]
 
 Expect: "100-continue" [C]        #See HTTP doc
 
@@ -513,12 +513,18 @@ OBJ.url                           #'URL'
 
 
 POST /BUCKET/OBJECT?uploads       #Req: same headers as PutObject()
-CreateMultipartUpload()           #Res: MUPLOAD, same headers as PutObject()
-                                  #  - no Parts, Initiated, Initiator, Owner, StorageClass, ChecksumAlgorithm
+CreateMultipartUpload()           #  - no x-amz-checksum-ALGO [C]
+                                  #Res:
+                                  #  - MUPLOAD
+                                  #     - no Parts, Initiated, Initiator, Owner, StorageClass, ChecksumAlgorithm
+                                  #  - same headers as PutObject()
+                                  #     - no x-amz-checksum-ALGO [S]
 PUT /BUCKET/OBJECT                #Req:
-UploadPart()                      #  - RAW_MPART, Expect [C], x-amz-server-side-encryption-customer-* [C]
+UploadPart()                      #  - RAW_MPART
+                                  #  - Expect [C], x-amz-server-side-encryption-customer-* [C],
+                                  #    x-amz-sdk-checksum-algorithm [C], x-amz-checksum-ALGO [C], Content-MD5 [C]
                                   #  - query variables: MUPLOAD.uploadId, MPART.partNumber
-                                  #Res: ETag [S], x-amz-server-side-encryption-* [S]
+                                  #Res: ETag [S], x-amz-server-side-encryption-* [S], x-amz-checksum-ALGO [S]
 GET /BUCKET/OBJECT                #Req: MUPLOAD
 ListParts()                       #  - only uploadId, x-amz-server-side-encryption-customer-* [C]
                                   #Res: MUPLOAD
@@ -535,9 +541,11 @@ POST /BUCKET/OBJECT               #Req: MUPLOAD
 CompleteMultipartUpload()         #  - only uploadId (as query variable)
                                   #  - only Parts
                                   #     - no LastModified, Size
-                                  #  - x-amz-server-side-encryption-customer-* [C]
-                                  #Res: OBJECT, x-amz-version-id [S], x-amz-expiration [S], x-amz-server-side-encryption-* [S]
-                                  #  - only Bucket, Location, ETag, LastModified, ChecksumCRC|SHA*
+                                  #  - x-amz-server-side-encryption-customer-* [C], x-amz-checksum-ALGO [C]
+                                  #Res:
+                                  #  - OBJECT
+                                  #     - only Bucket, Location, ETag, LastModified, ChecksumALGO
+                                  #  - x-amz-version-id [S], x-amz-expiration [S], x-amz-server-side-encryption-* [S]
 DELETE /BUCKET/OBJECT             #Req: MUPLOAD
 AbortMultipartUpload()            #  - only uploadId
                                   #Res: empty
@@ -572,12 +580,17 @@ MPART.Size                        #NUM
 
 PUT /BUCKET/OBJECT                #Req:
 CopyObject()                      #  - like PutObject()
+                                  #     - no x-amz-checksum-ALGO [C], Content-MD5 [C]
+                                  #     - x-amz-sdk-checksum-algorithm [C] -> x-amz-checksum-algorithm [C]
                                   #  - x-amz-copy-source* [C], x-amz-metadata-directive [C], x-amz-tagging-directive [C]
                                   #  - query variables: OBJECT.versionId (source)
-                                  #Res: CopyObjectResult OBJECT, x-amz-version-id [S], x-amz-expiration [S], x-amz-server-side-encryption-* [S]
-                                  #  - only ETag, LastModified, ChecksumCRC|SHA*
+                                  #Res:
+                                  #  - OBJECT
+                                  #     - only ETag, LastModified, ChecksumALGO
+                                  #  - x-amz-version-id [S], x-amz-expiration [S], x-amz-server-side-encryption-* [S]
 PUT /BUCKET/OBJECT                #Req:
 UploadPartCopy()                  #  - like uploadPart()
+                                  #     - no x-amz-checksum-ALGO [C], x-amz-sdk-checksum-algorithm [C], Content-MD5 [C]
                                   #  - x-amz-copy-source* [C]
                                   #  - query variables: OBJECT.versionId (source)
                                   #Res: like copyObject()
@@ -629,42 +642,6 @@ DELETE_ERROR.Message              #STR
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:      LOCATION CONSTRAINT      :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-GET /BUCKET?location              #Req: empty
-GetBucketLocation()               #Res: BUCKET
-                                  #  - only LocationConstraint
-
-x-amz-bucket-region: REGION [S]   #'REGION' (def: 'us-east-1') where BUCKET is located
-BUCKET.LocationConstraint         #Can differ from REGION of ACTION
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:            CACHING            :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-READ_OBJECT.response-expires
-Expires: DATE [C|S]               #See HTTP doc
-READ_OBJECT.response-cache-control
-Cache-Control: STR [C|S]          #See HTTP doc
-
-OBJECT|MPART.LastModified
-Last-Modified: DATE [S]           #'DATE'
-If-[Un]modified-Since: DATE [C]   #See HTTP doc
-
-OBJECT|MPART.ETag
-ETag: ETAG [S]                    #'ETAG'. By default, MD5 hash of data
-If-[None-]Match: STR [C]          #See HTTP doc
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
                                             )==:        CONTENT LENGTH         :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -694,6 +671,91 @@ Content-Disposition: STR [C|S]    #See HTTP doc
 
                                              /=+===============================+=\
                                             /  :                               :  \
+                                            )==:            CACHING            :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+READ_OBJECT.response-expires
+Expires: DATE [C|S]               #See HTTP doc. Def: none
+READ_OBJECT.response-cache-control
+Cache-Control: STR [C|S]          #See HTTP doc. Def: none
+
+OBJECT|MPART.LastModified
+Last-Modified: DATE [S]           #'DATE'. When upload starteed
+If-[Un]modified-Since: DATE [C]   #See HTTP doc
+
+OBJECT|MPART.ETag                 #'ETAG'. MD5 checksum
+ETag: ETAG [S]                    #Same behavior as x-amz-checksum-ALGO
+                                  #  - including when using SSE-KMS, SSE-C or multipart
+If-[None-]Match: ETAG [C]         #See HTTP doc
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:           CHECKSUMS           :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+ALGO                              #One of 'CRC32[C]', 'SHA1', 'SHA256'
+x-amz-checksum-algorithm: ALGO [C]#Automatically generate x-amz-checksum-ALGO [C]
+x-amz-sdk-checksum-algorithm:
+ ALGO [C]                         #Same but noop unless used through SDK or CLI
+OBJECT|MUPLOAD.ChecksumAlgorithm  #ALGO
+
+x-amz-checksum-ALGO [C]           #'BASE64_HASH'. Send checksum, for integrity: fail on checksum mismatch.
+                                  #Only of the data, not metadata|headers
+                                  #If SSE-KMS or SSE-C (but not SSE-S3):
+                                  #  - checksum of encrypted data instead
+                                  #  - if SSE-C: must pass x-amz-server-side-encryption-customer-* [C] to
+                                  #    ListParts(), CompleteMultipartUpload()
+                                  #If multipart:
+                                  #  - each MPART has own checksum
+                                  #  - OBJECT uses:
+                                  #     - checksum of concatenation of MPART checksums
+                                  #     - appended with -NUM (number of MPARTs)
+                                  #  - i.e. CopyObject|UploadPartCopy() can change checksum if source used multipart,
+                                  #    but not target, or vice-versa
+
+x-amz-checksum-mode: ENABLED [C]  #Set x-amz-checksum-ALGO [S]
+x-amz-checksum-ALGO [S]
+OBJECT|MPART.ChecksumALGO         #'BASE64_HASH'
+
+Content-MD5: MD5_HASH [C]         #Alternative to x-amz-checksum-ALGO [C]
+                                  #Matches ETag [S], except when using SSE-KMS, SSE-C or multipart
+                                  #  - unlike x-amz-checksum-ALGO [C], always checksum of the whole data
+                                  #Pros:
+                                  #  - can match ETag [S]
+                                  #  - standard
+                                  #Cons:
+                                  #  - when not matching ETag [S], cannot retrieve checksum
+                                  #  - no MPART checksum, i.e. integrity failures happen only at end of multipart upload
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:           METADATA            :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+READ_OBJECT
+ .response-content-language
+Content-Language: STR [C|S]       #See HTTP doc
+
+Server: AmazonS3 [S]              #
+
+x-amz-meta-*: VAL [C|S]           #'VAL'. Arbitrary metadata
+RESTORE_OUTPUT.UserMetadata.VAR   #If set multiple times, joined as 'VAL,...'
+                                  #Key is lowercased
+                                  #Max 2KB
+
+x-amz-missing-meta: NUM [S]       #NUM of x-amz-meta-* with invalid keys
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
                                             )==:          OBJECT TAGS          :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -717,40 +779,17 @@ FILTER.Tag                        #TAG_PAIRS. Only if TAGs match
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:           METADATA            :==(
+                                            )==:      LOCATION CONSTRAINT      :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
-READ_OBJECT
- .response-content-language
-Content-Language: STR [C|S]       #See HTTP doc
+GET /BUCKET?location              #Req: empty
+GetBucketLocation()               #Res: BUCKET
+                                  #  - only LocationConstraint
 
-x-amz-meta-*: VAL [C|S]           #'VAL'. Arbitrary metadata
-RESTORE_OUTPUT.UserMetadata.VAR   #If set multiple times, joined as 'VAL,...'
-                                  #Key is lowercased
-                                  #Max 2KB
-
-x-amz-missing-meta: NUM [S]       #NUM of x-amz-meta-* with invalid keys
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:           CHECKSUMS           :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-Content-MD5: STR [C]              #
-
-x-amz-sdk-checksum-algorithm:
- STR [C]
-OBJECT.ChecksumAlgorithm          #'CRC32[C]|SHA1|SHA256'
-
-OBJECT|MPART
- .ChecksumCRC32[C]|SHA1|SHA256
-x-amz-checksum-
- crc32[c]|sha1|sha256 [S]         #'BASE64_HASH'
+x-amz-bucket-region: REGION [S]   #'REGION' (def: 'us-east-1') where BUCKET is located
+BUCKET.LocationConstraint         #Can differ from REGION of ACTION
 
 
                                              /=+===============================+=\
@@ -768,7 +807,7 @@ GET /BUCKET?versions              #Req: OBJECT_VERSIONS
 ListObjectVersions()              #  - CamelCase -> dash-case
                                   #  - only EncodingType, Prefix, Delimiter
                                   #Res: OBJECT_VERSIONS
-                                  #  - Versions: no Bucket, Location, ChecksumCRC|SHA*
+                                  #  - Versions: no Bucket, Location, ChecksumALGO
                                   #Paginates OBJECTS.Versions with KeyMarker + VersionIdMarker, MaxKeys
 
 VERSIONING                        #Make OBJECTs:
@@ -870,6 +909,7 @@ StorageClass 'OUTPOSTS'           #AWS Outposts
 
 POST /BUCKET/OBJECT?restore       #Req:
 RestoreObject()                   #  - RESTORE
+                                  #  - x-amz-sdk-checksum-algorithm [C]
                                   #  - query variables: OBJECT.VersionId
                                   #Res: empty
                                   #Max 1e3/sec
