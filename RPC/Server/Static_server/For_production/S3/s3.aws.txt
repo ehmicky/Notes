@@ -57,7 +57,7 @@ FORMAT ==>                        #XML REST
 
 ERRORS ==>                        #OBJ_ARR: Code, Message, Resource, RequestId
 
-REQ_ID                            #x-amz-request-id [S] + x-amz-id-2 [S]
+REQ_ID                            #x-amz-request-id [S] + x-amz-id-2 [S] (S3 host)
 
 PAGINATION ==>                    #
 REQ.nextToken
@@ -2876,33 +2876,29 @@ GetBucketNotification             #Req: empty
  Configuration()                  #Res: NOTIFICATIONS
 
 NOTIFICATIONS                     #Send messages to SNS, SQS, Lambda or EventBridge on S3 events
-                                  #Can send to only one of them
                                   #Must be in same REGION
                                   #Delivered at least once, but can rarely be sent multiple times
                                   #Usually sent in seconds, but can be minutes
 
-NOTIFICATIONS.TopicConfiguration  #NOTIFICATIONS_SNS
+NOTIFICATIONS.TopicConfigurations #NOTIFICATIONS_SNS_ARR
 NOTIFICATIONS_SNS.Topic           #TOPIC_ARN. Cannot be FIFO
 
-NOTIFICATIONS.QueueConfiguration  #NOTIFICATIONS_SQS
+NOTIFICATIONS.QueueConfigurations #NOTIFICATIONS_SQS_ARR
 NOTIFICATIONS_SQS.Queue           #QUEUE_ARN. Cannot be FIFO
 
 NOTIFICATIONS
- .CloudFunctionConfiguration      #NOTIFICATIONS_LAMBDA
+ .CloudFunctionConfigurations     #NOTIFICATIONS_LAMBDA_ARR
 NOTIFICATIONS_LAMBDA.CloudFunction#FUNC_ARN
 
 NOTIFICATIONS
  .EventBridgeConfiguration        #NOTIFICATIONS_EVENTBRIDGE
-
-x-amz-skip-destination-validation:
- BOOL [C]                         #If false (def), fails is SNS|SQS|Lambda|EventBridge destination is not correctly configured
-NEVENT s3:TestEvent               #On PutBucketNotificationConfiguration()
 
 NOTIFICATIONS_SNS|SQS|LAMBDA.Id   #STR (def: automatic)
 NOTIFICATIONS_SNS|SQS|LAMBDA
  .Filter.S3Key.FilterRules        #NOTIFICATIONS_FILTER_ARR
 NOTIFICATIONS_FILTER.Name         #'prefix|suffix'
 NOTIFICATIONS_FILTER.Value        #STR. Only emits events for OBJECTs starting|ending with STR
+                                  #Cannot overlap with other NOTIFICATIONS_FILTER, i.e. match some of the same OBJECTs
 
 PERMISSIONS ==>                   #Must grant:
                                   #  - one of:
@@ -2947,15 +2943,77 @@ NEVENT s3:ObjectAcl:Put           #On PutObjectAcl() success
 NEVENT s3:ObjectTagging:Put       #On PutObjectTagging() success
 NEVENT s3:ObjectTagging:Delete    #On DeleteObjectTagging() success
 
-NPAYLOAD                          #Event message payload
-NPAYLOAD.Service                  #'Amazon S3'
-NPAYLOAD.Event                    #'NEVENT'
-NPAYLOAD.Time                     #'DATE'
-NPAYLOAD.Bucket                   #BUCKET_ARN
-NPAYLOAD.Key                      #'OBJECT'
-NPAYLOAD.VersionId                #VERSION_MID
-NPAYLOAD.RequestId                #REQ_ID
-NPAYLOAD.HostId                   #ID of requester host
+NPAYLOAD                          #Event message payload. JSON
+NPAYLOAD.Records                  #NMESSAGE_ARR
+NMESSAGE.eventVersion             #One of:
+                                  #  - '2.3': on NEVENT s3:ObjectRestore|Lifecycle*|IntelligentTiering|ObjectAcl|ObjectTagging
+                                  #  - '2.2': on NEVENT s3:Replication, if cross-REGIONs
+                                  #  - '2.1': otherwise
+NMESSAGE.eventSource              #Always 'aws:s3'
+NMESSAGE.awsRegion                #'REGION'
+NMESSAGE.eventTime                #'DATE'
+NMESSAGE.eventName                #'NEVENT' without 's3:' prefix
+NMESSAGE.s3                       #NMESSAGE_S3
+NMESSAGE_S3.s3SchemaVersion       #Always '1.0'
+
+NMESSAGE.userIdentity.principalId #ACCOUNT_ID of requester
+NMESSAGE.requestParameters
+ .sourceIPAddress                 #'IP' of requester
+NMESSAGE.responseElements         #NRES_HEADERS
+NRES_HEADERS.x-amz-request-id     #'REQ_ID'
+NRES_HEADERS.x-amz-id-2           #STR
+
+NMESSAGE_S3.bucket                #NMESSAGE_BUCKET
+NMESSAGE_BUCKET.arn               #BUCKET_ARN
+NMESSAGE_BUCKET.name              #'BUCKET'
+NMESSAGE_BUCKET
+ .ownerIdentity.principalId       #ACCOUNT_ID of BUCKET_OWNER
+
+NMESSAGE_S3.object                #NMESSAGE_OBJECT
+NMESSAGE_OBJECT.key               #'OBJECT'
+NMESSAGE_OBJECT.size              #NUM (in bytes)
+NMESSAGE_OBJECT.eTag              #STR
+NMESSAGE_OBJECT.versionId         #VERSION_MID
+NMESSAGE_OBJECT.sequencer         #'HEX' of NUM, used to know time order between NOTIFICATIONs on a given OBJECT
+                                  #Only for PUT|DELETE ACTIONs
+
+NMESSAGE.glacierEventData
+ .restoreEventData                #NMESSAGE_RESTORE. For NEVENT s3:RestoreObject:Completed only
+NMESSAGE_RESTORE
+ .lifecycleRestorationExpiryTime  #RESTORE_STATUS.RestoreExpiryDate
+NMESSAGE_RESTORE
+ .lifecycleRestoreStorageClass    #New 'STORAGE_CLASS'
+
+NMESSAGE
+ .intelligentTieringEventData
+ .destinationAccessTier           #New 'STORAGE_CLASS'. For NEVENT s3:IntelligentTiering only
+
+NMESSAGE.lifecycleEventData
+ .transitionEventData
+ .destinationStorageClass         #New 'STORAGE_CLASS'. For NEVENT s3:Lifecycle* only
+
+NMESSAGE.replicationEventData     #NMESSAGE_REPLICATION. For NEVENT s3:Replication:* only
+NMESSAGE_REPLICATION
+ .replicationRuleId               #'REPLICATION_RULE'
+NMESSAGE_REPLICATION.requestTime  #'DATE' of start
+NMESSAGE_REPLICATION
+ .replicationTime                 #'DATE' of end
+NMESSAGE_REPLICATION
+ .destinationBucket               #'BUCKET'
+NMESSAGE_REPLICATION.s3Operation  #'ACTION'
+NMESSAGE_REPLICATION.failureReason#STR
+NMESSAGE_REPLICATION.threshold    #NUM (for RTC)
+
+x-amz-skip-destination-validation:
+ BOOL [C]                         #If false (def), fails is SNS|SQS|Lambda|EventBridge destination is not correctly configured
+NEVENT s3:TestEvent               #On PutBucketNotificationConfiguration()
+TEST_NPAYLOAD                     #Event message payload for NEVENT s3:TestEvent
+TEST_NPAYLOAD.Service             #'Amazon S3'
+TEST_NPAYLOAD.Event               #'NEVENT'
+TEST_NPAYLOAD.Time                #'DATE'
+TEST_NPAYLOAD.Bucket              #'BUCKET'
+TEST_NPAYLOAD.RequestId           #REQ_ID
+TEST_NPAYLOAD.HostId              #ID of requester host
 
 AWS/S3/Storage-Lens/Event
  NotificationEnabledBucketCount   #Like Buckets, but only with NOTIFICATION enabled
