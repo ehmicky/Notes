@@ -443,6 +443,8 @@ PutObject()                       #  - RAW_OBJECT
 
 Expect: 100-continue [C]          #See HTTP doc
 
+NEVENT s3:ObjectCreated:Put       #On PutObject() success
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -478,6 +480,8 @@ BUPLOAD.success_action_redirect
 success_action_redirect: URL [S]
 Redirect: URL [S]                 #URL to redirect to when response code is success_action_status NUM
 BUPLOAD.success_action_status     #200, 201 or 204 (def)
+
+NEVENT s3:ObjectCreated:Post      #On PostObject() success
 
 
                                              /=+===============================+=\
@@ -605,6 +609,9 @@ MPART.partNumber                  #NUM. 1-based index.
                                   #Max 1e4
 MPART.Size                        #NUM
 
+NEVENT s3:ObjectCreated:
+ CompleteMultipartUpload          #On CompleteMultipartUpload() success
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -647,6 +654,8 @@ x-amz-copy-source-HEADER: STR [C] #Same as [x-amz-]HEADER: STR [C] but targettin
 x-amz-copy-source-HEADER: STR [S] #Reflects same request header [C]
                                   #Only for version-id, to distinguish from x-amz-version-id [S] (of new OBJECT)
 
+NEVENT s3:ObjectCreated:Copy      #On CopyObject() success
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -677,6 +686,10 @@ DELETE_OBJECTS.Errors             #DELETE_ERROR_ARR
 DELETE_ERROR.Key                  #'OBJECT'
 DELETE_ERROR.Code                 #STR
 DELETE_ERROR.Message              #STR
+
+NEVENT s3:ObjectRemoved:Delete    #On OBJECT permanent deletion (not from LIFECYCLE)
+NEVENT s3:ObjectRemoved:
+ DeleteMarkerCreated              #On delete marker creation (not from LIFECYCLE)
 
 
                                              /=+===============================+=\
@@ -821,6 +834,9 @@ x-amz-tagging-count: NUM [S]      #
 RESTORE_OUTPUT.Tagging            #TAG_PAIRS
 
 FILTER.Tags                       #TAG_PAIRS. Only if TAGs match
+
+NEVENT s3:ObjectTagging:Put       #On PutObjectTagging() success
+NEVENT s3:ObjectTagging:Delete    #On DeleteObjectTagging() success
 
 
                                              /=+===============================+=\
@@ -1037,6 +1053,9 @@ MAIN_METRICS DVAR StorageType     #Can be used on AWS/S3/BucketSizeBytes|NumberO
                                   #  - with INTELLIGENT_TIERING: FA|IA|(none)|AIA|AA|DAA
 SLENS DVAR storage_class          #'STORAGE_CLASS'
 
+NEVENT
+ s3:ReducedRedundancyLostObject   #When OBJECT with REDUCED_REDUDANCY is lost
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -1078,6 +1097,16 @@ RESTORE_OUTPUT.Prefix             #STR
 
 RESTORE.Type                      #Whether can use SelectParameters: not (def) or 'SELECT'
 RESTORE.SelectParameters          #Apply SELECT_REQ (except ScanRange, RequestProgress) on OBJECT being restored
+
+NEVENT s3:ObjectRestore:Post      #On RestoreObject() start
+NEVENT s3:ObjectRestore:Delete    #On RestoreObject() expiration
+NEVENT s3:ObjectRestore:Completed #On RestoreObject() success
+NMESSAGE.glacierEventData
+ .restoreEventData                #NMESSAGE_RESTORE. For NEVENT s3:RestoreObject:Completed only
+NMESSAGE_RESTORE
+ .lifecycleRestorationExpiryTime  #RESTORE_STATUS.RestoreExpiryDate
+NMESSAGE_RESTORE
+ .lifecycleRestoreStorageClass    #New 'STORAGE_CLASS'
 
 
                                              /=+===============================+=\
@@ -1125,6 +1154,11 @@ TIERING_CONF.Days                 #NUM. After OBJECT not read for NUM days, sets
 INTELLIGENT_TIERING.Filter        #FILTER. Only apply INTELLIGENT_TIERING to matching OBJECTs.
 FILTER.Prefix                     #STR. Only if 'OBJECT' start with STR
 FILTER.And                        #FILTER_ARR
+
+NEVENT s3:IntelligentTiering      #When INTELLIGENT_TIERING sets STORAGE_CLASS to GLACIER|DEEP_ARCHIVE
+NMESSAGE
+ .intelligentTieringEventData
+ .destinationAccessTier           #New 'STORAGE_CLASS'. For NEVENT s3:IntelligentTiering only
 
 
                                              /=+===============================+=\
@@ -1187,6 +1221,11 @@ SLENS_METRIC Average noncurrent
  version transition lifecycle
  rules per bucket                 #Average NoncurrentVersionTransitionLifecycleRuleCount per BUCKET
 
+NEVENT s3:LifecycleTransition     #When [N]TRANSITION changes a STORAGE_CLASS
+NMESSAGE.lifecycleEventData
+ .transitionEventData
+ .destinationStorageClass         #New 'STORAGE_CLASS'. For NEVENT s3:LifecycleTransition only
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -1218,6 +1257,11 @@ SLENS_METRIC Average expiration
 SLENS_METRIC Average noncurrent
  version expiration lifecycle
  rules per bucket                 #Average NoncurrentVersionExpirationLifecycleRuleCount per BUCKET
+
+NEVENT
+ s3:LifecycleExpiration:Delete    #When [N]EXPIRATION permanently deletes
+NEVENT s3:LifecycleExpiration:
+ DeleteMarkerCreated              #When [N]EXPIRATION creates a delete marker
 
 
                                              /=+===============================+=\
@@ -1523,6 +1567,8 @@ GRANTEE.URI                       #One of:
                                   #  - http://acs.amazonaws.com/groups/global/AllUsers: anyone
                                   #     - same as in POLICY_DOC: Principal '*'
                                   #     - CANONICAL_ACCOUNT_ID '65a011a29cdf8ec533ec3d1ccaae921c'
+
+NEVENT s3:ObjectAcl:Put           #On PutObjectAcl() success
 
 
                                              /=+===============================+=\
@@ -2177,7 +2223,7 @@ CROSS-ACCOUNT PERMISSIONS ==>     #If cross-ACCOUNT, TARGET_BUCKET must have POL
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:      REPLICATION METRICS      :==(
+                                            )==:      REPLICATION EVENTS       :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
@@ -2188,8 +2234,38 @@ REPLICATION_TIME.Time.Minutes     #NUM (must be 15). Ensures that REPLICATION ha
                                   #99.9% of times, covered by SLA
                                   #Does not cover replication of delete markers
                                   #Also emits the s3:Replication:* NOTIFICATION events
+
 REPLICATION_METRICS
  .EventThreshold.Minutes          #NUM (must be 15) used by s3:Replication:OperationMissedThreshold
+NEVENT s3:Replication:
+ OperationMissedThreshold         #When a REPLICATION ACTION does not happen within RTC time threshold
+NEVENT s3:Replication:
+ OperationReplicatedAfterThreshold#When a REPLICATION ACTION succeeds but after RTC time threshold
+NEVENT s3:Replication:
+ OperationNotTracked              #When METRICs failed to be emitted for a source OBJECT, providing it uses RTC
+
+NEVENT s3:Replication:
+ OperationFailedReplication       #When a source OBJECT failed to be replicated
+
+NMESSAGE.replicationEventData     #NMESSAGE_REPLICATION. For NEVENT s3:Replication:* only
+NMESSAGE_REPLICATION
+ .replicationRuleId               #'REPLICATION_RULE'
+NMESSAGE_REPLICATION.requestTime  #'DATE' of start
+NMESSAGE_REPLICATION
+ .replicationTime                 #'DATE' of end
+NMESSAGE_REPLICATION
+ .destinationBucket               #'BUCKET'
+NMESSAGE_REPLICATION.s3Operation  #'ACTION'
+NMESSAGE_REPLICATION.failureReason#STR
+NMESSAGE_REPLICATION.threshold    #NUM (for RTC)
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:      REPLICATION METRICS      :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
 
 REPLICATION_DEST.Metrics          #REPLICATION_METRICS
 REPLICATION_METRICS.Status        #'Enabled' or 'Disabled'. Def: 'Enabled' if RTC, otherwise not
@@ -2863,7 +2939,7 @@ PERMISSIONS ==>                   #Must grant permissions to S3 SERVICE_DOMAIN o
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:         NOTIFICATIONS         :==(
+                                            )==:      NOTIFICATIONS MAIN       :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
@@ -2888,12 +2964,14 @@ NOTIFICATIONS_SQS.Queue           #QUEUE_ARN. Cannot be FIFO
 
 NOTIFICATIONS
  .CloudFunctionConfigurations     #NOTIFICATIONS_LAMBDA_ARR
-NOTIFICATIONS_LAMBDA.CloudFunction#FUNC_ARN
+NOTIFICATIONS_LAMBDA.CloudFunction#FUNC_ARN. Uses INVOCATION_REQ: InvocationType 'Event', Payload NEVENT
 
 NOTIFICATIONS
  .EventBridgeConfiguration        #NOTIFICATIONS_EVENTBRIDGE
 
 NOTIFICATIONS_SNS|SQS|LAMBDA.Id   #STR (def: automatic)
+NOTIFICATIONS_SNS|SQS|LAMBDA      #'NEVENT'_ARR
+ .Events                          #Can use * after second `:`
 NOTIFICATIONS_SNS|SQS|LAMBDA
  .Filter.S3Key.FilterRules        #NOTIFICATIONS_FILTER_ARR
 NOTIFICATIONS_FILTER.Name         #'prefix|suffix'
@@ -2910,41 +2988,21 @@ PERMISSIONS ==>                   #Must grant:
                                   #  - CONDITION_KEY aws:SourceAccount = ACCOUNT_ID
                                   #  - access to KMS_KEY (if used)
 
-NOTIFICATIONS_SNS|SQS|LAMBDA      #'NEVENT'_ARR
- .Events                          #Can use * after second `:`
-NEVENT
- s3:ReducedRedundancyLostObject   #When OBJECT with REDUCED_REDUDANCY is lost
-NEVENT s3:ObjectCreated:Put       #On PutObject() success
-NEVENT s3:ObjectCreated:Post      #On PostObject() success
-NEVENT s3:ObjectCreated:Copy      #On CopyObject() success
-NEVENT s3:ObjectCreated:
- CompleteMultipartUpload          #On CompleteMultipartUpload() success
-NEVENT s3:ObjectRestore:Post      #On RestoreObject() start
-NEVENT s3:ObjectRestore:Completed #On RestoreObject() success
-NEVENT s3:ObjectRestore:Delete    #On RestoreObject() expiration
-NEVENT s3:Replication:
- OperationFailedReplication       #When a source OBJECT failed to be replicated
-NEVENT s3:Replication:
- OperationNotTracked              #When METRICs failed to be emitted for a source OBJECT, providing it uses RTC
-NEVENT s3:Replication:
- OperationMissedThreshold         #When a REPLICATION operation does not happen within RTC time threshold
-NEVENT s3:Replication:
- OperationReplicatedAfterThreshold#When a REPLICATION operation succeeds but after RTC time threshold
-NEVENT s3:ObjectRemoved:Delete    #On OBJECT permanent deletion (not from LIFECYCLE)
-NEVENT s3:ObjectRemoved:
- DeleteMarkerCreated              #On delete marker creation (not from LIFECYCLE)
-NEVENT
- s3:LifecycleExpiration:Delete    #When LIFECYCLE_RULE.[NonCurrentVersion]Expirations permanently deletes
-NEVENT s3:LifecycleExpiration:
- DeleteMarkerCreated              #When LIFECYCLE_RULE.[NonCurrentVersion]Expirations creates a delete marker
-NEVENT s3:LifecycleTransition     #When LIFECYCLE_RULE.[NonCurrentVersion]Transitions changes a STORAGE_CLASS
-NEVENT s3:IntelligentTiering      #When INTELLIGENT_TIERING sets STORAGE_CLASS to GLACIER|DEEP_ARCHIVE
-NEVENT s3:ObjectAcl:Put           #On PutObjectAcl() success
-NEVENT s3:ObjectTagging:Put       #On PutObjectTagging() success
-NEVENT s3:ObjectTagging:Delete    #On DeleteObjectTagging() success
+AWS/S3/Storage-Lens/Event
+ NotificationEnabledBucketCount   #Like Buckets, but only with NOTIFICATION enabled
+SLENS_METRIC % Event Notification
+ enabled buckets                  #% of EventNotificationEnabledBucketCount/Buckets
 
-NPAYLOAD                          #Event message payload. JSON
-NPAYLOAD.Records                  #NMESSAGE_ARR
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:     NOTIFICATIONS PAYLOAD     :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+NPAYLOAD                          #Event message JSON payload
+NPAYLOAD.Records                  #NMESSAGE_ARR. Only one item
 NMESSAGE.eventVersion             #One of:
                                   #  - '2.3': on NEVENT s3:ObjectRestore|Lifecycle*|IntelligentTiering|ObjectAcl|ObjectTagging
                                   #  - '2.2': on NEVENT s3:Replication, if cross-REGIONs
@@ -2977,36 +3035,19 @@ NMESSAGE_OBJECT.versionId         #VERSION_MID
 NMESSAGE_OBJECT.sequencer         #'HEX' of NUM, used to know time order between NOTIFICATIONs on a given OBJECT
                                   #Only for PUT|DELETE ACTIONs
 
-NMESSAGE.glacierEventData
- .restoreEventData                #NMESSAGE_RESTORE. For NEVENT s3:RestoreObject:Completed only
-NMESSAGE_RESTORE
- .lifecycleRestorationExpiryTime  #RESTORE_STATUS.RestoreExpiryDate
-NMESSAGE_RESTORE
- .lifecycleRestoreStorageClass    #New 'STORAGE_CLASS'
 
-NMESSAGE
- .intelligentTieringEventData
- .destinationAccessTier           #New 'STORAGE_CLASS'. For NEVENT s3:IntelligentTiering only
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:   NOTIFICATIONS TEST EVENT    :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
 
-NMESSAGE.lifecycleEventData
- .transitionEventData
- .destinationStorageClass         #New 'STORAGE_CLASS'. For NEVENT s3:Lifecycle* only
-
-NMESSAGE.replicationEventData     #NMESSAGE_REPLICATION. For NEVENT s3:Replication:* only
-NMESSAGE_REPLICATION
- .replicationRuleId               #'REPLICATION_RULE'
-NMESSAGE_REPLICATION.requestTime  #'DATE' of start
-NMESSAGE_REPLICATION
- .replicationTime                 #'DATE' of end
-NMESSAGE_REPLICATION
- .destinationBucket               #'BUCKET'
-NMESSAGE_REPLICATION.s3Operation  #'ACTION'
-NMESSAGE_REPLICATION.failureReason#STR
-NMESSAGE_REPLICATION.threshold    #NUM (for RTC)
 
 x-amz-skip-destination-validation:
  BOOL [C]                         #If false (def), fails is SNS|SQS|Lambda|EventBridge destination is not correctly configured
+
 NEVENT s3:TestEvent               #On PutBucketNotificationConfiguration()
+
 TEST_NPAYLOAD                     #Event message payload for NEVENT s3:TestEvent
 TEST_NPAYLOAD.Service             #'Amazon S3'
 TEST_NPAYLOAD.Event               #'NEVENT'
@@ -3014,11 +3055,6 @@ TEST_NPAYLOAD.Time                #'DATE'
 TEST_NPAYLOAD.Bucket              #'BUCKET'
 TEST_NPAYLOAD.RequestId           #REQ_ID
 TEST_NPAYLOAD.HostId              #ID of requester host
-
-AWS/S3/Storage-Lens/Event
- NotificationEnabledBucketCount   #Like Buckets, but only with NOTIFICATION enabled
-SLENS_METRIC % Event Notification
- enabled buckets                  #% of EventNotificationEnabledBucketCount/Buckets
 
 
                                              /=+===============================+=\
