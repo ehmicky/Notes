@@ -10,16 +10,13 @@ TODO ==>
      - aws s3|s3api|s3control ...
      - aws help topics s3-config
      - aws help topics s3-faq
-     - https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-files.html    #cli-configure-files-s3
+     - https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-files.html#cli-configure-files-s3
      - https://docs.aws.amazon.com/sdkref/latest/guide/feature-s3-access-point.html
      - https://docs.aws.amazon.com/sdkref/latest/guide/feature-s3-mrap.html
   - JavaScript SDK:
      - @aws-sdk/lib-storage
   - headers:
-      Content-MD5 [C]                   #
-      X-Amz-Content-SHA256 [C]          #'SHA256' hash of request body
       Server [S]                        #'AmazonS3'
-      ETag [S]                          #MD5. Of content, not metadata.
   - Pulumi:
      - https://www.pulumi.com/registry/packages/aws-static-website/
   - Glacier:
@@ -481,8 +478,31 @@ OP 'starts-with'                  #VAL1 starts with VAL2
                                   #Only with PROP: acl, Cache-Control, Content-*, Expires, key, success_action_redirect, x-amz-meta-*
 OP 'content-length-range'         #VAL1 <= Content-Length [S] <= VAL2
 
-x-amz-signature: STR [C]          #Unlike other ACTIONs, request body is BUPLOAD_POLICY
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:   BROWSER UPLOAD SIGNATURE    :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+x-amz-signature: STR [C]          #Unlike other ACTIONs, request body used in signature is BUPLOAD_POLICY
                                   #I.e. when authenticating with a pre-signed URL, client-side cannot modify BUPLOAD_POLICY
+                                  #Using a pre-signed URL is recommended since this is done client-side
+
+@aws-sdk/s3-presigned-post        #Part of JavaScript SDK
+createPresignedPost
+ (CLIENT, OPTS)->>OBJ             #Create pre-signed URL for PostObject()
+OPTS.Bucket                       #'BUCKET'
+OPTS.Key                          #BUPLOAD.key
+OPTS.Expires                      #BUPLOAD_POLICY.expiration, as NUM (in secs, def: 1h)
+OPTS.Conditions                   #BUPLOAD_POLICY.conditions
+OPTS.Fields                       #BUPLOAD.PROPs, as OBJ
+OBJ.fields                        #OBJ. Same but adds:
+                                  #  - policy 'BASE64_JSON'
+                                  #  - key 'OBJECT'
+                                  #  - X-Amz-* of signature
+OBJ.url                           #'URL'
 
 
                                              /=+===============================+=\
@@ -721,6 +741,10 @@ x-amz-missing-meta: NUM [S]       #NUM of x-amz-meta-* with invalid keys
                                              \=+===============================+=/
 
 
+Content-MD5: STR [C]              #
+
+x-amz-sdk-checksum-algorithm:
+ STR [C]
 OBJECT.ChecksumAlgorithm          #'CRC32[C]|SHA1|SHA256'
 
 OBJECT|MPART
@@ -1199,13 +1223,13 @@ PRE-SIGNED URL ==>                #Computing the AWS signature of a specific REQ
 x-amz-expires: NUM [C]            #Can be used (see AWS signature doc). Mostly meant for pre-signed URLs
                                   #Max depends on current authentication method
                                   #  - INSTANCE_PROFILE: 6h
-                                  #  - STS: 36h
+                                  #  - STS: min (36h, TEMP_CREDS)
                                   #  - otherwise: 7d
 
 x-amz-content-sha256: STR [C]     #Can be used for AWS signature (see its doc) to either:
                                   #  - ignore request body (mostly meant for pre-signed URLs)
                                   #  - use a chunked request body
-Content-MD5: STR [C]              #Like x-amz-content-sha256 [C], but deprecated
+                                  #Must not use Content-MD5 [C]
 
 @aws-sdk/s3-request-presigner     #Part of JavaScript SDK
 getSignedUrl
@@ -1452,24 +1476,17 @@ RESTORE_ENCRYPTION.KMSContext     #STR, like x-amz-server-side-encryption-contex
                                              \=+===============================+=/
 
 
-PUT /BUCKET?requestPayment        #Make requester pay for transfer costs (but not storage costs):
-PutBucketRequestPayment()         #  - must use x-amz-request-payer: requester [C], and request not fail (unless BUCKET_OWNER)
-                                  #  - does not work with BitTorrent and logging
-                                  #Request body PAYMENT_OBJ:
-                                  #  - RequestPaymentConfiguration
-                                  #     - Payer: "Requester|BucketOwner" (def: "BucketOwner")
-GET /BUCKET?requestPayment
-GetBucketRequestPayment()         #Returns PAYMENT_OBJ
+PUT /BUCKET?requestPayment        #Req: PAYMENT
+PutBucketRequestPayment()         #Res: empty
+GET /BUCKET?requestPayment        #Req: empty
+GetBucketRequestPayment()         #Res: PAYMENT
 
-DEVPAY ==>                        #Goal:
-                                  #  - Charges requester for S3 costs.
-                                  #  - Induces a transaction percentage fee.
-                                  #Requests must send:
-                                  #  - product token: ID of client application
-                                  #  - user token: ID of client application user
-                                  #Requests authentication as usual except:
-                                  #  - if client-side, client should not access SECRET_ACCESS_KEY, so needs to derive a second
-                                  #    SECRET_ACCESS_KEY2
+PAYMENT                           #Must be BUCKET_OWNER
+PAYMENT.Payer                     #Who is charged, either 'BucketOwner' (def) or 'Requester'
+                                  #Only for transfer costs, not storage
+                                  #Only for successful requests
+x-amz-request-payer: requester [C]#Must be used if PAYMENT.Payer 'Requester'
+                                  #Not with GetObjectTorrent()
 
 
                                              /=+===============================+=\
