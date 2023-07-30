@@ -52,42 +52,8 @@ COPTS.useArnRegion                #BOOL (def: false). Prefer REQ.Name|Bucket's A
 @aws-sdk/
  middleware-expect-continue       #Seems to always add Expect: 100-continue [C], used by S3 client
 
-@aws-sdk/
- middleware-flexible-checksums
-                                  #Content-MD5 [C] + x-amz-checksum-ALGO [C]: all requests with a payload, except:
-                                  #  - neither headers:
-                                  #     - S3-control ACTIONs
-                                  #     - CreateBucket SelectObjectContent AbortMultipartUpload
-                                  #       PutBucketAnalyticsConfiguration PutBucketIntelligentTieringConfiguration
-                                  #       PutBucketInventoryConfiguration PutBucketMetricsConfiguration PutBucketNotificationConfiguration
-                                  #  - Content-MD5 [C] only: PutBucketOwnershipControls
-                                  #     - automatically computed by SDK|CLI
-                                  #  - x-amz-checksum-ALGO [C] only:
-                                  #     - CompleteMultipartUpload CopyObject CreateMultiPartUpload UploadPartCopy
-                                  #       PutBucketAccelerateConfiguration PutBucketLifecycleConfiguration RestoreObject
-                                  #       WriteGetObjectResponse DeleteObjects
-                                  #x-amz-checksum-algorithm: ALGO [C]:
-                                  #  - only when copying, to change checksum ALGO
-                                  #  - only with CopyObject and CreateMultipartUpload
-                                  #REQ.ChecksumAlgorithm 'ALGO' or --checksum-algorithm ALGO
-                                  #  - can only used through SDK|CLI, not API
-                                  #  - sometimes called dummy name x-amz-sdk-checksum-algorithm [C] in the online doc
-                                  #  - automatically computes x-amz-checksum-ALGO [C]
-                                  #  - def: computes Content-MD5 [C] instead
-                                  #     - not for PutBucketAccelerateConfiguration, RestoreObject, UploadPart, PutObject
-                                  #  - for any requests which can use x-amz-checksum-ALGO
-                                  #     - except CompleteMultipartUpload WriteGetObjectResponse
-                                  #  - with SDK|CLI, must be used instead of x-amz-checksum-ALGO [C]
-                                  #     - except for:
-                                  #        - CompleteMultipartUpload WriteGetObjectResponse: they do not have REQ.ChecksumAlgorithm
-                                  #        - PutObject UploadPart CompleteMultipartUpload: can optionally use x-amz-checksum-ALGO [C] instead
-                                  #  - with streams, also sets:
-                                  #     - transfer-encoding: chunked [C]
-                                  #     - content-encoding: [...,]aws-chunked [C]
-                                  #     - x-amz-decoded-content-length: NUM [C] (original value for content-length [C])
-                                  #     - x-amz-content-sha256: STREAMING-UNSIGNED-PAYLOAD-TRAILER [C]
-                                  #     - x-amz-trailer: x-amz-checksum-ALGO [C]
-                                  #Also validates x-amz-checksum-ALGO [S] checksum matches response body
+@aws-sdk/                         #Implements REQ.ChecksumAlgorithm, x-amz-checksum-ALGO [S] validation,
+ middleware-flexible-checksums    #and x-amz-content-sha256 [C], in S3 client
 
 @aws-sdk/middleware-location-constraint
                                   #For CreateBucket()
@@ -294,7 +260,7 @@ BUCKET.Name                       #'BUCKET'
                                   #Must be unique across AWS
 BUCKET.CreationDate               #'DATE'
 
-PUT /BUCKET?tagging               #Req: TagSet TAG_PAIRS
+PUT /BUCKET?tagging               #Req: TagSet TAG_PAIRS, Content-MD5 [C], x-amz-checksum-ALGO [C]
 PutBucketTagging()                #Res: empty
 GET /BUCKET?tagging               #Req: empty
 GetBucketTagging()                #Res: TagSet TAG_PAIRS
@@ -450,7 +416,8 @@ PutObject()                       #  - RAW_OBJECT
                                   #  - Expect [C], Content-Type [C], Content-Encoding [C], Content-Language [C], Expires [C],
                                   #    Cache-Control [C], Content-Disposition [C], x-amz-meta-* [C], x-amz-storage-class [C],
                                   #    x-amz-acl [C], x-amz-grant-PERMISSION [C], x-amz-website-redirect-location [C],
-                                  #    x-amz-tagging [C], x-amz-server-side-encryption-* [C], x-amz-checksum-ALGO [C], x-amz-object-lock* [C]
+                                  #    x-amz-tagging [C], x-amz-server-side-encryption-* [C], Content-MD5 [C], x-amz-checksum-ALGO [C],
+                                  #    x-amz-object-lock* [C]
                                   #  - max 8KB request headers
                                   #Res:
                                   #  - ETag [S], x-amz-version-id [S], x-amz-expiration [S], x-amz-server-side-encryption-* [S],
@@ -566,7 +533,7 @@ OBJ.url                           #'URL'
 
 POST /BUCKET/OBJECT?uploads       #Req:
 CreateMultipartUpload()           #  - same headers as PutObject()
-                                  #  - x-amz-checksum-algorithm [C]
+                                  #  - x-amz-checksum-algo-ALGO [C], x-amz-checksum-algorithm [C]
                                   #Res:
                                   #  - MUPLOAD
                                   #     - only Bucket, Key, UploadId
@@ -577,7 +544,7 @@ CreateMultipartUpload()           #  - same headers as PutObject()
                                   #No own PACTION: use 's3:PutObject' instead
 PUT /BUCKET/OBJECT                #Req:
 UploadPart()                      #  - RAW_MPART
-                                  #  - Expect [C], x-amz-server-side-encryption-customer-* [C], x-amz-checksum-ALGO [C]
+                                  #  - Expect [C], x-amz-server-side-encryption-customer-* [C], Content-MD5 [C], x-amz-checksum-ALGO [C]
                                   #  - query variables: MUPLOAD.uploadId, MPART.partNumber
                                   #Res: ETag [S], x-amz-server-side-encryption-* [S], x-amz-checksum-ALGO [S]
                                   #No own PACTION: use 's3:PutObject' instead
@@ -656,7 +623,6 @@ CopyObject()                      #  - like PutObject()
                                   #No own PACTION: use 's3:GetObject' on source + 's3:PutObject' on destination instead
 PUT /BUCKET/OBJECT                #Req:
 UploadPartCopy()                  #  - like uploadPart()
-                                  #     - no x-amz-checksum-ALGO [C]
                                   #  - x-amz-copy-source* [C]
                                   #  - query variables: OBJECT.versionId (source)
                                   #Res: like copyObject()
@@ -827,13 +793,6 @@ If-[None-]Match: ETAG [C]         #See HTTP doc
 
 
 ALGO                              #One of 'CRC32[C]', 'SHA1', 'SHA256'
-x-amz-checksum-algorithm: ALGO [C]#Automatically generate x-amz-checksum-ALGO [C]
-x-amz-sdk-checksum-algorithm:     #Same but:
- ALGO [C]                         #  - noop unless used through SDK or CLI
-                                  #  - ALGO can be MD5, to generate Content-MD5 [C] instead
-                                  #Can be used:
-                                  #  - anywhere x-amz-checksum-ALGO [C] or Content-MD5 [C] is possible
-                                  #  - except when x-amz-checksum-algorithm [C] is used instead
 OBJECT|MUPLOAD.ChecksumAlgorithm  #ALGO
 
 x-amz-checksum-ALGO [C]           #'BASE64_HASH'. Send checksum, for integrity: fail on checksum mismatch.
@@ -850,20 +809,33 @@ x-amz-checksum-ALGO [C]           #'BASE64_HASH'. Send checksum, for integrity: 
                                   #  - i.e. CopyObject|UploadPartCopy() can change checksum if source used multipart,
                                   #    but not target, or vice-versa
 
-x-amz-checksum-mode: ENABLED [C]  #Set x-amz-checksum-ALGO [S]
-x-amz-checksum-ALGO [S]
-OBJECT|MPART.ChecksumALGO         #'BASE64_HASH'
-
 Content-MD5: MD5_HASH [C]         #Alternative to x-amz-checksum-ALGO [C]
-                                  #Matches ETag [S], except when using SSE-KMS, SSE-C or multipart
-                                  #  - unlike x-amz-checksum-ALGO [C], always checksum of the whole data
+                                  #Matches ETag [S]
+                                  #  - except when using SSE-KMS, SSE-C or multipart
+                                  #  - i.e. unlike x-amz-checksum-ALGO [C], always checksum of the whole decrypted data
                                   #Pros:
-                                  #  - can be used in any request with a body, as opposed to only specific ACTIONs
                                   #  - can match ETag [S]
                                   #  - standard
                                   #Cons:
                                   #  - when not matching ETag [S], cannot retrieve checksum
                                   #  - no MPART checksum, i.e. integrity failures happen only at end of multipart upload
+
+REQ.ChecksumAlgorithm             #'ALGO'
+--checksum-algorithm ALGO         #Must be used instead of x-amz-checksum-ALGO [C], computing it automatically, except:
+                                  #  - CompleteMultipartUpload(), WriteGetObjectResponse(): only x-amz-checksum-ALGO [C], no REQ.ChecksumAlgorithm
+                                  #  - PutObject(), UploadPart(): can use either REQ.ChecksumAlgorithm or x-amz-checksum-ALGO [C]
+                                  #  - PutBucketOwnershipControls(): only Content-MD5 [C], automatically computed
+                                  #Def:
+                                  #  - PutObject(), UploadPart(), RestoreObject(), PutBucketAccelerateConfiguration(): noop
+                                  #  - otherwise: computes Content-MD5 [C] instead
+                                  #Only with SDK|CLI, not API
+                                  #  - sometimes called dummy name x-amz-sdk-checksum-algorithm [C] in the online doc
+
+x-amz-checksum-algorithm: ALGO [C]#When copying OBJECTs, change the checksum ALGO
+
+x-amz-checksum-mode: ENABLED [C]  #Set x-amz-checksum-ALGO [S]
+x-amz-checksum-ALGO [S]
+OBJECT|MPART.ChecksumALGO         #'BASE64_HASH'. SDK|CLI validate response body against it
 
 
                                              /=+===============================+=\
@@ -894,7 +866,7 @@ x-amz-missing-meta: NUM [S]       #NUM of x-amz-meta-* with invalid keys
                                              \=+===============================+=/
 
 
-PUT /BUCKET/OBJECT?tagging        #Req: Tags TAG_PAIRS
+PUT /BUCKET/OBJECT?tagging        #Req: Tags TAG_PAIRS, Content-MD5 [C], x-amz-checksum-ALGO [C]
 PutObjectTagging()                #Res: x-amz-version-id [S]
                                   #Max 10 TAGs per OBJECT
 GET /BUCKET/OBJECT?tagging        #Req: empty
@@ -946,7 +918,7 @@ COND_KEY s3:locationconstraint    #'REGION'. Only for PACTIONs 's3:CreateBucket|
                                              \=+===============================+=/
 
 
-PUT /BUCKET?accelerate            #Req: ACCELERATE, x-amz-sdk-checksum-algorithm [C]
+PUT /BUCKET?accelerate            #Req: ACCELERATE, x-amz-checksum-ALGO [C]
 PutBucketAccelerateConfiguration()#Res: empty
                                   #PACTION named 's3:PutAccelerateConfiguration' instead
 GET /BUCKET?accelerate            #Req: empty
@@ -981,7 +953,7 @@ SLENS_METRIC % Transfer
                                              \=+===============================+=/
 
 
-PUT /BUCKET?versioning            #Req: VERSIONING, x-amz-mfa [C]
+PUT /BUCKET?versioning            #Req: VERSIONING, x-amz-mfa [C], Content-MD5 [C], x-amz-checksum-ALGO [C]
 PutBucketVersioning()             #Res: empty
 GET /BUCKET?versioning            #Req: empty
 GetBucketVersioning()             #Res: VERSIONING
@@ -1160,6 +1132,7 @@ NEVENT
 POST /BUCKET/OBJECT?restore       #Req:
 RestoreObject()                   #  - RESTORE
                                   #  - query variables: OBJECT.VersionId
+                                  #  - x-amz-checksum-ALGO [C]
                                   #Res: x-amz-restore-output-path [S]
 
 RESTORE                           #With StorageClass 'GLACIER|DEEP_ARCHIVE':
@@ -1271,7 +1244,7 @@ NMESSAGE
                                              \=+===============================+=/
 
 
-PUT /BUCKET?lifecycle             #Req: LIFECYCLE
+PUT /BUCKET?lifecycle             #Req: LIFECYCLE, x-amz-checksum-ALGO [C]
 PutBucketLifecycleConfiguration() #Res: empty
                                   #PACTION named 's3:PutLifecycleConfiguration' instead
 GET /BUCKET?lifecycle             #Req: empty
@@ -1440,7 +1413,7 @@ SLENS_METRIC % incomplete
                                              \=+===============================+=/
 
 
-PUT /BUCKET?object-lock           #Req: OBJECT_LOCK, x-amz-bucket-object-lock-token [C]
+PUT /BUCKET?object-lock           #Req: OBJECT_LOCK, x-amz-bucket-object-lock-token [C], Content-MD5 [C], x-amz-checksum-ALGO [C]
 PutObjectLockConfiguration()      #Res: empty
                                   #PACTION named 's3:PutBucketObjectLockConfiguration' instead
 GET /BUCKET?object-lock           #Req: empty
@@ -1449,7 +1422,7 @@ GetObjectLockConfiguration()      #Res: OBJECT_LOCK
 
 PUT /BUCKET/OBJECT?retention      #Req:
 PutObjectRetention()              #  - OBJECT_RETENTION
-                                  #  - x-amz-bypass-governance-retention [C]
+                                  #  - x-amz-bypass-governance-retention [C], Content-MD5 [C], x-amz-checksum-ALGO [C]
                                   #  - query variables: OBJECT.versionId
                                   #Res: empty
 GET /BUCKET/OBJECT?retention      #Req: OBJECT
@@ -1513,6 +1486,7 @@ JOB_LOCK.BypassGovernanceRetention#BOOL. x-amz-bypass-governance-retention [C]
 
 PUT /BUCKET/OBJECT?legal-hold     #Req:
 PutObjectLegalHold()              #  - LEGAL_HOLD
+                                  #  - Content-MD5 [C], x-amz-checksum-ALGO [C]
                                   #  - query variables: OBJECT.versionId
                                   #Res: empty
 GET /BUCKET/OBKECT?legal-hold     #Req: OBJECT
@@ -1557,7 +1531,7 @@ COND_KEY s3:ResourceAccount       #'ACCOUNT_ID'. Same as aws:ResourceAccount, bu
                                              \=+===============================+=/
 
 
-PUT /BUCKET?ownershipControls     #Req: BUCKET_OWNERSHIP
+PUT /BUCKET?ownershipControls     #Req: BUCKET_OWNERSHIP, Content-MD5 [C]
 PutBucketOwnershipControls()      #Res: empty
 GET /BUCKET?ownershipControls     #Req: empty
 GetBucketOwnershipControls()      #Res: BUCKET_OWNERSHIP
@@ -1603,9 +1577,9 @@ SLENS_METRIC % Object Ownership
 
 
 PUT /BUCKET?policy                #Req:
-                                  #  - BUCKET_POLICY
-                                  #  - x-amz-confirm-remove-self-bucket-access [C]
-PutBucketPolicy()                 #Res: empty
+PutBucketPolicy()                 #  - BUCKET_POLICY
+                                  #  - x-amz-confirm-remove-self-bucket-access [C], Content-MD5 [C], x-amz-checksum-ALGO [C]
+                                  #Res: empty
 GET /BUCKET?policy                #Req: empty
 GetBucketPolicy()                 #Res: BUCKET_POLICY
 DELETE /BUCKET?policy             #Req: empty
@@ -1642,13 +1616,13 @@ x-amz-confirm-remove-self-
 
 PUT /BUCKET?acl                   #Req:
 PutBucketAcl()                    #  - ACL
-                                  #  - x-amz-acl [C], x-amz-grant-PERMISSION [C]
+                                  #  - x-amz-acl [C], x-amz-grant-PERMISSION [C], x-amz-checksum-ALGO [C]
                                   #Res: empty
 GET /BUCKET?acl                   #Req: empty
 GetBucketAcl()                    #Res: ACL
 PUT /BUCKET/OBJECT?acl            #Req:
 PutObjectAcl()                    #  - ACL
-                                  #  - x-amz-acl [C], x-amz-grant-PERMISSION [C]
+                                  #  - x-amz-acl [C], x-amz-grant-PERMISSION [C], Content-MD5 [C], x-amz-checksum-ALGO [C]
                                   #  - query variables: OBJECT.versionId
                                   #Res: x-amz-version-id [S]
 GET /BUCKET/OBJECT?acl            #Req: OBJECT
@@ -1753,7 +1727,7 @@ COND_KEY s3:x-amz-acl             #x-amz-acl [C]. Only for PACTIONs 's3:CreateBu
                                              \=+===============================+=/
 
 
-PUT /BUCKET?publicAccessBlock     #Req: PUBLIC_BLOCK
+PUT /BUCKET?publicAccessBlock     #Req: PUBLIC_BLOCK, Content-MD5 [C], x-amz-checksum-ALGO [C]
 PutPublicAccessBlock()            #Res: empty
                                   #PACTION named 's3:PutBucketPublicAccessBlock' instead
 GET /BUCKET?publicAccessBlock     #Req: empty
@@ -1836,6 +1810,14 @@ COND_KEY x-amz-content-sha256     #  - ignore request body (mostly meant for pre
                                   #  - use a chunked request body
                                   #Must not use Content-MD5 [C]
 
+TODO ==> ???                      #With streams, also sets:
+                                  #  - transfer-encoding: chunked [C]
+                                  #  - content-encoding: [...,]aws-chunked [C]
+                                  #  - x-amz-decoded-content-length: NUM [C]
+                                  #  - x-amz-content-sha256: STREAMING-UNSIGNED-PAYLOAD-TRAILER [C]
+                                  #  - x-amz-trailer: x-amz-checksum-ALGO [C]
+                                  #Must pass ISTREAM as input, and also REQ.checksumAlgorithm???
+
 @aws-sdk/s3-request-presigner     #Part of JavaScript SDK
 getSignedUrl
  (CLIENT, COMMAND[, OPTS])->>'URL'#Create pre-signed URL
@@ -1859,7 +1841,7 @@ COND_KEY
                                              \=+===============================+=/
 
 
-PUT /BUCKET?website               #Req: STATIC_WEBSITE
+PUT /BUCKET?website               #Req: STATIC_WEBSITE, Content-MD5 [C], x-amz-checksum-ALGO [C]
 PutBucketWebsite()                #Res: empty
 GET /BUCKET?website               #Req: empty
 GetBucketWebsite()                #Res: STATIC_WEBSITE
@@ -1917,7 +1899,7 @@ COND_KEY s3:x-amz-website-
                                              \=+===============================+=/
 
 
-PUT /BUCKET?cors                  #Req: CORS
+PUT /BUCKET?cors                  #Req: CORS, Content-MD5 [C], x-amz-checksum-ALGO [C]
 PutBucketCors()                   #Res: empty
                                   #PACTION named 's3:PutBucketCORS' instead
 GET /BUCKET?cors                  #Req: empty
@@ -1998,7 +1980,7 @@ x-amz-server-side-encryption      #'BASE64' of key. Discarded after usage.
 x-amz-server-side-encryption
  -customer-MD5: STR [C|S]         #'MD5_HASH_BASE64' of key
 
-PUT /BUCKET?encryption            #Req: BUCKET_ENCRYPTION
+PUT /BUCKET?encryption            #Req: BUCKET_ENCRYPTION, Content-MD5 [C], x-amz-checksum-ALGO [C]
 PutBucketEncryption()             #Res: empty
                                   #PACTION named 's3:PutEncryptionConfiguration' instead
 GET /BUCKET?encryption            #Req: empty
@@ -2062,7 +2044,7 @@ SLENS_METRIC
                                              \=+===============================+=/
 
 
-PUT /BUCKET?requestPayment        #Req: PAYMENT
+PUT /BUCKET?requestPayment        #Req: PAYMENT, Content-MD5 [C], x-amz-checksum-ALGO [C]
 PutBucketRequestPayment()         #Res: empty
 GET /BUCKET?requestPayment        #Req: empty
 GetBucketRequestPayment()         #Res: PAYMENT
@@ -2295,7 +2277,7 @@ avg(NUM_SET)->NUM2                #
                                              \=+===============================+=/
 
 
-PUT /BUCKET?replication           #Req: REPLICATION, x-amz-bucket-object-lock-token [C]
+PUT /BUCKET?replication           #Req: REPLICATION, x-amz-bucket-object-lock-token [C], Content-MD5 [C], x-amz-checksum-ALGO [C]
 PutBucketReplication()            #Res: empty
                                   #PACTION named 's3:PutReplicationConfiguration' instead
 GET /BUCKET?replication           #Req: empty
@@ -2662,7 +2644,7 @@ INVENTORY_LINE.ObjectOwner        #OBJECT_OWNER
                                              \=+===============================+=/
 
 
-PUT /BUCKET?logging               #Req: LOGGING
+PUT /BUCKET?logging               #Req: LOGGING, Content-MD5 [C], x-amz-checksum-ALGO [C]
 PutBucketLogging()                #Res: empty
 GET /BUCKET?logging               #Req: empty
 GetBucketLogging()                #Res: LOGGING
@@ -3731,7 +3713,7 @@ HANDLER RESPONSE ==>              #For:
                                   #  - HeadObject(): return HEAD_RES
                                   #  - ListObjectsV2(): return LIST_RES
 
-POST /WriteGetObjectResponse      #Req: RAW_OBJECT, x-amz-fwd-* [C], x-amz-request-* [C], x-amz-meta-* [C]
+POST /WriteGetObjectResponse      #Req: RAW_OBJECT, x-amz-fwd-* [C], x-amz-request-* [C], x-amz-meta-* [C], x-amz-checksum-ALGO [C]
 WriteGetObjectResponse()          #Res: empty
 
 REQ_GET.outputToken
