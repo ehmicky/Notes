@@ -6,8 +6,9 @@
 
 
 TODO ==>
-  - https://docs.aws.amazon.com/AmazonS3/latest/userguide/inventory-configure-bops.html
+  - user guide
   - https://aws.amazon.com/s3/faqs/
+  - go through documentation for new services
   - CLI:
      - aws s3|s3api|s3control ...
      - aws help topics s3-config
@@ -110,33 +111,6 @@ REQUEST COUNT ==>                 #1$/2e6 requests
                                   #  - DEEP_ARCHIVE: 10x for list|write, 1x for read
                                   #  - i.e. better for read-only files
 
-IN|OUT TRAFFIC ==>                #Internet -> S3: free
-                                  #S3 -> Internet: 1$/11GB
-                                  #  - free: 100GB
-                                  #  - after 10TB: 5% cheaper
-                                  #  - after 50TB: 20% cheaper
-                                  #  - after 150TB: 50% cheaper
-                                  #S3 -> same region: free
-                                  #S3 -> CloudFront: free
-                                  #S3 -> another region:
-                                  #  - 4x cheaper
-                                  #  - must be done explicitly (e.g. copying OBJECT)
-                                  #Max 500 TB/month (flexible)
-
-MULTI-REGION ACCESS POINT ==>     #Always: 1$/300GB
-                                  #S3 <-> AWS: in|out traffic charge
-                                  #S3 <-> internet:
-                                  #  - same continent:
-                                  #     - internet -> S3: 1$/400GB
-                                  #     - S3 -> internet: 1$/200GB
-                                  #     - ~4x more expensive in Asia, ~10x in South America
-                                  #  - between continents: 1$/20GB
-
-ACCELERATE ==>                    #1$/25GB
-                                  #For both in|out
-                                  #Regardless of whether from|to Internet|AWS
-                                  #2x more expensive for Internet -> S3 if client's REGION is not US|Europe|Japan
-
 STORAGE CLASS READ|RESTORE ==>    #STORAGE_CLASS, on read|restore contents:
                                   #  - STANDARD: free
                                   #  - STANDARD_IA|ONEZONE_IA: 1$/100GB
@@ -161,19 +135,50 @@ SELECT ==>                        #Input: 1$/500GB
                                   #  - GLACIER + Bulk: 4x more expensive
                                   #  - DEEP_ARCHIVE: free
 
+IN|OUT TRAFFIC ==>                #Internet -> S3: free
+                                  #S3 -> Internet: 1$/11GB
+                                  #  - free: 100GB
+                                  #  - after 10TB: 5% cheaper
+                                  #  - after 50TB: 20% cheaper
+                                  #  - after 150TB: 50% cheaper
+                                  #S3 -> same region: free
+                                  #S3 -> CloudFront: free
+                                  #S3 -> another region: 4x cheaper
+                                  #Max 500 TB/month (flexible)
+
+MULTI-REGION ACCESS POINT ==>     #Always: 1$/300GB
+                                  #S3 <-> AWS: in|out traffic charge
+                                  #S3 <-> internet:
+                                  #  - same continent:
+                                  #     - internet -> S3: 1$/400GB
+                                  #     - S3 -> internet: 1$/200GB
+                                  #     - ~4x more expensive in Asia, ~10x in South America
+                                  #  - between continents: 1$/20GB
+
+ACCELERATE ==>                    #1$/25GB
+                                  #For both in|out
+                                  #Regardless of whether from|to Internet|AWS
+                                  #2x more expensive for Internet -> S3 if client's REGION is not US|Europe|Japan
+
+METRICS ==>                       #MAIN_METRICS: free
+                                  #ADVANCED_METRICS: 1$/5e6 OBJECTs per SLENS
+                                  #  - 20% cheaper if >2.5e10 OBJECTs
+                                  #  - 40% cheaper if >1e11 OBJECTs
+
 REPLICATION ==>                   #Free, except normal traffic|requests|storage cost of copying
                                   #Each write creates up to 5 reads requests
                                   #RTC: 1$/67GB
 
+BATCH ==>                         #1$/4 JOBs
+                                  #1$ per 1e6 tasks (JOB_OP + OBJECT)
+                                  #1$ per 7e7 OBJECTs, when using JOB.ManifestGenerator
+
 OTHERS ==>                        #OBJECT TAGs: 1$/1e6 TAGs
                                   #CAPACITY: 100$/month
                                   #INTELLIGENT_TIERING: 1$/4e5 OBJECTs (with >128KB)
+                                  #DSSE-KMS: 1$/333GB
                                   #INVENTORY: 1$/4e8 OBJECTs
                                   #LOGGING: free
-                                  #MAIN_METRICS: free
-                                  #ADVANCED_METRICS: 1$/5e6 OBJECTs per SLENS
-                                  #  - 20% cheaper if >2.5e10 OBJECTs
-                                  #  - 40% cheaper if >1e11 OBJECTs
                                   #ANALYTICS: 1$/1e7 OBJECTs
                                   #LACCESSPOINT: 1$/200GB
 
@@ -534,7 +539,7 @@ NEVENT s3:ObjectCreated:
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:          OBJECT COPY          :==(
+                                            )==:       OBJECT COPY MAIN        :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
@@ -574,6 +579,51 @@ x-amz-copy-source-HEADER: STR [S] #Reflects same request header [C]
                                   #Only for version-id, to distinguish from x-amz-version-id [S] (of new OBJECT)
 
 NEVENT s3:ObjectCreated:Copy      #On CopyObject() success
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:       OBJECT COPY BATCH       :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+JOB_OP.S3PutObjectCopy            #JOB_COPY. Call CopyObject() on multiple OBJECTs
+                                  #JOB.RoleArn must be allowed to PACTIONs:
+                                  #  - s3:GetObject[Version][Acl|Tagging], s3:ListBucket on source BUCKET
+                                  #  - s3:PutObject[Version][Acl|Tagging] on destination BUCKET
+
+JOB_COPY.TargetResource           #Destination BUCKET_ARN
+JOB_COPY.TargetKeyPrefix          #Destination 'OBJECT' prefix
+
+JOB_COPY.MetadataDirective        #STR. x-amz-metadata-directive [C]
+JOB_COPY
+ .[Un]ModifiedSinceConstraint     #'DATE'. x-amz-copy-source-if-[un]modified-since [C]
+JOB_COPY.NewObjectTagging         #TAG_PAIRS. x-amz-tagging [C]
+JOB_COPY.StorageClass             #STR. x-amz-storage-class [C]
+JOB_COPY.AccessControlGrants      #Like JOB_ACLIST.Grants. x-amz-grant-PERMISSION [C]
+JOB_COPY.CannedAccessControlList  #'ACL'. x-amz-acl [C]
+JOB_COPY.SSEAwsKmsKeyId           #STR. x-amz-server-side-encryption-aws-kms-key-id [C]
+JOB_COPY.BucketKeyEnabled         #BOOL. x-amz-server-side-encryption-bucket-key-enabled [C]
+JOB_COPY.ChecksumAlgorithm        #STR. x-amz-checksum-algorithm [C]
+JOB_COPY.ObjectLockLegalHoldStatus#STR. x-amz-object-lock-legal-hold [C]
+JOB_COPY.ObjectLockMode           #STR. x-amz-object-lock-mode [C]
+JOB_COPY.ObjectLockRetainUntilDate#'DATE'. x-amz-object-lock-retain-until-date [C]
+JOB_COPY.RedirectLocation         #STR. x-amz-website-redirect-location [C]
+JOB_COPY.RequesterPays            #BOOL. x-amz-request-payer [C]
+
+JOB_COPY.NewObjectMetadata        #JOB_COPY_PARAMS. Def: copy source's. If set, do not copy any from source's.
+JOB_COPY_PARAMS.CacheControl      #STR. Cache-Control [C]
+JOB_COPY_PARAMS.ContentDisposition#STR. Content-Disposition [C]
+JOB_COPY_PARAMS.ContentEncoding   #STR. Content-Encoding [C]
+JOB_COPY_PARAMS.ContentLanguage   #STR. Content-Language [C]
+JOB_COPY_PARAMS.ContentLength     #STR. Content-Length [C]
+JOB_COPY_PARAMS.ContentMD5        #STR. Content-MD5 [C]
+JOB_COPY_PARAMS.ContentType       #STR. Content-Type [C]
+JOB_COPY_PARAMS.HttpExpiresDate   #'DATE'. Expires [C]
+JOB_COPY_PARAMS.SSEAlgorithm      #'AES256|KMS'. x-amz-server-side-encryption [C]
+JOB_COPY_PARAMS.RequesterCharged  #BOOL. x-amz-request-payer [C]
+JOB_COPY_PARAMS.UserMetadata      #OBJ. x-amz-meta-* [C]
 
 
                                              /=+===============================+=\
@@ -756,6 +806,11 @@ FILTER.Tags                       #TAG_PAIRS. Only if TAGs match
 
 NEVENT s3:ObjectTagging:Put       #On PutObjectTagging() success
 NEVENT s3:ObjectTagging:Delete    #On DeleteObjectTagging() success
+
+JOB_OP.S3PutObjectTagging.TagSet  #TAG_PAIRS. Call PutObjectTagging() on multiple OBJECTs
+                                  #JOB.RoleArn must be allowed to PACTIONs s3:PutObject[Version]Tagging
+JOB_OP.S3DeleteObjectTagging      #Empty OBJ. Call DeleteObjectTagging() on multiple OBJECTs
+                                  #JOB.RoleArn must be allowed to PACTIONs s3:DeleteObject[Version]Tagging
 
 
                                              /=+===============================+=\
@@ -1029,6 +1084,12 @@ NMESSAGE_RESTORE
 NMESSAGE_RESTORE
  .lifecycleRestoreStorageClass    #New 'STORAGE_CLASS'
 
+JOB_OP.S3InitiateRestoreObject    #JOB_RESTORE. Call RestoreObject() on multiple OBJECTs
+                                  #OBJECTs can use INTELLIGENT_TIERING or not, but not both
+                                  #JOB.RoleArn must be allowed to PACTIONs s3:RestoreObject
+JOB_RESTORE.ExpirationInDays      #NUM. RESTORE.Days
+JOB_RESTORE.GlacierJobTier        #STR. RESTORE.Tier. Cannot be 'EXPEDITED'
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -1296,6 +1357,14 @@ AWS/S3/Storage-Lens/
 SLENS_METRIC % Object Lock bytes  #% of ObjectLockEnabledStorageBytes/StorageBytes
 SLENS_METRIC % Object Lock objects#% of ObjectLockEnabledObjectCount/ObjectCount
 
+JOB_OP.S3PutObjectRetention       #JOB_LOCK. Call PutObjectRetention() on multiple OBJECTs
+                                  #JOB.RoleArn must be allowed to PACTIONs:
+                                  #  - s3:PutObjectRetention|GetBucketObjectLockConfiguration
+                                  #  - s3:BypassGovernanceRetention: if JOB_LOCK.BypassGovernanceRetention true
+JOB_LOCK.Retention.RetainUntilDate#'DATE'. OBJECT_RETENTION.RetainUntilDate
+JOB_LOCK.Retention.Mode           #STR. OBJECT_RETENTION.Mode
+JOB_LOCK.BypassGovernanceRetention#BOOL. x-amz-bypass-governance-retention [C]
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -1318,6 +1387,9 @@ LEGAL_HOLD                        #Like OBJECT_LOCK but:
 x-amz-object-lock-legal-hold:
  STR [C|S]
 LEGAL_HOLD.Status                 #'ON' or 'OFF' (def)
+
+JOB_OP.S3PutObjectLegalHold       #STR. Call PutObjectLegalHold() on multiple OBJECTs
+ .LegalHold.Status                #JOB.RoleArn must be allowed to PACTIONs s3:PutObjectLegalHold|GetBucketObjectLockConfiguration
 
 
                                              /=+===============================+=\
@@ -1490,6 +1562,15 @@ GRANTEE.URI                       #One of:
                                   #     - CANONICAL_ACCOUNT_ID '65a011a29cdf8ec533ec3d1ccaae921c'
 
 NEVENT s3:ObjectAcl:Put           #On PutObjectAcl() success
+
+JOB_OP.S3PutObjectAcl             #JOB_ACL. Call PutObjectAcl() on multiple OBJECTs
+ .AccessControlPolicy             #JOB.RoleArn must be allowed to PACTIONs s3:PutObject[Version]Acl
+JOB_ACL.CannedAccessControlList   #'ACL'. x-amz-acl [C]
+JOB_ACL.AccessControlList         #JOB_ACLIST
+JOB_ACLIST.Grants                 #GRANT_ARR. ACL.AccessControlList[*].Grantee but:
+                                  #  - Id|EmailAddress|URI -> Identifier
+                                  #  - type -> TypeIdentifier
+JOB_ACLIST.Owner                  #BUCKET_OWNER. ACL.Owner
 
 
                                              /=+===============================+=\
@@ -2124,6 +2205,31 @@ REPLICATION_SRC
 REPLICATION_DEST                  #KMS_KEY_ARN of the target BUCKET
  .EncryptionConfiguration         #Must be in same REGION as target BUCKET
  .ReplicaKmsKeyID                 #Must allow SERVICE_DOMAIN 's3.REGION.amazonaws.com' of source|target REGION to PACTION kms:Decrypt|Encrypt
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:       REPLICATION BATCH       :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+JOB_OP.S3ReplicateObject          #Empty OBJ. Copy OBJECTs using JOB_MANIFEST + current REPLICATION settings
+                                  #Goal: allowing to replicate OBJECTs that:
+                                  #  - failed to replicate
+                                  #  - existed before REPLICATION creation
+                                  #  - were created by another REPLICATION
+                                  #JOB.RoleArn must be allowed to PACTIONs:
+                                  #  - s3:InitiateReplication
+                                  #  - s3:GetReplicationConfiguration|PutInventoryConfiguration: only if using JOB.ManifestGenerator
+                                  #Should temporarily disable LIFECYCLEs while JOB is ongoing
+
+JOB_FILTER.EligibleForReplication #BOOL (def: false). Only include if OBJECT is replicated by some REPLICATION
+
+JOB_FILTER                        #STR_ARR. Filter by x-amz-replication-status [S] among:
+ .ObjectReplicationStatuses       #  - 'REPLICA': created itself by another REPLICATION
+                                  #  - 'NONE': never replicated
+                                  #  - 'COMPLETED|FAILED'
 
 
                                              /=+===============================+=\
@@ -3527,233 +3633,12 @@ DVAR DataSourceARN                #Either:
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:             BATCH             :==(
+                                            )==:         LAMBDA BATCH          :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
-PUT /jobs                         #Req: JOB
-CreateJob()                       #  - no JobArn, JobId
-                                  #  - no ProgressSummary, CreationTime, Status*, Suspended*, TerminationDate, FailureReasons
-                                  #  - no GeneratedManifestDescriptor
-                                  #Res: JOB
-                                  #  - only JobId
-POST /jobs/JOB_MID/priority       #Req: query variables: priority (JOB.Priority)
-UpdateJobPriority()               #Res: JOB
-                                  #  - only JobId, Priority
-POST /jobs/JOB_MID/status         #Req: query variables:
-UpdateJobStatus()                 #  - requestedJobStatus: JOB.Status, only 'Ready' or 'Cancelled'
-                                  #  - statusUpdateReason
-                                  #Res: JOB
-                                  #  - only JobId, Status, StatusUpdateReason
-GET /jobs/JOB_MID                 #Req: empty
-DescribeJob()                     #Res: Job JOB
-                                  #  - no ClientRequestToken, Tags
-GET /jobs                         #Req: jobStatuses STR_ARR (JOB.Status)
-ListJobs()                        #Res: Jobs JOB_ARR
-                                  #  - only JobId, CreationTime, Description, Priority, ProgressSummary, TerminationDate, Status
-                                  #  - Operation.OP -> Operation 'OP'
-                                  #Paginates with NextToken, maxResults
-
-JOB                               #Perform S3 ACTIONs on multiple OBJECTs
-JOB.JobArn                        #JOB_ARN. arn:aws:s3:REGION:ACCOUNT_ID:job/JOB_MID
-JOB.JobId                         #JOB_MID
-JOB.Description                   #STR. Max 256 chars
-
-JOB.RoleArn                       #ROLE_ARN performing JOB_OP
-                                  #Trust policy must allow sts:AssumeRole to SERVICE_DOMAIN 'batchoperations.s3.amazonaws.com'
-                                  #Requester must be allowed to PACTION sts:PassRole
-                                  #Other permissions depend on JOB_OP
-
-JOB.ClientRequestToken            #STR. Idempotency token
-
-JOB.ConfirmationRequired          #BOOL. Set JOB.Status from 'Preparing' to 'Suspended' (instead of 'Ready')
-                                  #Must explicitly UpdateJobStatus() to 'Ready' to continue
-                                  #Def: true in UI console, false otherwise
-JOB.Priority                      #UINT. Compared to other JOBs in same REGION
-                                  #Only one JOB is running at once, according to Priority
-JOB.Status                        #One of:
-                                  #  - 'New': just created
-                                  #  - 'Preparing': reading parameters|manifest
-                                  #  - 'Suspended'
-                                  #  - 'Ready': ready to start, but JOB_OP not started yet
-                                  #  - 'Pausing', 'Paused': wait for other JOB with higher Priority to end
-                                  #  - 'Active': processing JOB_OPs
-                                  #  - 'Cancelling', 'Cancelled': abort
-                                  #  - 'Completing', 'Complete': success
-                                  #  - 'Failing', 'Failed': error
-JOB.StatusUpdateReason            #STR. Max 256 chars
-JOB.CreationTime                  #'DATE'
-JOB.SuspendedDate                 #'DATE' when Status 'Suspended'
-JOB.SuspendedCause                #STR
-JOB.TerminationDate               #'DATE' when Status 'Complete|Cancelled|Failed'
-JOB.FailureReasons                #JOB_FAILURE_ARR when Status 'Failed'
-                                  #Also fails either:
-                                  #  - after 90 days (30 if 'Suspended')
-                                  #  - as soon as both 50% of tasks failed, and 1000+ tasks completed
-JOB_FAILURE.FailureCode           #'CODE'
-JOB_FAILURE.FailureReason         #STR. Max 256 chars
-
-JOB.ProgressSummary               #JOB_PROGRESS
-JOB_PROGRESS.Timers
- .ElapsedTimeInActiveSeconds      #NUM of secs in Status 'Active'
-JOB_PROGRESS.TotalNumberOfTasks   #NUM of tasks (OBJECT + JOB_OP)
-JOB_PROGRESS
- .NumberOfTasksSucceeded          #NUM of tasks with Status 'Complete'
-JOB_PROGRESS.NumberOfTasksFailed  #NUM of tasks with Status 'Failed'
-
-JOB.Report                        #JOB_OUT. Summary output
-                                  #Output even if JOB canceled|failed, but not if all tasks failed
-                                  #JOB.RoleArn must be allowed to PACTION s3:PutObject those files
-JOB_OUT.Enabled                   #BOOL (def: false)
-JOB_OUT[_RESULTS].Bucket          #BUCKET_ARN
-JOB_OUT.Prefix                    #'JOB_OUT_PREFIX'
-JOB_OUT.ReportScope               #Whether to include: 'AllTasks' or 'FailedTasksOnly'
-JOB_OUT[_SUMMARY].Format          #Always 'Report_CSV_20180820'
-
-JOB_OUT_PREFIX/job-JOB_MID
- /manifest.json                   #JOB_OUT_SUMMARY path
-JOB_OUT_SUMMARY.ReportCreationDate#'DATE'
-JOB_OUT_SUMMARY.ReportSchema      #CSV 'COL, ...'
-JOB_OUT_SUMMARY.Results           #JOB_OUT_RESULTS_ARR: one for each TaskExecutionStatus
-JOB_OUT_RESULTS
- .TaskExecutionStatus             #'succeeded|failed'
-JOB_OUT_RESULTS.Key               #JOB_OUT_TASKS path
-JOB_OUT_RESULTS.MD5Checksum       #'HASH'
-
-JOB_OUT_PREFIX/job-JOB_MID
- /results/RANDOM_ID.csv           #JOB_OUT_TASKS path
-JOB_OUT_TASKS                     #CSV file. One line per JOB_OUT_TASK
-JOB_OUT_TASK.Bucket               #'BUCKET'
-JOB_OUT_TASK.Key                  #'OBJECT'
-JOB_OUT_TASK.VersionId            #VERSION_MID
-JOB_OUT_TASK.TaskStatus           #'succeeded|failed'
-JOB_OUT_TASK.HTTPStatusCode       #NUM
-JOB_OUT_TASK.ErrorCode            #'ERROR'. Empty if JOB failed
-JOB_OUT_TASK.ResultMessage        #STR. If JOB succeeded, pseudo-JSON with result
-                                  #If JOB failed, error message
-
-JOB.Manifest                      #JOB_MANIFEST. List of the "source OBJECTs", i.e. ones to apply JOB_OP to
-                                  #Unordered
-JOB_MANIFEST.Spec                 #JOB_SPEC
-JOB_SPEC|GMANIFEST.Format         #Either:
-                                  #  - 'S3BatchOperations_CSV_20180820': JOB_MANIFEST_FILE
-                                  #  - 'S3InventoryReport_CSV_20161130': INVENTORY MANIFEST
-                                  #JOB.RoleArn must be allowed to PACTION s3:GetObject[Version] that file
-
-JOB_[G]MANIFEST.Location          #JOB_MANIFEST_LOCATION. Where JOB_MANIFEST_FILE is located
-JOB_MANIFEST_LOCATION.ObjectArn   #OBJECT_ARN
-JOB_MANIFEST_LOCATION
- .ObjectVersionId                 #VERSION_MID
-JOB_MANIFEST_LOCATION.ETag        #'ETAG'. MD5 checksum
-
-JOB_MANIFEST_FILE                 #CSV format
-JOB_SPEC.Fields                   #'COL'_ARR used by JOB_MANIFEST_FILE among:
-                                  #  - 'Bucket': 'BUCKET'
-                                  #  - 'Key': 'OBJECT'
-                                  #  - 'VersionId': VERSION_MID (def: latest)
-                                  #  - 'Ignore': anything
-                                  #Def: 'Bucket', 'Key'[, 'VersionId']
-
-JOB.ManifestGenerator             #JOB_JMANIFEST. Alternative to JOB_MANIFEST.
- .S3JobManifestGenerator          #Generates a JOB_MANIFEST_FILE based on parameters instead
-JOB_JMANIFEST.SourceBucket        #'BUCKET' with source OBJECTs
-JOB_JMANIFEST.ExpectedBucketOwner #ACCOUNT_ID of BUCKET_OWNER
-
-JOB_JMANIFEST.Filter              #JOB_FILTER selecting source OBJECTs
-JOB_FILTER.CreatedBefore|After    #'DATE'
-JOB_FILTER.EligibleForReplication #BOOL (def: false). Only include if OBJECT is replicated by some REPLICATION
-JOB_FILTER
- .ObjectReplicationStatuses       #STR_ARR. Filter by x-amz-replication-status [S], among 'REPLICA|COMPLETED|FAILED|NONE'
-
-JOB.GeneratedManifestDescriptor   #JOB_GMANIFEST. JOB_MANIFEST_FILE generated by JOB_JMANIFEST
-JOB_JMANIFEST.EnableManifestOutput#BOOL. Whether to genereate JOB_GMANIFEST
-JOB_JMANIFEST
- .ManifestOutputLocation          #JOB_JOUTPUT. OBJECT storing JOB_GMANIFEST
-JOB_JOUTPUT.Bucket                #Like INVENTORY_DESTINATION.Bucket
-JOB_JOUTPUT
- .ExpectedManifestBucketOwner     #ACCOUNT_ID of BUCKET_OWNER
-JOB_JOUTPUT.ManifestPrefix        #Like INVENTORY_DESTINATION.Prefix
-JOB_JOUTPUT.ManifestEncryption    #Like INVENTORY_DESTINATION.Encryption
-JOB_JOUTPUT.ManifestFormat        #Always 'S3InventoryReport_CSV_20211130'
-
-JOB.Operation                     #JOB_OP. "Operations", i.e. ACTIONs to perform on each source OBJECT
-
-JOB_OP.S3PutObjectAcl             #JOB_ACL. Call PutObjectAcl()
- .AccessControlPolicy             #JOB.RoleArn must be allowed to PACTIONs s3:PutObject[Version]Acl
-JOB_ACL.CannedAccessControlList   #'ACL'. x-amz-acl [C]
-JOB_ACL.AccessControlList         #JOB_ACLIST
-JOB_ACLIST.Grants                 #GRANT_ARR. ACL.AccessControlList[*].Grantee but:
-                                  #  - Id|EmailAddress|URI -> Identifier
-                                  #  - type -> TypeIdentifier
-JOB_ACLIST.Owner                  #BUCKET_OWNER. ACL.Owner
-
-JOB_OP.S3PutObjectRetention       #JOB_LOCK. Call PutObjectRetention()
-                                  #JOB.RoleArn must be allowed to PACTIONs:
-                                  #  - s3:PutObjectRetention|GetBucketObjectLockConfiguration
-                                  #  - s3:BypassGovernanceRetention: if JOB_LOCK.BypassGovernanceRetention true
-JOB_LOCK.BypassGovernanceRetention#BOOL. x-amz-bypass-governance-retention [C]
-JOB_LOCK.Retention                #JOB_RETENTION
-JOB_RETENTION.Mode                #STR. OBJECT_RETENTION.Mode
-JOB_RETENTION.RetainUntilDate     #'DATE'. OBJECT_RETENTION.RetainUntilDate
-
-JOB_OP.S3PutObjectLegalHold       #STR. Call PutObjectLegalHold()
- .LegalHold.Status                #JOB.RoleArn must be allowed to PACTIONs s3:PutObjectLegalHold|GetBucketObjectLockConfiguration
-
-JOB_OP.S3PutObjectTagging.TagSet  #TAG_PAIRS. Call PutObjectTagging()
-                                  #JOB.RoleArn must be allowed to PACTIONs s3:PutObject[Version]Tagging
-
-JOB_OP.S3DeleteObjectTagging      #Empty OBJ. Call DeleteObjectTagging()
-                                  #JOB.RoleArn must be allowed to PACTIONs s3:DeleteObject[Version]Tagging
-
-JOB_OP.S3InitiateRestoreObject    #JOB_RESTORE. Call RestoreObject()
-                                  #OBJECTs can use INTELLIGENT_TIERING or not, but not both
-                                  #JOB.RoleArn must be allowed to PACTIONs s3:RestoreObject
-JOB_RESTORE.ExpirationInDays      #NUM. RESTORE.Days
-JOB_RESTORE.GlacierJobTier        #STR. RESTORE.Tier. Cannot be 'EXPEDITED'
-
-JOB_OP.S3PutObjectCopy            #JOB_COPY. Call CopyObject()
-                                  #JOB.RoleArn must be allowed to PACTIONs:
-                                  #  - s3:GetObject[Version][Acl|Tagging], s3:ListBucket on source BUCKET
-                                  #  - s3:PutObject[Version][Acl|Tagging] on destination BUCKET
-JOB_COPY.TargetResource           #Destination BUCKET_ARN
-JOB_COPY.TargetKeyPrefix          #Destination 'OBJECT' prefix
-
-JOB_COPY.MetadataDirective        #STR. x-amz-metadata-directive [C]
-JOB_COPY
- .[Un]ModifiedSinceConstraint     #'DATE'. x-amz-copy-source-if-[un]modified-since [C]
-JOB_COPY.NewObjectTagging         #TAG_PAIRS. x-amz-tagging [C]
-JOB_COPY.StorageClass             #STR. x-amz-storage-class [C]
-JOB_COPY.AccessControlGrants      #Like JOB_ACLIST.Grants. x-amz-grant-PERMISSION [C]
-JOB_COPY.CannedAccessControlList  #'ACL'. x-amz-acl [C]
-JOB_COPY.SSEAwsKmsKeyId           #STR. x-amz-server-side-encryption-aws-kms-key-id [C]
-JOB_COPY.BucketKeyEnabled         #BOOL. x-amz-server-side-encryption-bucket-key-enabled [C]
-JOB_COPY.ChecksumAlgorithm        #STR. x-amz-checksum-algorithm [C]
-JOB_COPY.ObjectLockLegalHoldStatus#STR. x-amz-object-lock-legal-hold [C]
-JOB_COPY.ObjectLockMode           #STR. x-amz-object-lock-mode [C]
-JOB_COPY.ObjectLockRetainUntilDate#'DATE'. x-amz-object-lock-retain-until-date [C]
-JOB_COPY.RedirectLocation         #STR. x-amz-website-redirect-location [C]
-JOB_COPY.RequesterPays            #BOOL. x-amz-request-payer [C]
-
-JOB_COPY.NewObjectMetadata        #JOB_COPY_PARAMS. Def: copy source's. If set, do not copy any from source's.
-JOB_COPY_PARAMS.CacheControl      #STR. Cache-Control [C]
-JOB_COPY_PARAMS.ContentDisposition#STR. Content-Disposition [C]
-JOB_COPY_PARAMS.ContentEncoding   #STR. Content-Encoding [C]
-JOB_COPY_PARAMS.ContentLanguage   #STR. Content-Language [C]
-JOB_COPY_PARAMS.ContentLength     #STR. Content-Length [C]
-JOB_COPY_PARAMS.ContentMD5        #STR. Content-MD5 [C]
-JOB_COPY_PARAMS.ContentType       #STR. Content-Type [C]
-JOB_COPY_PARAMS.HttpExpiresDate   #'DATE'. Expires [C]
-JOB_COPY_PARAMS.SSEAlgorithm      #'AES256|KMS'. x-amz-server-side-encryption [C]
-JOB_COPY_PARAMS.RequesterCharged  #BOOL. x-amz-request-payer [C]
-JOB_COPY_PARAMS.UserMetadata      #OBJ. x-amz-meta-* [C]
-
-JOB_OP.S3ReplicateObject          #Empty OBJ. "S3 Batch Replication"
-                                  #JOB.RoleArn must be allowed to PACTIONs:
-                                  #  - s3:InitiateReplication
-                                  #  - s3:GetReplicationConfiguration|PutInventoryConfiguration: only if using JOB.ManifestGenerator
-
-JOB_OP.LambdaInvoke.FunctionArn   #FUNC_ARN. Call Lambda FUNC using OBJECT as input.
+JOB_OP.LambdaInvoke.FunctionArn   #FUNC_ARN. Call Lambda FUNC using an OBJECT as input.
                                   #JOB.RoleArn must be allowed to PACTION lambda:InvokeFunction
                                   #INVOCATION_REQ.InvocationType 'Event', Payload REQ, must return RES
 
@@ -3776,6 +3661,42 @@ RES_TASK.resultCode               #STR among:
                                   #  - 'PermanentFailure'
 RES_TASK.resultString             #STR for JOB_OUT_TASK.ResultMessage
 
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:          BATCH MAIN           :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+PUT /jobs                         #Req: JOB
+CreateJob()                       #  - no JobArn, JobId
+                                  #  - no ProgressSummary, CreationTime, Status*, Suspended*, TerminationDate, FailureReasons
+                                  #  - no GeneratedManifestDescriptor
+                                  #Res: JOB
+                                  #  - only JobId
+GET /jobs/JOB_MID                 #Req: empty
+DescribeJob()                     #Res: Job JOB
+                                  #  - no ClientRequestToken, Tags
+GET /jobs                         #Req: jobStatuses STR_ARR (JOB.Status)
+ListJobs()                        #Res: Jobs JOB_ARR
+                                  #  - only JobId, CreationTime, Description, Priority, ProgressSummary, TerminationDate, Status
+                                  #  - Operation.OP -> Operation 'OP'
+                                  #Paginates with NextToken, maxResults
+
+JOB                               #Perform S3 ACTIONs ("Operation", JOB_OP) on multiple OBJECTs ("source OBJECT")
+                                  #Each JOB_OP is done once per OBJECT ("task")
+JOB.JobArn                        #JOB_ARN. arn:aws:s3:REGION:ACCOUNT_ID:job/JOB_MID
+JOB.JobId                         #JOB_MID
+JOB.Description                   #STR. Max 256 chars
+JOB.Operation                     #JOB_OP
+JOB.ClientRequestToken            #STR. Idempotency token
+
+JOB.RoleArn                       #ROLE_ARN performing JOB_OPs
+                                  #Trust policy must allow sts:AssumeRole to SERVICE_DOMAIN 'batchoperations.s3.amazonaws.com'
+                                  #Requester must be allowed to PACTION sts:PassRole
+                                  #Other permissions depend on JOB_OP
+
 PUT /jobs/JOB_MID/tagging         #Req: Tags TAG_PAIRS
 PutJobTagging()                   #Res: empty
 GET /jobs/JOB_MID/tagging         #Req: empty
@@ -3784,6 +3705,162 @@ DELETE /jobs/JOB_MID/tagging      #Req: empty
 DeleteJobTagging()                #Res: empty
 
 JOB.Tags                          #TAG_PAIRS
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:      BATCH MANIFEST CSV       :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+JOB.Manifest                      #JOB_MANIFEST. List of the source OBJECTs
+                                  #Unordered
+JOB_MANIFEST.Spec                 #JOB_SPEC
+JOB_SPEC.Format                   #Either:
+                                  #  - 'S3BatchOperations_CSV_20180820': JOB_MANIFEST_FILE
+                                  #  - 'S3InventoryReport_CSV_20161130': INVENTORY MANIFEST
+                                  #     - empty INVENTORY_LINE.VersionId must first be converted to "null" instead
+                                  #JOB.RoleArn must be allowed to PACTION s3:GetObject[Version] that file
+
+JOB_MANIFEST.Location             #JOB_MANIFEST_LOCATION. Where JOB_MANIFEST_FILE is located
+JOB_MANIFEST_LOCATION.ObjectArn   #OBJECT_ARN
+                                  #Must be in same REGION
+JOB_MANIFEST_LOCATION
+ .ObjectVersionId                 #VERSION_MID
+JOB_MANIFEST_LOCATION.ETag        #'ETAG'. MD5 checksum
+
+JOB_MANIFEST_FILE                 #CSV format
+JOB_SPEC.Fields                   #'COL'_ARR used by JOB_MANIFEST_FILE among:
+                                  #  - 'Bucket': 'BUCKET'
+                                  #  - 'Key': 'OBJECT'
+                                  #  - 'VersionId': VERSION_MID (def: latest)
+                                  #  - 'Ignore': anything
+                                  #Def: 'Bucket', 'Key'[, 'VersionId']
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:     BATCH MANIFEST PARAMS     :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+JOB.ManifestGenerator
+ .S3JobManifestGenerator          #JOB_GMANIFEST. Alternative to JOB_MANIFEST, using parameters instead of JOB_MANIFEST_FILE
+JOB_GMANIFEST.SourceBucket        #'BUCKET' with source OBJECTs
+JOB_GMANIFEST.ExpectedBucketOwner #ACCOUNT_ID of BUCKET_OWNER
+
+JOB_GMANIFEST.Filter              #JOB_FILTER selecting source OBJECTs
+JOB_FILTER.CreatedBefore|After    #'DATE'
+
+JOB_GMANIFEST.EnableManifestOutput#BOOL (def: false). Save JOB_GMANIFEST as an INVENTORY MANIFEST
+JOB_GMANIFEST
+ .ManifestOutputLocation          #JOB_GLOCATION. OBJECT storing INVENTORY MANIFEST
+JOB_GLOCATION.Bucket              #Like INVENTORY_DESTINATION.Bucket
+JOB_GLOCATION
+ .ExpectedManifestBucketOwner     #ACCOUNT_ID of BUCKET_OWNER
+JOB_GLOCATION.ManifestPrefix      #Like INVENTORY_DESTINATION.Prefix
+JOB_GLOCATION.ManifestEncryption  #Like INVENTORY_DESTINATION.Encryption
+JOB_GLOCATION.ManifestFormat      #Always 'S3InventoryReport_CSV_20161130'
+
+JOB.GeneratedManifestDescriptor   #JOB_GGMANIFEST. INVENTORY MANIFEST generated by JOB_GMANIFEST
+JOB_GGMANIFEST.Location           #Like JOB_MANIFEST.Location
+JOB_GGMANIFEST.Format             #Always 'S3InventoryReport_CSV_20161130'
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:         BATCH STATUS          :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+POST /jobs/JOB_MID/status         #Req: query variables:
+UpdateJobStatus()                 #  - requestedJobStatus: JOB.Status, only 'Ready' or 'Cancelled'
+                                  #  - statusUpdateReason
+                                  #Res: JOB
+                                  #  - only JobId, Status, StatusUpdateReason
+POST /jobs/JOB_MID/priority       #Req: query variables: priority (JOB.Priority)
+UpdateJobPriority()               #Res: JOB
+                                  #  - only JobId, Priority
+
+JOB.ConfirmationRequired          #BOOL. Make JOB.Status go from 'Preparing' to 'Suspended' (instead of 'Ready')
+                                  #Must explicitly UpdateJobStatus() to 'Ready' to continue
+                                  #Def: true in UI console, false otherwise
+
+JOB.Priority                      #UINT. Only one JOB is running at once per REGION, according to Priority
+
+JOB.Status                        #One of:
+                                  #  - 'New': just created
+                                  #  - 'Preparing': reading parameters|manifest
+                                  #  - 'Suspended'
+                                  #  - 'Ready': ready to start, but JOB_OP not started yet
+                                  #  - 'Pausing', 'Paused': wait for other JOBs with higher Priority to end
+                                  #  - 'Active': processing JOB_OPs
+                                  #  - 'Cancelling', 'Cancelled': abort
+                                  #  - 'Completing', 'Complete': all tasks succeeded
+                                  #  - 'Failing', 'Failed': error
+JOB.StatusUpdateReason            #STR. Max 256 chars
+JOB.CreationTime                  #'DATE'
+JOB.SuspendedDate                 #'DATE' when Status 'Suspended'
+JOB.SuspendedCause                #STR
+JOB.TerminationDate               #'DATE' when Status 'Complete|Cancelled|Failed'
+
+JOB.FailureReasons                #JOB_FAILURE_ARR when Status 'Failed'
+                                  #Also fails either:
+                                  #  - after 90 days (30 if 'Suspended')
+                                  #  - as soon as both 50% of tasks failed, and 1000+ tasks completed
+JOB_FAILURE.FailureCode           #'CODE'
+JOB_FAILURE.FailureReason         #STR. Max 256 chars
+
+JOB.ProgressSummary               #JOB_PROGRESS
+JOB_PROGRESS.Timers
+ .ElapsedTimeInActiveSeconds      #NUM of secs in Status 'Active'
+JOB_PROGRESS.TotalNumberOfTasks   #NUM of tasks
+JOB_PROGRESS
+ .NumberOfTasksSucceeded          #NUM of tasks with Status 'Complete'
+JOB_PROGRESS.NumberOfTasksFailed  #NUM of tasks with Status 'Failed'
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:         BATCH REPORT          :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+JOB.Report                        #JOB_OUT. Results of each task of a JOB
+                                  #Output even if JOB canceled|failed, but not if all tasks failed
+                                  #JOB.RoleArn must be allowed to PACTION s3:PutObject those files
+
+JOB_OUT.Enabled                   #BOOL (def: false)
+JOB_OUT[_RESULTS].Bucket          #BUCKET_ARN
+JOB_OUT.Prefix                    #'JOB_OUT_PREFIX'
+JOB_OUT[_SUMMARY].Format          #Always 'Report_CSV_20180820'
+JOB_OUT.ReportScope               #Whether to include: 'AllTasks' or 'FailedTasksOnly'
+
+JOB_OUT_PREFIX/job-JOB_MID
+ /manifest.json                   #JOB_OUT_SUMMARY path
+JOB_OUT_SUMMARY.ReportCreationDate#'DATE'
+JOB_OUT_SUMMARY.ReportSchema      #CSV 'COL, ...'
+JOB_OUT_SUMMARY.Results           #JOB_OUT_RESULTS_ARR: one for each TaskExecutionStatus
+JOB_OUT_RESULTS
+ .TaskExecutionStatus             #'succeeded|failed'
+JOB_OUT_RESULTS.Key               #JOB_OUT_TASKS path
+JOB_OUT_RESULTS.MD5Checksum       #'HASH'
+
+JOB_OUT_PREFIX/job-JOB_MID
+ /results/RANDOM_ID.csv           #JOB_OUT_TASKS path
+JOB_OUT_TASKS                     #CSV file. One line per JOB_OUT_TASK
+JOB_OUT_TASK.Bucket               #'BUCKET'
+JOB_OUT_TASK.Key                  #'OBJECT'
+JOB_OUT_TASK.VersionId            #VERSION_MID
+JOB_OUT_TASK.TaskStatus           #'succeeded|failed'
+JOB_OUT_TASK.HTTPStatusCode       #NUM
+JOB_OUT_TASK.ErrorCode            #'ERROR'. Empty if JOB failed
+JOB_OUT_TASK.ResultMessage        #STR. If JOB succeeded, pseudo-JSON with result
+                                  #If JOB failed, error message
 
 
                                              /=+===============================+=\
