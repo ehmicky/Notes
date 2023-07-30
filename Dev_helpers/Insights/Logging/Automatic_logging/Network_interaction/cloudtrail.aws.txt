@@ -21,31 +21,8 @@ GOAL ==>                          #Logs API calls:
                                   #  - made by user or by AWS services
                                   #  - sign-in attempts to AWS console, AWS forums or AWS support center, with eventSource
                                   #    "signin.amazonaws.com" and eventName "ConsoleLogin|etc."
-                                  #Free (except S3|SNS costs)
-                                  #Logs are created:
-                                  #  - in a S3 BUCKET at OBJECT [PREFIX/]AWSLogs/ACCOUNT_ID/CloudTrail/REGION/YYYY/MM/DD/
-                                  #    ACCOUNT_ID_CloudTrail_REGION_RANDOM.json.gz, so can use S3 to:
-                                  #     - encrypt with S3 SSE
-                                  #     - archive|rotate
-                                  #  - region-wise
-                                  #     - so global SERVICE (e.g. IAM) will duplicate logs accross regions
-                                  #     - should disable global SERVICE events in all regions but one
-                                  #  - not realtime:
-                                  #     - new log file every 5 mins, calls take 15 mins to come.
-                                  #     - Can deliver SNS notifications on log delivery, with message:
-                                  #        - s3Bucket BUCKET
-                                  #        - s3ObjectKey OBJECT_ARR
-                                  #Must let logger manipulate BUCKET by applying a policy:
-                                  #  - policy is:
-                                  #     - allowing:
-                                  #        - s3:GetBucketAcl on arn:aws:s3:::BUCKET
-                                  #        - s3:PutObject on arn:aws:s3:::BUCKET/[PREFIX/]AWSLogs/ACCOUNT_ID/* with Condition
-                                  #          s3:x-amz-acl == "bucket-owner-full-control"
-                                  #        - SNS:Publish on arn:aws:sns:REGION:ACCOUNT_ID:TOPIC if SNS notifications
-                                  #     - using Principal arn:aws:iam::ACCOUNT_ID:root, where ACCOUNT_ID of the logger depends on
-                                  #       the REGION (check online doc)
-                                  #Best practice: create one dedicated BUCKET using CreateSubscription(). Can also group several
-                                  #users logs in same BUCKET.
+                                  #Best practice: create one dedicated LOG_BUCKET using CreateSubscription(). Can also group several
+                                  #users logs in same LOG_BUCKET.
 
 
                                              /=+===============================+=\
@@ -56,6 +33,8 @@ GOAL ==>                          #Logs API calls:
 
 
 FORMAT ==>                        #JSON
+
+PRICING ==>                       #Free (except S3|SNS costs)
 
 
                                              /=+===============================+=\
@@ -75,11 +54,11 @@ DeleteTrail()                     #Req: TRAIL
                                   #Res: empty
 
 TRAIL                             #Max 1 per USER
-TRAIL.IncludeGlobalServiceEvents  #BOOL (def: true)
 TRAIL.Name                        #'TRAIL'
-TRAIL.S3BucketName                #'BUCKET'
-TRAIL.S3KeyPrefix                 #'TRAIL_PREFIX'
-TRAIL.SnsTopicName                #SNS_TOPIC
+
+TRAIL.IncludeGlobalServiceEvents  #BOOL (def: true). Whether to include global SERVICEs (e.g. IAM)
+                                  #LOG_FILE is REGION-wise, i.e. global SERVICEs are duplicated per REGION
+                                  #Should set to false in all REGIONs but one
 
 
                                              /=+===============================+=\
@@ -100,8 +79,42 @@ GetTrailStatus()                  #Req: TRAIL
 TRAIL_STATUS.IsLogging            #BOOL
 TRAIL_STATUS.StartLoggingTime     #DATE_NUM
 TRAIL_STATUS.StopLoggingTime      #DATE_NUM
-TRAIL_STATUS.LatestDeliveryError  #Last event delivery 'ERROR'
+
+LOG DELIVERY ==>                  #LOG_FILE created every 5 mins
+                                  #Calls take 15 mins to come
+TRAIL_STATUS.LatestDeliveryError  #Last log delivery 'ERROR'
 TRAIL_STATUS.LatestDeliveryTime   #DATE_NUM
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:          PERMISSIONS          :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+PERMISSIONS ==>                   #Logger is Principal arn:aws:iam::ACCOUNT_ID:root
+                                  #  - ACCOUNT_ID is REGION-specific (see online doc for value)
+                                  #Must be allowed PACTIONs:
+                                  #  - s3:GetBucketAcl on arn:aws:s3:::LOG_BUCKET
+                                  #  - s3:PutObject on arn:aws:s3:::LOG_BUCKET/TRAIL_PREFIX/AWSLogs/ACCOUNT_ID/*
+                                  #     - with COND_KEY s3:x-amz-acl 'bucket-owner-full-control'
+                                  #  (if SNS)
+                                  #  - SNS:Publish on arn:aws:sns:REGION:ACCOUNT_ID:TOPIC
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:              SNS              :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+TRAIL.SnsTopicName                #'SNS_TOPIC' to send on log delivery, with SNS_PAYLOAD
+
+SNS_PAYLOAD.s3Bucket              #'LOG_BUCKET'
+SNS_PAYLOAD.s3ObjectKey           #'LOG_FILE'
+
 TRAIL_STATUS
  .LatestNotificationError
 TRAIL_STATUS
@@ -114,6 +127,15 @@ TRAIL_STATUS
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
+
+TRAIL.S3BucketName                #S3 'LOG_BUCKET' to store LOG_FILE
+                                  #Can use S3 to encrypt, archive|rotate, etc.
+TRAIL.S3KeyPrefix                 #'TRAIL_PREFIX' (def: none)
+
+TRAIL_PREFIX/AWSLogs/ACCOUNT_ID
+ /CloudTrail/REGION/YYYY/MM/DD
+ /ACCOUNT_ID_CloudTrail_
+  REGION_RANDOM.json.gz           #'LOG_FILE'
 
 LOG_FILE                          #
 LOG_FILE.Records                  #LOG_EVENT_ARR
@@ -132,17 +154,20 @@ LOG_EVENT.errorCode               #NUM
 LOG_EVENT.errorMessage            #STR
 
 LOG_EVENT.userIdentity            #IDENTITY
-IDENTITY.type                     #"IAMUser|Root|FederatedUser|AssumedRole"
-IDENTITY.principalId STR
-IDENTITY.arn IAM_ARN
-IDENTITY.userName NAME
-IDENTITY.accountId ACCOUNT_ID
-IDENTITY.accessKeyId ACCESS_KEY_ID
-IDENTITY.invokedBy STR: if invoked by another AWS service
-IDENTITY.sessionIssuer: user that got the STS tokens: type, principalId, arn, accountId, userName
-IDENTITY.sessionContext (if STS):
-                                  #           - creationDate DATE
-                                  #           - mfaAuthenticated BOOL
-IDENTITY.webIdFederationData (if FederatedUser):
-                                  #           - federatedProvider DOMAIN
-                                  #           - attributes STR
+IDENTITY|ISSUER.type              #One of: 'IAMUser', 'Root', 'AssumedRole', 'FederatedUser'
+IDENTITY|ISSUER.arn               #IDENTITY ARN, e.g. ROLE_ARN
+IDENTITY|ISSUER.principalId       #IDENTITY ID, e.g. ROLE_MID
+IDENTITY|ISSUER.userName          #'IDENTITY' name, e.g. 'ROLE'
+IDENTITY|ISSUER.accountId         #ACCOUNT_ID
+IDENTITY.accessKeyId              #ACCESS_KEY_ID
+IDENTITY.invokedBy                #'SERVICE_DOMAIN', if called by another SERVICE
+
+IDENTITY.sessionContext           #SESSION_CONTEXT. Only if type 'AssumedRole'
+SESSION_CONTEXT.sessionIssuer     #ISSUER
+SESSION_CONTEXT.attributes        #SESSION_ATTRS
+SESSION_ATTRS.mfaAuthenticated    #'BOOL'
+SESSION_ATTRS.creationDate        #'DATE'
+
+IDENTITY.webIdFederationData      #FEDERATION_DATA. Only if type 'FederatedUser'
+FEDERATION_DATA.federatedProvider #'DOMAIN'
+FEDERATION_DATA.attributes        #STR
