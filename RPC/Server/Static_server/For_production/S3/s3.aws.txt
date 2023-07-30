@@ -3557,23 +3557,27 @@ ListJobs()                        #Res: Jobs JOB_ARR
 JOB.JobArn                        #JOB_ARN. arn:aws:s3:REGION:ACCOUNT_ID:job/JOB_MID
 JOB.JobId                         #JOB_MID
 JOB.Description                   #STR. Max 256 chars
-JOB.ConfirmationRequired          #BOOL. Require confirmation before starting. Only if JOB created in UI console ???
-JOB.Priority                      #UINT
+JOB.Priority                      #UINT. Compared to other JOBs in same REGION
+                                  #Only one JOB is running at once, according to Priority
 
-JOB.RoleArn                       #ROLE_ARN used by JOB
+JOB.RoleArn                       #ROLE_ARN performing JOB_OP
+                                  #Trust policy must allow sts:AssumeRole to SERVICE_DOMAIN 'batchoperations.s3.amazonaws.com'
 
 JOB.ClientRequestToken            #STR. Idempotency token
 
+JOB.ConfirmationRequired          #BOOL. Set JOB.Status to 'Suspended', i.e. must UpdateJobStatus() to 'Ready'
+                                  #Def: true in UI console, false otherwise
 JOB.Status                        #One of:
-                                  #  - 'New'
-                                  #  - 'Preparing'
-                                  #  - 'Suspended': waiting for confirmation. Only in UI console
-                                  #  - 'Ready'
+                                  #  - 'New': just created
+                                  #  - 'Suspended'
+                                  #  - 'Preparing': reading parameters|manifest
+                                  #  - 'Ready': ready to start
                                   #  - 'Active'
                                   #  - 'Pausing', 'Paused'
                                   #  - 'Completing', 'Complete'
                                   #  - 'Cancelling', 'Cancelled'
                                   #  - 'Failing', 'Failed'
+                                  #Fails after 90 days (30 if 'Suspended')
 JOB.StatusUpdateReason            #STR. Max 256 chars
 JOB.CreationTime                  #'DATE'
 JOB.SuspendedDate                 #'DATE' when Status 'Suspended'
@@ -3586,13 +3590,14 @@ JOB_FAILURE.FailureReason         #STR. Max 256 chars
 JOB.ProgressSummary               #JOB_PROGRESS
 JOB_PROGRESS.Timers
  .ElapsedTimeInActiveSeconds      #NUM of secs in Status 'Active'
-JOB_PROGRESS.TotalNumberOfTasks   #NUM of tasks
+JOB_PROGRESS.TotalNumberOfTasks   #NUM of tasks (OBJECT + JOB_OP)
 JOB_PROGRESS
  .NumberOfTasksSucceeded          #NUM of tasks with Status 'Complete'
 JOB_PROGRESS.NumberOfTasksFailed  #NUM of tasks with Status 'Failed'
 
 JOB.Report                        #JOB_REPORT. Summary output
-JOB_REPORT.Enabled                #BOOL
+                                  #Not output if all tasks failed
+JOB_REPORT.Enabled                #BOOL (def: false)
 JOB_REPORT.Bucket                 #BUCKET_ARN
 JOB_REPORT.Prefix                 #'JOB_OUTPUT_PREFIX'
 JOB_REPORT.ReportScope            #Whether to include: 'AllTasks' or 'FailedTasksOnly'
@@ -3601,21 +3606,25 @@ JOB_REPORT.Format                 #Either default (JSON) or 'Report_CSV_20180820
 JOB_OUTPUT_PREFIX/job-JOB_MID
  /report.json|csv                 #JOB_OUTPUT path
 
-JOB.Manifest                      #JOB_MANIFEST. Describes the JOB_MANIFEST_FILE
+JOB.Manifest                      #JOB_MANIFEST. List of the "source OBJECTs", i.e. ones to apply JOB_OP to
 JOB_MANIFEST.Spec                 #JOB_SPEC
 JOB_SPEC|GMANIFEST.Format         #Either:
-                                  #  - 'S3InventoryReport_CSV_20161130'
-                                  #  - 'S3BatchOperations_CSV_20180820'
-JOB_SPEC.Fields                   #'COL'_ARR. Only if Format 'S3BatchOperations_CSV_20180820'
-                                  #'COL' can be: 'Bucket', 'Key', 'VersionId', 'Ignore'
+                                  #  - 'S3BatchOperations_CSV_20180820': JOB_MANIFEST_FILE
+                                  #  - 'S3InventoryReport_CSV_20161130': INVENTORY MANIFEST
 
-JOB_[G]MANIFEST.Location          #JOB_MANIFEST_LOCATION
+JOB_[G]MANIFEST.Location          #JOB_MANIFEST_LOCATION. Where JOB_MANIFEST_FILE is located
 JOB_MANIFEST_LOCATION.ObjectArn   #OBJECT_ARN
 JOB_MANIFEST_LOCATION
  .ObjectVersionId                 #VERSION_MID
 JOB_MANIFEST_LOCATION.ETag        #'ETAG'. MD5 checksum
 
-JOB_MANIFEST_FILE                 #CSV|JSON OBJECT listing the "source OBJECTs", i.e. ones to apply JOB_OP to
+JOB_MANIFEST_FILE                 #CSV format
+JOB_SPEC.Fields                   #'COL'_ARR used by JOB_MANIFEST_FILE among:
+                                  #  - 'Bucket': 'BUCKET'
+                                  #  - 'Key': 'OBJECT'
+                                  #  - 'VersionId': VERSION_MID (def: latest)
+                                  #  - 'Ignore': anything
+                                  #Def: ['Bucket', 'Key'[, 'VersionId']]
 
 JOB.ManifestGenerator             #JOB_JMANIFEST. Alternative to JOB_MANIFEST.
  .S3JobManifestGenerator          #Generates a JOB_MANIFEST_FILE based on parameters
@@ -3639,7 +3648,7 @@ JOB_JOUTPUT.ManifestPrefix        #Like INVENTORY_DESTINATION.Prefix
 JOB_JOUTPUT.ManifestEncryption    #Like INVENTORY_DESTINATION.Encryption
 JOB_JOUTPUT.ManifestFormat        #Always 'S3InventoryReport_CSV_20211130'
 
-JOB.Operation                     #JOB_OP. ACTIONs to perform on each source OBJECT
+JOB.Operation                     #JOB_OP. "Operations", i.e. ACTIONs to perform on each source OBJECT
 
 JOB_OP.LambdaInvoke.FunctionArn   #FUNC_ARN. Call Lambda Invoke() using OBJECT as input
 
@@ -3647,36 +3656,36 @@ JOB_OP.S3DeleteObjectTagging      #Empty OBJ. Call DeleteObjectTagging()
 
 JOB_OP.S3InitiateRestoreObject    #JOB_RESTORE. Call RestoreObject()
                                   #OBJECTs can use INTELLIGENT_TIERING or not, but not both
-JOB_RESTORE.ExpirationInDays      #RESTORE.Days
-JOB_RESTORE.GlacierJobTier        #RESTORE.Tier. Cannot be 'EXPEDITED'
+JOB_RESTORE.ExpirationInDays      #NUM. RESTORE.Days
+JOB_RESTORE.GlacierJobTier        #STR. RESTORE.Tier. Cannot be 'EXPEDITED'
 
 JOB_OP.S3PutObjectAcl
  .AccessControlPolicy             #JOB_ACL. Call PutObjectAcl()
-JOB_ACL.CannedAccessControlList   #'ACL'
+JOB_ACL.CannedAccessControlList   #'ACL'. x-amz-acl [C]
 JOB_ACL.AccessControlList         #JOB_ACLIST
-JOB_ACLIST.Grants                 #GRANT_ARR
+JOB_ACLIST.Grants                 #GRANT_ARR. ACL.AccessControlList[*].Grantee but:
                                   #  - Id|EmailAddress|URI -> Identifier
                                   #  - type -> TypeIdentifier
-JOB_ACLIST.Owner                  #BUCKET_OWNER
+JOB_ACLIST.Owner                  #BUCKET_OWNER. ACL.Owner
 
 JOB_OP.S3PutObjectCopy            #JOB_COPY. Call CopyObject()
-JOB_COPY.TargetKeyPrefix          #
-JOB_COPY.TargetResource           #
+JOB_COPY.TargetResource           #Destination BUCKET_ARN
+JOB_COPY.TargetKeyPrefix          #Destination 'OBJECT' prefix
 
-JOB_COPY.MetadataDirective        #STR. Like x-amz-metadata-directive [C]
+JOB_COPY.MetadataDirective        #STR. x-amz-metadata-directive [C]
 JOB_COPY
- .[Un]ModifiedSinceConstraint     #'DATE'. Like x-amz-copy-source-if-[un]modified-since [C]
-JOB_COPY.NewObjectTagging         #TAG_PAIRS. Like x-amz-tagging [C]
+ .[Un]ModifiedSinceConstraint     #'DATE'. x-amz-copy-source-if-[un]modified-since [C]
+JOB_COPY.NewObjectTagging         #TAG_PAIRS. x-amz-tagging [C]
 JOB_COPY.StorageClass             #STR. x-amz-storage-class [C]
-JOB_COPY.AccessControlGrants      #Like JOB_ACLIST.Grants. Like x-amz-grant-PERMISSION [C]
-JOB_COPY.CannedAccessControlList  #'ACL'. Like x-amz-acl [C]
+JOB_COPY.AccessControlGrants      #Like JOB_ACLIST.Grants. x-amz-grant-PERMISSION [C]
+JOB_COPY.CannedAccessControlList  #'ACL'. x-amz-acl [C]
 JOB_COPY.SSEAwsKmsKeyId           #STR. x-amz-server-side-encryption-aws-kms-key-id [C]
-JOB_COPY.BucketKeyEnabled         #BOOL. Like x-amz-server-side-encryption-bucket-key-enabled [C]
-JOB_COPY.ChecksumAlgorithm        #STR. Like x-amz-checksum-algorithm [C]
-JOB_COPY.ObjectLockLegalHoldStatus#STR. Like x-amz-object-lock-legal-hold [C]
-JOB_COPY.ObjectLockMode           #STR. Like x-amz-object-lock-mode [C]
-JOB_COPY.ObjectLockRetainUntilDate#'DATE'. Like x-amz-object-lock-retain-until-date [C]
-JOB_COPY.RedirectLocation         #STR. Like x-amz-website-redirect-location [C]
+JOB_COPY.BucketKeyEnabled         #BOOL. x-amz-server-side-encryption-bucket-key-enabled [C]
+JOB_COPY.ChecksumAlgorithm        #STR. x-amz-checksum-algorithm [C]
+JOB_COPY.ObjectLockLegalHoldStatus#STR. x-amz-object-lock-legal-hold [C]
+JOB_COPY.ObjectLockMode           #STR. x-amz-object-lock-mode [C]
+JOB_COPY.ObjectLockRetainUntilDate#'DATE'. x-amz-object-lock-retain-until-date [C]
+JOB_COPY.RedirectLocation         #STR. x-amz-website-redirect-location [C]
 JOB_COPY.RequesterPays            #BOOL. x-amz-request-payer [C]
 
 JOB_COPY.NewObjectMetadata        #JOB_COPY_PARAMS. Def: copy source's. If set, do not copy any from source's.
@@ -3692,18 +3701,19 @@ JOB_COPY_PARAMS.SSEAlgorithm      #'AES256|KMS'. x-amz-server-side-encryption [C
 JOB_COPY_PARAMS.RequesterCharged  #BOOL. x-amz-request-payer [C]
 JOB_COPY_PARAMS.UserMetadata      #OBJ. x-amz-meta-* [C]
 
-JOB_OP.S3PutObjectRetention       #JOB_LOCK
-JOB_LOCK.BypassGovernanceRetention#BOOL
+JOB_OP.S3PutObjectRetention       #JOB_LOCK. Call PutObjectRetention()
+JOB_LOCK.BypassGovernanceRetention#BOOL. x-amz-bypass-governance-retention [C]
 JOB_LOCK.Retention                #JOB_RETENTION
-JOB_RETENTION.Mode                #STR
-JOB_RETENTION.RetainUntilDate     #'DATE'
+JOB_RETENTION.Mode                #STR. OBJECT_RETENTION.Mode
+JOB_RETENTION.RetainUntilDate     #'DATE'. OBJECT_RETENTION.RetainUntilDate
 
 JOB_OP.S3PutObjectLegalHold
- .LegalHold.Status                #STR
+ .LegalHold.Status                #STR. Call PutObjectLegalHold()
 
-JOB_OP.S3PutObjectTagging.TagSet  #TAG_PAIRS
+JOB_OP.S3PutObjectTagging.TagSet  #TAG_PAIRS. Call PutObjectTagging()
 
-JOB_OP.S3ReplicateObject          #Empty OBJ
+JOB_OP.S3ReplicateObject          #Empty OBJ. REPLICATION ???
+                                  #https://docs.aws.amazon.com/AmazonS3/latest/userguide/s3-batch-replication-batch.html ???
 
 PUT /jobs/JOB_MID/tagging         #Req: Tags TAG_PAIRS
 PutJobTagging()                   #Res: empty
@@ -3713,8 +3723,6 @@ DELETE /jobs/JOB_MID/tagging      #Req: empty
 DeleteJobTagging()                #Res: empty
 
 JOB.Tags                          #TAG_PAIRS
-
-BATCH replication: https://docs.aws.amazon.com/AmazonS3/latest/userguide/s3-batch-replication-batch.html
 
 
                                              /=+===============================+=\
