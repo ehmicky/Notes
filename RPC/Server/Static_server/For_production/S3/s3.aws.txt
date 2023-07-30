@@ -6,20 +6,14 @@
 
 
 TODO ==>
-  - CLI:
-     - aws help topics s3-faq
-     - https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-files.html#cli-configure-files-s3
-     - https://docs.aws.amazon.com/sdkref/latest/guide/feature-s3-access-point.html
-     - https://docs.aws.amazon.com/sdkref/latest/guide/feature-s3-mrap.html
-     - https://docs.aws.amazon.com/AmazonS3/latest/userguide/olap-best-practices.html#olap-cli-sdk
   - high-level CLI aws s3
-     - see doc already existing below this file
      - aws help s3-config
+     - https://docs.aws.amazon.com/AmazonS3/latest/userguide/olap-best-practices.html#olap-cli-sdk
+  - s3fs-fuse
+     - see doc already existing below this file
   - Pulumi:
      - see my list in aws_general doc
      - https://www.pulumi.com/registry/packages/aws-static-website/
-  - s3fs-fuse
-     - see doc already existing below this file
   - add summary on top
   - check https://aws.amazon.com/new for CloudWatch, Lambda, IAM, S3, etc.
 
@@ -49,6 +43,7 @@ BUCKET.s3.amazonaws.com           #"Virtual hosting". Same but using BUCKET as s
                                   #     - 301 redirection if not in right REGION
                                   #  - CNAME == 'BUCKET' exactly, e.g. BUCKET called 'www.example.com'
 COPTS.forcePathStyle              #BOOL (def: false). Use /BUCKET instead of virtual hosting
+S3_CONF.addressing_style          #'virtual' (def) or 'path'
 
 ACCOUNT_ID.s3-control             #SERVICE_DOMAIN for ACTIONs that not BUCKET-specific
  .amazonaws.com/SVERSION          #SERVICE is called s3-control with SDK, s3control with CLI
@@ -85,6 +80,8 @@ AmazonS3[Outposts]ReadOnlyAccess  #Same but readonly
  middleware-sdk-s3[-control]      #MFUNC used by S3[-control] client
 @aws-sdk/
  middleware-bucket-endpoint       #Used internally by @aws-sdk/middleware-sdk-s3-control
+
+CONF.s3                           #S3_CONF. Only used by CLI.
 
 
                                              /=+===============================+=\
@@ -292,8 +289,6 @@ OBJECT.Key                        #'OBJECT', its name. Also named "key".
                                   #  - as opposed to serial integer, timestamp, etc.
                                   #Max 1KB, [[:alnum:]-_.*'()!] (should URL encode others)
 OBJECT.Location                   #'.../BUCKET/OBJECT' URL
-
-s3://BUCKET/OBJECT                #Format used by some SERVICEs
 
 Range: bytes=NUM-NUM2 [C]
 Content-Range:
@@ -843,6 +838,7 @@ PARAMS.ChecksumAlgorithm          #'ALGO'
                                   #  - otherwise: computes Content-MD5 [C] instead
                                   #Only with SDK|CLI, not API
                                   #  - sometimes called dummy name x-amz-sdk-checksum-algorithm [C] in the online doc
+S3_CONF.payload_signing_enabled   #BOOL (def: true). Enables --checksum-algorithm
 
 x-amz-checksum-algorithm: ALGO [C]#When copying OBJECTs, change the checksum ALGO
 
@@ -958,7 +954,8 @@ BUCKET.s3-accelerate.amazonaws.com#Like BUCKET.s3.amazonaws.com but faster
                                   #     - 50-200% faster: elsewhere
                                   #Max 500TB/month (soft)
                                   #'BUCKET' name must not contain dots
-COPTS.useAccelerateEndpoint       #BOOL (def: false). Use BUCKET.s3-accelerate.amazonaws.com
+COPTS.useAccelerateEndpoint
+S3_CONF.use_accelerate_endpoint   #BOOL (def: false). Use BUCKET.s3-accelerate.amazonaws.com
 
 AWS/S3/Storage-Lens/Transfer
  AccelerationEnabledBucketCount   #Like Buckets, but only with ACCELERATE enabled
@@ -3328,6 +3325,8 @@ PARAMS.Name|Bucket                #When using ACCESSPOINTs with SDK|CLI, must us
 --name|bucket                     #This computes x-amz-account-id [C] and x-amz-outpost-id [C] automatically
                                   #Exception: not with CreateBucket|ListRegionalBuckets()
                                   #  - must use PARAMS.AccountId|OutpostId STR instead
+CONFIG.s3_use_arn_region
+ENVVAR AWS_S3_USE_ARN_REGION
 COPTS.useArnRegion                #BOOL (def: false). Prefer PARAMS.Name|Bucket's ARN's REGION over one specifying in hostname
 
 ACCESSPOINT.NetworkOrigin         #Whether can be accessed from 'Internet' (def) or 'VPC' (VpcConfiguration.VpcId)
@@ -3457,6 +3456,10 @@ REGIONS ==>                       #Must make call in us-west-2 REGION
                                   #MACCESSPOINT_REGION|ROUTE.Region can be any REGION
                                   #Actual calls to OBJECTs through MACCESSPOINT have no REGION
 
+CONFIG.s3_disable_multiregion
+ _access_points
+ENVVAR AWS_S3_DISABLE_MULTIREGION
+ _ACCESS_POINTS
 COPTS
  .disableMultiregionAccessPoints  #BOOL (def: false). Do not allow MACCESSPOINTs
 
@@ -4106,61 +4109,73 @@ StorageClass 'OUTPOSTS'           #Only 'STORAGE_CLASS' possible
                                              \=+===============================+=/
 
 
-aws s3 COMMAND [ARGS...]          #High-level S3 CLI.
-                                  #Globbing not possible as is, but can use --exclude "*" --include "GLOB"
---debug                           #To see underlying HTTP
+aws s3 ...                        #High-level S3 CLI
+--debug                           #Show HTTP request|response
 
-PATH|FILE|DIR                     #Local file path
-S3PATH|S3FILE|S3DIR               #s3://BUCKET, s3://BUCKET/OBJECT or s3://BUCKET/PATH
+DIR|FILE|PATH                     #Local file path, using OS-specific syntax
+S3DIR                             #s3://BUCKET[/PREFIX/] or s3://ACCESSPOINT_ARN[/PREFIX/]
+S3FILE                            #S3DIR/OBJECT
+S3PATH                            #S3DIR|S3FILE
 
-aws s3 cp|mv
-[S3]PATH [S3]PATH2                #
---recursive                       #If [S3]DIR, targets also all contained files.
---exclude|include GLOB_STR        #To use with --recursive. Priority on the one on the right.
---source-region STR               #
+aws s3 mb S3BUCKET                #CreateBucket()
 
---storage-class STR               #"STANDARD|REDUCED_REDUDANCY"
---grants "STR=STR2=STR3"...       #STR is "read|write[acl]" or "full"
-                                  #STR2 is "uri|emailaddress|id", specified by STR3.
---acl 'ACL'                       #
---website-redirect STR            #
---sse                             #
---expires STR                     #
---cache-control STR               #
---content-disposition STR         #
---content-encoding STR            #
---content-language STR            #
+aws s3 rb S3BUCKET                #DeleteBucket()
+--force                           #If OBJECTs exist, delete them first
+
+aws s3 ls                         #ListBuckets()
+aws s3 ls S3BUCKET                #ListObjectsV2()
+--recursive                       #
+
+aws s3 cp [S3]PATH [S3]PATH2      #CopyObject()
+--recursive                       #Allows [S3]PATH to be a [S3]DIR, targetting also all its OBJECTs
+--exclude|include                 #'GLOB'. With --recursive
+                                  #Priority to rightmost
+                                  #  - --include '*' is always prepended
+                                  #  - i.e. --include requires using --exclude before it first, e.g. --exclude '*'
+                                  #cwd is [S3]PATH
+--source-region                   #'REGION'. Def: current one
+
+--storage-class
+--acl
+--website-redirect
+--expires
+--cache-control STR
+--content-disposition STR
+--content-encoding STR
+--content-language STR
+--content-type STR                #Same as request headers
 --no-guess-mime-type              #
---content-type STR                #
+--grants                          #ACL, as 'PERMISSION=GRANTEE'
+--sse                             #
 
 --follow-symlinks                 #
 --dryrun                          #
 --quiet                           #
 
-aws s3 rm S3PATH                  #
---recursive                       #
---exclude|include GLOB_STR        #
---dryrun                          #
---quiet                           #
+aws s3 mv [S3]PATH [S3]PATH2      #DeleteObjects() + CopyObject()
+                                  #Same options as aws cp
 
-aws s3 sync [S3]PATH [S3]PATH2    #Make dest path copy of source path, possibly erasing some stuff in PATH2.
-                                  #Like aws cp but only if:
-                                  #  - files have different size.
-                                  #Or if (unless --size-only):
-                                  #  - file doesn't exist in dest path
-                                  #  - file has newer mtime (unless --exact-timestamps)
-                                  #Same options as aws cp|mv, plus:
+aws s3 sync [S3]PATH [S3]PATH2    #Same as aws s3 cp, except additional flags
 --delete                          #If file exist in dest path, but not in source path, remove it.
+--size-only                       #different size only, not no existence???
+--exact-timestamps                #Newer timestamp???
 
-aws s3 ls [S3BUCKET]              #If no S3BUCKET, do listAllBuckets() (show ctime+BUCKET)
-                                  #Otherwise listBucket() (show mtime+size+OBJECT)
---recursive                       #
+aws s3 rm S3PATH                  #DeleteObjects()
+--recursive
+--exclude|include
+--dryrun
+--quiet                           #Like aws s3 cp|mv
 
-aws s3 mb S3BUCKET                #createBucket()
-aws s3 rb S3BUCKET                #deleteBucket(). If OBJECT exists and --force, deleteObject() first.
+aws s3 website S3BUCKET           #PutBucketWebsite()
+--index-document
+--error-document                  #Same as request headers
 
-aws s3 website S3BUCKET
---index|error-document STR        #Modifies it
+https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-files.html#cli-configure-files-settings
+S3_CONF.max_bandwidth
+S3_CONF.max_concurrent_requests
+S3_CONF.max_queue_size
+S3_CONF.multipart_chunksize
+S3_CONF.multipart_threshold
 
 
                                              /=+===============================+=\
