@@ -32,28 +32,10 @@ TODO ==>
 VERSION ==>                       #2023-06-13
 SVERSION                          #v20180820
 
-@aws-sdk/middleware-sdk-s3        #MFUNC implementing new COPTS, used by S3 client
-COPTS.forcePathStyle              #BOOL (def: false). Use /BUCKET instead of virtual hosting
-COPTS.useAccelerateEndpoint       #BOOL (def: false). Use s3-accelerate endpoint
-COPTS
- .disableMultiregionAccessPoints  #BOOL (def: false). Do not allow MACCESSPOINTs
-
-@aws-sdk/middleware-sdk-s3-control#Same for s3-control client
-                                  #Outposts:
-                                  #  - use s3-outposts endpoint when needed
-                                  #  - sets x-amz-account-id [C] and x-amz-outpost-id [C] automatically,
-                                  #    by requiring REQ.Name|Bucket to be ARN instead of 'NAME'
-                                  #     - CreateBucket|ListRegionalBuckets() use REQ.OutpostId STR instead
-COPTS.useArnRegion                #BOOL (def: false). Prefer REQ.Name|Bucket's ARN's REGION over one specifying in hostname
-
+@aws-sdk/
+ middleware-sdk-s3[-control]      #MFUNC implementing new COPTS, used by S3[-control] client
 @aws-sdk/
  middleware-bucket-endpoint       #Used internally by @aws-sdk/middleware-sdk-s3-control
-
-@aws-sdk/
- middleware-expect-continue       #Seems to always add Expect: 100-continue [C], used by S3 client
-
-@aws-sdk/                         #Implements REQ.ChecksumAlgorithm, x-amz-checksum-ALGO [S] validation,
- middleware-flexible-checksums    #and x-amz-content-sha256 [C], in S3 client
 
 @aws-sdk/middleware-location-constraint
                                   #For CreateBucket()
@@ -87,6 +69,7 @@ BUCKET.s3.amazonaws.com           #"Virtual hosting". Same but using BUCKET as s
                                   #  - specifying REGION in subdomain
                                   #     - 301 redirection if not in right REGION
                                   #  - CNAME == 'BUCKET' exactly, e.g. BUCKET called 'www.example.com'
+COPTS.forcePathStyle              #BOOL (def: false). Use /BUCKET instead of virtual hosting
 
 ACCOUNT_ID.s3-control             #SERVICE_DOMAIN for ACTIONs that not BUCKET-specific
  .amazonaws.com/SVERSION          #Some ACTIONs have two variants s3[-control]: BUCKET-specific, and not
@@ -335,6 +318,12 @@ x-amz-mp-parts-count: NUM3 [S]    #Total NUM3 of parts
 
 RAW_OBJECT                        #OBJECT, as is
                                   #Max 5GB
+REQ.Body                          #As request, RAW_OBJECT can be STR or UINT8ARR|BUFFER|BLOB
+                                  #It can also be RSTREAM|ISTREAM:
+                                  #  - uses Transfer-Encoding: chunked [C]
+                                  #    + x-amz-content-sha256: STREAMING-UNSIGNED-PAYLOAD-TRAILER [C]
+                                  #  - requires setting REQ.checksumAlgorithm
+--REQ_VAR PATH                    #Same for CLI
 
 
                                              /=+===============================+=\
@@ -412,7 +401,7 @@ x-amz-optional-object-attributes:
 
 
 PUT /BUCKET/OBJECT                #Req:
-PutObject()                       #  - RAW_OBJECT
+PutObject()                       #  - RAW_OBJECT (including REQ.Body STREAM)
                                   #  - Expect [C], Content-Type [C], Content-Encoding [C], Content-Language [C], Expires [C],
                                   #    Cache-Control [C], Content-Disposition [C], x-amz-meta-* [C], x-amz-storage-class [C],
                                   #    x-amz-acl [C], x-amz-grant-PERMISSION [C], x-amz-website-redirect-location [C],
@@ -424,6 +413,8 @@ PutObject()                       #  - RAW_OBJECT
                                   #    x-amz-checksum-ALGO [S]
 
 Expect: 100-continue [C]          #See HTTP doc
+@aws-sdk/
+ middleware-expect-continue       #Always use Expect: 100-continue [C], used by S3 client
 
 NEVENT s3:ObjectCreated:Put       #On PutObject() success
 
@@ -450,7 +441,7 @@ BUPLOAD                           #Like PutObject() but meant to be performed by
                                   #Must use Content-Type: multipart/form-data [C]
                                   #Max 20KB
 BUPLOAD.key                       #'OBJECT'
-BUPLOAD.file                      #RAW_OBJECT
+BUPLOAD.file                      #RAW_OBJECT (excluding REQ.body STREAM)
                                   #Must be last field
 ${filename}                       #Anywhere in BUPLOAD, replaced by FILENAME from BUPLOAD.file, i.e.:
                                   #  - Content-Disposition: form-data; name="file"; filename="FILENAME"
@@ -591,7 +582,7 @@ MUPLOAD.Key                       #'OBJECT'
 MUPLOAD.Initiated                 #'DATE'
 MUPLOAD.Initiator                 #S3_OWNER
 
-RAW_MPART                         #OBJECT part, as is
+RAW_MPART                         #OBJECT part, as is (including REQ.Body STREAM)
                                   #Min 5MB, max 5GB
 
 MUPLOAD.Parts                     #MPART_ARR
@@ -823,7 +814,7 @@ Content-MD5: MD5_HASH [C]         #Alternative to x-amz-checksum-ALGO [C]
 REQ.ChecksumAlgorithm             #'ALGO'
 --checksum-algorithm ALGO         #Must be used instead of x-amz-checksum-ALGO [C], computing it automatically, except:
                                   #  - CompleteMultipartUpload(), WriteGetObjectResponse(): only x-amz-checksum-ALGO [C], no REQ.ChecksumAlgorithm
-                                  #  - PutObject(), UploadPart(): can use either REQ.ChecksumAlgorithm or x-amz-checksum-ALGO [C]
+                                  #  - PutObject(), UploadPart(): can use either x-amz-checksum-ALGO [C] or REQ.ChecksumAlgorithm
                                   #  - PutBucketOwnershipControls(): only Content-MD5 [C], automatically computed
                                   #Def:
                                   #  - PutObject(), UploadPart(), RestoreObject(), PutBucketAccelerateConfiguration(): noop
@@ -836,6 +827,9 @@ x-amz-checksum-algorithm: ALGO [C]#When copying OBJECTs, change the checksum ALG
 x-amz-checksum-mode: ENABLED [C]  #Set x-amz-checksum-ALGO [S]
 x-amz-checksum-ALGO [S]
 OBJECT|MPART.ChecksumALGO         #'BASE64_HASH'. SDK|CLI validate response body against it
+
+@aws-sdk/                         #Implements REQ.ChecksumAlgorithm, x-amz-checksum-ALGO [S] validation,
+ middleware-flexible-checksums    #and x-amz-content-sha256 [C], in S3 client
 
 
                                              /=+===============================+=\
@@ -939,6 +933,7 @@ BUCKET.s3-accelerate.amazonaws.com#Like BUCKET.s3.amazonaws.com but faster
                                   #     - 50-200% faster: elsewhere
                                   #Max 500TB/month (soft)
                                   #'BUCKET' name must not contain dots
+COPTS.useAccelerateEndpoint       #BOOL (def: false). Use BUCKET.s3-accelerate.amazonaws.com
 
 AWS/S3/Storage-Lens/Transfer
  AccelerationEnabledBucketCount   #Like Buckets, but only with ACCELERATE enabled
@@ -1809,10 +1804,6 @@ x-amz-content-sha256: STR [C]     #Can be used for AWS signature (see its doc) t
 COND_KEY x-amz-content-sha256     #  - ignore request body (mostly meant for pre-signed URLs)
                                   #  - use a chunked request body
                                   #Must not use Content-MD5 [C]
-REQ.Body                          #Can be STR, UINT8ARR|BUFFER|BLOB
-                                  #Can also be RSTREAM|ISTREAM, which uses Transfer-Encoding: chunked [C] +
-                                  #x-amz-content-sha256: STREAMING-UNSIGNED-PAYLOAD-TRAILER [C]
-                                  #  - requires setting REQ.checksumAlgorithm
 
 @aws-sdk/s3-request-presigner     #Part of JavaScript SDK
 getSignedUrl
@@ -3300,6 +3291,12 @@ x-amz-access-point-alias:         #'BUCKET_ALIAS'. Max 63 chars, [[:alnum:]-]
 ACCESSPOINT.Alias                 #Can only be used in BUCKET_ALIAS.s3.amazonaws.com
 ACCESSPOINT.CreationDate          #'DATE'
 
+REQ.Name|Bucket                   #When using ACCESSPOINTs with SDK|CLI, must use ACCESSPOINT_ARN|BUCKET_ARN instead of 'ACCESSPOINT|BUCKET'
+--name|bucket                     #This computes x-amz-account-id [C] and x-amz-outpost-id [C] automatically
+                                  #Exception: not with CreateBucket|ListRegionalBuckets()
+                                  #  - must use REQ.AccountId|OutpostId STR instead
+COPTS.useArnRegion                #BOOL (def: false). Prefer REQ.Name|Bucket's ARN's REGION over one specifying in hostname
+
 ACCESSPOINT.NetworkOrigin         #Whether can be accessed from 'Internet' (def) or 'VPC' (VpcConfiguration.VpcId)
 ACCESSPOINT.VpcConfiguration.VpcId#VPC_ID
 ACCESSPOINT.Endpoints             #OBJ. VPC endpoints
@@ -3426,6 +3423,9 @@ REGIONS ==>                       #Must make call in us-west-2 REGION
                                   #With MACCESSPOINT_ROUTE, can also use a few more: us-east-1, eu-west-1, ap-northeast-1, ap-southeast-2
                                   #MACCESSPOINT_REGION|ROUTE.Region can be any REGION
                                   #Actual calls to OBJECTs through MACCESSPOINT have no REGION
+
+COPTS
+ .disableMultiregionAccessPoints  #BOOL (def: false). Do not allow MACCESSPOINTs
 
 
                                              /=+===============================+=\
@@ -3709,8 +3709,10 @@ HANDLER RESPONSE ==>              #For:
                                   #  - HeadObject(): return HEAD_RES
                                   #  - ListObjectsV2(): return LIST_RES
 
-POST /WriteGetObjectResponse      #Req: RAW_OBJECT, x-amz-fwd-* [C], x-amz-request-* [C], x-amz-meta-* [C], x-amz-checksum-ALGO [C]
-WriteGetObjectResponse()          #Res: empty
+POST /WriteGetObjectResponse      #Req:
+WriteGetObjectResponse()          #  - RAW_OBJECT (including REQ.Body STREAM)
+                                  #  - x-amz-fwd-* [C], x-amz-request-* [C], x-amz-meta-* [C], x-amz-checksum-ALGO [C]
+                                  #Res: empty
 
 REQ_GET.outputToken
 x-amz-request-token: STR [C]      #Must pass REQ_GET.outputToken, for authentication
