@@ -15,6 +15,7 @@ TODO ==>
      - https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-files.html#cli-configure-files-s3
      - https://docs.aws.amazon.com/sdkref/latest/guide/feature-s3-access-point.html
      - https://docs.aws.amazon.com/sdkref/latest/guide/feature-s3-mrap.html
+     - https://docs.aws.amazon.com/AmazonS3/latest/userguide/olap-best-practices.html#olap-cli-sdk
   - JavaScript SDK:
      - @aws-sdk/lib-storage
   - Pulumi:
@@ -174,6 +175,7 @@ OTHERS ==>                        #OBJECT TAGs: 1$/1e6 TAGs
                                   #  - 20% cheaper if >2.5e10 OBJECTs
                                   #  - 40% cheaper if >1e11 OBJECTs
                                   #ANALYTICS: 1$/1e7 OBJECTs
+                                  #LACCESSPOINT: 1$/200GB
 
 
                                              /=+===============================+=\
@@ -3144,7 +3146,8 @@ ACCESSPOINT_ARN/object/OBJECT     #OBJECT in ACCESSPOINT
 
 BUCKET_ALIAS.s3.amazonaws.com     #Like BUCKET.s3.amazonaws.com, but through ACCESSPOINT
 ACCESSPOINT-ACCOUNT_ID
- .s3-accesspoint.amazonaws.com    #Same
+ .s3-accesspoint.REGION
+ .amazonaws.com                   #Same
 
 ALLOWED ACTIONS ==>               #Can only use ACTIONs for:
                                   #  - BUCKET (read-only)
@@ -3153,7 +3156,7 @@ ALLOWED ACTIONS ==>               #Can only use ACTIONs for:
                                   #  - OBJECT (read-write)
                                   #     - including RestoreObject(), ACL, TAGS, OBJECT_LOCK, LEGAL_HOLD
                                   #     - including CopyObject(), UploadPartCopy(), but only if same-REGION
-                                  #     - excluding HeadObject(), GetObjectAttributes(), GetObjectTorrent(), DeleteObjects(), SelectObjectContent()
+                                  #     - excluding HeadObject(), GetObjectAttributes(), GetObjectTorrent(), DeleteObjects(), PostObject(), SelectObjectContent()
                                   #Requester must be authenticated
 
 
@@ -3365,6 +3368,7 @@ DeleteAccessPointForObjectLambda()#Res: empty
 
 LACCESSPOINT                      #Like ACCESSPOINT, but transforms requests|responses with a Lambda FUNC
                                   #Only transforms GetObject|HeadObject|ListObjectsV2()
+                                  #Max 1000 per REGION
 LACCESSPOINT
  .ObjectLambdaAccessPointArn      #LACCESSPOINT_ARN
 LACCESSPOINT.Name                 #'LACCESSPOINT'
@@ -3380,7 +3384,8 @@ LACCESSPOINT_ARN/object/OBJECT    #OBJECT in LACCESSPOINT
 
 LBUCKET_ALIAS.s3.amazonaws.com    #Like BUCKET.s3.amazonaws.com, but through LACCESSPOINT
 LACCESSPOINT-ACCOUNT_ID
- .s3-accesspoint.amazonaws.com    #Same
+ .s3-object-lambda.REGION
+ .amazonaws.com                   #Same
 
 
                                              /=+===============================+=\
@@ -3407,7 +3412,7 @@ LACCESSPOINT_POLICY.Policy        #Like ACCESSPOINT_POLICY.Policy but for LACCES
 
 s3-object-lambda.amazonaws.com    #SERVICE_DOMAIN
 
-PERMISSIONS ==>                   #PRINCIPAL must have permissions on all of:
+PERMISSIONS ==>                   #Requester must have permissions on all of:
                                   #  - LACCESSPOINT
                                   #     - PACTIONS s3-object-lambda:* instead of s3:*
                                   #  - FUNC:
@@ -3439,10 +3444,26 @@ GET /accesspointforobjectlambda
 GetAccessPointConfiguration       #Req: empty
  ForObjectLambda()                #Res: Configuration S3LAMBDA
 
-S3LAMBDA.SupportingAccessPoint    #ACCESSPOINT_ARN. Used by LACCESSPOINT to read OBJECTs, i.e.:
-                                  #  - if S3TRANSFORM: LACCESSPOINT <-> FUNC <-> ACCESSPOINT <-> OBJECT
-                                  #  - no S3TRANSFORM: LACCESSPOINT <-> ACCESSPOINT <-> OBJECT
-                                  #Also called "standard ACCESSPOINT"
+S3LAMBDA.SupportingAccessPoint    #ACCESSPOINT_ARN. Also called "standard ACCESSPOINT"
+                                  #Used by LACCESSPOINT to read OBJECTs, i.e.:
+                                  #  - if uses a FUNC: LACCESSPOINT <-> FUNC <-> ACCESSPOINT <-> OBJECT
+                                  #  - otherwise: LACCESSPOINT <-> ACCESSPOINT <-> OBJECT
+
+S3LAMBDA
+ .TransformationConfigurations    #S3TRANSFORM_ARR
+S3TRANSFORM.Actions               #'ACTION'_ARR among 'GetObject', 'HeadObject', 'ListObjectsV2'
+                                  #Only transform if one of those ACTIONs
+                                  #Other ACTIONs allowed by MACCESSPOINT:
+                                  #  - also allowed by LACCESSPOINT
+                                  #  - but not transformed
+
+S3TRANSFORM.ContentTransformation
+ .AwsLambda                       #S3CTRANSFORM
+S3CTRANSFORM.FunctionArn          #FUNC_ARN. Transforms both input and output
+                                  #Must be in same REGION as LACCESSPOINT
+
+S3CTRANSFORM.FunctionPayload      #STR payload passed to FUNC
+REQ_CONF.payload                  #STR
 
 S3LAMBDA.AllowedFeatures          #STR_ARR among:
                                   #  - 'GetObject-Range': allow Range [C]
@@ -3453,20 +3474,6 @@ S3LAMBDA.AllowedFeatures          #STR_ARR among:
                                   #  - if FUNC does not transform (or does not change byte-to-byte relation),
                                   #    it can forward those to ACCESSPOINT
                                   #  - otherwise, it must retrieved full OBJECT and perform the slice after transformation
-
-S3LAMBDA
- .TransformationConfigurations    #S3TRANSFORM_ARR
-S3TRANSFORM.Actions               #'ACTION'_ARR among 'GetObject', 'HeadObject', 'ListObjectsV2'
-                                  #Only transform if one of those ACTIONs
-                                  #Other ACTIONs allowed by MACCESSPOINT:
-                                  #  - also allowed by LACCESSPOINT
-                                  #  - but not transformed
-S3TRANSFORM.ContentTransformation
- .AwsLambda                       #S3CTRANSFORM
-S3CTRANSFORM.FunctionArn          #FUNC_ARN. Transforms both input and output
-
-S3CTRANSFORM.FunctionPayload      #STR payload passed to FUNC. Usually JSON.
-REQ_CONF.payload                  #STR
 
 
                                              /=+===============================+=\
@@ -3493,26 +3500,31 @@ REQ.configuration                 #REQ_CONF
 REQ_CONF.accessPointArn           #LACCESSPOINT_ARN
 REQ.userRequest.url               #'URL' to LACCESSPOINT, including query variables
 REQ.userRequest.headers           #OBJ. Request headers passed to LACCESSPOINT
-REQ.protocolVersion               #STR
+REQ.protocolVersion               #Always '1.00'. Version of REQ.
 
 REQ_CONF.supportingAccessPointArn #ACCESSPOINT_ARN
 REQ_GET|HEAD|LIST.inputS3Url      #'URL' to ACCESSPOINT, pre-signed
                                   #Request headers:
-                                  #  - pre-signed URL always includes: ?versionId, x-amz-checksum-mode [C], x-amz-expected-bucket-owner [C],
-                                  #    x-amz-request-payer [C] If-[None-]Match [C], If-[Un]modified-Since [C]
+                                  #  - pre-signed URL always includes:
+                                  #     - ?versionId
+                                  #     - all query parameters, if ListObjectsV2()
+                                  #     - x-amz-checksum-mode [C], x-amz-expected-bucket-owner [C], x-amz-request-payer [C]
+                                  #     - If-[None-]Match [C], If-[Un]modified-Since [C]
                                   #  - can add others by passing REQ.userRequest.headers though
 
 REQ.userIdentity                  #REQ_IDENTITY
-REQ_IDENTITY.type                 #STR
-REQ_IDENTITY.principalId          #PRINCIPAL ID
-REQ_IDENTITY.arn                  #STR
-REQ_IDENTITY.accounId             #ACCOUNT_ID
+REQ_IDENTITY|ISSUER.type          #'IDENTITY' (see IAM doc)
+REQ_IDENTITY|ISSUER.arn           #IDENTITY ARN, e.g. ROLE_ARN
+REQ_IDENTITY|ISSUER.principalId   #IDENTITY ID, e.g. ROLE_MID
+REQ_IDENTITY|ISSUER.userName      #'IDENTITY' name, e.g. 'ROLE'
+REQ_IDENTITY|ISSUER.accountId     #ACCOUNT_ID
 REQ_IDENTITY.accessKeyId          #ACCESS_KEY_ID
-REQ_IDENTITY.userName             #'USER'
-REQ_IDENTITY.invokedBy            #STR
-REQ_IDENTITY.sessionContext       #REQ_SESSION
-REQ_SESSION.attributes            #OBJ
-REQ_SESSION.sessionIssuer         #OBJ
+REQ_IDENTITY.invokedBy            #'SERVICE_DOMAIN', if called by another SERVICE
+REQ_IDENTITY.sessionContext       #REQ_SESSION. Only set if using STS
+REQ_SESSION.sessionIssuer         #REQ_ISSUER
+REQ_SESSION.attributes            #REQ_ATTRS
+REQ_ATTRS.mfaAuthenticated        #'BOOL'
+REQ_ATTRS.creationDate            #'DATE'
 
 
                                              /=+===============================+=\
@@ -3540,7 +3552,8 @@ REQ_GET.outputRoute
 x-amz-request-route: STR [C]      #Same with REQ_GET.outputRoute
 
 RAW_OBJECT                        #STR. Response body for GetObject()
-LIST_RES.listResultXml            #'XML'. Response body for ListObjectsV2()
+LIST_RES.listBucketResult         #OBJ. Response body for ListObjectsV2()
+LIST_RES.listResultXml            #Same but as 'XML' instead
 
 HEAD_RES.headers                  #OBJ. Response headers
 x-amz-fwd-header-HEADER: STR [C]  #Only allows same ones as GetObject|HeadObject()
@@ -3553,6 +3566,25 @@ HEAD|LIST_RES.errorCode
 x-amz-fwd-error-code: STR [C]     #STR. ERROR_RES.Code
 HEAD|LIST_RES.errorMessage
 x-amz-fwd-error-message: STR [C]  #STR. ERROR_RES.Message
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:        LAMBDA BUILTIN         :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+arn:aws:serverlessrepo:REGION
+ :ACCOUNT_ID:applications/FUNC    #AWS managed FUNCs to use with LACCESSPOINTs
+
+S3ObjectLambdaDecompression       #
+
+ComprehendPiiAccessControl
+ S3ObjectLambda                   #
+
+ComprehendPiiRedaction
+ S3ObjectLambda                   #
 
 
                                              /=+===============================+=\
@@ -3576,8 +3608,8 @@ AWS/S3ObjectLambda
 
 DVAR AccessPointName              #'LACCESSPOINT'
 DVAR DataSourceARN                #Either:
-                                  #  - if S3TRANSFORM: FUNC_ARN
-                                  #  - no S3TRANSFORM: ACCESSPOINT_ARN
+                                  #  - if uses a FUNC: FUNC_ARN
+                                  #  - otherwise: ACCESSPOINT_ARN
 
 
                                              /=+===============================+=\
