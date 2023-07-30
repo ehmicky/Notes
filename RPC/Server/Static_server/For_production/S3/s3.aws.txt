@@ -52,38 +52,41 @@ COPTS.useArnRegion                #BOOL (def: false). Prefer REQ.Name|Bucket's A
 @aws-sdk/
  middleware-expect-continue       #Seems to always add Expect: 100-continue [C], used by S3 client
 
-@aws-sdk/middleware-flexible-checksums
-                                  #x-amz-checksum-ALGO [C]: all requests with a payload, except:
-                                  #  - S3-control ACTIONs
-                                  #  - CreateBucket SelectObjectContent AbortMultipartUpload
-                                  #    PutBucketAnalyticsConfiguration PutBucketIntelligentTieringConfiguration
-                                  #    PutBucketInventoryConfiguration PutBucketMetricsConfiguration PutBucketNotificationConfiguration
-                                  #x-amz-checksum-algorithm: ALGO [C]: only when copying, to change checksum ALGO, only with CopyObject() and CreateMultipartUpload()
+@aws-sdk/
+ middleware-flexible-checksums
+                                  #Content-MD5 [C] + x-amz-checksum-ALGO [C]: all requests with a payload, except:
+                                  #  - neither headers:
+                                  #     - S3-control ACTIONs
+                                  #     - CreateBucket SelectObjectContent AbortMultipartUpload
+                                  #       PutBucketAnalyticsConfiguration PutBucketIntelligentTieringConfiguration
+                                  #       PutBucketInventoryConfiguration PutBucketMetricsConfiguration PutBucketNotificationConfiguration
+                                  #  - Content-MD5 [C] only: PutBucketOwnershipControls
+                                  #     - automatically computed by SDK|CLI
+                                  #  - x-amz-checksum-ALGO [C] only:
+                                  #     - CompleteMultipartUpload CopyObject CreateMultiPartUpload UploadPartCopy
+                                  #       PutBucketAccelerateConfiguration PutBucketLifecycleConfiguration RestoreObject
+                                  #       WriteGetObjectResponse DeleteObjects
+                                  #x-amz-checksum-algorithm: ALGO [C]:
+                                  #  - only when copying, to change checksum ALGO
+                                  #  - only with CopyObject and CreateMultipartUpload
                                   #REQ.ChecksumAlgorithm 'ALGO' or --checksum-algorithm ALGO
-                                  #  - called x-amz-sdk-checksum-algorithm [C] in the doc, but can only used through SDK|CLI
-                                  #  -
-
-                                  #For all requests with a payload, except:
-                                  #  - S3-control ACTIONs
-                                  #  - CreateBucket SelectObjectContent AbortMultipartUpload
-                                  #    PutBucketAnalyticsConfiguration PutBucketIntelligentTieringConfiguration
-                                  #    PutBucketInventoryConfiguration PutBucketMetricsConfiguration PutBucketNotificationConfiguration
-                                  #  (but has x-amz-checksum-ALGO [C])
-                                  #  - CompleteMultipartUpload WriteGetObjectResponse
-                                  #REQ.ChecksumAlgorithm 'ALGO', or --checksum-algorithm ALGO
-                                  #  - always MD5: PutBucketOwnershipControls()
-                                  #  - def: MD5
-                                  #     - except def: none for: PutBucketAccelerateConfiguration(), RestoreObject(), UploadPart(), PutObject()
-                                  #  - 'ALGO': 'CRC32[C]', 'SHA1|256'
-                                  #  - computes content-md5 [C] or x-amz-checksum-ALGO [C]
+                                  #  - can only used through SDK|CLI, not API
+                                  #  - sometimes called dummy name x-amz-sdk-checksum-algorithm [C] in the online doc
+                                  #  - automatically computes x-amz-checksum-ALGO [C]
+                                  #  - def: computes Content-MD5 [C] instead
+                                  #     - not for PutBucketAccelerateConfiguration, RestoreObject, UploadPart, PutObject
+                                  #  - for any requests which can use x-amz-checksum-ALGO
+                                  #     - except CompleteMultipartUpload WriteGetObjectResponse
+                                  #  - with SDK|CLI, must be used instead of x-amz-checksum-ALGO [C]
+                                  #     - except for:
+                                  #        - CompleteMultipartUpload WriteGetObjectResponse: they do not have REQ.ChecksumAlgorithm
+                                  #        - PutObject UploadPart CompleteMultipartUpload: can optionally use x-amz-checksum-ALGO [C] instead
                                   #  - with streams, also sets:
                                   #     - transfer-encoding: chunked [C]
                                   #     - content-encoding: [...,]aws-chunked [C]
                                   #     - x-amz-decoded-content-length: NUM [C] (original value for content-length [C])
                                   #     - x-amz-content-sha256: STREAMING-UNSIGNED-PAYLOAD-TRAILER [C]
                                   #     - x-amz-trailer: x-amz-checksum-ALGO [C]
-                                  #  (also has x-amz-checksum-ALGO [C])
-                                  #  - PutObject UploadPart CompleteMultipartUpload
                                   #Also validates x-amz-checksum-ALGO [S] checksum matches response body
 
 @aws-sdk/middleware-location-constraint
@@ -561,8 +564,9 @@ OBJ.url                           #'URL'
                                              \=+===============================+=/
 
 
-POST /BUCKET/OBJECT?uploads       #Req: same headers as PutObject()
-CreateMultipartUpload()           #  - x-amz-checksum-ALGO [C] -> x-amz-checksum-algorithm [C]
+POST /BUCKET/OBJECT?uploads       #Req:
+CreateMultipartUpload()           #  - same headers as PutObject()
+                                  #  - x-amz-checksum-algorithm [C]
                                   #Res:
                                   #  - MUPLOAD
                                   #     - only Bucket, Key, UploadId
@@ -641,8 +645,8 @@ NEVENT s3:ObjectCreated:
 
 PUT /BUCKET/OBJECT                #Req:
 CopyObject()                      #  - like PutObject()
-                                  #     - x-amz-checksum-ALGO [C] -> x-amz-checksum-algorithm [C]
-                                  #  - x-amz-copy-source* [C], x-amz-metadata-directive [C], x-amz-tagging-directive [C]
+                                  #  - x-amz-copy-source* [C], x-amz-metadata-directive [C], x-amz-tagging-directive [C],
+                                  #    x-amz-checksum-algorithm [C]
                                   #  - query variables: OBJECT.versionId (source)
                                   #Res:
                                   #  - OBJECT
@@ -741,7 +745,7 @@ DeleteObject()                    #  - OBJECT
 POST /BUCKET?delete               #Req:
 DeleteObjects()                   #  - DELETE_OBJECTS
                                   #     - no Errors, DeleteMarker*
-                                  #  - x-amz-mfa [C], x-amz-bypass-governance-retention [C]
+                                  #  - x-amz-mfa [C], x-amz-bypass-governance-retention [C], x-amz-checksum-ALGO [C]
                                   #Res: DELETE_OBJECTS
                                   #  - no Quiet
                                   #  - Objects -> Deleted
@@ -942,7 +946,7 @@ COND_KEY s3:locationconstraint    #'REGION'. Only for PACTIONs 's3:CreateBucket|
                                              \=+===============================+=/
 
 
-PUT /BUCKET?accelerate            #Req: ACCELERATE
+PUT /BUCKET?accelerate            #Req: ACCELERATE, x-amz-sdk-checksum-algorithm [C]
 PutBucketAccelerateConfiguration()#Res: empty
                                   #PACTION named 's3:PutAccelerateConfiguration' instead
 GET /BUCKET?accelerate            #Req: empty
