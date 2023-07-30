@@ -6,9 +6,6 @@
 
 
 TODO ==>
-  - high-level CLI aws s3
-     - aws help s3-config
-     - https://docs.aws.amazon.com/AmazonS3/latest/userguide/olap-best-practices.html#olap-cli-sdk
   - s3fs-fuse
      - see doc already existing below this file
   - Pulumi:
@@ -31,7 +28,6 @@ SVERSION                          #v20180820
 NAME ==>                          #Simple Storage Service
 
 s3.amazonaws.com                  #SERVICE_DOMAIN for BUCKET-specific ACTIONs
-                                  #SERVICE is called s3 with SDK, s3api with CLI
 BUCKET.s3.amazonaws.com           #"Virtual hosting". Same but using BUCKET as subdomain instead of /BUCKET as path.
                                   #Preferred: /BUCKET path is deprecated
                                   #Allows BUCKET-specific:
@@ -46,8 +42,7 @@ COPTS.forcePathStyle              #BOOL (def: false). Use /BUCKET instead of vir
 S3_CONF.addressing_style          #'virtual' (def) or 'path'
 
 ACCOUNT_ID.s3-control             #SERVICE_DOMAIN for ACTIONs that not BUCKET-specific
- .amazonaws.com/SVERSION          #SERVICE is called s3-control with SDK, s3control with CLI
-                                  #Some ACTIONs have two variants s3[-control]: BUCKET-specific, and not
+ .amazonaws.com/SVERSION          #Some ACTIONs have two variants s3[-control]: BUCKET-specific, and not
 x-amz-account-id: ACCOUNT_ID [C]  #Alternative to specifying ACCOUNT_ID in subdomain
 
 FORMAT ==>                        #XML REST
@@ -76,12 +71,49 @@ RESP.PROPCount                    #NUM. Only set with some ACTIONs, together wit
 AmazonS3[Outposts]FullAccess      #AWS managed POLICY. Grants all 's3[-object-lambda][-outposts]:*' PACTIONs
 AmazonS3[Outposts]ReadOnlyAccess  #Same but readonly
 
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:            CLIENT             :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+
+@aws-sdk/client-s3                #SDK CLIENT for s3 SERVICE
+@aws-sdk/client-s3-control        #SDK CLIENT for s3-control SERVICE
 @aws-sdk/
- middleware-sdk-s3[-control]      #MFUNC used by S3[-control] client
+ middleware-sdk-s3[-control]      #MFUNC used by S3[-control] CLIENT
 @aws-sdk/
  middleware-bucket-endpoint       #Used internally by @aws-sdk/middleware-sdk-s3-control
 
+aws s3api ...                     #CLI for s3 SERVICE
+aws s3control ...                 #CLI for s3-control SERVICE
+
 CONF.s3                           #S3_CONF. Only used by CLI.
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:        HIGH-LEVEL CLI         :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+aws s3 ...                        #High-level S3 CLI on top of aws s3api|s3control
+--OPT                             #Same as other CLI commands
+--debug                           #Show HTTP request|response
+
+DIR|FILE|PATH                     #Local file path, using OS-specific syntax
+S3BUCKET                          #s3://BUCKET or s3://ACCESSPOINT_ARN
+S3DIR                             #S3BUCKET[/PREFIX/]
+S3FILE                            #S3DIR/OBJECT
+S3PATH                            #S3DIR|S3FILE
+
+HS3_CONF                          #S3_CONF, but only for `aws s3`
+HS3_CONF.max_bandwidth            #NUM[UNIT] (def: no limit) (def UNIT: 'B/s'). Max bandwidth for GetObject|PutObject()
+HS3_CONF.max_concurrent_requests  #Max NUM (def: 10) of concurrent requests
+HS3_CONF.max_queue_size           #Max NUM (def: 1e3) of ACTIONs waiting to be run (due to max_concurrent_requests)
 
 
                                              /=+===============================+=\
@@ -192,7 +224,7 @@ OTHERS ==>                        #OBJECT TAGs: 1$/1e6 TAGs
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:            BUCKET             :==(
+                                            )==:          BUCKET MAIN          :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
@@ -225,6 +257,23 @@ BUCKET.Name                       #'BUCKET'
                                   #3-63 chars, [[:alnum:]-.]
                                   #Must be unique across AWS
 BUCKET.CreationDate               #'DATE'
+
+aws s3 mb S3BUCKET                #CreateBucket()
+--region                          #'REGION'
+
+aws s3 ls                         #ListBuckets()
+
+aws s3 rb S3BUCKET                #DeleteBucket()
+--force                           #If OBJECTs exist, delete them first
+                                  #Fail if OBJECTs are versioned
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:          BUCKET TAGS          :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
 
 PUT /BUCKET?tagging               #Req: TagSet TAG_PAIRS, Content-MD5 [C], x-amz-checksum-ALGO [C]
 PutBucketTagging()                #Res: empty
@@ -375,6 +424,12 @@ x-amz-object-attributes:
  VAR,... [C]
 x-amz-optional-object-attributes:
  VAR,... [C]                      #Only return OBJECT.VAR
+
+aws s3 ls S3DIR                   #ListObjectsV2()
+--recursive                       #Include OBJECTs in subfolders
+--human-readable                  #Print size as KiB|MiB|etc.
+--summarize                       #Print NUM of OBJECTs and total size
+--request-payer                   #x-amz-request-payer: requester [C]
 
 
                                              /=+===============================+=\
@@ -577,6 +632,10 @@ MPART.Size                        #NUM
 NEVENT s3:ObjectCreated:
  CompleteMultipartUpload          #On CompleteMultipartUpload() success
 
+HS3_CONF.multipart_threshold      #NUM[UNIT] (def: 8MB) (def UNIT: 'B')
+                                  #When uploading files larger than this, use a MUPLOAD
+HS3_CONF.multipart_chunksize      #MPART.Size (def: 8MB)
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -706,6 +765,76 @@ JOB_COPY_PARAMS.UserMetadata      #OBJ. x-amz-meta-* [C]
 
                                              /=+===============================+=\
                                             /  :                               :  \
+                                            )==:        OBJECT HELPERS         :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+aws s3 cp S3PATH PATH2            #GetObject()
+                                  #PATH2 can be - for stdout
+
+aws s3 cp PATH S3PATH2            #PutObject()
+                                  #PATH can be - for stdin
+
+aws s3 cp S3PATH S3PATH2          #CopyObject()
+
+aws s3 mv [S3]PATH [S3]PATH2      #Like aws cp + aws rm
+
+aws s3 sync [S3]PATH [S3]PATH2    #Same as aws s3 cp, but only copy files if either file size differs, or local mtime newer
+--delete                          #If copied file exist in [S3]PATH2, delete it
+--size-only                       #Do not check mtime
+--exact-timestamps                #Also copy files if local mtime is older (but not equal)
+
+FLAGS ==>                         #Following flags are for aws cp|mv|sync
+--recursive                       #Allows [S3]PATH to be a [S3]DIR, targetting also all its OBJECTs
+--exclude|include                 #'GLOB'. With --recursive
+                                  #Priority to rightmost
+                                  #  - --include '*' is always prepended
+                                  #  - i.e. --include requires using --exclude before it first, e.g. --exclude '*'
+                                  #cwd is [S3]PATH
+--follow-symlinks                 #
+--source-region                   #'REGION' of [S3]PATH. Def: same as --region
+--region                          #'REGION' of [S3]PATH2
+
+--dryrun                          #
+--no-progress                     #Do not print progress
+--only-show-errors                #Print only warnings|errors
+--quiet                           #Print nothing
+
+--ignore-glacier-warnings         #Do not warn when STORAGE_CLASS is GLACIER|DEEP_ARCHIVE
+--force-glacier-transfer          #RestoreObject() if STORAGE_CLASS is GLACIER|DEEP_ARCHIVE
+
+--no-guess-mime-type              #Do not guess Content-Type [C]
+--expected-size                   #NUM (in bytes) of OBJECT.Size. Required if uploading >50GB
+--copy-props                      #Similar to --metadata-directive, but with values:
+                                  #  - none: x-amz-metadata-directive: REPLACE [C]
+                                  #  - default: x-amz-metadata-directive: COPY [C]
+                                  #  - metadata-directive: like x-amz-metadata-directive: COPY [C] but using instead:
+                                  #    x-amz-* [C], content-* [C], cache-control [C], expires [C]
+
+--acl
+--cache-control
+--content-disposition
+--content-encoding
+--content-language
+--content-type
+--expires
+--grants
+--metadata
+--metadata-directive
+--request-payer
+--sse
+--sse-c
+--sse-c-copy-source
+--sse-c-copy-source-key
+--sse-c-key
+--sse-kms-key-id
+--storage-class
+--website-redirect                #Same as request headers
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
                                             )==:         OBJECT DELETE         :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -738,6 +867,14 @@ DELETE_ERROR.Message              #STR
 NEVENT s3:ObjectRemoved:Delete    #On OBJECT permanent deletion (not from LIFECYCLE)
 NEVENT s3:ObjectRemoved:
  DeleteMarkerCreated              #On delete marker creation (not from LIFECYCLE)
+
+aws s3 rm S3PATH                  #DeleteObject[s]()
+--recursive
+--exclude|include
+--request-payer
+--dryrun
+--only-show-errors
+--quiet                           #Like aws s3 cp
 
 
                                              /=+===============================+=\
@@ -1842,6 +1979,9 @@ COND_KEY s3:signatureversion      #'AWS' (v2) or 'AWS4-HMAC-SHA256' (v4)
 COND_KEY
  s3[-object-lambda]:signatureAge  #NUM (in ms) difference between now and signature's DATE
 
+aws s3 presign S3FILE             #Print pre-signed URL for GetObject()
+--expires-in                      #NUM (def: 7 days)
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -1899,6 +2039,10 @@ x-amz-website-redirect-location:  #301 redirect to URL, for this specific OBJECT
                                   #URL can be relative
 COND_KEY s3:x-amz-website-
  redirect-location                #x-amz-website-redirect-location [C]. Only for PACTIONs 's3:PutObject|BypassGovernanceRetention'
+
+aws s3 website S3BUCKET           #PutBucketWebsite()
+--index-document
+--error-document                  #Same as request headers
 
 
                                              /=+===============================+=\
@@ -4100,82 +4244,6 @@ Put|GetBucketVersioning()         #Must use s3-control endpoints instead. Fewer 
 ListRegionalBuckets()             #No own PACTION: use 's3:ListAllMyBuckets' instead
 
 StorageClass 'OUTPOSTS'           #Only 'STORAGE_CLASS' possible
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:        HIGH-LEVEL CLI         :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-aws s3 ...                        #High-level S3 CLI
---debug                           #Show HTTP request|response
-
-DIR|FILE|PATH                     #Local file path, using OS-specific syntax
-S3DIR                             #s3://BUCKET[/PREFIX/] or s3://ACCESSPOINT_ARN[/PREFIX/]
-S3FILE                            #S3DIR/OBJECT
-S3PATH                            #S3DIR|S3FILE
-
-aws s3 mb S3BUCKET                #CreateBucket()
-
-aws s3 rb S3BUCKET                #DeleteBucket()
---force                           #If OBJECTs exist, delete them first
-
-aws s3 ls                         #ListBuckets()
-aws s3 ls S3BUCKET                #ListObjectsV2()
---recursive                       #
-
-aws s3 cp [S3]PATH [S3]PATH2      #CopyObject()
---recursive                       #Allows [S3]PATH to be a [S3]DIR, targetting also all its OBJECTs
---exclude|include                 #'GLOB'. With --recursive
-                                  #Priority to rightmost
-                                  #  - --include '*' is always prepended
-                                  #  - i.e. --include requires using --exclude before it first, e.g. --exclude '*'
-                                  #cwd is [S3]PATH
---source-region                   #'REGION'. Def: current one
-
---storage-class
---acl
---website-redirect
---expires
---cache-control STR
---content-disposition STR
---content-encoding STR
---content-language STR
---content-type STR                #Same as request headers
---no-guess-mime-type              #
---grants                          #ACL, as 'PERMISSION=GRANTEE'
---sse                             #
-
---follow-symlinks                 #
---dryrun                          #
---quiet                           #
-
-aws s3 mv [S3]PATH [S3]PATH2      #DeleteObjects() + CopyObject()
-                                  #Same options as aws cp
-
-aws s3 sync [S3]PATH [S3]PATH2    #Same as aws s3 cp, except additional flags
---delete                          #If file exist in dest path, but not in source path, remove it.
---size-only                       #different size only, not no existence???
---exact-timestamps                #Newer timestamp???
-
-aws s3 rm S3PATH                  #DeleteObjects()
---recursive
---exclude|include
---dryrun
---quiet                           #Like aws s3 cp|mv
-
-aws s3 website S3BUCKET           #PutBucketWebsite()
---index-document
---error-document                  #Same as request headers
-
-https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-files.html#cli-configure-files-settings
-S3_CONF.max_bandwidth
-S3_CONF.max_concurrent_requests
-S3_CONF.max_queue_size
-S3_CONF.multipart_chunksize
-S3_CONF.multipart_threshold
 
 
                                              /=+===============================+=\
