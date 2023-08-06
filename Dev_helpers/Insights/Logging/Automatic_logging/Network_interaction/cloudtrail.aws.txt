@@ -16,11 +16,14 @@ TO DOCUMENT ==>
      - JOBs: https://docs.aws.amazon.com/AmazonS3/latest/userguide/batch-ops-examples-event-bridge-cloud-trail.html
 
 Already read in user guide:
-  - CloudTrail concepts:
-     - How does CloudTrail behave regionally and globally?
-     - Global service events
-  - Receiving CloudTrail log files from multiple Regions
-  - Validating CloudTrail log file integrity
+  - What is AWS CloudTrail
+     - CloudTrail concepts
+        - How does CloudTrail behave regionally and globally
+        - Global service events
+  - CloudTrail log files
+     - Receiving CloudTrail log files from multiple Regions
+     - Validating CloudTrail log file integrity
+  - Settings
   - FaQ:
      - Services and Region support
      - Applying a trail to all Regions
@@ -125,6 +128,37 @@ TRAIL.IncludeGlobalServiceEvents  #BOOL (def: true). Whether to log global SERVI
 
                                              /=+===============================+=\
                                             /  :                               :  \
+                                            )==:              ORG              :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+RegisterOrganization              #Req: ORG_ADMIN
+ DelegatedAdmin()                 #  - DelegatedAdminAccountId -> MemberAccountId
+                                  #Res: empty
+DeregisterOrganization            #Req: ORG_ADMIN
+ DelegatedAdmin()                 #Res: empty
+
+ORG_ADMIN.DelegatedAdminAccountId #ACCOUNT_ID. Give same permissions as ORG's management ACCOUNT, for CloudTrail only
+                                  #Requires PACTIONs organizations:[De]registerDelegatedAdministrator|ListAWSServiceAccessForOrganization
+
+TRAIL.IsOrganizationTrail         #BOOL (def: false). Log SERVICEs from all ACCOUNTs in ORG
+DATASTORE.OrganizationEnabled     #Work similarly to TRAIL.IsMultiRegionTrail:
+                                  #  - use shadow TRAILs
+                                  #  - LOG_FILE|DIGEST_FILE processed in own ACCOUNT, but sent to single S3 BUCKET
+                                  #Requires PACTION organizations:ListAWSServiceAccessForOrganization
+
+LOG_VALIDATION_REQ.AccountId      #ACCOUNT_ID. Noop unless TRAIL.IsOrganizationTrail true
+
+SERVICE-LINKED ROLE ==>           #Requires PACTIONs iam:CreateServiceLinkedRole|GetRole
+                                  #For:
+                                  #  - Create|UpdateTrail(), Create|UpdateEventDataStore(): TRAIL.IsOrganizationTrail, DATASTORE.OrganizationEnabled???
+                                  #  - RegisterOrganizationDelegatedAdmin(): ORG_ADMIN.DelegatedAdminAccountId???
+                                  #???
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
                                             )==:         TRAIL STATUS          :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -156,6 +190,7 @@ TRAIL.S3BucketName                #S3 'LOG_BUCKET' to store LOG_FILE
 TRAIL.S3KeyPrefix                 #'TRAIL_PREFIX' (def: none). Max 200 chars
 
 TRAIL|DATASTORE.KmsKeyId          #S3 KMS_KEY_MID|ARN x-amz-server-side-encryption-aws-kms-key-id [C|S]
+                                  #Requires some kms:* PACTIONs (see S3 doc)
 
 LOG DELIVERY ==>                  #LOG_FILE created every 5 mins
                                   #Calls take 15 mins to come
@@ -339,52 +374,6 @@ PERMISSIONS ==>                   #Logger is Principal arn:aws:iam::ACCOUNT_ID:r
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:            POLICY             :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-PutResourcePolicy()               #Req: RESOURCE_POLICY
-                                  #Res: RESOURCE_POLICY
-GetResourcePolicy()               #Req: RESOURCE_POLICY
-                                  #  - only ResourceArn
-                                  #Res: RESOURCE_POLICY
-DeleteResourcePolicy()            #Req: RESOURCE_POLICY
-                                  #  - only ResourceArn
-                                  #Res: empty
-
-RESOURCE_POLICY.ResourceArn       #CHANNEL_ARN
-RESOURCE_POLICY.ResourcePolicy    #IAM 'POLICY'
-                                  #Resource-based POLICY on CHANNEL, with resource-level permissions
-                                  #Only for PACTION PutAuditEvents
-                                  #Max 8KB
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:             ORGS              :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-RegisterOrganization              #Req: ORG_ADMIN
- DelegatedAdmin()                 #  - DelegatedAdminAccountId -> MemberAccountId
-                                  #Res: empty
-DeregisterOrganization            #Req: ORG_ADMIN
- DelegatedAdmin()                 #Res: empty
-
-ORG_ADMIN.DelegatedAdminAccountId #ACCOUNT_ID
-
-TRAIL.IsOrganizationTrail         #BOOL
-DATASTORE.OrganizationEnabled     #BOOL
-
-See doc for TRAIL_REQ.includeShadowTrails
-
-LOG_VALIDATION_REQ.AccountId      #ACCOUNT_ID
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
                                             )==:              SNS              :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -493,30 +482,6 @@ CHANNEL_STATUS
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:            INSIGHT            :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-PutInsightSelectors()             #Req: INSIGHT
-                                  #  - no TrailARN
-                                  #Res: INSIGHT
-                                  #  - no TrailName
-GetInsightSelectors()             #Req: INSIGHT
-                                  #  - only TrailName
-                                  #Res: INSIGHT
-                                  #  - no TrailName
-
-INSIGHT.TrailARN                  #TRAIL_ARN
-INSIGHT.TrailName                 #'TRAIL'
-TRAIL.HasInsightSelectors         #BOOL
-
-INSIGHT.InsightSelectors          #INSIGHT_SELECTOR_ARR
-INSIGHT_SELECTOR.InsightType      #STR
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
                                             )==:            EVENTS             :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -572,6 +537,53 @@ FAILED_EVENT_DATA.errorMessage    #'ERROR'
 EVENT_DATA_RES.successful         #SUCCESS_EVENT_DATA_ARR
 SUCCESS_EVENT_DATA.id             #Old EVENT.EventId
 SUCCESS_EVENT_DATA.eventID        #New EVENT.EventId
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:            POLICY             :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+PutResourcePolicy()               #Req: RESOURCE_POLICY
+                                  #Res: RESOURCE_POLICY
+GetResourcePolicy()               #Req: RESOURCE_POLICY
+                                  #  - only ResourceArn
+                                  #Res: RESOURCE_POLICY
+DeleteResourcePolicy()            #Req: RESOURCE_POLICY
+                                  #  - only ResourceArn
+                                  #Res: empty
+
+RESOURCE_POLICY.ResourceArn       #CHANNEL_ARN
+RESOURCE_POLICY.ResourcePolicy    #IAM 'POLICY'
+                                  #Resource-based POLICY on CHANNEL, with resource-level permissions
+                                  #Only for PACTION PutAuditEvents
+                                  #Min 1 PRINCIPAL. Max 8KB, 20 STATEMENTs, 50 PRINCIPALs
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:            INSIGHT            :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+PutInsightSelectors()             #Req: INSIGHT
+                                  #  - no TrailARN
+                                  #Res: INSIGHT
+                                  #  - no TrailName
+GetInsightSelectors()             #Req: INSIGHT
+                                  #  - only TrailName
+                                  #Res: INSIGHT
+                                  #  - no TrailName
+
+INSIGHT.TrailARN                  #TRAIL_ARN
+INSIGHT.TrailName                 #'TRAIL'
+TRAIL.HasInsightSelectors         #BOOL
+
+INSIGHT.InsightSelectors          #INSIGHT_SELECTOR_ARR
+INSIGHT_SELECTOR.InsightType      #STR
 
 
                                              /=+===============================+=\
@@ -734,6 +746,8 @@ QUERY_STATS.EventsScanned         #NUM
 QUERY_STATS.BytesScanned          #NUM
 QUERY_STATS.ExecutionTimeInMillis #NUM (in ms)
 
+StartQuery|GetQueryResults() sometimes require PACTIONs kms:Decrypt|GenerateDataKey?
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -776,7 +790,17 @@ RESOURCE_TAGS.TagsList            #TAG_PAIRS
 
 TRAIL.TagsList
 CHANNEL.Tags
-DATASTORE.TagsList                #TAG_PAIRS
+DATASTORE.TagsList                #TAG_PAIRS. Requires PACTION AddTags
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:     SERVICE-LINKED CHANNEL    :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+PACTION CreateServiceLinkedChannel, DeleteServiceLinkedChannel, GetServiceLinkedChannel, ListServiceLinkedChannels, UpdateServiceLinkedChannel???
 
 
                                              /=+===============================+=\
