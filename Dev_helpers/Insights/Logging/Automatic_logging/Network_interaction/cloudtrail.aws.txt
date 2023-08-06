@@ -30,7 +30,8 @@ FORMAT ==>                        #JSON
                                   #  - except AUDIT_EVENTs: REST
 
 PAGINATION ==>                    #REQ|RES.NextToken STR
-                                  #REQ.MaxResults NUM (def|max: 1e3, 50 with EVENT, none with TRAIL|RESOURCE_TAGS|PUBLIC_KEY)
+                                  #REQ.MaxResults NUM (def|max: 1e3, 50 with EVENT, none with TRAIL)
+                                  #No pagination with RESOURCE_TAGS|PUBLIC_KEY
 
 PRICING ==>                       #Free (except S3|SNS costs)
 
@@ -89,7 +90,8 @@ TRAIL.HomeRegion                  #'REGION' of TRAIL
 TRAIL.IsMultiRegionTrail          #BOOL (def: false). Whether log SERVICEs from other REGIONs.
 DATASTORE.MultiRegionEnabled      #For TRAIL, it duplicates it across REGIONs ("shadow TRAIL").
 CHANNEL_SOURCE.ApplyToAllRegions  #  - can be used for CloudTrail ACTIONs, but only readonly ones
-                                  #LOG_FILE (but not DIGEST_FILE) for all REGIONs in located in the single HomeRegion
+                                  #LOG_FILE for all REGIONs in located in the single HomeRegion
+                                  #  - but not DIGEST_FILE|PUBLIC_KEY
 
 TRAIL_REQ.includeShadowTrails     #BOOL (def: true)
 
@@ -238,50 +240,65 @@ DIGEST_FILE                       #List of LOG_FILEs for a given period
 DIGEST_FILE.awsAccountId          #ACCOUNT_ID
 DIGEST_FILE.digestStartTime       #'DATE'
 DIGEST_FILE.digestEndTime         #'DATE' (1h later)
-DIGEST_FILE.oldestEventTime       #'DATE' of first EVENT. Can be < digestStartTime if digest delivery was slow
+DIGEST_FILE.oldestEventTime       #'DATE' of first EVENT
+                                  #Can be < digestStartTime if digest delivery was slow
+                                  #null if DIGEST_FILE.logFiles empty
 DIGEST_FILE.newestEventTime       #'DATE' of last EVENT
+                                  #null if DIGEST_FILE.logFiles empty
 DIGEST_FILE.digestS3Bucket
 DIGEST_FILE.digestS3Object        #'BUCKET|OBJECT' where DIGEST_FILE is located
 
-DIGEST_FILE                       #DIGEST.digestS3Bucket|Object of last DIGEST_FILE
- .previousDigestS3Bucket|Object   #Goal: ensure the full list of DIGEST_FILEs is complete, with no missing DIGEST_FILE
-DIGEST_FILE
- .previousDigestHashValue         #'BASE64_SHA256' of last uncompressed DIGEST_FILE
-DIGEST_FILE
- .previousDigestHashAlgorithm     #Always 'SHA-256'
-
-DIGEST_FILE.logFiles              #DIGEST_LOG_FILE_ARR
+DIGEST_FILE.logFiles              #DIGEST_LOG_FILE_ARR. Can be empty.
 DIGEST_LOG_FILE.s3Bucket
 DIGEST_LOG_FILE.s3Object          #'BUCKET|OBJECT' where OBJECT_FILE is located
-DIGEST_LOG_FILE.hashValue         #'BASE64_SHA256' of LOG_FILE
+DIGEST_LOG_FILE.hashValue         #'SHA256_HEX' of uncompressed LOG_FILE
                                   #Goal: ensure LOG_FILE's integrity
 DIGEST_LOG_FILE.hashAlgorithm     #Always 'SHA-256'
 DIGEST_LOG_FILE.oldestEventTime   #'DATE' of first EVENT
-DIGEST_LOG_FILE.newestEventTime   #'DATE' of last EVENT
+DIGEST_LOG_FILE.newestEventTime   #'DATE' of last EVENT. Also LOG_FILE's timestamp
 
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:          PUBLIC KEYS          :==(
+                                            )==:       DIGEST INTEGRITY        :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
 ListPublicKeys()                  #Req: PUBLIC_KEY
-                                  #  - only ValidityStart|EndTime -> Start|EndTime
+                                  #  - only ValidityStart|EndTime -> Start|EndTime (def: now)
                                   #Res: PublicKeyList PUBLIC_KEY_ARR
 
-DIGEST_FILE                       #RSA signature of 'BASE64_SHA256' of last DIGEST_FILE, with AWS private key
- .previousDigestSignature         #Goal: ensure DIGEST_FILE's integrity
+PUBLIC_KEY                        #Used to validate x-amz-meta-signature [S]
+PUBLIC_KEY.Value                  #Public key as 'BASE64', DER-encoded PKCS#1
+PUBLIC_KEY.Fingerprint            #'HEX' of fingerprint
+PUBLIC_KEY.ValidityStart|EndTime  #DATE_NUM where public key might have been used
+
+x-amz-meta-signature: STR [S]     #'HEX'. RSA signature of DIGEST_FILE, with AWS private key
+                                  #When retrieving DIGEST_FILE on S3
+                                  #Goal: ensure DIGEST_FILE's integrity
+                                  #STR being signed is newline-concatenation of:
+                                  #  - DIGEST_FILE.digestEndTime
+                                  #  - BUCKET/OBJECT of DIGEST_FILE.digestS3Bucket|Object
+                                  #  - 'SHA256_HEX' of uncompressed DIGEST_FILE
+                                  #  - DIGEST_FILE.previousDigestHashValue
+x-amz-meta-signature-algorithm:
+ STR [S]
 DIGEST_FILE
  .digestSignatureAlgorithm        #Always 'SHA256withRSA'
 DIGEST_FILE
- .digestPublicKeyFingerprint      #'BASE64_SHA256' of ???
+ .digestPublicKeyFingerprint      #PUBLIC_KEY.Fingerprint
 
-PUBLIC_KEY                        #Used to validate DIGEST_FILE.digestPublicKey
-PUBLIC_KEY.Value                  #'BASE64'
-PUBLIC_KEY.Fingerprint            #STR
-PUBLIC_KEY.ValidityStart|EndTime  #DATE_NUM
+DIGEST_FILE                       #DIGEST.digestS3Bucket|Object of last DIGEST_FILE
+ .previousDigestS3Bucket|Object   #Goal: ensure the full list of DIGEST_FILEs is complete, with no missing DIGEST_FILE
+                                  #When [re]setting TRAIL.LogFileValidationEnabled true, an initial DIGEST_FILE is created,
+                                  #with DIGEST_FILE.previous* null
+DIGEST_FILE
+ .previousDigestHashValue         #'SHA256_HEX' of last uncompressed DIGEST_FILE
+DIGEST_FILE
+ .previousDigestHashAlgorithm     #Always 'SHA-256'
+DIGEST_FILE
+ .previousDigestSignature         #Like x-amz-meta-signature [S] but for previous DIGEST_FILE
 
 
                                              /=+===============================+=\
