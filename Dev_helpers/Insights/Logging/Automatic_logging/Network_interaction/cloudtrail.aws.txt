@@ -48,12 +48,13 @@ CreateTrail()                     #Req: TRAIL
                                   #Res: TRAIL
                                   #  - no HomeRegion, HasCustomEventSelectors, HasInsightSelectors, TagsList
 UpdateTrail()                     #Req: TRAIL
-                                  #  - no TrailARN, HomeRegion, HasCustomEventSelectors, HasInsightSelectors, SnsTopicARN, TagsList
+                                  #  - Name + TrailARN -> Name
+                                  #  - no HomeRegion, HasCustomEventSelectors, HasInsightSelectors, SnsTopicARN, TagsList
                                   #  - LogFileValidationEnabled -> EnableLogFileValidation
                                   #Res: TRAIL
                                   #  - no HomeRegion, HasCustomEventSelectors, HasInsightSelectors, TagsList
 GetTrail()                        #Req: TRAIL
-                                  #  - only Name
+                                  #  - Name + TrailARN -> Name
                                   #Res: Trail TRAIL
                                   #  - no TagsList
 ListTrails()                      #Req: empty
@@ -63,7 +64,7 @@ DescribeTrails()                  #Req: TRAIL_REQ
                                   #Response: trailList TRAIL_ARR
                                   #  - no TagsList
 DeleteTrail()                     #Req: TRAIL
-                                  #  - only Name
+                                  #  - Name + TrailARN -> Name
                                   #Res: empty
 
 TRAIL                             #Logs any AWS API calls to a S3 BUCKET
@@ -72,10 +73,8 @@ TRAIL                             #Logs any AWS API calls to a S3 BUCKET
                                   #Max 1 per USER
 
 TRAIL.TrailARN                    #TRAIL_ARN. arn:aws:cloudtrail:REGION:ACCOUNT_ID:trail/TRAIL
-TRAIL.Name                        #'TRAIL'
+TRAIL.Name                        #'TRAIL'. Max 128 chars, [[:alnum:]._-]
 TRAIL_REQ.trailNameList           #ARR of 'TRAIL'|TRAIL_ARN
-
-TRAIL_REQ.includeShadowTrails     #BOOL
 
 
                                              /=+===============================+=\
@@ -85,16 +84,17 @@ TRAIL_REQ.includeShadowTrails     #BOOL
                                              \=+===============================+=/
 
 
-TRAIL.HomeRegion                  #'REGION'
+TRAIL.HomeRegion                  #'REGION' of TRAIL
 
-TRAIL.IsMultiRegionTrail          #BOOL
-DATASTORE.MultiRegionEnabled      #BOOL
+TRAIL.IsMultiRegionTrail          #BOOL (def: false). Whether log SERVICEs from other REGIONs.
+DATASTORE.MultiRegionEnabled      #For TRAIL, it duplicates it across REGIONs ("shadow TRAIL").
+CHANNEL_SOURCE.ApplyToAllRegions  #  - can be used for CloudTrail ACTIONs, but only readonly ones
+                                  #LOG_FILE (but not DIGEST_FILE) for all REGIONs in located in the single HomeRegion
 
-TRAIL.IncludeGlobalServiceEvents  #BOOL (def: true). Whether to include global SERVICEs (e.g. IAM)
-                                  #LOG_FILE is REGION-specific, i.e. global SERVICEs are duplicated per REGION
+TRAIL_REQ.includeShadowTrails     #BOOL (def: true)
+
+TRAIL.IncludeGlobalServiceEvents  #BOOL (def: true). Whether to log global SERVICEs (e.g. IAM)
                                   #Should set to false in all REGIONs but one
-
-CHANNEL_SOURCE.ApplyToAllRegions  #BOOL
 
 
                                              /=+===============================+=\
@@ -105,26 +105,16 @@ CHANNEL_SOURCE.ApplyToAllRegions  #BOOL
 
 
 StartLogging|StopLogging()        #Req: TRAIL
-                                  #  - only Name
+                                  #  - Name + TrailARN -> Name
                                   #Res: empty
                                   #Sets TRAIL_STATUS.IsLogging
 GetTrailStatus()                  #Req: TRAIL
-                                  #  - only Name
+                                  #  - Name + TrailARN -> Name
                                   #Res: TRAIL_STATUS
 
-TRAIL_STATUS.IsLogging            #BOOL
-TRAIL_STATUS.StartLoggingTime     #DATE_NUM
-TRAIL_STATUS.StopLoggingTime      #DATE_NUM
-
-LOG DELIVERY ==>                  #LOG_FILE created every 5 mins
-                                  #Calls take 15 mins to come
-TRAIL_STATUS.LatestDeliveryError  #Last log delivery 'ERROR'
-TRAIL_STATUS.LatestDeliveryTime   #DATE_NUM
-
-TRAIL_STATUS.LatestDigest
- DeliveryError                    #'ERROR'
-TRAIL_STATUS.LatestDigest
- DeliveryTime                     #DATE_NUM
+TRAIL_STATUS.IsLogging            #BOOL (def: true). Whether TRAIL is enabled.
+TRAIL_STATUS.StartLoggingTime     #Most recent DATE_NUM, if IsLogging true
+TRAIL_STATUS.StopLoggingTime      #Most recent DATE_NUM, if IsLogging false
 
 
                                              /=+===============================+=\
@@ -176,26 +166,29 @@ TRAIL.S3KeyPrefix                 #'TRAIL_PREFIX' (def: none)
 
 TRAIL|DATASTORE.KmsKeyId          #KMS_KEY_ID
 
-TRAIL.LogFileValidationEnabled    #BOOL
+LOG DELIVERY ==>                  #LOG_FILE created every 5 mins
+                                  #Calls take 15 mins to come
+TRAIL_STATUS.LatestDeliveryTime   #DATE_NUM
+TRAIL_STATUS.LatestDeliveryError  #Last log delivery 'ERROR', due to issue with destination BUCKET
 
 TRAIL_PREFIX/AWSLogs/ACCOUNT_ID
  /CloudTrail/REGION/YYYY/MM/DD
- /ACCOUNT_ID_CloudTrail_
-  REGION_RANDOM.json.gz           #'LOG_FILE'
+ /ACCOUNT_ID_CloudTrail_REGION_
+ YYYYMMDDTHHMMZ_RANDOM.json.gz    #'LOG_FILE'
 
 LOG_FILE                          #
 LOG_FILE.Records                  #LOG_EVENT_ARR
 LOG_EVENT.eventVersion            #Always '1.02'
+LOG_EVENT.eventId                 #EVENT_MID
+LOG_EVENT.eventTime               #'DATE'
 LOG_EVENT.eventSource             #'SERVICE_DOMAIN'
 LOG_EVENT.eventName               #'ACTION'
 LOG_EVENT.awsRegion               #'REGION'
-LOG_EVENT.requestParameters       #PARAMS_OBJ
-LOG_EVENT.responseElements        #RESP_OBJ
-LOG_EVENT.eventTime               #'DATE'
+LOG_EVENT.requestId               #REQ_ID
 LOG_EVENT.sourceIPAddress         #'IP'
 LOG_EVENT.userAgent               #STR of User-Agent [C]
-LOG_EVENT.requestId               #REQ_ID
-LOG_EVENT.eventId                 #EVENT_MID
+LOG_EVENT.requestParameters       #PARAMS_OBJ
+LOG_EVENT.responseElements        #RESP_OBJ
 LOG_EVENT.errorCode               #NUM
 LOG_EVENT.errorMessage            #STR
 
@@ -217,6 +210,78 @@ SESSION_ATTRS.creationDate        #'DATE'
 IDENTITY.webIdFederationData      #FEDERATION_DATA. Only if type 'FederatedUser'
 FEDERATION_DATA.federatedProvider #'DOMAIN'
 FEDERATION_DATA.attributes        #STR
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:         LOG INTEGRITY         :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+TRAIL.LogFileValidationEnabled    #BOOL (def: false). Enables digest delivery
+
+DIGEST DELIVERY ==>               #DIGEST_FILE created every 1h
+TRAIL_STATUS
+ .LatestDigestDeliveryTime        #DATE_NUM
+TRAIL_STATUS
+ .LatestDigestDeliveryError       #Last log delivery 'ERROR', due to issue with destination BUCKET
+
+TRAIL_PREFIX/AWSLogs[/ORG]
+ /ACCOUNT_ID/CloudTrail-Digest
+ /REGION/YYYY/MM/DD/ACCOUNT_ID_
+ CloudTrail-Digest_REGION_TRAIL_  #'DIGEST_FILE'
+ REGION_YYYYMMDDTHHMMSSZ.json.gz  #First 2 REGIONs are of the DIGEST_FILE, last is HomeRegion of TRAIL
+
+DIGEST_FILE                       #List of LOG_FILEs for a given period
+                                  #Meant to ensure their integrity
+DIGEST_FILE.awsAccountId          #ACCOUNT_ID
+DIGEST_FILE.digestStartTime       #'DATE'
+DIGEST_FILE.digestEndTime         #'DATE' (1h later)
+DIGEST_FILE.oldestEventTime       #'DATE' of first EVENT. Can be < digestStartTime if digest delivery was slow
+DIGEST_FILE.newestEventTime       #'DATE' of last EVENT
+DIGEST_FILE.digestS3Bucket
+DIGEST_FILE.digestS3Object        #'BUCKET|OBJECT' where DIGEST_FILE is located
+
+DIGEST_FILE                       #DIGEST.digestS3Bucket|Object of last DIGEST_FILE
+ .previousDigestS3Bucket|Object   #Goal: ensure the full list of DIGEST_FILEs is complete, with no missing DIGEST_FILE
+DIGEST_FILE
+ .previousDigestHashValue         #'BASE64_SHA256' of last uncompressed DIGEST_FILE
+DIGEST_FILE
+ .previousDigestHashAlgorithm     #Always 'SHA-256'
+
+DIGEST_FILE.logFiles              #DIGEST_LOG_FILE_ARR
+DIGEST_LOG_FILE.s3Bucket
+DIGEST_LOG_FILE.s3Object          #'BUCKET|OBJECT' where OBJECT_FILE is located
+DIGEST_LOG_FILE.hashValue         #'BASE64_SHA256' of LOG_FILE
+                                  #Goal: ensure LOG_FILE's integrity
+DIGEST_LOG_FILE.hashAlgorithm     #Always 'SHA-256'
+DIGEST_LOG_FILE.oldestEventTime   #'DATE' of first EVENT
+DIGEST_LOG_FILE.newestEventTime   #'DATE' of last EVENT
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:          PUBLIC KEYS          :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+ListPublicKeys()                  #Req: PUBLIC_KEY
+                                  #  - only ValidityStart|EndTime -> Start|EndTime
+                                  #Res: PublicKeyList PUBLIC_KEY_ARR
+
+DIGEST_FILE                       #RSA signature of 'BASE64_SHA256' of last DIGEST_FILE, with AWS private key
+ .previousDigestSignature         #Goal: ensure DIGEST_FILE's integrity
+DIGEST_FILE
+ .digestSignatureAlgorithm        #Always 'SHA256withRSA'
+DIGEST_FILE
+ .digestPublicKeyFingerprint      #'BASE64_SHA256' of ???
+
+PUBLIC_KEY                        #Used to validate DIGEST_FILE.digestPublicKey
+PUBLIC_KEY.Value                  #'BASE64'
+PUBLIC_KEY.Fingerprint            #STR
+PUBLIC_KEY.ValidityStart|EndTime  #DATE_NUM
 
 
                                              /=+===============================+=\
@@ -345,6 +410,8 @@ ORG_ADMIN.DelegatedAdminAccountId #ACCOUNT_ID
 
 TRAIL.IsOrganizationTrail         #BOOL
 DATASTORE.OrganizationEnabled     #BOOL
+
+See doc for TRAIL_REQ.includeShadowTrails
 
 
                                              /=+===============================+=\
@@ -612,22 +679,6 @@ RESOURCE_TAGS.TagsList            #TAG_PAIRS
 TRAIL.TagsList
 CHANNEL.Tags
 DATASTORE.TagsList                #TAG_PAIRS
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:          PUBLIC KEYS          :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-ListPublicKeys()                  #Req: PUBLIC_KEY
-                                  #  - only ValidityStart|EndTime -> Start|EndTime
-                                  #Res: PublicKeyList PUBLIC_KEY_ARR
-
-PUBLIC_KEY.Value                  #'BASE64'
-PUBLIC_KEY.Fingerprint            #STR
-PUBLIC_KEY.ValidityStart|EndTime  #DATE_NUM
 
 
                                              /=+===============================+=\
