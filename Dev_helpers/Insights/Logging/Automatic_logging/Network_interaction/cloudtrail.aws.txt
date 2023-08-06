@@ -16,8 +16,15 @@ TO DOCUMENT ==>
      - JOBs: https://docs.aws.amazon.com/AmazonS3/latest/userguide/batch-ops-examples-event-bridge-cloud-trail.html
 
 Already read in user guide:
+  - CloudTrail concepts:
+     - How does CloudTrail behave regionally and globally?
+     - Global service events
   - Receiving CloudTrail log files from multiple Regions
   - Validating CloudTrail log file integrity
+  - FaQ:
+     - Services and Region support
+     - Applying a trail to all Regions
+     - Multiple trails
 
 VERSION ==>                       #2023-08-01
 
@@ -75,7 +82,7 @@ DeleteTrail()                     #Req: TRAIL
 TRAIL                             #Logs any AWS API calls to a S3 BUCKET
                                   #From both user and SERVICE_DOMAINs
                                   #Only for current REGION
-                                  #Max 1 per USER
+                                  #Max 5 per REGION
 
 TRAIL.TrailARN                    #TRAIL_ARN. arn:aws:cloudtrail:REGION:ACCOUNT_ID:trail/TRAIL
 TRAIL.Name                        #'TRAIL'. Max 128 chars, [[:alnum:]._-]
@@ -94,13 +101,22 @@ TRAIL.HomeRegion                  #'REGION' of TRAIL
 TRAIL.IsMultiRegionTrail          #BOOL (def: false, recommended: true). Whether to log SERVICEs from other REGIONs.
 DATASTORE.MultiRegionEnabled      #For TRAIL, it duplicates it across REGIONs ("shadow TRAIL").
 CHANNEL_SOURCE.ApplyToAllRegions  #  - can be used for CloudTrail ACTIONs, but only readonly ones
-                                  #LOG_FILE for all REGIONs in located in the single HomeRegion
-                                  #  - but not DIGEST_FILE|PUBLIC_KEY
-
+                                  #LOG_FILE|DIGEST_FILE:
+                                  #  - processed in own REGION, by shadow TRAIL
+                                  #     - including signing with PUBLIC_KEY, which is REGION-specific
+                                  #     - including REGION shown in filename
+                                  #  - but sent to a single S3 BUCKET, in a single REGION
 TRAIL_REQ.includeShadowTrails     #BOOL (def: true)
 
-TRAIL.IncludeGlobalServiceEvents  #BOOL (def: true). Whether to log global SERVICEs (e.g. IAM)
-                                  #Should set to false in all REGIONs but one
+TRAIL.IncludeGlobalServiceEvents  #BOOL (def: true). Whether to log global SERVICEs (e.g. IAM, STS (if v1Token), CloudFront)
+                                  #If using TRAILs:
+                                  #  - in multiple REGIONs but with TRAIL.IsMultiRegionTrail false
+                                  #  - then should set IncludeGlobalServiceEvents to false in all TRAILs but one, to avoid duplicated EVENTs
+                                  #  - if TRAIL.IsMultiRegionTrail true though, no issue
+                                  #Global SERVICEs are:
+                                  #  - processed in TRAIL's HomeRegion
+                                  #  - shown as REGION us-east-1 in LOG_FILE
+                                  #  - shown as REGION where it occurred in EVENT.*
 
 
                                              /=+===============================+=\
@@ -134,29 +150,10 @@ PERMISSIONS ==>                   #Logger is Principal arn:aws:iam::ACCOUNT_ID:r
                                   #  - ACCOUNT_ID is REGION-specific (see online doc for value)
                                   #Must be allowed PACTIONs:
                                   #  - s3:GetBucketAcl on arn:aws:s3:::LOG_BUCKET
-                                  #  - s3:PutObject on arn:aws:s3:::LOG_BUCKET/TRAIL_PREFIX/AWSLogs/ACCOUNT_ID/*
+                                  #  - s3:PutObject on arn:aws:s3:::LOG_BUCKET/TRAIL_PREFIX/AWSLogs[/ORG]/ACCOUNT_ID/*
                                   #     - with COND_KEY s3:x-amz-acl 'bucket-owner-full-control'
                                   #  (if SNS)
                                   #  - SNS:Publish on arn:aws:sns:REGION:ACCOUNT_ID:TOPIC
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:              SNS              :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-TRAIL.SnsTopicARN                 #SNS_TOPIC_ARN to send on log delivery, with SNS_PAYLOAD
-TRAIL.SnsTopicName                #Same as 'SNS_TOPIC'
-
-SNS_PAYLOAD.s3Bucket              #'LOG_BUCKET'
-SNS_PAYLOAD.s3ObjectKey           #'LOG_FILE'
-
-TRAIL_STATUS
- .LatestNotificationError
-TRAIL_STATUS
- .LatestNotificationTime          #Same as LatestDelivery* but for SNS notifications
 
 
                                              /=+===============================+=\
@@ -167,19 +164,21 @@ TRAIL_STATUS
 
 
 TRAIL.S3BucketName                #S3 'LOG_BUCKET' to store LOG_FILE
+                                  #Can be in a different REGION than TRAIL
                                   #Can use S3 to encrypt, archive|rotate, etc.
-TRAIL.S3KeyPrefix                 #'TRAIL_PREFIX' (def: none)
+TRAIL.S3KeyPrefix                 #'TRAIL_PREFIX' (def: none). Max 200 chars
 
-TRAIL|DATASTORE.KmsKeyId          #KMS_KEY_ID
+TRAIL|DATASTORE.KmsKeyId          #KMS_KEY_ID|ARN
 
 LOG DELIVERY ==>                  #LOG_FILE created every 5 mins
                                   #Calls take 15 mins to come
 TRAIL_STATUS.LatestDeliveryTime   #DATE_NUM
 TRAIL_STATUS.LatestDeliveryError  #Last log delivery 'ERROR', due to issue with destination BUCKET
 
-TRAIL_PREFIX/AWSLogs/ACCOUNT_ID
- /CloudTrail/REGION/YYYY/MM/DD
- /ACCOUNT_ID_CloudTrail_REGION_
+TRAIL_PREFIX/AWSLogs[/ORG]
+ /ACCOUNT_ID/CloudTrail
+ /REGION/YYYY/MM/DD/
+ ACCOUNT_ID_CloudTrail_REGION_
  YYYYMMDDTHHMMZ_RANDOM.json.gz    #'LOG_FILE'
 
 LOG_FILE                          #
@@ -237,7 +236,7 @@ TRAIL_PREFIX/AWSLogs[/ORG]
  /ACCOUNT_ID/CloudTrail-Digest
  /REGION/YYYY/MM/DD/ACCOUNT_ID_
  CloudTrail-Digest_REGION_TRAIL_  #'DIGEST_FILE'
- REGION_YYYYMMDDTHHMMSSZ.json.gz  #First 2 REGIONs are of the DIGEST_FILE, last is HomeRegion of TRAIL
+ REGION_YYYYMMDDTHHMMSSZ.json.gz  #First 2 REGIONs are of the S3 BUCKET, last is TRAIL's HomeRegion
 
 DIGEST_FILE                       #List of LOG_FILEs for a given period
                                   #Meant to ensure their integrity
@@ -332,6 +331,25 @@ LOG_VALIDATION_RES                #TSV output:
 LOG_VALIDATION_RES_LINE[0]        #'Digest file' or 'Log file'
 LOG_VALIDATION_RES_LINE[1]        #'s3://BUCKET/OBJECT'
 LOG_VALIDATION_RES_LINE[2]        #'valid' or 'INVALID: ...'
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:              SNS              :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+TRAIL.SnsTopicARN                 #SNS_TOPIC_ARN to send on log delivery, with SNS_PAYLOAD
+TRAIL.SnsTopicName                #Same as 'SNS_TOPIC'
+
+SNS_PAYLOAD.s3Bucket              #'LOG_BUCKET'
+SNS_PAYLOAD.s3ObjectKey           #'LOG_FILE'
+
+TRAIL_STATUS
+ .LatestNotificationError
+TRAIL_STATUS
+ .LatestNotificationTime          #Same as LatestDelivery* but for SNS notifications
 
 
                                              /=+===============================+=\
