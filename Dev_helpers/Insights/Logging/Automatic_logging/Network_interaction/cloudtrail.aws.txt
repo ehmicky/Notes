@@ -20,10 +20,15 @@ Already read in user guide:
      - CloudTrail concepts
         - How does CloudTrail behave regionally and globally
         - Global service events
+  - Working with CloudTrail
+     - Configuring Amazon SNS notifications for CloudTrail
   - CloudTrail log files
      - Receiving CloudTrail log files from multiple Regions
      - Validating CloudTrail log file integrity
   - Settings
+  - Security
+     - Identity and Access Management
+        - Amazon SNS topic policy for CloudTrail
   - FaQ:
      - Services and Region support
      - Applying a trail to all Regions
@@ -53,8 +58,8 @@ PAGINATION ==>                    #REQ|RES.NextToken STR
 
 PRICING ==>                       #Free (except S3|SNS costs)
 
-AWSCloudTrail_FullAccess          #AWS managed POLICY. Grants all CloudTrail PACTIONs
-                                  #Also allows:
+AWSCloudTrail_FullAccess          #AWS managed POLICY, granting:
+                                  #  - cloudtrail:* on anything
                                   #  - iam:ListRoles|GetRolePolicy|GetUser: on any ROLE|USER
                                   #  - iam:PassRole: on any ROLE, if SERVICE_DOMAIN 'cloudtrail.amazonaws.com'
                                   #  - s3:ListAllMyBuckets|GetBucketLocation|GetBucketPolicy: on any BUCKET
@@ -127,7 +132,8 @@ CHANNEL_SOURCE.ApplyToAllRegions  #  - can be used for CloudTrail ACTIONs, but o
                                   #  - processed in own REGION, by shadow TRAIL
                                   #     - including signing with PUBLIC_KEY, which is REGION-specific
                                   #     - including REGION shown in filename
-                                  #  - but sent to a single S3 BUCKET, in a single REGION
+                                  #  - but sent to a single LOG_BUCKET, in a single REGION
+                                  #     - same for SNS notification
 TRAIL_REQ.includeShadowTrails     #BOOL (def: true)
 
 TRAIL.IncludeGlobalServiceEvents  #BOOL (def: true). Whether to log global SERVICEs (e.g. IAM, STS (if v1Token), CloudFront)
@@ -156,21 +162,24 @@ DeregisterOrganization            #Req: ORG_ADMIN
 
 ORG_ADMIN.DelegatedAdminAccountId #ACCOUNT_ID. Give same permissions as ORG's management ACCOUNT, for CloudTrail only
                                   #Requires PACTIONs organizations:[De]registerDelegatedAdministrator|ListAWSServiceAccessForOrganization
+                                  #Max 3 per ORG
 
 TRAIL.IsOrganizationTrail         #BOOL (def: false). Log SERVICEs from all ACCOUNTs in ORG
 DATASTORE.OrganizationEnabled     #Work similarly to TRAIL.IsMultiRegionTrail:
                                   #  - use shadow TRAILs
-                                  #  - LOG_FILE|DIGEST_FILE processed in own ACCOUNT, but sent to single S3 BUCKET
+                                  #  - LOG_FILE|DIGEST_FILE processed in own ACCOUNT, but sent to single LOG_BUCKET
                                   #Requires PACTION organizations:ListAWSServiceAccessForOrganization
 
 LOG_VALIDATION_REQ.AccountId      #ACCOUNT_ID. Noop unless TRAIL.IsOrganizationTrail true
 
-CloudTrailServiceRolePolicy???
-SERVICE-LINKED ROLE ==>           #Requires PACTIONs iam:CreateServiceLinkedRole|GetRole
-                                  #For:
-                                  #  - Create|UpdateTrail(), Create|UpdateEventDataStore(): TRAIL.IsOrganizationTrail, DATASTORE.OrganizationEnabled???
-                                  #  - RegisterOrganizationDelegatedAdmin(): ORG_ADMIN.DelegatedAdminAccountId???
-                                  #???
+AWSServiceRoleForCloudTrail       #SERVICE_LINKED_ROLE used by TRAIL.IsOrganizationTrail, DATASTORE.OrganizationEnabled and ORG_ADMIN.DelegatedAdminAccountId
+                                  #Created automatically by ACTIONs setting those properties
+                                  #  - providing has PACTIONs iam:CreateServiceLinkedRole|GetRole
+                                  #Can only be assumed by SERVICE_DOMAIN 'cloudtrail.amazonaws.com'
+CloudTrailServiceRolePolicy       #POLICY used by AWSServiceRoleForCloudTrail, which allows PACTIONs:
+                                  #  - cloudtrail:*
+                                  #  - organizations:ListAWSServiceAccessForOrganization|ListAccounts|DescribeOrganization|DescribeAccount
+                                  #  - organizations:ListDelegatedAdministrators, if PRINCIPAL 'cloudtrail.amazonaws.com'
 
 
                                              /=+===============================+=\
@@ -204,6 +213,10 @@ TRAIL.S3BucketName                #S3 'LOG_BUCKET' to store LOG_FILE
                                   #Can be in a different REGION than TRAIL
                                   #Can use S3 to encrypt, archive|rotate, etc.
 TRAIL.S3KeyPrefix                 #'TRAIL_PREFIX' (def: none). Max 200 chars
+PERMISSIONS ==>                   #Must allow PACTIONs to Principal.Service 'cloudtrail.amazonaws.com':
+                                  #  - s3:GetBucketAcl on arn:aws:s3:::LOG_BUCKET
+                                  #  - s3:PutObject on arn:aws:s3:::LOG_BUCKET/TRAIL_PREFIX/AWSLogs[/ORG]/ACCOUNT_ID/*
+                                  #     - with COND_KEY s3:x-amz-acl 'bucket-owner-full-control'
 
 TRAIL|DATASTORE.KmsKeyId          #S3 KMS_KEY_MID|ARN x-amz-server-side-encryption-aws-kms-key-id [C|S]
                                   #Requires some kms:* PACTIONs (see S3 doc)
@@ -211,13 +224,13 @@ TRAIL|DATASTORE.KmsKeyId          #S3 KMS_KEY_MID|ARN x-amz-server-side-encrypti
 LOG DELIVERY ==>                  #LOG_FILE created every 5 mins
                                   #Calls take 15 mins to come
 TRAIL_STATUS.LatestDeliveryTime   #DATE_NUM
-TRAIL_STATUS.LatestDeliveryError  #Last log delivery 'ERROR', due to issue with destination BUCKET
+TRAIL_STATUS.LatestDeliveryError  #Last log delivery 'ERROR', due to issue with LOG_BUCKET
 
 TRAIL_PREFIX/AWSLogs[/ORG]
  /ACCOUNT_ID/CloudTrail
  /REGION/YYYY/MM/DD/
- ACCOUNT_ID_CloudTrail_REGION_
- YYYYMMDDTHHMMZ_RANDOM.json.gz    #'LOG_FILE'
+ ACCOUNT_ID_CloudTrail_REGION_    #'LOG_FILE'
+ YYYYMMDDTHHMMZ_RANDOM.json.gz    #/ORG only if TRAIL.IsOrganizationTrail true
 
 LOG_FILE                          #
 LOG_FILE.Records                  #LOG_EVENT_ARR
@@ -268,13 +281,13 @@ DIGEST DELIVERY ==>               #DIGEST_FILE created every 1h
 TRAIL_STATUS
  .LatestDigestDeliveryTime        #DATE_NUM
 TRAIL_STATUS
- .LatestDigestDeliveryError       #Last log delivery 'ERROR', due to issue with destination BUCKET
+ .LatestDigestDeliveryError       #Last log delivery 'ERROR', due to issue with LOG_BUCKET
 
 TRAIL_PREFIX/AWSLogs[/ORG]
  /ACCOUNT_ID/CloudTrail-Digest
  /REGION/YYYY/MM/DD/ACCOUNT_ID_
  CloudTrail-Digest_REGION_TRAIL_  #'DIGEST_FILE'
- REGION_YYYYMMDDTHHMMSSZ.json.gz  #First 2 REGIONs are of the S3 BUCKET, last is TRAIL's HomeRegion
+ REGION_YYYYMMDDTHHMMSSZ.json.gz  #First 2 REGIONs are of the LOG_BUCKET, last is TRAIL's HomeRegion
 
 DIGEST_FILE                       #List of LOG_FILEs for a given period
                                   #Meant to ensure their integrity
@@ -367,25 +380,8 @@ LOG_VALIDATION_RES                #TSV output:
                                   #  - DIGEST_FILE.oldest|newestEventTime
                                   #  - NUM of DIGEST_FILEs|LOG_FILEs [in]valid
 LOG_VALIDATION_RES_LINE[0]        #'Digest file' or 'Log file'
-LOG_VALIDATION_RES_LINE[1]        #'s3://BUCKET/OBJECT'
+LOG_VALIDATION_RES_LINE[1]        #'s3://LOG_BUCKET/OBJECT'
 LOG_VALIDATION_RES_LINE[2]        #'valid' or 'INVALID: ...'
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:          PERMISSIONS          :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-PERMISSIONS ==>                   #Logger is Principal arn:aws:iam::ACCOUNT_ID:root
-                                  #  - ACCOUNT_ID is REGION-specific (see online doc for value)
-                                  #Must be allowed PACTIONs:
-                                  #  - s3:GetBucketAcl on arn:aws:s3:::LOG_BUCKET
-                                  #  - s3:PutObject on arn:aws:s3:::LOG_BUCKET/TRAIL_PREFIX/AWSLogs[/ORG]/ACCOUNT_ID/*
-                                  #     - with COND_KEY s3:x-amz-acl 'bucket-owner-full-control'
-                                  #  (if SNS)
-                                  #  - SNS:Publish on arn:aws:sns:REGION:ACCOUNT_ID:TOPIC
 
 
                                              /=+===============================+=\
@@ -396,10 +392,14 @@ PERMISSIONS ==>                   #Logger is Principal arn:aws:iam::ACCOUNT_ID:r
 
 
 TRAIL.SnsTopicARN                 #SNS_TOPIC_ARN to send on log delivery, with SNS_PAYLOAD
-TRAIL.SnsTopicName                #Same as 'SNS_TOPIC'
+                                  #Must allow PACTION SNS:Publish on the TOPIC
+                                  #  - for Principal.Service 'cloudtrail.amazonaws.com'
+                                  #  - should add COND_KEY aws:SourceArn TRAIL_ARN
+                                  #  - also kms:GenerateDataKey*|Decrypt, if TOPIC uses KMS
+TRAIL.SnsTopicName                #Same but as 'SNS_TOPIC'
 
 SNS_PAYLOAD.s3Bucket              #'LOG_BUCKET'
-SNS_PAYLOAD.s3ObjectKey           #'LOG_FILE'
+SNS_PAYLOAD.s3ObjectKey           #'LOG_FILE'_ARR
 
 TRAIL_STATUS
  .LatestNotificationError
@@ -423,28 +423,53 @@ GetEventSelectors()               #Req: SELECTORS
                                   #Res: SELECTORS
                                   #  - no TrailName
 
-TRAIL.HasCustomEventSelectors     #BOOL
-
+SELECTORS                         #Filter which EVENTs are logged by a TRAIL
+                                  #If not specified: any except data EVENTs
+                                  #Max 5 per TRAIL
 SELECTORS.TrailARN                #TRAIL_ARN
 SELECTORS.TrailName               #'TRAIL'
 
-SELECTORS|CHANNEL_SOURCE|DATASTORE
- .AdvancedEventSelectors          #ADVANCED_SELECTOR_ARR
-ADVANCED_SELECTOR.Name            #STR. Description
-ADVANCED_SELECTOR.FieldSelectors  #FIELD_SELECTOR_ARR
-FIELD_SELECTOR.Field              #STR
-FIELD_SELECTOR
- .[Not]Starts|EndsWith            #STR_ARR
-FIELD_SELECTOR.[Not]Equals        #STR_ARR
-
-SELECTORS.EventSelectors          #SELECTOR_ARR
-SELECTOR.ReadWriteType            #'All' (def), 'ReadOnly' or 'WriteOnly'
+SELECTORS.EventSelectors          #SELECTOR_ARR, or'd
+SELECTOR.ReadWriteType            #Whether to log ACTIONs that are:
+                                  #  - 'ReadOnly': e.g. Get|List*()
+                                  #  - 'WriteOnly': not read-only
+                                  #  - 'All' (def)
 SELECTOR.IncludeManagementEvents  #BOOL
 SELECTOR
  .ExcludeManagementEventSources   #STR_ARR
 SELECTOR.DataResources            #DATA_RESOURCE_ARR
 DATA_RESOURCE.Type                #STR
 DATA_RESOURCE.Values              #STR_ARR
+
+SELECTORS|CHANNEL_SOURCE|DATASTORE#ADVANCED_SELECTOR_ARR, or'd
+ .AdvancedEventSelectors          #Cannot use both SELECTORs and ADVANCED_SELECTORs
+                                  #Max 500
+ADVANCED_SELECTOR.Name            #STR. Description. Max 1000 chars
+ADVANCED_SELECTOR.FieldSelectors  #FIELD_SELECTOR_ARR
+FIELD_SELECTOR.Field              #STR. Available name and their values:
+                                  #  - eventName 'ACTION,...'
+                                  #  - readOnly BOOL:
+                                  #     - true|false|def is like SELECTOR.ReadWriteType 'ReadOnly|WriteOnly|All'
+                                  #     - only FIELD_SELECTOR.Equals
+                                  #  - eventCategory STR among:
+                                  #     - 'Data': data EVENTs
+                                  #     - 'Management': management EVENTs
+                                  #     - 'ConfigurationItem': AWS Config items
+                                  #     - 'Evidence': Audit manager
+                                  #     - 'ActivityAuditLog': not from an AWS SERVICE
+                                  #  - eventSource 'SERVICE_DOMAIN'
+                                  #     - not for data EVENTs
+                                  #  - resources.type 'AWS::SERVICE::RESOURCE'
+                                  #     - e.g. 'AWS::Lambda::Function' or 'AWS::S3::Accesspoint'
+                                  #     - only for data EVENTs
+                                  #     - not all are available: see list in https://docs.aws.amazon.com/awscloudtrail/latest/APIReference/API_AdvancedFieldSelector.html
+                                  #  - resources.ARN ARN
+                                  #     - trailing shash for S3 BUCKET|OBJECT
+FIELD_SELECTOR.[Not]Equals        #STR_ARR. Max 2KB per STR
+FIELD_SELECTOR
+ .[Not]Starts|EndsWith            #STR_ARR. Max 2KB per STR
+
+TRAIL.HasCustomEventSelectors     #BOOL. True if there are SELECTORS.
 
 
                                              /=+===============================+=\
