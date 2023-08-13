@@ -653,16 +653,16 @@ SUBSCRIPTION.roleArn          #ROLE_ARN used to write LLEVENTs onto SUBSCRIPTION
                                              \=+===============================+=/
 
 
-PAYLOAD                       #Sent to the SUBSCRIPTION destination
+SPAYLOAD                      #Sent to the SUBSCRIPTION destination
                               #Is OBJ_JSON that is base64'd and gzip'd
-PAYLOAD.owner                 #ACCOUNT_ID
-PAYLOAD.logGroup              #'LOG_GROUP'
-PAYLOAD.logStream             #'LOG_STREAM'
-PAYLOAD.subscriptionFilters   #'SUBSCRIPTION'_ARR
-PAYLOAD.messageType           #Either:
+SPAYLOAD.owner                #ACCOUNT_ID
+SPAYLOAD.logGroup             #'LOG_GROUP'
+SPAYLOAD.logStream            #'LOG_STREAM'
+SPAYLOAD.subscriptionFilters  #'SUBSCRIPTION'_ARR
+SPAYLOAD.messageType          #Either:
                               #  - 'DATA_MESSAGE': usual one
                               #  - 'CONTROL_MESSAGE': ping
-PAYLOAD.logEvents             #LLEVENT_ARR
+SPAYLOAD.logEvents            #LLEVENT_ARR
                               #Only message, timestamp, and id LLEVENT_MID
 
 
@@ -680,7 +680,7 @@ PERMISSION ==>                #Must use LAMBDA FUNC_VERSION.Role, not SUBSCRIPTI
                               #  - COND_KEY aws:SourceArn LOG_GROUP_ARN, aws:SourceAccount ACCOUNT_ID
 
 INVOCATION ==>                #InvocationType 'Event'
-REQ.awslogs.data              #'PAYLOAD_JSON_GZIP_BASE64'
+REQ.awslogs.data              #'SPAYLOAD_JSON_GZIP_BASE64'
 RES                           #None
 
 
@@ -732,7 +732,7 @@ DeleteDestination()           #Req: DESTINATION
 DESTINATION                   #SUBSCRIPTION.destinationArn that can be used in a different ACCOUNT
                               #Can only be Kinesis STREAM|FIREHOSE, not Lambda FUNCTION
                               #Must be in same REGION as LOG_GROUP
-                              #A test PAYLOAD is sent on DESTINATION creation
+                              #A test SPAYLOAD is sent on DESTINATION creation
 DESTINATION.arn               #DESTINATION_ARN. arn:aws:logs:REGION:ACCOUNT_ID:destination:DESTINATION
 DESTINATION.destinationName   #'DESTINATION'
 DESTINATION.creationTime      #DATE_NUM
@@ -864,6 +864,7 @@ LLEVENTS_REQ|QUERY_RECORD_REQ #BOOL (def: false). If true, do not mask.
                               #  - this also allows not masking in UI console
 
 unmask                        #QUERY COMMAND to not mask
+unmask(FIELD)->STR            #Same for a single FIELD
 
 
                                              /=+===============================+=\
@@ -918,19 +919,110 @@ MASK_STATEMENT.Sid            #'MASK_STATEMENT'
 MASK_STATEMENT.Operation      #MASK_OP
 
 MASK_OP.Deidentify.MaskConfig #Always empty OBJ
+                              #Applies the masking
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:       MASK DESTINATION        :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
 
 MASK_OP                       #MASK_DESTINATION
  .Audit.FindingsDestination   #Send masked values to a destination
-MASK_DESTINATION
- .CloudWatchLogs.LogGroup     #Send to a 'LOG_GROUP'
+                              #Also emits the AWS/Logs/LogEventsWithFindings METRIC
+                              #Requires PACTIONs logs:CreateLogDelivery
+MASK_DESTINATION              #Send to a 'LOG_GROUP'
+ .CloudWatchLogs.LogGroup     #Requires PACTIONs logs:PutResourcePolicy|DescribeResourcePolicies|DescribeLogGroups
 MASK_DESTINATION.S3.Bucket    #Send to a 'BUCKET'
+                              #Requires PACTIONs s3:PutBucketPolicy|GetBucketPolicy
 MASK_DESTINATION
  .Firehose.DeliveryStream     #Send to a Kinesis STREAM_ARN
+                              #Requires PACTION firehose:TagDeliveryStream
+
+MPAYLOAD                      #Payload sent to MASK_DESTINATION
+MPAYLOAD.auditTimestamp       #'DATE'
+MPAYLOAD.resourceArn          #LOG_GROUP_ARN
+MPAYLOAD.dataIdentifiers      #DDATAID_ARR
+DDATAID.name                  #'DATAID'
+DDATAID.count                 #NUM of masked values
+DDATAID.detections            #DDATAID_VAL_ARR
+DDATAID_VAL.start|end         #NUM. Byte position in LLEVENT.message
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:       MASK IDENTIFIERS        :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
 
 MASK_STATEMENT.DataIdentifier #DATAID_ARN_ARR. Defines what to mask
                               #Must be the same for each MASK_STATEMENT
                               #Always arn:aws:dataprotection::aws:data-identifier/DATAID
                               #DATAIDs are automatically managed by AWS, listed below
+                              #Some are COUNTRY-specific
+                              #Some require a keyword nearby, with|without space, _ or -
+
+AwsSecretKey                  #SECRET_ACCESS_KEY
+                              #Keywords: aws_secret_access_key, secret [access] key, credentials, set-awscredential
+OpenSshPrivateKey             #
+PgpPrivateKey                 #
+PkcsPrivateKey                #
+PuttyPrivateKey               #
+
+IpAddress                     #
+
+BankAccountNumber-COUNTRY     #COUNTRY: DE, ES, FR, GB, IT
+                              #Keywords:
+                              #  - iban, bban
+                              #  - account code|number, accountnumber#, accountno#, customer [bank] account id|number
+                              #  - some language-specific keywords
+                              #Does not mask account numbers known to be used for testing
+CreditCardNumber              #Keywords:
+                              #  - account number
+                              #  - [bank|credit|debit|check] [card]
+                              #  - card num[ber], cc #, ccn, payment account|card number, pan|pcn
+                              #  - visa, mastercard|mc, american express, amex, diners club, discover, electron, japanese card bureau, jcb, union pay, dankort
+CreditCardExpiration          #Keywords: expiration|expiry, exp d|m|y
+CreditCardSecurityCode        #Keywords:
+                              #  - cvc[2], cvv[2]
+                              #  - card id, card identification code|number, card security code, card validation code|number|data|value, elo verification code
+
+HealthInsuranceCardNumber-EU  #EU health number
+                              #Keywords:
+                              #  - ehic[#]
+                              #  - health card [number], health insurance card|number, insurance card number, medical account number
+HealthInsuranceNumber-FR      #FR health number
+                              #Keywords: carte vitale, insurance card
+NhsNumber-GB                  #GB health number
+                              #Keywords: NHS, national health sservice
+PersonalHealthNumber-CA       #CA health number
+                              #Keywords: phn, msp|care number, canada healthcare number
+HealthInsuranceClaimNumber-US #HICN number
+                              #Keywords:
+                              #  - hic[n[o]][#], hic no[.]|number
+                              #  - health insurance claim number
+HealthcareProcedureCode-US    #HCPCS code
+                              #Keywords:
+                              #  - hcpcs
+                              #  - healthcare common procedure coding system
+                              #  - current procedural terminology
+MedicareBeneficiaryNumber-US  #MBN number
+                              #Keywords: mbi, medicare beneficiary
+NationalProviderId-US         #NPI number
+                              #Keywords: npi|n.p.i., national provider, hippa
+DrugEnforcementAgencyNumber-US#DEA number
+                              #Keywords: dea number|registration
+NationalDrugCode-US           #NDC number
+                              #Keywords: ndc, national drug code
+
+Address                       #
+EmailAddress                  #
+LatLong                       #
+Name                          #
+VehicleIdentificationNumber   #
 
 
                                              /=+===============================+=\
