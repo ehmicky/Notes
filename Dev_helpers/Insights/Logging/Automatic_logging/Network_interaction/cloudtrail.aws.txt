@@ -26,7 +26,9 @@ Already read in user guide:
      - Viewing CloudTrail Insights events
      - Creating a trail for your AWS account
      - Creating a trail for an organization
+     - Getting and viewing your CloudTrail log files
      - Configuring Amazon SNS notifications for CloudTrail
+     - Using AWS CloudTrail with interface VPC endpoints
   - CloudTrail log files
      - Create multiple trails
      - Logging management events
@@ -140,7 +142,9 @@ TRAIL.HomeRegion                  #'REGION' of TRAIL
 
 TRAIL.IsMultiRegionTrail          #BOOL (def: false, recommended: true). Whether to log SERVICEs from other REGIONs.
 DATASTORE.MultiRegionEnabled      #For TRAIL, it duplicates it across REGIONs ("shadow TRAIL").
-CHANNEL_SOURCE.ApplyToAllRegions  #  - can be used for CloudTrail ACTIONs, but only readonly ones
+CHANNEL_SOURCE.ApplyToAllRegions  #Shadow TRAILs can be used for CloudTrail ACTIONs but:
+                                  #  - only readonly ones
+                                  #  - only use current REGION
                                   #LOG_FILE|DIGEST_FILE:
                                   #  - processed in own REGION, by shadow TRAIL
                                   #     - including signing with PUBLIC_KEY, which is REGION-specific
@@ -179,15 +183,17 @@ ORG_ADMIN.DelegatedAdminAccountId #ACCOUNT_ID. Give same permissions as ORG's ma
 
 TRAIL.IsOrganizationTrail         #BOOL (def: false). Log SERVICEs from all ACCOUNTs in ORG
 DATASTORE.OrganizationEnabled     #Work similarly to TRAIL.IsMultiRegionTrail:
-                                  #  - use shadow TRAILs
+                                  #  - use shadow TRAILs, which are ACCOUNT-specific
                                   #  - LOG_FILE|DIGEST_FILE processed in own ACCOUNT, but sent to single LOG_BUCKET
                                   #Requires PACTION organizations:ListAWSServiceAccessForOrganization
+TRAIL_PREFIX/AWSLogs/ORG
+ /ACCOUNT_ID/...                  #Instead of TRAIL_PREFIX/AWSLogs/ACCOUNT_ID/... if TRAIL.IsOrganizationTrail true
 
 LOG_VALIDATION_REQ.AccountId      #ACCOUNT_ID. Noop unless TRAIL.IsOrganizationTrail true
 
 AWSServiceRoleForCloudTrail       #SERVICE_LINKED_ROLE used by TRAIL.IsOrganizationTrail, DATASTORE.OrganizationEnabled and ORG_ADMIN.DelegatedAdminAccountId
                                   #Created automatically by ACTIONs setting those properties
-                                  #  - providing has PACTIONs iam:CreateServiceLinkedRole|GetRole
+                                  #  - providing has PACTIONs iam:CreateServiceLinkedRole|GetRole and organizations:EnableAWSServiceAccess
                                   #Can only be assumed by SERVICE_DOMAIN 'cloudtrail.amazonaws.com'
 CloudTrailServiceRolePolicy       #POLICY used by AWSServiceRoleForCloudTrail, which allows PACTIONs:
                                   #  - cloudtrail:*
@@ -228,7 +234,7 @@ TRAIL.S3BucketName                #S3 'LOG_BUCKET' to store LOG_FILE
 TRAIL.S3KeyPrefix                 #'TRAIL_PREFIX' (def: none). Max 200 chars
 
 PERMISSIONS ==>                   #Must allow PACTIONs to Principal.Service 'cloudtrail.amazonaws.com':
-                                  #  - s3:PutObject on arn:aws:s3:::LOG_BUCKET/TRAIL_PREFIX/AWSLogs[/ORG]/ACCOUNT_ID/*
+                                  #  - s3:PutObject on arn:aws:s3:::LOG_BUCKET/TRAIL_PREFIX/AWSLogs/ACCOUNT_ID/*
                                   #     - COND_KEY aws:SourceArn TRAIL_ARN
                                   #     - COND_KEY s3:x-amz-acl 'bucket-owner-full-control'
                                   #  - s3:GetBucketAcl on arn:aws:s3:::LOG_BUCKET
@@ -238,15 +244,14 @@ TRAIL|DATASTORE.KmsKeyId          #S3 KMS_KEY_MID|ARN x-amz-server-side-encrypti
                                   #Requires some kms:* PACTIONs (see S3 doc)
 
 LOG DELIVERY ==>                  #LOG_FILE created every 5 mins
-                                  #Calls take 15 mins to come
 TRAIL_STATUS.LatestDeliveryTime   #DATE_NUM
 TRAIL_STATUS.LatestDeliveryError  #Last log delivery 'ERROR', due to issue with LOG_BUCKET
 
-TRAIL_PREFIX/AWSLogs[/ORG]
+TRAIL_PREFIX/AWSLogs
  /ACCOUNT_ID/CloudTrail
  /REGION/YYYY/MM/DD/
- ACCOUNT_ID_CloudTrail_REGION_    #'LOG_FILE'
- YYYYMMDDTHHMMZ_RANDOM.json.gz    #/ORG only if TRAIL.IsOrganizationTrail true
+ ACCOUNT_ID_CloudTrail_REGION_
+ YYYYMMDDTHHMMZ_RANDOM.json.gz    #'LOG_FILE'
 
 
                                              /=+===============================+=\
@@ -269,18 +274,19 @@ LOG_EVENT.awsRegion               #'REGION'
 LOG_EVENT.eventName               #'ACTION'
 LOG_EVENT.eventType               #STR, among:
                                   #  - 'AwsApiCall': normal ACTION
-                                  #  - 'AwsServiceEvent': service EVENT
                                   #  - 'AwsConsoleAction': ACTION from UI console
                                   #  - 'AwsConsoleSignIn': ACTION 'ConsoleLogin|CheckMfa'
+                                  #  - 'AwsServiceEvent': service EVENT
                                   #  - 'AwsCloudTrailInsight': INSIGHT
+                                  #  - 'ActivityLog': audit EVENT
 LOG_EVENT.readOnly                #BOOL. Whether is readonly ACTION
 LOG_EVENT.eventCategory           #STR among:
                                   #  - 'Data': data ACTIONs
                                   #  - 'Management': management ACTIONs
                                   #  - 'Insight': INSIGHT
+                                  #  - 'ActivityAuditLog': audit EVENT
                                   #  - 'ConfigurationItem': AWS Config items
                                   #  - 'Evidence': Audit manager
-                                  #  - 'ActivityAuditLog': not from an AWS SERVICE
 LOG_EVENT.managementEvent         #BOOL. Whether is management ACTION
 
 LOG_EVENT.recipientAccountId      #ACCOUNT_ID that received the EVENT
@@ -302,8 +308,10 @@ LOG_EVENT.responseElements        #RESP_OBJ
 LOG_EVENT.errorCode               #'CODE|ERROR'. Some SERVICEs show them in LOG_EVENT.responseElements instead
 LOG_EVENT.errorMessage            #Truncate over 1KB
 LOG_EVENT.additionalEventData     #OBJ. Used for some information not present in PARAMS|RESP.
+                                  #Called CLOUDTRAIL_METADATA in my doc
                                   #Truncate over 28KB
 LOG_EVENT.serviceEventDetails     #OBJ. Similar to LOG_EVENT.additionalEventData but when LOG_EVENT.eventType 'AwsServiceEvent'.
+                                  #Called CLOUDTRAIL_SMETADATA in my doc
                                   #Truncate over 100KB
 
 LOG_EVENT.resources               #LOG_RESOURCE_ARR. ARNs of resources impacted by EVENT
@@ -422,7 +430,7 @@ TRAIL_STATUS
 TRAIL_STATUS
  .LatestDigestDeliveryError       #Last log delivery 'ERROR', due to issue with LOG_BUCKET
 
-TRAIL_PREFIX/AWSLogs[/ORG]
+TRAIL_PREFIX/AWSLogs
  /ACCOUNT_ID/CloudTrail-Digest
  /REGION/YYYY/MM/DD/ACCOUNT_ID_
  CloudTrail-Digest_REGION_TRAIL_  #'DIGEST_FILE'
@@ -640,6 +648,7 @@ INSIGHT                           #Logs unusual ACTIONs to INSIGHT_FILE
                                   #Checks for big changes from the "baseline"
                                   #  - average/minute, in last 7d
                                   #  - on the first minute that deviates
+                                  #  - but INSIGHT_FILE created every 30m
                                   #  - one EVENT for start, another for end
                                   #Per ACTION
                                   #Only for management ACTIONs
@@ -663,7 +672,7 @@ TRAIL.HasInsightSelectors         #BOOL. Whether there are INSIGHT_SELECTORs
                                              \=+===============================+=/
 
 
-TRAIL_PREFIX/AWSLogs[/ORG]
+TRAIL_PREFIX/AWSLogs
  /ACCOUNT_ID/CloudTrail-Insight
  /REGION/YYYY/MM/DD/ACCOUNT_ID_
  CloudTrail-Insight_REGION_
@@ -809,32 +818,35 @@ CHANNEL_STATUS
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:          EVENT DATA           :==(
+                                            )==:          AUDIT EVENT          :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
-POST /PutAuditEvents              #Req: EVENT_DATA_REQ
+POST /PutAuditEvents              #Req: AUDIT_EVENT_REQ
 PutAuditEvents()                  #  - query parameters: channelArn, externalId
-                                  #Res: EVENT_DATA_RES
-                                  #Is a data ACTION itself???
+                                  #Res: AUDIT_EVENT_RES
 
-EVENT_DATA_REQ.channelArn         #CHANNEL_ARN
-EVENT_DATA_REQ.externalId         #STR, used by COND_KEY sts:ExternalId
+AUDIT_EVENT_REQ                   #Add EVENTs to a DATASTORE through a CHANNEL:
+                                  #  - called "audit EVENTs"
+                                  #  - is a data ACTION
+AUDIT_EVENT_REQ.channelArn        #CHANNEL_ARN
+AUDIT_EVENT_REQ.externalId        #STR, used by COND_KEY sts:ExternalId
 
-EVENT_DATA_REQ.auditEvents        #EVENT_DATA_ARR
-EVENT_DATA.id                     #EVENT.EventId
-EVENT_DATA.eventData              #STR
-EVENT_DATA.eventDataChecksum      #'SHA256_BASE64' of EVENT_DATA.eventData
+AUDIT_EVENT_REQ.auditEvents       #AUDIT_EVENT_ARR
+                                  #Max 100. Max 1MB
+AUDIT_EVENT.id                    #'AUDIT_EVENT'
+AUDIT_EVENT.eventData             #'LOG_EVENT_JSON'
+AUDIT_EVENT.eventDataChecksum     #'SHA256_BASE64' of AUDIT_EVENT.eventData
 
-EVENT_DATA_RES.failed             #FAILED_EVENT_DATA_ARR
-FAILED_EVENT_DATA.id              #EVENT.EventId
-FAILED_EVENT_DATA.errorCode       #'CODE'
-FAILED_EVENT_DATA.errorMessage    #'ERROR'
+AUDIT_EVENT_RES.successful        #SUCCESS_AUDIT_EVENT_ARR
+SUCCESS_AUDIT_EVENT.id            #'AUDIT_EVENT'
+SUCCESS_AUDIT_EVENT.eventID       #EVENT.EventId
 
-EVENT_DATA_RES.successful         #SUCCESS_EVENT_DATA_ARR
-SUCCESS_EVENT_DATA.id             #Old EVENT.EventId
-SUCCESS_EVENT_DATA.eventID        #New EVENT.EventId
+AUDIT_EVENT_RES.failed            #FAILED_AUDIT_EVENT_ARR
+FAILED_AUDIT_EVENT.id             #'AUDIT_EVENT'
+FAILED_AUDIT_EVENT.errorCode      #'CODE'
+FAILED_AUDIT_EVENT.errorMessage   #'ERROR'
 
 
                                              /=+===============================+=\
