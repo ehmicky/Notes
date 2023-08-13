@@ -22,6 +22,7 @@ Already read in user guide:
         - How does CloudTrail behave regionally and globally
         - Global service events
   - Working with CloudTrail
+     - Viewing events with CloudTrail Event history
      - Configuring Amazon SNS notifications for CloudTrail
   - CloudTrail log files
      - Create multiple trails
@@ -36,6 +37,7 @@ Already read in user guide:
   - Security
      - Identity and Access Management
         - Amazon SNS topic policy for CloudTrail
+  - Log event reference
   - FaQ:
      - Services and Region support
      - Applying a trail to all Regions
@@ -60,7 +62,7 @@ FORMAT ==>                        #JSON
                                   #  - except AUDIT_EVENTs: REST
 
 PAGINATION ==>                    #REQ|RES.NextToken STR
-                                  #REQ.MaxResults NUM (def|max: 1e3, 50 with EVENT, none with TRAIL)
+                                  #REQ.MaxResults NUM (def|max: 1e3, 50 with LookupEvents(), none with TRAIL)
                                   #No pagination with RESOURCE_TAGS|PUBLIC_KEY
 
 PRICING ==>                       #TRAIL: first free
@@ -114,6 +116,7 @@ DeleteTrail()                     #Req: TRAIL
                                   #Res: empty
 
 TRAIL                             #Logs any AWS API calls to a S3 BUCKET
+                                  #A few SERVICEs do not log all their ACTIONs, or sometimes none
                                   #From both user and SERVICE_DOMAINs
                                   #Only for current REGION
                                   #Max 5 per REGION
@@ -364,6 +367,41 @@ LOG_ADDENDUM.reason               #STR among:
 LOG_ADDENDUM.updatedFields        #'PROP'_ARR, if reason 'UPDATED_DATA'
 LOG_ADDENDUM.originalEventID      #Original's EVENT.eventID, if reason 'UPDATED_DATA'
 LOG_ADDENDUM.originalRequestID    #Original's EVENT.requestID, if reason 'UPDATED_DATA'
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:         EVENTS LOOKUP         :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+LookupEvents()                    #Req: EVENTS_REQ
+                                  #Res: Events EVENT_ARR
+
+EVENTS_REQ                        #List LOG_EVENTs
+                                  #Only management|INSIGHT EVENTs
+                                  #Max 2/s per REGION
+EVENTS_REQ.StartTime|EndTime      #DATE_NUM. Filter by EVENT.EventTime
+                                  #Def|min StartTime: 90 days ago
+EVENTS_REQ.EventCategory          #Either default ('management') or 'insight'. Filter by LOG_EVENT.eventCategory.
+
+EVENTS_REQ.LookupAttributes       #EVENT_ATTR_ARR
+EVENT_ATTR.AttributeKey           #'PROP' to filter on, of EVENT[_RESOURCE] (except CloudTrailEvent|EventTime)
+EVENT_ATTR.AttributeValue         #STR
+
+EVENT.CloudTrailEvent             #'LOG_EVENT_JSON'
+EVENT.EventTime
+EVENT.EventId
+EVENT.EventSource
+EVENT.EventName
+EVENT.ReadOnly                    #LOG_EVENT.*
+EVENT.Username
+EVENT.AccessKeyId                 #IDENTITY.*
+
+EVENT.Resources                   #EVENT_RESOURCE_ARR
+EVENT_RESOURCE.ResourceType       #LOG_RESOURCE.type, as 'RESOURCE' only, e.g. 'AWS::EC2::Instance' -> 'Instance'
+EVENT_RESOURCE.ResourceName       #LOG_RESOURCE.arn, as 'NAME'|MID only
 
 
                                              /=+===============================+=\
@@ -665,6 +703,60 @@ INSIGHT_ATTR.average              #NUM. Average/minute
 
                                              /=+===============================+=\
                                             /  :                               :  \
+                                            )==:          DATA STORE           :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+CreateEventDataStore()            #Req: DATASTORE
+                                  #  - no EventDataStoreArn, CreatedTimestamp, UpdatedTimestamp, Status
+                                  #  - Status 'STARTING_INGESTION' -> StartIngestion BOOL
+                                  #Res: DATASTORE
+UpdateEventDataStore()            #Req: DATASTORE
+                                  #  - no CreatedTimestamp, UpdatedTimestamp, Status, TagsList
+                                  #  - EventDataStoreArn -> EventDataStore
+                                  #Res: DATASTORE
+                                  #  - no TagsList
+StartEventDataStoreIngestion()    #Req: DATASTORE
+                                  #  - only EventDataStoreArn -> EventDataStore
+                                  #Res: empty
+                                  #Sets DATASTORE.Status 'STARTING_INGESTION'
+StopEventDataStoreIngestion()     #Req: DATASTORE
+                                  #  - only EventDataStoreArn -> EventDataStore
+                                  #Res: empty
+                                  #Sets DATASTORE.Status 'STOPPING_INGESTION'
+GetEventDataStore()               #Req: DATASTORE
+                                  #  - only EventDataStoreArn -> EventDataStore
+                                  #Res: DATASTORE
+                                  #  - no TagsList
+ListEventDataStores()             #Req: empty
+                                  #Res: EventDataStores DATASTORE_ARR
+                                  #  - no TagsList
+DeleteEventDataStore()            #Req: DATASTORE
+                                  #  - only EventDataStoreArn -> EventDataStore
+                                  #Res: empty
+RestoreEventDataStore()           #Req: DATASTORE
+                                  #  - only EventDataStoreArn -> EventDataStore
+                                  #Res: DATASTORE
+                                  #  - no TagsList
+
+DATASTORE.EventDataStoreArn       #DATASTORE_ARN. 'arn:aws:cloudtrail:REGION:ACCOUNT_ID:eventdatastore/DATASTORE'
+DATASTORE.Name                    #'DATASTORE'
+DATASTORE.CreatedTimestamp        #DATE_NUM
+DATASTORE.UpdatedTimestamp        #DATE_NUM
+
+DATASTORE.Status                  #One of:
+                                  #  - 'CREATED'
+                                  #  - 'STARTING_INGESTION', 'ENABLED'
+                                  #  - 'STOPPING_INGESTING', 'STOPPED_INGESTION'
+                                  #  - 'PENDING_DELETION'
+DATASTORE.RetentionPeriod         #DATE_NUM
+DATASTORE
+ .TerminationProtectionEnabled    #BOOL
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
                                             )==:            CHANNEL            :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -710,36 +802,6 @@ CHANNEL_STATUS
  .LatestIngestionSuccessTime      #DATE_NUM
 CHANNEL_STATUS
  .LatestIngestionErrorCode        #'CODE'
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:            EVENTS             :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-LookupEvents()                    #Req: EVENTS_REQ
-                                  #Res: Events EVENT_ARR
-
-EVENTS_REQ.StartTime|EndTime      #DATE_NUM. Search by EVENT.EventTime
-EVENTS_REQ.EventCategory          #STR
-EVENTS_REQ.LookupAttributes       #EVENT_ATTR_ARR
-EVENT_ATTR.AttributeKey           #STR
-EVENT_ATTR.AttributeValue         #STR
-
-EVENT.EventId
-EVENT.EventName
-EVENT.EventSource
-EVENT.EventTime                   #LOG_EVENT.*
-EVENT.Username                    #LOG_EVENT.userIdentity.userName
-EVENT.CloudTrailEvent             #STR
-EVENT.AccessKeyId                 #ACCESS_KEY_ID
-EVENT.ReadOnly                    #STR
-
-EVENT.Resources                   #EVENT_RESOURCE_ARR
-EVENT_RESOURCE.ResourceType       #STR
-EVENT_RESOURCE.ResourceName       #STR
 
 
                                              /=+===============================+=\
@@ -793,60 +855,6 @@ RESOURCE_POLICY.ResourcePolicy    #IAM 'POLICY'
                                   #Resource-based POLICY on CHANNEL, with resource-level permissions
                                   #Only for PACTION PutAuditEvents
                                   #Min 1 PRINCIPAL. Max 8KB, 20 STATEMENTs, 50 PRINCIPALs
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:          DATA STORE           :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-CreateEventDataStore()            #Req: DATASTORE
-                                  #  - no EventDataStoreArn, CreatedTimestamp, UpdatedTimestamp, Status
-                                  #  - Status 'STARTING_INGESTION' -> StartIngestion BOOL
-                                  #Res: DATASTORE
-UpdateEventDataStore()            #Req: DATASTORE
-                                  #  - no CreatedTimestamp, UpdatedTimestamp, Status, TagsList
-                                  #  - EventDataStoreArn -> EventDataStore
-                                  #Res: DATASTORE
-                                  #  - no TagsList
-StartEventDataStoreIngestion()    #Req: DATASTORE
-                                  #  - only EventDataStoreArn -> EventDataStore
-                                  #Res: empty
-                                  #Sets DATASTORE.Status 'STARTING_INGESTION'
-StopEventDataStoreIngestion()     #Req: DATASTORE
-                                  #  - only EventDataStoreArn -> EventDataStore
-                                  #Res: empty
-                                  #Sets DATASTORE.Status 'STOPPING_INGESTION'
-GetEventDataStore()               #Req: DATASTORE
-                                  #  - only EventDataStoreArn -> EventDataStore
-                                  #Res: DATASTORE
-                                  #  - no TagsList
-ListEventDataStores()             #Req: empty
-                                  #Res: EventDataStores DATASTORE_ARR
-                                  #  - no TagsList
-DeleteEventDataStore()            #Req: DATASTORE
-                                  #  - only EventDataStoreArn -> EventDataStore
-                                  #Res: empty
-RestoreEventDataStore()           #Req: DATASTORE
-                                  #  - only EventDataStoreArn -> EventDataStore
-                                  #Res: DATASTORE
-                                  #  - no TagsList
-
-DATASTORE.EventDataStoreArn       #DATASTORE_ARN. 'arn:aws:cloudtrail:REGION:ACCOUNT_ID:eventdatastore/DATASTORE'
-DATASTORE.Name                    #'DATASTORE'
-DATASTORE.CreatedTimestamp        #DATE_NUM
-DATASTORE.UpdatedTimestamp        #DATE_NUM
-
-DATASTORE.Status                  #One of:
-                                  #  - 'CREATED'
-                                  #  - 'STARTING_INGESTION', 'ENABLED'
-                                  #  - 'STOPPING_INGESTING', 'STOPPED_INGESTION'
-                                  #  - 'PENDING_DELETION'
-DATASTORE.RetentionPeriod         #DATE_NUM
-DATASTORE
- .TerminationProtectionEnabled    #BOOL
 
 
                                              /=+===============================+=\
