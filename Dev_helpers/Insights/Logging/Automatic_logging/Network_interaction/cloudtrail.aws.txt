@@ -29,6 +29,10 @@ Already read in user guide:
      - Getting and viewing your CloudTrail log files
      - Configuring Amazon SNS notifications for CloudTrail
      - Using AWS CloudTrail with interface VPC endpoints
+  - Working with CloudTrail Lake
+     - CloudTrail Lake supported Regions
+     - Create an integration with an event source outside of AWS
+        - CloudTrail Lake integrations event schema
   - CloudTrail log files
      - Create multiple trails
      - Logging management events
@@ -583,7 +587,7 @@ SELECTOR.ReadWriteType            #Whether to log ACTIONs that are:
                                   #  - 'All' (def)
 
 SELECTOR.IncludeManagementEvents  #BOOL (def: true). Whether to log management EVENTs
-                                  #Those are from ACTIONs triggered directly by AWS users, usually not called frequently
+                                  #Those are from MANAGEMENT_ACTIONs, i.e. ones triggered directly by AWS users, usually not called frequently
                                   #Those can also be "service EVENTs":
                                   #  - i.e. DEPENDENT_ACTION or SERVICE_ASYNC_ACTION
                                   #  - "non-API events": service EVENTs + IAM 'ConsoleLogin'
@@ -592,7 +596,7 @@ SELECTOR                          #'SERVICE_DOMAIN'_ARR (def: empty) to exclude.
                                   #Only for SERVICEs generating lots of EVENTs: 'kms|rdsdata.amazonaws.com'
 
 SELECTOR.DataResources            #DATA_RESOURCE_ARR (def: empty). Which data EVENTs to include
-                                  #Those are from DATA_ACTIONs, i.e. triggered indirectly by AWS users' users, usually called frequently
+                                  #Those are from DATA_ACTIONs, i.e. ones triggered indirectly by AWS users' users, usually called frequently
                                   #  - documented in each SERVICE's doc
                                   #When using SELECTOR (as opposed to ADVANCED_SELECTOR), can only log:
                                   #  - S3 OBJECTs
@@ -752,6 +756,13 @@ RestoreEventDataStore()           #Req: DATASTORE
                                   #Res: DATASTORE
                                   #  - no TagsList
 
+DATASTORE                         #Like TRAIL but with additional features, including AUDIT_EVENT and QUERY
+                                  #Stores EVENTs in ORC format, i.e. no LOG_FILE
+                                  #DATASTORE.AdvancedEventSelectors must allow only one LOG_EVENT.eventCategory
+                                  #  - cannot be 'Data|Insight'
+                                  #  - if 'Management': automatically filled
+                                  #  - allows 'ActivityAuditLog': audit EVENTs
+                                  #Features related to DATASTORE|CHANNEL|AUDIT_EVENTs are called "CloudTrail lake"
 DATASTORE.EventDataStoreArn       #DATASTORE_ARN. 'arn:aws:cloudtrail:REGION:ACCOUNT_ID:eventdatastore/DATASTORE'
 DATASTORE.Name                    #'DATASTORE'
 DATASTORE.CreatedTimestamp        #DATE_NUM
@@ -762,14 +773,16 @@ DATASTORE.Status                  #One of:
                                   #  - 'STARTING_INGESTION', 'ENABLED'
                                   #  - 'STOPPING_INGESTING', 'STOPPED_INGESTION'
                                   #  - 'PENDING_DELETION'
-DATASTORE.RetentionPeriod         #DATE_NUM
+
+DATASTORE.RetentionPeriod         #NUM. Delete audit EVENTs after NUM days.
+                                  #Def: 90, min: 7 days, max: 7 years
 DATASTORE
- .TerminationProtectionEnabled    #BOOL
+ .TerminationProtectionEnabled    #BOOL (def: false). Do not allow deleting audit EVENTs
 
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:            CHANNEL            :==(
+                                            )==:         CHANNEL MAIN          :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
@@ -793,27 +806,41 @@ DeleteChannel()                   #Req: CHANNEL
                                   #  - only ChannelArn -> Channel
                                   #Res: empty
 
+CHANNEL                           #Target for PutAuditEvents() to add audit EVENTs
 CHANNEL.ChannelArn                #CHANNEL_ARN. 'aws:aws:cloudtrail:REGION:ACCOUNT_ID:channel/CHANNEL'
 CHANNEL.Name                      #'CHANNEL'
 
-CHANNEL.Source                    #STR
+CHANNEL.Source                    #'CHANNEL_SOURCE', either:
+                                  #  - name of a known partner
+                                  #     - e.g. 'GitHub', 'Snyk', 'LaunchDarkly'
+                                  #     - calls PutAuditEvents() either:
+                                  #        - "direct integration": externally
+                                  #        - "solution integration": from inside current ACCOUNT
+                                  #  - 'Custom'
+                                  #1 CHANNEL_SOURCE can only have 1 CHANNEL
 CHANNEL.SourceConfig              #CHANNEL_SOURCE
 
 CHANNEL.Destinations              #CHANNEL_DEST_ARR
-CHANNEL_DEST.Type                 #STR
-CHANNEL_DEST.Location             #STR
+                                  #Max 200
+CHANNEL_DEST.Type|Location        #STR
+CHANNEL_DEST.Type
+ 'EVENT_DATA_STORE'               #Redirects to CHANNEL_DEST.Location DATASTORE_ARN
+CHANNEL_DEST.Type 'AWS_SERVICE'   #"Service-linked CHANNEL", for CHANNEL_REST.Location 'SERVICE'
+                                  #PACTION *Channel -> *ServiceLinkedChannel
 
 CHANNEL.IngestionStatus           #CHANNEL_STATUS
 CHANNEL_STATUS
- .LatestIngestionAttemptEventID   #STR
+ .LatestIngestionAttemptEventID   #Last EVENT.eventID being processed
 CHANNEL_STATUS
- .LatestIngestionAttemptTime      #DATE_NUM
+ .LatestIngestionAttemptTime      #DATE_NUM of last EVENT processing start
 CHANNEL_STATUS
- .LatestIngestionSuccessEventID   #STR
+ .LatestIngestionSuccessEventID
 CHANNEL_STATUS
- .LatestIngestionSuccessTime      #DATE_NUM
+ .LatestIngestionSuccessTime      #Same for successful processing
 CHANNEL_STATUS
- .LatestIngestionErrorCode        #'CODE'
+ .LatestIngestionErrorCode        #'CODE'. Same for failed processing
+
+https://docs.aws.amazon.com/awscloudtrail/latest/userguide/viewing-service-linked-channels.html???
 
 
                                              /=+===============================+=\
@@ -823,27 +850,26 @@ CHANNEL_STATUS
                                              \=+===============================+=/
 
 
-POST /PutAuditEvents              #Req: AUDIT_EVENT_REQ
+POST /PutAuditEvents              #Req: AUDIT_EVENTS_REQ
 PutAuditEvents()                  #  - query parameters: channelArn, externalId
-                                  #Res: AUDIT_EVENT_RES
+                                  #Res: AUDIT_EVENTS_RES
 
-AUDIT_EVENT_REQ                   #Add EVENTs to a DATASTORE through a CHANNEL
-                                  #Called "audit EVENTs"
+AUDIT_EVENTS_REQ                  #Add audit EVENTs to a DATASTORE through a CHANNEL
+                                  #"Audit EVENTs" are custom LOG_EVENTs
                                   #PutAuditEvents() is a DATA_ACTION
-AUDIT_EVENT_REQ.channelArn        #CHANNEL_ARN
-AUDIT_EVENT_REQ.externalId        #STR, used by COND_KEY sts:ExternalId
+AUDIT_EVENTS_REQ.channelArn       #CHANNEL_ARN
 
-AUDIT_EVENT_REQ.auditEvents       #AUDIT_EVENT_ARR
+AUDIT_EVENTS_REQ.auditEvents      #AUDIT_EVENT_ARR
                                   #Max 100. Max 1MB
 AUDIT_EVENT.id                    #'AUDIT_EVENT'
 AUDIT_EVENT.eventData             #'AUDIT_EVENT_DATA_JSON'
 AUDIT_EVENT.eventDataChecksum     #'SHA256_BASE64' of AUDIT_EVENT.eventData
 
-AUDIT_EVENT_RES.successful        #SUCCESS_AUDIT_EVENT_ARR
+AUDIT_EVENTS_RES.successful       #SUCCESS_AUDIT_EVENT_ARR
 SUCCESS_AUDIT_EVENT.id            #'AUDIT_EVENT'
 SUCCESS_AUDIT_EVENT.eventID       #EVENT.EventId
 
-AUDIT_EVENT_RES.failed            #FAILED_AUDIT_EVENT_ARR
+AUDIT_EVENTS_RES.failed           #FAILED_AUDIT_EVENT_ARR
 FAILED_AUDIT_EVENT.id             #'AUDIT_EVENT'
 FAILED_AUDIT_EVENT.errorCode      #'CODE'
 FAILED_AUDIT_EVENT.errorMessage   #'ERROR'
@@ -878,7 +904,7 @@ AUDIT_EVENT_DATA.UID              #Required. Like LOG_EVENT.requestID, but CHANN
 AUDIT_EVENT_DATA
  .eventTime|eventSource|eventName #Required
 AUDIT_EVENT_DATA.userIdentity     #Required, but only has type|principalId
-                                  #Also has details OBJ (CHANNEL-specific auth info)
+                                  #Also has details OBJ: CHANNEL-specific auth info
 AUDIT_EVENT_DATA
  .recipientAccountId              #Must be CHANNEL's ACCOUNT_ID
 AUDIT_EVENT_DATA.sourceIPAddress
@@ -889,7 +915,7 @@ AUDIT_EVENT_DATA.sourceIPAddress
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:            POLICY             :==(
+                                            )==:        CHANNEL POLICY         :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
@@ -907,7 +933,11 @@ RESOURCE_POLICY.ResourceArn       #CHANNEL_ARN
 RESOURCE_POLICY.ResourcePolicy    #IAM 'POLICY'
                                   #Resource-based POLICY on CHANNEL, with resource-level permissions
                                   #Only for PACTION PutAuditEvents
+                                  #With partner CHANNEL_SOURCEs, should check Service.Principal ACCOUNT_ID
                                   #Min 1 PRINCIPAL. Max 8KB, 20 STATEMENTs, 50 PRINCIPALs
+
+AUDIT_EVENTS_REQ.externalId       #STR, used by COND_KEY sts:ExternalId
+                                  #Should be used with partner CHANNEL_SOURCEs
 
 
                                              /=+===============================+=\
@@ -995,6 +1025,7 @@ GetQueryResults()                 #Req: QUERY
                                   #Res: QUERY
                                   #  - no QueryId, QueryAlias, EventDataStore, QueryString, QueryParameters, DeliveryS3Uri, DeliveryStatus
 
+QUERY                             #Can be across multiple REGIONs|ACCOUNTs
 QUERY.QueryId                     #QUERY_MID
 QUERY.QueryAlias                  #STR
 QUERY.EventDataStore              #DATASTORE_ARN
@@ -1003,6 +1034,7 @@ QUERY_STATS.CreationTime          #DATE_NUM
 QUERY.QueryString                 #STR
 QUERY.QueryParameters             #STR_ARR
 QUERY.QueryResultRows             #OBJ_ARR_ARR
+                                  #Deleted 7 days after creation
 
 QUERY.DeliveryS3Uri               #STR
 QUERY.DeliveryStatus              #STR
@@ -1055,23 +1087,12 @@ RemoveTags()                      #Req: RESOURCE_TAGS
                                   #Res: empty
 
 RESOURCE_TAGS.ResourceId          #TRAIL_ARN|CHANNEL_ARN|DATASTORE_ARN
+                                  #CHANNEL|DATASTORE can use ABAC, but not TRAIL
 RESOURCE_TAGS.TagsList            #TAG_PAIRS
 
 TRAIL.TagsList
 CHANNEL.Tags
 DATASTORE.TagsList                #TAG_PAIRS. Requires PACTION AddTags
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:     SERVICE-LINKED CHANNEL    :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-PACTION CreateServiceLinkedChannel, DeleteServiceLinkedChannel, GetServiceLinkedChannel, ListServiceLinkedChannels, UpdateServiceLinkedChannel???
-
-https://docs.aws.amazon.com/awscloudtrail/latest/userguide/viewing-service-linked-channels.html
 
 
                                              /=+===============================+=\
