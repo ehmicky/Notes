@@ -16,44 +16,11 @@ TO DOCUMENT ==>
      - JOBs: https://docs.aws.amazon.com/AmazonS3/latest/userguide/batch-ops-examples-event-bridge-cloud-trail.html
   - go through todo list in "new service" doc
 
-Already read in user guide:
-  - What is AWS CloudTrail
-     - CloudTrail concepts
-        - How does CloudTrail behave regionally and globally
-        - Global service events
+Not read in user guide:
   - Working with CloudTrail
-     - Viewing events with CloudTrail Event history
-     - Viewing CloudTrail Insights events
-     - Creating a trail for your AWS account
-     - Creating a trail for an organization
-     - Getting and viewing your CloudTrail log files
-     - Configuring Amazon SNS notifications for CloudTrail
-     - Using AWS CloudTrail with interface VPC endpoints
-  - Working with CloudTrail Lake
-     - CloudTrail Lake supported Regions
-     - Create an event data store
-     - Manage event data store lifecycles
-     - Create an integration with an event source outside of AWS
-     - View Lake dashboards
-     - Learning resources
-     - Managing CloudTrail Lake by using the AWS CLI
-     - Supported CloudWatch metrics
+     - Viewing service-linked channels by using the AWS CLI
   - CloudTrail log files
-     - Create multiple trails
-     - Logging management events
-     - Logging data events
-     - Logging Insights events for trails
-     - Managing data consistency in CloudTrail
-     - Receiving CloudTrail log files from multiple Regions
-     - Receiving CloudTrail log files from multiple accounts
-     - Validating CloudTrail log file integrity
-  - Settings
-  - Security
-  - Log event reference
-  - FaQ:
-     - Services and Region support
-     - Applying a trail to all Regions
-     - Multiple trails
+     - Using the CloudTrail Processing Library
 
 VERSION ==>                       #2023-08-01
 
@@ -77,7 +44,15 @@ PAGINATION ==>                    #REQ|RES.NextToken STR
                                   #REQ.MaxResults NUM (def|max: 1e3, 50 with LookupEvents(), none with TRAIL)
                                   #No pagination with RESOURCE_TAGS|PUBLIC_KEY
 
+THROTTLING ==>                    #Max 10 requests per second, except:
+                                  #  - PutAuditEvents(): 100 requests per second
+                                  #  - StartQuery|CancelQuery(): 3 requests per second
+                                  #  - LookupEvents(): 2 requests per second
+                                  #  - write ACTIONs: 1 request per second
+
 PRICING ==>                       #TRAIL: first free
+                                  #???
+                                  #See https://docs.aws.amazon.com/awscloudtrail/latest/userguide/cloudtrail-trail-manage-costs.html#cloudtrail-trail-manage-costs-trailconfig
 
 AWSCloudTrail_FullAccess          #AWS managed POLICY, granting:
                                   #  - cloudtrail:* on anything
@@ -272,8 +247,10 @@ TRAIL_PREFIX/AWSLogs
 
 
 LOG_FILE                          #Some of the fields are optional (missing or null)
+                                  #Max 50MB
 LOG_FILE.Records                  #LOG_EVENT_ARR
 
+LOG_EVENT                         #Max 256KB
 LOG_EVENT.eventVersion            #Current: '1.09'
 LOG_EVENT.eventID                 #EVENT_MID
 LOG_EVENT.eventTime               #'DATE'
@@ -770,6 +747,7 @@ DATASTORE                         #Like TRAIL but accessed through SQL QUERYs
                                   #  - cannot be 'Insight'
                                   #  - if 'Management|Data': automatically filled
                                   #  - allows 'ActivityAuditLog': audit EVENTs
+                                  #Max 10 per REGION
 DATASTORE.EventDataStoreArn       #DATASTORE_ARN. 'arn:aws:cloudtrail:REGION:ACCOUNT_ID:eventdatastore/DATASTORE'
 DATASTORE.Name                    #'DATASTORE'
 DATASTORE.CreatedTimestamp        #DATE_NUM
@@ -804,21 +782,23 @@ CreateChannel()                   #Req: CHANNEL
                                   #  - no SourceConfig, IngestionStatus
 UpdateChannel()                   #Req: CHANNEL
                                   #  - no Source, SourceConfig, IngestionStatus, Tags
+                                  #  - ChannelArn -> Channel ARN|MID
                                   #Res: CHANNEL
                                   #  - no SourceConfig, IngestionStatus, Tags
 GetChannel()                      #Req: CHANNEL
-                                  #  - only ChannelArn -> Channel
+                                  #  - only ChannelArn -> Channel ARN|MID
                                   #Res: CHANNEL
                                   #  - no Tags
 ListChannels()                    #Req: empty
                                   #Res: Channels CHANNEL_ARR
                                   #  - only ChannelArn, Name
 DeleteChannel()                   #Req: CHANNEL
-                                  #  - only ChannelArn -> Channel
+                                  #  - only ChannelArn -> Channel ARN|MID
                                   #Res: empty
 
 CHANNEL                           #Target for PutAuditEvents() to add audit EVENTs
-CHANNEL.ChannelArn                #CHANNEL_ARN. 'aws:aws:cloudtrail:REGION:ACCOUNT_ID:channel/CHANNEL'
+                                  #Max 25
+CHANNEL.ChannelArn                #CHANNEL_ARN. 'aws:aws:cloudtrail:REGION:ACCOUNT_ID:channel/CHANNEL_MID'
 CHANNEL.Name                      #'CHANNEL'
 
 CHANNEL.Source                    #'CHANNEL_SOURCE', either:
@@ -828,6 +808,7 @@ CHANNEL.Source                    #'CHANNEL_SOURCE', either:
                                   #        - "direct integration": externally
                                   #        - "solution integration": from inside current ACCOUNT
                                   #  - 'Custom'
+                                  #  - 'CloudTrail': for service-linked CHANNELs
                                   #1 CHANNEL_SOURCE can only have 1 CHANNEL
 CHANNEL.SourceConfig              #CHANNEL_SOURCE
 
@@ -836,7 +817,7 @@ CHANNEL.Destinations              #CHANNEL_DEST_ARR
 CHANNEL_DEST.Type|Location        #STR
 CHANNEL_DEST.Type
  'EVENT_DATA_STORE'               #Redirects to CHANNEL_DEST.Location DATASTORE_ARN
-CHANNEL_DEST.Type 'AWS_SERVICE'   #"Service-linked CHANNEL", to receive management|data EVENTs from CHANNEL_REST.Location 'SERVICE'
+CHANNEL_DEST.Type 'AWS_SERVICE'   #"Service-linked CHANNEL", to receive management EVENTs from CHANNEL_REST.Location 'SERVICE'
                                   #PACTION *Channel -> *ServiceLinkedChannel
                                   #Automatically sets CHANNEL.SourceConfig, based on SERVICE
 
@@ -851,8 +832,6 @@ CHANNEL_STATUS
  .LatestIngestionSuccessTime      #Same for successful processing
 CHANNEL_STATUS
  .LatestIngestionErrorCode        #'CODE'. Same for failed processing
-
-https://docs.aws.amazon.com/awscloudtrail/latest/userguide/viewing-service-linked-channels.html???
 
 
                                              /=+===============================+=\
@@ -875,7 +854,6 @@ AUDIT_EVENTS_REQ.auditEvents      #AUDIT_EVENT_ARR
                                   #Max 100. Max 1MB.
 AUDIT_EVENT.id                    #'AUDIT_EVENT'
 AUDIT_EVENT.eventData             #'AUDIT_EVENT_DATA_JSON'
-                                  #Max 256KB
 AUDIT_EVENT.eventDataChecksum     #'SHA256_BASE64' of AUDIT_EVENT.eventData
 
 AUDIT_EVENTS_RES.successful       #SUCCESS_AUDIT_EVENT_ARR
@@ -1005,6 +983,7 @@ IMPORT_FAILURE.LastUpdatedTime    #DATE_NUM
 IMPORT_FAILURE.Location           #STR
 IMPORT_FAILURE.Status             #STR
 
+https://docs.aws.amazon.com/awscloudtrail/latest/userguide/cloudtrail-copy-trail-to-lake.html
 https://docs.aws.amazon.com/awscloudtrail/latest/userguide/cloudtrail-copy-trail-to-lake-eds.html
 
 
@@ -1041,6 +1020,7 @@ GetQueryResults()                 #Req: QUERY
                                   #  - no QueryId, QueryAlias, EventDataStore, QueryString, QueryParameters, DeliveryS3Uri, DeliveryStatus
 
 QUERY                             #Can be across multiple REGIONs|ACCOUNTs
+                                  #Max 10 ongoing QUERYs
 QUERY.QueryId                     #QUERY_MID
 QUERY.QueryAlias                  #STR
 QUERY.EventDataStore              #DATASTORE_ARN
