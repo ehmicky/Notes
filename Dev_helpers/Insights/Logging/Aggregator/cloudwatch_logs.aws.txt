@@ -48,10 +48,14 @@ REQ_ID                        #x-amzn-RequestId [S]
 
 PAGINATION ==>                #REQ.limit NUM (def|max: 50) + REQ|RES.nextToken except:
                               #  - def|max 1e4: StartQuery()
-                              #  - def|max 1e4 or 1MB: FilterLogEvents()
+                              #  - def|max 1e4 or 1MB: GetLogEvents|FilterLogEvents()
                               #  - def|max 1e4 and use RES.nextBackwardToken|nextForwardToken: GetLogEvents()
                               #  - def|max 1e3 and use REQ.maxResults: DescribeQueries|QueryDefinitions()
                               #  - no pagination: DescribeAccountPolicies(), GetLogGroupFields(), TestMetricFilter()
+
+THROTTLING ==>                #Max:
+                              #  - 50 requests/sec: CreateLogStream()
+                              #  - 5 requests/sec: DescribeLogStreams()
 
 PRICING ==>                   #  - 0.5$/GB read
                               #  - 0.03$/GB stored
@@ -80,6 +84,7 @@ DeleteRetentionPolicy()       #Req:
 DescribeLogGroups()           #Req LOG_GROUP_REQ
                               #Res: logGroups LOG_GROUP_ARR
                               #  - no tags
+                              #  - only arn|logGroupName|creationTime if logGroupNamePattern used
 DeleteLogGroup()              #Req:
                               #  - only logGroupName
                               #Res: empty
@@ -90,9 +95,9 @@ LOG_GROUP.arn                 #LOG_GROUP_ARN. arn:aws:logs:REGION:ACCOUNT_ID:log
 LOG_GROUP.logGroupName        #'LOG_GROUP'. Max 512 chars, [[:alnum:]_-/.#]
                               #Can include a NAMEPATH
 LOG_GROUP_REQ
- .logGroupNamePrefix          #STR
+ .logGroupNamePrefix          #STR. Filter logGroupName that start with STR
 LOG_GROUP_REQ
- .logGroupNamePattern         #STR
+ .logGroupNamePattern         #STR. Filter logGroupName that include STR, case-insensitively
 LOG_GROUP.creationTime        #DATE_NUM
 
 LOG_GROUP.retentionInDays     #NUM (def: none) of days before deleting LLEVENTs, among:
@@ -101,7 +106,7 @@ LOG_GROUP.retentionInDays     #NUM (def: none) of days before deleting LLEVENTs,
                               #  - 1-6 months
                               #  - 1|1.5|2-10 years
 
-LOG_GROUP.storedBytes         #NUM
+LOG_GROUP.storedBytes         #Total NUM of bytes stored
 
 
                                              /=+===============================+=\
@@ -124,13 +129,13 @@ DeleteLogStream()             #Req: LOG_STREAM
 LOG_STREAM                    #Series of LLEVENTs
                               #Deleted if empty for 2 months
 LOG_STREAM.arn                #LOG_STREAM_ARN. arn:aws:logs:REGION:ACCOUNT_ID:log-group:LOG_GROUP:log-stream:LOG_STREAM
-LOG_STREAM.logStreamName      #'LOG_STREAM'
+LOG_STREAM.logStreamName      #'LOG_STREAM'. Max 512 chars, no : or *
 LOG_STREAM_REQ
  .logStreamNamePrefix         #STR
 LOG_STREAM.creationTime       #DATE_NUM
-LOG_STREAM.lastIngestionTime  #DATE_NUM
-LOG_STREAM.firstEventTimestamp#DATE_NUM
-LOG_STREAM.lastEventTimestamp #DATE_NUM
+LOG_STREAM.firstEventTimestamp#DATE_NUM of earliest LLEVENT
+LOG_STREAM.lastIngestionTime  #DATE_NUM of latest LLEVENT starting processing
+LOG_STREAM.lastEventTimestamp #DATE_NUM of latest LLEVENT finishing processing
 
 LOG_STREAM[_REQ]
  |METRIC_FILTER.logGroupName  #'LOG_GROUP'
@@ -139,6 +144,7 @@ LOG_STREAM_REQ
 
 LOG_STREAM_REQ.orderBy        #'LogStreamName' (def) or 'LastEventTime'
 LOG_STREAM_REQ.descending     #BOOL (def: false). Sorting order
+
 
 
                                              /=+===============================+=\
@@ -159,47 +165,58 @@ FilterLogEvents()             #Req: LLEVENTS_REQ
                               #  - no startFromHead
                               #Res: events LLEVENT_ARR, searchedLogStreams LLEVENTS_RES_ARR
 
-LLEVENTS                      #
-LLEVENTS[_REQ|RES]
- .logStreamName               #'LOG_STREAM'
+LLEVENTS.logEvents            #LLEVENT_ARR
+                              #Max 1e4. Max 1MB
+LLEVENT                       #Log message
+                              #Max 256KB
 
+LLEVENT.message               #STR
+
+LLEVENT.ingestionTime         #DATE_NUM of LLEVENT itelf
+LLEVENT.timestamp             #DATE_NUM of event being logged
+                              #Max 14 days before ingestionTime, and 2h after it
+                              #LLEVENTS.logEvents is sorted by LLEVENT.timestamp
+                              #  - in request, must be sorted, with a max 24h span
 LLEVENTS_REQ.startTime|endTime#DATE_NUM. Filter by LLEVENT.timestamp
 LLEVENTS_REQ.startFromHead    #BOOL (def: true). asc|desc sorting order.
                               #Always sorted by LLEVENT.timestamp
+
+LLEVENTS_NEW
+ .rejectedLogEventsInfo       #LLEVENTS_REJECT. LLEVENTs that failed
+LLEVENTS_REJECT
+ .tooOldLogEventEndIndex      #NUM of LLEVENTs with a timestamp >14d older than ingestionTime
+LLEVENTS_REJECT
+ .tooNewLogEventStartIndex    #NUM of LLEVENTs with a timestamp >2h newer than ingestionTime
+LLEVENTS_REJECT
+ .expiredLogEventEndIndex     #NUM of LLEVENTs beyond LOG_GROUP.retentionInDays
+
+LLEVENTS[_REQ|RES]
+ .logStreamName               #'LOG_STREAM'
+LLEVENTS_RES
+ .searchedCompletely          #BOOL. Whether all LLEVENTs in LOG_STREAM were searched
 
 LLEVENTS[_REQ].logGroupName   #'LOG_GROUP'
 LLEVENTS_REQ
  .logGroupIdentifier          #'LOG_GROUP'|LOG_GROUP_ARN
 
-LLEVENTS_REQ.filterPattern    #'FILTER_PATTERN', either:
-                              #  - STR:
-                              #     - pattern triggering metric
-                              #     - can be '' for any log event
-                              #  - [VAR[=|>|<|>=|<=|!=VAL],...]:
-                              #     - for tab-delimited log lines, when a field equals VAL
-                              #     - VAR can be '...' at beginning, middle or end
-                              #STR and VAL can use globbing
+LLEVENTS_REQ.filterPattern    #'FILTER_PATTERN'. Filter by LLEVENT.message
+                              #Can be:
+                              #  - '': any
+                              #  - 'VAL ...':
+                              #     - includes all of VALs
+                              #     - case-sensitive
+                              #     - can use globbing: *
+                              #  - [VAR[OPVAL],...]:
+                              #     - set each tab-delimited field as a $VAR
+                              #     - if OP (= != > >= < <=), filter LLEVENT that do not match VAL
+                              #        - if OP = !=, can use globbing: *
+                              #     - can use ... instead of VAR anywhere
+                              #        - set each field as $NUM VAR (1-based)
+                              #  - []: same as [...]
+                              #Max 1KB
 
 LLEVENTS_REQ|QUERY_RECORD_REQ #BOOL. If false (def), sensitive data are masked
  .unmask                      #If true, requires PACTION logs:Unmask
-
-LLEVENTS.logEvents            #LLEVENT_ARR
-LLEVENT                       #Log message
-LLEVENT.timestamp             #DATE_NUM of event being logged
-LLEVENT.ingestionTime         #DATE_NUM of LLEVENT itelf
-LLEVENT.message               #STR
-
-LLEVENTS_RES
- .searchedCompletely          #BOOL. Whether all LLEVENTs in LOG_STREAM were searched
-
-LLEVENTS_NEW
- .rejectedLogEventsInfo       #LLEVENTS_REJECT
-LLEVENTS_REJECT
- .expiredLogEventEndIndex     #NUM
-LLEVENTS_REJECT
- .tooNewLogEventStartIndex    #NUM
-LLEVENTS_REJECT
- .tooOldLogEventEndIndex      #NUM
 
 LIVE TAIL ==>                 #View LLEVENTs as they come
                               #Can filter by LOG_GROUPs|LOG_STREAMs|FILTER_PATTERNs
@@ -225,35 +242,42 @@ DeleteMetricFilter()          #Req: METRIC_FILTER
                               #  - only filterName, logGroupName
                               #Res: empty
 
-METRIC_FILTER                 #Create METRIC_DATA from LLEVENTs
+METRIC_FILTER                 #Create CloudWatch METRIC_DATA from LLEVENTs
+                              #Max 100 per LOG_GROUP
 METRIC_FILTER.filterName      #'METRIC_FILTER'
 METRIC_FILTER.creationTime    #DATE_NUM
 
-METRIC_FILTER|TEST_FILTER_REQ
- .filterPattern               #'FILTER_PATTERN'
+METRIC_FILTER.filterPattern   #'FILTER_PATTERN'
 
 METRIC_FILTER
- .metricTransformations       #METRIC_TRANSFORM_ARR
+ .metricTransformations       #METRIC_TRANSFORM_ARR. METRIC_DATA being created
 METRIC_TRANSFORM.metricName   #'METRIC'. METRIC.MetricName
 METRIC_TRANSFORM
  .metricNamespace             #'NAMESPACE'. METRIC.Namespace
 METRIC_TRANSFORM.dimensions   #OBJ. METRIC.Dimensions
+                              #Max 3 DVARs
+                              #If >1000 different DVALs in an hour, METRIC_FILTER automatically disabled
+                              #Can include '$VAR'???
 METRIC_TRANSFORM.metricValue  #STR. METRIC_DATUM.Value
-METRIC_TRANSFORM.defaultValue #NUM
+                              #Can include '$VAR'???
+METRIC_TRANSFORM.defaultValue #STR. METRIC_DATUM.Value
+                              #Emitted when METRIC_FILTER.filterPattern does not match
 METRIC_TRANSFORM.unit         #STR. METRIC_DATUM.Unit
 
-LOG_GROUP.metricFilterCount   #NUM
+LOG_GROUP.metricFilterCount   #NUM of METRIC_FILTERs
 
 TestMetricFilter()            #Req: TEST_FILTER_REQ
                               #Res: matches TEST_FILTER_RES_ARR
 
-TEST_FILTER_REQ
- .logEventMessages            #STR_ARR
+TEST_FILTER_REQ               #Try a METRIC_FILTER against test LLEVENTs
+TEST_FILTER_REQ               #STR_ARR of test LLEVENT.message
+ .logEventMessages            #Max 50
+TEST_FILTER_REQ.filterPattern #'FILTER_PATTERN'
 
-TEST_FILTER_RES.eventMessage  #STR
-TEST_FILTER_RES.eventNumber   #NUM
+TEST_FILTER_RES.eventMessage  #STR. Value in logEventMessages
+TEST_FILTER_RES.eventNumber   #NUM. Index in logEventMessages
 TEST_FILTER_RES
- .extractedValues             #{ VAR: STR, ... }
+ .extractedValues             #{ $VAR: STR, ... } matched by FILTER_PATTERN
 
 
                                              /=+===============================+=\
