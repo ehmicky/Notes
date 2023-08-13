@@ -29,6 +29,8 @@ Already read:
      - Use Live Tail to view logs in near real time
      - Search log data using filter patterns
   - Creating metrics from log events using filters
+  - Real-time processing of log data with subscriptions
+  - Exporting log data to Amazon S3
 
 GOAL ==>                      #Aggregates logs to single place, with rotation, and possibility to create CloudWatch alarms when log line match pattern
 
@@ -356,7 +358,7 @@ GetQueryResults()             #Req: QUERY
 
 QUERY                         #Advanced search|query for LLEVENTs
                               #Called "Logs Insights"
-                              #Times out after 60m. Once complete, deleted after 7d
+                              #60m timeout. Once complete, deleted after 7d
                               #Max 30 running at once
 QUERY.queryId                 #QUERY_MID
 QUERY.createTime              #DATE_NUM
@@ -610,7 +612,7 @@ isIp[V4|6]InSubnet
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:         SUBSCRIPTION          :==(
+                                            )==:       SUBSCRIPTION MAIN       :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
@@ -636,16 +638,24 @@ SUBSCRIPTION.logGroupName     #'LOG_GROUP'
 
 SUBSCRIPTION.filterPattern    #'FILTER_PATTERN'
 
-SUBSCRIPTION.distribution     #Whether to group:
-                              #  - 'ByLogStream': by LOG_STREAM
-                              #  - 'Random': randomly, i.e. uniform distribution of LLEVENTs
-                              #Only for Kinesis STREAM|FIREHOSE
+SUBSCRIPTION.destinationArn   #ARN of either Lambda FUNCTION, Kinesis STREAM|FIREHOSE or DESTINATION
 
 SUBSCRIPTION.roleArn          #ROLE_ARN used to write LLEVENTs onto SUBSCRIPTION.destinationArn
                               #Requires PACTION iam:PassRole
                               #If using a DESTINATION, should use DESTINATION.roleArn instead
+                              #  - unless logs come from another SERVICE, in which case:
+                              #     - both SUBSCRIPTION|DESTINATION.roleArn must be used
+                              #     - SUBSCRIPTION.roleArn must grant PACTION logs:PutLogEvents instead
 
-PAYLOAD                       #Sent to the destination
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:     SUBSCRIPTION PAYLOAD      :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+PAYLOAD                       #Sent to the SUBSCRIPTION destination
                               #Is OBJ_JSON that is base64'd and gzip'd
 PAYLOAD.owner                 #ACCOUNT_ID
 PAYLOAD.logGroup              #'LOG_GROUP'
@@ -657,13 +667,36 @@ PAYLOAD.messageType           #Either:
 PAYLOAD.logEvents             #LLEVENT_ARR
                               #Only message, timestamp, and id LLEVENT_MID
 
-SUBSCRIPTION.destinationArn   #ARN of either Lambda FUNCTION or Kinesis STREAM|FIREHOSE
 
-KINESIS STREAM|FIREHOSE ==>   #Permissions:
-                              #  - must use SUBSCRIPTION.roleArn
-                              #  - use a trust policy for Principal.Service 'logs.amazonaws.com'
-                              #  - PACTION kinesis:PutRecord
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:      SUBSCRIPTION LAMBDA      :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+PERMISSION ==>                #Must use LAMBDA FUNC_VERSION.Role, not SUBSCRIPTION.roleArn
+                              #Use a LAMBDA PERMISSION policy:
+                              #  - Principal.Service 'logs.amazonaws.com'
+                              #  - allow PACTION lambda:InvokeFunction
+                              #  - COND_KEY aws:SourceArn LOG_GROUP_ARN, aws:SourceAccount ACCOUNT_ID
+
+INVOCATION ==>                #InvocationType 'Event'
+REQ.awslogs.data              #'PAYLOAD_JSON_GZIP_BASE64'
+RES                           #None
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:     SUBSCRIPTION KINESIS      :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+PERMISSIONS ==>               #Must use SUBSCRIPTION.roleArn
+                              #Use a trust policy for Principal.Service 'logs.amazonaws.com'
                               #  - COND_KEY aws:SourceArn arn:aws:logs:REGION:ACCOUNT_ID:*
+                              #Use a ROLE policy to allow PACTION kinesis:PutRecord
 AWSServiceRoleForLogDelivery  #SERVICE_LINKED_ROLE used as SUBSCRIPTION.roleArn with Kinesis FIREHOSE
                               #Automatically created, if PACTION iam:CreateServiceLinkedRole
 AWSServiceRoleForLogDelivery  #AWS managed POLICY used by AWSServiceRoleForLogDelivery
@@ -671,20 +704,14 @@ AWSServiceRoleForLogDelivery  #AWS managed POLICY used by AWSServiceRoleForLogDe
                               #  - providing Firehose delivery stream has TAG LogDeliveryEnabled 'true'
                               #     - automatically setup by AWS
 
-LAMBDA FUNCTION ==>           #Permissions:
-                              #  - must use LAMBDA FUNC_VERSION.Role, not SUBSCRIPTION.roleArn
-                              #  - use a LAMBDA PERMISSION policy for Principal.Service 'logs.amazonaws.com'
-                              #  - COND_KEY aws:SourceArn LOG_GROUP_ARN, aws:SourceAccount ACCOUNT_ID
-                              #  - PACTION kinesis:InvokeFunction
-                              #Invocation:
-                              #  - InvocationType 'Event'
-                              #  - REQ.awslogs.data 'PAYLOAD_JSON_GZIP_BASE64'
-                              #  - no RES
+SUBSCRIPTION.distribution     #Whether to group:
+                              #  - 'ByLogStream': by LOG_STREAM
+                              #  - 'Random': randomly, i.e. uniform distribution of LLEVENTs
 
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:          DESTINATION          :==(
+                                            )==:  SUBSCRIPTION CROSS-ACCOUNT   :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
@@ -706,19 +733,22 @@ DeleteDestination()           #Req: DESTINATION
 
 DESTINATION                   #SUBSCRIPTION.destinationArn that can be used in a different ACCOUNT
                               #Can only be Kinesis STREAM|FIREHOSE, not Lambda FUNCTION
+                              #Must be in same REGION as LOG_GROUP
+                              #A test PAYLOAD is sent on DESTINATION creation
 DESTINATION.arn               #DESTINATION_ARN. arn:aws:logs:REGION:ACCOUNT_ID:destination:DESTINATION
 DESTINATION.destinationName   #'DESTINATION'
 DESTINATION.creationTime      #DATE_NUM
 
 DESTINATION.targetArn         #Kinesis STREAM|FIREHOSE_ARN
 
-DESTINATION.accessPolicy      #Resource-based 'POLICY' for DESTINATION. Must have:
-                              #  - Principal.Service 'logs.REGION.amazonaws.com'
+DESTINATION.roleArn           #Like SUBSCRIPTION.roleArn, but for DESTINATION.targetArn
+DESTINATION.accessPolicy      #Resource-based 'POLICY' to allow DESTINATION to be used as SUBSCRIPTION.roleArn
+                              #E.g. can restrict which ACCOUNTs can send to DESTINATION
+                              #Must have:
                               #  - PACTION logs:PutSubscriptionFilter
                               #  - Resource DESTINATION_ARN
                               #Max 5KB
-DESTINATION.roleArn           #Like SUBSCRIPTION.roleArn, but for DESTINATION.targetArn
-DESTINATION.forceUpdate       #BOOL ???
+DESTINATION.forceUpdate       #BOOL (def: false). Allow upserting.
 
 
                                              /=+===============================+=\
@@ -740,16 +770,27 @@ CancelExportTask()            #Req: EXPORT
                               #  - only taskId
                               #Res: empty
 
+EXPORT                        #Export LOG_GROUP to S3 OBJECTs
+                              #24h timeout
 EXPORT.taskId                 #EXPORT_MID
 EXPORT.taskName               #'EXPORT'
-EXPORT.destination            #S3 'BUCKET'
-EXPORT.destinationPrefix      #S3 'OBJECT' prefix
 EXPORT
  .executionInfo.creationTime  #DATE_NUM
 
 EXPORT.logGroupName           #'LOG_GROUP'
-EXPORT.logStreamNamePrefix    #STR
-EXPORT.from|to                #DATE_NUM
+EXPORT.logStreamNamePrefix    #STR. Only if 'LOG_STREAM' start with STR
+EXPORT.from|to                #DATE_NUM. Filter by LLEVENT.timestamp
+
+EXPORT.destination            #S3 'BUCKET'
+                              #Must be in same REGION as LOG_GROUP
+EXPORT.destinationPrefix      #STR. Prefix to all S3 OBJECTs
+
+PERMISSIONS ==>               #Must allow:
+                              #  - PACTION s3:GetBucketAcl on BUCKET, s3:PutObject on OBJECTs
+                              #     - also some kms:* if using S3-KMS (see its doc)
+                              #  - Principal.Service 'logs.amazonaws.com'
+                              #  - COND_KEY aws:SourceArn LOG_GROUP_ARN, aws:SourceAccount ACCOUNT_ID
+                              #  - COND_KEY s3:x-amz-acl 'bucket-owner-full-control' (only for s3:PutObject)
 
 EXPORT.status.code            #STR among:
                               #  - PENDING
@@ -759,8 +800,6 @@ EXPORT.status.code            #STR among:
 EXPORT.status.message         #STR
 EXPORT
  .executionInfo.completionTime#DATE_NUM
-
-https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/S3Export.html
 
 
                                              /=+===============================+=\
@@ -786,17 +825,82 @@ KMS_ASSOC.resourceIdentifier  #Either:
 LOG_GROUP.kmsKeyId            #KMS_KEY_ID. Encrypt LLEVENTs at rest
 QUERY_RES.encryptionKey       #KMS_KEY_ID. Encrypt QUERY_RESULTs at rest
 
-PERMISSIONS ==>               #Must allow Principal.Service 'logs.REGION.amazonaws.com' to PACTIONs
-                              #kms:[Re]Encrypt*|Decrypt*|GenerateDataKey*|Describe*
-                              #  - COND_KEY aws:SourceArn KMS_ACCOC.resourceIdentifier
-                              #  - COND_KEY aws:SourceAccount ACCOUNT_ID
-
-https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/encrypt-log-data-kms.html
+PERMISSIONS ==>               #Must allow:
+                              #  - Principal.Service 'logs.amazonaws.com'
+                              #  - PACTIONs kms:[Re]Encrypt*|Decrypt*|GenerateDataKey*|Describe*
+                              #  - COND_KEY aws:SourceArn KMS_ACCOC.resourceIdentifier, aws:SourceAccount ACCOUNT_ID
+                              #  - COND_KEY kms:EncryptionContext:aws:logs:arn LOG_GROUP_ARN
 
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:        POLICY ACCOUNT         :==(
+                                            )==:           MASK MAIN           :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+PutDataProtectionPolicy()     #Req: DATA_POLICY
+                              #  - no lastUpdatedTime
+                              #Res: DATA_POLICY
+GetDataProtectionPolicy()     #Req: DATA_POLICY
+                              #  - only logGroupIdentifier
+                              #Res: DATA_POLICY
+DeleteDataProtectionPolicy()  #Req: DATA_POLICY
+                              #  - only logGroupIdentifier
+                              #Res: empty
+
+DATA_POLICY                   #Mask sensitive data with ***
+DATA_POLICY.logGroupIdentifier#'LOG_GROUP'|LOG_GROUP_ARN
+DATA_POLICY.lastUpdatedTime   #DATE_NUM
+
+DATA_POLICY.policyDocument    #'MASK_POLICY' as JSON
+                              #Max 30KB
+
+LOG_GROUP.dataProtectionStatus#STR among:
+                              #  - ACTIVATED
+                              #  - DISABLED
+                              #  - DELETED, ARCHIVED
+LOG_GROUP.inheritedProperties #Can only be 'ACCOUNT_DATA_PROTECTION'
+
+LLEVENTS_REQ|QUERY_RECORD_REQ #BOOL (def: false). If true, do not mask.
+ .unmask                      #Requires PACTION logs:Unmask
+                              #  - this also allows not masking in UI console
+
+unmask                        #QUERY COMMAND to not mask
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:          MASK POLICY          :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+MASK_POLICY                   #
+MASK_POLICY.Version           #Always '2021-06-01'
+MASK_POLICY.Name              #'MASK_POLICY'
+MASK_POLICY.Description       #STR
+
+MASK_POLICY.Statements        #MASK_STATEMENT_ARR
+                              #Must have 2 items: one with MASK_AUDIT, one with MASK_DEID
+MASK_STATEMENT.Sid            #'MASK_STATEMENT'
+MASK_STATEMENT.Operation      #MASK_OP
+
+MASK_OP.Audit                 #MASK_AUDIT
+MASK_AUDIT.FindingsDestination#MASK_DESTINATION
+                              #Send masked values to a destination
+
+MASK_OP.Deidentify            #MASK_DEID
+MASK_DEID.MaskConfig          #MASK_CONFIG. Always empty
+
+MASK_STATEMENT.DataIdentifier #DATAID_ARN_ARR. Defines what to mask
+                              #Always arn:aws:dataprotection::aws:data-identifier/DATAID
+                              #DATAIDs are automatically managed by AWS, listed below
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:         MASK ACCOUNT          :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
@@ -826,42 +930,6 @@ LOG_GROUP_REQ
  .includeLinkedAccounts       #BOOL (def: false)
 LOG_GROUP_REQ                 #ACCOUNT_ID_ARR. Only if includeLinkedAccounts true
  .accountIdentifiers          #Max 20
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:    POLICY DATA PROTECTION     :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-PutDataProtectionPolicy()     #Req: DATA_POLICY
-                              #  - no lastUpdatedTime
-                              #Res: DATA_POLICY
-GetDataProtectionPolicy()     #Req: DATA_POLICY
-                              #  - only logGroupIdentifier
-                              #Res: DATA_POLICY
-DeleteDataProtectionPolicy()  #Req: DATA_POLICY
-                              #  - only logGroupIdentifier
-                              #Res: empty
-
-DATA_POLICY.logGroupIdentifier#'LOG_GROUP'|LOG_GROUP_ARN
-DATA_POLICY.lastUpdatedTime   #DATE_NUM
-
-DATA_POLICY.policyDocument    #IAM 'POLICY'
-
-LOG_GROUP.dataProtectionStatus#STR among:
-                              #  - ACTIVATED
-                              #  - DISABLED
-                              #  - DELETED, ARCHIVED
-LOG_GROUP.inheritedProperties #Can only be 'ACCOUNT_DATA_PROTECTION'
-
-LLEVENTS_REQ|QUERY_RECORD_REQ #BOOL. If false (def), sensitive data are masked
- .unmask                      #If true, requires PACTION logs:Unmask
-
-unmask                        #QUERY COMMAND to show sensitive data
-
-https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/mask-sensitive-log-data.html
 
 
                                              /=+===============================+=\
