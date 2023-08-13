@@ -6,7 +6,7 @@
 
 
 TO DOCUMENT ==>
-  - https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/logging_cw_api_calls.html
+  - CloudWatch: https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/logging_cw_api_calls.html
   - IAM: https://docs.aws.amazon.com/IAM/latest/UserGuide/cloudtrail-integration.html
   - Glacier: https://docs.aws.amazon.com/amazonglacier/latest/dev/audit-logging.html
   - S3:
@@ -15,12 +15,6 @@ TO DOCUMENT ==>
      - see common fields with NPAYLOAD (https://docs.aws.amazon.com/AmazonS3/latest/userguide/notification-content-structure.html)
      - JOBs: https://docs.aws.amazon.com/AmazonS3/latest/userguide/batch-ops-examples-event-bridge-cloud-trail.html
   - go through todo list in "new service" doc
-
-Not read in user guide:
-  - Working with CloudTrail
-     - Viewing service-linked channels by using the AWS CLI
-  - CloudTrail log files
-     - Using the CloudTrail Processing Library
 
 VERSION ==>                       #2023-08-01
 
@@ -33,12 +27,12 @@ VERSION ==>                       #2023-08-01
 
 
 SERVICE_DOMAIN                    #'cloudtrail'
-                                  #Except for PutAuditEvents: 'cloudtrail-data'
+                                  #Except for PutAuditEvents(): 'cloudtrail-data'
                                   #  - including in PACTION and SDK|CLI
 
 FORMAT ==>                        #JSON
                                   #Request: ?Action and ?Version
-                                  #  - except AUDIT_EVENTs: REST
+                                  #  - except PutAuditEvents(): REST
 
 PAGINATION ==>                    #REQ|RES.NextToken STR
                                   #REQ.MaxResults NUM (def|max: 1e3, 50 with LookupEvents(), none with TRAIL)
@@ -66,7 +60,6 @@ AWSCloudTrail_FullAccess          #AWS managed POLICY, granting:
                                   #  - kms:CreateKey|ListKeys|CreateAlias|ListAliases: on any KMS_KEY|ALIAS
                                   #  - lambda:ListFunctions: on any FUNCTION
                                   #  - dynamodb:List[Global]Tables: on any TABLE
-                                  #Make sure the reason behind those PACTIONs is documented in the rest of this doc???
 AWSCloudTrail_ReadOnlyAccess      #Same but readonly, and only for CloudTrail PACTIONs
 
 
@@ -237,6 +230,10 @@ TRAIL_PREFIX/AWSLogs
  /REGION/YYYY/MM/DD/
  ACCOUNT_ID_CloudTrail_REGION_
  YYYYMMDDTHHMMZ_RANDOM.json.gz    #'LOG_FILE'
+
+CLOUDTRAIL PROCESSING LIBRARY ==> #Java library that allows running code on each new LOG_EVENT
+                                  #Uses a SQS QUEUE
+                                  #Not documented yet
 
 
                                              /=+===============================+=\
@@ -457,7 +454,7 @@ ListPublicKeys()                  #Req: PUBLIC_KEY
                                   #  - only ValidityStart|EndTime -> Start|EndTime (def: now)
                                   #Res: PublicKeyList PUBLIC_KEY_ARR
 
-PUBLIC_KEY                        #Used to validate x-amz-meta-signature [S]
+PUBLIC_KEY                        #Used to validate x-amz-meta-signature [S] and QUERY_RESULTS_SIGN
 PUBLIC_KEY.Value                  #Public key as 'BASE64', DER-encoded PKCS#1
 PUBLIC_KEY.Fingerprint            #'HEX' of fingerprint
 PUBLIC_KEY.ValidityStart|EndTime  #DATE_NUM where public key might have been used
@@ -526,11 +523,12 @@ LOG_VALIDATION_RES_LINE[2]        #'valid' or 'INVALID: ...'
 
 
 TRAIL.SnsTopicARN                 #SNS_TOPIC_ARN to send on log delivery, with SNS_PAYLOAD
-                                  #Must allow PACTION SNS:Publish on the TOPIC
+TRAIL.SnsTopicName                #Same but as 'SNS_TOPIC'
+
+PERMISSIONS ==>                   #Must allow PACTION SNS:Publish on the TOPIC
                                   #  - for Principal.Service 'cloudtrail.amazonaws.com'
                                   #  - should add COND_KEY aws:SourceArn TRAIL_ARN
                                   #  - also kms:GenerateDataKey*|Decrypt, if TOPIC uses KMS
-TRAIL.SnsTopicName                #Same but as 'SNS_TOPIC'
 
 SNS_PAYLOAD.s3Bucket              #'LOG_BUCKET'
 SNS_PAYLOAD.s3ObjectKey           #'LOG_FILE'_ARR
@@ -740,13 +738,15 @@ RestoreEventDataStore()           #Req: DATASTORE
                                   #  - no TagsList
 
 DATASTORE                         #Like TRAIL but accessed through SQL QUERYs
-                                  #Stores EVENTs in ORC format, i.e. no LOG_FILE
+                                  #Stores EVENTs:
+                                  #  - in ORC format
+                                  #  - internally, i.e. no S3|LOG_FILE
                                   #Can also add audit EVENTs (partner|custom data)
                                   #Features related to DATASTORE|CHANNEL|AUDIT_EVENTs are called "CloudTrail lake"
                                   #DATASTORE.AdvancedEventSelectors must allow only one LOG_EVENT.eventCategory
                                   #  - cannot be 'Insight'
+                                  #  - can be 'ActivityAuditLog': audit EVENTs
                                   #  - if 'Management|Data': automatically filled
-                                  #  - allows 'ActivityAuditLog': audit EVENTs
                                   #Max 10 per REGION
 DATASTORE.EventDataStoreArn       #DATASTORE_ARN. 'arn:aws:cloudtrail:REGION:ACCOUNT_ID:eventdatastore/DATASTORE'
 DATASTORE.Name                    #'DATASTORE'
@@ -802,13 +802,9 @@ CHANNEL.ChannelArn                #CHANNEL_ARN. 'aws:aws:cloudtrail:REGION:ACCOU
 CHANNEL.Name                      #'CHANNEL'
 
 CHANNEL.Source                    #'CHANNEL_SOURCE', either:
-                                  #  - name of a known partner
-                                  #     - e.g. 'GitHub' (Audit log), 'Snyk', 'LaunchDarkly'
-                                  #     - calls PutAuditEvents() either:
-                                  #        - "direct integration": externally
-                                  #        - "solution integration": from inside current ACCOUNT
                                   #  - 'Custom'
-                                  #  - 'CloudTrail': for service-linked CHANNELs
+                                  #  - 'CloudTrail': service-linked CHANNEL
+                                  #  - 'CHANNEL_PARTNER'
                                   #1 CHANNEL_SOURCE can only have 1 CHANNEL
 CHANNEL.SourceConfig              #CHANNEL_SOURCE
 
@@ -817,9 +813,15 @@ CHANNEL.Destinations              #CHANNEL_DEST_ARR
 CHANNEL_DEST.Type|Location        #STR
 CHANNEL_DEST.Type
  'EVENT_DATA_STORE'               #Redirects to CHANNEL_DEST.Location DATASTORE_ARN
+
 CHANNEL_DEST.Type 'AWS_SERVICE'   #"Service-linked CHANNEL", to receive management EVENTs from CHANNEL_REST.Location 'SERVICE'
                                   #PACTION *Channel -> *ServiceLinkedChannel
                                   #Automatically sets CHANNEL.SourceConfig, based on SERVICE
+
+CHANNEL_PARTNER                   #Let an external service call PutAuditEvents() either:
+                                  #  - "direct integration": externally
+                                  #  - "solution integration": from inside current ACCOUNT
+                                  #E.g. 'GitHub' (Audit log), 'Snyk', 'LaunchDarkly'
 
 CHANNEL.IngestionStatus           #CHANNEL_STATUS
 CHANNEL_STATUS
@@ -956,40 +958,54 @@ StopImport()                      #Req: IMPORT
                                   #  - only ImportId
                                   #Res: IMPORT
 
+IMPORT                            #Copy LOG_FILEs to a DATASTORE
+                                  #Ignores DATASTORE's ADVANCED_SELECTORS
 IMPORT.ImportId                   #'IMPORT'
 IMPORT.CreatedTimestamp           #DATE_NUM
 IMPORT.UpdatedTimestamp           #DATE_NUM
-IMPORT.StartEventTime             #DATE_NUM
-IMPORT.EndEventTime               #DATE_NUM
 
-IMPORT.ImportSource.S3            #IMPORT_S3
+IMPORT.ImportSource.S3            #IMPORT_S3. Where LOG_FILEs are located
+IMPORT_S3.S3LocationUri           #'URI' to either:
+                                  #  - s3://BUCKET/TRAIL_PREFIX/AWSLogs/ACCOUNT_ID/CloudTrail[-Digest|Insight]
+                                  #  - s3://BUCKET -> BUCKET/TRAIL_PREFIX/AWSLogs/ACCOUNT_ID/CloudTrail
 IMPORT_S3.S3BucketRegion          #'REGION'
-IMPORT_S3.S3LocationUri           #STR
-IMPORT_S3.S3BucketAccessRoleArn   #ROLE_ARN
+IMPORT_S3.S3BucketAccessRoleArn   #ROLE_ARN used to read BUCKET
+                                  #Must allow PACTIONs:
+                                  #  - s3:GetObject on URI/*
+                                  #     - with COND_KEY aws:SourceArn DATASTORE_ARN
+                                  #  - s3:ListBucket|GetBucketAcl on BUCKET
+                                  #     - with COND_KEY aws:SourceArn DATASTORE_ARN
+                                  #  - kms:GenerateDataKey|Decrypt, if using S3-KMS
+                                  #Trust policy must allow Principal.Service 'cloudtrail.amazonaws.com' to sts:AssumeRole
+                                  #  - with COND_KEY aws:SourceArn DATASTORE_ARN
 
-IMPORT.Destinations               #STR_ARR
+IMPORT.Destinations               #DATASTORE_ARN_ARR
 
-IMPORT.ImportStatus               #STR
+IMPORT.Start|EndEventTime         #DATE_NUM, filtering by LOG_EVENT.eventTime
+                                  #StartTime should be < DATASTORE.CreatedTimestamp to avoid duplicated LOG_EVENTs,
+                                  #if it uses service-linked CHANNELs
+
+IMPORT.ImportStatus               #STR among:
+                                  #  - 'INITIALIZING'
+                                  #  - 'IN_PROGRESS', 'STOPPED'
+                                  #  - 'COMPLETED', 'FAILED'
 IMPORT.ImportStatistics           #IMPORT_STATS
-IMPORT_STATS.EventsCompleted      #NUM
-IMPORT_STATS.PrefixesCompleted    #NUM
-IMPORT_STATS.PrefixesFound        #NUM
-IMPORT_STATS.FilesCompleted       #NUM
-IMPORT_STATS.FailedEntries        #NUM
+IMPORT_STATS.FilesCompleted       #NUM of LOG_FILEs done
+IMPORT_STATS.PrefixesFound        #NUM of S3 prefixes (i.e. number of recorded days) started
+IMPORT_STATS.PrefixesCompleted    #NUM of S3 prefixes done
+IMPORT_STATS.EventsCompleted      #NUM of LOG_EVENTs done
+IMPORT_STATS.FailedEntries        #NUM of LOG_EVENTs failed
 
-IMPORT_FAILURE.ErrorMessage       #STR
 IMPORT_FAILURE.ErrorType          #STR
-IMPORT_FAILURE.LastUpdatedTime    #DATE_NUM
-IMPORT_FAILURE.Location           #STR
-IMPORT_FAILURE.Status             #STR
-
-https://docs.aws.amazon.com/awscloudtrail/latest/userguide/cloudtrail-copy-trail-to-lake.html
-https://docs.aws.amazon.com/awscloudtrail/latest/userguide/cloudtrail-copy-trail-to-lake-eds.html
+IMPORT_FAILURE.ErrorMessage       #'ERROR'
+IMPORT_FAILURE.Location           #'OBJECT'
+IMPORT_FAILURE.LastUpdatedTime    #IMPORT.UpdatedTimestamp
+IMPORT_FAILURE.Status             #STR among: 'RETRY', 'SUCCEEDED', 'FAILED'
 
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:             QUERY             :==(
+                                            )==:         QUERY REQUEST         :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
@@ -1018,44 +1034,89 @@ GetQueryResults()                 #Req: QUERY
                                   #  - MaxResults -> MaxQueryResults
                                   #Res: QUERY
                                   #  - no QueryId, QueryAlias, EventDataStore, QueryString, QueryParameters, DeliveryS3Uri, DeliveryStatus
+                                  #  - QueryStatistics: only BytesScanned
+                                  #  - pagination: QueryStatistics.[Total]ResultsCount
 
-QUERY                             #Can be across multiple REGIONs|ACCOUNTs
+QUERY                             #SQL query on LOG_EVENTs of a DATASTORE
+                                  #Unlike LookupEvents(), can be across multiple REGIONs|ACCOUNTs
+                                  #Can save QUERYs in UI console
                                   #Max 10 ongoing QUERYs
+                                  #Times out after 1h
 QUERY.QueryId                     #QUERY_MID
-QUERY.QueryAlias                  #STR
-QUERY.EventDataStore              #DATASTORE_ARN
 QUERY_STATS.CreationTime          #DATE_NUM
 
-QUERY.QueryString                 #STR
-QUERY.QueryParameters             #STR_ARR
-QUERY.QueryResultRows             #OBJ_ARR_ARR
-                                  #Deleted 7 days after creation
+QUERY.EventDataStore              #DATASTORE_ARN
 
-QUERY.DeliveryS3Uri               #STR
-QUERY.DeliveryStatus              #STR
+QUERY.QueryString                 #'SQL'
+                                  #Only 'SELECT' statement
+                                  #FROM is DATASTORE
+                                  #COLs are LOG_EVENT.*
+                                  #  - def name for `select FUNC(...)`: "_colNUM"
+                                  #Can use:
+                                  #  - all FUNCs from Presto
+                                  #     - including count()
+                                  #  - as
+                                  #  - and|or|not
+                                  #  - = <> !=, in, is [not] null, is [not] distinct from
+                                  #  - < <= > >=, between, greatest|least()
+                                  #  - like 'GLOB'
+                                  #  - left|right|inner join, on
+                                  #  - where
+                                  #  - order by
+                                  #  - limit
+                                  #  - union [all], except, intersect
+                                  #Uses Presto under the hood (see its doc)
+                                  #Max 1e4 chars
 
-QUERY.QueryStatus                 #STR
-QUERY.ErrorMessage                #STR
-
-QUERY.QueryStatistics             #QUERY_STATS
-QUERY_STATS.EventsMatched         #NUM
-QUERY_STATS.EventsScanned         #NUM
-QUERY_STATS.BytesScanned          #NUM
-QUERY_STATS.ExecutionTimeInMillis #NUM (in ms)
-
-DASHBOARD ==>                     #UI console includes dashboards with pre-saved common QUERYs:
+DASHBOARD ==>                     #UI console includes dashboards with QUERY_TEMPLATEs, i.e. pre-saved common QUERYs:
                                   #  - "Overview":
                                   #     - USER|REGION|SERVICEs with most EVENTs
                                   #     - most throttled|errored ACTIONs
                                   #     - only management EVENTs
                                   #  - "Management events": ACTION ConsoleLogin, IAM errors, delete ACTIONs, top errors per USER
                                   #  - "S3 data events": top OBJECT|USER|ACTIONs
+QUERY.QueryAlias                  #'QUERY_TEMPLATE'
+QUERY.QueryParameters             #STR_ARR. Arguments to 'QUERY_TEMPLATE'
+                                  #Max 10
 
-StartQuery|GetQueryResults() sometimes require PACTIONs kms:Decrypt|GenerateDataKey?
 
-https://docs.aws.amazon.com/awscloudtrail/latest/userguide/query-create-edit-query.html
-https://docs.aws.amazon.com/awscloudtrail/latest/userguide/query-limitations.html
-https://docs.aws.amazon.com/awscloudtrail/latest/userguide/query-lake-cli.html#lake-cli-start-query (and next chapters)
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:      QUERY RESULTS MAIN       :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+QUERY.QueryResultRows             #Results as OBJ_ARR_ARR
+                                  #Each OBJ is a `select VAL`, each OBJ_ARR is a ROW
+                                  #Deleted 7 days after creation
+
+QUERY.DeliveryS3Uri               #'s3://BUCKET' storing QUERY.QueryResultRows
+                                  #If not specified, not stored in S3, but QUERY.QueryResultsRows still available
+                                  #Requires same permissions as ones for a TRAIL's BUCKET
+AWSLogs/ACCOUNT_ID/CloudTrail-Lake
+ /Query/YYYY/MM/DD/QUERY_MID/     #'QUERY_RESULTS_FILE', when using QUERY.DeliveryS3Uri
+ result_NUM.csv.gz                #NUM spreads results over multiple files, max 1TB each, if total is >1TB
+QUERY.DeliveryStatus              #STR among:
+                                  #  - PENDING
+                                  #  - SUCCESS
+                                  #  - CANCELLED
+                                  #  - FAILED[_SIGNING_FILE], ACCESS_DENIED[_SIGNING_FILE], RESOURCE_NOT_FOUND
+                                  #  - UNKNOWN
+
+QUERY.QueryStatus                 #STR among:
+                                  #  - QUEUED
+                                  #  - RUNNING
+                                  #  - FINISHED
+                                  #  - CANCELLED
+                                  #  - FAILED, TIMED_OUT
+QUERY.ErrorMessage                #'ERROR'
+
+QUERY.QueryStatistics             #QUERY_STATS
+QUERY_STATS.EventsMatched         #NUM of LOG_EVENTs being returned
+QUERY_STATS.EventsScanned         #NUM of LOG_EVENTs filtered by `where` clause
+QUERY_STATS.BytesScanned          #NUM of bytes read in the DATASTORE, i.e. from EventsScanned
+QUERY_STATS.ExecutionTimeInMillis #NUM of ms the QUERY has been running
 
 
                                              /=+===============================+=\
@@ -1065,17 +1126,39 @@ https://docs.aws.amazon.com/awscloudtrail/latest/userguide/query-lake-cli.html#l
                                              \=+===============================+=/
 
 
-https://awscli.amazonaws.com/v2/documentation/api/latest/reference/cloudtrail/verify-query-results.html
-
 VerifyQueryResults()              #Req: QUERY_VERIFY_REQ
                                   #Res: QUERY_VERIFY_RES
 
-QUERY_VERIFY_REQ                  #CLI-only
-QUERY_VERIFY_REQ.LocalExportPath  #Local '/PATH'
+QUERY_VERIFY_REQ                  #Check integrity of QUERY_RESULTS_FILEs using QUERY_RESULTS_SIGN
+                                  #CLI-only
 QUERY_VERIFY_REQ
- .S3Bucket|S3Prefix               #Same but as 'BUCKET|OBJECT'
+ .S3Bucket|S3Prefix               #'BUCKET|OBJECT' to QUERY_RESULTS_SIGN
+QUERY_VERIFY_REQ.LocalExportPath  #Same as local '/PATH'
 
-QUERY_VERIFY_RES                  #???
+QUERY_VERIFY_RES                  #TSV output: one QUERY_VERIFY_RES_LINE per QUERY_RESULTS_FILE|QUERY_RESULTS_SIGN
+QUERY_VERIFY_RES_LINE[0]          #'Query result file' or 'Sign file'
+QUERY_VERIFY_RES_LINE[1]          #'s3://LOG_BUCKET/OBJECT'
+QUERY_VERIFY_RES_LINE[2]          #'Successfully ...' or 'ValidationError: ...'
+
+result_sign.json                  #'QUERY_RESULTS_SIGN'. Sibling to result_NUM.csv.gz, ensuring its integrity
+QUERY_RESULTS_SIGN.version        #Currently '1.0'
+QUERY_RESULTS_SIGN.region         #'REGION'
+QUERY_RESULTS_SIGN
+ .queryCompleteTime               #'DATE' of creation of QUERY_RESULTS
+
+QUERY_RESULTS_SIGN.files          #QUERY_RESULTS_FILE_ARR
+QUERY_RESULTS_FILE.fileName       #'result_NUM.csv.gz'
+QUERY_RESULTS_FILE.fileHashValue  #'SHA256_HEX' of QUERY_RESULTS_FILE's contents
+                                  #Goal: ensure integrity of QUERY_RESULTS_FILE
+QUERY_RESULTS_SIGN.hashAlgorithm  #Always 'SHA-256'
+
+QUERY_RESULTS_SIGN.hashSignature  #'HEX'. RSA signature of QUERY_RESULTS_SIGN, with AWS private key
+                                  #STR being signed is space-concatenation of each QUERY_RESULTS_FILE.fileHashValue
+                                  #Goal: ensure integrity of QUERY_RESULTS_SIGN itself
+QUERY_RESULTS_SIGN
+ .signatureAlgorithm              #Always 'SHA256withRSA'
+QUERY_RESULTS_SIGN
+ .publicKeyFingerprint            #PUBLIC_KEY.Fingerprint
 
 
                                              /=+===============================+=\
