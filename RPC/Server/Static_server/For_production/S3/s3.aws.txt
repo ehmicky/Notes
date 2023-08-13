@@ -2018,11 +2018,16 @@ OPTS.expiresIn                    #NUM (in secs, def: 15m). x-amz-expires [C]
 
 COND_KEY
  s3[-object-lambda]:TlsVersion    #NUM. TLS version of request
+CLOUDTRAIL_METADATA CipherSuite   #STR, e.g. 'ECDHE-RSA-AES128-SHA'
 COND_KEY                          #How request is signed, among:
  s3[-object-lambda]:authType      #  - 'REST-HEADER': request header
                                   #  - 'REST-QUERY-STRING': query variable
                                   #  - 'POST': BUPLOAD signature
+CLOUDTRAIL_METADATA
+ AuthenticationMethod             #'AuthHeader|QueryString|Post'
 COND_KEY s3:signatureversion      #'AWS' (v2) or 'AWS4-HMAC-SHA256' (v4)
+CLOUDTRAIL_METADATA
+ SignatureVersion                 #'SigV2|4'
 COND_KEY
  s3[-object-lambda]:signatureAge  #NUM (in ms) difference between now and signature's DATE
 
@@ -2867,7 +2872,13 @@ LOGGING                           #Logs all requests to a BUCKET ("source")
                                   #Batched every few hours. Changes also take some time.
                                   #Some requests might be missing or duplicate
                                   #Must be BUCKET_OWNER
-                                  #Different from CloudTrail. Prefer CloudTrail instead.
+                                  #Different from CloudTrail:
+                                  #  - less features
+                                  #     - except only it has:
+                                  #        - LOG_LINE[6] BATCH.DELETE.OBJECT and S3.ACTION.RESOURCE
+                                  #        - LOG_LINE[12|13|14|15]
+                                  #  - less frequent
+                                  #  - cheaper: no cost per event, and smaller files (i.e. storage cost)
 LOGGING.LoggingEnabled            #LOG_CONF. Omit to disable
 LOG_CONF.TargetBucket             #'BUCKET' ("target") where to store LOG_FILE
                                   #Must be be in same REGION as logged BUCKET and have same BUCKET_OWNER
@@ -2886,13 +2897,11 @@ LOG_LINE[6]                       #One of:
                                   #  - REST.HTTP_METHOD.ACTION
                                   #  - WEBSITE.HTTP_METHOD.ACTION
                                   #  - BATCH.DELETE.OBJECT
-                                  #  - S3.ACTION.RESOURCE:
-                                  #     - for LIFECYCLE:
-                                  #        - S3.TRANSITION_SIA|ZIA|INT|GIR|(nothing)|GDA.OBJECT: TRANSITION.StorageClass
-                                  #        - S3.EXPIRE.OBJECT: LIFECYCLE_RULE.Expiration permanently deletes OBJECT
-                                  #        - S3.CREATE.DELETEMARKER: LIFECYCLE_RULE.Expiration creates a delete marker
-                                  #        - S3.DELETE.UPLOAD: LIFECYCLE_RULE.AbortIncompleteMultipartUpload.DaysAfterInitiation
-                                  #     - not captured by CloudTrail
+                                  #  - S3.ACTION.RESOURCE: for LIFECYCLE:
+                                  #     - S3.TRANSITION_SIA|ZIA|INT|GIR|(nothing)|GDA.OBJECT: TRANSITION.StorageClass
+                                  #     - S3.EXPIRE.OBJECT: LIFECYCLE_RULE.Expiration permanently deletes OBJECT
+                                  #     - S3.CREATE.DELETEMARKER: LIFECYCLE_RULE.Expiration creates a delete marker
+                                  #     - S3.DELETE.UPLOAD: LIFECYCLE_RULE.AbortIncompleteMultipartUpload.DaysAfterInitiation
 LOG_LINE[7]                       #'OBJECT'. - if none
 LOG_LINE[8]                       #HTTP_METHOD + PATH + HTTP version
                                   #PATH does not include query variables, except x-*
@@ -3098,7 +3107,6 @@ SLENS                             #CloudWatch METRICs under AWS/S3/Storage-Lens/
                                   #Data:
                                   #  - generated daily
                                   #  - kept for 15 months if ADVANCED_METRICS, 14 days otherwise
-                                  #Max 50 per REGION
 SLENS.StorageLensArn              #SLENS_ARN. arn:aws:s3:REGION:ACCOUNT_ID:storage_lens/STORAGE_LENS
 SLENS.Id                          #'SLENS'. Max 64 chars, [[:alnum:].-_]
 SLENS.IsEnabled                   #BOOL
@@ -3442,7 +3450,7 @@ RPROPS.filterPrefix|Suffix       ##NOTIFICATIONS_FILTER.Value
 
 
 NPAYLOAD                          #Event message JSON payload
-NPAYLOAD.Records                  #NMESSAGE_ARR. Only one item
+NPAYLOAD.Records                  #NMESSAGE_ARR
 NMESSAGE.eventVersion             #One of:
                                   #  - '2.3': on NEVENT s3:ObjectRestore|Lifecycle*|IntelligentTiering|ObjectAcl|ObjectTagging
                                   #  - '2.2': on NEVENT s3:Replication, if cross-REGIONs
@@ -3454,7 +3462,7 @@ NMESSAGE.eventName                #'NEVENT' without 's3:' prefix
 NMESSAGE.s3                       #NMESSAGE_S3
 NMESSAGE_S3.s3SchemaVersion       #Always '1.0'
 
-NMESSAGE.userIdentity.principalId #PRINCIPAL id of requester (same values as CloudTrail userIdentity)
+NMESSAGE.userIdentity.principalId #PRINCIPAL id of requester (same values as CloudTrail)
 NMESSAGE.requestParameters
  .sourceIPAddress                 #'IP' of requester
 NMESSAGE.responseElements         #NRES_HEADERS
@@ -4214,6 +4222,15 @@ JOB.SuspendedCause                #STR
 COND_KEY s3:JobSuspendedCause     #JOB.SuspendedCause. Only for PACTION 's3:UpdateJobStatus'
 JOB.TerminationDate               #'DATE' when Status 'Complete|Cancelled|Failed'
 
+JobStatusChanged                  #ACTION logged to CloudTrail on change, with following.
+CLOUDTRAIL_SMETADATA jobArn       #JOB_ARN
+CLOUDTRAIL_SMETADATA jobId        #JOB_MID
+CLOUDTRAIL_SMETADATA status       #JOB.Status
+CLOUDTRAIL_SMETADATA jobEventId   #STR
+CLOUDTRAIL_SMETADATA failureCodes #ARR
+CLOUDTRAIL_SMETADATA
+ statusChangeReason               #ARR
+
 JOB.FailureReasons                #JOB_FAILURE_ARR when Status 'Failed'
                                   #Also fails either:
                                   #  - after 90 days (30 if 'Suspended')
@@ -4282,7 +4299,9 @@ OUTPOSTS ON S3 ==>                #Not fully documented yet
                                   #  - API: https://docs.aws.amazon.com/AmazonS3/latest/userguide/S3onOutposts.html
                                   #  - JavaScript client: https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/client/s3outposts
                                   #  - Pulumi: https://www.pulumi.com/registry/packages/aws/api-docs/s3outposts
-                                  #  - CloudTrail LOG_FILE.edgeDeviceDetails: https://docs.aws.amazon.com/awscloudtrail/latest/userguide/cloudtrail-event-reference-record-contents.html
+                                  #  - CloudTrail:
+                                  #     - LOG_FILE.edgeDeviceDetails: https://docs.aws.amazon.com/awscloudtrail/latest/userguide/cloudtrail-event-reference-record-contents.html
+                                  #     - https://docs.aws.amazon.com/AmazonS3/latest/userguide/cloudtrail-logging-understanding-s3-entries.html#cloudtrail-logging-understanding-s3outposts-entries
 
 NOT SUPPORTED ==>                 #  - TORRENT, LocationConstraint, ACL, LOCK, LEGAL_HOLD, SELECT, RESTORE, PUBLIC_BLOCK,
                                   #  - x-amz-confirm-remove-self-bucket-access [C], ListObjectVersions()
