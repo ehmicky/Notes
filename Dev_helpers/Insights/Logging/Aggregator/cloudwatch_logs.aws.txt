@@ -32,6 +32,8 @@ Already read:
   - Enabling logging from certain AWS services
   - Exporting log data to Amazon S3
   - Streaming data to OpenSearch Service
+  - Code examples
+  - Security
 
 GOAL ==>                      #Aggregates logs to single place, with rotation, and possibility to create CloudWatch alarms when log line match pattern
 
@@ -174,6 +176,7 @@ FilterLogEvents()             #Req: LLEVENTS_REQ
 LLEVENTS.logEvents            #LLEVENT_ARR
                               #Max 1e4. Max 1MB
 LLEVENT                       #Log message
+                              #Encrypted at rest
                               #Max 256KB
 
 LLEVENT.message               #STR
@@ -613,6 +616,72 @@ isIp[V4|6]InSubnet
 
                                              /=+===============================+=\
                                             /  :                               :  \
+                                            )==:        RESOURCE POLICY        :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+PutResourcePolicy()           #Req: RESOURCE_POLICY
+                              #  - no lastUpdatedTime
+                              #Res: resourcePolicy RESOURCE_POLICY
+DescribeResourcePolicies()    #Req: empty
+                              #Res: resourcePolicies RESOURCE_POLICY_ARR
+DeleteResourcePolicy()        #Req: RESOURCE_POLICY
+                              #  - only policyName
+                              #Res: empty
+
+RESOURCE_POLICY               #Resource-based POLICY on LOG_GROUP|LOG_STREAM
+                              #Max 10 per REGION
+RESOURCE_POLICY.policyName    #'RESOURCE_POLICY'
+RESOURCE_POLICY
+ .lastUpdatedTime             #DATE_NUM
+
+RESOURCE_POLICY               #IAM 'POLICY'
+ .policyDocument              #Max 5KB
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:          VENDED LOGS          :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+VENDED LOGS ==>               #When another SERVICE calls PutLogEvents()
+                              #Enabled|disabled by granting|revoking the permissions
+                              #  - requires PACTION logs:Create|Update|Get|List|DeleteLogDelivery
+
+VENDED LOGS TO LOG_STREAM ==> #Some vended logs are done directly to a LOG_STREAM called /aws/vendedlogs/SERVICE
+                              #Must use a RESOURCE_POLICY.policyDocument with:
+                              #  - Principal.Service 'delivery.logs.amazonaws.com'
+                              #  - PACTION logs:PutLogEvents|CreateLogStream
+                              #  - COND_KEY aws:SourceArn LOG_GROUP_ARN
+                              #  - COND_KEY aws:SourceAccount ACCOUNT_ID
+
+VENDED LOGS TO S3 ==>         #Some vended logs are sent to a S3 BUCKET, at BUCKET/AWSLogs/account-ID/ACCOUNT_ID/*, every 5m
+                              #Uses a LOG_GROUP internally
+                              #Must use a BUCKET POLICY with:
+                              #  - Principal.Service 'delivery.logs.amazonaws.com'
+                              #  - PACTION s3:GetBucketAcl on BUCKET, s3:PutObject on BUCKET/AWSLogs/account-ID/*
+                              #     - also some kms:* if using S3-KMS (see its doc)
+                              #  - COND_KEY aws:SourceArn LOG_GROUP_ARN
+                              #  - COND_KEY aws:SourceAccount ACCOUNT_ID
+                              #  - COND_KEY s3:x-amz-acl 'bucket-owner-full-control' (only for s3:PutObject)
+
+VENDED LOGS TO KINESIS ==>    #Some vended logs are sent to a Kinesis FIREHOSE
+                              #Uses a LOG_GROUP internally
+                              #Requires PACTION firehose:TagDeliveryStream
+AWSServiceRoleForLogDelivery  #SERVICE_LINKED_ROLE used for Kinesis FIREHOSE
+                              #Automatically created, if PACTION iam:CreateServiceLinkedRole
+                              #Trust policy allows 'delivery.logs.amazonaws.com' to sts:AssumeRole
+AWSServiceRoleForLogDelivery  #AWS managed POLICY used by AWSServiceRoleForLogDelivery
+ Policy                       #Allows PACTIONs firehose:PutRecord[Batch]|ListTagsForDeliveryStream
+                              #  - providing Firehose delivery stream has TAG LogDeliveryEnabled 'true'
+                              #     - automatically setup by AWS
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
                                             )==:       SUBSCRIPTION MAIN       :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -677,10 +746,11 @@ SPAYLOAD.logEvents            #LLEVENT_ARR
 
 
 PERMISSION ==>                #Must use LAMBDA FUNC_VERSION.Role, not SUBSCRIPTION.roleArn
-                              #Use a LAMBDA PERMISSION policy:
+                              #Use a LAMBDA PERMISSION policy with:
                               #  - Principal.Service 'logs.amazonaws.com'
-                              #  - allow PACTION lambda:InvokeFunction
-                              #  - COND_KEY aws:SourceArn LOG_GROUP_ARN, aws:SourceAccount ACCOUNT_ID
+                              #  - PACTION lambda:InvokeFunction
+                              #  - COND_KEY aws:SourceArn LOG_GROUP_ARN
+                              #  - COND_KEY aws:SourceAccount ACCOUNT_ID
 
 INVOCATION ==>                #InvocationType 'Event'
 REQ.awslogs.data              #'SPAYLOAD_JSON_GZIP_BASE64'
@@ -698,12 +768,6 @@ PERMISSIONS ==>               #Must use SUBSCRIPTION.roleArn
                               #Use a trust policy for Principal.Service 'logs.amazonaws.com'
                               #  - COND_KEY aws:SourceArn arn:aws:logs:REGION:ACCOUNT_ID:*
                               #Use a ROLE policy to allow PACTION kinesis:PutRecord
-AWSServiceRoleForLogDelivery  #SERVICE_LINKED_ROLE used as SUBSCRIPTION.roleArn with Kinesis FIREHOSE
-                              #Automatically created, if PACTION iam:CreateServiceLinkedRole
-AWSServiceRoleForLogDelivery  #AWS managed POLICY used by AWSServiceRoleForLogDelivery
- Policy                       #Allows PACTIONs firehose:PutRecord[Batch]|ListTagsForDeliveryStream
-                              #  - providing Firehose delivery stream has TAG LogDeliveryEnabled 'true'
-                              #     - automatically setup by AWS
 
 SUBSCRIPTION.distribution     #Whether to group:
                               #  - 'ByLogStream': by LOG_STREAM
@@ -787,10 +851,11 @@ EXPORT.destination            #S3 'BUCKET'
 EXPORT.destinationPrefix      #STR. Prefix to all S3 OBJECTs
 
 PERMISSIONS ==>               #Must allow:
+                              #  - Principal.Service 'logs.amazonaws.com'
                               #  - PACTION s3:GetBucketAcl on BUCKET, s3:PutObject on OBJECTs
                               #     - also some kms:* if using S3-KMS (see its doc)
-                              #  - Principal.Service 'logs.amazonaws.com'
-                              #  - COND_KEY aws:SourceArn LOG_GROUP_ARN, aws:SourceAccount ACCOUNT_ID
+                              #  - COND_KEY aws:SourceArn LOG_GROUP_ARN
+                              #  - COND_KEY aws:SourceAccount ACCOUNT_ID
                               #  - COND_KEY s3:x-amz-acl 'bucket-owner-full-control' (only for s3:PutObject)
 
 EXPORT.status.code            #STR among:
@@ -829,7 +894,8 @@ QUERY_RES.encryptionKey       #KMS_KEY_ID. Encrypt QUERY_RESULTs at rest
 PERMISSIONS ==>               #Must allow:
                               #  - Principal.Service 'logs.amazonaws.com'
                               #  - PACTIONs kms:[Re]Encrypt*|Decrypt*|GenerateDataKey*|Describe*
-                              #  - COND_KEY aws:SourceArn KMS_ACCOC.resourceIdentifier, aws:SourceAccount ACCOUNT_ID
+                              #  - COND_KEY aws:SourceArn KMS_ACCOC.resourceIdentifier
+                              #  - COND_KEY aws:SourceAccount ACCOUNT_ID
                               #  - COND_KEY kms:EncryptionContext:aws:logs:arn LOG_GROUP_ARN
 
 
@@ -1026,41 +1092,6 @@ DrugEnforcementAgencyNumber-US#DEA number
 NationalDrugCode-US           #NDC number
 
 VehicleIdentificationNumber   #ISO 3779|3780
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:        POLICY RESOURCE        :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-PutResourcePolicy()           #Req: LOG_GROUP_POLICY
-                              #  - no lastUpdatedTime
-                              #Res: resourcePolicy LOG_GROUP_POLICY
-DescribeResourcePolicies()    #Req: empty
-                              #Res: resourcePolicies LOG_GROUP_POLICY_ARR
-DeleteResourcePolicy()        #Req: LOG_GROUP_POLICY
-                              #  - only policyName
-                              #Res: empty
-
-LOG_GROUP_POLICY              #Resource-based POLICY on LOG_GROUP, allowing another SERVICE to call PutLogEvents()
-                              #Max 10 per REGION
-LOG_GROUP_POLICY.policyName   #'LOG_GROUP_POLICY'
-LOG_GROUP_POLICY
- .lastUpdatedTime             #DATE_NUM
-
-LOG_GROUP_POLICY              #IAM 'POLICY', which must use:
- .policyDocument              #  - Principal.Service 'SERVICE_DOMAIN'
-                              #  - PACTION logs:PutLogEvents
-                              #  - Resource LOG_GROUP_ARN
-                              #  - COND_KEY aws:SourceArn ARN (SERVICE-specific), aws:SourceAccount ACCOUNT_ID
-
-VENDED LOGS ==>               #Some SERVICEs setup a LOG_GROUP[_POLICY] internally, but redirect to S3 or Kinesis
-
-PACTION logs:Create|Update|Get|List|DeleteLogDelivery???
-
-https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/security.html
 
 
                                              /=+===============================+=\
