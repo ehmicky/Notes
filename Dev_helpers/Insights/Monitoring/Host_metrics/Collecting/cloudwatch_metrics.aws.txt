@@ -16,6 +16,7 @@ SUMMARY ==>                   #Metric: name, namespace, dimensions
                               #Search query: name|namespace|dimensions, tokenize, partial match, bool logic
                               #Aggregation: period, min|max, avg|sum|count, percentile [rank], outliers
                               #Stream: Kinesis Firehose, all|filtered metrics, aggregation
+                              #Embedded metrics: logs, format, Node library
 
 
                                              /=+===============================+=\
@@ -636,13 +637,14 @@ PublishErrorRate              #NUM% of unrecoverable errors sending to the FIREH
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:       EMBEDDED METRICS        :==(
+                                            )==:     EMBEDDED METRICS MAIN     :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
 EMBEDDED METRICS ==>          #CloudWatch Logs LLEVENT, where message is 'ROOT_JSON' with following format ("EMF")
                               #Automatically calls PutMetricData() based on METRIC_DATA contained in log message
+                              #Goal: combining METRIC_DATA + LLEVENT
 
 ROOT.*                        #Anything, i.e. actual message
 ROOT.VARR                     #Can be used anywhere in ROOT._aws.** as dot-delimited 'VARR'
@@ -652,12 +654,91 @@ ROOT._aws.CloudWatchMetrics   #XMETRIC_ARR
 XMETRIC.Namespace             #'NAMESPACE'
 
 XMETRIC.Dimensions            #XDVARS_ARR. Each XDVARS creates a new METRIC (cartesian product)
-                              #Max 30 items
+                              #Max 30
 XDVARS                        #'DVAR'_ARR
-                              #Max 250 items
+                              #Max 250
 ROOT.DVAR                     #'DVAL'
 
 XMETRIC.Metrics               #XMETRIC_DATUM_ARR
+                              #Max 100, but can repeat
 XMETRIC_DATUM.Name            #'METRIC'
+ROOT.METRIC                   #NUM or NUM_ARR (max 100)
 XMETRIC_DATUM
  .Unit|StorageResolution      #Like METRIC_DATUM.*. Optional
+
+CLOUDWATCH METRICS ==>        #METRICs sent for embedded metrics themselves
+                              #DVAR: LogGroupName 'LOG_GROUP'
+AWS/Logs/EMFParsingErrors     #NUM of LLEVENTs using invalid format for embedded metrics
+AWS/Logs/EMFValidationErrors  #Same but with higher-level validation instead
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:     EMBEDDED METRICS NODE     :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+VERSION ==>                   #4.1.0
+                              #Named aws-embedded-metrics
+
+new MetricsLogger
+ (()->>ENV[, MCONTEXT])       #Def MCONTEXT: new one
+MLOGGER.*(...)->MLOGGER       #For all FUNCs, except flush()
+MLOGGER.flush()->>            #Call ENV.configureContext() and SINK.accept()
+MLOGGER
+ .flushPreserveDimensions     #BOOL (def: true)
+
+ENV                           #
+ENV.probe()->>BOOL            #Whether to skip
+ENV.getLogGroupName()->STR    #Set in default DOBJ, as DVAR LogGroup
+ENVVAR [AWS_EMF_]SERVICE_NAME
+ENV.getName()->STR            #Same for DVAR ServiceName
+ENVVAR [AWS_EMF_]SERVICE_TYPE
+ENV.getType()->STR            #Same for DVAR ServiceType
+ENV.configureContext(MCONTEXT)#
+
+ENV.getSink()->SINK           #
+SINK.name                     #'SINK'
+SINK.accept(MCONTEXT)->>      #
+
+new LocalSink([OBJ])          #SINK that calls multiple console.log(STR), using OBJ.serialize(MCONTEXT)->STR_ARR
+                              #Def OBJ.serialize(): returns 'ROOT_JSON'
+                              #  - batches every 100 METRIC_DATAs into multiple console.log()
+
+MCONTEXT.namespace            #'NAMESPACE'
+MCONTEXT|MLOGGER
+ .setNamespace('NAMESPACE')   #
+
+MCONTEXT.properties           #OBJ set as ROOT.*
+MCONTEXT|MLOGGER
+ .setProperty('VAR', VAL)     #
+
+MCONTEXT.meta                 #OBJ set as ROOT._aws.*
+MCONTEXT|MLOGGER
+ .setTimestamp(DATE|DATE_NUM) #Set meta.Timestamp DATE_NUM (def: now)
+
+MCONTEXT|MLOGGER.setDimensions#DOBJ is { DVAR: DVAL, ... }
+ (DOBJ_ARR[, BOOL])           #Must use DOBJ_ARR (not DOBJ) with MCONTEXT
+                              #BOOL (def: false): make MCONTEXT.getDimensions() take into account default DOBJ
+MCONTEXT|MLOGGEER
+ .resetDimensions(BOOL)       #Empty DOBJ and default DOBJ
+MCONTEXT|MLOGGER              #Add a new DOBJ
+ .putDimensions(DOBJ)         #Remove existing DOBJs with exact same DVARs
+MCONTEXT
+ .setDefaultDimensions(DOBJ)  #
+MCONTEXT.getDimensions
+ ()->DOBJ_ARR                 #
+
+MCONTEXT.metrics              #MAP where key is 'METRIC' and value is MVALUES
+MCONTEXT|MLOGGER.putMetric
+ ('METRIC', NUM[, 'UNIT'
+ [, NUM2]])                   #
+MVALUES.values                #NUM_ARR
+MVALUES.addValue(NUM)         #
+MVALUES.unit                  #'UNIT' (def: 'None')
+MVALUES.storageResolution     #NUM (def: 60)
+
+MLOGGER.new()->MLOGGER2       #Clone
+MCONTEXT.createCopyWithContext
+ ([BOOL])->MCONTEXT2          #Clone. If BOOL true (def), including DOBJs
