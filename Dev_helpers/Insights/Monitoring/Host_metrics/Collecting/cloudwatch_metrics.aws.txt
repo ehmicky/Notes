@@ -650,21 +650,26 @@ ROOT.*                        #Anything, i.e. actual message
 ROOT.VARR                     #Can be used anywhere in ROOT._aws.** as dot-delimited 'VARR'
 ROOT._aws.Timestamp           #DATE_NUM
 
-ROOT._aws.CloudWatchMetrics   #XMETRIC_ARR
-XMETRIC.Namespace             #'NAMESPACE'
+ROOT._aws.CloudWatchMetrics   #EMETRIC_META_ARR
+EMETRIC_META.Namespace        #'NAMESPACE'
 
-XMETRIC.Dimensions            #XDVARS_ARR. Each XDVARS creates a new METRIC (cartesian product)
+EMETRIC_META.Dimensions       #EDVARS_ARR. Each EDVARS creates a new METRIC (cartesian product)
                               #Max 30
-XDVARS                        #'DVAR'_ARR
+EDVARS                        #'DVAR'_ARR
                               #Max 250
 ROOT.DVAR                     #'DVAL'
 
-XMETRIC.Metrics               #XMETRIC_DATUM_ARR
-                              #Max 100, but can repeat
-XMETRIC_DATUM.Name            #'METRIC'
-ROOT.METRIC                   #NUM or NUM_ARR (max 100)
-XMETRIC_DATUM
- .Unit|StorageResolution      #Like METRIC_DATUM.*. Optional
+EMETRIC_META.Metrics          #EMETRIC_ARR
+                              #Max 100
+EMETRIC.Name                  #'METRIC'
+ROOT.METRIC                   #NUM
+                              #Can also be NUM_ARR (max 100), uses as METRIC_DATUM.Values
+EMETRIC.Unit|StorageResolution#Like METRIC_DATUM.*. Optional
+
+CLOUDWATCH AGENT ==>          #TCP|UDP local daemon that forwards to CloudWatch Logs
+                              #Used by EC2
+ROOT._aws.logGroupName        #'LOG_GROUP'
+ROOT._aws.logStreamName       #'LOG_STREAM'
 
 CLOUDWATCH METRICS ==>        #METRICs sent for embedded metrics themselves
                               #DVAR: LogGroupName 'LOG_GROUP'
@@ -682,18 +687,37 @@ AWS/Logs/EMFValidationErrors  #Same but with higher-level validation instead
 VERSION ==>                   #4.1.0
                               #Named aws-embedded-metrics
 
-new MetricsLogger
- (()->>ENV[, MCONTEXT])       #Def MCONTEXT: new one
+Configuration.VAR             #CONF.VAR
+                              #Can be manually set
+
+metricScope(FUNC(MLOGGER)     #FUNC3(...ARGS) calls:
+ ->FUNC2(...ARGS)[->>VAL])    #  - FUNC(createMetricsLogger())
+ ->FUNC3(...ARGS)->>VAL       #  - FUNC2(...ARGS)
+                              #  - MLOGGER.flush()
+
+createMetricsLogger()->MLOGGER#
 MLOGGER.*(...)->MLOGGER       #For all FUNCs, except flush()
 MLOGGER.flush()->>            #Call ENV.configureContext() and SINK.accept()
+                              #Only one EMETRIC_META per flush()
 MLOGGER
  .flushPreserveDimensions     #BOOL (def: true)
 
+CONF.environmentOverride
+ENVVAR AWS_EMF_ENVIRONMENT    #One of following
+                              #Def: automatically detects Lambda|ECS|EC2, otherwise use 'Agent'
+ENV 'Lambda'                  #
+ENV 'EC2'                     #
+ENV 'ECS'                     #
+ENV 'Agent'                   #
+ENV 'Local'                   #
+
 ENV                           #
-ENV.probe()->>BOOL            #Whether to skip
+ENV.probe()->>BOOL            #Auto-detect current environment
 ENV.getLogGroupName()->STR    #Set in default DOBJ, as DVAR LogGroup
+CONF.serviceName
 ENVVAR [AWS_EMF_]SERVICE_NAME
 ENV.getName()->STR            #Same for DVAR ServiceName
+CONF.serviceType
 ENVVAR [AWS_EMF_]SERVICE_TYPE
 ENV.getType()->STR            #Same for DVAR ServiceType
 ENV.configureContext(MCONTEXT)#
@@ -702,9 +726,12 @@ ENV.getSink()->SINK           #
 SINK.name                     #'SINK'
 SINK.accept(MCONTEXT)->>      #
 
-new LocalSink([OBJ])          #SINK that calls multiple console.log(STR), using OBJ.serialize(MCONTEXT)->STR_ARR
-                              #Def OBJ.serialize(): returns 'ROOT_JSON'
-                              #  - batches every 100 METRIC_DATAs into multiple console.log()
+new LocalSink()               #SINK that calls console.log('ROOT_JSON')
+                              #If needed due to max 100 ARR items in EMETRIC_META.Metrics or ROOT.METRIC, calls console.log() multiple times
+new AgentSink                 #SINK that sent to CloudWatch agent
+ ('LOG_GROUP'[, 'LOG_STREAM'])#Sets LOG_GROUP|LOG_STREAM to ROOT._aws.logGroupName|logStreamName
+CONF.agentEndpoint            #'tcp|udp://HOST:PORT' to send to
+ENVVAR AWS_EMF_AGENT_ENDPOINT #Def: 'tcp://0.0.0.0:25888'
 
 MCONTEXT.namespace            #'NAMESPACE'
 MCONTEXT|MLOGGER
@@ -717,6 +744,7 @@ MCONTEXT|MLOGGER
 MCONTEXT.meta                 #OBJ set as ROOT._aws.*
 MCONTEXT|MLOGGER
  .setTimestamp(DATE|DATE_NUM) #Set meta.Timestamp DATE_NUM (def: now)
+ROOT._aws.FormattedImageName  #'IMAGE' when using ECS
 
 MCONTEXT|MLOGGER.setDimensions#DOBJ is { DVAR: DVAL, ... }
  (DOBJ_ARR[, BOOL])           #Must use DOBJ_ARR (not DOBJ) with MCONTEXT
@@ -742,3 +770,7 @@ MVALUES.storageResolution     #NUM (def: 60)
 MLOGGER.new()->MLOGGER2       #Clone
 MCONTEXT.createCopyWithContext
  ([BOOL])->MCONTEXT2          #Clone. If BOOL true (def), including DOBJs
+
+CONF.debuggingLoggingEnabled
+ENVVAR
+ AWS_EMF_ENABLE_DEBUG_LOGGING #BOOL (def: false). Prints debugging logs with console.log()
