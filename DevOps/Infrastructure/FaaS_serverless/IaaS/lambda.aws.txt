@@ -11,8 +11,8 @@ SUMMARY ==>                       #Functions: versions|aliases, alias routing
                                   #Main code: zip (upload|S3) or container, sign, publish
                                   #Additional code: layer, internal|external extension
                                   #Runtimes: versions|upgrades, custom, options, Node|Go|Python|Java|Ruby|DotNet, Custom|Deno
-                                  #Environment: CPU, memory, envvar, /tmp, EFS, VPC, insights
-                                  #Invoke: instance, sync|async, dry, streaming, URL, logs, destination
+                                  #Environment: CPU, memory, envvar, /tmp, EFS, VPC, logging, insights
+                                  #Invoke: instance, sync|async, dry, streaming, URL, destination
                                   #Event source: batch size|duration, filters, concurrency
                                   #Errors: timeout, retries, dead letter, tracing
                                   #Concurrency: total, reserved, provisioned
@@ -720,8 +720,38 @@ COND_KEY lambda:SubnetIds         #FUNC_VPC.SubnetIds. Only with CreateFunction|
 COND_KEY lambda:SecurityGroupIds  #FUNC_VPC.SecurityGroupIds. Only with CreateFunction|UpdateFunctionConfiguration()
 
 AWSLambdaVPCAccessExecutionRole   #AWS managed POLICY allowing a FUNCTION to use ec2:*NetworkInterface|PrivateIpAddresses*
-                                  #and logs:PutLogEvents|CreateLogGroup|Stream
+                                  #and logs:PutLogEvents|CreateLogGroup|CreateLogStream
 AWSLambdaENIManagementAccess      #AWS managed POLICY allowing a FUNCTION to use ec2:*NetworkInterface*
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:            LOGGING            :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+INVOCATION_REQ.LogType            #Whether to include INVOCATION_RES.LogResult: 'None' (no, def) or 'Tail' (yes)
+                                  #Only if InvocationType 'RequestResponse'
+INVOCATION_RES[_END].LogResult    #FUNCTION stdout|stderr
+                                  #Last 4KB only
+                                  #Base64 encoded
+
+LOGGING ==>                       #CloudWatch logs LOG_GROUP receiving all stdout|stderr
+                                  #Automatically timestamped
+                                  #Can take up to 10m
+ENVVAR AWS_LAMBDA_LOG_GROUP_NAME
+NCONTEXT.logGroupName             #'LOG_GROUP', i.e. /aws/lambda/FUNCTION
+ENVVAR AWS_LAMBDA_LOG_STREAM_NAME
+NCONTEXT.logStreamName            #'LOG_STREAM', i.e. YYYY/MM/DD/[VERSION_NUM]FUNC_INSTANCE_ID
+
+console.LEVEL(...)                #Automatically prepends LEVEL
+
+PERMISSIONS ==>                   #FUNC_VERSION.Role must be allowed PACTIONs:
+                                  #  - logs:CreateLogGroup
+                                  #  - logs:CreateLogStream|PutLogEvents on LOG_GROUP
+
+RLOG                              #Each request automatically logs some information, documented here as RLOG.*
 
 
                                              /=+===============================+=\
@@ -734,6 +764,7 @@ AWSLambdaENIManagementAccess      #AWS managed POLICY allowing a FUNCTION to use
 LAMBDA INSIGHTS ==>               #Send additional CloudWatch custom METRICs related to Memory, CPU, Network
                                   #Uses embedded METRICs (~1KB payload)
                                   #Sent to LOG_GROUP '/aws/lambda-insights'
+                                  #Can take up to 20m
                                   #Has dedicated automated DASHBOARD in CloudWatch
 
 INSIGHTS LAYER ==>                #External extension, shared as a LAYER
@@ -746,20 +777,61 @@ CloudWatchLambdaInsights          #AWS managed POLICY to attach to FUNC_VERSION.
                                   #  - logs:CreateLogGroup
                                   #  - logs:CreateLogStream|PutLogEvents on LOG_GROUP '/aws/lambda-insights'
 
-METRICS ==>                       #List of collected CloudWatch METRICs
-                                  #All namespaced with AWS/LambdaInsights
-                                  #DVARs: function_name 'FUNCTION', version NUM
+ENVVAR LAMBDA_INSIGHTS_LOG_LEVEL  #If 'info', verbose logging for debugging
 
-used_memory_max                   #Max memory used (in MB)
-memory_utilization                #Max memory used (in % of total_memory)
-total_memory                      #FUNC_VERSION.MemorySize (in MB)
+METRICS ==>                       #All namespaced with AWS/LambdaInsights
+                                  #DVARs: function_name 'FUNCTION', version VERSION_NUM
+ROOT                              #Embedded METRICs root (see CloudWatch metrics doc)
+                                  #The following are top-level properties, i.e. available in logs, but not as METRICs
+ROOT.METRIC                       #Same as METRICs above
+@FIELD                            #CloudWatch Logs QUERY can use additional @FIELDs with Lambda, documented below
 
-cpu_total_time                    #CPU time spent (in ms) (user|system)
-init_duration                     #Time spent (in ms) in cold start
+ROOT|RLOG.function_name           #'FUNCTION'
+ROOT|RLOG.version                 #VERSION_NUM
+@type
+ROOT.event_type                   #STR
 
-rx_bytes                          #HTTP request size (in bytes)
-tx_bytes                          #HTTP response size (in bytes)
-total_network                     #rx_bytes + tx_bytes
+@requestId
+ROOT|RLOG.request_id              #'REQ_ID'
+@xrayTraceId
+ROOT|RLOG.trace_id                #X-Ray TRACE_ID
+@xraySegmentId
+RLOG.segment_id                   #X-Ray SEGMENT_ID
+RLOG.sampled                      #BOOL, for X-Ray
+
+@duration
+ROOT|RLOG.duration                #NUM of ms handling request (including cold start, if ROOT.cold_start true)
+@billedDuration
+ROOT|RLOG.billed_duration         #Same but rounded
+ROOT|RLOG.cold_start              #BOOL
+ROOT.timeout                      #BOOL
+ROOT.shutdown_reason              #STR, among 'Failure', 'Timeout', 'Spindown'
+
+@maxMemoryUsed
+METRIC|RLOG used_memory_max       #Max memory used (in MB)
+METRIC memory_utilization         #Max memory used (in % of total_memory)
+@memorySize
+METRIC|RLOG total_memory          #FUNC_VERSION.MemorySize (in MB)
+ROOT.billed_mb_ms                 #total_memory * billed_duration
+
+ROOT.cpu_user_time                #CPU time spent (in ms) (user)
+ROOT.cpu_system_time              #CPU time spent (in ms) (system)
+METRIC cpu_total_time             #cpu_user_time + cpu_system_time
+METRIC init_duration              #Time spent (in ms) in cold start
+
+ROOT.fd_use                       #NUM of file descriptors used
+ROOT.fd_max                       #Max NUM of file descriptors
+ROOT.tmp_used                     #NUM of bytes used in /tmp
+ROOT.tmp_max                      #Max size of /tmp
+
+ROOT.threads_max                  #Max NUM of threads
+
+METRIC rx_bytes                   #Network bytes received
+METRIC tx_bytes                   #Network bytes sent
+METRIC total_network              #rx_bytes + tx_bytes
+
+ROOT.agent_version                #'X.Y.Z.A'. CloudWatch agent version
+ROOT.agent_memory_avg|max         #NUM of MB taken by CloudWatch agent in average|max
 
 
                                              /=+===============================+=\
@@ -910,7 +982,7 @@ CODE_SIGNING                      #'CODE_SIGNING'.
 CODE_SIGNING.AllowedPublishers
  .SigningProfileVersionArns       #SIGNING_PROFILE_ARN_ARR allowed to sign a code package
 CODE_SIGNING                      #What to do when code package not properly signed. Either
- .CodeSigningPolicies             #  - 'Warn' (def): CloudWatch log
+ .CodeSigningPolicies             #  - 'Warn' (def): CloudWatch log (LLEVENT) + METRIC
  .UntrustedArtifactOnDeployment   #  - 'Enforce': publish fails
 
 
@@ -998,8 +1070,6 @@ INVOCATION_REQ.Payload            #'JSON'. Request payload
                                   #  - RequestResponse|DryRun: 6MB
                                   #  - Event: 256KB
 INVOCATION_REQ.ClientContext      #STR. Base64-encoded context 'JSON' to pass to FUNCTION
-INVOCATION_REQ.LogType            #Whether to include X-Amz-Log-Result [S]: 'None' (no, def) or 'Tail' (yes)
-                                  #Only if InvocationType 'RequestResponse'
 
 INVOCATION_RES                    #Response of an INVOCATION
 INVOCATION_RES.StatusCode         #NUM.
@@ -1014,9 +1084,6 @@ INVOCATION_RES.ResponseBody       #STR, as sent by FUNCTION
                                   #Empty if InvocationType 'Event|DryRun'
                                   #Max size: 6MB
 INVOCATION_RES.ExecutedVersion    #VERSION_NUM
-INVOCATION_RES.LogResult          #FUNCTION stdout|stderr
-                                  #Last 4KB only
-                                  #Base64 encoded
 
 ERROR_RES                         #JSON response sent on function errors
 ERROR_RES.errorType               #STR. ERROR.name
@@ -1066,7 +1133,6 @@ INVOCATION_RES
 
 INVOCATION_RES_EVENT
  .InvokeComplete                  #INVOCATION_RES_END
-INVOCATION_RES_END.LogResult      #STR
 INVOCATION_RES_END.ErrorCode      #STR
 INVOCATION_RES_END.ErrorDetails   #STR
 
@@ -1074,9 +1140,8 @@ FUNC_URL.InvokeMode               #Either:
                                   #  - 'BUFFERED' (def): use Invoke()
                                   #  - 'RESPONSE_STREAM': use InvokeWithResponseStream()
 
-awslambda.streamifyResponse
- (FUNC(REQ, OSTREAM, CONTEXT)     #Must use this Node.js HANDLER
-  ->PROMISE)                      #Must write STR chunks to OSTREAM, then call OSTREAM.end()
+awslambda.streamifyResponse       #Must use this Node.js HANDLER
+ (FUNC(REQ, OSTREAM, NCONTEXT)->>)#Must write STR chunks to OSTREAM, then call OSTREAM.end()
 OSTREAM.setContentType('MIME')    #Sets INVOCATION_RES.ResponseStreamContentType
 
 
@@ -1664,7 +1729,9 @@ SNAP_START.OptimizationStatus     #Whether to apply on each separate FUNC_VERSIO
                                              \=+===============================+=/
 
 
-ENVVAR NODE_PATH                  #'/opt/nodejs/nodeVERSION/node_modules/:/opt/nodejs/node_modules:$LAMBDA_RUNTIME_DIR/node_modules'
+ENVVAR NODE_PATH                  #'/opt/nodejs/nodeVERSION/node_modules/:
+                                  # /opt/nodejs/node_modules:
+                                  # $LAMBDA_RUNTIME_DIR/node_modules'
 LAMBDA_RUNTIME_DIR/node_modules   #Preferred location for node modules of FUNCTIONs
                                   #I.e. .zip archives can have a top-level node_modules DIR
 /opt/nodejs[/nodeVERSION]
@@ -1683,8 +1750,8 @@ AUTOMATICALLY INCLUDED ==>        #  - npm (from Node.js version)
 
 index.[m]js                       #Default main FILE
 
-HANDLER(REQ, CONTEXT)             #Main FUNC.
- ->[PROMISE_]RES                  #Default name: 'handler'
+HANDLER(REQ, NCONTEXT)->[>]RES    #Main FUNC.
+                                  #Default name: 'handler'
                                   #Can also use a FUNC(ERROR, RES) callback instead of PROMISE
 
 REQ                               #Same as:
@@ -1699,30 +1766,27 @@ RES                               #Same as:
 ERROR ==>                         #When throwing ERROR, converted to ERROR_RES
                                   #If not JSON-serializable, ERROR_RES shows serialization error instead
 
-CONTEXT                           #Information from INVOCATION_REQ.*
+NCONTEXT                          #Information from INVOCATION_REQ.*
 
-CONTEXT.invokedFunctionArn        #'FUNC_VERSION_ARN'
-CONTEXT.functionName              #'FUNCTION'
-CONTEXT.functionVersion           #NUM
-CONTEXT.awsRequestId              #'REQ_ID'
+NCONTEXT.invokedFunctionArn       #'FUNC_VERSION_ARN'
+NCONTEXT.functionName             #'FUNCTION'
+NCONTEXT.functionVersion          #NUM
+NCONTEXT.awsRequestId             #'REQ_ID'
 
-CONTEXT.getRemainingTimeInMillis()
- ->NUM                            #NUM of ms before timeout
-CONTEXT.memoryLimitInMB           #NUM (in MB). FUNC_VERSION.MemorySize
+NCONTEXT
+ .getRemainingTimeInMillis()->NUM #NUM of ms before timeout
+NCONTEXT.memoryLimitInMB          #NUM (in MB). FUNC_VERSION.MemorySize
 
-CONTEXT                           #BOOL
+NCONTEXT                          #BOOL
  .callbackWaitsForEmptyEventLoop  #If true (def) and HANDLER is sync (no PROMISE|callback),
                                   #completion waits for event loop to be empty.
 
-CONTEXT.logGroupName              #Log 'GROUP' of FUNCTION
-CONTEXT.logStreamName             #Log 'STREAM' of FUNC_INSTANCE
-
-CONTEXT.identity                  #CONTEXT_IDENTITY. Information about AWS Cognity
+NCONTEXT.identity                 #CONTEXT_IDENTITY. Information about AWS Cognity
 CONTEXT_IDENTITY.cognitoIdentityId#STR. User ID
 CONTEXT_IDENTITY
  .cognitoIdentityPoolId           #STR. Identity pool ID
 
-CONTEXT.clientContext             #CLIENT_CONTEXT. Mobile app information.
+NCONTEXT.clientContext            #CLIENT_CONTEXT. Mobile app information.
 CLIENT_CONTEXT.client             #CLIENT
 CLIENT.installation_id            #
 CLIENT.app_title                  #
