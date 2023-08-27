@@ -285,12 +285,12 @@ ROUTE.routeKey                  -~#'ROUTE', as:
 RESOURCE
  .resourceMethods.HTTP_METHOD    =#ROUTE
 ROUTE.httpMethod                 =#'HTTP_METHOD'
-API.routeSelectionExpression     ~#'ROUTE_EXPR' used by each request
+API.routeSelectionExpression     ~#'ROUTE_$EXPR' used by each request
 
 HTTP_METHOD                       #'GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS' or 'ANY'
 
 PATHVAR ==>                     =-#/PATH can include '{PATHVAR[+]}'
-                                  #Cannot resolve to empty
+                                  #Can resolve to empty
                                   #If +:
                                   #  - does not stop at next /
                                   #  - called "proxy parameter"
@@ -306,7 +306,7 @@ ROUTE.requestModels.MIME         =#'MODEL'. Allowed request body parameters
 ROUTE.requestModels.ROUTE_MODEL  ~#Same but using a name
                                   #Max request body size: 128KB, with max frame size 32KB
                                   #ROUTE_MODEL can be '$default' as a catch-all
-ROUTE.modelSelectionExpression   ~#'ROUTE_MODEL_EXPR'
+ROUTE.modelSelectionExpression   ~#'ROUTE_MODEL_$EXPR'
 
 HEADERS FORWARDING ==>            #The following only applies if ENDPOINT.types 'EDGE'
                                   #Request|response header names are capitalized
@@ -371,8 +371,8 @@ DELETE /v2/apis/API_MID
 DeleteRouteResponse()             #Res: empty
 
 RRESP                           =~#ROUTE's response status|headers|body
-                                  #Optional with integrationType '*_PROXY'
                                  ~#Def: no response
+                                  #Not with integrationType '*_PROXY'
 RRESP_ARN                        =#arn:aws:apigateway:REGION::/restapis/API_MID/integrations/resources/RESOURCE_MID/methods/HTTP_METHOD/responses/STATUS_NUM
 RRESP_ARN                        ~#arn:aws:apigateway:REGION::/apis/API_MID/routes/ROUTE_MID/routeresponses[/RRESP_MID]
 RRESP.routeReponseId             ~#RRESP_MID
@@ -386,9 +386,10 @@ RRESP.statusCode                 =#'STATUS_NUM'
 RRESP.responseParameters          #OBJ. Response headers
                                   #Key is 'method.response.header.HEADER'
                                   #Value is BOOL: requiredness
+                                  #Def Content-Type: application/json [S]
 RRESP.responseModels.MIME        =#'MODEL'. Response body
 RRESP.responseModels.RRESP_MODEL ~#Same but as a name
-RRESP.modelSelectionExpression   ~#'RRESP_MODEL_EXPR'. Currently not supported
+RRESP.modelSelectionExpression   ~#'RRESP_MODEL_$EXPR'. Currently not supported
 
 
                                              /=+===============================+=\
@@ -476,15 +477,29 @@ ROUTE.methodIntegration          =#INTEGRATION
 
 INTEGRATION.type                 =
 INTEGRATION.integrationType     -~#STR. "Backend" to forward to:
-                                =~#  - HTTP ("HTTP custom"): a new HTTP request
-                                =~#  - AWS ("AWS custom"): a call to an AWS SERVICE
-                                  #  - HTTP_PROXY: the original request
-                                  #  - AWS_PROXY: the original request
-                                  #     - only with Lambda
+                                  #  - HTTP[_PROXY]: a new HTTP request
+                                  #     - initial port must be 80|443|1024-65535
+                                  #  - AWS[_PROXY]: a call to an AWS SERVICE
                                 =~#  - MOCK: nothing
+                                  #Difference between:
+                                  #  - HTTP_PROXY: pass initial request as is
+                                =-#  - AWS_PROXY:
+                                  #     - Lambda: pass initial request as a REQ with its parameters|body|context
+                                 -#     - "first-class": like integrationType AWS (including mapping parameters) except:
+                                  #        - only specific SERVICEs|ACTIONs
+                                  #        - INTEGRATION.requestParameters keys are PARAMs, i.e. simpler
+                                =~#  - HTTP|AWS ("custom"):
+                                  #     - map parameters|body|context to a body OBJ
+                                  #     - if no mapping specified, pass initial request body as is
+                                  #     - AWS: any SERVICEs|ACTIONs
 
-INTEGRATION.integrationSubtype   -#'SERVICE'
-                                  #Only with integrationType 'AWS_PROXY'
+INTEGRATION.integrationSubtype   -#'SERVICE-ACTION' among:
+                                  #  - EventBridge-PutEvents (for a single EVENT)
+                                  #  - SQS-SendMessage|ReceiveMessage|DeleteMessage|PurgeQueue
+                                  #  - AppConfig-GetConfiguration
+                                  #  - Kinesis-PutRecord
+                                  #  - StepFunctions-Start[Sync]Execution|StopExecution
+                                  #Only with integrationType 'AWS_PROXY' ("first-class")
 INTEGRATION.uri                  =
 INTEGRATION.integrationUri      -~#Depending on type:
                                   #  - 'HTTP[_PROXY]': 'URI' to call
@@ -500,23 +515,27 @@ INTEGRATION.integrationMethod   -~#'HTTP_METHOD' to call
 
 INTEGRATION.requestParameters     #OBJ. Request parameters to forward to backend.
                                 =~#Uses:
-                                  #  - key: PARAM
+                                  #  - key: 'EXPR'
                                   #  - value: 'method.request.LOCATION.PARAM2'
                                  -#Uses:
-                                 -#  - if INTEGRATION.integrationSubType:
-                                 -#     - key: PARAM
+                                 -#  - if "first-class":
+                                 -#     - key: 'PARAM' among:
+                                 -#        - Region
+                                 -#        - any parameter of the SERVICE ACTION (path|query|body)
+                                 -#     - value: '$EXPR'
                                  -#  - otherwise:
                                  -#     - key: TRANSFORM:LOCATION.PARAM2
                                  -#     - TRANSFORM can be 'append', 'overwrite' or 'remove'
                                   #LOCATION is 'path' (PATHVARs), 'querystring' or 'header'
-                                  #Not with integrationType '*_PROXY'
+                                  #Not with integrationType '*_PROXY' (except "first-class")
 
-INTEGRATION                      =#'TEMPLATE' transforming request body to forward
+INTEGRATION                     =~#'TEMPLATE' transforming request body to forward
  .requestTemplates.MIME           #Not with integrationType '*_PROXY'
-INTEGRATION.requestTemplates     ~#Same but using a name
+INTEGRATION.requestTemplates     ~#Same but using a name, selected by templateSelecctionExpression
  .INTEGRATION_TEMPLATE            #INTEGRATION_TEMPLATE can be '$default' as a catch-all
-INTEGRATION
- .templateSelectionExpression    ~#'INTEGRATION_TEMPLATE_EXPR'. Can only be 'INTEGRATION_TEMPLATE' or '$request.body.VARR'
+                                  #Not with integrationType '*_PROXY'
+INTEGRATION                      ~#'INTEGRATION_TEMPLATE_$EXPR'. Can only be 'INTEGRATION_TEMPLATE' or '$request.body.VARR'
+ .templateSelectionExpression     #Not with integrationType '*_PROXY'
 INTEGRATION                     =~#STR. Default behavior when no requestTemplates matches. Can be:
  .passthroughBehavior             #  - NEVER: respond with 415
                                   #  - WHEN_NO_MATCH (def): forward request body as is
@@ -538,10 +557,99 @@ INTEGRATION.credentialsArn      -~#STR. Authentication, among:
                                   #  - null: none, but can use resource-based POLICY, e.g. Lambda FUNCTION PERMISSION
                                   #Only for integrationType 'AWS[_PROXY]'
 
-INTEGRATION.cacheKeyParameters   =#'PARAM'_ARR (def: []) to cache
+INTEGRATION.cacheKeyParameters   =#'EXPR'_ARR (def: []) to cache
+                                  #Must be present in INTEGRATION.requestParameters.*
 INTEGRATION.cacheNamespace       =#STR (def: RESOURCE_MID) prefixing cache key
 
 INTEGRATION.timeoutInMillis       #NUM (in ms, def|max: 29s). Request timeout
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:     INTEGRATION RESPONSE      :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+PUT /restapis/API_MID
+ /resources/RESOURCE_MID
+ /methods/HTTP_METHOD
+ /integration                    =#Req: IRESP
+ /responses/STATUS_NUM            #  - no statusCode
+PutIntegrationResponse()          #Res: IRESP
+PATCH /restapis/API_MID
+ /resources/RESOURCE_MID
+ /methods/HTTP_METHOD
+ /integration                    =#Req: IRESP
+ /responses/STATUS_NUM            #  - no statusCode
+UpdateIntegrationResponse()       #Res: IRESP
+GET /restapis/API_MID
+ /resources/RESOURCE_MID
+ /methods/HTTP_METHOD
+ /integration
+ /responses/STATUS_NUM           =#Req: empty
+GetIntegrationResponse()          #Res: IRESP
+DELETE /restapis/API_MID
+ /resources/RESOURCE_MID
+ /methods/HTTP_METHOD
+ /integration
+ /responses/STATUS_NUM           =#Req: empty
+DeleteIntegrationResponse()       #Res: empty
+
+POST /v2/apis/API_MID
+ /integrations/INTEGRATION_MID  -~#Req: IRESP
+ /integrationresponses            #  - no integrationResponseId
+CreateIntegrationResponse()       #Res: IRESP
+PATCH /v2/apis/API_MID
+ /integrations/INTEGRATION_MID  -~#Req: IRESP
+ /integrationresponses/IRESP_MID  #  - no integrationResponseId
+UpdateIntegrationResponse()       #Res: IRESP
+GET /v2/apis/API_MID
+ /integrations/INTEGRATION_MID
+ /integrationresponses          -~#Req: empty
+GetIntegrationResponses()         #Res: items IRESP_ARR
+GET /v2/apis/API_MID
+ /integrations/INTEGRATION_MID
+ /integrationresponses
+ /IRESP_MID                     -~#Req: empty
+GetIntegrationResponse()          #Res: IRESP
+DELETE /v2/apis/API_MID
+ /integrations/INTEGRATION_MID
+ /integrationresponses
+ /IRESP_MID                     -~#Req: empty
+DeleteIntegrationResponse()       #Res: empty
+
+IRESP                             #Response from backend forwarded back from ROUTE to client
+                                  #Not with integrationType '*_PROXY'
+IRESP_ARN                        =#arn:aws:apigateway:REGION::/restapis/API_MID/integrations/resources/RESOURCE_MID/methods/HTTP_METHOD/integration/responses/STATUS_NUM
+IRESP_ARN                       -~#arn:aws:apigateway:REGION::/apis/API_MID/integrations[/IRESP_MID]
+IRESP.integrationResponseId     -~#IRESP_MID
+IRESP.selectionPattern           =#'REGEXP' whether to use IRESP, matched against STATUS_NUM
+                                  #Can be '' (def) as a catch-all
+IRESP.integrationResponseKey    -~#'/REGEXP/' whether to use IRESP, matched against STATUS_NUM
+                                 ~#Can be '$default' as a catch-all
+
+INTEGRATION.integrationResponses
+ .STATUS_NUM                     =#IRESP
+INTEGRATION.integrationResponse
+ SelectionExpression             ~#'$EXPR' evaluated to IRESP.integrationResponseKey
+
+IRESP.statusCode                 =#'STATUS_NUM'
+IRESP.responseParameters          #OBJ. Response headers.
+                                  #Key is 'method.response.header.HEADER'
+                                  #Use backend response, depending on value:
+                                  #  - 'integration.response.header.HEADER'
+                                  #  - 'integration.response.body.VARR'
+IRESP.responseTemplates.MIME     =#'TEMPLATE' transforming response body from backend
+IRESP.responseTemplate           ~#Same but as a name
+ .IRESP_TEMPLATE                  #Can be '$default' as a catch-all
+IRESP                            ~#'IRESP_TEMPLATE_$EXPR'. Can be:
+ .templateSelectionExpression     #  - 'IRESP_TEMPLATE'
+                                  #  - '$request.body.VARR'
+                                  #  - '$integration.response.statuscode'
+                                  #  - '$integration.response.[multivalue]header.HEADER'
+
+IRESP.contentHandling[Strategy] =~#Like INTEGRATION.*
 
 
                                              /=+===============================+=\
@@ -551,10 +659,12 @@ INTEGRATION.timeoutInMillis       #NUM (in ms, def|max: 29s). Request timeout
                                              \=+===============================+=/
 
 
+INTEGRATION.httpMethod           =
+INTEGRATION.integrationMethod   -~#'POST'
 INTEGRATION.uri                  =#'arn:aws:apigateway:REGION:lambda:path//YYYY-MM-DD/functions/SHORT_FUNC_ARN/invocations[?Qualifier=QUALIFIER]
 INTEGRATION.integrationUri      -~#Lambda FUNC_ARN
-
-LAMBDA INVOCATIONTYPE ==>         #'RequestResponse'
+INTEGRATION.requestParameters     #Can be used to set X-Amz-InvocationType|ClientContext|LogType [C]
+LAMBDA INVOCATIONTYPE ==>         #'RequestResponse', but can be changed with X-Amz-InvocationType [C]
 
 PERMISSIONS ==>                   #Must use FUNCTION PERMISSION or INTEGRATION.credentials[Arn] to allow:
                                   #  - PACTION lambda:InvokeFunction
@@ -624,98 +734,24 @@ REQ_IDENTITY0|1.user
 REQ_IDENTITY0|1.caller            #Like FUNC_URL_REQ_IAM.*
 REQ_IDENTITY0|1.accessKey         #Only when IAM authenticated
 
-RES                               #
-RES.statusCode|headers|body
+RES                               #One of: MAIN_RES, ERROR_RES, CUSTOM_ERROR_RES
+MAIN_RES.statusCode|headers|body
  |isBase64Encoded                 #Like FUNC_URL_RES.*
-RES.multiValueHeaders             #OBJ
+MAIN_RES.multiValueHeaders        #OBJ
 
+ERROR_RES.errorType|errorMessage
+ |stackTrace|cause                #Like Lambda
+IRESP.selectionPattern
+IRESP.integrationResponseKey      #When using ERROR_RES, matches ERROR_RES.errorMessage, not STATUS_NUM
 
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:     INTEGRATION RESPONSE      :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-PUT /restapis/API_MID
- /resources/RESOURCE_MID
- /methods/HTTP_METHOD
- /integration                    =#Req: IRESP
- /responses/STATUS_NUM            #  - no statusCode
-PutIntegrationResponse()          #Res: IRESP
-PATCH /restapis/API_MID
- /resources/RESOURCE_MID
- /methods/HTTP_METHOD
- /integration                    =#Req: IRESP
- /responses/STATUS_NUM            #  - no statusCode
-UpdateIntegrationResponse()       #Res: IRESP
-GET /restapis/API_MID
- /resources/RESOURCE_MID
- /methods/HTTP_METHOD
- /integration
- /responses/STATUS_NUM           =#Req: empty
-GetIntegrationResponse()          #Res: IRESP
-DELETE /restapis/API_MID
- /resources/RESOURCE_MID
- /methods/HTTP_METHOD
- /integration
- /responses/STATUS_NUM           =#Req: empty
-DeleteIntegrationResponse()       #Res: empty
-
-POST /v2/apis/API_MID
- /integrations/INTEGRATION_MID  -~#Req: IRESP
- /integrationresponses            #  - no integrationResponseId
-CreateIntegrationResponse()       #Res: IRESP
-PATCH /v2/apis/API_MID
- /integrations/INTEGRATION_MID  -~#Req: IRESP
- /integrationresponses/IRESP_MID  #  - no integrationResponseId
-UpdateIntegrationResponse()       #Res: IRESP
-GET /v2/apis/API_MID
- /integrations/INTEGRATION_MID
- /integrationresponses          -~#Req: empty
-GetIntegrationResponses()         #Res: items IRESP_ARR
-GET /v2/apis/API_MID
- /integrations/INTEGRATION_MID
- /integrationresponses
- /IRESP_MID                     -~#Req: empty
-GetIntegrationResponse()          #Res: IRESP
-DELETE /v2/apis/API_MID
- /integrations/INTEGRATION_MID
- /integrationresponses
- /IRESP_MID                     -~#Req: empty
-DeleteIntegrationResponse()       #Res: empty
-
-IRESP                             #Response from backend forwarded back from ROUTE to client
-                                  #Not with integrationType '*_PROXY'
-IRESP_ARN                        =#arn:aws:apigateway:REGION::/restapis/API_MID/integrations/resources/RESOURCE_MID/methods/HTTP_METHOD/integration/responses/STATUS_NUM
-IRESP_ARN                       -~#arn:aws:apigateway:REGION::/apis/API_MID/integrations[/IRESP_MID]
-IRESP.integrationResponseId     -~#IRESP_MID
-IRESP.integrationResponseKey    -~#'IRESP'
-                                 ~#Can be '$default' as a catch-all
-
-INTEGRATION.integrationResponses
- .STATUS_NUM                     =#IRESP
-INTEGRATION.integrationResponse
- SelectionExpression             ~#'IRESP_EXPR'
-
-IRESP.statusCode                 =#'STATUS_NUM'
-IRESP.responseParameters          #OBJ. Response headers.
-                                  #Key is 'method.response.header.HEADER'
-                                  #Use backend response, depending on value:
-                                  #  - 'integration.response.header.HEADER'
-                                  #  - 'integration.response.body.VARR'
-IRESP.responseTemplates.MIME     =#'TEMPLATE' transforming response body from backend
-IRESP.responseTemplate           ~#Same but as a name
- .IRESP_TEMPLATE                  #Can be '$default' as a catch-all
-IRESP                            ~#'IRESP_TEMPLATE_EXPR'. Can be:
- .templateSelectionExpression     #  - 'IRESP_TEMPLATE'
-                                  #  - '$request.body.VARR'
-                                  #  - '$integration.response.statuscode'
-                                  #  - '$integration.response.[multivalue]header.HEADER'
-
-IRESP.selectionPattern           =#'REGEXP' whether to use IRESP, matched against response body from backend
-                                  #Can be '' to match anything
-IRESP.contentHandling[Strategy] =~#Like INTEGRATION.*
+CUSTOM_ERROR_RES                  #Is 'OBJ_JSON', not OBJ
+CUSTOM_ERROR_RES.errorType        #STR. ERROR.name
+CUSTOM_ERROR_RES.trace            #CUSTOM_ERROR_TRACE
+CUSTOM_ERROR_TRACE.file           #'FILENAME'
+CUSTOM_ERROR_TRACE.function       #'FUNC()'
+CUSTOM_ERROR_TRACE.line           #LINE_NUM
+CUSTOM_ERROR_RES.httpStatus       #STATUS_NUM
+CUSTOM_ERROR_RES.requestId        #REQ_ID. Should forward REQ_CONTEXT.requestId
 
 
                                              /=+===============================+=\
@@ -833,16 +869,27 @@ MODEL_TEMPLATE.value            =~#'TEMPLATE'
                                              \=+===============================+=/
 
 
-EXPR                             ~#STR that can contain the following syntax
+EXPR                             =#STR that can contain the following syntax
+method.request                   =#Initial request
+method.request.path.PATHVAR      =#'VAL'
+method.request.header.HEADER     =#'VAL'
+integration.request              =#Request sent to backend
+integration.request.path.PATHVAR =#'VAL'
+integration.request.header.HEADER=#'VAL'
+
+$EXPR                            ~#STR that can contain the following syntax
 
 $VARR                             #Dot-delimited
                                   #Can \-escape $
                                   #If not found, resolves to empty string
 
-$request.header.HEADER            #'VAL'
-                                  #Case-insensitive
+$request.path.PATHVAR             #'VAL'
 $request.querystring.PARAM        #'VAL'
                                   #Case-sensitive
+$request.header.HEADER            #'VAL'
+                                  #Case-insensitive
+$request.body                     #STR
+$request.body.VARR                #VAL
 $stageVariables.STAGEVAR          #'VAL'
 $context.routeKey                 #'ROUTE'
 
@@ -855,7 +902,7 @@ $integration.response             #RES
 ${...}...                         #Concatenation
 
 VARR                              #JSON path (see its doc)
-                                  #Since EXPR is stringified and usually evaluates to a name (e.g. 'MODEL_EXPR' evaluates to 'MODEL' name)
+                                  #Since $EXPR is stringified and usually evaluates to a name (e.g. 'MODEL_$EXPR' evaluates to 'MODEL' name)
                                   #it is usually more useful to resolve to a STR (not ARR|OBJ)
                                   #I.e. in practice, mostly only .VAR, ['VAR'] and [NUM] are useful
 
@@ -894,7 +941,7 @@ REQVALID
  .validateRequestParameters      =#BOOL. Validate request parameters
 
 REQVALID.validateRequestBody     =#BOOL. Validate request body against its MODEL
-                                 ~#Always true, unless integrationType '*_PROXY'. If fails, returns error response:
+                                 ~#false with integrationType '*_PROXY', true otherwise. If fails, returns error response:
                                  ~#  - OBJ: message 'Bad request body', connectionId CONNECTION_ID, messageId STR
 MODEL.schema                    =~#STR. JSON schema v4. Only with MODEL.contentType 'application/json'
 MODEL.flatten                    =#BOOL (def: false). Resolve all JSON references
@@ -1016,7 +1063,7 @@ COND_KEY AuthorizerType           #STR, on Create|Update|DeleteAuthorizer(), on 
 AUTHORIZER.identitySource        =#'STR,...'. Locates request authentication info (which is authorizerType-specific).
                                   #E.g. 'method.request.header.HEADER' or 'method.request.querystring.PARAM'
                                   #Returns 401 right away if missing request authentication info
-AUTHORIZER.identitySource       -~#Same but use 'EXPR'_ARR instead of 'STR,...'
+AUTHORIZER.identitySource       -~#Same but use '$EXPR'_ARR instead of 'STR,...'
 
 AUTHORIZER                        #'REGEXP' matched on value returned by AUTHORIZER.identifySource
  .identityValidationExpression    #Returns 401 right away if no match
@@ -1287,7 +1334,7 @@ ACCESS_LOG.destinationArn         #Either:
                                   #  - CloudWatch LOG_GROUP_ARN
                                  =#  - Kinesis Firehose DELIVERY_STREAM_ARN
                                   #     - name must start with 'amazon-apigateway-'
-ACCESS_LOG.format                 #'EXPR' transforming each request to a single line
+ACCESS_LOG.format                 #'$EXPR' transforming each request to a single line
                                   #Must include $context.requestId
 COND_KEY AccessLoggingDestination
 COND_KEY AccessLoggingFormat      #On Create|Update|DeleteStage()
