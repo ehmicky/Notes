@@ -600,14 +600,6 @@ REQ_IDENTITY1.user
 REQ_IDENTITY1.caller
 REQ_IDENTITY1.accessKey           #Like FUNC_URL_REQ_IAM.*
 
-REQ_IDENTITY1.cognitoIdentityId   #STR
-REQ_IDENTITY1
- .cognitoIdentityPoolId           #STR
-REQ_IDENTITY1
- .cognitoAuthenticationType       #STR
-REQ_IDENTITY1
- .cognitoAuthenticationProvider   #STR
-
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -812,7 +804,8 @@ EXPR                            ~2#STR that can contain the following syntax
 $VARR                             #Dot-delimited
                                   #Can \-escape $
                                   #If not found, resolves to empty string
-$request                          #REQ
+$request.header.HEADER            #'VAL'
+$request.querystring.PARAM        #'VAL'
 $context                          #REQ_CONTEXT
 $input                            #???
 $integration.response             #RES
@@ -970,14 +963,12 @@ XAUTHORIZER.authorizerType        #'REQUEST|TOKEN|JWT|COGNITO_USER_POOLS'
 COND_KEY AuthorizerType           #STR, on Create|Update|DeleteAuthorizer(), on [X]AUTHORIZER
                                   #Also STR_ARR, on [Re]Import[Rest]Api(), on [X]API
 
-AUTHORIZER.identitySource         #'EXPR,...'. Locates request authentication info.
+AUTHORIZER.identitySource         #'STR,...'. Locates request authentication info.
                                   #E.g. 'method.request.header.HEADER'
                                   #Returns 401 right away if missing request authentication info
-XAUTHORIZER.identitySource        #Same but use STR_ARR instead of 'EXPR,...'
-[X]AUTHORIZER                     #'REGEXP' matched on, depending on type:
- .identityValidationExpression    #  - 'TOKEN': token
-                                  #  - 'COGNITO_USER_POOLS': `aud` field
-                                  #Returns 401 right away if no match
+XAUTHORIZER.identitySource        #Same but use 'EXPR'_ARR instead of 'STR,...'
+[X]AUTHORIZER                     #'REGEXP' matched on token, authorizerType-specific
+ .identityValidationExpression    #Returns 401 right away if no match
 
 
                                              /=+===============================+=\
@@ -988,18 +979,54 @@ XAUTHORIZER.identitySource        #Same but use STR_ARR instead of 'EXPR,...'
 
 
 AUTHORIZER TYPE 'JWT'           -2#Authorize with JWT
+
 XAUTHORIZER.identitySource ==>    #Locates the JWT value, either 'JWT' or 'Bearer JWT'
                                   #Only in headers or query variables
+
 XAUTHORIZER.jwtConfiguration      #XJWT
 XJWT.issuer                       #STR, matched against PAYLOAD.iss
 XJWT.audience                     #STR_ARR, matched against PAYLOAD.aud
+XAUTHORIZER
+ .identityValidationExpression    #'REGEXP' matched against PAYLOAD.aud
+XROUTE.authorizationScopes        #'SCOPE'_ARR', matched against PAYLOAD.scope|scp
+PAYLOAD.iat|nbf|exp               #Must not be expired
+
+ISSUER/.well-known/jwks.json      #Used and cached for 2h
+JWK.alg                           #Only RSA algorithms
+JWK.kid                           #Must match ENVLOP.kid
+
+REQ_CONTEXT.authorizer.jwt        #REQ_JWT2
+REQ_JWT2.claims                   #OBJ of custom PAYLOAD.* on JWT token
+REQ_JWT2.scopes                   #'SCOPE'_ARR
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:      AUTHORIZER COGNITO       :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
 
 AUTHORIZER TYPE                  1#Authorize with Cognito USER_POOL
  'COGNITO_USER_POOLS'           -2#Could also use type 'JWT' instead, since Cognito uses JWT
-AUTHORIZER.providerARNs           #Cognito USER_POOL_ARN_ARR
 
-[X]ROUTE.authorizationScopes      #'SCOPE'_ARR. Only with authorizationType 'COGNITO_USER_POOLS|JWT'
-                                  #Requires credentials to include that SCOPE
+AUTHORIZER.providerARNs           #Cognito USER_POOL_ARN_ARR
+COND_KEY apigateway:
+ CognitoUserPoolProviderArn       #USER_POOL_ARN_ARR, on Create|Update|DeleteAuthorizer()
+
+XAUTHORIZER
+ .identityValidationExpression    #'REGEXP' matched against Cognito's JWT's PAYLOAD.aud
+ROUTE.authorizationScopes         #Like XROUTE.authorizationScopes but for Cognito's JWT
+
+INVOKE_AUTHORIZER_REQ.claims      #OBJ. PAYLOAD.* of custom properties in Cognito's JWT
+
+REQ_IDENTITY1.cognitoIdentityId   #STR
+REQ_IDENTITY1
+ .cognitoIdentityPoolId           #STR
+REQ_IDENTITY1
+ .cognitoAuthenticationType       #STR
+REQ_IDENTITY1
+ .cognitoAuthenticationProvider   #STR
 
 
                                              /=+===============================+=\
@@ -1011,6 +1038,9 @@ AUTHORIZER.providerARNs           #Cognito USER_POOL_ARN_ARR
 
 AUTHORIZER TYPE 'REQUEST'         #Authorize with request parameters, checked by Lambda FUNCTION
 AUTHORIZER TYPE 'TOKEN'          1#Same but with request header
+
+[X]AUTHORIZER
+ .identityValidationExpression    #'REGEXP' matched against token
 
 [X]AUTHORIZER.authorizerUri       #Lambda FUNCTION to invoke
                                   #Is 'arn:aws:apigateway:REGION:lambda:path/API_VERSION/functions/FUNC_ARN/invocations'
@@ -1057,8 +1087,6 @@ INVOKE_AUTHORIZER_REQ
 INVOKE_AUTHORIZER_REQ.clientStatus#STATUS_NUM. 0 if AUTHORIZER passed
 INVOKE_AUTHORIZER_REQ.policy      #'POLICY_DOC' returned by AUTHORIZER
 INVOKE_AUTHORIZER_REQ.principalId #STR returned by AUTHORIZER
-INVOKE_AUTHORIZER_REQ.claims.STR  #STR
-                                  #Only with type 'COGNITO_USER_POOLS'
 
 
                                              /=+===============================+=\
