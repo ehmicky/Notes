@@ -60,6 +60,17 @@ PAGINATION ==>                    #Uses:
                                   #  - GetTags()
                                  =#  - GetStages()
 
+THROTTLING ==>                    #Per ACCOUNT:
+                                  #  - 10/s: total for all ACTIONs (burst quota of 40/s) (for API ACTIONs, not client requests)
+                                  #  - 5/s: Create|DeleteApiKey, Create|DeleteResource
+                                  #  - 1/s: PutRestApi
+                                  #  - 5/2s: GetResources
+                                  #  - 1/5s: CreateDeployment 	1 request every 5 seconds per account 	No
+                                  #  - 1/15s: CreateVpcLink
+                                  #  - 1/20s: CreateDocumentationVersion, UpdateAccount, UpdateUsagePlan
+                                  #  - 1/30s: Create|Update|DeleteDomainName, ImportDocumentationParts, DeleteRestApi, DeleteVpcLink
+                                  #  - 1/3s (ENDPOINT.types 'EDGE'), 1/30s (ENDPOINT.types 'REGIONAL|PRIVATE'): CreateRestApi, ImportRestApi
+
 PRICING ==>                       #Requests:
                                  =#  - 3.5$/1e6 requests
                                   #     - 20% cheaper after 3e8 requests, 32% after 1e9, 57% after 2e10
@@ -191,6 +202,7 @@ DeleteApi()                       #Res: empty
 
 API                               #API gateway, i.e. sets of endpoints that perform validation and authorization
                                   #then forward to a backend
+                                  #Max 120 (if ENDPOINT.types 'EDGE') or 600 (if ENDPOINT.types 'REGIONAL|PRIVATE') per ACCOUNT
 API_ARN                          =#arn:aws:apigateway:REGION::/restapis[/API_MID]
 API_ARN                         -~#arn:aws:apigateway:REGION::/apis[/API_MID]
 API.id                           =
@@ -288,6 +300,7 @@ DELETE /restapis/API_MID
 DeleteResource()                  #Res: empty
 
 RESOURCE                         =#Endpoints sharing same /PATH (but can have different HTTP_METHODs)
+                                  #Max 300 per API (soft)
 RESOURCE_ARN                     =#arn:aws:apigateway:REGION::/restapis/API_MID/resources[/RESOURCE_MID]
 RESOURCE.id                      =#RESOURCE_MID
 
@@ -341,6 +354,7 @@ DELETE /v2/apis/API_MID
 DeleteRouteRequestParameter()     #Delete ROUTE.requestParameters
 
 ROUTE                             #Endpoint, i.e. /PATH + HTTP_METHOD
+                                  #Max 300 per API (soft)
 ROUTE_ARN                        =#arn:aws:apigateway:REGION::/restapis/API_MID/integrations/resources/RESOURCE_MID/methods/HTTP_METHOD
 ROUTE_ARN                       -~#arn:aws:apigateway:REGION::/apis/API_MID/routes[/ROUTE_MID]
 ROUTE.routeId                   -~#ROUTE_MID
@@ -367,9 +381,12 @@ PATHVAR ==>                     =-#/PATH can include '{PATHVAR[+]}'
 
 ROUTE.requestParameters.EXPR    =~#BOOL (requiredness). Allowed request non-body parameters from client
                                   #EXPR: only non-body 'request.*'
+                                  #Max size of URI: 8KB
+                                  #Max size of URI + headers: 10KB
 PARAM_ARN                        ~#arn:aws:apigateway:REGION::/apis/API_MID/routes/ROUTE_MID/requestparameters/PARAM
 
 ROUTE.requestModels.MIME         =#'MODEL'. Allowed request body parameters from client
+                                  #Max request body size: 10MB
 ROUTE.requestModels.ROUTE_MODEL  ~#Same but using a name
                                   #Max request body size: 128KB, with max frame size 32KB
                                   #ROUTE_MODEL can be '$default' as a catch-all
@@ -544,6 +561,7 @@ DELETE /v2/apis/API_MID
 DeleteIntegration()               #Res: empty
 
 INTEGRATION                       #"Backend", i.e. destination to forward client's request, and send back response from
+                                  #Max 300 per API (soft)
 INTEGRATION_ARN                  =#arn:aws:apigateway:REGION::/restapis/API_MID/integrations/resources/RESOURCE_MID/methods/HTTP_METHOD/integration
 INTEGRATION_ARN                 -~#arn:aws:apigateway:REGION::/apis/API_MID/integrations[/INTEGRATION_MID]
 INTEGRATION.integrationId       -~#INTEGRATION_MID
@@ -623,7 +641,7 @@ INTEGRATION.credentialsArn      -~#STR. Authentication, among:
                                   #  - null: none, but can use resource-based POLICY, e.g. Lambda FUNCTION PERMISSION
                                   #Only for integrationType 'AWS[_PROXY]'
 
-INTEGRATION.timeoutInMillis       #NUM (in ms, def|max: 29s). Request timeout
+INTEGRATION.timeoutInMillis       #NUM (in ms, min: 50ms, def|max: 29s). Request timeout
 
 
                                              /=+===============================+=\
@@ -966,6 +984,7 @@ MODEL_TEMPLATE.value            =~#'TEMPLATE'
 
 TEMPLATE                        =~#Transforms request|response body between ROUTE and backend
                                   #Velocity template
+                                  #Max 1e3 iterations in #foreach loops
                                   #Can use $EXPR
 
 $input                          =~#Used instead of $request in TEMPLATEs
@@ -1124,6 +1143,7 @@ COND_KEY RouteAuthorizationType   #STR, on Create|Put|DeleteMethod(), on ROUTE
 API.policy                       =#IAM 'POLICY_DOC'
                                   #Resource-based policy for API, with resource-level permissions
                                   #Requires PACTION apigateway:UpdateRestApiPolicy
+                                  #Max 8KB (soft)
 
 PACTION execute-api:*             #Required if either:
                                   #  - authorizationType 'AWS_IAM|CUSTOM'
@@ -1206,6 +1226,7 @@ DELETE /v2/apis/API_MID
 DeleteAuthorizer()                #Res: empty
 
 AUTHORIZER                        #Authorize requests to API
+                                  #Max 10 per API (soft)
 AUTHORIZER_ARN                   =#arn:aws:apigateway:REGION::/restapis/API_MID/authorizers[/AUTHORIZER_MID]
 AUTHORIZER_ARN                  -~#arn:aws:apigateway:REGION::/apis/API_MID/authorizers[/AUTHORIZER_MID]
 AUTHORIZER.id                    =
@@ -1246,12 +1267,15 @@ AUTH_TYPE 'JWT'                  -#Authorize with JWT
 
 AUTHORIZER.jwtConfiguration      -#JWT
 JWT.issuer                       -#STR, matched against PAYLOAD.iss
-JWT.audience                     -STR_ARR, matched against PAYLOAD.aud
+JWT.audience                     -#STR_ARR, matched against PAYLOAD.aud
                                   #Must be used instead of AUTHORIZER.identityValidationExpression
+                                  #Max 50 per AUTHORIZER
 ROUTE.authorizationScopes        -#'SCOPE'_ARR', matched against PAYLOAD.scope|scp
+                                  #Max 10 per ROUTE
 PAYLOAD.iat|nbf|exp              -#Must not be expired
 
 ISSUER/.well-known/jwks.json     -#Used and cached for 2h
+                                  #Timeout: 1.5s. Max response: 150KB
 JWK.alg                          -#Only RSA algorithms
 JWK.kid                          -#Must match ENVLOP.kid
 
@@ -1353,6 +1377,8 @@ ACONTEXT.authorizer.requestId    =#REQ_ID of Lambda invocation
 
 [S]ARES                           #AUTHORIZER Lambda RES
                                   #Can be null to send 401
+                                  #Max 8KB
+                                  #Timeout: 10s
 
 ARES.principalId                  #PRINCIPAL ID. Authenticate request with it
 CONTEXT.authorizer.principalId
@@ -1475,6 +1501,7 @@ DeleteAccessLogSettings()         #Delete STAGE.accessLogSettings
 STAGE                             #Like a git branch, for a API
                                   #Included in requester's path, i.e. API_MID.execute-api.amazonaws.com[/STAGE]
                                 -~#'$default' can be used as default (only for ROUTE '/')
+                                  #Max 10 per API (soft)
 STAGE_ARN                        =#arn:aws:apigateway:REGION::/restapis/API_MID/stages[/STAGE]
 STAGE_ARN                       -~#arn:aws:apigateway:REGION::/apis/API_MID/stages[/STAGE]
 STAGE.stageName                   #'STAGE'
@@ -1486,10 +1513,11 @@ STAGE.lastUpdatedDate            =#DATE_NUM
                                 -~#'DATE'
 
 STAGE.variables.STAGE_VAR        =
-STAGE.stageVariables.STAGE_VAR  -~#'VAL'
-                                  #'STAGE_VAR' must be [[:alnum:]-._~:/?#&=,]
+STAGE.stageVariables.STAGE_VAR  -~#'VAL', max 512 chars
+                                  #'STAGE_VAR': max 64 chars, [[:alnum:]-._~:/?#&=,]
                                   #Similar goal as an environment-specific ENVVAR
                                   #Should not include confidential information
+                                  #Max 100 per STAGE
 
 STAGE.methodSettings             =#ROUTE_SETTINGS
  ./PATH/HTTP_METHOD               #PATH|HTTP_METHOD can be *
@@ -1601,10 +1629,12 @@ ACCESS_LOG_ARN                  -~#arn:aws:apigateway:REGION::/apis/API_MID/stag
 ACCESS_LOG.destinationArn         #Either:
                                   #  - CloudWatch LOG_GROUP_ARN
                                   #     - named API-Gateway-Execution-Logs/API_MID/STAGE[/canary]???
+                                  #     - max 1MB LOG_EVENT
                                  =#  - Kinesis Firehose DELIVERY_STREAM_ARN
                                   #     - name must start with 'amazon-apigateway-'
 ACCESS_LOG.format                 #'$EXPR' of the log line to print
                                   #Must include '$context.requestId'
+                                  #Max 3KB
 COND_KEY AccessLoggingDestination
 COND_KEY AccessLoggingFormat      #On Create|Update|DeleteStage()
 ACCOUNT.cloudwatchRoleArn        =#ROLE_ARN used to send to CloudWatch logs
@@ -1731,6 +1761,7 @@ PUT /v2/apis/API_MID            -~#Req: RAW_API_EXPORT + [API]_IMPORT (query var
 ReimportApi()                     #Res: API
 
 RAW_API_EXPORT                    #'JSON|YAML' OpenAPI SPEC
+                                  #Max 6MB
 
 API_EXPORT_TYPE                   #OpenAPI version, either 'oas30' (3.0) or 'swagger' (2.0)
 Accepts: MIME [C]                 #'application/json' or 'application/yaml'
@@ -1795,6 +1826,7 @@ DELETE /restapis/API_MID
 DeleteDocumentationPart()         #Res: empty
 
 DOCPART                          =#Single OBJ in OpenAPI SPEC, but only the documentation-related properties
+                                  #Max 2e3 per API (soft)
 DOCPART_ARN                      =#arn:aws:apigateway:REGION::/restapis/API_MID/documentation/parts[/DOCPART_MID]
 DOCPART.id                       =#DOCPART_MID
 
@@ -1951,6 +1983,7 @@ DELETE /v2/domainnames/DNAME    -~#Req: empty
 DeleteDomainName()                #Res: empty
 
 DNAME                             #Custom domain name
+                                  #Max 120 per REGION (soft)
 DNAME_ARN                         #arn:aws:apigateway:REGION::/domainnames/DNAME
 DNAME.domainName                  #'DNAME'
 
@@ -2008,27 +2041,33 @@ DNAME.tags                        #TAGS
                                              \=+===============================+=/
 
 
-DNAME.securityPolicy             =#'TLS_1_0|1_2' (def: none)
-DDNAME.securityPolicy           -~#'TLS_1_2' (def: none)
-COND_KEY SecurityPolicy           #STR_ARR, on Create|Put|DeleteDomainName()
-
-DNAME.mutualTlsAuthentication     #DNAME_TLS. Require client TLS authentication
-DNAME_TLS.truststoreUri           #'s3://BUCKET/OBJECT' to truststore, that contains CAs
-DNAME_TLS.truststoreVersion       #VERSION_ID of S3 OBJECT
-DNAME_TLS.truststoreWarnings      #'MESSAGE'_ARR. Warnings related to truststore
-COND_KEY MtlsTrustStoreUri|Version#STR, on Create|Update|DeleteDomainName()
-
 DNAME.certificateArn             =
 DDNAME.certificateArn           -~#ACM certificate ARN, used for TLS
                                   #Only with ENDPOINT.types 'EDGE'
                                   #Certificate's REGION must be us-east-1
                                   #Requires PACTION apigateway:AddCertificateToDomain|RemoveCertificateFromDomain
 DNAME.certificateName            =
-DDNAME.certificateName          -~#Same but as 'CERTIFICATE' name
+DDNAME.certificateName          -~#Same but as 'ACM_CERTIFICATE' name
 DNAME.certificateUploadDate      =#DATE_NUM
 DDNAME.certificateUploadDate    -~#'DATE'
 DNAME.regionalCertificateArn|Name=#Same as certificateArn|Name but only with ENDPOINT.types 'REGIONAL'
                                   #Certificate's REGION must be the same REGION
+
+DNAME.securityPolicy             =#'TLS_1_0|1_2' (def: none)
+DDNAME.securityPolicy           -~#'TLS_1_2' (def: none)
+COND_KEY SecurityPolicy           #STR_ARR, on Create|Put|DeleteDomainName()
+
+DNAME.mutualTlsAuthentication     #DNAME_TLS. Require client TLS authentication
+                                  #Only when accessed through DNAME, i.e. should consider using API.disableExecuteApiEndpoint true
+                                  #Only with ENDPOINT.types 'REGIONAL'
+DNAME_TLS.truststoreUri           #'s3://BUCKET/OBJECT' to truststore, that contains CAs
+                                  #Must be *.pem file. Newline-separated list of X.509 certificates in PEM format
+                                  #For whole CAs chain (max size for chain: 4)
+                                  #Can be self-signed
+                                  #Hash algorithms: at least SHA-256, RSA-2048 or ECDSA-256
+DNAME_TLS.truststoreVersion       #VERSION_ID of S3 OBJECT
+DNAME_TLS.truststoreWarnings      #'MESSAGE'_ARR. Warnings related to truststore
+COND_KEY MtlsTrustStoreUri|Version#STR, on Create|Update|DeleteDomainName()
 
 DNAME.ownership
  VerificationCertificateArn      =
@@ -2082,7 +2121,7 @@ MAPPING                           #Make a given DNAME/BASEPATH use a specific AP
                                 =-#  - including from different versions (v1|v2, but not WebSocket)
                                   #Must all be in same ACCOUNT
                                   #If API uses ENDPOINT.types 'REGIONAL', securityPolicy must be 'TLS_1_2'
-                                  #Max 200
+                                  #Max 200 per DNAME
 MAPPING_ARN                      =#arn:aws:apigateway:REGION::/domainnames/DNAME/basepathmappings[/BASEPATH]
 MAPPING_ARN                     -~#arn:aws:apigateway:REGION::/domainnames/DNAME/apimappings[/MAPPING_MID]
 MAPPING.apiMappingId            -~#MAPPING_MID
@@ -2108,53 +2147,57 @@ MAPPING.stage                     #'STAGE'
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:          CERTIFICATE          :==(
+                                            )==:      CLIENT CERTIFICATE       :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
-POST /clientcertificates         =#Req: CERTIFICATE
+POST /clientcertificates         =#Req: CCERTIFICATE
 GenerateClientCertificate()       #  - no clientCertificateId, createdDate, expirationDate, pemEncodedCertificate
-                                  #Res: CERTIFICATE
-PATCH /clientcertificates        =#Req: CERTIFICATE
- /CERTIFICATE_MID                 #  - no clientCertificateId, createdDate, expirationDate, pemEncodedCertificate, tags
-UpdateClientCertificate()         #Res: CERTIFICATE
+                                  #Res: CCERTIFICATE
+PATCH /clientcertificates        =#Req: CCERTIFICATE
+ /CCERTIFICATE_MID                #  - no clientCertificateId, createdDate, expirationDate, pemEncodedCertificate, tags
+UpdateClientCertificate()         #Res: CCERTIFICATE
 GET /clientcertificates          =#Req: empty
-GetClientCertificates()           #Res: item CERTIFICATE_ARR
+GetClientCertificates()           #Res: item CCERTIFICATE_ARR
 GET /clientcertificates
- /CERTIFICATE_MID                =#Req: empty
-GetClientCertificate()            #Res: CERTIFICATE
+ /CCERTIFICATE_MID               =#Req: empty
+GetClientCertificate()            #Res: CCERTIFICATE
 DELETE /clientcertificates
- /CERTIFICATE_MID                =#Req: empty
+ /CCERTIFICATE_MID               =#Req: empty
 DeleteClientCertificate()         #Res: empty
 
-CERTIFICATE                      =#TLS certificate
-CERTIFICATE_ARN                  =#arn:aws:apigateway:REGION::/clientcertificates[/CERTIFICATE_MID]
-CERTIFICATE.clientCertificateId  =#CERTIFICATE_MID
-CERTIFICATE.description          =#STR
-CERTIFICATE.createdDate          =#DATE_NUM
-CERTIFICATE.expirationDate       =#DATE_NUM
+CCERTIFICATE                     =#TLS self-signed certificate used by HTTP requests sent by ROUTEs to backend
+                                  #Allows backend to authenticate requests it received from ROUTEs
+                                  #Only useful when backend is public
+                                  #Max 60 per ACCOUNT + REGION (soft)
+CCERTIFICATE_ARN                 =#arn:aws:apigateway:REGION::/clientcertificates[/CCERTIFICATE_MID]
+CCERTIFICATE.clientCertificateId =#CCERTIFICATE_MID
+CCERTIFICATE.description         =#STR
+CCERTIFICATE.createdDate         =#DATE_NUM
+CCERTIFICATE.expirationDate      =#DATE_NUM
 
-CERTIFICATE
+CCERTIFICATE
  .pemEncodedCertificate          =#'PEM' of client certificate
+                                  #Automatically created
 
-STAGE.clientCertificateId        ~#CERTIFICATE_MID
+STAGE.clientCertificateId        ~#CCERTIFICATE_MID. Use CCERTIFICATE in this STAGE
 
 INVOKE_ROUTE_REQ
- .clientCertificateId            =#CERTIFICATE_MID
+ .clientCertificateId            =#CCERTIFICATE_MID. For debugging
 
-CERTIFICATE.tags                 =#TAGS
+CCERTIFICATE.tags                =#TAGS
 
 REQ_CONTEXT
  .authentication.clientCert
 CONTEXT_IDENTITY.clientCert     =-
-REQ_IDENTITY0|1.clientCert        #REQ_CERTIFICATE
-REQ_CERTIFICATE.clientCertPem     #CERTIFICATE.pemEncodedCertificate
-REQ_CERTIFICATE.validity
+REQ_IDENTITY0|1.clientCert        #REQ_CCERTIFICATE. CCERTIFICATE received in backend
+REQ_CCERTIFICATE.clientCertPem    #CCERTIFICATE.pemEncodedCertificate
+REQ_CCERTIFICATE.validity
  .notBefore|notAfter              #'DATE' of expiration
-REQ_CERTIFICATE.subjectDN         #'DOMAIN' of user
-REQ_CERTIFICATE.issuerDN          #'DOMAIN' of issuer
-REQ_CERTIFICATE.serialNumber      #'XX:...:XX'
+REQ_CCERTIFICATE.subjectDN        #'DOMAIN' of user
+REQ_CCERTIFICATE.issuerDN         #'DOMAIN' of issuer
+REQ_CCERTIFICATE.serialNumber     #'XX:...:XX'
 
 
                                              /=+===============================+=\
@@ -2181,6 +2224,7 @@ DELETE /usageplans/USAGEPLAN_MID =#Req: empty
 DeleteUsagePlan()                 #Res: empty
 
 USAGEPLAN                        =#Limit number of requests made to a given API[s] + STAGE[s] by a given client
+                                  #Max 300 per ACCOUNT + REGION (soft)
 USAGEPLAN_ARN                    =#arn:aws:apigateway:REGION::/usageplans[/USAGEPLAN_MID]
 USAGEPLAN.id                     =#USAGEPLAN_MID
 USAGEPLAN.name                   =#'USAGEPLAN'
@@ -2190,26 +2234,42 @@ USAGEPLAN.apiStages              =#API_STAGE_ARR
 API_STAGE.apiId                  =#API_MID
 API_STAGE.stage                  =#'STAGE'
 
-USAGEPLAN.quota                  =#QUOTA
-QUOTA.limit                      =#Max NUM of requests per QUOTA.period
-QUOTA.period                     =#'DAY|WEEK|MONTH'
-QUOTA.offset                     =#NUM (def: 0) of requests to substract in the first QUOTA.period
-
-USAGEPLAN.throttle
-API_STAGE.throttle.HTTP_METHOD   =#THROTTLE. Like QUOTA except per second, and debounced
-THROTTLE.rateLimit               =#Max NUM per second
-THROTTLE.burstLimit              =#Allows NUM in a row without throttling
-
-ROUTE_SETTINGS
- .throttlingRate|BurstLimit       #Like THROTTLE.*, but only for that ROUTE
-ACCOUNT.throttleSettings         =#THROTTLE, only for that ACCOUNT
-
 USAGEPLAN.productCode            =#PRODUCT_MID from AWS Marketplace
 
 ACCOUNT.features                 =#STR_ARR. Must include 'UsagePlans' to enable USAGEPLAN, but only for APIs created before 2016
 
 USAGEPLAN.tags                   =#TAGS
                                   #Inherited by children (ABAC-only): USAGEKEY
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:           THROTTLE            :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+ACCOUNT.throttleSettings         =#THROTTLE. 429 if throttled
+                                  #For that ACCOUNT + REGION. For all APIs and clients
+THROTTLE.rateLimit                #Max NUM per second, debounced
+                                  #1e4 (soft)
+THROTTLE.burstLimit               #Allows NUM in a row without throttling
+                                  #5e3 (soft)
+
+ROUTE_SETTINGS                    #Like THROTTLE.*, but only for that API + STAGE + ROUTE. For all APIs and clients
+ .throttlingRate|BurstLimit       #Def: only limited by ACCOUNT.throttleSettings
+
+USAGEPLAN.throttle                #THROTTLE, for this client + API + STAGE
+API_STAGE.throttle.HTTP_METHOD   =#THROTTLE, for this client + API + STAGE + HTTP_METHOD
+
+USAGEPLAN.quota                  =#QUOTA. 429 if quota exceeded
+                                  #Unlike THROTTLE:
+                                  #  - longer period
+                                  #  - not debounced
+                                  #  - meant for pricing purpose, not for performance|resilience
+QUOTA.limit                      =#Max NUM of requests per QUOTA.period
+QUOTA.period                     =#'DAY|WEEK|MONTH'
+QUOTA.offset                     =#NUM (def: 0) of requests to substract in the first QUOTA.period
 
 
                                              /=+===============================+=\
@@ -2234,6 +2294,7 @@ DELETE /usageplans/USAGEPLAN_MID
 DeleteUsagePlanKey()              #Res: empty
 
 USAGEKEY                         =#APIKEY used to enable a USAGEPLAN
+                                  #Max 10 USAGEPLAN per APIKEY (soft)
 USAGEKEY_ARN                     =#arn:aws:apigateway:REGION::/usageplans/USAGEPLAN_MID/keys[/USAGEKEY_MID]
 USAGEKEY.id                      =#USAGEKEY_MID
 USAGEKEY.name                    =#'USAGEKEY'
@@ -2292,6 +2353,7 @@ DeleteApiKey()                    #Res: empty
 APIKEY                           =#API key used for request authentication
                                   #Intended for USAGEPLANs only, documentation discourages using it for general authentication of the API
                                   #1 APIKEY can be used in several USAGEPLANs, unless they target the same API + STAGE
+                                  #Max 1e4 per ACCOUNT + REGION
 APIKEY_ARN                       =#arn:aws:apigateway:REGION::/apikeys[/APIKEY_MID]
 APIKEY.id                        =#APIKEY_MID
 APIKEY.name                      =#'APIKEY'. Max 1KB
@@ -2387,6 +2449,8 @@ DeleteVpcLink()                   #Res: empty
 
 VPCLINK                         =-#Expose private VPC resources
                                   #All resoures must be in same ACCOUNT
+                                 =#Max 20 per ACCOUNT + REGION (soft)
+                                 -#Max 10 per ACCOUNT + REGION (soft)
 VPCLINK_ARN                       #arn:aws:apigateway:REGION::/vpclinks[/VPCLINK_MID]
 VPCLINK.id                       =
 VPCLINK.vpcLinkId                -#VPCLINK_MID
@@ -2397,6 +2461,7 @@ VPCLINK.vpcLinkVersion           -#Always 'V2'
 
 VPCLINK.targetArns               =#ELB_ARN_ARR
 VPCLINK.subnetIds                -#VPC SUBNET_MID_ARR
+                                  #Max 10 (soft)
 VPCLINK.securityGroupIds         -#VPC SECURITY_GROUP_MID_ARR
 
 VPCLINK.status                   =
@@ -2459,6 +2524,8 @@ DeleteConnection()                #Res: empty
 RAW_CONNECTION_DATA              ~#Push message from server to client
 
 CONNECTION                       ~#WebSocket connection
+                                  #Max 500 new connections per second per ACCOUNT + REGION (for all APIs) (soft)
+                                  #Timeout: 10m if idle, 2h if not
 REQ_CONTEXT0|CONTEXT.connectionId~#CONNECTION_MID
                                   #Only passed in '$connect' ROUTE
 CONNECTION.ConnectedAt
