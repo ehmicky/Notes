@@ -60,23 +60,26 @@ PAGINATION ==>                    #Uses:
                                   #  - GetTags()
                                  =#  - GetStages()
 
-PRICING ==>                       #Number of requests:
+PRICING ==>                       #Requests:
                                  =#  - 3.5$/1e6 requests
                                   #     - 20% cheaper after 3e8 requests, 32% after 1e9, 57% after 2e10
-                                  #     - big requests charged the same
+                                  #     - also pay EC2 egress cost on responses (e.g. 1$/11GB)
                                   #     - free for first 12 months: 1e6 requests/month
                                  -#  - 1$/1e6 requests
                                   #     - 10% cheaper after 3e8 requests
-                                  #     - big requests multiplied by their size % 512KB
+                                  #     - no egress cost, but big responses multiplied by their size % 512KB
                                   #     - free for first 12 months: 1e6 requests/month
                                  ~#  - 1$/1e6 requests or responses (push message)
                                   #     - 20% cheaper after 1e9 requests
-                                  #     - big requests multiplied by their size % 128KB
+                                  #     - no igress|egress cost, but big requests|responses multiplied by their size % 32KB
                                   #     - free for first 12 months: 1e6 requests/month
+                                 ~#Connections: 1$/1e6 connections
+                                  #  - for 4 minute connections, proportional to duration otherwise
+                                  #  - free for first 12 months: 7.5e5 connections/month
                                  =#Caching:
                                   #  - depending on STAGE.cacheClusterSize:
                                   #     - 0.5 GB: 15$, 1.6GB: 27$, 6.1GB: 146$, 13.5GB: 182$, 28.4GB: 365$, 58.2GB: 730$, 118GB: 1400$, 237GB: 2800$
-                                  #  - charged hourly
+                                  #  - those are monthly prices, but this is charged hourly
                                 =-#  - AUTHORIZER cache: free
 
 AmazonAPIGatewayAdministrator     #AWS managed POLICY that allows PACTION apigateway:*
@@ -237,7 +240,12 @@ API.routeKey                     -#'ROUTE' created by "Quick create"
                                              \=+===============================+=/
 
 
-API.minimumCompressionSize       =#NUM (max: 10MB). When set, allow compressed request body, and produce response body
+API.minimumCompressionSize       =#NUM (def: disabled, max: 10MB). When set:
+                                  #  - allow compressed request body
+                                  #     - if Content-Encoding [C]
+                                  #  - produce compressed response body
+                                  #     - if Accept-Encoding [C] and no Content-Encoding [S]
+                                  #Only for gzip|deflate
                                   #Only when body >=NUM bytes.
 
 API.binaryMediaTypes             =#Binary 'MIME|*'_ARR allowed
@@ -1365,6 +1373,26 @@ SARES.isAuthorized                #BOOL. Simpler alternative to ARES.policyDocum
 
                                              /=+===============================+=\
                                             /  :                               :  \
+                                            )==:       AUTHORIZER CACHE        :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+DELETE /restapis/API_MID
+ /stages/STAGE/cache/authorizers =#Req: empty
+FlushStageAuthorizersCache()      #Res: empty
+DELETE /v2/apis/API_MID
+ /stages/STAGE
+ /cache/authorizers              -#Req: empty
+ResetAuthorizersCache()           #Res: empty
+
+AUTHORIZER                      =-#NUM of secs to cache AUTHORIZER's Lambda FUNCTION successful responses
+ .authorizerResultTtlInSeconds    #'TOKEN' is used as cache key
+                                  #Def: 5m, min: 0, max: 1h
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
                                             )==:        AUTHORIZER TEST        :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -1610,13 +1638,15 @@ FlushStageCache()                 #Res: empty
 STAGE.cacheClusterEnabled        =#BOOL (def: false). Cache RRESP successful responses
 STAGE.cacheClusterSize           =#'NUM' (in GB). Max cache size
                                   #Can be 0.5, 1.6, 6.1, 13.5, 28.4, 58.2, 118, 237
-                                  #Never caches individual responses >1GB
+                                  #Also impacts the instance type, i.e. its CPU, RAM and network bandwidth, i.e. overall performance
+                                  #Updating it flushes cache
+                                  #Individual responses >1GB are never cached
 STAGE.cacheClusterStatus         =#STR among:
                                   #  - CREATE_IN_PROGRESS
                                   #  - AVAILABLE
+                                  #  - FLUSH_IN_PROGRESS
                                   #  - DELETE_IN_PROGRESS
                                   #  - NOT_AVAILABLE
-                                  #  - FLUSH_IN_PROGRESS
 
 ROUTE_SETTINGS.cachingEnabled    =#BOOL. Enable caching for that ROUTE
                                   #Requires STAGE.cacheClusterEnabled true
@@ -1626,30 +1656,23 @@ ROUTE_SETTINGS.cacheTtlInSeconds =#NUM (in secs). How long to cache
 ROUTE_SETTINGS
  .cacheDataEncrypted             =#BOOL. Encrypt cached responses
 
+INTEGRATION.cacheKeyParameters   =#'EXPR'_ARR (def: []) to use as cache key
+                                  #Must be present in ROUTE.requestParameters.*
+INTEGRATION.cacheNamespace       =#STR (def: RESOURCE_MID) prefixing cache key
+
+Cache-Control: max-age=0 [C]     =#Invalidate cache
+                                  #Anyone can do unless either:
+                                  #  - ROUTE_SETTINGS.requireAuthorizationForCacheControl true
+                                  #  - one POLICY restricts PACTION execute-api:InvalidateCache
+                                  #If so, then:
+                                  #  - requires PACTION execute-api:InvalidateCache
+                                  #  - must be authenticated, and within same ACCOUNT
 ROUTE_SETTINGS.require
  AuthorizationForCacheControl    =#BOOL. Require authorization for invalidation requests
 ROUTE_SETTINGS.unauthorized      =#How to handle unauthorized invalidation requests, among:
  CacheControlHeaderStrategy       #  - 'FAIL_WITH_403'
                                   #  - 'SUCCEED_WITHOUT_RESPONSE_HEADER'
-                                  #  - 'SUCCEED_WITH_RESPONSE_HEADER'
-PACTION
- execute-api:InvalidateCache     =#Required to invalidate cache
-
-INTEGRATION.cacheKeyParameters   =#'EXPR'_ARR (def: []) to cache IRESP successful responses
-                                  #Must be present in INTEGRATION.requestParameters.*
-INTEGRATION.cacheNamespace       =#STR (def: RESOURCE_MID) prefixing cache key
-
-DELETE /restapis/API_MID
- /stages/STAGE/cache/authorizers =#Req: empty
-FlushStageAuthorizersCache()      #Res: empty
-DELETE /v2/apis/API_MID
- /stages/STAGE
- /cache/authorizers              -#Req: empty
-ResetAuthorizersCache()           #Res: empty
-
-AUTHORIZER                      =-#NUM of secs to cache AUTHORIZER's Lambda FUNCTION successful responses
- .authorizerResultTtlInSeconds    #'TOKEN' is used as cache key
-                                  #Def: 5m, min: 0, max: 1h
+                                  #  - 'SUCCEED_WITH_RESPONSE_HEADER': set a warning in a response header
 
 
                                              /=+===============================+=\
@@ -2157,7 +2180,7 @@ GetUsagePlan()                    #Res: USAGEPLAN
 DELETE /usageplans/USAGEPLAN_MID =#Req: empty
 DeleteUsagePlan()                 #Res: empty
 
-USAGEPLAN                        =#Limit number of requests made to a given API + STAGE by a given client
+USAGEPLAN                        =#Limit number of requests made to a given API[s] + STAGE[s] by a given client
 USAGEPLAN_ARN                    =#arn:aws:apigateway:REGION::/usageplans[/USAGEPLAN_MID]
 USAGEPLAN.id                     =#USAGEPLAN_MID
 USAGEPLAN.name                   =#'USAGEPLAN'
@@ -2267,21 +2290,24 @@ DELETE /apikeys/APIKEY_MID       =#Req: empty
 DeleteApiKey()                    #Res: empty
 
 APIKEY                           =#API key used for request authentication
+                                  #Intended for USAGEPLANs only, should not be used for general authentication of the API
+                                  #1 APIKEY can be used in several USAGEPLANs, unless they target the same API + STAGE
 APIKEY_ARN                       =#arn:aws:apigateway:REGION::/apikeys[/APIKEY_MID]
 APIKEY.id                        =#APIKEY_MID
-APIKEY.name                      =#'APIKEY'
+APIKEY.name                      =#'APIKEY'. Max 1KB
 APIKEY.description               =#STR
 APIKEY.enabled                   =#BOOL (def: true)
 APIKEY.createdDate               =#DATE_NUM
 APIKEY.lastUpdatedDate           =#DATE_NUM
 
-APIKEY.value                     =#'APIKEY_VAL'
+APIKEY.value                     =#'APIKEY_VAL'. Min 20 chars, max 128, [:alnum:], must be unique
+                                  #Def: random
 
 APIKEY.stageKeys                 =#'API_MID/STAGE'_ARR. Only enables for those API|STAGEs
 
 API.apiKeySource                 =#STR. Where APIKEY is located among:
                                   #  - 'HEADER': X-Api-Key [C]
-                                  #  - 'AUTHORIZER': AUTHORIZER
+                                  #  - 'AUTHORIZER': ARES.usageIdentifierKey
 API.apiKeySelectionExpression    ~#Same but named either:
                                   #  - '$request.header.x-api-key'
                                   #  - '$context.authorizer.usageIdentifierKey'
