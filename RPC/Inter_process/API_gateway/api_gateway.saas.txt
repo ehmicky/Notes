@@ -23,6 +23,8 @@ TODO:
      - "Tutorials and workshops"
      - already read: "Tagging"
   - OpenAPI:
+     - https://docs.aws.amazon.com/apigateway/latest/developerguide/api-gateway-import-api.html
+     - https://docs.aws.amazon.com/apigateway/latest/developerguide/http-api-open-api.html
      - https://docs.aws.amazon.com/apigateway/latest/developerguide/api-gateway-request-validation-set-up.html#api-gateway-request-validation-setup-importing-swagger
      - https://docs.aws.amazon.com/apigateway/latest/developerguide/api-gateway-request-validation-sample-api-swagger.html
   - Velocity template
@@ -76,7 +78,7 @@ EXECUTE API ==>                   #Separate API, also called "data plane API"
 
 SERVICE_DOMAIN                    #execute-api.amazonaws.com
 
-INVOKE_URI                        #API_MID.execute-api.amazonaws.com
+INVOKE_URI                        #https://API_MID.execute-api.REGION.amazonaws.com
                                   #URI for clients to call the API
                                   #Online documentation calls "app developer" the client, as opposed to "API developer".
 
@@ -205,18 +207,19 @@ API.routeKey                     -#'ROUTE' created by "Quick create"
 API.minimumCompressionSize       =#NUM (max: 10MB). When set, allow compressed request body, and produce response body
                                   #Only when body >=NUM bytes.
 
-API.binaryMediaTypes             =#Additional 'MIME|*'_ARR supported for Content-Type [C|S]
-                                  #By default, only allows UTF8
-                                  #They are base64'd when passed to (or received from) a Lambda FUNCTION in INTEGRATION|AUTHORIZER
+API.binaryMediaTypes             =#Binary 'MIME|*'_ARR allowed
+                                  #By default, only non-binary allowed, i.e. UTF8
 
 INTEGRATION|IRESP.contentHandling=
 INTEGRATION|IRESP                ~#STR. Whether request|response body should be:
- .contentHandlingStrategy         #  - default: kept as is
-                                  #  - CONVERT_TO_BINARY: binary BLOB
-                                  #  - CONVERT_TO_TEXT: base64'd STR
+ .contentHandlingStrategy         #  - default: keep as is
+                                  #  - CONVERT_TO_BINARY: base64 decode (only if non-binary MIME request|response)
+                                  #  - CONVERT_TO_TEXT: base64 encode (only if binary MIME request|response)
+                                 ~#Backend request|response must be base64'd, if binary
 
 MIME                              #Based on Content-Type [C] and Accept [S]
                                   #Def application/json
+                                  #Can use wildcard *
                                   #Can be '$default' as a catch-all
 
 
@@ -436,7 +439,7 @@ POST /restapis/API_MID
  /methods/HTTP_METHOD            =#Req: INVOKE_ROUTE_REQ
 TestInvokeMethod()                #Res: INVOKE_ROUTE_RES
 
-INVOKE_ROUTE_REQ                 =#Call a ROUTE, for debugging
+INVOKE_ROUTE_REQ                 =#Like calling INVOKE_URI, but programmatically, for debugging
 INVOKE_ROUTE_REQ
  .pathWithQueryString            =#'/PATH?QUERY'. Request path
 INVOKE_ROUTE_REQ.headers.HEADER  =#'VAL'. Request headers
@@ -777,8 +780,8 @@ CONTEXT_IDENTITY|REQ_IDENTITY0|1
 REQ_IDENTITY0|1.accessKey         #Only when IAM authenticated
 
 RES                               #One of: MAIN_RES, ERROR_RES, CUSTOM_ERROR_RES
-MAIN_RES.statusCode|headers|body
- |isBase64Encoded                 #Like FUNC_URL_RES.*
+MAIN_RES.statusCode|headers|body  #Like FUNC_URL_RES.*
+ |isBase64Encoded                 #Must base64 if binary MIME
 MAIN_RES.multiValueHeaders        #OBJ
 
 ERROR_RES.errorType|errorMessage
@@ -832,25 +835,24 @@ GRESP.responseTemplates          =#Same as IRESP.* except TEMPLATE can only use 
 GRESP.defaultResponse            =#BOOL (def: true). Whether has been customized
 
 GRESP.responseType               =#'RESP_TYPE' among:
-CONTEXT.error.responseType       =
-                                  #  - BAD_REQUEST_PARAMETERS: 400, validation against non-body parameters
+CONTEXT.error.responseType       =#  - BAD_REQUEST_PARAMETERS: 400, validation against non-body parameters
                                   #  - BAD_REQUEST_BODY: 400, validation against body
-                                  #  - ACCESS_DENIED: 403, authorization error
+                                  #  - MISSING_AUTHENTICATION_TOKEN: 403, no authentication
+                                  #  - INVALID_SIGNATURE: 403, AWS ACCESS_TOKEN invalid
                                   #  - EXPIRED_TOKEN: 403, AWS ACCESS_TOKEN expired
-                                  #  - RESOURCE_NOT_FOUND
-                                  #  - UNAUTHORIZED
-                                  #  - INVALID_API_KEY
-                                  #  - INVALID_SIGNATURE
-                                  #  - MISSING_AUTHENTICATION_TOKEN
-                                  #  - INTEGRATION_FAILURE
-                                  #  - INTEGRATION_TIMEOUT
-                                  #  - UNSUPPORTED_MEDIA_TYPE
-                                  #  - REQUEST_TOO_LARGE
-                                  #  - THROTTLED
-                                  #  - QUOTA_EXCEEDED
+                                  #  - INVALID_API_KEY: 403, invalid APIKEY
+                                  #  - ACCESS_DENIED: 403, authorization error
+                                  #  - UNAUTHORIZED: 403, AUHTORIZER error
+                                  #  - RESOURCE_NOT_FOUND: 404
+                                  #  - REQUEST_TOO_LARGE: 413, request body too large
+                                  #  - UNSUPPORTED_MEDIA_TYPE: 415, invalid MIME
+                                  #  - QUOTA_EXCEEDED: 429, USAGEPLAN QUOTA
+                                  #  - THROTTLED: 429, AWS quota
                                   #  - API_CONFIGURATION_ERROR: 500, API Gateway was misconfigured
                                   #  - AUTHORIZER_CONFIGURATION_ERROR: 500, AUTHORIZER was misconfigured
                                   #  - AUTHORIZER_FAILURE: 500, AUTHORIZER exception
+                                  #  - INTEGRATION_FAILURE: 504, INTEGRATION exception
+                                  #  - INTEGRATION_TIMEOUT: 504, INTEGRATION timed out
                                   #  - DEFAULT_4XX|5XX: used instead of the above if not defined
 
 
@@ -1492,7 +1494,7 @@ DELETE /v2/apis/API_MID
  /deployments/DEPLOYMENT_MID    -~#Req: empty
 DeleteDeployment()                #Res: empty
 
-DEPLOYMENT                        #Make an API + STAGE[s] available in production
+DEPLOYMENT                        #Make latest changes on an API (including subresources) available in production, for a given STAGE[s]
 DEPLOYMENT_ARN                   =#arn:aws:apigateway:REGION::/restapis/API_MID/deployments[/DEPLOYMENT_MID]
 DEPLOYMENT_ARN                  -~#arn:aws:apigateway:REGION::/apis/API_MID/deployments[/DEPLOYMENT_MID]
 DEPLOYMENT.id                    =
@@ -2316,6 +2318,10 @@ VPCLINK.vpcLinkStatus            -#STR, among:
                                   #  - FAILED
 VPCLINK.statusMessage            =
 VPCLINK.vpcLinkStatusMessage     -#STR
+
+INVOKE_URI                        #Either:
+                                  #  - https://API_MID-VPC_MID.execute-api.REGION.amazonaws.com
+                                  #  - https://VPC_MID-API_MID.execute-api.REGION.amazonaws.com
 
 ENDPOINT.types 'PRIVATE'         =#Use VPC
 ENDPOINT.vpcEndpointIds          =#VPC ENDPOINT_MID_ARR. Only if ENDPOINT.types 'PRIVATE'
