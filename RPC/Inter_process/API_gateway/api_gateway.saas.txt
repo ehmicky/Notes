@@ -42,7 +42,7 @@ VERSION ==>                       #There are two versions of the API:
                                   #     - simpler
                                   #     - i.e. preferred unless need v1 features
                                   #Resources are version-specific, i.e. cannot use v1|v2 together
-                                  #  - but several APIs with different versions can be under same domain name by using MAPPINGs
+                                =-#  - but HTTP|REST APIs can be mixed under same domain name by using MAPPINGs
 
 SERVICE_DOMAIN                    #apigateway.amazonaws.com
 
@@ -1588,9 +1588,10 @@ DELETE /restapis/API_MID
  /stages/STAGE/cache/data        =#Req: empty
 FlushStageCache()                 #Res: empty
 
-STAGE.cacheClusterEnabled        =#BOOL (def: false). Cache responses
-STAGE.cacheClusterSize           =#'NUM' (in GB). Cache size.
+STAGE.cacheClusterEnabled        =#BOOL (def: false). Cache RRESP successful responses
+STAGE.cacheClusterSize           =#'NUM' (in GB). Max cache size
                                   #Can be 0.5, 1.6, 6.1, 13.5, 28.4, 58.2, 118, 237
+                                  #Never caches individual responses >1GB
 STAGE.cacheClusterStatus         =#STR among:
                                   #  - CREATE_IN_PROGRESS
                                   #  - AVAILABLE
@@ -1598,19 +1599,24 @@ STAGE.cacheClusterStatus         =#STR among:
                                   #  - NOT_AVAILABLE
                                   #  - FLUSH_IN_PROGRESS
 
-ROUTE_SETTINGS.cachingEnabled    =#BOOL (def: false). Enable caching for that ROUTE
+ROUTE_SETTINGS.cachingEnabled    =#BOOL. Enable caching for that ROUTE
                                   #Requires STAGE.cacheClusterEnabled true
+                                  #Def: true, but only if GET method + STAGE.cacheClusterEnabled true
 ROUTE_SETTINGS.cacheTtlInSeconds =#NUM (in secs). How long to cache
+                                  #Def: 5m, min: 0, max: 1h
 ROUTE_SETTINGS
  .cacheDataEncrypted             =#BOOL. Encrypt cached responses
+
 ROUTE_SETTINGS.require
  AuthorizationForCacheControl    =#BOOL. Require authorization for invalidation requests
 ROUTE_SETTINGS.unauthorized      =#How to handle unauthorized invalidation requests, among:
  CacheControlHeaderStrategy       #  - 'FAIL_WITH_403'
                                   #  - 'SUCCEED_WITHOUT_RESPONSE_HEADER'
                                   #  - 'SUCCEED_WITH_RESPONSE_HEADER'
+PACTION
+ execute-api:InvalidateCache     =#Required to invalidate cache
 
-INTEGRATION.cacheKeyParameters   =#'EXPR'_ARR (def: []) to cache
+INTEGRATION.cacheKeyParameters   =#'EXPR'_ARR (def: []) to cache IRESP successful responses
                                   #Must be present in INTEGRATION.requestParameters.*
 INTEGRATION.cacheNamespace       =#STR (def: RESOURCE_MID) prefixing cache key
 
@@ -1622,12 +1628,9 @@ DELETE /v2/apis/API_MID
  /cache/authorizers              -#Req: empty
 ResetAuthorizersCache()           #Res: empty
 
-AUTHORIZER                      =-#NUM of secs to cache Lambda FUNCTION successful responses
+AUTHORIZER                      =-#NUM of secs to cache AUTHORIZER's Lambda FUNCTION successful responses
  .authorizerResultTtlInSeconds    #'TOKEN' is used as cache key
                                   #Def: 5m, min: 0, max: 1h
-
-PACTION
- execute-api:InvalidateCache     =#Required to invalidate cache
 
 
                                              /=+===============================+=\
@@ -1963,8 +1966,8 @@ DNAME.tags                        #TAGS
                                              \=+===============================+=/
 
 
-DNAME.securityPolicy             =
-DDNAME.securityPolicy           -~#'TLS_1_0|1_2' (def: none)
+DNAME.securityPolicy             =#'TLS_1_0|1_2' (def: none)
+DDNAME.securityPolicy           -~#'TLS_1_2' (def: none)
 COND_KEY SecurityPolicy           #STR_ARR, on Create|Put|DeleteDomainName()
 
 DNAME.mutualTlsAuthentication     #DNAME_TLS. Require client TLS authentication
@@ -2034,17 +2037,23 @@ DeleteApiMapping()                #Res: empty
 
 MAPPING                           #Make a given DNAME/BASEPATH use a specific API + STAGE
                                   #Can map same DNAME to multiple APIs (with different BASEPATHs),
-                                  #including from different versions (v1, v2 HTTP, v2 WebSocket)
+                                =-#  - including from different versions (v1|v2, but not WebSocket)
+                                  #Must all be in same ACCOUNT
+                                  #If API uses ENDPOINT.types 'REGIONAL', securityPolicy must be 'TLS_1_2'
+                                  #Max 200
 MAPPING_ARN                      =#arn:aws:apigateway:REGION::/domainnames/DNAME/basepathmappings[/BASEPATH]
 MAPPING_ARN                     -~#arn:aws:apigateway:REGION::/domainnames/DNAME/apimappings[/MAPPING_MID]
 MAPPING.apiMappingId            -~#MAPPING_MID
 MAPPING.apiMappingKey           -~#'MAPPING'
 
-MAPPING.basePath                 =#'/BASEPATH'. Can be '(none)' as a catch-all
-                                  #Cannot have subdirectories:
-                                  #  - unless using ENDPOINT.types 'REGIONAL' + securityPolicy 'TLS_1_2'
-                                  #  - can use multiple MAPPINGs with BASEPATHs with common parent directories
-                                  #     - e.g. '/a/b' and '/a/c', or '/a' and '/a/b'
+MAPPING.basePath                 =#'/BASEPATH'. Can be '(none)'
+                                  #Max 300 chars, [[:alnum:]$-_.+!*'()/]
+                                  #Can only use subdirectories if using ENDPOINT.types 'REGIONAL'
+                                  #Can use multiple MAPPINGs with BASEPATHs with common parent directories
+                                  #  - e.g. '/a/b' and '/a/c', or '/a' and '/a/b', or '(none)' and '/a'
+                                  #Can be a prefix (as opposed to exact match) for the last path part
+                                  #  - but only if some MAPPINGs use subdirectories
+                                  #  - e.g. '/a' matches '/ab', but only if annother MAPPING uses subdirectories
 DNAME
  .apiMappingSelectionExpression -~#Always '$request.basepath'
 ACONTEXT
