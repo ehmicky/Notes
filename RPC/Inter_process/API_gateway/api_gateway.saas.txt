@@ -20,10 +20,13 @@ TODO:
   - go through AWS general bullet points for new services
   - summarize features unique to v1, v2 HTTP, v2 WebSocket
   - OpenAPI:
-     - https://docs.aws.amazon.com/apigateway/latest/developerguide/api-gateway-import-api.html
-     - https://docs.aws.amazon.com/apigateway/latest/developerguide/http-api-open-api.html
-     - https://docs.aws.amazon.com/apigateway/latest/developerguide/api-gateway-request-validation-set-up.html#api-gateway-request-validation-setup-importing-swagger
-     - https://docs.aws.amazon.com/apigateway/latest/developerguide/api-gateway-request-validation-sample-api-swagger.html
+     - imports:
+        - https://docs.aws.amazon.com/apigateway/latest/developerguide/api-gateway-import-api.html
+        - https://docs.aws.amazon.com/apigateway/latest/developerguide/http-api-open-api.html
+        - https://docs.aws.amazon.com/apigateway/latest/developerguide/api-gateway-request-validation-set-up.html#api-gateway-request-validation-setup-importing-swagger
+        - https://docs.aws.amazon.com/apigateway/latest/developerguide/api-gateway-request-validation-sample-api-swagger.html
+     - doc: https://docs.aws.amazon.com/apigateway/latest/developerguide/api-gateway-documenting-api.html
+     - SDK: https://docs.aws.amazon.com/apigateway/latest/developerguide/how-to-generate-sdk.html
   - Velocity template
      - https://docs.aws.amazon.com/apigateway/latest/developerguide/models-mappings.html
      - https://docs.aws.amazon.com/apigateway/latest/developerguide/rest-api-develop-models-mapping-examples.html
@@ -483,9 +486,14 @@ RRESP.modelSelectionExpression   ~#'RRESP_MODEL_$EXPR'. Currently not supported
 ACONTEXT.status                   #STATUS_NUM of RRESP
 CONTEXT.error.message           =-#'ERROR' message of RRESP
 CONTEXT.error.messageString       #Like CONTEXT.error.message but "-quoted
-ACONTEXT.responseLatency        =-#RRESP latency
+
+ACONTEXT.responseLatency        =-#Duration NUM (in ms) of RRESP
+AWS/ApiGateway/Latency          =-#CloudWatch METRIC with duration NUM (in ms) of RRESP
+
 ACONTEXT.responseLength         =-#RRESP Content-Length [S]
+
 CONTEXT.dataProcessed            -#NUM of bytes processed
+AWS/ApiGateway/DataProcessed     -#CloudWatch METRIC with NUM of bytes processed
 
 
                                              /=+===============================+=\
@@ -741,6 +749,8 @@ ACONTEXT.integrationLatency     =-
 ACONTEXT.integration.latency    =-#Same as ACONTEXT.authorize.* but for backend response
 ACONTEXT[.integration]          =-#Like ACONTEXT.integration.status except with Lambda:
  .integrationStatus               #STATUS_NUM of Invoke() call itself, not MAIN_RES.statusCode
+
+AWS/ApiGateway/IntegrationLatency #CloudWatch METRIC with duration NUM (in ms) of INTEGRATION
 
 
                                              /=+===============================+=\
@@ -1619,14 +1629,47 @@ STAGE
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:            LOGGING            :==(
+                                            )==:            METRICS            :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
+SYSTEM ERRORS ==>                 #Some 5** might not create logs nor METRICS.
+                                  #Also some 429 (throttle) and 413 (request body too large)
+
 ROUTE_SETTINGS.metricsEnabled    =
-ROUTE_SETTINGS
- .detailedMetricsEnabled        -~#BOOL (def: false). Send CloudWatch METRICs
+ROUTE_SETTINGS                  -~#BOOL. If false (def), send each METRIC with:
+ .detailedMetricsEnabled          #  - DVAR ApiName|ApiId
+                                  #  - DVAR ApiName|ApiId + Stage
+                                  #If true, also with:
+                                  #  - DVAR ApiName|ApiId + Stage + Method|Resource|Route
+                                  #1m PERIOD
+
+DVAR ApiName                     =#'API'
+DVAR ApiId                      -~#API_MID
+DVAR Stage                        #'STAGE'
+DVAR Resource                    =#RESOURCE_MID
+DVAR Method                      =
+DVAR Route                      -~#ROUTE_MID
+
+AWS/ApiGateway/Count            =-#CloudWatch METRIC with NUM of requests|responses
+AWS/ApiGateway/ConnectCount      ~#CloudWatch METRIC with NUM of CONNECTIONs
+AWS/ApiGateway/MessageCount      ~#CloudWatch METRIC with NUM of messages (requests or push messages)
+
+AWS/ApiGateway/4XXError          =
+AWS/ApiGateway/4xx               -#CloudWatch METRIC with NUM of 4** responses
+AWS/ApiGateway/ClientError       ~#CloudWatch METRIC with NUM of 4** responses in ROUTE (not INTEGRATION)
+AWS/ApiGateway/5XXError          =
+AWS/ApiGateway/5xx               -#CloudWatch METRIC with NUM of 5** responses
+AWS/ApiGateway/ExecutionError    ~#CloudWatch METRIC with NUM of 4**|5** responses in INTEGRATION
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:            LOGGING            :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
 
 STAGE.accessLogSettings           #ACCESS_LOG. Send request logs
 ACCESS_LOG_ARN                  -~#arn:aws:apigateway:REGION::/apis/API_MID/stages/STAGE/accesslogsettings
@@ -1708,6 +1751,9 @@ ROUTE_SETTINGS.unauthorized      =#How to handle unauthorized invalidation reque
  CacheControlHeaderStrategy       #  - 'FAIL_WITH_403'
                                   #  - 'SUCCEED_WITHOUT_RESPONSE_HEADER'
                                   #  - 'SUCCEED_WITH_RESPONSE_HEADER': set a warning in a response header
+
+AWS/ApiGateway/CacheHitCount     =#CloudWatch METRIC with NUM of cached responses
+AWS/ApiGateway/CacheMissCount    =#CloudWatch METRIC with NUM of non-cached responses
 
 
                                              /=+===============================+=\
@@ -2241,8 +2287,6 @@ USAGEPLAN.apiStages              =#API_STAGE_ARR
 API_STAGE.apiId                  =#API_MID
 API_STAGE.stage                  =#'STAGE'
 
-USAGEPLAN.productCode            =#PRODUCT_MID from AWS Marketplace
-
 ACCOUNT.features                 =#STR_ARR. Must include 'UsagePlans' to enable USAGEPLAN, but only for APIs created before 2016
 
 USAGEPLAN.tags                   =#TAGS
@@ -2387,8 +2431,6 @@ COND_KEY ApiKeyRequired           #BOOL, on Create|Put|DeleteMethod(), on ROUTE
 
 ACCOUNT.apiKeyVersion            =#STR
 
-APIKEY.customerId                =#CUSTOMER_MID, from AWS Marketplace
-
 APIKEY.tags                      =#TAGS
 
 AREQ                              #'APIKEY_VAL', when using apiKeySource 'HEADER'
@@ -2417,6 +2459,32 @@ APIKEY_IMPORT.format             =#Always 'csv'
 
 APIKEY_IMPORT.ids                =#APIKEY_MID_ARR
 APIKEY_IMPORT.warnings           =#Like API.*
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:          MARKETPLACE          :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+USAGEPLAN.productCode            =#PRODUCT_MID. When distributing USAGEPLAN on AWS Marketplace
+
+METRICS ==>                      =#Must send usage metrics to AWS Marketplace with type 'requests' and dimension 'apigateway'
+
+PERMISSIONS ==>                  =#Must create a ROLE ApiGatewayMarketplaceMeteringRole:
+                                  #  - allowing aws-marketplace:BatchMeterUsage|ResolveCustomer
+                                  #  - assumed by Service.Principal 'apigateway.amazonaws.com'
+
+POST SUBSCRIPTION_URL            =#Webhook called on new subscription from AWS Marketplace
+                                  #SUBSCRIPTION_URL is set when registering on AWS Marketplace
+                                  #Contains x-amzn-marketplace-token [C]
+
+SNS_TOPIC subscribe-success      =#Called on subscription success
+                                  #Should create an APIKEY (with customerId) and USAGEKEY
+APIKEY.customerId                =#CUSTOMER_MID, from AWS Marketplace
+
+SNS_TOPIC unsubscribe-success    =#Called on subscription deletion
 
 
                                              /=+===============================+=\
@@ -2454,9 +2522,8 @@ DELETE
  /v2/vpclinks/VPCLINK_MID       -~#Req: empty
 DeleteVpcLink()                   #Res: empty
 
-VPCLINK                         =-#Expose private VPC resources
+VPCLINK                         =-#Access backend that uses a private VPC
                                   #All resoures must be in same ACCOUNT
-                                  #Min TLS 1.2
                                  =#Max 20 per ACCOUNT + REGION (soft)
                                  -#Max 10 per ACCOUNT + REGION (soft)
 VPCLINK_ARN                       #arn:aws:apigateway:REGION::/vpclinks[/VPCLINK_MID]
@@ -2474,8 +2541,6 @@ INTEGRATION.connectionId        =-#VPCLINK_MID. Called "private INTEGRATION"
                                   #Only with integrationType 'HTTP[_PROXY]'
                                  =#Can be an $EXPR (only with STAGEVAR)
 
-ENDPOINT.types 'PRIVATE'         =#Use VPC
-ENDPOINT.vpcEndpointIds          =#VPC ENDPOINT_MID_ARR. Only if ENDPOINT.types 'PRIVATE'
 VPCLINK.subnetIds                -#VPC SUBNET_MID_ARR
                                   #Max 10 (soft)
 VPCLINK.securityGroupIds         -#VPC SECURITY_GROUP_MID_ARR
@@ -2498,9 +2563,6 @@ VPCLINK.vpcLinkStatus            -#STR, among:
 VPCLINK.statusMessage            =
 VPCLINK.vpcLinkStatusMessage     -#STR
 
-INVOKE_URI                        #Used by backend: https://VPC_MID.execute-api.REGION.vpce.amazonaws.com
-                                  #Used by clients: https://API_MID-VPC_MID.execute-api.REGION.amazonaws.com
-
 INTEGRATION.tlsConfig            -#TLSCONFIG. Use HTTPS
                                   #Only with VPCLINK
 TLSCONFIG.serverNameToVerify     -#'HOSTNAME' to verify with TLS handshake
@@ -2508,6 +2570,21 @@ TLSCONFIG                        =#BOOL. If false (def), verify TLS certificate 
  .insecureSkipVerification        #Only with integrationType 'HTTP[_PROXY]'
 
 VPCLINK.tags                    =-#TAGS
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:          PRIVATE API          :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+ENDPOINT.types 'PRIVATE'         =#Access API through VPC
+                                  #Min TLS 1.2
+ENDPOINT.vpcEndpointIds          =#VPC ENDPOINT_MID_ARR. Only if ENDPOINT.types 'PRIVATE'
+
+INVOKE_URI                        #Used by backend: https://VPC_MID.execute-api.REGION.vpce.amazonaws.com
+                                  #Used by clients: https://API_MID-VPC_MID.execute-api.REGION.amazonaws.com
 
 
                                              /=+===============================+=\
