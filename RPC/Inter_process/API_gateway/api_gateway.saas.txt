@@ -159,8 +159,9 @@ XAPI.protocolType                 #Protocol used, either 'HTTP' or 'WEBSOCKET'
 
 API.minimumCompressionSize        #NUM (max: 10MB). When set, allow compressed request body, and produce response body
                                   #Only when body >=NUM bytes.
-API.binaryMediaTypes              #Additional 'MIME|*'_ARR supported for Content-Type [C]
+API.binaryMediaTypes              #Additional 'MIME|*'_ARR supported for Content-Type [C|S]
                                   #By default, only allows UTF8
+                                  #They are base64'd when passed to (or received from) a Lambda FUNCTION in INTEGRATION|AUTHORIZER
 MIME                              #Based on Content-Type [C]
                                   #Can be '$default' as a catch-all
 
@@ -555,7 +556,10 @@ REQ                               #If type 'AWS', request body as is
 REQ.requestContext                #REQ_CONTEXT
 REQ_CONTEXT2.http                 #REQ_HTTP2
 
-RES.*                             #Like FUNC_URL_RES.*
+RES                               #
+RES.statusCode|headers|body
+ |isBase64Encoded                 #Like FUNC_URL_RES.*
+RES.multiValueHeaders             #OBJ
 
 REQ_CONTEXT1.protocol
 REQ_HTTP2.protocol                #Like FUNC_URL_REQ_CONTEXT_HTTP.protocol
@@ -597,8 +601,8 @@ REQ_IDENTITY1.principalOrgId
 REQ_IDENTITY1.accountId
 REQ_IDENTITY1.userArn
 REQ_IDENTITY1.user
-REQ_IDENTITY1.caller
-REQ_IDENTITY1.accessKey           #Like FUNC_URL_REQ_IAM.*
+REQ_IDENTITY1.caller              #Like FUNC_URL_REQ_IAM.*
+REQ_IDENTITY1.accessKey           #Only when IAM authenticated
 
 
                                              /=+===============================+=\
@@ -806,8 +810,9 @@ $VARR                             #Dot-delimited
                                   #If not found, resolves to empty string
 $request.header.HEADER            #'VAL'
 $request.querystring.PARAM        #'VAL'
-$context                          #REQ_CONTEXT
-$input                            #???
+$context.authorizer
+ .principalId|usageIdentifierKey  #ARES.*
+$context.authorizer.*             #ARES.context.*
 $integration.response             #RES
 
 ${...}...                         #Concatenation
@@ -877,11 +882,10 @@ COND_KEY RouteAuthorizationType   #STR, on Create|Put|DeleteMethod(), on [X]ROUT
 
 API.policy                        #IAM 'POLICY_DOC'
                                   #Resource-based policy for API, with resource-level permissions
-                                  #If AUTHORIZER FUNCTION returns a POLICY_DOC, appended to it
                                   #Requires PACTION apigateway:UpdateRestApiPolicy
 
 PACTION execute-api:*             #Required if either:
-                                  #  - authorizationType 'AWS_IAM'
+                                  #  - authorizationType 'AWS_IAM|CUSTOM'
                                   #  - API.policy set
 PACTION execute-api:Invoke        #Required to call INVOKE_URI
 PACTION
@@ -898,6 +902,7 @@ CALL_ROUTE_ARN                    #ARN of the act of executing a ROUTE (not ROUT
                                  ~#  - CALL_ROUTE_PREFIX/XSTAGE/ROUTE
                                  ~#  - XCONNECTION: CALL_ROUTE_PREFIX/XSTAGE/HTTP_METHOD/@connections
                                   #Can use * in [X]STAGE|HTTP_METHOD|PATH|ROUTE
+                                  #Max 1600 bytes (512 when used as Resource in a POLICY_DOC)
 
 PACTION apigateway:HTTP_METHOD    #Unlike other SERVICEs, PACTIONs are not named apigateway:ACTION,
                                   #except for a few ones documented in this doc
@@ -959,16 +964,17 @@ XAUTHORIZER.authorizerId          #[X]AUTHORIZER_MID
 [X]ROUTE.authorizerId             #AUTHORIZER_MID. Only with authorizationType 'CUSTOM|JWT|COGNITO_USER_POOLS'
 
 AUTHORIZER.type
-XAUTHORIZER.authorizerType        #'REQUEST|TOKEN|JWT|COGNITO_USER_POOLS'
+XAUTHORIZER.authorizerType        #'AUTH_TYPE', among 'REQUEST|TOKEN|JWT|COGNITO_USER_POOLS'
 COND_KEY AuthorizerType           #STR, on Create|Update|DeleteAuthorizer(), on [X]AUTHORIZER
                                   #Also STR_ARR, on [Re]Import[Rest]Api(), on [X]API
 
 AUTHORIZER.identitySource         #'STR,...'. Locates request authentication info.
-                                  #E.g. 'method.request.header.HEADER'
+                                  #E.g. 'method.request.header.HEADER' or 'method.request.querystring.PARAM'
                                   #Returns 401 right away if missing request authentication info
 XAUTHORIZER.identitySource        #Same but use 'EXPR'_ARR instead of 'STR,...'
-[X]AUTHORIZER                     #'REGEXP' matched on token, authorizerType-specific
- .identityValidationExpression    #Returns 401 right away if no match
+[X]AUTHORIZER                     #'REGEXP' matched on value returned by [X]AUTHORIZER.identifySource
+ .identityValidationExpression    #Is authorizerType-specific
+                                  #Returns 401 right away if no match
 
 
                                              /=+===============================+=\
@@ -978,7 +984,7 @@ XAUTHORIZER.identitySource        #Same but use 'EXPR'_ARR instead of 'STR,...'
                                              \=+===============================+=/
 
 
-AUTHORIZER TYPE 'JWT'           -2#Authorize with JWT
+AUTH_TYPE 'JWT'                 -2#Authorize with JWT
 
 XAUTHORIZER.identitySource ==>    #Locates the JWT value, either 'JWT' or 'Bearer JWT'
                                   #Only in headers or query variables
@@ -995,9 +1001,10 @@ ISSUER/.well-known/jwks.json      #Used and cached for 2h
 JWK.alg                           #Only RSA algorithms
 JWK.kid                           #Must match ENVLOP.kid
 
-REQ_CONTEXT.authorizer.jwt        #REQ_JWT2
-REQ_JWT2.claims                   #OBJ of custom PAYLOAD.* on JWT token
-REQ_JWT2.scopes                   #'SCOPE'_ARR
+REQ_CONTEXT1.authorizer
+REQ_CONTEXT2.authorizer.jwt       #REQ_JWT
+REQ_JWT.claims                    #OBJ|null of custom PAYLOAD.* on JWT token
+REQ_JWT.scopes                    #'SCOPE'_ARR|null
 
 
                                              /=+===============================+=\
@@ -1007,16 +1014,17 @@ REQ_JWT2.scopes                   #'SCOPE'_ARR
                                              \=+===============================+=/
 
 
-AUTHORIZER TYPE                  1#Authorize with Cognito USER_POOL
- 'COGNITO_USER_POOLS'           -2#Could also use type 'JWT' instead, since Cognito uses JWT
+AUTH_TYPE 'COGNITO_USER_POOLS'   1#Authorize with Cognito USER_POOL
+                                -2#Could also use type 'JWT' instead, since Cognito uses JWT
 
 AUTHORIZER.providerARNs           #Cognito USER_POOL_ARN_ARR
 COND_KEY apigateway:
  CognitoUserPoolProviderArn       #USER_POOL_ARN_ARR, on Create|Update|DeleteAuthorizer()
 
-XAUTHORIZER
- .identityValidationExpression    #'REGEXP' matched against Cognito's JWT's PAYLOAD.aud
-ROUTE.authorizationScopes         #Like XROUTE.authorizationScopes but for Cognito's JWT
+AUTHORIZER
+ .identityValidationExpression
+ROUTE.authorizationScopes
+REQ_CONTEXT1.authorizer           #Same as JWT but using Cognito's JWT
 
 INVOKE_AUTHORIZER_REQ.claims      #OBJ. PAYLOAD.* of custom properties in Cognito's JWT
 
@@ -1036,8 +1044,9 @@ REQ_IDENTITY1
                                              \=+===============================+=/
 
 
-AUTHORIZER TYPE 'REQUEST'         #Authorize with request parameters, checked by Lambda FUNCTION
-AUTHORIZER TYPE 'TOKEN'          1#Same but with request header
+AUTH_TYPE 'REQUEST|TOKEN'         #Pass a 'TOKEN' to a Lambda FUNCTION, which perform authorization
+AUTH_TYPE 'REQUEST'               #XAUTHORIZER.identitySource can use request headers, query variables, PATHVARs, STAGEVARs, context
+AUTH_TYPE 'TOKEN'                1#XAUTHORIZER.identitySource can use request headers only
 
 [X]AUTHORIZER
  .identityValidationExpression    #'REGEXP' matched against token
@@ -1047,20 +1056,46 @@ AUTHORIZER TYPE 'TOKEN'          1#Same but with request header
 COND_KEY AuthorizerUri            #STR, on Create|Update|DeleteAuthorizer(), on [X]AUTHORIZER
                                   #Also STR_ARR, on [Re]Import[Rest]Api(), on [X]API
 
-AUTHORIZER.authorizerCredentials
-XAUTHORIZER                       #ROLE_ARN to assume when calling Lambda FUNCTION
+AUTHORIZER.authorizerCredentials  #ROLE_ARN to assume when calling Lambda FUNCTION
+XAUTHORIZER                       #ROLE is assumed by Principal.Service 'apigateway.amazonaws.com'
  .authorizerCredentialsArn        #Optional, e.g. can use Lambda FUNCTION PERMISSION instead
+                                  #In either case, must:
+                                  #  - be allowed PACTION lambda:InvokeFunction
+                                  #  - use COND_KEY aws:SourceArn 'arn:aws:execute-api:REGION:ACCOUNT_ID:[X]API_MID/authorizers/[X]AUTHORIZER_MID'
 
-[X]AUTHORIZER                    -#NUM of secs to cache Lambda FUNCTION responses
- .authorizerResultTtlInSeconds   -#Can be 0. Def: 5m, max: 1h
-
-CALL_AUTHORIZER_ARN               #ARN of the act of executing an AUTHORIZER (i.e. not ARN of the AUTHORIZER itself)
-                                  #Is 'arn:aws:execute-api:REGION:ACCOUNT_ID:[X]API_MID/authorizers/[X]AUTHORIZER_MID'
-                                  #Can only be used as COND_KEY aws:SourceArn in that AUTHORIZER's Lambda FUNCTION PERMISSION
+[X]AUTHORIZER                    -#NUM of secs to cache Lambda FUNCTION successful responses, using 'TOKEN' as cache key
+ .authorizerResultTtlInSeconds   -#Def: 5m, min: 0, max: 1h
 
 XAUTHORIZER
  .authorizerPayloadFormatVersion -#'1.0' or '2.0'. Format of Lambda FUNCTION request|response body
 XAUTHORIZER.enableSimpleResponses-#BOOL (def: false). With authorizerPayloadFormatVersion '2.0', whether Lambda FUNCTION uses the simple format.
+
+AREQ                              #AUTHORIZER Lambda REQ
+AREQ.type                         #'AUTH_TYPE'
+AREQ.methodArn                    #CALL_ROUTE_ARN
+AREQ.authorizationToken           #'TOKEN'
+                                  #Only with AUTH_TYPE 'TOKEN'
+AREQ.*                            #Like REQ.*, except some not documented (i.e. maybe not present):
+                                  #  - multiValue*
+                                  #  - body, isBase64Encoded
+                                  #  - REQ_CONTEXT.authorizer|domain*|extendedRequestId|protocol|requestTime[Epoch]
+                                  #  - REQ_IDENTITY: only sourceIp, clientCert
+                                  #Only with AUTH_TYPE 'REQUEST'
+
+ARES                              #AUTHORIZER Lambda RES
+                                  #Can be null to send 401
+
+ARES.principalId                  #PRINCIPAL ID. Authenticate request with it
+INVOKE_AUTHORIZER_RES.principalId #ARES.principalId
+
+ARES.policyDocument               #POLICY_DOC, as OBJ, to attach to requester
+                                  #This is in additional to other POLICYs that might impact ARES.principalId
+                                  #Usually allows|denies PACTION execute-api:* on CALL_ROUTE_ARN
+                                  #Send 403 if POLICY_DOC denies
+INVOKE_AUTHORIZER_RES.policy      #'POLICY_DOC' from ARES.policyDocument
+
+ARES.context                      #Custom OBJ. Values cannot be OBJ|ARR
+REQ_CONTEXT.authorizer            #OBJ from ARES.context
 
 
                                              /=+===============================+=\
@@ -1082,11 +1117,9 @@ INVOKE_AUTHORIZER_REQ
  .additionalContext.VAR           #STR ???
 
 INVOKE_AUTHORIZER_RES.latency|log #Like INVOKE_ROUTE_REQ.*
-INVOKE_AUTHORIZER_REQ
+INVOKE_AUTHORIZER_RES.clientStatus#STATUS_NUM. 0 if AUTHORIZER passed
+INVOKE_AUTHORIZER_RES
  .authorization.STR               #STR_ARR
-INVOKE_AUTHORIZER_REQ.clientStatus#STATUS_NUM. 0 if AUTHORIZER passed
-INVOKE_AUTHORIZER_REQ.policy      #'POLICY_DOC' returned by AUTHORIZER
-INVOKE_AUTHORIZER_REQ.principalId #STR returned by AUTHORIZER
 
 
                                              /=+===============================+=\
@@ -1707,6 +1740,14 @@ INVOKE_ROUTE_REQ
 
 CERTIFICATE.tags                  #TAGS
 
+REQ_IDENTITY1.clientCert          #REQ_CERTIFICATE1
+REQ_CERTIFICATE1.clientCertPem    #CERTIFICATE.pemEncodedCertificate
+REQ_CERTIFICATE1.validity
+ .notBefore|notAfter              #'DATE' of expiration
+REQ_CERTIFICATE1.subjectDN        #'DOMAIN' of user
+REQ_CERTIFICATE1.issuerDN         #'DOMAIN' of issuer
+REQ_CERTIFICATE1.serialNumber     #'XX:...:XX'
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -1869,6 +1910,10 @@ ACCOUNT.apiKeyVersion             #STR
 APIKEY.customerId                 #CUSTOMER_MID, from AWS Marketplace
 
 APIKEY.tags                       #TAGS
+
+AREQ                              #'APIKEY_VAL'
+ .requestContext.identity.apiKey  #Only with AUTH_TYPE 'REQUEST'
+ARES.usageIdentifierKey           #'APIKEY_MID'
 
 
                                              /=+===============================+=\
