@@ -42,6 +42,7 @@ VERSION ==>                       #There are two versions of the API:
                                   #     - simpler
                                   #     - i.e. preferred unless need v1 features
                                   #Resources are version-specific, i.e. cannot use v1|v2 together
+                                  #  - but several APIs with different versions can be under same domain name by using MAPPINGs
 
 SERVICE_DOMAIN                    #apigateway.amazonaws.com
 
@@ -1904,7 +1905,7 @@ GetDomainName()                   #Res: DNAME
 DELETE /v2/domainnames/DNAME    -~#Req: empty
 DeleteDomainName()                #Res: empty
 
-DNAME                             #Domain names that can call API
+DNAME                             #Custom domain name
 DNAME_ARN                         #arn:aws:apigateway:REGION::/domainnames/DNAME
 DNAME.domainName                  #'DNAME'
 
@@ -1916,8 +1917,11 @@ COND_KEY DisableExecuteApiEndpoint#BOOL, on Create|Update|Delete[Rest]Api()
 
 DNAME.domainName                 =
 DDNAME.apiGatewayDomainName     -~#Custom domain name, e.g. 'example.com'
-DNAME.distributionDomainName     =#CloudFront domain name, when using custom CloudFront, with ENDPOINT.types 'REGIONAL'
-DNAME.regionalDomainName         =#Regional domain name, when using custom CloudFront, with ENDPOINT.types 'REGIONAL'
+                                  #Must point to either DNAME.distributionDomainName or DNAME.regionalDomainName
+DNAME.distributionDomainName     =#CloudFront domain name, e.g. 'DISTRIBUTION_MID.cloudfront.net'
+                                  #Only with ENDPOINT.types 'EDGE'
+DNAME.regionalDomainName         =#Regional domain name, e.g. 'API_MID.execute-api.REGION.amazonaws.com'
+                                  #Only with ENDPOINT.types 'REGIONAL'
 DDNAME.hostedZoneId             -~
 DNAME.distributionHostedZoneId   =
 DNAME.regionalHostedZoneId       =#Like *DomainName, but as Route53 ZONE_MID
@@ -1935,6 +1939,7 @@ ENDPOINT.types                   =#STR_ARR among:
                                   #        - use own CloudFront instead of default one
                                   #  - 'PRIVATE': use VPC
                                   #To set from 'PRIVATE' to 'EDGE', must set to 'REGIONAL' first
+                                  #To set from|to 'EDGE' from|to 'REGIONAL', must set to ['EDGE', 'REGIONAL'] first
 DDNAME.endpointType             -~#STR, like ENDPOINT.types, but no 'PRIVATE'
 COND_KEY EndpointType             #STR_ARR, on Create|Update|Delete[Rest]Api|DomainName()
 
@@ -1950,8 +1955,6 @@ DDNAME.domainNameStatusMessage  -~#STR
 DNAME.tags                        #TAGS
                                  =#Inherited by children (ABAC-only): MAPPING
 
-TODO: see patch conditions on https://docs.aws.amazon.com/apigateway/latest/api/patch-operations.html#UpdateDomainName-Patch???
-
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -1961,7 +1964,7 @@ TODO: see patch conditions on https://docs.aws.amazon.com/apigateway/latest/api/
 
 
 DNAME.securityPolicy             =
-DDNAME.securityPolicy           -~#'TLS_1_0|1_2'
+DDNAME.securityPolicy           -~#'TLS_1_0|1_2' (def: none)
 COND_KEY SecurityPolicy           #STR_ARR, on Create|Put|DeleteDomainName()
 
 DNAME.mutualTlsAuthentication     #DNAME_TLS. Require client TLS authentication
@@ -1972,12 +1975,15 @@ COND_KEY MtlsTrustStoreUri|Version#STR, on Create|Update|DeleteDomainName()
 
 DNAME.certificateArn             =
 DDNAME.certificateArn           -~#ACM certificate ARN, used for TLS
+                                  #Only with ENDPOINT.types 'EDGE'
+                                  #Certificate's REGION must be us-east-1
                                   #Requires PACTION apigateway:AddCertificateToDomain|RemoveCertificateFromDomain
 DNAME.certificateName            =
 DDNAME.certificateName          -~#Same but as 'CERTIFICATE' name
-DNAME.regionalCertificateArn|Name=#Same but for DNAME.regionalDomainName
 DNAME.certificateUploadDate      =#DATE_NUM
 DDNAME.certificateUploadDate    -~#'DATE'
+DNAME.regionalCertificateArn|Name=#Same as certificateArn|Name but only with ENDPOINT.types 'REGIONAL'
+                                  #Certificate's REGION must be the same REGION
 
 DNAME.ownership
  VerificationCertificateArn      =
@@ -2026,13 +2032,19 @@ DELETE /v2/domainnames/DNAME
  /apimappings/MAPPING_MID       -~#Req: empty
 DeleteApiMapping()                #Res: empty
 
-MAPPING                           #Use a specific STAGE based on DNAME + base /PATH
+MAPPING                           #Make a given DNAME/BASEPATH use a specific API + STAGE
+                                  #Can map same DNAME to multiple APIs (with different BASEPATHs),
+                                  #including from different versions (v1, v2 HTTP, v2 WebSocket)
 MAPPING_ARN                      =#arn:aws:apigateway:REGION::/domainnames/DNAME/basepathmappings[/BASEPATH]
 MAPPING_ARN                     -~#arn:aws:apigateway:REGION::/domainnames/DNAME/apimappings[/MAPPING_MID]
 MAPPING.apiMappingId            -~#MAPPING_MID
 MAPPING.apiMappingKey           -~#'MAPPING'
 
-MAPPING.basePath                 =#'/BASEPATH'. Can be '(none)'
+MAPPING.basePath                 =#'/BASEPATH'. Can be '(none)' as a catch-all
+                                  #Cannot have subdirectories:
+                                  #  - unless using ENDPOINT.types 'REGIONAL' + securityPolicy 'TLS_1_2'
+                                  #  - can use multiple MAPPINGs with BASEPATHs with common parent directories
+                                  #     - e.g. '/a/b' and '/a/c', or '/a' and '/a/b'
 DNAME
  .apiMappingSelectionExpression -~#Always '$request.basepath'
 ACONTEXT
