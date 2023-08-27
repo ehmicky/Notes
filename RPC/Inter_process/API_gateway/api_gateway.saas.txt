@@ -416,6 +416,13 @@ RRESP.responseModels.MIME        =#'MODEL'. Response body to send to client
 RRESP.responseModels.RRESP_MODEL ~#Same but as a name
 RRESP.modelSelectionExpression   ~#'RRESP_MODEL_$EXPR'. Currently not supported
 
+ACONTEXT.status                   #STATUS_NUM of RRESP
+CONTEXT.error.message           =-#'ERROR' message of RRESP
+CONTEXT.error.messageString       #Like CONTEXT.error.message but "-quoted
+ACONTEXT.responseLatency        =-#RRESP latency
+ACONTEXT.responseLength         =-#RRESP Content-Length [S]
+CONTEXT.dataProcessed            -#NUM of bytes processed
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -662,6 +669,14 @@ IRESP                            ~#'IRESP_TEMPLATE_$EXPR'. Can be:
                                   #  - '$integration.response.statuscode'
                                   #  - '$integration.response.[multivalue]header.HEADER'
 
+ACONTEXT.integration.status     =-
+CONTEXT.integrationErrorMessage  -
+ACONTEXT.integration.error      =-
+ACONTEXT.integrationLatency     =-
+ACONTEXT.integration.latency    =-#Same as ACONTEXT.authorize.* but for backend response
+ACONTEXT[.integration]          =-#Like ACONTEXT.integration.status except with Lambda:
+ .integrationStatus               #STATUS_NUM of Invoke() call itself, not MAIN_RES.statusCode
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -808,19 +823,35 @@ DELETE /restapis/API_MID
  /gatewayresponses/RESP_TYPE     =#Req: empty
 DeleteGatewayResponse()           #Res: empty
 
-GRESP                            =#Default IRESP, that can be customized
+GRESP                            =#Used by invalid requests and system errors, instead of RRESP|IRESPs
+                                  #Can be customized
 GRESP_ARN                        =#arn:aws:apigateway:REGION::/restapis/API_MID/gatewayresponses[/RESP_TYPE]
 GRESP.statusCode
-GRESP.responseParameters
-GRESP.responseTemplates          =#Same as IRESP.*
+GRESP.responseParameters         =#Same as IRESP.*
+GRESP.responseTemplates          =#Same as IRESP.* except TEMPLATE can only use simple $EXPR in OBJ|ARR values
 GRESP.defaultResponse            =#BOOL (def: true). Whether has been customized
 
-GRESP.responseType               =#STR among:
-CONTEXT.error.responseType       =#  - specific error type among: RESOURCE_NOT_FOUND, UNAUTHORIZED, INVALID_API_KEY, ACCESS_DENIED, AUTHORIZER_FAILURE,
-                                  #    AUTHORIZER_CONFIGURATION_ERROR, INVALID_SIGNATURE, EXPIRED_TOKEN, MISSING_AUTHENTICATION_TOKEN,
-                                  #    INTEGRATION_FAILURE, INTEGRATION_TIMEOUT, API_CONFIGURATION_ERROR, UNSUPPORTED_MEDIA_TYPE,
-                                  #    BAD_REQUEST_PARAMETERS, BAD_REQUEST_BODY, REQUEST_TOO_LARGE, THROTTLED, QUOTA_EXCEEDED
-                                  #  - DEFAULT_4XX, DEFAULT_5XX: if none above matches
+GRESP.responseType               =#'RESP_TYPE' among:
+CONTEXT.error.responseType       =
+                                  #  - BAD_REQUEST_PARAMETERS: 400, validation against non-body parameters
+                                  #  - BAD_REQUEST_BODY: 400, validation against body
+                                  #  - ACCESS_DENIED: 403, authorization error
+                                  #  - EXPIRED_TOKEN: 403, AWS ACCESS_TOKEN expired
+                                  #  - RESOURCE_NOT_FOUND
+                                  #  - UNAUTHORIZED
+                                  #  - INVALID_API_KEY
+                                  #  - INVALID_SIGNATURE
+                                  #  - MISSING_AUTHENTICATION_TOKEN
+                                  #  - INTEGRATION_FAILURE
+                                  #  - INTEGRATION_TIMEOUT
+                                  #  - UNSUPPORTED_MEDIA_TYPE
+                                  #  - REQUEST_TOO_LARGE
+                                  #  - THROTTLED
+                                  #  - QUOTA_EXCEEDED
+                                  #  - API_CONFIGURATION_ERROR: 500, API Gateway was misconfigured
+                                  #  - AUTHORIZER_CONFIGURATION_ERROR: 500, AUTHORIZER was misconfigured
+                                  #  - AUTHORIZER_FAILURE: 500, AUTHORIZER exception
+                                  #  - DEFAULT_4XX|5XX: used instead of the above if not defined
 
 
                                              /=+===============================+=\
@@ -894,13 +925,35 @@ TEMPLATE                        =~#Transforms request|response body between ROUT
                                   #Velocity template
                                   #Can use $EXPR
 
+$input                          =~#Used instead of $request in TEMPLATEs
+$input.body                     =~#STR
+$input.json('JSONPATH')         =~#STR, from body request parameter
+$input.path('JSONPATH')         =~#Same but JSON parses
+$input.params(['PARAM'])        =~#VAL, from non-body parameter (def: all)
+
+CONTEXT.requestOverride
+ |responseOverride.*             =#Can be set (but not twice). Only for TEMPLATEs
+CONTEXT.requestOverride
+ .path.PATHVAR                   =#'VAL'
+CONTEXT.requestOverride
+ .querystring.PARAM              =#'VAL'[_ARR]
+CONTEXT.requestOverride
+ .header.PARAM                   =#'VAL'[_ARR]
+CONTEXT
+ .responseOverride.header.PARAM  =#'VAL'
+CONTEXT.responseOverride.status  =#STATUS_NUM
+
+$util.parseJson('JSON')         =~#VAL
+$util.urlEncode|Decode(STR)     =~#STR. For application/x-www-form-urlencoded
+$util.base64Encode|Decode(STR)  =~#STR
+$util.escapeJavaScript(STR)     =~#STR. Actually meant for JSON escaping
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
                                             )==:          EXPRESSION           :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
-
 
 
 TEXPR                             #STR. Any of the following VARs
@@ -956,48 +1009,6 @@ $stageVariables['STAGEVAR']       #'VAL'
 
 $context                          #CONTEXT
                                  =#Or ACONTEXT: when can only be used in ACCESS_LOG.format
-CONTEXT.routeKey                  #'ROUTE'
-CONTEXT.requestOverride
- .path.PATHVAR                    #'VAL'
-CONTEXT.requestOverride
- .querystring.PARAM               #'VAL'[_ARR]
-CONTEXT.requestOverride
- .header.HEADER                   #'VAL'[_ARR]
-CONTEXT
- .responseOverride.header.HEADER  #'VAL'
-CONTEXT.responseOverride.status   #STATUS_NUM
-$EXPR in https://docs.aws.amazon.com/apigateway/latest/developerguide/api-gateway-mapping-template-reference.html#context-variable-reference: can be set. But not twice ???
-
-CONTEXT.error.message           =-#'ERROR' message of RRESP
-CONTEXT.error.messageString       #Like CONTEXT.error.message but "-quoted
-ACONTEXT.status                   #STATUS_NUM of RRESP
-ACONTEXT.responseLatency        =-#
-ACONTEXT.responseLength =-
-CONTEXT.integrationErrorMessage  -
-ACONTEXT.integrationLatency     =-
-ACONTEXT.integration
- .status|error|latency          =-#Same as ACONTEXT.authorize.* but for backend response
-ACONTEXT[.integration]          =-#Like ACONTEXT.integration.status except with Lambda:
- .integrationStatus               #STATUS_NUM of Invoke() call itself, not MAIN_RES.statusCode
-CONTEXT.requestOverride.path.PARAM =
-CONTEXT.requestOverride.header.PARAM =
-CONTEXT.requestOverride.querystring.PARAM =
-CONTEXT.responseOverride.header.PARAM =
-CONTEXT.responseOverride.statuscode =
-ACONTEXT.customDomain.basePathMatched =-
-CONTEXT.dataProcessed -
-
-$input.body =~
-$input.json('JSONPATH') =~
-$input.params(['PARAM']) =~
-$input.path(['JSONPATH']) =~
-
-$util.escapeJavaScript(STR) =
-$util.parseJson('JSON') =
-$util.urlEncode(STR) =
-$util.urlDecode(STR) =
-$util.base64Encode(STR) =
-$util.base64Decode(STR) =
 
 
                                              /=+===============================+=\
@@ -2000,6 +2011,8 @@ MAPPING.apiMappingKey           -~#'MAPPING'
 MAPPING.basePath                 =#'/BASEPATH'. Can be '(none)'
 DNAME
  .apiMappingSelectionExpression -~#Always '$request.basepath'
+ACONTEXT
+ .customDomain.basePathMatched  =-#'/BASEPATH'
 
 MAPPING.restApiId                =
 MAPPING.apiId                   -~#API_MID
