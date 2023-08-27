@@ -147,6 +147,7 @@ XAPI_ARN                          #arn:aws:apigateway:REGION::/apis[/XAPI_MID]
 API.id
 XAPI.apiId                        #[X]API_MID
 [X]API.name                       #'API'
+COND_KEY ApiName                  #'API', on Create|Update|Delete[Rest]Api()
 [X]API.description                #STR
 [X]API.createdDate                #DATE_NUM|'DATE'
 
@@ -872,19 +873,19 @@ XAPI.disableSchemaValidation     ~#BOOL. If false (def), validate MODELs during 
                                              \=+===============================+=/
 
 
-[X]ROUTE|ROUTE_SUMMARY            #Authorizer, among:
- .authorizationType               #  - 'NONE' (def)
+[X]ROUTE|ROUTE_SUMMARY            #STR. How to authorize requests to [X]API, among:
+ .authorizationType               #  - 'NONE' (def): always allow
                                   #  - 'AWS_IAM': requires authenticated USER
-                                 1#  - 'COGNITO_USER_POOLS': requires Cognito authentication
-                                -2#  - 'JWT'
-                                  #  - 'CUSTOM': AUTHORIZER
-[X]ROUTE.authorizerId             #AUTHORIZER_MID. Only with authorizationType 'COGNITO_USER_POOLS|CUSTOM'
-[X]ROUTE.authorizationScopes      #'SCOPE'_ARR. Only with authorizationType 'COGNITO_USER_POOLS|JWT'
-                                  #Requires credentials to include that SCOPE
+                                  #  - 'CUSTOM': AUTHORIZER with type 'REQUEST|TOKEN'
+                                -2#  - 'JWT': AUTHORIZER with type 'JWT'
+                                 1#  - 'COGNITO_USER_POOLS': AUTHORIZER with type 'COGNITO_USER_POOLS'
+COND_KEY RouteAuthorizationType   #STR, on Create|Put|DeleteMethod(), on [X]ROUTE
+                                  #Also STR_ARR on [Re]Import[Rest]Api(), on [X]API
 
 API.policy                        #IAM 'POLICY_DOC'
                                   #Resource-based policy for API, with resource-level permissions
                                   #If AUTHORIZER FUNCTION returns a POLICY_DOC, appended to it
+                                  #Requires PACTION apigateway:UpdateRestApiPolicy
 
 PACTION execute-api:*             #Required if either:
                                   #  - authorizationType 'AWS_IAM'
@@ -904,6 +905,17 @@ CALL_ROUTE_ARN                    #ARN of the act of executing a ROUTE (not ROUT
                                  ~#  - CALL_ROUTE_PREFIX/XSTAGE/ROUTE
                                  ~#  - XCONNECTION: CALL_ROUTE_PREFIX/XSTAGE/HTTP_METHOD/@connections
                                   #Can use * in [X]STAGE|HTTP_METHOD|PATH|ROUTE
+
+PACTION apigateway:HTTP_METHOD    #Unlike other SERVICEs, PACTIONs are not named apigateway:ACTION,
+                                  #except for a few ones documented in this doc
+                                  #Instead, one must specify:
+                                  #  - HTTP_METHOD: GET|POST|PUT|PATCH|DELETE
+                                  #  - Resource ARN
+
+COND_KEY apigateway:Request/NAME  #For request payload
+COND_KEY apigateway:Response/NAME #For current state of the resource
+                                  #Not available for Create*() since resource not created yet
+COND_KEY NAME                     #Short notation in this doc for COND_KEY apigateway:Request|Response/NAME
 
 
                                              /=+===============================+=\
@@ -944,53 +956,81 @@ DELETE /v2/apis/XAPI_MID
  /authorizers/XAUTHORIZER_MID     #Req: empty
 DeleteAuthorizer()                #Res: empty
 
-[X]AUTHORIZER                     #Validate request's authentication
+[X]AUTHORIZER                     #Authorize requests to [X]API
 AUTHORIZER_ARN                    #arn:aws:apigateway:REGION::/restapis/API_MID/authorizers[/AUTHORIZER_MID]
 XAUTHORIZER_ARN                   #arn:aws:apigateway:REGION::/apis/XAPI_MID/authorizers[/XAUTHORIZER_MID]
 AUTHORIZER.id
 XAUTHORIZER.authorizerId          #[X]AUTHORIZER_MID
 [X]AUTHORIZER.name                #'AUTHORIZER'
 
-CALL_AUTHORIZER_ARN               #ARN of the act of executing an AUTHORIZER (not AUTHORIZER itself)
-                                  #Can only be used as COND_KEY aws:SourceArn in that AUTHORIZER's Lambda FUNCTION PERMISSION
-                                 -#arn:aws:execute-api:REGION:ACCOUNT_ID:[X]API_MID/authorizers/[X]AUTHORIZER_MID
+[X]ROUTE.authorizerId             #AUTHORIZER_MID. Only with authorizationType 'CUSTOM|JWT|COGNITO_USER_POOLS'
 
-AUTHORIZER.type                   #STR among:
-XAUTHORIZER.authorizerType        #  - 'REQUEST': request parameters, checked by Lambda FUNCTION
-                                 1#  - 'TOKEN': request header, checked by Lambda FUNCTION
-                                 1#  - 'COGNITO_USER_POOLS': Cognito USER_POOL
-                                -2#  - 'JWT': JWT
+AUTHORIZER.type
+XAUTHORIZER.authorizerType        #'REQUEST|TOKEN|JWT|COGNITO_USER_POOLS'
+COND_KEY AuthorizerType           #STR, on Create|Update|DeleteAuthorizer(), on [X]AUTHORIZER
+                                  #Also STR_ARR, on [Re]Import[Rest]Api(), on [X]API
 
 AUTHORIZER.identitySource         #'EXPR,...'. Locates request authentication info.
                                   #E.g. 'method.request.header.HEADER'
                                   #Returns 401 right away if missing request authentication info
 XAUTHORIZER.identitySource        #Same but use STR_ARR instead of 'EXPR,...'
-                                  #With type 'JWT', locates the JWT, and only in headers or query variables
 [X]AUTHORIZER                     #'REGEXP' matched on, depending on type:
  .identityValidationExpression    #  - 'TOKEN': token
                                   #  - 'COGNITO_USER_POOLS': `aud` field
                                   #Returns 401 right away if no match
 
-[X]AUTHORIZER.authorizerUri       #'arn:aws:apigateway:REGION:lambda:path/API_VERSION/functions/FUNC_ARN/invocations'
-                                  #Only with type 'REQUEST|TOKEN'
-AUTHORIZER.authorizerCredentials  #ROLE_ARN to assume.
-XAUTHORIZER                       #Optional, e.g. can use Lambda FUNCTION PERMISSION instead
- .authorizerCredentialsArn        #Only with type 'REQUEST'
-[X]AUTHORIZER                    -#NUM of secs to cache Lambda FUNCTION responses
- .authorizerResultTtlInSeconds   -#Can be 0. Def: 5m, max: 1h
-                                 -#Only with type 'REQUEST|TOKEN'
-XAUTHORIZER                      -#'1.0' or '2.0'. Format of Lambda FUNCTION request|response body
- .authorizerPayloadFormatVersion -#Only with type 'REQUEST|TOKEN'
-XAUTHORIZER.enableSimpleResponses-#BOOL (def: false). With authorizerPayloadFormatVersion '2.0', whether Lambda FUNCTION
-                                 -#uses the simple format.
 
-AUTHORIZER.providerARNs           #Cognito USER_POOL_ARN_ARR
-                                  #Only with type 'COGNITO_USER_POOLS'
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:        AUTHORIZER JWT         :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
 
+
+AUTHORIZER TYPE 'JWT'           -2#Authorize with JWT
+XAUTHORIZER.identitySource ==>    #Locates the JWT value, either 'JWT' or 'Bearer JWT'
+                                  #Only in headers or query variables
 XAUTHORIZER.jwtConfiguration      #XJWT
-                                  #Only with type 'JWT'
 XJWT.issuer                       #STR, matched against PAYLOAD.iss
 XJWT.audience                     #STR_ARR, matched against PAYLOAD.aud
+
+AUTHORIZER TYPE                  1#Authorize with Cognito USER_POOL
+ 'COGNITO_USER_POOLS'           -2#Could also use type 'JWT' instead, since Cognito uses JWT
+AUTHORIZER.providerARNs           #Cognito USER_POOL_ARN_ARR
+
+[X]ROUTE.authorizationScopes      #'SCOPE'_ARR. Only with authorizationType 'COGNITO_USER_POOLS|JWT'
+                                  #Requires credentials to include that SCOPE
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:       AUTHORIZER LAMBDA       :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+AUTHORIZER TYPE 'REQUEST'         #Authorize with request parameters, checked by Lambda FUNCTION
+AUTHORIZER TYPE 'TOKEN'          1#Same but with request header
+
+[X]AUTHORIZER.authorizerUri       #Lambda FUNCTION to invoke
+                                  #Is 'arn:aws:apigateway:REGION:lambda:path/API_VERSION/functions/FUNC_ARN/invocations'
+COND_KEY AuthorizerUri            #STR, on Create|Update|DeleteAuthorizer(), on [X]AUTHORIZER
+                                  #Also STR_ARR, on [Re]Import[Rest]Api(), on [X]API
+
+AUTHORIZER.authorizerCredentials
+XAUTHORIZER                       #ROLE_ARN to assume when calling Lambda FUNCTION
+ .authorizerCredentialsArn        #Optional, e.g. can use Lambda FUNCTION PERMISSION instead
+
+[X]AUTHORIZER                    -#NUM of secs to cache Lambda FUNCTION responses
+ .authorizerResultTtlInSeconds   -#Can be 0. Def: 5m, max: 1h
+
+CALL_AUTHORIZER_ARN               #ARN of the act of executing an AUTHORIZER (i.e. not ARN of the AUTHORIZER itself)
+                                  #Is 'arn:aws:execute-api:REGION:ACCOUNT_ID:[X]API_MID/authorizers/[X]AUTHORIZER_MID'
+                                  #Can only be used as COND_KEY aws:SourceArn in that AUTHORIZER's Lambda FUNCTION PERMISSION
+
+XAUTHORIZER
+ .authorizerPayloadFormatVersion -#'1.0' or '2.0'. Format of Lambda FUNCTION request|response body
+XAUTHORIZER.enableSimpleResponses-#BOOL (def: false). With authorizerPayloadFormatVersion '2.0', whether Lambda FUNCTION uses the simple format.
 
 
                                              /=+===============================+=\
@@ -1015,7 +1055,7 @@ INVOKE_AUTHORIZER_RES.latency|log #Like INVOKE_ROUTE_REQ.*
 INVOKE_AUTHORIZER_REQ
  .authorization.STR               #STR_ARR
 INVOKE_AUTHORIZER_REQ.clientStatus#STATUS_NUM. 0 if AUTHORIZER passed
-INVOKE_AUTHORIZER_REQ.policy      #'POLICY' returned by AUTHORIZER
+INVOKE_AUTHORIZER_REQ.policy      #'POLICY_DOC' returned by AUTHORIZER
 INVOKE_AUTHORIZER_REQ.principalId #STR returned by AUTHORIZER
 INVOKE_AUTHORIZER_REQ.claims.STR  #STR
                                   #Only with type 'COGNITO_USER_POOLS'
@@ -1091,6 +1131,7 @@ ResetAuthorizersCache()           #Res: empty
 STAGE_ARN                         #arn:aws:apigateway:REGION::/restapis/API_MID/stages[/STAGE]
 XSTAGE_ARN                        #arn:aws:apigateway:REGION::/apis/XAPI_MID/stages[/XSTAGE]
 [X]STAGE.stageName                #'STAGE'
+COND_KEY StageName                #STR_ARR, on CreateDeployment()
 [X]STAGE.description              #STR
 [X]STAGE.createdDate              #DATE_NUM|'DATE'
 [X]STAGE.lastUpdatedDate          #DATE_NUM|'DATE'
@@ -1117,12 +1158,15 @@ XROUTE_SETTINGS
 
 [X]STAGE.accessLogSettings        #[X]ACCESS_LOG. Send request logs
 XACCESS_LOG_ARN                   #arn:aws:apigateway:REGION::/apis/XAPI_MID/stages/XSTAGE/accesslogsettings
+                                  #Must use [X]STAGE_ARN instead with COND_KEYs
 [X]ACCESS_LOG.destinationArn      #Either:
                                   #  - CloudWatch LOG_GROUP_ARN
                                  1#  - Kinesis Firehose DELIVERY_STREAM_ARN
                                  1#     - name must start with 'amazon-apigateway-'
 [X]ACCESS_LOG.format              #'EXPR' transforming each request to a single line
                                   #Must include $context.requestId
+COND_KEY AccessLoggingDestination
+COND_KEY AccessLoggingFormat      #On Create|Update|DeleteStage()
 ACCOUNT.cloudwatchRoleArn         #ROLE_ARN used to send to CloudWatch logs
 
 [X]ROUTE_SETTINGS.loggingLevel   ~#STR. Send CloudWatch Logs:
@@ -1155,6 +1199,7 @@ ROUTE_SETTINGS.unauthorized       #How to handle unauthorized invalidation reque
 
 STAGE.tracingEnabled              #BOOL (def: false). Enable X-Ray
 STAGE.webAclArn                   #WEB_ACL_ARN. Enable WAF
+                                  #Requires PACTION apigateway:SetWebACL
 
 [X]STAGE.tags                     #TAGS
 
@@ -1475,6 +1520,7 @@ XDNAME.domainNameConfigurations   #XDDNAME_ARR
 
 XAPI.apiEndpoint                  #'XAPI_MID.execute-api.amazonaws.com'
 [X]API.disableExecuteApiEndpoint  #BOOL (def: false). Do not allow [X]API_MID.execute-api.amazonaws.com, i.e. must use [X]DNAME instead
+COND_KEY DisableExecuteApiEndpoint#BOOL, on Create|Update|Delete[Rest]Api()
 
 DNAME.domainName
 XDDNAME.apiGatewayDomainName      #Custom domain name, e.g. 'example.com'
@@ -1498,6 +1544,7 @@ ENDPOINT.types                    #STR_ARR among:
                                   #  - 'PRIVATE': use VPC
                                   #To set from 'PRIVATE' to 'EDGE', must set to 'REGIONAL' first
 XDDNAME.endpointType              #STR, like ENDPOINT.types, but no 'PRIVATE'
+COND_KEY EndpointType             #STR_ARR, on Create|Update|Delete[Rest]Api|DomainName()
 
 [XD]DNAME.domainNameStatus        #STR, among:
                                   #  - PENDING_CERTIFICATE_REIMPORT
@@ -1520,13 +1567,16 @@ TODO: see patch conditions on https://docs.aws.amazon.com/apigateway/latest/api/
 
 
 [XD]DNAME.securityPolicy          #'TLS_1_0|1_2'
+COND_KEY SecurityPolicy           #STR_ARR, on Create|Put|DeleteDomainName()
 
 [X]DNAME.mutualTlsAuthentication  #[X]DNAME_TLS. Require client TLS authentication
 [X]DNAME_TLS.truststoreUri        #'s3://BUCKET/OBJECT' to truststore, that contains CAs
 [X]DNAME_TLS.truststoreVersion    #VERSION_ID of S3 OBJECT
 [X]DNAME_TLS.truststoreWarnings   #'MESSAGE'_ARR. Warnings related to truststore
+COND_KEY MtlsTrustStoreUri|Version#STR, on Create|Update|DeleteDomainName()
 
 [XD]DNAME.certificateArn          #ACM certificate ARN, used for TLS
+                                  #Requires PACTION apigateway:AddCertificateToDomain|RemoveCertificateFromDomain
 DNAME.certificateName             #Same but as 'CERTIFICATE' name
 DNAME.regionalCertificateArn|Name #Same but for DNAME.regionalDomainName
 [XD]DNAME.certificateUploadDate   #DATE_NUM|'DATE'
@@ -1783,6 +1833,8 @@ XAPI.apiKeySelectionExpression   ~#Same but named either:
                                  ~#  - '$context.authorizer.usageIdentifierKey'
 [X]ROUTE|ROUTE_SUMMARY
  .apiKeyRequired                 ~#BOOL (def: false). Requires requests to have an APIKEY
+COND_KEY ApiKeyRequired           #BOOL, on Create|Put|DeleteMethod(), on [X]ROUTE
+                                  #Also BOOL_ARR on [Re]Import[Rest]Api(), on [X]API
 
 ACCOUNT.apiKeyVersion             #STR
 
@@ -1955,7 +2007,7 @@ UntagResource()                   #  - tags TAGS -> tagKeys 'TAG'_ARR
                                   #Res: empty
 
 [X]RESOURCE.tags                  #TAGS
+TAGS_ARN                          #arn:aws:apigateway:REGION::/tags/ARN
 
 ARN                               #From any resource of API Gateway that has a `tags` property
                                   #URL-encoded
-TAGS_ARN                          #arn:aws:apigateway:REGION::/tags/ARN
