@@ -183,8 +183,8 @@ INTEGRATION.apiGatewayManaged   -~#BOOL. Do not allow delete (but allow update)
 
 API.target                       -#STR. "Quick create", i.e. automatically create default STAGE and INTEGRATION
                                   #Can be:
-                                  #  - 'URL': type 'HTTP_PROXY'
-                                  #  - Lambda FUNC_ARN: type 'AWS_PROXY'
+                                  #  - 'URL': integrationType 'HTTP_PROXY'
+                                  #  - Lambda FUNC_ARN: integrationType 'AWS_PROXY'
 API.credentialsArn               -#STR. Only with API.target FUNC_ARN.
                                   #Same value as INTEGRATION.credentialsArn
 API.routeKey                     -#'ROUTE' created by "Quick create"
@@ -371,7 +371,7 @@ DELETE /v2/apis/API_MID
 DeleteRouteResponse()             #Res: empty
 
 RRESP                           =~#ROUTE's response status|headers|body
-                                  #Optional with type '*_PROXY'
+                                  #Optional with integrationType '*_PROXY'
                                  ~#Def: no response
 RRESP_ARN                        =#arn:aws:apigateway:REGION::/restapis/API_MID/integrations/resources/RESOURCE_MID/methods/HTTP_METHOD/responses/STATUS_NUM
 RRESP_ARN                        ~#arn:aws:apigateway:REGION::/apis/API_MID/routes/ROUTE_MID/routeresponses[/RRESP_MID]
@@ -476,19 +476,21 @@ ROUTE.methodIntegration          =#INTEGRATION
 
 INTEGRATION.type                 =
 INTEGRATION.integrationType     -~#STR. "Backend" to forward to:
-                                =~#  - HTTP: a new HTTP request
-                                =~#  - AWS: a call to an AWS SERVICE
-                                  #  - HTTP_PROXY|AWS_PROXY: the original request
+                                =~#  - HTTP ("HTTP custom"): a new HTTP request
+                                =~#  - AWS ("AWS custom"): a call to an AWS SERVICE
+                                  #  - HTTP_PROXY: the original request
+                                  #  - AWS_PROXY: the original request
+                                  #     - only with Lambda
                                 =~#  - MOCK: nothing
 
 INTEGRATION.integrationSubtype   -#'SERVICE'
-                                  #Only with type 'AWS_PROXY'
+                                  #Only with integrationType 'AWS_PROXY'
 INTEGRATION.uri                  =
 INTEGRATION.integrationUri      -~#Depending on type:
                                   #  - 'HTTP[_PROXY]': 'URI' to call
                                   #  - 'AWS[_PROXY]':
-                                  #     - 'SERVICE_ARN:action/ACTION[&PARAM=VAL&...]': any SERVICEs
-                                  #     - 'SERVICE_ARN:path/PATH[?PARAM=VAL&...]': REST SERVICEs only
+                                  #     - 'SERVICE_ARN:action/ACTION[&PARAM=VAL&...]': any SERVICEs (including REST)
+                                  #     - 'SERVICE_ARN:path//PATH[?PARAM=VAL&...]': REST SERVICEs only
                                   #     - SERVICE_ARN is 'arn:aws:apigateway:REGION:[SUBDOMAIN.]SERVICE'
                                   #     - PARAMs are only for URL paths and query parameters
                                 =~#  - 'MOCK': not allowed
@@ -507,18 +509,19 @@ INTEGRATION.requestParameters     #OBJ. Request parameters to forward to backend
                                  -#     - key: TRANSFORM:LOCATION.PARAM2
                                  -#     - TRANSFORM can be 'append', 'overwrite' or 'remove'
                                   #LOCATION is 'path' (PATHVARs), 'querystring' or 'header'
+                                  #Not with integrationType '*_PROXY'
 
-INTEGRATION
- .requestTemplates.MIME          =#'TEMPLATE' transforming request body to forward
+INTEGRATION                      =#'TEMPLATE' transforming request body to forward
+ .requestTemplates.MIME           #Not with integrationType '*_PROXY'
 INTEGRATION.requestTemplates     ~#Same but using a name
- .INTEGRATION_TEMPLATE            #Not with type '*_PROXY'
-                                  #INTEGRATION_TEMPLATE can be '$default' as a catch-all
+ .INTEGRATION_TEMPLATE            #INTEGRATION_TEMPLATE can be '$default' as a catch-all
 INTEGRATION
  .templateSelectionExpression    ~#'INTEGRATION_TEMPLATE_EXPR'. Can only be 'INTEGRATION_TEMPLATE' or '$request.body.VARR'
 INTEGRATION                     =~#STR. Default behavior when no requestTemplates matches. Can be:
  .passthroughBehavior             #  - NEVER: respond with 415
                                   #  - WHEN_NO_MATCH (def): forward request body as is
                                   #  - WHEN_NO_TEMPLATES: like NEVER if requestTemplates is defined, as WHEN_NO_MATCH otherwise
+                                  #Not with integrationType '*_PROXY'
 INTEGRATION.contentHandling      =
 INTEGRATION                      ~#STR. Whether request payload should be:
  .contentHandlingStrategy         #  - default: kept as is
@@ -530,9 +533,10 @@ INTEGRATION.responseParameters   -#OBJ. Response headers to forward back from ba
 
 INTEGRATION.credentials          =
 INTEGRATION.credentialsArn      -~#STR. Authentication, among:
-                                  #  - ROLE_ARN: require assuming ROLE
-                                  #  - 'arn:aws:iam::*:user/*': allow any authenticated USER
-                                  #  - null: none, but can use Lambda FUNCTION PERMISSION
+                                  #  - ROLE_ARN: must allow Principal.Service 'apigateway.amazonaws.com' assuming it
+                                  #  - 'arn:aws:iam::*:user/*': keep current authenticated USER
+                                  #  - null: none, but can use resource-based POLICY, e.g. Lambda FUNCTION PERMISSION
+                                  #Only for integrationType 'AWS[_PROXY]'
 
 INTEGRATION.cacheKeyParameters   =#'PARAM'_ARR (def: []) to cache
 INTEGRATION.cacheNamespace       =#STR (def: RESOURCE_MID) prefixing cache key
@@ -547,12 +551,12 @@ INTEGRATION.timeoutInMillis       #NUM (in ms, def|max: 29s). Request timeout
                                              \=+===============================+=/
 
 
-INTEGRATION.uri                  =#'arn:aws:apigateway:REGION:lambda:action/Invoke[&PARAM=VAL&...]'
+INTEGRATION.uri                  =#'arn:aws:apigateway:REGION:lambda:path//YYYY-MM-DD/functions/SHORT_FUNC_ARN/invocations[?Qualifier=QUALIFIER]
 INTEGRATION.integrationUri      -~#Lambda FUNC_ARN
 
 LAMBDA INVOCATIONTYPE ==>         #'RequestResponse'
 
-PERMISSIONS ==>                   #Must use FUNCTION PERMISSION to allow:
+PERMISSIONS ==>                   #Must use FUNCTION PERMISSION or INTEGRATION.credentials[Arn] to allow:
                                   #  - PACTION lambda:InvokeFunction
                                   #  - Principal.Service 'apigateway.amazonaws.com'
                                   #  - COND_KEY aws:SourceArn CALL_ROUTE_ARN
@@ -562,14 +566,14 @@ ERRORS ==>                        #Invocation|function errors (but not RES with 
                                   #response body { message: 'Internal server error' }
 
 INTEGRATION                     -~#'X.Y' of the request sent to backend.
- .payloadFormatVersion            #With Lambda:
+ .payloadFormatVersion            #With Lambda + integrationType 'AWS_PROXY':
                                  -#  - either '1.0' or '2.0', documented as REQ*[1|2]
                                  ~#  - always '1.0', documented as REQ*[0]
                                   #Otherwise, always '1.0'
 REQ.version                       #undefined ('1.0') or '2.0'
 
-REQ                               #If type 'AWS', request body as is
-                                  #If type 'AWS_PROXY', following properties
+REQ                               #If integrationType 'AWS', request body as is
+                                  #If integrationType 'AWS_PROXY', following properties
 REQ.requestContext                #REQ_CONTEXT
 REQ_CONTEXT2.http                 #REQ_HTTP2
 
@@ -682,7 +686,7 @@ DELETE /v2/apis/API_MID
 DeleteIntegrationResponse()       #Res: empty
 
 IRESP                             #Response from backend forwarded back from ROUTE to client
-                                  #Not with type '*_PROXY'
+                                  #Not with integrationType '*_PROXY'
 IRESP_ARN                        =#arn:aws:apigateway:REGION::/restapis/API_MID/integrations/resources/RESOURCE_MID/methods/HTTP_METHOD/integration/responses/STATUS_NUM
 IRESP_ARN                       -~#arn:aws:apigateway:REGION::/apis/API_MID/integrations[/IRESP_MID]
 IRESP.integrationResponseId     -~#IRESP_MID
@@ -890,7 +894,7 @@ REQVALID
  .validateRequestParameters      =#BOOL. Validate request parameters
 
 REQVALID.validateRequestBody     =#BOOL. Validate request body against its MODEL
-                                 ~#Always true, unless type '*_PROXY'. If fails, returns error response:
+                                 ~#Always true, unless integrationType '*_PROXY'. If fails, returns error response:
                                  ~#  - OBJ: message 'Bad request body', connectionId CONNECTION_ID, messageId STR
 MODEL.schema                    =~#STR. JSON schema v4. Only with MODEL.contentType 'application/json'
 MODEL.flatten                    =#BOOL (def: false). Resolve all JSON references
@@ -2077,7 +2081,7 @@ INTEGRATION.connectionType        #Either:
                                   #  - 'INTERNET' (def)
                                   #  - 'VPC_LINK': use connectionId
 INTEGRATION.connectionId        =-#VPCLINK_MID. Called "private INTEGRATION"
-                                  #Only with type 'HTTP[_PROXY]'
+                                  #Only with integrationType 'HTTP[_PROXY]'
                                   #INTEGRATION.uri:
                                   #  - must be:
                                   #     - ELB network LISTENER_ARN
@@ -2089,7 +2093,7 @@ INTEGRATION.tlsConfig            -#TLSCONFIG. Use HTTPS
                                   #Only with VPCLINK
 TLSCONFIG.serverNameToVerify     -#'HOSTNAME' to verify with TLS handshake
 TLSCONFIG                        =#BOOL. If false (def), verify TLS certificate against known CAs
- .insecureSkipVerification        #Only with INTEGRATION.type 'HTTP[_PROXY]'
+ .insecureSkipVerification        #Only with integrationType 'HTTP[_PROXY]'
 
 VPCLINK.tags                      #TAGS
 
