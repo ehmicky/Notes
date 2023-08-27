@@ -12,8 +12,6 @@ NOTATION ==>                     =#: v1
                                  ~#: v2 WebSocket
 
 TODO:
-  - https://docs.aws.amazon.com/apigateway/latest/developerguide/http-api-parameter-mapping.html#http-api-mapping-reserved-headers
-  - TRANSFORM with INTEGRATION.requestParameters|responseParameters: https://docs.aws.amazon.com/apigateway/latest/developerguide/http-api-parameter-mapping.html#http-api-mapping-request-parameters
   - $context:
      - https://docs.aws.amazon.com/apigateway/latest/developerguide/api-gateway-mapping-template-reference.html#context-variable-reference
      - https://docs.aws.amazon.com/apigateway/latest/developerguide/http-api-logging-variables.html
@@ -337,6 +335,9 @@ HEADERS FORWARDING ==>            #The following only applies if ENDPOINT.types 
                                   #Request|response header names are capitalized
                                   #Cookies are sorted by name
                                   #Content-MD5 [C] is removed
+RESERVED HEADERS ==>              #Many well-known HTTP headers cannot be set in request|response
+                                  #Nor x-amz[n]-* [C|S]
+                                  #I.e. mostly meant for custom headers
 
 ROUTE.target                    -~#STR ???
 
@@ -543,8 +544,7 @@ INTEGRATION.requestParameters     #OBJ. Request parameters to send to backend.
                                  -#  - if "first-class": 'PARAM' among:
                                   #     - any parameter of the SERVICE ACTION (PATHVARs, query variables, headers, body)
                                   #     - Region
-                                 -#  - otherwise: TRANSFORM:path or TRANSFORM:querystring|header.PARAM2
-                                  #     - TRANSFORM can be 'append', 'overwrite' or 'remove'
+                                 -#  - otherwise: 'TEXPR' (PATHVARs, query variables, headers only)
                                   #Value:
                                 =~#  - 'EXPR2'
                                  -#  - '$EXPR2'
@@ -648,10 +648,9 @@ IRESP.statusCode                 =#'STATUS_NUM'
 IRESP.responseParameters.EXPR   =~#'EXPR2'. Response headers to send to RRESP (not client)
                                   #EXPR: only 'response.header.*'
                                   #EXPR2: only 'integration.response|stageVariables|context.*' or static STR
-INTEGRATION.responseParameters   -#OBJ. Response headers to send to RRESP (not client)
-                                  #Key: TRANSFORM:statuscode or TRANSFORM:header.PARAM2
-                                  #  - TRANSFORM can be 'append', 'overwrite' or 'remove'
-                                  #Value: '$EXPR' (only '$integration.response|stageVariables|context.*' or static STR)
+INTEGRATION                      -#'$EXPR'. Response headers to send to RRESP (not client)
+ .responseParameters.TEXPR        #TEXPR: only headers or status code
+                                  #'$EXPR': only '$integration.response|stageVariables|context.*' or static STR
 
 IRESP.responseTemplates.MIME     =#'TEMPLATE'. Response body to send to RRESP (not client)
 IRESP.responseTemplate           ~#Same but as a name
@@ -702,6 +701,7 @@ REQ_CONTEXT1.protocol
 REQ_HTTP2.protocol                #Like FUNC_URL_REQ_CONTEXT_HTTP.protocol
 REQ[_CONTEXT]1.httpMethod
 REQ_HTTP2.method                  #Like FUNC_URL_REQ_CONTEXT_HTTP.method
+CONTEXT.apiId
 REQ_CONTEXT.domainPrefix|apiId    #'API_MID'
 REQ_CONTEXT.domainName            #STR
 REQ[_CONTEXT]1|REQ_HTTP2.path
@@ -736,6 +736,7 @@ REQ_CONTEXT0.connectedAt          #DATE_NUM
 REQ_IDENTITY0|1|REQ_HTTP2.sourceIp#Like FUNC_URL_REQ_CONTEXT_HTTP.*
 REQ_IDENTITY1|REQ_HTTP2.userAgent #Like FUNC_URL_REQ_CONTEXT_HTTP.*
 
+CONTEXT.accountId               =-
 REQ_CONTEXT.accountId             #ACCOUNT_ID of API
 REQ_CONTEXT0|1.identity           #REQ_IDENTITY0|1
 REQ_IDENTITY0|1.principalOrgId
@@ -886,6 +887,16 @@ TEMPLATE                        =~#Transforms request|response body between ROUT
                                              \=+===============================+=/
 
 
+
+TEXPR                             #STR. Any of the following VARs
+overwrite:path                    #Like $request.path
+overwrite:querystring.PARAM       #Like $request.querystring.PARAM
+overwrite:header.PARAM            #Like $request|response.header.PARAM
+overwrite:statuscode              #Like $response.statuscode
+remove:querystring|header.PARAM   #Same as overwrite:* but unsets instead
+                                  #Value can be anything, often "''"
+append:querystring|header.PARAM   #Same as overwrite:* but if value already exists, appends as ,-separated list
+
 $EXPR                             #STR. Can include:
                                   #  - value as is ("static")
                                   #  - ${...}... for concatenation
@@ -909,9 +920,9 @@ $request.path.PARAM               #'VAL'
 $request.querystring.PARAM        #'VAL,...'
 $request
  .multivaluequerystring.PARAM   =~#'VAL'_ARR
-$request|response.header.HEADER   #'VAL,...'
+$request|response.header.PARAM    #'VAL,...'
 $request|response
- .multivalueheader.HEADER       =~#'VAL'_ARR
+ .multivalueheader.PARAM        =~#'VAL'_ARR
 $request|response.body            #STR
 $request|response.body.VARR       #VAL
 $response.statuscode              #STATUS_NUM
@@ -925,25 +936,91 @@ VARR                              #JSON path (see its doc)
                                   #I.e. in practice, mostly only .VAR, ['VAR'] and [NUM] are useful
                                   #If not found, resolves to empty string
 
-$stageVariables.STAGEVAR          #'VAL'
+$stageVariables.STAGEVAR
+$stageVariables['STAGEVAR']       #'VAL'
 
-$EXPR in https://docs.aws.amazon.com/apigateway/latest/developerguide/api-gateway-mapping-template-reference.html#context-variable-reference: can be set. But not twice
-$context.*                        #CONTEXT
-$context.routeKey                 #'ROUTE'
-$context.requestOverride
+$context                          #CONTEXT
+                                 =#Or ACONTEXT: when can only be used in ACCESS_LOG.format
+CONTEXT.routeKey                  #'ROUTE'
+CONTEXT.requestOverride
  .path.PATHVAR                    #'VAL'
-$context.requestOverride
- .querystring.PARAM               #'VAL'
-$context.requestOverride
+CONTEXT.requestOverride
+ .querystring.PARAM               #'VAL'[_ARR]
+CONTEXT.requestOverride
  .header.HEADER                   #'VAL'[_ARR]
-$context
+CONTEXT
  .responseOverride.header.HEADER  #'VAL'
-$context.responseOverride.status  #STATUS_NUM
+CONTEXT.responseOverride.status   #STATUS_NUM
+$EXPR in https://docs.aws.amazon.com/apigateway/latest/developerguide/api-gateway-mapping-template-reference.html#context-variable-reference: can be set. But not twice ???
 
-$context.authorizer
- .principalId|usageIdentifierKey  #ARES.*
-$context.authorizer.*             #ARES.context.*
-$context.authorizer.error         #'MESSAGE' on AUTHORIZER exception or if could not be executed
+CONTEXT.awsEndpointRequestId =-
+CONTEXT.awsEndpointRequestId2 -
+CONTEXT.connectionId ~
+CONTEXT.connectedAt ~
+ACONTEXT.customDomain.basePathMatched =-
+CONTEXT.dataProcessed -
+CONTEXT.domainName
+CONTEXT.domainPrefix =-
+CONTEXT.error.message =-
+CONTEXT.error.messageString
+CONTEXT.error.responseType =-
+CONTEXT.error.validationErrorString =~
+CONTEXT.extendedRequestId
+CONTEXT.eventType ~
+CONTEXT.httpMethod =-
+CONTEXT.identity.accountId
+CONTEXT.identity.apiKey =~
+CONTEXT.identity.apiKeyId =~
+CONTEXT.identity.caller
+CONTEXT.identity.principalOrgId =-
+CONTEXT.identity.sourceIp
+CONTEXT.identity.clientCert.clientCertPerm|subjectDN|issuerDN|serialNumber|validity =-
+CONTEXT.identity.user
+CONTEXT.identity.userAgent
+CONTEXT.identity.userArn
+ACONTEXT.integration.error =-
+ACONTEXT.integration.integrationStatus =-
+ACONTEXT.integration.latency =-
+ACONTEXT.integration.requestId =-
+ACONTEXT.integration.status =-
+ACONTEXT.integrationLatency =-
+ACONTEXT.integrationStatus =-
+CONTEXT.integrationErrorMessage -
+CONTEXT.messageId ~
+CONTEXT.path =-
+CONTEXT.protocol =-
+CONTEXT.requestId
+CONTEXT.requestOverride.header.PARAM =
+CONTEXT.requestOverride.path.PARAM =
+CONTEXT.requestOverride.querystring.PARAM =
+CONTEXT.responseOverride.header.PARAM =
+CONTEXT.responseOverride.statuscode =
+CONTEXT.requestTime[Epoch]
+CONTEXT.resourceId =
+CONTEXT.resourcePath =
+ACONTEXT.responseLatency =-
+ACONTEXT.responseLength =-
+CONTEXT.routeKey -~
+CONTEXT.stage =-~
+ACONTEXT.status =-~
+CONTEXT.wafResponseCode =
+ACONTEXT.waf.error =
+ACONTEXT.waf.latency =
+ACONTEXT.waf.status =
+CONTEXT.webaclArn =
+ACONTEXT.xrayTraceId =
+
+$input.body =~
+$input.json('JSONPATH') =~
+$input.params(['PARAM']) =~
+$input.path(['JSONPATH']) =~
+
+$util.escapeJavaScript(STR) =
+$util.parseJson('JSON') =
+$util.urlEncode(STR) =
+$util.urlDecode(STR) =
+$util.base64Encode(STR) =
+$util.base64Decode(STR) =
 
 
                                              /=+===============================+=\
@@ -1041,6 +1118,20 @@ COND_KEY apigateway:Response/NAME #For current state of the resource
                                   #Not available for Create*() since resource not created yet
 COND_KEY NAME                     #Short notation in this doc for COND_KEY apigateway:Request|Response/NAME
 
+ACONTEXT.authenticate.status     =#STATUS_NUM of underlying authentication request
+ACONTEXT.authenticate.error      =#'MESSAGE' of underlying authentication request, if errored
+ACONTEXT.authenticate.latency    =#NUM (in ms) duration of underlying authentication request
+ACONTEXT.authorize.status        =
+ACONTEXT.authorize.error         =
+ACONTEXT.authorize.latency       =#Same but for underlying authorization request
+ACONTEXT.authorizer.error       =-#'MESSAGE' on AUTHORIZER exception or if could not be executed
+ACONTEXT.authorizer.status       =
+ACONTEXT.authorizer.latency      =#Same as ACONTEXT.authorize.* but only when using AUTHORIZER
+ACONTEXT.authorizer
+ .integrationStatus              =
+ACONTEXT.authorizer
+ .integrationLatency             =#Same as ACONTEXT.authorizer.* but only when using Lambda AUTHORIZER
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -1134,6 +1225,7 @@ JWK.kid                          -#Must match ENVLOP.kid
 
 REQ_CONTEXT0|1.authorizer
 REQ_CONTEXT2.authorizer.jwt      -#REQ_JWT
+CONTEXT.authorizer.claims
 REQ_JWT.claims                   -#OBJ|null of custom PAYLOAD.* on JWT token
 REQ_JWT.scopes                   -#'SCOPE'_ARR|null
 
@@ -1158,15 +1250,24 @@ AUTHORIZER
 ROUTE.authorizationScopes
 REQ_CONTEXT0|1.authorizer        =#Same as JWT but using Cognito's JWT
 
-INVOKE_AUTHORIZER_REQ.claims     =#OBJ. PAYLOAD.* of custom properties in Cognito's JWT
+CONTEXT.authorizer.claims.VAR    =
+INVOKE_AUTHORIZER_REQ.claims     =#Same as REQ_JWT but using Cognito's JWT
 
+CONTEXT.identity
+ .cognitoIdentityId              =
 REQ_IDENTITY1.cognitoIdentityId  =#STR
+CONTEXT.identity
+ .cognitoIdentityPoolId          =
 REQ_IDENTITY1
- .cognitoIdentityPoolId          =#STR
+ .cognitoIdentityPoolId          =#USER_POOL_MID
+CONTEXT.identity
+ .cognitoAuthenticationType      =
 REQ_IDENTITY1
- .cognitoAuthenticationType      =#STR
+ .cognitoAuthenticationType      =#'[un]authenticated'
+CONTEXT.identity
+ .cognitoAuthenticationProvider  =
 REQ_IDENTITY1
- .cognitoAuthenticationProvider  =#STR
+ .cognitoAuthenticationProvider  =#'PROVIDER,...'
 
 
                                              /=+===============================+=\
@@ -1216,11 +1317,13 @@ AREQ1.*                           #Like REQ1.*, except some not documented (i.e.
                                   #Only with AUTH_TYPE 'REQUEST'
 AREQ2.*                           #Like REQ2.*, except some not documented (i.e. maybe not present):
                                   #  - body, isBase64Encoded
+ACONTEXT.authorizer.requestId    =#REQ_ID of Lambda invocation
 
 [S]ARES                           #AUTHORIZER Lambda RES
                                   #Can be null to send 401
 
 ARES.principalId                  #PRINCIPAL ID. Authenticate request with it
+CONTEXT.authorizer.principalId
 INVOKE_AUTHORIZER_RES
  .principalId                    =#ARES.principalId
 
@@ -1233,7 +1336,7 @@ INVOKE_AUTHORIZER_RES.policy     =#'POLICY_DOC' from ARES.policyDocument
 SARES.isAuthorized                #BOOL. Simpler alternative to ARES.policyDocument.
 
 [S]ARES.context                   #Custom OBJ. Values cannot be OBJ|ARR
-REQ_CONTEXT.authorizer            #OBJ from ARES.context
+[REQ_]CONTEXT.authorizer          #OBJ from ARES.context
 
 
                                              /=+===============================+=\
