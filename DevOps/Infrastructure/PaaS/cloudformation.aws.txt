@@ -40,6 +40,9 @@ RESOURCE.DependsOn                #'RESOURCE2'
                                   #Create RESOURCE2 before RESOURCE
                                   #When deleting RESOURCE2, delete RESOURCE first
 
+AWS::CloudFormation::Stack        #RESTYPE of a STACK
+                                  #Allows creating child STACKs, created|updated along the parent
+
 RESOURCE.Metadata                 #OBJ. Any custom property
 
 
@@ -56,36 +59,6 @@ UPDATES ==>                       #No update if no RESOURCE.RESPROP has changed
                                   #  - MinorInterruption: with an Update*() with side-effects, e.g. EC2 instance restarting
                                   #  - Replacement: with a Delete*() then Create*()
                                   #  - ReadOnly: cannot be updated, i.e. must recreate the STACK
-
-STACK.StackPolicyBody             #'POLICY_DOC', as STR
-                                  #Resource-based POLICY with resource-level permissions
-                                  #PACTION is only:
-                                  #  - 'Update:Modify': updating a RESOURCE with MinorInterruption
-                                  #  - 'Update:Replace': updating a RESOURCE with Replacement
-                                  #  - 'Update:Delete': deleting a RESOURCE
-                                  #  - 'Update:*'
-                                  #RESOURCE is 'LogicalResourceId/MID'
-STACK.StackPolicyDuringUpdateBody #Only "Update", and temporary for the duration of UpdateStack()
-STACK.StackPolicy[DuringUpdate]URL#Like *Body, but using a 'URL'
-
-STACK LIFECYCLE ==>               #Updating:
-                                  #  - StackPolicy:
-                                  #     - IAM-like policies whose goal is to prevent resources from being updated by mistake
-                                  #     - OBJ: Statement: OBJ_ARR:
-                                  #        - Effect "Deny|Allow": by def. Allow all. If there is a StackPolicy, def. becomes
-                                  #          Deny all.
-                                  #        - Action "Update:Modify|Replace|Delete|*": Modify is MinorInterruption, Replace is
-                                  #          Replacement
-                                  #        - Principal: like IAM
-                                  #        - [Not]Resource: STR_ARR, where STR is "LogicalId/ID"
-                                  #        - Condition:
-                                  #           - StringEquals|StringLike (if globbing):
-                                  #              - ResourceType: 'RESTYPE'_ARR
-                                  #     - Can include globbing like IAM
-
-CHILD STACKS ==>                  #  - Specifying a 'RESOURCE' of type "AWS::CloudFormation::Stack", with Properties
-                                  #    NotificationARNs, Parameters, TemplateURL, TimeoutInMinutes
-                                  #  - Will be created|updated along the parent
 
 RESOURCE.UpdatePolicy             #UPDATE_POLICY
                                   #Only for specific RESTYPEs like AutoScaling::AutoScalingGroup or Lambda::Alias
@@ -115,6 +88,28 @@ RESOURCE.DeletionPolicy           #When STACK is deleted, what to do with RESOUR
                                   #  - 'Snapshot':
                                   #     - delete but create a snapshot
                                   #     - only for specific RESTYPEs like EC2::Volume, RDS::DBInstance, Redshift::Cluster
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:         STACK POLICY          :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+STACK.StackPolicyBody             #'POLICY_DOC', as STR
+STACK.StackPolicyDuringUpdateBody #Same but only during update (not create)
+STACK.StackPolicy[DuringUpdate]URL#Like *Body, but using a 'URL'
+
+STACK POLICY ==>                  #Resource-based POLICY with resource-level permissions
+                                  #Def: allow all if not specified, deny all if specified
+                                  #PACTION can only be:
+                                  #  - 'Update:Modify': updating a RESOURCE with MinorInterruption
+                                  #  - 'Update:Replace': updating a RESOURCE with Replacement
+                                  #  - 'Update:Delete': deleting a RESOURCE
+                                  #  - 'Update:*'
+                                  #RESOURCE is 'LogicalResourceId/MID'
+COND_KEY ResourceType             #'RESTYPE'
 
 
                                              /=+===============================+=\
@@ -215,41 +210,44 @@ STACK.OnFailure                   #Rollback behavior:
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:             ASYNC             :==(
+                                            )==:             WAIT              :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
-WAITCONDITIONS ==>                #  - used to introduce async pauses in the construction|updates, e.g. manual intervention on EC2
-                                  #    instance before continuing building
-                                  #  - 'RESOURCE' of Type "AWS::CloudFormation::WaitCondition"
-                                  #     - Properties:
-                                  #        - Handle: { "Ref": RESOURCE2_VAR }
-                                  #           - where RESOURCE2_VAR is of Type "AWS::CloudFormation::WaitConditionHandle", with
-                                  #             empty Properties {}
-                                  #           - { ... } will resolve to HANDLE_URL
-                                  #        - Timeout NUM
-                                  #        - Count NUM2 (def: 1)
-                                  #     - usually DependsOn another RESOURCE3_VAR, and other RESOURCE4_VAR depend on it
-                                  #     - 'RESOURCE' will be marked as Complete only once HANDLE_URL has been called NUM2 times
-                                  #        - can e.g. pass HANDLE_URL to EC2 instance UserData
-                                  #        - must do HTTP PUT - HANDLE_URL:
-                                  #           - no Content-Type [C]
-                                  #           - content is JSON:
-                                  #              - Status "SUCCESS|FAILURE"
-                                  #              - Reason STR
-                                  #              - UniqueId ID: unique accross different invocations if NUM2 > 1
-                                  #              - Data STR: can be accessed as { ID: STR } with
-                                  #                { Fn::GetAtt: [ 'RESOURCE', "Data" ] } (max 4KB)
-                                  #        - can use cfn-signal HANDLE_URL to do it, with options:
-                                  #           -s BOOL: "SUCCESS|FAILURE" (def: "SUCCESS")
-                                  #           -e NUM:  "SUCCESS|FAILURE" according to exit code NUM
-                                  #                    Usually after cfn-init
-                                  #           -r STR:  "Reason"
-                                  #           -i ID:   "UniqueId"
-                                  #           -d STR:  "Data"
-                                  #     - if NotificationARNs, will use it to notify when ready, etc.
-                                  #       Can also see in DescribeStackEvents()
+AWS::CloudFormation::WaitCondition#RESOURCE representing an async pause
+WAITCONDITION.Handle              #{ Ref } pointing to a RESOURCE of RESTYPE AWS::CloudFormation::WaitConditionHandle, with no RESPROPs
+                                  #Becomes 'HANDLE_URL', which must be called to stop the pause
+                                  #  - PUT
+                                  #  - no Content-Type [C]
+                                  #  - request body is JSON of HANDLE_REQ
+WAITCONDITION.Count               #NUM (def: 1) of times to call HANDLE_URL
+WAITCONDITION.Timeout             #NUM
+
+HANDLE_REQ.Status                 #'SUCCESS|FAILURE'
+HANDLE_REQ.Reason                 #'ERROR' when failure
+HANDLE_REQ.UniqueId               #STR. Do not increment WAITCONDITION.Count when using same UniqueId twice
+HANDLE_REQ.Data                   #STR. Sets WAITCONDITION.Data STR, e.g. with { Fn::GetAtt }
+                                  #Max 4KB
+
+cfn-signal HANDLE_URL             #Calls HANDLE_URL
+-s                                #BOOL (def: true). HANDLE_REQ.Status
+-e                                #Same but as NUM, using exit code
+-r                                #HANDLE_REQ.Reason
+-i                                #HANDLE_REQ.UniqueId
+-d                                #HANDLE_REQ.Data
+
+                                  #  - usually DependsOn another RESOURCE3_VAR, and other RESOURCE4_VAR depend on it
+                                  #  - if NotificationARNs, will use it to notify when ready, etc.
+                                  #    Can also see in DescribeStackEvents()
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:             ASYNC             :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
 
 CUSTOM RESOURCES ==>              #  - 'RESOURCE':
                                   #     - Type "Custom::CUSTOM" or "AWS::CloudFormation::CustomResource"
