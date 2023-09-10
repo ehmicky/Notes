@@ -36,7 +36,11 @@ RESOURCE.Type                     #RESTYPE
 RESOURCE.Properties.RESPROP       #VAL
                                   #Usually same|similar as request payload of create|update ACTIONs of the RESTYPE
 
-RESOURCE.DependsOn                #'RESOURCE'
+RESOURCE.DependsOn                #'RESOURCE2'
+                                  #Create RESOURCE2 before RESOURCE
+                                  #When deleting RESOURCE2, delete RESOURCE first
+
+RESOURCE.Metadata                 #OBJ. Any custom property
 
 
                                              /=+===============================+=\
@@ -46,17 +50,49 @@ RESOURCE.DependsOn                #'RESOURCE'
                                              \=+===============================+=/
 
 
+UPDATES ==>                       #No update if no RESOURCE.RESPROP has changed
+                                  #Depending on RESOURCE.RESPROP, is done:
+                                  #  - NoInterruption: with an Update*()
+                                  #  - MinorInterruption: with an Update*() with side-effects, e.g. EC2 instance restarting
+                                  #  - Replacement: with a Delete*() then Create*()
+                                  #  - Read-only: cannot be updated, i.e. must recreate the STACK
+
+STACK.StackPolicyBody             #STR
+STACK.StackPolicyDuringUpdateBody #Only "Update", and temporary for the duration of UpdateStack()
+STACK.StackPolicy[DuringUpdate]URL#Like *Body, but using a 'URL'
+
+STACK LIFECYCLE ==>               #Updating:
+                                  #  - StackPolicy:
+                                  #     - IAM-like policies whose goal is to prevent resources from being updated by mistake
+                                  #     - OBJ: Statement: OBJ_ARR:
+                                  #        - Effect "Deny|Allow": by def. Allow all. If there is a StackPolicy, def. becomes
+                                  #          Deny all.
+                                  #        - Action "Update:Modify|Replace|Delete|*": Modify is MinorInterruption, Replace is
+                                  #          Replacement
+                                  #        - Principal: like IAM
+                                  #        - [Not]Resource: STR_ARR, where STR is "LogicalId/ID"
+                                  #        - Condition:
+                                  #           - StringEquals|StringLike (if globbing):
+                                  #              - ResourceType: 'RESTYPE'_ARR
+                                  #     - Can include globbing like IAM
+
+CHILD STACKS ==>                  #  - Specifying a 'RESOURCE' of type "AWS::CloudFormation::Stack", with Properties
+                                  #    NotificationARNs, Parameters, TemplateURL, TimeoutInMinutes
+                                  #  - Will be created|updated along the parent
+
 RESOURCE.UpdatePolicy             #UPDATE_POLICY
-UPDATE_POLICY
- .AutoScalingScheduledAction
- .IgnoreUnmodifiedGroupSize
-  Properties                      #BOOL (def: false)
+                                  #Only for specific RESTYPEs like AutoScaling::AutoScalingGroup or Lambda::Alias
 UPDATE_POLICY
  .AutoScalingRollingUpdate        #ROLLING_POLICY
+                                  #When replacing RESOURCE, do it in batches
 ROLLING_POLICY.MaxBatchSize       #NUM (def: 1)
 ROLLING_POLICY
  .MinInstancesInService           #NUM (def: 0)
 ROLLING_POLICY.PauseTime          #'PT[..H][..M][..S]' (def: 'PT0S'). Each .. is a NUM
+UPDATE_POLICY                     #BOOL. If false (def), update RESOURCE batch sizes (e.g. AutoScalingGroup.MinSize|MaxSize|DesiredCapacity)
+ .AutoScalingScheduledAction      #even when value has not changed.
+ .IgnoreUnmodifiedGroupSize       #Reason: some RESOURCE changes those dynamically (e.g. AutoScalingGroup scheduled policy),
+  Properties                      #which might be ongoing
 
 
                                              /=+===============================+=\
@@ -66,10 +102,12 @@ ROLLING_POLICY.PauseTime          #'PT[..H][..M][..S]' (def: 'PT0S'). Each .. is
                                              \=+===============================+=/
 
 
-RESOURCE.DeletionPolicy           #One of:
-                                  #  - 'Delete'
+RESOURCE.DeletionPolicy           #When STACK is deleted, what to do with RESOURCE, among:
+                                  #  - 'Delete' (def)
                                   #  - 'Retain'
-                                  #  - 'Snapshot'
+                                  #  - 'Snapshot':
+                                  #     - delete but create a snapshot
+                                  #     - only for specific RESTYPEs like EC2::Volume, RDS::DBInstance, Redshift::Cluster
 
 
                                              /=+===============================+=\
@@ -155,177 +193,17 @@ AWS::NoValue                      #undefined. Used with Fn::If
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:           METADATA            :==(
+                                            )==:           ROLLBACK            :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
-RESOURCE.Metadata                 #OBJ
-                                  #Fetched by cfn-get-metadata
-
-METADATA ==>                      #  - can be anything
-                                  #  - OBJ.VAR can be fetched with /opt/aws/bin/cfn-get-metadata --key VAR, which
-                                  #    takes same options as cfn-init
-                                  #  - /opt/aws/bin/cfn-hup -c DIR:
-                                  #     - daemon that fires actions when Metadata is changed, or anything on 'RESOURCE'
-                                  #     - uses DIR/cfn-hup.conf, init file with [main]:
-                                  #        - interval NUM (def: 10): how many minutes to check
-                                  #        - stack STACK_ID
-                                  #        - credential-file STR
-                                  #        - region REGION
-                                  #        - verbose BOOL
-                                  #     - run all DIR/NAME.conf, init file with [NAME]:
-                                  #        - path STR: to monitor, either:
-                                  #           - "Resources.RESOURCE": anything in 'RESOURCE'
-                                  #           - "Resources.RESOURCE.PhysicalResourceId": resource Id
-                                  #           - "Resources.RESOURCE.Metadata[(PATH)]": Metadata
-                                  #        - action STR: shell command
-                                  #        - triggers "post.add|update|remove"
-                                  #        - runas SHELL_USER
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:           LIFECYCLE           :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-STACK LIFECYCLE ==>               #Creating:
-                                  #  - Can specify order with DependsOn 'RESOURCE'
-                                  #  - If specifying Internet|VpnGateway, should make AutoScalingGroup, EC2 instance,
-                                  #    LoadBalancer, ElasticIP, RouteTable depend on it
-                                  #Updating:
-                                  #  - only affects resources that changed, either (depending on the resource and propertie
-                                  #    changed):
-                                  #     - NoInterruption
-                                  #     - MinorInterruption: e.g. EC2 instance restarting
-                                  #     - Replacement: e.g. EC2 instance terminated then replaced
-                                  #     - Read-only: cannot be updated (must recreate the Stack)
-                                  #  - EC2 instance recreation is controlled by UpdatePolicy
-                                  #    (assigned to AWS::AutoScaling::AutoScalingGroup):
-                                  #     - AutoScalingRollingUpdate: terminates EC2 instances in batches, by modifying
-                                  #       AutoScalingGroup MinSize, MaxSize and DesiredCapactity
-                                  #     - IgnoreUnmodifiedGroupSizeProperties:
-                                  #        - how to handle AutoScalingGroup scheduledPolicy that happen while a Stack update is
-                                  #          ongoing
-                                  #        - should suspend scheduledPolicy before, then reenable
-                                  #  - rollback:
-                                  #     - on Create|UpdateStack() if either:
-                                  #        - error
-                                  #        - CancelUpdateStack()
-                                  #        - above TimeoutInMinutes (def: none)
-                                  #     - unless DisableRollback true
-                                  #     - according to OnFailure: if "DELETE", deletes the resource but do not rollback all
-                                  #       resources
-                                  #  - StackPolicy:
-                                  #     - IAM-like policies whose goal is to prevent resources from being updated by mistake
-                                  #     - OBJ: Statement: OBJ_ARR:
-                                  #        - Effect "Deny|Allow": by def. Allow all. If there is a StackPolicy, def. becomes
-                                  #          Deny all.
-                                  #        - Action "Update:Modify|Replace|Delete|*": Modify is MinorInterruption, Replace is
-                                  #          Replacement
-                                  #        - Principal: like IAM
-                                  #        - [Not]Resource: STR_ARR, where STR is "LogicalId/ID"
-                                  #        - Condition:
-                                  #           - StringEquals|StringLike (if globbing):
-                                  #              - ResourceType: 'RESTYPE'_ARR
-                                  #     - Can include globbing like IAM
-                                  #Erasing:
-                                  #  - Resources are deleted according to DeletionPolicy:
-                                  #     - "Delete" (def)
-                                  #     - "Retain"
-                                  #     - "Snapshot" (but still deletes), for EC2::Volume, RDS::DBInstance, Redshift::Cluster
-
-UPDATES ==>                       #MinorInterruption:
-                                  #  - AutoScalingGroup: VPCZoneIdentifier
-                                  #  - Elasticache: CacheCluster: CacheParameterGroupName, EngineVersion
-                                  #  - ElasticBeanstalk:
-                                  #     - ApplicationVersion: Description
-                                  #     - Environment: OptionSettings, TemplateName, VersionLabel
-                                  #  - Redshift: Cluster: ClusterParameterGroupName
-                                  #  - RDS: DBInstance: AutoMinorVersionUpgrade|BackupRetentionPeriod|DBParameterGroupName|
-                                  #    PreferredMaintenanceWindow (sometimes), EngineVersion
-                                  #Replacement:
-                                  #  - AutoScaling:
-                                  #     - LaunchConfiguration: all
-                                  #     - ScheduledPolicy: AutoScalingGroupName
-                                  #  - CloudWatch: Alarm: AlarmName
-                                  #  - DynamoDB: Table: all but ProvisionedThroughput
-                                  #  - EC2:
-                                  #     - CustomerGateway: all but Tags
-                                  #     - DHCPOptions: all but Tags
-                                  #     - EIP: Domain
-                                  #     - EIPAssociation: InstanceId|NetworkInterfaceId + AllocationId|EIP (together)
-                                  #     - Instance: all but:
-                                  #        - BlockDeviceMappings (if only DeleteOnTerminatin changed), DisableApiTermination
-                                  #          InstanceInitiatedShutdownBehavior, Monitoring, SourceDestCheck, Tags, Volumes
-                                  #        - if EBS-backed: EbsOptimized|Instancetype|KernelId|RamdiskId|UserData
-                                  #          (only MinorInterruption), SecurityGroupIds
-                                  #      - NetworkAcl: VpcId
-                                  #      - NetworkAclEntry: Egress, NetworkAclId, RuleNumber
-                                  #      - NetworkInterface: PrivateIpAddress, PrivateIpAddresses (if primary), SubnetId
-                                  #      - Route: DestinationCidrBlock, RouteTableId
-                                  #      - RouteTable: VpcId
-                                  #      - SecurityGroup: GroupDescription, VpcId
-                                  #      - SecurityGroupEgress|Ingress: all
-                                  #      - Subnet: all but Tags
-                                  #      - SubnetNetworkAclAssociation: all
-                                  #      - SubnetRouteTableAssociation: SubnetId
-                                  #      - VPC: CidrBlock, InstanceTenancy
-                                  #      - VPCDHCPOptionsAssociation: VpcId
-                                  #      - VPCPeeringConnection: all but Tags
-                                  #      - VPNConnection: all but Tags
-                                  #      - VPNConnectionRoute: all but Tags
-                                  #      - VPNGateway: all but Tags
-                                  #   - Elasticache: CacheCluster: CacheNodeType, CacheSubnetGroupName, ClusterName, Engine,
-                                  #     Port, PreferredAvailabilityZone, SnapshotArns
-                                  #   - ElasticBeanstalk:
-                                  #      - Application: ApplicationName
-                                  #      - ApplicationVersion: ApplicationName
-                                  #      - ConfigurationTemplate: all but Description, OptionSettings (MinorInterruption)
-                                  #      - Environment: ApplicationName, CNAMEPrefix, EnvironmentName, SolutionStackName, Tier
-                                  #   - ElasticLoadBalancing: LoadBalancer: HealthCheck|Subnets (if add|remove, not modify),
-                                  #     LoadBalancerName
-                                  #   - IAM:
-                                  #      - AccessKey: Serial, UserName
-                                  #      - InstanceProfile: Path
-                                  #      - Role: Path
-                                  #   - Kinesis: Stream: ShardCount
-                                  #   - Logs: MetricFilter: LogGroupName
-                                  #   - OpsWork:
-                                  #      - App: Shortname, StackId
-                                  #      - Instance: all but AmiId, Architecture, InstallUpdatesOnBoot, InstanceType, LayerIds,
-                                  #        Os, SshKeyName (MinorInterruption)
-                                  #      - Layer: StackId, Type
-                                  #      - Stack: VpcId
-                                  #   - Redshift:
-                                  #      - Cluster: AvailabilityZone, ClusterSubnetGroupName, DBName, ElasticIp, Encrypted,
-                                  #        MasterUsername, OwnerAccount, Port, PubliclyAccessible, SnapshotClusterIdentifier,
-                                  #        SnapshotIdentifier
-                                  #      - ClusterParameterGroup: Description, ParameterGroupFamily
-                                  #      - ClusterSecurityGroup[Ingress]: all
-                                  #   - RDS:
-                                  #      - DBInstance: AvailabilityZone, DBInstanceIdentifier, DBName, DBSnapshotIdentifier,
-                                  #        DBSubnetGroupName, Engine, LicenseModel, MasterUsername, Port,
-                                  #        SourceDBInstanceIdentifier
-                                  #      - DBSecurityGroup: EC2VpcId, GroupDescription
-                                  #   - Route53:
-                                  #      - RecordSet: HostedZoneId|Name
-                                  #      - RecordSetGroup: HostedZoneId|Name
-                                  #   - S3: Bucket: BucketName
-                                  #   - SQS: Queue: QueueName
-                                  #Readonly
-                                  #   - CloudFormation WaitCondition[Handle]
-                                  #   - EC2 Volume[Attachment]
-                                  #   - Elasticache ParameterGroup, SecurityGroup[Ingress]
-                                  #   - S3 Policy: Bucket
-                                  #   - SDB (SimpleDB) Domain
-                                  #   - SNS all
-
-CHILD STACKS ==>                  #  - Specifying a 'RESOURCE' of type "AWS::CloudFormation::Stack", with Properties
-                                  #    NotificationARNs, Parameters, TemplateURL, TimeoutInMinutes
-                                  #  - Will be created|updated along the parent
+STACK.TimeoutInMinutes            #After NUM mins (def: none), CancelUpdateStack()
+STACK.DisableRollback             #BOOL. If false (def), rollback Create|UpdateStack() on error|cancel
+STACK.OnFailure                   #Rollback behavior:
+                                  #  - 'DO_NOTHING'
+                                  #  - 'ROLLBACK' (def): rollback whole create|update
+                                  #  - 'DELETE': only rollback errored RESOURCE
 
 
                                              /=+===============================+=\
@@ -356,7 +234,7 @@ WAITCONDITIONS ==>                #  - used to introduce async pauses in the con
                                   #              - UniqueId ID: unique accross different invocations if NUM2 > 1
                                   #              - Data STR: can be accessed as { ID: STR } with
                                   #                { Fn::GetAtt: [ 'RESOURCE', "Data" ] } (max 4KB)
-                                  #        - can use /opt/aws/bin/cfn-signal HANDLE_URL to do it, with options:
+                                  #        - can use cfn-signal HANDLE_URL to do it, with options:
                                   #           -s BOOL: "SUCCESS|FAILURE" (def: "SUCCESS")
                                   #           -e NUM:  "SUCCESS|FAILURE" according to exit code NUM
                                   #                    Usually after cfn-init
@@ -391,74 +269,6 @@ CUSTOM RESOURCES ==>              #  - 'RESOURCE':
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:            HELPERS            :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-CLOUDFORMER ==>                   #  - Web app (available as a CloudFormation Stack itself, which must be created (can do from
-                                  #    CloudFormation web console homepage))
-                                  #     - only cost price of one t1.micro
-                                  #     - URL is at OUTPUT.URL
-                                  #  - Creates a Template from existing resources
-                                  #     - Automatically manages DependsOn
-
-/opt/aws/bin/cfn-init             #Wrapper around cloud-init. Must be fired from UserData.
-                                  #Uses as input RESOURCE.Metadata["AWS::CloudFormation::Init"].config:
-                                  #  - packages:
-                                  #     - yum|rpm|rubygems|apt: PATH|VERSION|[]
-                                  #  - sources: uncompress a URL to DIR (tar, tar.gz, tar.bz2, zip)
-                                  #     - DIR: URL
-                                  #  - files: FILE_PATH:
-                                  #     - mode STR
-                                  #     - owner|group STR
-                                  #     - source URL or content STR, encoding "plain|base64"
-                                  #     - context OBJ: used as Mustache template (must have aws-cfn-bootstrap and pystache
-                                  #       installed)
-                                  #     - authentication VAR:
-                                  #        - uses RESOURCE.Metadata["AWS::CloudFormation::Authentication"].VAR for
-                                  #          authentication of URL:
-                                  #           - type "basic|S3"
-                                  #           - username|password STR (if "basic")
-                                  #           - uris URL_ARR (if "basic")
-                                  #           - accessKeyId|secretKey STR (if "S3")
-                                  #           - roleName STR (if "S3")
-                                  #           - buckets STR_ARR (if "S3")
-                                  #  - users: USER:
-                                  #     - groups: GROUP_STR_ARR
-                                  #     - uid STR
-                                  #     - homeDir PATH
-                                  #  - groups: GROUP:
-                                  #     - gid STR
-                                  #  - commands: ANY: (run in alphabetical order)
-                                  #     - command COMMAND_STR[_ARR] (can be FILE too)
-                                  #     - test COMMAND_BOOL_STR
-                                  #     - cwd PATH
-                                  #     - env: VAR: VAL
-                                  #     - ignoreErrors BOOL
-                                  #  - container_commands: ANY:
-                                  #     - same as above, but run before and have access to AWS credentials ENVVAR
-                                  #     - leader_only BOOL: if true, only done on one instance in an AutoScalingGroup
-                                  #  - services: sysvinit: SERVICE:
-                                  #     - enabled BOOL: if true, SERVICE start run at boot
-                                  #     - ensureRunning BOOL: if true, makes sure SERVICE is running after Beanstalk finishes
-                                  #       setting up
-                                  #     - files|sources FILE|DIR[_ARR]: if changed, SERVICE restarted
-                                  #     - packages:
-                                  #        - yum|rpm|rubygems|apt: PATH|VERSION|[]: if installed|updated, SERVICE restarted
-                                  #     - commands COMMAND: command names, if run, SERVICE restarted
--s STACK_NAME                     #
--r RESOURCE                       #
---region REGION                   #
---access-key STR                  #
---secret-key STR                  #
---role STR                        #
---credential-file FILE            #
--v                                #
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
                                             )==:              API              :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -471,7 +281,7 @@ LIMITS ==>                        #  - Template number of keys:
                                   #     - 100 FILTERs, with each 30 VAR
                                   #     - 60 OUTPUTs
                                   #     - 60 PARAM
-                                  #  - 20 Stacks
+                                  #  - 20 STACKs
                                   #  - Template size: 51KB (body) or 460KB (URL)
 
 PAGINATION ==>                    #  - Request parameters: NextToken STR
@@ -586,3 +396,85 @@ SetStackPolicy()                  #Request parameters:
                                   #  - StackPolicyBody|URL STR
 GetStackPolicy()                  #Request parameters: StackName STR
                                   #Response body: StackPolicyBody STR
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:            HELPERS            :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+/opt/aws/bin/cfn-*                #cfn-* location in EC2 instances
+
+cfn-init                          #Wrapper around cloud-init. Must be fired from UserData.
+                                  #Uses as input RESOURCE.Metadata["AWS::CloudFormation::Init"].config:
+                                  #  - packages:
+                                  #     - yum|rpm|rubygems|apt: PATH|VERSION|[]
+                                  #  - sources: uncompress a URL to DIR (tar, tar.gz, tar.bz2, zip)
+                                  #     - DIR: URL
+                                  #  - files: FILE_PATH:
+                                  #     - mode STR
+                                  #     - owner|group STR
+                                  #     - source URL or content STR, encoding "plain|base64"
+                                  #     - context OBJ: used as Mustache template (must have aws-cfn-bootstrap and pystache
+                                  #       installed)
+                                  #     - authentication VAR:
+                                  #        - uses RESOURCE.Metadata["AWS::CloudFormation::Authentication"].VAR for
+                                  #          authentication of URL:
+                                  #           - type "basic|S3"
+                                  #           - username|password STR (if "basic")
+                                  #           - uris URL_ARR (if "basic")
+                                  #           - accessKeyId|secretKey STR (if "S3")
+                                  #           - roleName STR (if "S3")
+                                  #           - buckets STR_ARR (if "S3")
+                                  #  - users: USER:
+                                  #     - groups: GROUP_STR_ARR
+                                  #     - uid STR
+                                  #     - homeDir PATH
+                                  #  - groups: GROUP:
+                                  #     - gid STR
+                                  #  - commands: ANY: (run in alphabetical order)
+                                  #     - command COMMAND_STR[_ARR] (can be FILE too)
+                                  #     - test COMMAND_BOOL_STR
+                                  #     - cwd PATH
+                                  #     - env: VAR: VAL
+                                  #     - ignoreErrors BOOL
+                                  #  - container_commands: ANY:
+                                  #     - same as above, but run before and have access to AWS credentials ENVVAR
+                                  #     - leader_only BOOL: if true, only done on one instance in an AutoScalingGroup
+                                  #  - services: sysvinit: SERVICE:
+                                  #     - enabled BOOL: if true, SERVICE start run at boot
+                                  #     - ensureRunning BOOL: if true, makes sure SERVICE is running after Beanstalk finishes
+                                  #       setting up
+                                  #     - files|sources FILE|DIR[_ARR]: if changed, SERVICE restarted
+                                  #     - packages:
+                                  #        - yum|rpm|rubygems|apt: PATH|VERSION|[]: if installed|updated, SERVICE restarted
+                                  #     - commands COMMAND: command names, if run, SERVICE restarted
+-s STACK_NAME                     #
+-r RESOURCE                       #
+--region REGION                   #
+--access-key STR                  #
+--secret-key STR                  #
+--role STR                        #
+--credential-file FILE            #
+-v                                #
+
+cfn-get-metadata --key VAR        #Fetches TEMPLATE.metadata.VAR
+                                  #Takes same options as cfn-init
+
+cfn-hup -c DIR                    #Daemon that fires actions when Metadata is changed, or anything on 'RESOURCE'
+                                  #Uses DIR/cfn-hup.conf, init file with [main]:
+                                  #  - interval NUM (def: 10): how many minutes to check
+                                  #  - stack STACK_ID
+                                  #  - credential-file STR
+                                  #  - region REGION
+                                  #  - verbose BOOL
+                                  #Run all DIR/NAME.conf, init file with [NAME]:
+                                  #  - path STR: to monitor, either:
+                                  #     - "Resources.RESOURCE": anything in 'RESOURCE'
+                                  #     - "Resources.RESOURCE.PhysicalResourceId": resource Id
+                                  #     - "Resources.RESOURCE.Metadata[(PATH)]": Metadata
+                                  #  - action STR: shell command
+                                  #  - triggers "post.add|update|remove"
+                                  #  - runas SHELL_USER
