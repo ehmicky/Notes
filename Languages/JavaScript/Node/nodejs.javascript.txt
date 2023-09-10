@@ -74,6 +74,11 @@ node sea-config.json                     20.0.0*#Outputs a FILE.js as a FILE.blo
 SEA_CONFIG.disableExperimentalSEAWarning 20.2.0*#BOOL (def: false)
 SEA_CONFIG.main                          20.0.0*#'PATH' to FILE.js
 SEA_CONFIG.output                        20.0.0*#'PATH' to FILE.blob
+SEA_CONFIG.useSnapshot                   20.6.0*#BOOL (def: false). Runs FILE.js right away, and use startupSnapshot.* to
+                                         20.6.0*#register the main FUNC
+SEA_CONFIG.useCodeCache                  20.6.0*#BOOL (def: false). Pre-generate the V8 code cache, which makes Node.js binary
+                                         20.6.0*#startup time faster.
+                                         20.6.0*#Cannot use dynamic import()
 
 postject NODE_BIN NODE_SEA_BLOB          20.0.0*#Make Node.js binary execute FILE.blob by default, i.e. embed it
  FILE.blob                               20.0.0*#To avoid modifying global Node.js binary, should copy it
@@ -817,45 +822,6 @@ import.meta.url                                 #'file://...'. Should be used in
 require('module').syncBuiltinESMExports()       #Can monkey-patch core modules by modifying their default import.
                                                 #This must be called after it so that dynamic import(...) can use it
 
---experimental-loader FILE              16.17.0*#Customize the behavior of import|import()
-                                        16.17.0*#FILE must be ESM, and have a default export LOADER
-                                        16.17.0*#When called several times, each LOADER is run, starting from last
-                                        16.17.0*#  - including the implicit default LOADER, run last
-                                        16.17.0*#Each of the methods below:
-                                        16.17.0*#  - represent one step of the resolution to customize
-                                        16.17.0*#  - are optional
-                                        16.17.0*#  - must return either:
-                                        16.17.0*#     - OBJ2, with OBJ2.shortCircuit true (def: false)
-                                        16.17.0*#        - the previous LOADERs are not run
-                                        16.17.0*#        - this moves on the next LOADER phase
-                                        16.17.0*#     - FUNC(...)
-                                        16.17.0*#        - the previous LOADERs are then run
-                                        16.17.0*#        - ... are the LOADER.*() arguments, except FUNC itself
-                                        16.17.0*#           - they can be modified
-                                        16.17.0*#        - this remains in the same LOADER phase, with potentially different arguments
-LOADER.resolve('PATH', OBJ, FUNC(...))  16.17.0*#'PATH' is relative path
- ->PROMISE_OBJ2                         16.17.0*#OBJ:
-                                        16.17.0*#  - parentURL 'URL'|undefined: absolute base
-                                        16.17.0*#     - is a URL, e.g. file: protocol with filesystem
-                                        16.17.0*#     - undefined if entry point, including REPL
-                                        16.17.0*#  - conditions 'CONDITION'_ARR: from PACKAGE.exports.CONDITION
-                                        16.17.0*#  - importAssertions OBJ: from import("MDL", { assert: OBJ }) or import ...  assert OBJ
-                                        16.17.0*#OBJ2:
-                                        16.17.0*#  - url 'URL' (required): resolved absolute URL
-                                        16.17.0*#  - format: 'module' (ESM), 'commonjs', 'json', 'builtin' (core module), 'wasm'
-                                        16.17.0*#     - custom formats should use 'module'
-                                        16.17.0*#     - meant as a hint for LOADER.load()
-                                        16.17.0*#  - shortCircuit BOOL
-LOADER.load('URL', OBJ, FUNC(...))      16.17.0*#'URL': same as returned by LOADER.resolve() OBJ2.url
- ->PROMISE_OBJ2                         16.17.0*#OBJ:
-                                        16.17.0*#  - format STR: returned by LOADER.resolve(), i.e. can be undefined
-                                        16.17.0*#OBJ2:
-                                        16.17.0*#  - format (required): like LOADER.resolve()
-                                        16.17.0*#  - source 'SOURCE'_STR|ARRBUFFER|UINT8_ARR (required): file content
-                                        16.17.0*#  - shortCircuit BOOL
-LOADER.globalPreload()->'SOURCE'        16.17.0*#Prepended to any SOURCE
-                                        16.17.0*#'SOURCE' can use getBuiltin(STR), which is similar to require('node:STR')
-
 PACKAGE.exports                                 #'URI'[_ARR]. Like PACKAGE.main except:
                                                 #  - priority over it
                                                 #  - start from Node 12.20.0, i.e. can be used to target Node that supports ESM
@@ -897,6 +863,58 @@ PACKAGE.imports.#PATH[.CONDITION]               #PATH2. Like PACKAGE.exports but
                                                 #Similar goal as IMPORT_MAP but
                                                 #  - different syntax
                                                 #  - usable by libraries not only top-level applicaions
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:            LOADER             :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+--experimental-loader PATH              16.17.0*#Customize the behavior of import|import()
+                                        16.17.0*#PATH must be ESM, and have a default export LOADER
+                                        16.17.0*#When called several times, each LOADER is run, starting from last
+                                        16.17.0*#  - including the implicit default LOADER, run last
+                                        16.17.0*#Each of the methods below:
+                                        16.17.0*#  - represent one step of the resolution to customize
+                                        16.17.0*#  - are optional
+                                        16.17.0*#  - must return either:
+                                        16.17.0*#     - OBJ2, with OBJ2.shortCircuit true (def: false)
+                                        16.17.0*#        - the previous LOADERs are not run
+                                        16.17.0*#        - this moves on the next LOADER phase
+                                        16.17.0*#     - FUNC(...)
+                                        16.17.0*#        - the previous LOADERs are then run
+                                        16.17.0*#        - ... are the current LOADER.*() arguments, except FUNC itself
+                                        16.17.0*#           - they can be modified
+                                        16.17.0*#        - this remains in the same LOADER phase, with potentially different arguments
+module.register('PATH', import.meta.url)20.6.0*#Like --experimental-loader but programmatic
+module.register(URL)                    20.6.0*#Like --experimental-loader but programmatic
+
+LOADER.resolve('PATH', OBJ, FUNC(...))  16.17.0*#'PATH' is relative path
+ ->>OBJ2                                16.17.0*#OBJ:
+                                        16.17.0*#  - parentURL 'URL'|undefined: absolute base
+                                        16.17.0*#     - is a URL, e.g. file: protocol with filesystem
+                                        16.17.0*#     - undefined if entry point, including REPL
+                                        16.17.0*#  - conditions 'CONDITION'_ARR: from PACKAGE.exports.CONDITION
+                                        16.17.0*#  - importAssertions OBJ: from import("MDL", { assert: OBJ }) or import ...  assert OBJ
+                                        16.17.0*#OBJ2:
+                                        16.17.0*#  - url 'URL' (required): resolved absolute URL
+                                        16.17.0*#  - format: 'module' (ESM), 'commonjs', 'json', 'builtin' (core module), 'wasm'
+                                        16.17.0*#     - custom formats should use 'module'
+                                        16.17.0*#     - meant as a hint for LOADER.load()
+                                        16.17.0*#  - shortCircuit BOOL
+
+LOADER.load('URL', OBJ, FUNC(...))      16.17.0*#'URL': same as returned by LOADER.resolve() OBJ2.url
+ ->>OBJ2                                16.17.0*#OBJ:
+                                        16.17.0*#  - format STR: returned by LOADER.resolve(), i.e. can be undefined
+                                        16.17.0*#OBJ2:
+                                        16.17.0*#  - format (required): like LOADER.resolve()
+                                        16.17.0*#  - source 'SOURCE'_STR|ARRBUFFER|UINT8_ARR (required): file content
+                                        16.17.0*#  - shortCircuit BOOL
+
+LOADER.globalPreload()->'SOURCE'        16.17.0*#Prepended to any SOURCE
+                                        16.17.0*#'SOURCE' can use getBuiltin(STR), which is similar to require('node:STR')
 
 
                                              /=+===============================+=\
