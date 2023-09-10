@@ -11,7 +11,7 @@ TO DOCUMENT:
      - https://www.pulumi.com/registry/packages/aws-native/api-docs/extensionresource/
      - https://www.pulumi.com/registry/packages/aws-native/api-docs/importvalue/
 
-VERSION ==>                       #2014-07-10
+VERSION ==>                       #2023-09-15
 
 
                                              /=+===============================+=\
@@ -23,6 +23,8 @@ VERSION ==>                       #2014-07-10
 
 PAGINATION ==>                    #Req|res: NextToken STR
 
+REQ.ClientRequestToken            #Idempotence STR, for some ACTIONs
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -32,28 +34,38 @@ PAGINATION ==>                    #Req|res: NextToken STR
 
 
 CreateStack()                     #Req: STACK
-                                  #  - no StackId, *Time, Description, Outputs, StackStatus*
-                                  #  - no UsePreviousTemplate
+                                  #  - no StackId, *Time, Description, Outputs, StackStatus*, ChangeSetId,
+                                  #    DriftInformation, ParentId, RootId
+                                  #  - no UsePreviousTemplate, StackPolicyDuringUpdate*
+                                  #  - also ClientRequestToken
                                   #Res: STACK
                                   #  - only StackId
 UpdateStack()                     #Req: STACK
-                                  #  - no StackId, *Time, Description, Outputs, StackStatus*
-                                  #  - no DisableRollback, OnFailure, Tags, TimeoutInMinutes
+                                  #  - no StackId, *Time, Description, Outputs, StackStatus*, ChangeSetId,
+                                  #    DriftInformation, ParentId, RootId
+                                  #  - no EnableTerminationProtection, OnFailure, Tags, TimeoutInMinutes
+                                  #  - also ClientRequestToken
                                   #Res: STACK
                                   #  - only StackId
 ListStacks()                      #Req: STACK
                                   #  - only StackStatus -> StackStatusFilter STR_ARR
                                   #Res: StackSummaries STACK_ARR
-                                  #  - only StackId, StackName, *Time, StackStatus*, Description -> TemplateDescription
+                                  #  - no Capabilities, ChangeSetId, DisableRollback, EnableTerminationProtection,
+                                  #    NotificationARNs, Outputs, Parameters, RetainExceptOnCreate, RoleARN,
+                                  #    RollbackConfiguration, Tags, TimeoutInMinutes, ResourceTypes
+                                  #  - Description -> TemplateDescription
 DescribeStacks()                  #Req: STACK
                                   #  - only StackName
                                   #Res: Stacks STACK_ARR
-                                  #  - no Template*, UsePreviousTemplate, OnFailure, StackPolicy*
+                                  #  - no Template*, UsePreviousTemplate, OnFailure, StackPolicy*, ResourceTypes
 CancelUpdateStack()               #Req: STACK
                                   #  - only StackName
+                                  #  - also ClientRequestToken
                                   #Res: empty
 DeleteStack()                     #Req: STACK
-                                  #  - only StackName
+                                  #  - only StackName, RoleARN
+                                  #  - only one with RetainResources
+                                  #  - also ClientRequestToken
                                   #Res: empty
 
 STACK                             #Provisioning of a TEMPLATE
@@ -67,20 +79,29 @@ STACK.LastUpdatedTime             #DATE
 STACK.DeletionTime                #DATE
 STACK.Description                 #STR
 
-STACK.StackStatus                 #One of:
-                                  #  - 'CREATE'
-                                  #  - 'UPDATE_IN_PROGRESS'
-                                  #  - '[UPDATE_]ROLLBACK'
-                                  #  - 'UPDATE_[ROLLBACK_]COMPLETE_CLEANUP_IN_PROGRESS'
-                                  #  - 'COMPLETE', 'DELETE', 'FAILED'
+STACK.StackStatus                 #'STATUS_STATE'
+                                  #STATUS can be:
+                                  #  - CREATE, ROLLBACK
+                                  #  - UPDATE, UPDATE_ROLLBACK
+                                  #  - IMPORT, IMPORT_ROLLBACK
+                                  #  - UPDATE[_ROLLBACK]_COMPLETE_CLEANUP
+                                  #  - REVIEW
+                                  #  - DELETE
+                                  #STATE can be:
+                                  #  - IN_PROGRESS: only one for REVIEW and UPDATE[_ROLLBACK]_COMPLETE_CLEANUP
+                                  #  - COMPLETE
+                                  #  - FAILED: not for IMPORT_ROLLBACK
 STACK.StackStatusReason           #STR
 
-STACK.Capabilities                #['CAPABILITY_IAM']. Required when using AWS::IAM|CloudFormation::*
+STACK.RoleARN                     #ROLE_ARN
+STACK.ResourceTypes               #RESTYPE_ARR
 
 STACK.Tags                        #TAG_PAIRS
 
 AWS::CloudFormation::Stack        #RESTYPE of a STACK
                                   #Allows creating child STACKs, created|updated along the parent
+STACK.ParentId                    #STACK2_MID
+STACK.RootId                      #STACK2_MID
 
 
                                              /=+===============================+=\
@@ -91,15 +112,23 @@ AWS::CloudFormation::Stack        #RESTYPE of a STACK
 
 
 GetTemplate()                     #Req: STACK_TEMPLATE
-                                  #  - only StackName
+                                  #  - only StackName, StagesAvailable STR_ARR -> TemplateStage STR
+                                  #  - only one with ChangeSetName
                                   #Res: STACK_TEMPLATE
                                   #  - only TemplateBody
+                                  #  - only one with StagesAvailable
+GetTemplateSummary()              #Req: STACK_TEMPLATE
+                                  #  - only StackName, TemplateBody, TemplateURL
+                                  #  - only one with StackSetName, TemplateSummaryConfig, CallAs
+                                  #Res: STACK_TEMPLATE
+                                  #  - no StackName, TemplateBody, TemplateURL, Parameters[*].ParameterType|ParameterConstraints
+                                  #  - only one with Version, ResourceTypes, ResourceIdentifierSummaries, Warnings
 ValidateTemplate()                #Req: STACK_TEMPLATE
                                   #  - only TemplateBody, TemplateURL
                                   #Res: STACK_TEMPLATE
                                   #  - no StackName, TemplateBody, TemplateURL
 EstimateTemplateCost()            #Req: STACK_TEMPLATE
-                                  #  - only TemplateBody, TemplateUrl, Parameters
+                                  #  - only TemplateBody, TemplateUrl, STACK.Parameters
                                   #Res: STACK_TEMPLATE
                                   #  - only one with Url
 
@@ -115,8 +144,25 @@ STACK.UsePreviousTemplate         #BOOL. Re-use current TEMPLATE
 TEMPLATE.AWSTemplateFormatVersion #Currently '2010-09-09'
 [STACK_]TEMPLATE.Description      #STR
 
-STACK_TEMPLATE.Capabilities       #STR_ARR
+STACK_TEMPLATE.Version            #STR
+STACK[_TEMPLATE].Capabilities     #STR_ARR among:
+                                  #  - CAPABILITY_IAM: required when using AWS::IAM::*
+                                  #  - CAPABILITY_NAMED_IAM
+                                  #  - CAPABILITY_AUTO_EXPAND
 STACK_TEMPLATE.CapabilitiesReason #STR
+
+STACK_TEMPLATE.DeclaredTransforms #STR_ARR
+STACK_TEMPLATE.StagesAvailable    #STR_ARR among 'Original', 'Processed'
+
+STACK_TEMPLATE.ResourceTypes      #RESTYPE_ARR
+STACK_TEMPLATE
+ .ResourceIdentifierSummaries     #'RESOURCE'_ARR
+STACK_TEMPLATE
+ .TemplateSummaryConfig
+ .TreatUnrecognizedResource
+ TypesAsWarnings                  #BOOL (def: false)
+STACK_TEMPLATE.Warnings
+ .UnrecognizedResourceTypes       #RESTYPE_ARR
 
 STACK_TEMPLATE.Errors             #TEMPLATE_ERROR_ARR
                                   #Only syntax errors, not semantic
@@ -137,21 +183,15 @@ STACK_TEMPLATE.Url                #URL to AWS price calculator
 ListStackResources()              #Req: STACK_RESOURCE
                                   #  - only StackName
                                   #Res: StackResourceSummaries STACK_RESOURCE_ARR
-                                  #  - no StackId, StackName, Description, Metadata, ResourceProperties
+                                  #  - no StackId, StackName, Description, Metadata
 DescribeStackResources()          #Req: STACK_RESOURCE
                                   #  - only *ResourceId, StackName
                                   #Res: StackResources STACK_RESOURCE_ARR
-                                  #  - no Metadata, ResourceProperties
+                                  #  - no Metadata
                                   #  - LastUpdatedTimestamp -> Timestamp
 DescribeStackResource()           #Req: STACK_RESOURCE
                                   #  - only LogicalResourceId, StackName
                                   #Res: StackResourceDetail STACK_RESOURCE
-                                  #  - no ResourceProperties
-DescribeStackEvents()             #Req: STACK_RESOURCE
-                                  #  - only StackName
-                                  #Res: StackEvents STACK_RESOURCE_ARR
-                                  #  - no Description, Metadata
-                                  #  - LastUpdatedTimestamp -> Timestamp
 
 TEMPLATE.Resources.RESOURCE       #RESOURCE. AWS resource
                                   #Max 200 per TEMPLATE
@@ -166,20 +206,57 @@ STACK_RESOURCE
  .LastUpdatedTimestamp            #DATE
 STACK_RESOURCE.Description        #STR
 
-STACK_RESOURCE.ResourceStatus     #One of:
-                                  #  - 'CREATE'
-                                  #  - 'UPDATE_IN_PROGRESS'
-                                  #  - 'COMPLETE', 'FAILED', 'DELETE'
+STACK_RESOURCE.ResourceStatus     #'STATUS_STATE'
+                                  #STATUS can be:
+                                  #  - CREATE, ROLLBACK
+                                  #  - UPDATE, UPDATE_ROLLBACK
+                                  #  - IMPORT, IMPORT_ROLLBACK
+                                  #  - DELETE
+                                  #STATE can be IN_PROGRESS, COMPLETE, FAILED
+                                  #  - also SKIPPED with DELETE
 STACK_RESOURCE
  .ResourceStatusReason            #STR
 
-RESOURCE.Properties.RESPROP
-STACK_RESOURCE.ResourceProperties #VAL
- .RESPROP                         #Usually same|similar as request payload of create|update ACTIONs of the RESTYPE
+RESOURCE.Properties.RESPROP       #VAL
+                                  #Usually same|similar as request payload of create|update ACTIONs of the RESTYPE
 
 RESOURCE.DependsOn                #'RESOURCE2'
                                   #Create RESOURCE2 before RESOURCE
                                   #When deleting RESOURCE2, delete RESOURCE first
+
+STACK_RESOURCE.ModuleInfo         #MODULE_INFO
+MODULE_INFO.LogicalIdHierarchy    #STR
+MODULE_INFO.TypeHierarchy         #STR
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:            EVENTS             :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+DescribeStackEvents()             #Req: STACK_EVENT
+                                  #  - only StackName
+                                  #  - also ClientRequestToken
+                                  #Res: StackEvents STACK_EVENT_ARR
+
+STACK_EVENT.EventId               #STACK_EVENT_MID
+STACK_EVENT.LogicalResourceId
+ |PhysicalResourceId|ResourceType
+ |StackId|StackName
+ |ResourceStatus[Reason]          #Like STACK_RESOURCE.*
+STACK_EVENT.Timestamp             #Like STACK_RESOURCE.LastUpdatedTimestamp
+
+STACK_EVENT.ResourceProperties    #STR blob
+
+STACK_EVENT.HookType              #STR
+STACK_EVENT.HookFailureMode       #'FAIL|WARN'
+STACK_EVENT.HookInvocationPoint   #Can only be 'PRE_PROVISION'
+STACK_EVENT.HookStatus            #STR among:
+                                  #  - HOOK_IN_PROGRESS
+                                  #  - HOOK_COMPLETE_SUCCEEDED, HOOK_COMPLETE_FAILED, HOOK_FAILED
+STACK_EVENT.HookStatusReason      #STR
 
 
                                              /=+===============================+=\
@@ -256,6 +333,14 @@ STACK.OnFailure                   #Rollback behavior:
                                   #  - 'ROLLBACK' (def): rollback whole create|update
                                   #  - 'DELETE': only rollback errored RESOURCE
 
+STACK.RollbackConfiguration       #STACK_ROLLBACK
+STACK_ROLLBACK
+ .MonitoringTimeInMinutes         #NUM
+
+STACK_ROLLBACK.RollbackTriggers   #ROLLBACK_TRIGGER_ARR
+ROLLBACK_TRIGGER.Type             #RESTYPE
+ROLLBACK_TRIGGER.Arn              #ARN
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -263,6 +348,14 @@ STACK.OnFailure                   #Rollback behavior:
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
+
+UpdateTerminationProtection()???  #
+
+STACK.EnableTerminationProtection #BOOL
+
+STACK.RetainExceptOnCreate        #BOOL
+
+STACK.RetainResources             #'RESOURCE'_ARR
 
 RESOURCE.DeletionPolicy           #When STACK is deleted, what to do with RESOURCE, among:
                                   #  - 'Delete' (def)
@@ -291,10 +384,14 @@ STACK_TEMPLATE.Parameters         #TEMPLATE_PARAM_ARR
 
 TEMPLATE.Parameters.PARAM         #PARAM. STACK.Parameters definition
                                   #Max 60 per TEMPLATE
+TEMPLATE_PARAM.ParameterType
 PARAM.Type                        #'String|Number|CommaDelimitedList'
 PARAM.Min|MaxLength               #'NUM'. Only with Type 'String'
 PARAM.Min|MaxValue                #'NUM'. Only with Type 'Number'
 PARAM.AllowedPattern              #'GLOB'
+TEMPLATE_PARAM
+ .ParameterConstraints
+ .AllowedValues
 PARAM.AllowedValues               #STR_ARR
 TEMPLATE_PARAM.DefaultValue
 PARAM.Default                     #STR
@@ -329,6 +426,7 @@ STACK.Outputs                     #STACK_OUTPUT_ARR
 STACK_OUTPUT.OutputKey            #'OUTPUT'
 STACK_OUTPUT.OutputValue          #VAL
 STACK_OUTPUT.Description          #STR
+STACK_OUTPUT.ExportName           #STR
 
 
                                              /=+===============================+=\
@@ -382,6 +480,8 @@ TEMPLATE.Conditions.COND          #BOOL
 RESOURCE.Metadata                 #OBJ. Any custom property
 STACK_RESOURCE.Metadata           #'OBJ_JSON'
 
+STACK_TEMPLATE.Metadata           #STR
+
 cfn-get-metadata --key VAR        #Prints RESOURCE.Metadata.VAR
                                   #Takes same options as cfn-init
 
@@ -394,7 +494,7 @@ cfn-get-metadata --key VAR        #Prints RESOURCE.Metadata.VAR
 
 
 SetStackPolicy()                  #Req: STACK
-                                  #  - only StackName, StackPolicy*
+                                  #  - only StackName, StackPolicyBody, StackPolicyURL
                                   #Res: empty
 GetStackPolicy()                  #Req: STACK
                                   #  - only StackName
@@ -454,9 +554,9 @@ cfn-signal HANDLE_URL             #Calls HANDLE_URL
                                              \=+===============================+=/
 
 
-STACK.NotificationARNs            #'ARN'_ARR
+STACK.NotificationARNs            #SNS_TOPIC_ARN_ARR
 
-AWS::NotificationARNs             #'ARN'_ARR
+AWS::NotificationARNs             #SNS_TOPIC_ARN_ARR
                                   #Built-in PARAM
 
 
@@ -467,7 +567,11 @@ AWS::NotificationARNs             #'ARN'_ARR
                                              \=+===============================+=/
 
 
+cfn-*                             #"Helper scripts"
+                                  #Version 2.0-26
+
 /opt/aws/bin/cfn-*                #cfn-* location in EC2 instances
+                                  #Can also be downloaded from online documentation
 
 cfn-init                          #Initialize current machine based on EC2 metadata
                                   #Wrapper around cloud-init
@@ -569,3 +673,168 @@ HUP_CONF.credential-file          #'PATH' to CREDS file
 HUP_CONF.verbose                  #BOOL (def: false)
 
 
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:           ROLLBACK            :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+RollbackStack()                   #
+ContinueUpdateRollback()          #
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:              SET              :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+CreateStackSet()                  #
+UpdateStackSet()                  #
+ListStackSets()                   #
+DescribeStackSet()                #
+DeleteStackSet()                  #
+ImportStacksToStackSet()          #
+
+ListStackSetOperations()          #
+DescribeStackSetOperation()       #
+ListStackSetOperationResults()    #
+StopStackSetOperation()           #
+
+STACK_TEMPLATE.StackSetName       #'STACKSET'|STACKSET_MID
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:           INSTANCE            :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+CreateStackInstances()            #
+UpdateStackInstances()            #
+ListStackInstances()              #
+DescribeStackInstance()           #
+DeleteStackInstances()            #
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:          CHANGE SET           :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+CreateChangeSet()                 #
+ListChangeSets()                  #
+DescribeChangeSet()               #
+DescribeChangeSetHooks()          #
+DeleteChangeSet()                 #
+ExecuteChangeSet()                #
+
+STACK.ChangeSetId                 #CHANGE_SET_MID
+STACK_TEMPLATE.ChangeSetName      #'CHANGESET'|CHANGESET_ARN
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:            IMPORT             :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+ListExports()                     #
+ListImports()                     #
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:         ORGANIZATION          :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+ActivateOrganizationsAccess()     #
+DescribeOrganizationsAccess()     #
+DeactivateOrganizationsAccess()   #
+
+STACK_TEMPLATE.CallAs             #'SELF' or 'DELEGATED_ADMIN'
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:          EXTENSIONS           :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+ActivateType()                    #
+SetTypeConfiguration()            #
+ListTypes()                       #
+DescribeType()                    #
+DeactivateType()                  #
+
+RegisterType()                    #
+DescribeTypeRegistration()        #
+DeregisterType()                  #
+
+ListTypeRegistrations()           #
+BatchDescribeTypeConfigurations() #
+
+SetTypeDefaultVersion()           #
+ListTypeVersions()                #
+
+PublishType()                     #
+TestType()                        #
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:           PUBLISHER           :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+DescribePublisher()               #
+RegisterPublisher()               #
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:             DRIFT             :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+DetectStackDrift()                #
+DetectStackSetDrift()             #
+DetectStackResourceDrift()        #
+ListStackInstanceResourceDrifts() #
+DescribeStackResourceDrifts()     #
+DescribeStackDrift
+ DetectionStatus()                #
+
+STACK.DriftInformation            #STACK_DRIFT
+STACK_DRIFT.LastCheckTimestamp    #DATE
+STACK_DRIFT.StackDriftStatus      #One of 'IN_SYNC', 'DRIFTED', 'UNKNOWN', 'NOT_CHECKED'
+
+STACK_RESOURCE.DriftInformation   #RESOURCE_DRIFT
+RESOURCE_DRIFT.LastCheckTimestamp #DATE
+RESOURCE_DRIFT
+ .StackResourceDriftStatus        #One of 'IN_SYNC', 'MODIFIED', 'DELETED', 'NOT_CHECKED'
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:            TO SORT            :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+RecordHandlerProgress()           #
+
+SignalResource()                  #
+
+DescribeAccountLimits()           #
