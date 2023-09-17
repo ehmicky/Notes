@@ -48,9 +48,12 @@ PAGINATION ==>                    #REQ|RES.NextToken STR
                                   #     - always 100: ListImports|ListExports(), DescribeChangeSet[Hooks]()
                                   #     - use 1MB chunks instead: DescribeStacks|ListStacks(), ListStackResources(),
                                   #       DescribeStackEvents(), ListChangeSets(), DescribeAccountLimits()
-                                  #No pagination: DescribeStackResources(), BatchDescribeTypeConfigurations()
+                                  #Always limited to 100 items: DescribeStackResources()
+                                  #No pagination: BatchDescribeTypeConfigurations()
 
 REQ.Client[Request]Token          #Idempotence STR, for some ACTIONs
+                                  #In UI, is 'Console-ACTION-UUID'
+                                  #Must be [[:alnum:]-], max 128 chars
 
 
                                              /=+===============================+=\
@@ -103,7 +106,6 @@ TEMPLATE                          #Set of AWS RESOURCEs specified declaratively,
                                   #  - JSON
                                   #  - YAML: JSON-compatible, no << nor &REF
                                   #Should avoid secrets in it
-                                  #Kept for 90 days for deleted STACKs
 STACK_TEMPLATE                    #TEMPLATE on a given STACK
 STACK_TEMPLATE.StackName          #'STACK'|STACK_MID
 
@@ -111,7 +113,7 @@ SET|STACK[_TEMPLATE]|CHANGESET    #'TEMPLATE' contents as STR
  .TemplateBody                    #Max 51KB
 SET|STACK[_TEMPLATE]|CHANGESET    #Same but as URL
  .TemplateURL                     #Must be a S3 OBJECT or a SSM document
-                                  #Max 460KB
+                                  #Max 1MB
 SET|STACK|CHANGESET
  .UsePreviousTemplate             #BOOL (def: false). Re-use current TEMPLATE
 
@@ -187,14 +189,6 @@ RESATTR_SPEC.[Primitive]ItemType  #Like RESPROP_SPEC.*
                                              \=+===============================+=/
 
 
-https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/using-cfn-cli-creating-stack.html???
-https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/using-cfn-describing-stacks.html???
-https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/using-cfn-listing-stack-resources.html???
-https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/using-cfn-cli-deleting-stack.html???
-https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/cfn-using-console.html???
-  - except: Creating stacks using change sets, Monitor and roll back stack operations, Protecting a stack from being deleted
-https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/cfn-windows-stacks.html???
-
 CreateStack()                     #Req: STACK
                                   #  - no StackId, *Time, Description, Outputs, StackStatus*, ChangeSetId,
                                   #    DriftInformation, ParentId, RootId
@@ -203,8 +197,9 @@ CreateStack()                     #Req: STACK
                                   #Res: STACK
                                   #  - only StackId
 UpdateStack()                     #Req: STACK
-                                  #  - no StackId, *Time, Description, Outputs, StackStatus*, ChangeSetId,
+                                  #  - no *Time, Description, Outputs, StackStatus*, ChangeSetId,
                                   #    DriftInformation, ParentId, RootId
+                                  #  - StackId|StackName -> StackName 'STACK'|STACK_MID
                                   #  - no EnableTerminationProtection, OnFailure, Tags, TimeoutInMinutes
                                   #  - also ClientRequestToken
                                   #Res: STACK
@@ -217,26 +212,30 @@ ListStacks()                      #Req: STACK
                                   #    RollbackConfiguration, Tags, TimeoutInMinutes, ResourceTypes
                                   #  - Description -> TemplateDescription
 DescribeStacks()                  #Req: STACK
-                                  #  - only StackName
+                                  #  - only StackId|StackName -> StackName 'STACK'|STACK_MID
                                   #Res: Stacks STACK_ARR
                                   #  - no Template*, UsePreviousTemplate, OnFailure, StackPolicy*, ResourceTypes
 CancelUpdateStack()               #Req: STACK
-                                  #  - only StackName
+                                  #  - only StackId|StackName -> StackName 'STACK'|STACK_MID
                                   #  - also ClientRequestToken
                                   #Res: empty
                                   #If STACK.StackStatus UPDATE_IN_PROGRESS, set to UPDATE_ROLLBACK_*
 DeleteStack()                     #Req: STACK
-                                  #  - only StackName, RoleARN
+                                  #  - only RoleARN, StackId|StackName -> StackName 'STACK'|STACK_MID
                                   #  - only one with RetainResources
                                   #  - also ClientRequestToken
                                   #Res: empty
 
 STACK                             #Provisioning of a TEMPLATE
+                                  #After deletion:
+                                  #  - keep information (including TEMPLATE) for 90 days
+                                  #  - shown by *StackResource*(), ListStacks() but not DescribeStacks()
                                   #Max 2e3 per ACCOUNT
 STACK_ARN                         #arn:aws:cloudformation:REGION:ACCOUNT_ID:stack/STACK/STACK_MID
 
 STACK.StackId                     #STACK_MID
 STACK.StackName                   #'STACK'
+                                  #Must be [[:alnum:]-], max 128 chars
 STACK.CreationTime                #DATE
 STACK.LastUpdatedTime             #DATE
 STACK.DeletionTime                #DATE
@@ -244,10 +243,12 @@ STACK.Description                 #STR
 
 STACK.StackStatus                 #'STATUS_STATE'
                                   #STATUS can be:
-                                  #  - CREATE, IMPORT
-                                  #  - UPDATE[_COMPLETE_CLEANUP]
+                                  #  - CREATE
+                                  #  - IMPORT: import through a CHANGESET
+                                  #  - UPDATE
+                                  #  - UPDATE_COMPLETE_CLEANUP: after UPDATE, when deleting RESOURCEs that were replaced
                                   #  - ROLLBACK, UPDATE_ROLLBACK[_COMPLETE_CLEANUP], IMPORT_ROLLBACK: on failure of any of the above
-                                  #  - REVIEW
+                                  #  - REVIEW: CHANGESET not executed yet
                                   #  - DELETE
                                   #STATE can be:
                                   #  - IN_PROGRESS: only one for REVIEW and UPDATE[_ROLLBACK]_COMPLETE_CLEANUP
@@ -255,15 +256,21 @@ STACK.StackStatus                 #'STATUS_STATE'
                                   #  - FAILED: not for IMPORT_ROLLBACK
 STACK.StackStatusReason           #STR
 
-STACK|CHANGESET.RoleARN           #ROLE_ARN used for ACTIONs performed on by the STACK
-                                  #Def:
-                                  #  - previously used ROLE_ARN for that STACK
-                                  #  - if none, use STS TEMP_TOKEN (i.e. based on current PRINCIPAL)
-
 STACK|CHANGESET.ResourceTypes     #RESTYPE_ARR. Fail if lacks a RESTYPE used in STACK|CHANGESET
                                   #Can be 'AWS::*' (def), 'Custom::*|RESOURCE', 'AWS::SERVICE::*|RESOURCE'
 
+STACK|CHANGESET.RoleARN           #ROLE_ARN used for ACTIONs performed on by the STACK
+                                  #Def: STS TEMP_TOKEN (i.e. based on current PRINCIPAL)
+
 STACK|CHANGESET.Tags              #TAG_PAIRS
+
+https://REGION.console.aws
+ .amazon.com/cloudformation/home
+ ?region=REGION
+ #/stacks/create/review
+ ?templateURL=URL
+ &stackName=STACK                 #Link to UI page to create STACK
+ &param_PARAM=VAL                 #PARAMs cannot use NoEcho
 
 
                                              /=+===============================+=\
@@ -273,74 +280,13 @@ STACK|CHANGESET.Tags              #TAG_PAIRS
                                              \=+===============================+=/
 
 
-https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/using-cfn-nested-stacks.html???
-
 AWS::CloudFormation::Stack        #RESTYPE of a STACK
-                                  #Allows creating child STACKs, created|updated along the parent
+                                  #Child STACKs, created|updated along the parent
+                                  #Allows re-using TEMPLATE parts
 STACK.ParentId                    #STACK2_MID
 STACK.RootId                      #STACK2_MID
 
-CHANGESET.IncludeNestedStacks     #BOOL
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:           INSTANCE            :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-CreateStackInstances()            #Req: INSTANCE
-                                  #  - Account|Region -> Accounts|Regions ARR
-                                  #  - also OP: OperationId
-                                  #  - no StackSetId, StackId, LastOperationId, *Status*, *Drift*, OrganizationalUnitId
-                                  #Res: OP
-                                  #  - only OperationId
-UpdateStackInstances()            #Req: INSTANCE
-                                  #  - Account|Region -> Accounts|Regions ARR
-                                  #  - also OP: OperationId
-                                  #  - no StackSetId, StackId, LastOperationId, *Status*, *Drift*, OrganizationalUnitId
-                                  #Res: OP
-                                  #  - only OperationId
-ListStackInstances()              #Req: INSTANCE
-                                  #  - only StackSetName, Account|Region -> StackInstanceAccount|Region
-                                  #  - only one with Filters
-                                  #  - also OP: CallAs
-                                  #Res: Summaries INSTANCE_ARR
-                                  #  - no StackSetName, DeploymentTargets, OperationPreferences
-                                  #  - no ParameterOverrides
-DescribeStackInstance()           #Req: INSTANCE
-                                  #  - only StackSetName, Account|Region -> StackInstanceAccount|Region
-                                  #  - also OP: CallAs
-                                  #Res: StackInstance INSTANCE
-                                  #  - no StackSetName, DeploymentTargets, OperationPreferences
-DeleteStackInstances()            #Req: INSTANCE
-                                  #  - Account|Region -> Accounts|Regions ARR
-                                  #  - only StackSetName, DeploymentTargets, OperationPreferences
-                                  #  - also OP: OperationId, CallAs, RetainStacks
-                                  #Res: OP
-                                  #  - only OperationId
-
-INSTANCE.StackSetId               #SET_MID
-INSTANCE.StackSetName             #'SET'
-INSTANCE.StackId                  #STACK_MID
-INSTANCE.LastOperationId          #'OP'
-
-INSTANCE.Status                   #STR among:
-                                  #  - CURRENT
-                                  #  - OUTDATED
-                                  #  - INOPERABLE
-INSTANCE.StatusReason             #STR
-INSTANCE.StackInstanceStatus      #STR among:
- .DetailedStatus                  #  - PENDING, RUNNING
-                                  #  - SUCCEEDED, CANCELLED, FAILED
-                                  #  - INOPERABLE
-                                  #  - SKIPPED_SUSPENDED_ACCOUNT
-
-INSTANCE.Filters                  #INSTANCE_FILTER_ARR
-INSTANCE_FILTER.Name              #'PROP', for INSTANCE.PROP
-                                  #Can be 'LAST_OPERATION_ID', 'DETAILED_STATUS' or 'DRIFT_STATUS'
-INSTANCE_FILTER.Values            #STR_ARR
+CHANGESET.IncludeNestedStacks     #BOOL (def: false). Whether can change child STACKs
 
 
                                              /=+===============================+=\
@@ -351,16 +297,16 @@ INSTANCE_FILTER.Values            #STR_ARR
 
 
 ListStackResources()              #Req: STACK_RESOURCE
-                                  #  - only StackName
+                                  #  - only StackId|StackName -> StackName 'STACK'|STACK_MID
                                   #Res: StackResourceSummaries STACK_RESOURCE_ARR
                                   #  - no StackId, StackName, Description, Metadata
 DescribeStackResources()          #Req: STACK_RESOURCE
-                                  #  - only *ResourceId, StackName
+                                  #  - only *ResourceId, StackId|StackName -> StackName 'STACK'|STACK_MID
                                   #Res: StackResources STACK_RESOURCE_ARR
                                   #  - no Metadata
                                   #  - LastUpdatedTimestamp -> Timestamp
 DescribeStackResource()           #Req: STACK_RESOURCE
-                                  #  - only LogicalResourceId, StackName
+                                  #  - only LogicalResourceId, StackId|StackName -> StackName 'STACK'|STACK_MID
                                   #Res: StackResourceDetail STACK_RESOURCE
 
 TEMPLATE.Resources.RESOURCE       #RESOURCE
@@ -373,21 +319,25 @@ STACK_RESOURCE.LogicalResourceId  #'RESOURCE'. RESOURCE identifier inside CloudF
                                   #Does not change on create|update|delete
                                   #Must be [[:alnum:]]
 STACK_RESOURCE.PhysicalResourceId #RESOURCE_MID. RESOURCE identifier in its own SERVICE
-                                  #Usually MID, but can also be name|ARN for some RESTYPEs that lacks MIDs (e.g. S3 BUCKET)
+                                  #Usually MID, but can also be name|ARN for some RESTYPEs
+                                  #null if deleted or not created yet
                                   #Set|modified|unset on create|update|delete
+                                  #Max 1KB
 RESOURCE.Type
-STACK_RESOURCE.ResourceType       #'RESTYPE'
-STACK_RESOURCE.StackId            #STACK_MID
-STACK_RESOURCE.StackName          #'STACK'
+STACK_RESOURCE.ResourceType       #'RESTYPE'. Max 256 chars
 STACK_RESOURCE
  .LastUpdatedTimestamp            #DATE
 STACK_RESOURCE.Description        #STR
 
+STACK_RESOURCE.StackId            #STACK_MID
+STACK_RESOURCE.StackName          #'STACK'
+
 STACK_RESOURCE.ResourceStatus     #'STATUS_STATE'
                                   #STATUS can be:
-                                  #  - CREATE, ROLLBACK
-                                  #  - UPDATE, UPDATE_ROLLBACK
-                                  #  - IMPORT, IMPORT_ROLLBACK
+                                  #  - CREATE
+                                  #  - IMPORT: import through a CHANGESET
+                                  #  - UPDATE
+                                  #  - ROLLBACK, UPDATE_ROLLBACK, IMPORT_ROLLBACK: on failure of any of the above
                                   #  - DELETE
                                   #STATE can be IN_PROGRESS, COMPLETE, FAILED
                                   #  - also SKIPPED with DELETE
@@ -405,49 +355,32 @@ RESOURCE.DependsOn                #'RESOURCE2'[_ARR]
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:            MODULE             :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/modules.html???
-
-STACK_RESOURCE.ModuleInfo         #MODULE_INFO
-MODULE_INFO.LogicalIdHierarchy    #STR
-MODULE_INFO.TypeHierarchy         #STR
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
                                             )==:            EVENTS             :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
-https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/using-cfn-listing-event-history.html???
-https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/using-cfn-updating-stacks-monitor-stack.html???
-
 DescribeStackEvents()             #Req: EVENT
                                   #  - only StackName
-                                  #  - also ClientRequestToken
                                   #Res: StackEvents EVENT_ARR
 
+EVENT                             #Update of STACK[_RESOURCE], anytime when their properties changes (including status)
+                                  #I.e. meant as STACK history
 EVENT.EventId                     #EVENT_MID
+EVENT.Timestamp                   #DATE
+                                  #Sorted by most recent to least
+
 EVENT.LogicalResourceId
  |PhysicalResourceId|ResourceType
  |StackId|StackName
  |ResourceStatus[Reason]          #Like STACK_RESOURCE.*
-EVENT.Timestamp                   #Like STACK_RESOURCE.LastUpdatedTimestamp
+EVENT.ResourceProperties          #RESOURCE.Properties but as 'OBJ_JSON'
 
-EVENT.ResourceProperties          #STR blob
+EVENT.ClientRequestToken          #STR. 1 per OP
 
-EVENT.HookType
-EVENT.HookFailureMode
-EVENT.HookInvocationPoint         #Like CHANGE_HOOK.*
-EVENT.HookStatus                  #STR among:
-                                  #  - HOOK_IN_PROGRESS
-                                  #  - HOOK_COMPLETE_SUCCEEDED, HOOK_COMPLETE_FAILED, HOOK_FAILED
-EVENT.HookStatusReason            #STR
+STACK|CHANGESET.NotificationARNs  #SNS_TOPIC_ARN_ARR. Send to TOPIC each EVENT
+AWS::NotificationARNs             #STACK.NotificationARNs
+                                  #Built-in PARAM
 
 
                                              /=+===============================+=\
@@ -457,28 +390,38 @@ EVENT.HookStatusReason            #STR
                                              \=+===============================+=/
 
 
-https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/template-custom-resources.html???
-
-Custom::CUSTOM
+CUSTOM_RESOURCE                   #Custom RESOURCE
+                                  #Less featureful than EXTENSIONs but simpler
+Custom::CUSTOM                    #RESTYPE of a specific CUSTOM_RESOURCE
+                                  #CUSTOM must be [[:alnum:]-_@], max 60 chars
 AWS::CloudFormation
- ::CustomResource                 #CUSTOM_RESOURCE
-CUSTOM_RESOURCE.*                 #Anything
+ ::CustomResource                 #RESTYPE of any CUSTOM_RESOURCE
 
-CUSTOM_RESOURCE.ServiceToken      #SNS_TOPIC_ARN
+RESPROP ServiceToken              #SNS_TOPIC_ARN|LAMBDA_FUNC_ARN
                                   #Called on RESOURCE create|update|delete, with REQ_PAYLOAD
+                                  #Must be in same REGION
 REQ_PAYLOAD.RequestType           #'Create|Update|Delete'
-REQ_PAYLOAD.ResourceProperties    #CUSTOM_RESOURCE.*
-REQ_PAYLOAD.OldResourceProperties #Previous CUSTOM_RESOURCE.*, if update
+REQ_PAYLOAD.ResourceProperties    #OBJ of RESPROPs. Can be anything
+REQ_PAYLOAD.OldResourceProperties #Previous RESPROPs
+                                  #Only if update
 REQ_PAYLOAD.ResourceType          #'Custom:CUSTOM'
 REQ|RES_PAYLOAD.LogicalResourceId #'RESOURCE'
-REQ|RES_PAYLOAD.PhysicalResourceId#RESOURCE_MID, if update
-REQ|RES_PAYLOAD.StackId           #STACK_MID
-REQ|RES_PAYLOAD.RequestId         #REQ_ID
+REQ|RES_PAYLOAD.PhysicalResourceId#RESOURCE_MID
+                                  #If update sends a different one, means an update has been done
+                                  #Not if create
+REQ|RES_PAYLOAD.StackId           #STACK_ARN
+REQ|RES_PAYLOAD.RequestId         #STR. Unique ID. Must be combined with StackId
 
 REQ_PAYLOAD.ResponseURL           #URL. Should send RES_PAYLOAD to it
+                                  #Pre-signed S3 PutObject() URL
+                                  #1h timeout
+RES_PAYLOAD                       #JSON. Max 4KB
 RES_PAYLOAD.Status                #'SUCCESS|FAILED'
-RES_PAYLOAD.Data                  #OBJ. Sets CUSTOM_RESOURCE.Data OBJ, as RESATTRs
-                                  #Max 4KB
+RES_PAYLOAD.Reason                #STR. Required if Status 'FAILED', optional if 'SUCCESS'
+RES_PAYLOAD.Data                  #OBJ of RESATTRs. Can be anything
+                                  #Not if delete. Not if Status 'FAILED'
+RES_PAYLOAD.NoEcho                #Like PARAM.* but for RES_PAYLOAD.Data
+                                  #Not if delete. Not if Status 'FAILED'
 
 
                                              /=+===============================+=\
@@ -561,6 +504,7 @@ REPLACEMENT ==>                   #Depending on RESOURCE.RESPROP, is done:
                                   #  - NoInterruption: with an Update*()
                                   #  - MinorInterruption: with an Update*() with side-effects, e.g. EC2 instance restarting
                                   #  - Replacement: with a Create*() then Delete*()
+                                  #     - retry Delete*() 3 times
                                   #  - ReadOnly: cannot be updated, i.e. must recreate the STACK
 
 RESPROP_SPEC.UpdateType           #'Immutable|Mutable'. Whether update requires Replacement
@@ -578,6 +522,7 @@ RESOURCE.UpdatePolicy             #UPDATE_POLICY. Only for specific RESTYPEs, do
                                              \=+===============================+=/
 
 
+https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/cfn-console-add-tags.html??? (Stack failure options, Rollback configuration, Stack creation options)
 https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/using-cfn-updating-stacks-continueupdaterollback.html???
 https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/using-cfn-rollback-triggers.html???
 https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/stack-failure-options.html???
@@ -631,7 +576,7 @@ UpdateTerminationProtection()     #Req: STACK
 STACK.EnableTerminationProtection #BOOL
 
 STACK|CHANGESET
- .RetainExceptOnCreate            #BOOL
+ .RetainExceptOnCreate            #BOOL (def: false)
 
 STACK.RetainResources             #'RESOURCE'_ARR
 
@@ -661,7 +606,9 @@ RESOURCE.DeletionPolicy           #STR. What to do with RESOURCE when either:
 https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/using-cfn-updating-stacks-changesets.html???
 https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/cfn-console-create-stacks-changesets.html???
 https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/resource-import.html???
+https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/resource-import-nested-stacks.html???
 https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/refactor-stacks.html???
+https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/change-sets-for-nested-stacks.html???
 
 CreateChangeSet()                 #Req: CHANGESET
                                   #  - no Changes, ChangeSetId, CreationTime, *Status*, ParentChangeSetId,
@@ -796,6 +743,14 @@ HOOK_DETAIL.ResourceTargetDetails #HOOK_RESDETAIL
 HOOK_RESDETAIL
  .ResourceType|LogicalResourceId  #Like STACK_RESOURCE.*
 HOOK_RESDETAIL.ResourceAction     #Like RESCHANGE.Action
+
+EVENT.HookType
+EVENT.HookFailureMode
+EVENT.HookInvocationPoint         #Like CHANGE_HOOK.*
+EVENT.HookStatus                  #STR among:
+                                  #  - HOOK_IN_PROGRESS
+                                  #  - HOOK_COMPLETE_SUCCEEDED, HOOK_COMPLETE_FAILED, HOOK_FAILED
+EVENT.HookStatusReason            #STR
 
 
                                              /=+===============================+=\
@@ -1189,19 +1144,6 @@ cfn-signal HANDLE_URL             #Calls HANDLE_URL
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:         NOTIFICATION          :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-STACK|CHANGESET.NotificationARNs  #SNS_TOPIC_ARN_ARR
-
-AWS::NotificationARNs             #STACK.NotificationARNs
-                                  #Built-in PARAM
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
                                             )==:              SET              :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -1265,6 +1207,66 @@ SET.ManagedExecution.Active       #BOOL (def: false)
 SET.Tags                          #TAG_PAIRS
 
 STACK_TEMPLATE.StackSetName       #'SET'|SET_MID
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:           INSTANCE            :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+CreateStackInstances()            #Req: INSTANCE
+                                  #  - Account|Region -> Accounts|Regions ARR
+                                  #  - also OP: OperationId
+                                  #  - no StackSetId, StackId, LastOperationId, *Status*, *Drift*, OrganizationalUnitId
+                                  #Res: OP
+                                  #  - only OperationId
+UpdateStackInstances()            #Req: INSTANCE
+                                  #  - Account|Region -> Accounts|Regions ARR
+                                  #  - also OP: OperationId
+                                  #  - no StackSetId, StackId, LastOperationId, *Status*, *Drift*, OrganizationalUnitId
+                                  #Res: OP
+                                  #  - only OperationId
+ListStackInstances()              #Req: INSTANCE
+                                  #  - only StackSetName, Account|Region -> StackInstanceAccount|Region
+                                  #  - only one with Filters
+                                  #  - also OP: CallAs
+                                  #Res: Summaries INSTANCE_ARR
+                                  #  - no StackSetName, DeploymentTargets, OperationPreferences
+                                  #  - no ParameterOverrides
+DescribeStackInstance()           #Req: INSTANCE
+                                  #  - only StackSetName, Account|Region -> StackInstanceAccount|Region
+                                  #  - also OP: CallAs
+                                  #Res: StackInstance INSTANCE
+                                  #  - no StackSetName, DeploymentTargets, OperationPreferences
+DeleteStackInstances()            #Req: INSTANCE
+                                  #  - Account|Region -> Accounts|Regions ARR
+                                  #  - only StackSetName, DeploymentTargets, OperationPreferences
+                                  #  - also OP: OperationId, CallAs, RetainStacks
+                                  #Res: OP
+                                  #  - only OperationId
+
+INSTANCE.StackSetId               #SET_MID
+INSTANCE.StackSetName             #'SET'
+INSTANCE.StackId                  #STACK_MID
+INSTANCE.LastOperationId          #'OP'
+
+INSTANCE.Status                   #STR among:
+                                  #  - CURRENT
+                                  #  - OUTDATED
+                                  #  - INOPERABLE
+INSTANCE.StatusReason             #STR
+INSTANCE.StackInstanceStatus      #STR among:
+ .DetailedStatus                  #  - PENDING, RUNNING
+                                  #  - SUCCEEDED, CANCELLED, FAILED
+                                  #  - INOPERABLE
+                                  #  - SKIPPED_SUSPENDED_ACCOUNT
+
+INSTANCE.Filters                  #INSTANCE_FILTER_ARR
+INSTANCE_FILTER.Name              #'PROP', for INSTANCE.PROP
+                                  #Can be 'LAST_OPERATION_ID', 'DETAILED_STATUS' or 'DRIFT_STATUS'
+INSTANCE_FILTER.Values            #STR_ARR
 
 
                                              /=+===============================+=\
@@ -1658,6 +1660,20 @@ PUBLISHER.AcceptTermsAndConditions#BOOL (def: false)
 
                                              /=+===============================+=\
                                             /  :                               :  \
+                                            )==:            MODULE             :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/modules.html???
+
+STACK_RESOURCE.ModuleInfo         #MODULE_INFO
+MODULE_INFO.LogicalIdHierarchy    #STR
+MODULE_INFO.TypeHierarchy         #STR
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
                                             )==:           INTERFACE           :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -1717,6 +1733,7 @@ https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/cfn-helper-script
 https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-init.html???
 https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-authentication.html???
 https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/deploying.applications.html???
+https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/cfn-windows-stacks-bootstrapping.html???
 
 cfn-*                             #"Helper scripts"
                                   #Version 2.0-26
