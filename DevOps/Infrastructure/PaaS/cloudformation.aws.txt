@@ -21,6 +21,11 @@ TO DOCUMENT:
 Already read:
   - Working with templates
      - Template formats
+     - Template anatomy
+        - Format version
+        - Description
+        - Metadata
+        - Parameters
   - Transform reference
 
 VERSION ==>                       #2023-09-15
@@ -418,7 +423,7 @@ EstimateTemplateCost()            #Req: STACK_TEMPLATE
 STACK_TEMPLATE                    #TEMPLATE on a given STACK
 STACK_TEMPLATE.StackName          #'STACK'
 
-SET|STACK[_TEMPLATE]|CHANGESET    #'TEMPLATE' JSON as STR
+SET|STACK[_TEMPLATE]|CHANGESET    #'TEMPLATE' contents as STR
  .TemplateBody                    #Max 51KB
 SET|STACK[_TEMPLATE]|CHANGESET    #Same but as URL
  .TemplateURL                     #Max 460KB
@@ -426,8 +431,11 @@ SET|STACK|CHANGESET
  .UsePreviousTemplate             #BOOL. Re-use current TEMPLATE
 
 TEMPLATE                          #Set of AWS RESOURCEs
+                                  #Either:
+                                  #  - JSON
+                                  #  - YAML: JSON-compatible, no << nor &REF
 TEMPLATE.AWSTemplateFormatVersion #Currently '2010-09-09'
-[STACK_]TEMPLATE.Description      #STR
+[STACK_]TEMPLATE.Description      #STR. Max 1KB
 
 STACK_TEMPLATE.Version            #STR
 SET|STACK[_TEMPLATE]|CHANGESET    #STR_ARR among:
@@ -436,7 +444,6 @@ SET|STACK[_TEMPLATE]|CHANGESET    #STR_ARR among:
                                   #  - CAPABILITY_AUTO_EXPAND
 STACK_TEMPLATE.CapabilitiesReason #STR
 
-STACK_TEMPLATE.DeclaredTransforms #STR_ARR
 STACK_TEMPLATE.StagesAvailable    #STR_ARR among 'Original', 'Processed'
 
 STACK_TEMPLATE.ResourceTypes      #RESTYPE_ARR
@@ -565,8 +572,11 @@ GATE_RES.StatusReason             #STR
                                              \=+===============================+=/
 
 
-UPDATES ==>                       #No update if no RESOURCE.RESPROP has changed
-                                  #Depending on RESOURCE.RESPROP, is done:
+NOOP ==>                          #No update if no RESOURCE.RESPROP has changed
+
+TEMPLATE UPDATE ==>               #Can only update TEMPLATE.Description|Metadata|Conditions if TEMPLATE.Resources is also modified
+
+REPLACEMENT ==>                   #Depending on RESOURCE.RESPROP, is done:
                                   #  - NoInterruption: with an Update*()
                                   #  - MinorInterruption: with an Update*() with side-effects, e.g. EC2 instance restarting
                                   #  - Replacement: with a Delete*() then Create*()
@@ -794,26 +804,40 @@ HOOK_RESDETAIL.ResourceAction     #Like RESCHANGE.Action
                                              \=+===============================+=/
 
 
-TEMPLATE.Parameters.PARAM         #PARAM. Variable declaration in a TEMPLATE
-                                  #Max 60 per TEMPLATE
+TEMPLATE.Parameters.PARAM         #PARAM. Inputs to the STACK
+                                  #Max 200 per TEMPLATE
+                                  #'PARAM' must be [[:alnum::]]
 STACK_TEMPLATE.Parameters         #STACK_PARAM_ARR. Variable declaration in a STACK_TEMPLATE
 STACK_PARAM.ParameterKey          #'PARAM'
 
 STACK_PARAM.ParameterType
-PARAM.Type                        #'String|Number|CommaDelimitedList'
+PARAM.Type                        #One of:
+                                  #  - 'String': STR
+                                  #  - 'Number': NUM (converted to 'NUM')
+                                  #  - 'List<Number>': 'NUM,...' (converted to NUM_ARR)
+                                  #  - 'CommaDelimitedList': 'STR,...' (converted to STR_ARR)
+                                  #     - PARAM.Allowed* are for each STR
+                                  #     - each STR is trimmed
+                                  #  - 'RESTYPE' or 'List<RESTYPE>'
+                                  #     - like STR, but with PARAM.AllowedValues guessed from current ACCOUNT
+                                  #     - only for:
+                                  #        - EC2: AvailabilityZone::Name, Image::Id, Instance::Id, KeyPair::KeyName,
+                                  #          SecurityGroup::GroupName|Id, Subnet::Id, Volume::Id, VPC::Id
+                                  #        - Route53: HostedZone::Id
 PARAM.Min|MaxLength               #'NUM'. Only with Type 'String'
 PARAM.Min|MaxValue                #'NUM'. Only with Type 'Number'
-PARAM.AllowedPattern              #'GLOB'
+PARAM.AllowedPattern              #'REGEXP'
 STACK_PARAM
  .ParameterConstraints
  .AllowedValues
 PARAM.AllowedValues               #STR_ARR
 STACK_PARAM.DefaultValue
-PARAM.Default                     #STR
-[STACK_]PARAM.Description         #STR
-PARAM.ConstraintDescription       #STR
-[STACK_]PARAM.NoEcho              #BOOL (def: false). Show '****' when read
-                                  #Exceptions: as stack OUTPUT or metadata
+PARAM.Default                     #VAL
+[STACK_]PARAM.Description         #STR. Description of PARAM
+                                  #Max 4KB
+PARAM.ConstraintDescription       #STR. Description of PARAM validation
+[STACK_]PARAM.NoEcho              #BOOL (def: false). Show '*****' when read
+                                  #Exceptions: as STACK OUTPUT or STACK|RESOURCE metadata
 
 SET|STACK|CHANGESET.Parameters
 INSTANCE.ParameterOverrides       #PARAMVAL_ARR. STACK_PARAM value
@@ -825,6 +849,7 @@ PARAMVAL.ResolvedValue            #'VAL', only with AWS Systems Manager
 
 { Ref: 'PARAM' }                  #Replaced with PARAM value
                                   #If none, ''
+                                  #Must be inside RESOURCE|OUTPUT.**
 
 BUILT-IN PARAMS ==>               #Called "pseudo PARAMs"
 AWS::StackId                      #STACK_MID
@@ -874,7 +899,6 @@ EXPORT.Value                      #'VAL'. OUTPUT.Value
 EXPORT.ExportingStackId           #STACK_MID
 
 { Fn::ImportValue: 'EXPORT'}      #'VAL'
-                                  #Built-in function
 
 
                                              /=+===============================+=\
@@ -997,6 +1021,9 @@ https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/transform-referen
 
 { Fn::Transform??? }              #https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/intrinsic-function-reference-transform.html
 
+TEMPLATE.Transform
+STACK_TEMPLATE.DeclaredTransforms #STR_ARR
+
 AWS::LanguageExtensions           #Allows using inside !Ref|!GetAtt: !Ref !Base64 !FindInMap !If !Join !Sub !ToJsonString
 
 
@@ -1007,10 +1034,11 @@ AWS::LanguageExtensions           #Allows using inside !Ref|!GetAtt: !Ref !Base6
                                              \=+===============================+=/
 
 
-STACK_TEMPLATE.Metadata           #STR. Stack metadata
+TEMPLATE.Metadata                 #OBJ. Stack metadata (any custom info)
+                                  #Should not contain secrets.
+STACK_TEMPLATE.Metadata           #'OBJ_JSON'
 
-RESOURCE.Metadata                 #OBJ. Resource metadata
-                                  #Any custom property. Should not contain secrets.
+RESOURCE.Metadata                 #OBJ. Same but for resource
 STACK_RESOURCE.Metadata           #'OBJ_JSON'
 
 cfn-get-metadata --key VAR        #Prints RESOURCE.Metadata.VAR
@@ -1488,12 +1516,33 @@ PUBLISHER.AcceptTermsAndConditions#BOOL (def: false)
 
                                              /=+===============================+=\
                                             /  :                               :  \
+                                            )==:           INTERFACE           :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+TEMPLATE.Metadata
+['AWS::CloudFormation::Interface']#INTERFACE. UI console settings
+
+INTERFACE
+ .ParameterLabels.PARAM.default   #STR. PARAM's UI name
+
+INTERFACE.ParameterGroups         #PARAM_GROUP_ARR. Group PARAMs in the UI
+                                  #PARAMs not listed are put in a last "Others" GROUP_PARAM
+PARAM_GROUP.Parameters            #'PARAM'_ARR
+PARAM_GROUP.Label.default         #STR. PARAM_GROUP's UI name
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
                                             )==:           CFN-INIT            :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
 https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/cfn-helper-scripts-reference.html ???
+https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-init.html???
+https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-authentication.html???
 
 cfn-*                             #"Helper scripts"
                                   #Version 2.0-26
