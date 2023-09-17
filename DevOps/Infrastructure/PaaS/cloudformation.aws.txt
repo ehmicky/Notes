@@ -281,7 +281,7 @@ https://REGION.console.aws
 
 
 AWS::CloudFormation::Stack        #RESTYPE of a STACK
-                                  #Child STACKs, created|updated along the parent
+                                  #Child STACKs, created|updated|rolledback along the parent
                                   #Allows re-using TEMPLATE parts
 STACK.ParentId                    #STACK2_MID
 STACK.RootId                      #STACK2_MID
@@ -417,42 +417,47 @@ RESOURCE.UpdatePolicy             #UPDATE_POLICY. Only for specific RESTYPEs, do
                                              \=+===============================+=/
 
 
-https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/cfn-console-add-tags.html??? (Stack failure options, Rollback configuration, Stack creation options)
-https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/using-cfn-updating-stacks-continueupdaterollback.html???
-https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/using-cfn-rollback-triggers.html???
-https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/stack-failure-options.html???
-
 ContinueUpdateRollback()          #Req: STACK
                                   #  - only StackName, RoleARN
                                   #  - only one with ResourcesToSkip
                                   #  - also ClientRequestToken
                                   #Res: empty
-                                  #When StackStatus 'UPDATE_ROLLBACK_FAILED', retry update rollback
+                                  #When StackStatus 'UPDATE_ROLLBACK_FAILED', cannot update STACK nor use CHANGESET
+                                  #This allows retrying update rollback
 RollbackStack()                   #Req: STACK
                                   #  - only StackName, RoleARN, RetainExceptOnCreate
                                   #  - also ClientRequestToken
                                   #Res: STACK
                                   #  - only StackId
-                                  #When StackStatus '*_FAILED', rollback to most recent state with '*_COMPLETE' StackStatus
+                                  #When StackStatus 'CREATE|UPDATE_FAILED', rollback to most recent state with '*_COMPLETE' StackStatus
                                   #  - if none, deletes it
 
 STACK.ResourcesToSkip             #'RESOURCE'_ARR to set ResourceStatus to 'UPDATE_COMPLETE' without retrying rolling back
                                   #Only if RESOURCE.ResourceStatus is 'UPDATE_FAILED' due to rollback failure
+                                  #Cannot be a nested STACK
+
+STACK.OnFailure                   #STR. On Create|UpdateStack():
+CHANGESET.OnStackFailure          #  - 'DO_NOTHING':
+                                  #      - on create: do nothing
+                                  #      - on update: only rollback errored RESOURCEs
+                                  #  - 'ROLLBACK' (def): rollback all RESOURCEs
+                                  #  - 'DELETE': delete the CHANGESET
+                                  #Rollback wait for whole create|update to complete first (as opposed to start on first failure)
+STACK|CHANGESET.DisableRollback   #BOOL (def: false). Same as OnFailure 'DO_NOTHING|ROLLBACK'
 
 STACK.TimeoutInMinutes            #NUM (in mins, def: none). CreateStack() timeout
 
-STACK.OnFailure                   #STR. On Create|UpdateStack():
-CHANGESET.OnStackFailure          #  - 'DO_NOTHING': do not rollback
-                                  #  - 'ROLLBACK' (def): rollback all RESOURCEs
-                                  #  - 'DELETE': only rollback errored RESOURCE
-STACK|CHANGESET.DisableRollback   #BOOL (def: false). Same as OnFailure 'DO_NOTHING|ROLLBACK'
-
-STACK|CHANGESET
- .RollbackConfiguration           #STACK_ROLLBACK. For all operations on the STACK, not just current one
-STACK_ROLLBACK
- .MonitoringTimeInMinutes         #NUM
+STACK|CHANGESET                   #STACK_ROLLBACK
+ .RollbackConfiguration           #For all operations on the STACK, not just current one
+STACK_ROLLBACK                    #NUM (def: 0, max: 3h). Wait for NUM minutes before:
+ .MonitoringTimeInMinutes         #  - CreateStack(): setting as complete
+                                  #  - UpdateStack(): starting cleanup phase
+                                  #During that time, can rollback with either:
+                                  #  - ROLLBACK_TRIGGER
+                                  #  - manual call to CancelUpdateStack()
 
 STACK_ROLLBACK.RollbackTriggers   #ROLLBACK_TRIGGER_ARR
+                                  #Rollback Create|UpdateStack() when specific CloudWatch ALARM.StateValue is 'ALARM'
                                   #Max 5 items
 ROLLBACK_TRIGGER.Type             #'AWS::CloudWatch::[Composite]Alarm'
 ROLLBACK_TRIGGER.Arn              #ALARM_ARN
@@ -465,19 +470,14 @@ ROLLBACK_TRIGGER.Arn              #ALARM_ARN
                                              \=+===============================+=/
 
 
-https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/using-cfn-protect-stacks.html???
-
 UpdateTerminationProtection()     #Req: STACK
                                   #  - only StackName, EnableTerminationProtection
                                   #Res: STACK
                                   #  - only StackId
 
-STACK.EnableTerminationProtection #BOOL
-
-STACK|CHANGESET
- .RetainExceptOnCreate            #BOOL (def: false)
-
-STACK.RetainResources             #'RESOURCE'_ARR
+STACK.EnableTerminationProtection #BOOL (def: false)
+                                  #Do not allow deleting STACK
+                                  #For nested STACKs, must be done on root STACK
 
 RESOURCE.DeletionPolicy           #STR. What to do with RESOURCE when either:
                                   #  - STACK is deleted
@@ -486,13 +486,18 @@ RESOURCE.DeletionPolicy           #STR. What to do with RESOURCE when either:
                                   #  - 'Delete' (def)
                                   #  - 'Retain': keep RESOURCE
                                   #  - 'RetainExceptOnCreate':
-                                  #     - like 'Delete' if OP that creates the RESOURCE is rollbacked
+                                  #     - like 'Delete' if RESOURCE was rollbacked during creation
                                   #     - 'Retain' otherwise
                                   #  - 'Snapshot'
                                   #     - delete but create a snapshot
                                   #     - only for specific RESTYPEs
                                   #        - mostly database cluster and EC2 VOLUME
                                   #        - documented in their respective docs
+STACK|CHANGESET
+ .RetainExceptOnCreate            #BOOL (def: false). Force RESOURCE.DeletionPolicy 'RetainExceptOnCreate'
+
+STACK.RetainResources             #'RESOURCE'_ARR ignored by DeleteStack()
+                                  #Meant for STACKs in StackState 'DELETE_FAILED' due to issue deleting those RESOURCEs
 
 
                                              /=+===============================+=\
