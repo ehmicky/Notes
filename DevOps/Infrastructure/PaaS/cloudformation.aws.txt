@@ -366,13 +366,25 @@ STACK_RESOURCE.ResourceStatus     #'STATUS_STATE'
 STACK_RESOURCE
  .ResourceStatusReason            #STR
 
-RESOURCE.Properties.RESPROP       #STR[_ARR], NUM or BOOL
-                                  #Usually same|similar as request payload of create|update ACTIONs of the RESTYPE
-
 RESOURCE.DependsOn                #'RESOURCE2'[_ARR]
                                   #Create RESOURCE2 before RESOURCE
                                   #When deleting RESOURCE2, delete RESOURCE first
                                   #By default, RESOURCEs are created|updated|deleted in parallel
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:          PROPERTIES           :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+RESOURCE.Properties.RESPROP       #STR[_ARR], NUM or BOOL
+                                  #Usually same|similar as request payload of create|update ACTIONs of the RESTYPE
+
+READ-ONLY ==>                     #Some RESPROPs are returned but cannot be created|updated
+WRITE-ONLY ==>                    #Some RESPROPs are not returned but can be created|updated
+CREATE-ONLY ==>                   #Some write-only RESPROPs can only be set at create-time
 
 
                                              /=+===============================+=\
@@ -421,6 +433,10 @@ REPLACEMENT ==>                   #Depending on RESOURCE.RESPROP, is done:
                                   #  - MinorInterruption: with an Update*() with side-effects, e.g. EC2 instance restarting
                                   #  - Replacement: with a Create*() then Delete*()
                                   #     - retry Delete*() 3 times
+                                  #     - often due to create-only RESPROP
+                                  #     - few RESPROPs require Delete*() before Create*() instead
+                                  #        - required when RESOURCE is a singleton
+                                  #        - but less safe
                                   #  - ReadOnly: cannot be updated, i.e. must recreate the STACK
 
 RESPROP_SPEC.UpdateType           #'Immutable|Mutable'. Whether update requires Replacement
@@ -1748,9 +1764,6 @@ custom-resource-helper            #Project bootstrapping a CUSTOM_RESOURCE's Lam
                                              \=+===============================+=/
 
 
-https://docs.aws.amazon.com/cloudformation-cli/latest/userguide/modules.html
-https://docs.aws.amazon.com/cloudformation-cli/latest/userguide/hooks.html
-
 ListTypes()                       #Req: ETYPE
                                   #  - only DeprecatedStatus, Type, Visibility, ProvisioningType
                                   #  - TypeName|Category|PublisherId -> Filters.TypeNamePrefix|Category|PublisherId
@@ -1764,9 +1777,9 @@ DescribeType()                    #Req: ETYPE
                                   #  - no TypeNameAlias, VersionId, Category, PublisherName, PublisherStatus
 
 ETYPE                             #Extension
-ETYPE.Arn                         #ETYPE_ARN. arn:aws:cloudformation:REGION:ACCOUNT_ID:type/ETYPE.Type/ETYPE
+ETYPE.Arn                         #ETYPE_ARN. arn:aws:cloudformation:REGION:ACCOUNT_ID:type/ETYPE_KIND/ETYPE
 ETYPE.TypeName                    #'ETYPE'. RESTYPE of ETYPE. Must be 'ORG::SERVICE::NAME'
-                                  #  - if MODULE: must append '::MODULE'
+                                  #If MODULE: must append '::MODULE'
                                   #ORG|SERVICE|NAME must be min 2 chars, max 64 chars, [[::alnum::]]
                                   #ORG cannot be Custom, Dev, AWS|AWZN|Amazon or Alexa|ASK
 ETYPE.TimeCreated                 #DATE
@@ -1777,7 +1790,7 @@ ETYPE.Description                 #STR. Max 1KB
 ETYPE.DocumentationUrl            #'URL' to documentation. Max 4KB
 ETYPE.SourceUrl                   #'URL' to source code. Max 4KB
 
-ETYPE.Type                        #Can be: 'RESOURCE', 'MODULE', 'HOOK'
+ETYPE.Type                        #'ETYPE_KIND'. Can be: 'RESOURCE', 'MODULE', 'HOOK'
 
 ETYPE.IsActivated                 #BOOL|null. Whether enabled
                                   #AWS managed ETYPEs are always enabled
@@ -1793,16 +1806,13 @@ ETYPE.Category                    #Can be:
                                   #      - public, enabled or not, not AWS managed
                                   #  - 'AWS_TYPES': public, enabled, AWS managed
 
-ETYPE.ExecutionRoleArn            #ROLE_ARN used when running|testing the ETYPE
+ETYPE.ExecutionRoleArn            #ROLE_ARN used when running|testing ETYPE
                                   #Must be assumable by Principal.Service:
                                   #  - resource|hooks: 'resources.cloudformation.amazonaws.com'
                                   #  - hooks: also 'hooks.cloudformation.amazonaws.com'
                                   #Must use COND_KEY SourceAccount ACCOUNT_ID, SourceArn ETYPE_ARN
                                   #Not needed for modules
-resource-role.yaml                #TEMPLATE defining the AWS::IAM::Role used by ETYPE, used by PublishType()
-                                  #Must define:
-                                  #  - TEMPLATE.Resources.ExecutionRole: for the ROLE
-                                  #  - TEMPLATE.Outputs.ExecutionRoleArn: for ROLE_ARN, using { Fn::GetAtt: ExecutionRole.Arn }
+resource-role.yaml                #STACK TEMPLATE with STACK OUTPUT ExecutionRoleArn ROLE_ARN, used by PublishType()
 
 ETYPE.LoggingConfig               #ETYPE_LOG. ETYPE logging
 ETYPE_LOG.LogGroupName            #CloudWatch 'LOG_GROUP'
@@ -1847,7 +1857,7 @@ ETYPE_PVERSION                    #Specific version of a private ETYPE
                                   #Enabling it is "registering"
                                   #WAIT (DescribeTypeRegistration()) TypeRegistrationComplete: when ETYPE_PVERSION.ProgressStatus COMPLETE
                                   #Max 50 per ETYPE
-ETYPE_PVERSION.TypeVersionArn     #ETYPE_PRVERSION_ARN. arn:aws:cloudformation:REGION:ACCOUNT_ID:type/ETYPE.Type/ETYPE/ETYPE_VERSION
+ETYPE_PVERSION.TypeVersionArn     #ETYPE_PRVERSION_ARN. arn:aws:cloudformation:REGION:ACCOUNT_ID:type/ETYPE_KIND/ETYPE/ETYPE_VERSION
                                   #Only with ProgressStatus 'COMPLETE'
 ETYPE_PVERSION.RegistrationToken  #ETYPE_PVERSION_MID
 ETYPE_PVERSION.Description        #STR
@@ -1865,8 +1875,7 @@ ETYPE.DefaultVersionId            #Default ETYPE.VersionId
 ETYPE.IsDefaultVersion            #BOOL
 
 cfn submit                        #Call RegisterType()
-                                  #Calls cfn validate|test
-                                  #Package|upload files
+                                  #Also calls cfn validate|test, then package|upload files
 --set-default                     #Call SetTypeDefaultVersion()
 --region
 --endpoint-url                    #Like cfn invoke
@@ -1898,20 +1907,18 @@ DescribePublisher()               #Req: PUBLISHER
                                   #Res: PUBLISHER
                                   #  - no AcceptTermsAndConditions, ConnectionArn
 
-PUBLISHING ==>                    #Publishing makes a private ETYPE_VERSION "public",
-                                  #i.e. available in any ACCOUNT, through CloudFormation registry
+PUBLISHING ==>                    #Make a private ETYPE_VERSION "public", i.e. available in any ACCOUNT, through CloudFormation registry
                                   #Only for current REGION
                                   #  - in order to target all REGIONs, should publish using a STACKSET,
                                   #    as opposed to manually calling the API
                                   #  - e.g. using RESTYPEs AWS::CloudFormation::Resource[Default]Version|PublicTypeVersion|Publisher
+
 PUBLISHER                         #Entity that published a public ETYPE on the CloudFormation registry
                                   #Only for "third-party", i.e. not AWS managed ETYPEs
-PUBLISHER.PublisherId             #PUBLISHER_MID
-                                  #With DescribePublisher(), def: one associated with current ACCOUNT
+PUBLISHER|[REQUIRED_]ETYPE        #PUBLISHER_MID
+ .PublisherId                     #With DescribePublisher(), def: one associated with current ACCOUNT
 ETYPE.PublisherName               #'PUBLISHER'. Taken from PublisherProfile
 PUBLISHER.PublisherStatus         #Always 'VERIFIED'
-
-[REQUIRED_]ETYPE.PublisherId      #PUBLISHER_MID
 
 PUBLISHER.PublisherProfile        #'URL' (http[s]) to PUBLISHER's main page
 PUBLISHER.IdentityProvider
@@ -1946,6 +1953,7 @@ DeactivateType()                  #Req: ETYPE
 ACTIVATION ==>                    #[De]ActivateType() sets ETYPE.IsActivated
                                   #When activated, public ETYPE creates a copy as a private ETYPE in current ACCOUNT|REGION,
                                   #which is the one being used.
+                                  #I.e. installs a public ETYPE
 
 [REQUIRED_]ETYPE.TypeNameAlias    #ETYPE.TypeName of the public's ETYPE's private copy in this ACCOUNT|REGION
                                   #Def: same as original public ETYPE
@@ -1955,12 +1963,12 @@ ETYPE.OriginalTypeArn             #ETYPE_ARN of the original public ETYPE
 
 ETYPE.PublicVersionNumber         #'X.Y.Z'. Current version used
                                   #With PublishType():
+                                  #  - version to publish instead
                                   #  - def: minor bump from LatestPublicVersion
                                   #  - initial def (required): 1.0.0
                                   #Only if ETYPE enabled
                                   #With AWS managed ETYPEs: always use latest public version
-ETYPE.LatestPublicVersion         #'X.Y.Z'. Latest version
-                                  #Only if ETYPE enabled
+ETYPE.LatestPublicVersion         #'X.Y.Z'. Latest PublicVersionNumber
 
 ETYPE.MajorVersion                #NUM (def: latest). Major version to enable
                                   #The latest minor version of that major version is used
@@ -1976,7 +1984,9 @@ ETYPE.AutoUpdate                  #BOOL (def: true). Automatically enable new mi
                                              \=+===============================+=/
 
 
-ETYPE.Schema                      #'ESCHEMA_JSON'. ETYPE.Type-specific
+ETYPE.Schema                      #'ESCHEMA_JSON'
+                                  #Declarative description of ETYPE
+                                  #ETYPE_KIND-specific
                                   #Max 16MB
 
 ESCHEMA.type
@@ -2005,7 +2015,7 @@ ESCHEMA_HANDLER|ESCHEMA_TAGGING   #Required 'PERMISSION'_ARR
 
 cfn validate                      #Validate ETYPE's SCHEMA against syntax errors
 
-cfn generate                      #Scaffolds ETYPE's HANDLERs
+cfn generate                      #Generate ETYPE's HANDLERs runtime code
                                   #Also creates contract tests
 
 cfn invoke HANDLER PATH           #Call an ETYPE's HANDLER
@@ -2054,18 +2064,20 @@ ETYPE_CONF.TypeArn|TypeName|Type  #Like ETYPE.*
 ESCHEMA.typeConfiguration         #ETYPE_CONF_SCHEMA
 ETYPE.ConfigurationSchema         #'ETYPE_CONF_SCHEMA_JSON'
                                   #Max 60KB
-ETYPE_CONF_SCHEMA                 #JSON_SCHEMA but:
+ETYPE_CONF_SCHEMA                 #Describe shape of ETYPE_CONF_DATA. Must describe each property
+                                  #JSON_SCHEMA but:
                                   #  - top-level must have only properties|additionalProperties|required, description, allOf|anyOf|oneOf
                                   #  - can have deprecatedProperties (like ESCHEMA)
-                                  #Must describe each property of ETYPE_CONF OBJ
                                   #VARs must be [[:alnum:]], max 64 chars
 
-ETYPE_CONF.Configuration          #'OBJ_JSON' (def: '{}')
+ETYPE_CONF.Configuration          #'ETYPE_CONF_DATA_JSON' (def: '{}'). Data used for configuration
                                   #Should avoid secrets
                                   #Max 200KB
 ETYPE_CONF.IsDefaultConfiguration #BOOL
 
-cfn test --typeconfig PATH        #PATH to ETYPE_CONF, as JSON
+HREQP_DATA.typeConfiguration      #ETYPE_CONF_DATA
+
+cfn test --typeconfig PATH        #PATH to ETYPE_CONF_DATA_JSON
                                   #Def: ~/.cfn-cli/typeConfiguration.json
 
 
@@ -2083,7 +2095,7 @@ TestType()                        #Req: ETYPE
                                   #  - Arn -> TypeVersionArn
 
 CONTRACT TESTS ==>                #Automated tests performed by AWS
-                                  #Depend on ETYPE.Type
+                                  #ETYPE_KIND-specific
                                   #Done on private ETYPEs before PublishType():
                                   #  - cannot PublishType() until ETYPE.TypeTestsStatus PASSED
 
@@ -2131,27 +2143,6 @@ inputs/inputs_NUM_invalid.json    #Same but for RESPROP values meant to fail
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:     EXTENSIONS TEST DEBUG     :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-TestEntrypoint                    #'FUNC' to use with `sam local invoke` to run contract tests locally
-                                  #Must first run `sam local start-lambda` and pass to `sam local invoke -d PORT`
-                                  #Must also pass request payload TEST_REQ as `--event PATH_TO_TEST_REQ.json`
-TEST_REQ.action                   #'HANDLER'
-TEST_REQ.request
- .logicalResourceIdentifier       #'RESOURCE'
-TEST_REQ.request
- .desiredResourceState            #RESPROPs OBJ
-TEST_REQ.request
- .clientRequestToken              #HANDLER_PROGRESS.ClientRequestToken
-TEST_REQ.credentials              #OBJ: accessKeyId, secretAccessKey, sessionToken
-TEST_REQ.callbackContext          #HANDLE_RES.CallbackContext
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
                                             )==:      EXTENSIONS TEST LOG      :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -2176,9 +2167,10 @@ ETYPE.LogDeliveryBucket           #'S3_BUCKET' with both HANDLER's and contract 
 
 
 EXTENSIONS RESOURCE ==>           #Like CUSTOM_RESOURCE, but more features
-                                  #TypeScript|Go|Python|Java
+                                  #Core AWS CloudFormation resources are actually resource ETYPEs
+                                  #  - can see their code (Java) in https://github.com/aws-cloudformation/aws-cloudformation-resource-provider-SERVICE
 
-ETYPE.ProvisioningType            #Which handlers are available, among:
+ETYPE.ProvisioningType            #Which write handlers are available, among:
                                   #  - 'NON_PROVISIONABLE': none
                                   #     - cannot create RESOURCE, import nor detect drift
                                   #  - 'IMMUTABLE': create|delete
@@ -2197,11 +2189,10 @@ ESCHEMA                           #Changes tracked in repository cloudformation-
 ESCHEMA.properties.RESPROP        #JSON_SCHEMA describing RESPROP
 
 RESPROP_VARR                      #'VARR' to RESPROP property, as JSON pointer
-ESCHEMA.readOnlyProperties        #'RESPROP_VARR'_ARR that cannot be created|updated but are returned
-ESCHEMA.writeOnlyProperties       #'RESPROP_VARR'_ARR that are not returned but can be created|updated
-ESCHEMA.createOnlyProperties      #'RESPROP_VARR'_ARR that are not returned|updated but can be created
-                                  #I.e. requires replacement
-ESCHEMA                           #'RESPROP_VARR'_ARR that can sometimes not be updated without a replacement
+ESCHEMA.readOnlyProperties        #'RESPROP_VARR'_ARR that are read-only
+ESCHEMA.writeOnlyProperties       #'RESPROP_VARR'_ARR that are write-only
+ESCHEMA.createOnlyProperties      #'RESPROP_VARR'_ARR that are create-only
+ESCHEMA                           #'RESPROP_VARR'_ARR that are create-only but only under specific conditions
  .conditionalCreateOnlyProperties #If update fails, should retry with a replacement instead
 ESCHEMA.nonPublicProperties       #'RESPROP_VARR'_ARR that are hidden
 ESCHEMA.nonPublicDefinitions      #Same but for JSON schema definitions
@@ -2217,9 +2208,22 @@ ESCHEMA.propertyTransform         #STR. JSONata expression describing how RESPRO
                                   #Def: use the input value
 
 ESCHEMA.replacementStrategy       #When replacing, whether should wait for creation to delete
-                                  #Either:
-                                  #  - 'create_then_delete' (def): safer
-                                  #  - 'delete_then_create': when resource is a singleton
+                                  #Either: 'create_then_delete' (def) or 'delete_then_create'
+
+ESCHEMA.resourceLink              #ESCHEMA_RLINK. Resource's main URI
+ESCHEMA_RLINK.templateUri         #HTTPS 'URI', either absolute, or relative to AWS console URI
+ESCHEMA_RLINK.mappings.VAR        #'RESPROP_VARR'. URI variables to insert as ${VAR} in templateUri
+                                  #VAR must be [[:alnum:]], max 64 chars
+                                  #Builtin: awsRegion
+ESCHEMA_RLINK.$comment            #STR. Description
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:   EXTENSIONS RESOURCE TAGS    :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
 
 ESCHEMA.tagging                   #ESCHEMA_TAGGING
 ESCHEMA_TAGGING.taggable          #BOOL (def: true). Whether can use TAGs
@@ -2229,12 +2233,9 @@ ESCHEMA_TAGGING
  .cloudFormationSystemTags        #BOOL (def: true). Whether support aws:cloudformation:* TAGs
 ESCHEMA_TAGGING.tagProperty       #'RESPROP_VARR' with TAGs (def: '/properties/Tags')
 
-ESCHEMA.resourceLink              #ESCHEMA_RLINK. Resource's main URI
-ESCHEMA_RLINK.templateUri         #HTTPS 'URI', either absolute, or relative to AWS console URI
-ESCHEMA_RLINK.mappings.VAR        #'RESPROP_VARR'. URI variables to insert as ${VAR} in templateUri
-                                  #VAR must be [[:alnum:]], max 64 chars
-                                  #Builtin: awsRegion
-ESCHEMA_RLINK.$comment            #STR. Description
+HREQP_DATA|HREQH.systemTags       #OBJ of aws:cloudformation:* TAGs
+HREQP_DATA.[previous]stackTags
+HREQH.desired|previousResourceTags#OBJ of other TAGs
 
 
                                              /=+===============================+=\
@@ -2255,195 +2256,227 @@ ESCHEMA_HANDLER.handlerSchema     #JSON_SCHEMA describing the items being return
 ESCHEMA_HANDLER.timeoutInMinutes  #NUM (def: 2h, min: 2m, max: 1.5d). HANDLER's timeout
                                   #For create|update|delete only. Always 30s for read|list
 
-HANDLER_REQ                       #With create|update: RESOURCE OBJ
-                                  #With read|delete: OBJ with only primaryIdentifier|additionalIdentifiers
-                                  #With list: none
 
-HANDLER_RES                       #Return value of HANDLERs. Also called `ProgressEvent`
-                                  #Frameworks call RecordHandlerProgress() under-the-hood
-HANDLER_RES.ResourceModel         #HANDLER_PROGRESS.ResourceModel
-HANDLER_RES.ResourceModels        #Same but as ARR, for list HANDLER
-HANDLER_RES.NextToken             #STR. Pagination token, for list HANDLER. null if no more
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:   EXTENSIONS RESOURCE LOGS    :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
 
-HANDLER_RES.OperationStatus       #HANDLER_PROGRESS.OperationStatus
-HANDLER_RES.HandlerErrorCode      #HANDLER_PROGRESS.ErrorCode
-HANDLER_RES.Message               #HANDLER_PROGRESS.StatusMessage
 
-HANDLER_RES.CallbackContext       #STR. Information meant to be passed in HANDLER_REQ of subsequent run
-                                  #Only if OperationStatus 'IN_PROGRESS'
-HANDLER_RES.CallbackDelaySeconds  #'NUM'. Call read HANDLER after NUM secs, when OperationStatus is now expected to be 'SUCCESS'
-                                  #Handled by frameworks
+AWS/CloudFormation/ETYPE/*        #CloudWatch METRICs published by ETYPE handlers
+                                  #ETYPE is /-separated instead of ::
+                                  #DVARs:
+                                  #  - DimensionKeyResourceType 'ETYPE'
+                                  #  - DimensionKeyActionType 'HANDLER' or 'ProviderLogDelivery' (S3|CloudWatch logs error)
+AWS/CloudFormation/ETYPE/
+ HandlerInvocationCount           #NUM of ETYPE handler calls
+AWS/CloudFormation/ETYPE/         #NUM of failed ETYPE handler calls
+ HandlerException                 #Has DVAR DimensionKeyExceptionType: HRES.HandlerErrorCode (def: ERROR.name)
+AWS/CloudFormation/ETYPE/
+ HandlerInvocationDuration        #NUM. ETYPE handler duration
+
+LOGGING ==>                       #Debug logs are sent to: console, S3, CloudWatch logs
+                                  #Debug logs of logging itself (S3, CloudWatch logs, METRICs) are only sent to console
+HREQP_DATA.providerLogGroupName   #'LOG_GROUP'
+S3 LOGGING ==>                    #BUCKET: 'LOG_GROUP-ACCOUNT_ID'
+                                  #OBJECT: 'STACK_MID/RESOURCE/YYYYMMDDTHHMMSSSSSZ-RANDOM.log'
+                                  #Requires PACTIONs:
+                                  #  - s3:CreateBucket (unless already exists)
+                                  #  - s3:PutObject|GetObject|ListBucket
+CLOUDWATCH LOGS ==>               #LOG_GROUP: 'LOG_GROUP'
+                                  #LOG_STREAM: 'STACK_MID/RESOURCE'
+                                  #Requires PACTIONs:
+                                  #  - logs:CreateLogGroup|CreateLogStream (unless already exists)
+                                  #  - logs:PutLogEvents|DescribeLogGroups|DescribeLogStreams
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:   EXTENSIONS RESOURCE CODE    :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+cfn init                          #Scaffold new resource ETYPE's files: SCHEMA, handlers, tests, build logic
+--force                           #Allow overwriting
+
+PLUGIN ==>                        #TypeScript|Python|Go|Java binary used by `cfn init` for language-specific code generation
+
+FRAMEWORK ==>                     #TypeScript|Python|Go|Java client library to use in HANDLERs
+
+LAMBDA FUNCTIONS ==>              #A resource ETYPE is mostly a Lambda FUNC
+                                  #Its required files are packaged by `cfn submit`
+                                  #Each framework has its own convention on how the files should be setup
+
+PRODUCTION VS TEST ==>            #2 Lambda FUNCs are exported:
+                                  #  - production: HREQP input
+                                  #  - debugging: HREQD input
+                                  #     - use empty ETYPE_CONF_DATA
+                                  #     - no remote logging|METRICs
+                                  #Both return HRES (also called "progress event")
+
+TestEntrypoint                    #Debugging Lambda 'FUNC'
+                                  #Can be executed with `sam local invoke -d PORT --event PATH_TO_HREQD.json`
+                                  #Must run `sam local start-lambda` first
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:  EXTENSIONS RESOURCE REQUEST  :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+HREQP|HREQD.action                #'HANDLER'
+HREQP.resourceType                #'ETYPE'
+HREQP.resourceTypeVersion         #'ETYPE_VERSION'
+
+HREQP.stackId                     #STACK_MID
+HREQP|HREQH.awsAccountId          #ACCOUNT_ID
+HREQP|HREQD|HREQH.region          #'REGION'
+HREQH.awsPartition                #'PARTITION'
+
+HREQP.requestData                 #HREQP_DATA
+HREQP_DATA.logicalResourceId
+HREQH.logicalResourceIdentifier   #'RESOURCE'
+HREQP_DATA                        #RESPROPs OBJ
+ .[previous]resourceProperties    #With create|update: full
+HREQH                             #With read|delete: only primaryIdentifier|additionalIdentifiers
+ .previous|desiredResourceState   #With list: empty
+
+HREQP_DATA.callerCredentials      #CREDENTIALS used by ETYPE's main logic, i.e. HFUNC
+HREQD.credentials
+HREQP_DATA.providerCredentials    #CREDENTIALS used by ETYPE's framework logic, i.e. METRICs and logging (S3, CloudWatch logs)
+CREDENTIALS                       #OBJ: accessKeyId STR, secretAccessKey STR, sessionToken STR
+
+HREQP.requestContext              #HREQP_CONTEXT
+HREQP_CONTEXT.invocation          #NUM
+HREQP_CONTEXT
+ .cloudWatchEventsRuleName        #STR
+HREQP_CONTEXT
+ .cloudWatchEventsTargetId        #STR
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==: EXTENSIONS RESOURCE RESPONSE  :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+HRES                              #Return value of HANDLERs. Also called `ProgressEvent`
+HRES.ResourceModel                #'OBJ_JSON' of RESOURCE
+HRES.ResourceModels               #Same but as ARR, for list HANDLER
+
+HRES.OperationStatus              #'PENDING', 'IN_PROGRESS' or 'SUCCESS|FAILED'
+HRES.HandlerErrorCode             #STR. Required if CurrentOperationStatus 'FAILED', optional if 'IN_PROGRESS'
+                                  #One of: AccessDenied AlreadyExists GeneralServiceException InternalFailure
+                                  # InvalidCredentials InvalidRequest NetworkFailure NotFound NotStabilized
+                                  # NotUpdatable ResourceConflict ServiceInternalError ServiceLimitExceeded Throttling
+                                  #See online doc for description
+HRES.Message                      #STR explaining OperationStatus
+
+HREQP|HREQH.nextToken             #STR. Pagination token, for list HANDLER. null if no more
+HRES.NextToken                    #Pagination is handled by cfn-cli
+
+HREQP[_CONTEXT]|HREQD
+ .callbackContext                 #STR. Information meant to be passed to HREQP|HREQD of subsequent run
+HRES.CallbackContext              #Only if OperationStatus 'IN_PROGRESS'
+HRES.CallbackDelaySeconds         #'NUM'. Meant when HANDLER is a long operation
+                                  #Make cfn-cli call `read` HANDLER when OperationStatus is now expected to be 'SUCCESS'
                                   #This final state is called "desired-state stabilization"
-                                  #For create|update, must also satisfy "runtime-state stabilization"
+                                  #For create|update, must also only be SUCCESS when satisfy "runtime-state stabilization"
                                   #  - i.e. finished create|update and user can interact with RESOURCE
                                   #  - also create-only RESPROPs cannot be updated anymore, etc.
                                   #Can be 0 (def) to indicate none.
 
 RecordHandlerProgress()           #Req: HANDLER_PROGRESS
                                   #Res: empty
-HANDLER_PROGRESS                  #Response of a HANDLER
-                                  #I.e. HANDLER indicating to the API that it ended
-HANDLER_PROGRESS.ResourceModel    #'OBJ|ARR_JSON' of RESOURCE
+HREQP.responseEndpoint            #'URL' of RecordHandlerProgress()
+
+HANDLER_PROGRESS                  #Communicates HRES to API
+                                  #Done by cfn-cli, i.e. should not be used directly
+HANDLER_PROGRESS.ResourceModel
+ |[Current]OperationStatus
+ |ErrorCode|StatusMessage         #Like HRES.*
+HREQP.bearerToken
+HREQH.clientRequestToken
+HANDLER_PROGRESS.BearerToken      #STR. Token to connect request|response
 HANDLER_PROGRESS
- .[Current]OperationStatus        #'PENDING', 'IN_PROGRESS' or 'SUCCESS|FAILED'
-HANDLER_PROGRESS.ErrorCode        #STR. Required if CurrentOperationStatus 'FAILED', optional if 'IN_PROGRESS'
-                                  #One of: AccessDenied AlreadyExists GeneralServiceException InternalFailure
-                                  # InvalidCredentials InvalidRequest NetworkFailure NotFound NotStabilized
-                                  # NotUpdatable ResourceConflict ServiceInternalError ServiceLimitExceeded Throttling
-                                  #See online doc for description
-HANDLER_PROGRESS.StatusMessage    #STR explaining OperationStatus
-HANDLER_PROGRESS
- .ClientRequestToken              #STR. Random UUID
-HANDLER_PROGRESS.BearerToken      #STR. Authentication token passed to Lambda FUNC when calling HANDLER, and forwarded by frameworks
+ .ClientRequestToken              #STR. Idempotence
 
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:  EXTENSIONS RESOURCE PLUGIN   :==(
+                                            )==:EXTENSIONS RESOURCE TYPESCRIPT :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
-PLUGIN ==>                        #TypeScript|Python|Go|Java binary that scaffold a resource ETYPE project,
-                                  #including the usage of the framework
-
-FRAMEWORKS ==>                    #TypeScript|Python|Go|Java client library to use in HANDLERs
-
 cloudformation-cli-typescript
- -plugin                          #Version 1.0.2 (plugin), 1.0.4 (lib|framework)
+ -plugin                          #Version 1.0.2 (plugin), 1.0.4 (framework|lib)
 
-AWS/CloudFormation/ETYPE/*        #CloudWatch METRICs published by ETYPE handlers
-                                  #ETYPE is /-separated instead of ::
-                                  #DVARs:
-                                  #  - DimensionKeyResourceType 'ETYPE'
-                                  #  - DimensionKeyActionType 'HANDLER' or 'ProviderLogDelivery' (S3 logging error)
-AWS/CloudFormation/ETYPE/
- HandlerInvocationCount           #NUM of ETYPE handler calls
-AWS/CloudFormation/ETYPE/         #NUM of failed ETYPE handler calls
- HandlerException                 #Has DVAR DimensionKeyExceptionType: HANDLER_RES.HandlerErrorCode (def: ERROR.name)
-AWS/CloudFormation/ETYPE/
- HandlerInvocationDuration        #NUM. ETYPE handler duration
+EXPORT                            #Main file must export:
+                                  #  - resource BASE_RESOURCE
+                                  #  - entrypoint|testEntrypoint BASE_RESOURCE.*
+BASE_RESOURCE.entrypoint          #Lambda FUNC's production entrypoint
+ (HREQP, NCONTEXT)->>HRESPD       #NCONTEXT is Lambda context (see its doc)
+BASE_RESOURCE.testEntrypoint
+ (HREQD, NCONTEXT)->>HRESPD       #Lambda FUNC's debugging entrypoint
 
-this.platformLoggerProxy: new LoggerProxy()
-  - publisher: LambdaLogPublisher(console)
-  - used in debug logs of logging itself: METRICs, S3, CloudWatch logs
-this.loggerProxy: new LoggerProxy()
-  - sent to:
-     - LambdaLogPublisher(console)
-     - S3:
-        - BUCKET: 'LOG_GROUP-ACCOUNT_ID'
-        - OBJECT: 'STACK_MID/RESOURCE/YYYYMMDDTHHMMSSSSSZ-RANDOM.log'
-        - requires PACTIONs: s3:CreateBucket (unless already exists), s3:PutObject|GetObject|ListBucket
-     - CloudWatch logs:
-        - LOG_GROUP: 'LOG_GROUP'
-        - LOG_STREAM: 'STACK_MID/RESOURCE'
-        - requires PACTIONs: logs:CreateLogGroup|CreateLogStream (unless already exists), logs:PutLogEvents|DescribeLogGroups|DescribeLogStreams
-  - used in other debug logs
-  - passed to HFUNC
-  - replace bearerToken|credentials with '<REDACTED>'
-
-new BaseResource(...RARGS)        #Base class for RESOURCEs
-                                  #Main file must export BASE_RESOURCE as `resource`
-RARGS[0]                          #ETYPE.TypeName
-RARGS[1]                          #BaseModel of RESOURCE
-RARGS[2]                          #workerPool??? Can be null
-RARGS[4]                          #BaseModel of ETYPE_CONF
-
-BASE_RESOURCE.entrypoint          #Main file must export it
- (HREQ, NCONTEXT)->>PROGRESS_EVENT#NCONTEXT is Lambda context
-BASE_RESOURCE.testEntrypoint      #Main file must export it
- (HREQT,NCONTEXT)->>PROGRESS_EVENT#Same but use HREQT instead of HREQ
-                                  #  - does not pass ETYPE_CONF to HFUNC
-                                  #Also, no remote logging|metrics
-
-HREQ                              #HREQ sent to Lambda FUNC
-HREQQ                             #Transformation of HREQ, passed to HANDLER
-HREQT.request                     #HREQQ
-
-HREQ|HREQT.action                 #'HANDLER'
-HREQ.resourceType                 #'ETYPE'
-HREQ.resourceTypeVersion          #'ETYPE_VERSION'
-HREQ.stackId                      #STACK_MID
-HREQ|HREQQ.awsAccountId           #ACCOUNT_ID
-HREQ|HREQQ|HREQT.region           #'REGION'
-HREQQ.awsPartition                #'PARTITION'
-HREQ.responseEndpoint             #'URL' of RecordHandlerProgress()
-HREQ.bearerToken
-HREQQ.clientRequestToken          #HANDLER_PROGRESS.BearerToken
-HREQ|HREQQ.nextToken              #HANDLER_RES.NextToken
-
-HREQ.requestContext               #HREQ_CONTEXT
-HREQ_CONTEXT.invocation           #NUM
-HREQ[_CONTEXT]|HREQT
- .callbackContext                 #HANDLER_RES.CallbackContext (def: {})
-HREQ_CONTEXT
- .cloudWatchEventsRuleName        #STR
-HREQ_CONTEXT
- .cloudWatchEventsTargetId        #STR
-
-HREQ.requestData                  #HREQ_DATA
-HREQ_DATA.logicalResourceId
-HREQQ.logicalResourceIdentifier   #RESOURCE
-HREQ_DATA
- .[previous]resourceProperties
-HREQQ
- .previous|desiredResourceState   #RESPROPs OBJ (def: {})
-HREQ_DATA.typeConfiguration       #ETYPE_CONF OBJ
-HREQ_DATA.providerLogGroupName    #'LOG_GROUP'
-HREQ_DATA|HREQQ.systemTags        #OBJ of aws:cloudformation:* TAGs
-HREQ_DATA.[previous]stackTags
-HREQQ.desired|previousResourceTags#OBJ of other TAGs
-HREQ_DATA.callerCredentials       #OBJ: accessKeyId STR, secretAccessKey STR, sessionToken STR
-                                  #Used by requester
-HREQT.credentials
-HREQ_DATA.providerCredentials     #Same but to use with RecordHandlerProgress()
-
+BaseResource                      #Base class for RESOURCEs
+new BaseResource(...RARGS)        #
+RARGS[0]                          #'ETYPE'
+RARGS[1]                          #RESOURCE's BaseModel
+RARGS[2]                          #Used to create pools of AWS CLIENTs
+                                  #Not documented yet, i.e. must set to null
 RARGS[3]                          #OBJ with key 'HANDLER', value HFUNC
-@handlerEvent('HANDLER')          #Alternative, by decorating BASE_RESOURCE method that is a HFUNC
-HFUNC                             #FUNC(...HARGS)->>PROGRESS_EVENT
-HARGS[0]                          #SESSION_PROXY
-HARGS[1]                          #HREQQ
-HARGS[2]                          #HREQ.callbackContext
-HARGS[3]                          #LOGGER_PROXY???
-HARGS[4]                          #HREQ_DATA.typeConfiguration
+                                  #Alternatively, can decorate BASE_RESOURCE's methods that are HFUNC with @handlerEvent('HANDLER')
+RARGS[4]                          #ETYPE_CONF_DATA's BaseModel
 
-SESSION_PROXY.client
- ('SERVICE'[, COPTS])->CLIENT     #AWS JavaScript client
+HFUNC                             #HANDLER's method
+                                  #Is FUNC(...HARGS)->>HRESPD
+HARGS[0]                          #HCLIENTS
+HARGS[1]                          #HREQH. Simplification of HREQP
+                                  #If debugging entrypoint, should pass it as HREQD.request HREQH
+HARGS[2]                          #HREQP|HREQD.callbackContext
+HARGS[3]                          #HLOGGER
+HARGS[4]                          #ETYPE_CONF_DATA
+
+HCLIENTS.client
+ ('SERVICE'[, COPTS])->CLIENT     #AWS JavaScript CLIENT (see its doc)
 CLIENT.makeRequestPromise
  ('ACTION'[,PARAMS[,HEADERS_OBJ]])
- ->>RESP                          #Calls ACTION
+ ->>RESP                          #Calls ACTION, but taking into account RARGS[2] pooling
 
-new ProgressEvent([OBJ])          #PROGRESS_EVENT. Child of BaseModel
-PROGRESS_EVENT.resourceModel      #HANDLER_RES.ResourceModel, as BASE_MODEL
-PROGRESS_EVENT.resourceModels     #HANDLER_RES.ResourceModels, as BASE_MODEL_ARR
-PROGRESS_EVENT.nextToken          #HANDLER_RES.NextToken
-PROGRESS_EVENT.status             #HANDLER_RES.OperationStatus
-PROGRESS_EVENT.errorCode          #HANDLER_RES.HandlerErrorCode
-PROGRESS_EVENT.message            #HANDLER_RES.Message
-PROGRESS_EVENT.callbackContext    #HANDLER_RES.CallbackContext, as OBJ
-PROGRESS_EVENT
- .callbackDelaySeconds            #HANDLER_RES.CallbackDelaySeconds
+HLOGGER.log(STR[, VAL...])        #Debug logging
+                                  #VAL...: like Node util.format()
 
+new ProgressEvent([OBJ])          #HRESPD. Child of BaseModel
+HRESPD.*                          #HRES.* except:
+                                  #  - camelCase
+                                  #  - resourceModel[s] use BASE_MODEL
+                                  #  - callbackContext is OBJ
+ProgressEvent.success
+ ([[BASE_MODEL[, OBJ]]])->HRESPD  #With: ResourceModel BASE_MODEL, OperationStatus SUCCESS, callbackContext OBJ
 ProgressEvent.progress
- ([BASE_MODEL[, OBJ]])
- ->PROGRESS_EVENT                 #ResourceModel BASE_MODEL, OperationStatus IN_PROGRESS, callbackContext OBJ
-ProgressEvent.success(...)
- ->PROGRESS_EVENT                 #Same but OperationStatus SUCCESS
-ProgressEvent.failed(STR, STR2)
- ->PROGRESS_EVENT                 #OperationStatus FAILED, HandlerErrorCode STR, Message STR2
-ProgressEvent.builder()->BUILDER #
-BUILDER.PROP(VAL)->BUILDER        #Sets PROGRESS_EVENT.PROP = VAL
-BUILDER.build()->PROGRESS_EVENT   #
+ ([BASE_MODEL[, OBJ]])->HRESPD    #With: ResourceModel BASE_MODEL, OperationStatus IN_PROGRESS, callbackContext OBJ
+ProgressEvent.failed
+ (STR, STR2)->HRESPD              #With: OperationStatus FAILED, HandlerErrorCode STR, Message STR2
+ProgressEvent.builder()->BUILDER
+BUILDER.PROP(VAL)->BUILDER
+BUILDER.build()->HRESPD           #With: PROP VAL, ...
 
 new BaseModel([OBJ])              #Base class for many OBJs
                                   #OBJ.* is assigned
-BASE_MODEL.toJSON()->RESOURCE_OBJ
-BASE_MODEL.serialize
- ([BOOL])->RESOURCE_OBJ           #If BOOL true (def), removes null values
+                                  #Mostly meant to convert from|to JavaScript|JSON
+BASE_MODEL.toJSON()->OBJ          #
+BASE_MODEL.serialize([BOOL])->OBJ #If BOOL true (def), removes null values
 BaseModel.deserialize
- (RESOURCE_OBJ)->BASE_MODEL       #
+ (OBJ)->BASE_MODEL                #
 BaseModel.TYPE_NAME
-BASE_MODEL.getTypeName()->STR     #ETYPE.TypeName
+BASE_MODEL.getTypeName()->STR     #'ETYPE'
 
 
                                              /=+===============================+=\
@@ -2453,7 +2486,7 @@ BASE_MODEL.getTypeName()->STR     #ETYPE.TypeName
                                              \=+===============================+=/
 
 
-https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/modules.html???
+https://docs.aws.amazon.com/cloudformation-cli/latest/userguide/modules.html
 https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/template-macros.html#template-macros-author???: part mentioning modules
 
 EXTENSIONS MODULE ==>             #Language agnostic
@@ -2484,6 +2517,7 @@ MODULE.TypeHierarchy              #STR
                                              \=+===============================+=/
 
 
+https://docs.aws.amazon.com/cloudformation-cli/latest/userguide/hooks.html
 https://docs.aws.amazon.com/cloudformation-cli/latest/userguide/resource-type-register.html#resource-type-register-submit: "To enable activated hooks"
 
 EXTENSIONS HOOK ==>               #Run validation logic during STACK create|update
@@ -2547,9 +2581,6 @@ cfn ...                           #CLI for CloudFormation extensions
                                   #Installed using pip
                                   #Version 0.2.33
 --verbose|-v                      #
-
-cfn init                          #Scaffold new ETYPE: SCHEMA, handlers, tests, build logic
---force                           #Allow overwriting
 
 
                                              /=+===============================+=\
