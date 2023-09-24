@@ -27,6 +27,8 @@ TO DOCUMENT:
 
 VERSION ==>                       #2023-09-15
 
+S3_URL                            #'s3|http[s]://' to a S3 OBJECT
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -959,8 +961,7 @@ GetStackPolicy()                  #Req: STACK
 
 STACK.StackPolicyBody             #'POLICY_DOC', as STR
                                   #Max 16KB
-STACK.StackPolicyURL              #Same but using an HTTP 'URL'
-                                  #Must be to a S3 OBJECT, in same REGION
+STACK.StackPolicyURL              #Same but using a S3_URL, in same REGION
                                   #URL max 1KB, contents max 16KB
 STACK                             #Same but only during the ongoing update
  .StackPolicyDuringUpdateBody|URL #Meant to update RESOURCEs otherwise not allowed by STACK policy
@@ -1051,9 +1052,6 @@ cfn-signal HANDLE_URL             #Calls HANDLE_URL
                                              \=+===============================+=/
 
 
-https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/what-is-cfnstacksets.html???
-  - except: Detecting unmanaged changes in stack sets
-
 CreateStackSet()                  #Req: SET
                                   #  - also ClientRequestToken
                                   #  - only one with StackId
@@ -1095,18 +1093,21 @@ DeleteStackSet()                  #Req: SET
                                   #  - also OP: CallAs
                                   #Res: empty
 
-SET                               #STACK provisioned across multiple ACCOUNTs|REGIONs ("target")
+SET                               #STACK provisioned across multiple ACCOUNTs|REGIONs ("target"|INSTANCE)
+                                  #Each INSTANCE has own copy of the STACK
                                   #ACCOUNT operating the SET is "administrator"
 SET.StackSetARN                   #SET_ARN. arn:aws:cloudformation:ACCOUNT_ID:REGION:stackset/SET_MID
 SET|OP|STACK_TEMPLATE.StackSetId  #SET_MID
 SET|OP|STACK_TEMPLATE.StackSetName#'SET'. Max 128 chars
 SET.Description                   #STR. Max 1KB
 
-SET.StackId                       #STACK_ARN to create
-SET.StackIds                      #STACK_MID_ARR to import
+SET.StackId                       #STACK_ARN to import, converting into INSTANCE
+                                  #Def: no import, i.e. create new STACK
+                                  #Administrator ACCOUNT must be allowed to PACTION cloudformation:GetTemplate
+SET.StackIds                      #Same with STACK_MID_ARR
                                   #Max 10 items
-SET.StackIdsUrl                   #Same but as 'URL' to a S3 OBJECT with a list of STACK_MIDs
-                                  #Max 5GB
+SET.StackIdsUrl                   #Same but as S3_URL with a list of STACK_MIDs
+                                  #Max 5KB for URL, 200 items for list
 
 SET.Status                        #'ACTIVE' or 'DELETED'
 
@@ -1131,21 +1132,22 @@ DeactivateOrganizationsAccess()   #Req: empty
                                   #Res: empty
                                   #Sets ORG_ACCESS.Status
 
-SET|OP.AdministrationRoleARN      #ROLE_ARN used by SET, in administrator ACCOUNT
+SET|OP.AdministrationRoleARN      #"Administration ROLE": ROLE_ARN used by SET, in administrator ACCOUNT
                                   #Def: 'AWSCloudFormationStackSetAdministrationRole'
                                   #  - if not using default, current PRINCIPAL must be allowed to iam:PassRole|GetRole to ROLE_ARN
                                   #Must be assumable by Principal.Service 'cloudformation.amazonaws.com'
                                   #  - should set COND_KEY SourceAccount ACCOUNT_ID, SourceArn SET_ARN
-                                  #Must be allowed to sts:AssumeRole to ExecutionRoleName ROLE
-SET|OP.ExecutionRoleName          #'ROLE' used by INSTANCEs|STACKs, i.e. STACK.RoleARN, in each target ACCOUNT
+                                  #Must be allowed to sts:AssumeRole to execution ROLE
+SET|OP.ExecutionRoleName          #"Execution ROLE": 'ROLE' used by INSTANCEs|STACKs, i.e. STACK.RoleARN, in each target ACCOUNT
                                   #Def: 'AWSCloudFormationStackSetExecutionRole'
                                   #Must be assumable by Principal.AWS
-                                  #  - ADMINISTRATOR_ACCOUNT: if using default AdministrationRoleARN
+                                  #  - ADMINISTRATOR_ACCOUNT: if using default SET.AdministrationRoleARN
                                   #  - ROLE_ARN: otherwise
 
 SET.PermissionModel               #Whether to:
                                   #  - allow ORG_ACCESS and OP.CallAs
                                   #  - forbid setting SET.AdministrationRoleARN|ExecutionRoleName
+                                  #  - forbid using nested STACKs
                                   #Can be 'SELF_MANAGED' (false, def) or 'SERVICE_MANAGED' (true)
 ORG_ACCESS.Status                 #'ENABLED', 'DISABLED' or 'DISABLED_PERMANENTLY'
                                   #If 'ENABLED', creates the following SERVICE_LINKED_ROLEs:
@@ -1172,7 +1174,7 @@ INSTANCE|OP.DeploymentTargets     #DEPLOYMENT_TARGET_ARR. ACCOUNT_IDs of the INS
                                   #Management ACCOUNT is always excluded
                                   #Only with PermissionModel 'SERVICE_MANAGED'
 DEPLOYMENT_TARGET.Accounts        #ACCOUNT_ID_ARR
-DEPLOYMENT_TARGET.AccountsUrl     #Like Accounts but as a 's3|http[s]://...' URL to a S3 OBJECT with the list
+DEPLOYMENT_TARGET.AccountsUrl     #Like Accounts but as a S3_URL with the list
                                   #Max 5KB
 DEPLOYMENT_TARGET                 #STR_ARR. ORG root|unit IDs.
  .OrganizationalUnitIds           #Necessary for create|delete OPs (as opposed to update)
@@ -1242,6 +1244,8 @@ DeleteStackInstances()            #Req: INSTANCE
 
 INSTANCE                          #Target STACK in a given ACCOUNT|REGION for a given SET
                                   #Cannot delete a SET if it still has some INSTANCEs
+                                  #All INSTANCEs of a given SET must always have same TEMPLATE
+                                  #  - however can have different PARAM values
 INSTANCE.StackSetId               #SET_MID
 INSTANCE.StackSetName             #'SET'
 INSTANCE.StackId                  #STACK_MID
@@ -1314,6 +1318,17 @@ OP.StatusReason                   #STR
 OP.StatusDetails
  .FailedStackInstancesCount       #NUM of INSTANCEs that failed
 
+OP_RES.Status                     #One of:
+                                  #  - PENDING: like OP.Status QUEUED
+                                  #  - RUNNING, SUCCEEDED, FAILED: like OP.Status
+                                  #  - CANCELLED: like OP.Status STOPPED, or when canceled due to SET_PREF.FailureToleranceCount
+OP_RES.StatusReason               #STR
+
+OP.Filters                        #SET_FILTER_ARR
+                                  #Max 1 item
+SET_FILTER.Name                   #Always 'OPERATION_RESULT_STATUS', i.e. filter by OP_RES.Status
+SET_FILTER.Values                 #STR_ARR
+
 OP|INSTANCE.OperationPreferences  #SET_PREF
 SET_PREF.FailureToleranceCount    #NUM (def: 0). If >NUM INSTANCEs fail per REGION, cancel OP (for all REGIONs).
 SET_PREF.MaxConcurrentCount       #Max NUM of INSTANCEs to operate on at once
@@ -1322,26 +1337,15 @@ SET_PREF.MaxConcurrentCount       #Max NUM of INSTANCEs to operate on at once
 SET_PREF
  .FailureTolerancePercentage
  |MaxConcurrentPercentage         #NUM. Same but as percentage
-SET_PREF.RegionOrder              #'REGION'_ARR. Order of INSTANCEs based on their REGION, for a given OP
-                                  #Def: no order
-SET_PREF.RegionConcurrencyType    #'SEQUENTIAL' or 'PARALLEL'
+SET_PREF.RegionConcurrencyType    #'SEQUENTIAL' (def) or 'PARALLEL'
                                   #Whether to run one REGION at a time or not, for a given OP
+SET_PREF.RegionOrder              #'REGION'_ARR. Order of REGIONs, when RegionConcurrencyType 'SEQUENTIAL'
+                                  #Def: no order
 
 SET.ManagedExecution.Active       #BOOL (def: false). Whether to run multiple OPs concurrently, except when depend on each other
 
 OP.RetainStacks                   #BOOL (def: false). Do not delete the STACK when removing its INSTANCE
                                   #Only with Action 'DELETE'
-
-OP.Filters                        #SET_FILTER_ARR
-                                  #Max 1 item
-SET_FILTER.Name                   #Always 'OPERATION_RESULT_STATUS', i.e. filter by OP_RES.Status
-SET_FILTER.Values                 #STR_ARR
-
-OP_RES.Status                     #One of:
-                                  #  - PENDING: like OP.Status QUEUED
-                                  #  - RUNNING, SUCCEEDED, FAILED: like OP.Status
-                                  #  - CANCELLED: like OP.Status STOPPED, or when canceled dur to SET_PREF.FailureToleranceCount
-OP_RES.StatusReason               #STR
 
 
                                              /=+===============================+=\
@@ -1354,12 +1358,20 @@ OP_RES.StatusReason               #STR
 OP_RES.AccountGateResult          #GATE_RES
                                   #Use a Lambda FUNC to validate that an INSTANCE can run a given OP
                                   #Meant to ensure it is in a stable state (e.g. no ongoing CloudWatch ALARMs) before deploying to it
-GATE_RES.Status                   #'SUCCEEDED', 'FAILED' or 'SKIPPED'
+GATE_RES.Status                   #Can be:
+                                  #  - 'SUCCEEDED'
+                                  #  - 'FAILED'
+                                  #  - 'SKIPPED' due to one of:
+                                  #     - no Lambda FUNC
+                                  #     - missing permissions
+                                  #     - OP is noop
 GATE_RES.StatusReason             #STR
 
-AWSCloudFormationStackSet
- AccountGate                      #Must be Lambda 'FUNC' name
-                                  #SET.ExecutionRoleName ROLE and target ACCOUNT must be allowed to lambda:InvokeFunction
+AWSCloudFormationStackSet         #Must be Lambda 'FUNC' name
+ AccountGate                      #SET's execution ROLE and target ACCOUNT must be allowed to lambda:InvokeFunction
+
+REQ                               #Could not find documentation for it
+RES.Status                        #'SUCCEEDED|FAIL'
 
 
                                              /=+===============================+=\
@@ -1369,33 +1381,39 @@ AWSCloudFormationStackSet
                                              \=+===============================+=/
 
 
-https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/using-cfn-stack-drift.html???
-https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/stacksets-drift.html???
-
 DetectStackSetDrift()             #Req: SET
                                   #  - only StackSetName
                                   #  - also OP: OperationId, CallAs, OperationPreferences
                                   #Res: OP
                                   #  - only OperationId
 
-SET|OP
- .StackSetDriftDetectionDetails   #SET_DETECTION
-SET_DETECTION                     #One of:
- .DriftDetectionStatus            #  - IN_PROGRESS, STOPPED
-                                  #  - PARTIAL_SUCCESS, COMPLETED, FAILED
+SET|OP                            #SET_DRIFT
+ .StackSetDriftDetectionDetails   #Current|last drift, i.e. difference between TEMPLATE|PARAMVALs and actual provisioning, for a SET
+                                  #Not all RESTYPEs can have their drift detected (see online doc for list)
+                                  #Not performed on nested STACKs
+                                  #RESPROP default values are considered different from undefined
+                                  #Requires PACTIONs cloudformation:DetectStackSet|Stack|StackResourceDrift|BatchDescribeTypeConfigurations
+SET_DRIFT.DriftDetectionStatus    #One of:
+                                  #  - IN_PROGRESS
+                                  #  - STOPPED
+                                  #  - COMPLETED: failed on no INSTANCE
+                                  #  - PARTIAL_SUCCESS: failed on some INSTANCEs but < SET_PREF.FailureToleranceCount
+                                  #  - FAILED: failed on some INSTANCEs and >= SET_PREF.FailureToleranceCount
 SET[_DETECTION]
  .LastDriftCheckTimestamp         #DATE
-SET[_DETECTION].DriftStatus       #One of 'IN_SYNC', 'DRIFTED', 'NOT_CHECKED'
-SET_DETECTION
- .TotalStackInstancesCount        #NUM
-SET_DETECTION
- .InProgressStackInstancesCount   #NUM
-SET_DETECTION
- .FailedStackInstancesCount       #NUM
-SET_DETECTION
- .InSyncStackInstancesCount       #NUM
-SET_DETECTION
- .DriftedStackInstancesCount      #NUM
+SET[_DETECTION].DriftStatus       #One of:
+                                  #  - 'IN_SYNC': no drift
+                                  #  - 'DRIFTED': drift in >=1 INSTANCE
+                                  #  - 'NOT_CHECKED': no drift detection yet, or RESTYPE does not support it
+SET_DRIFT.TotalStackInstancesCount#NUM of INSTANCEs
+SET_DRIFT
+ .InSyncStackInstancesCount       #NUM of INSTANCEs with DriftStatus 'IN_SYNC'
+SET_DRIFT
+ .DriftedStackInstancesCount      #NUM of INSTANCEs with DriftStatus 'DRIFTED'
+SET_DRIFT
+ .InProgressStackInstancesCount   #NUM of INSTANCEs with ongoing drift detection
+SET_DRIFT
+ .FailedStackInstancesCount       #NUM of INSTANCEs with failed drift detection
 
 
                                              /=+===============================+=\
@@ -1416,16 +1434,21 @@ DescribeStackDrift                #Req: STACK_DRIFT
 
 STACK.DriftInformation            #STACK_DRIFT
                                   #  - only Timestamp -> LastCheckTimestamp, StackDriftStatus
+                                  #Like SET_DRIFT but for a single STACK
+                                  #Requires PACTIONs cloudformation:DetectStack|StackResourceDrift|BatchDescribeTypeConfigurations
 STACK_DRIFT.Timestamp
 INSTANCE.LastDriftCheckTimestamp  #DATE
-STACK_DRIFT.StackDriftStatus
-INSTANCE.DriftStatus              #One of 'IN_SYNC', 'DRIFTED', 'NOT_CHECKED'
-STACK_DRIFT
- .DriftedStackResourceCount       #NUM|null
+STACK_DRIFT.StackDriftStatus      #One of:
+INSTANCE.DriftStatus              #  - 'IN_SYNC': no drift
+                                  #  - 'DRIFTED': drift in >=1 RESOURCEs
+                                  #  - 'NOT_CHECKED': no drift detection yet, or RESTYPE does not support it
+STACK_DRIFT                       #NUM of RESOURCEs with drift
+ .DriftedStackResourceCount       #null if no drift detection yet
 
 STACK_DRIFT.StackDriftDetectionId #STACK_DRIFT_MID
-STACK_DRIFT.StackId               #Like STACK.*
-STACK_DRIFT.LogicalResourceIds    #'RESOURCE'_ARR
+STACK_DRIFT.StackId               #STACK_MID
+STACK_DRIFT.LogicalResourceIds    #'RESOURCE'_ARR (def: all)
+                                  #Max 200 items
 
 STACK_DRIFT.DetectionStatus       #One of 'DETECTION_IN_PROGRESS', 'DETECTION_COMPLETE', 'DETECTION_FAILED'
 STACK_DRIFT.DetectionStatusReason #STR
@@ -1455,30 +1478,36 @@ ListStackInstanceResourceDrifts() #Req: RESOURCE_DRIFT
 
 STACK_RESOURCE.DriftInformation   #RESOURCE_DRIFT
                                   #  - only Timestamp -> LastCheckTimestamp, StackResourceDriftStatus
-                                  #Not all RESTYPEs can have their drift detected (see online doc for list)
+                                  #Like STACK_DRIFT, but for a single RESOURCE
+                                  #Requires PACTIONs cloudformation:DetectStackResourceDrift|BatchDescribeTypeConfigurations
 RESOURCE_DRIFT.Timestamp          #DATE
-RESOURCE_DRIFT
- .StackResourceDriftStatus        #One of 'IN_SYNC', 'MODIFIED', 'DELETED', 'NOT_CHECKED'
+RESOURCE_DRIFT                    #One of:
+ .StackResourceDriftStatus        #  - 'IN_SYNC': no drift
+                                  #  - 'DELETED': drift (deleted RESOURCE)
+                                  #  - 'MODIFIED': drift (others)
 
 RESOURCE_DRIFT.LogicalResourceId
  |PhysicalResourceId|ResourceType
  |StackId|ModuleInfo              #Like STACK_RESOURCE.*
-RESOURCE_DRIFT
- .PhysicalResourceIdContext       #RESID_CONTEXT_ARR
-RESID_CONTEXT.Key                 #STR
-RESID_CONTEXT.Value               #STR
+RESOURCE_DRIFT                    #RESID_CONTEXT_ARR. Equivalent to RESOURCE.PhysicalResourceId
+ .PhysicalResourceIdContext       #Max 5 items
+RESID_CONTEXT.Key                 #'RESPROP'
+RESID_CONTEXT.Value               #'VAL'
 
-RESOURCE_DRIFT.ActualProperties   #'OBJ_JSON'
+RESOURCE_DRIFT.ActualProperties   #'OBJ_JSON' of RESPROPs actually used
                                   #Not with StackResourceDriftStatus 'DELETED'
-RESOURCE_DRIFT.ExpectedProperties #'OBJ_JSON'
+RESOURCE_DRIFT.ExpectedProperties #'OBJ_JSON' of RESPROPs defined in TEMPLATE
                                   #Not with StackResourceDriftStatus 'DELETED'
                                   #Same as ActualProperties unless StackResourceDriftStatus 'MODIFIED'
 RESOURCE_DRIFT.PropertyDifferences#RESPROP_DIFF_ARR
                                   #Only with StackResourceDriftStatus 'MODIFIED'
+RESPROP_DIFF.PropertyPath         #'VARR'
 RESPROP_DIFF.ActualValue          #'VAL'
 RESPROP_DIFF.ExpectedValue        #'VAL'
-RESPROP_DIFF.DifferenceType       #'ADD', 'REMOVE' or 'NOT_EQUAL'
-RESPROP_DIFF.PropertyPath         #STR
+RESPROP_DIFF.DifferenceType       #One of:
+                                  #  - 'ADD': to an ARR value
+                                  #  - 'REMOVE': removed RESPROP
+                                  #  - 'NOT_EQUAL': others
 
 
                                              /=+===============================+=\
