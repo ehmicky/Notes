@@ -10,12 +10,6 @@ TO DOCUMENT:
   - Best practices: https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/best-practices.html
   - Troubleshooting: https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/troubleshooting.html
   - Quotas: https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/cloudformation-limits.html
-  - aws cloudformation package: https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/using-cfn-cli-package.html
-  - cfn-cli:
-     - https://docs.aws.amazon.com/cloudformation-cli/latest/userguide/what-is-cloudformation-cli.html
-        - including hooks
-     - https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/resource-type-schemas.html
-     - https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_RecordHandlerProgress.html
   - look at SERVICEs I know at: https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-template-resource-type-ref.html
      - including https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/CHAP_TemplateQuickRef.html
   - Guard:
@@ -573,6 +567,34 @@ CHANGESET.ExecutionStatus         #STR among:
                                   #  - EXECUTE_IN_PROGRESS
                                   #  - EXECUTE_COMPLETE, EXECUTE_FAILED
                                   #  - OBSOLETE: STACK was updated by another ACTION|CHANGESET2, making current one obsolete
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:       CHANGESET DEPLOY        :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+deploy                            #CLI command to do CreateChangeSet(), then ExecuteChangeSet() directly
+
+--no-execute-changeset            #Only CreateChangeSet(), not ExecuteChangeSet()
+--no-fail-on-empty-changeset      #Do not set non-0 exit code if CHANGESET is empty
+
+--stack-name
+--capabilities
+--role-arn
+--notification-arns
+--tags                            #Like CreateChangeSet()
+--parameter-overrides             #Like CreateChangeSet(), except as { PARAM: 'VAL', ... } and cannot add|remove PARAMs
+
+--template-file                   #'PATH' to TEMPLATE
+
+--s3-bucket                       #S3 'BUCKET' to use CHANGESET.TemplateURL instead
+                                  #Automatically calls S3 PutObject()
+--s3-prefix                       #STR. S3 OBJECT prefix
+--force-upload                    #Override existing S3 OBJECT
+--kms-key-id                      #KMS_KEY_ID to use with S3 OBJECT
 
 
                                              /=+===============================+=\
@@ -1534,8 +1556,8 @@ Custom::CUSTOM                    #RESTYPE of a specific CUSTOM_RESOURCE
 AWS::CloudFormation
  ::CustomResource                 #RESTYPE of any CUSTOM_RESOURCE
 
-RESPROP ServiceToken              #SNS_TOPIC_ARN|LAMBDA_FUNC_ARN
-                                  #Called on RESOURCE create|update|delete, with REQ_PAYLOAD
+RESPROP                           #SNS_TOPIC_ARN|LAMBDA_FUNC_ARN
+ CUSTOM_RESOURCE.ServiceToken     #Called on RESOURCE create|update|delete, with REQ_PAYLOAD
                                   #Must be in same REGION
 REQ_PAYLOAD.RequestType           #'Create|Update|Delete'
 REQ_PAYLOAD.ResourceProperties    #OBJ of RESPROPs. Can be anything
@@ -1574,25 +1596,78 @@ CFN_RESPONSE.send(REQ_PAYLOAD,
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:           TRANSFORM           :==(
+                                            )==:         MACRO CREATE          :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
-https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/template-macros.html???
-Capabilities CAPABILITY_AUTO_EXPAND (see https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_CreateStack.html)
+AWS::CloudFormation::Macro        #Lambda FUNC transforming a TEMPLATE
+                                  #Available for use by any STACK in current ACCOUNT
+                                  #Declared|managed by the MACRO provider, not users
+                                  #Performed before RFUNCs
+                                  #  - i.e. response can include RFUNCs (except Fn::ImportValue)
+                                  #  - but cannot include other MACROs
+                                  #Cannot be used with PermissionModel 'SERVICE_MANAGED'
+                                  #Following are the RESPROPs
+MACRO.Name                        #'MACRO'
+MACRO.Description                 #STR
 
-https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/cloudformation-limits.html#stacksets-macros???
+MACRO.LogGroupName                #CloudWatch 'LOG_GROUP'
+                                  #Sends error logs
+MACRO.LogRoleARN                  #ROLE_ARN
+
+MACRO.FunctionName                #Lambda FUNC_ARN performing the macro
+                                  #Users must have permissions to execute it
+                                  #  - i.e. if user is other ACCOUNT, must setup cross-account permission with Lambda
+REQ.transformId                   #'MACRO'
+REQ.region                        #'REGION'
+REQ.accountId                     #ACCOUNT_ID
+REQ|RES.requestId                 #REQ_ID
+REQ.templateParameterValues       #TEMPLATE.Parameters
+REQ.params                        #{ Fn::Transform }'s OBJ.Parameters
+                                  #Cannot include other RFUNCs
+                                  #Not defined with TEMPLATE.Transform
+
+REQ|RES.fragment                  #OBJ. With:
+                                  #  - TEMPLATE.Transform: whole TEMPLATE
+                                  #  - { Fn::Transform }: sibling nodes, excluding Fn::Transform itself
+RES.status                        #'success|failure'
+RES.errorMessage                  #'ERROR'
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:           MACRO USE           :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+TEMPLATE.Transform                #'MACRO'_ARR to apply to whole TEMPLATE
+STACK_TEMPLATE.DeclaredTransforms #Evaluated in order, and after any Fn::Transform
+
+{ Fn::Transform: OBJ }            #Apply MACRO to part of TEMPLATE
+OBJ.Name                          #'MACRO'
+OBJ.Parameters                    #OBJ2
+
+STACK_TEMPLATE.StagesAvailable    #STR_ARR among:
+                                  #  - 'Original': before MACRO
+                                  #  - 'Processed': after MACRO
+
+Capabilities                      #Required when using MACROs and either:
+ CAPABILITY_AUTO_EXPAND           #  - updating with UpdateStack(), as opposed to ExecuteChangeSet()
+                                  #  - using nested STACKs (in which case UpdateStack() must be used)
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:        MACRO TRANSFORM        :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
 https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/transform-reference.html???
-https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/transform-section-structure.html???
-https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/using-cfn-cli-deploy.html???
 
-{ Fn::Transform??? }              #https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/intrinsic-function-reference-transform.html
-
-TEMPLATE.Transform
-STACK_TEMPLATE.DeclaredTransforms #STR_ARR
-
-STACK_TEMPLATE.StagesAvailable    #STR_ARR among 'Original', 'Processed'
+TRANSFORM ==>                     #AWS managed MACROs
 
 AWS::LanguageExtensions           #Allows using inside !Ref|!GetAtt: !Ref !Base64 !FindInMap !If !Join !Sub !ToJsonString
 
@@ -1605,6 +1680,11 @@ AWS::LanguageExtensions           #Allows using inside !Ref|!GetAtt: !Ref !Base6
 
 
 https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/registry.html???
+cfn-cli:
+  - https://docs.aws.amazon.com/cloudformation-cli/latest/userguide/what-is-cloudformation-cli.html
+     - including hooks
+  - https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/resource-type-schemas.html
+  - https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_RecordHandlerProgress.html
 
 ActivateType()                    #Req: ETYPE
                                   #  - only Arn -> PublicTypeArn, TypeName, TypeNameAlias, AutoUpdate,
@@ -1831,6 +1911,7 @@ PUBLISHER.AcceptTermsAndConditions#BOOL (def: false)
 
 
 https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/modules.html???
+https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/template-macros.html#template-macros-author???: part mentioning modules
 
 STACK_RESOURCE.ModuleInfo         #MODULE_INFO
 MODULE_INFO.LogicalIdHierarchy    #STR
