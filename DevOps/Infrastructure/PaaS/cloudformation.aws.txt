@@ -276,7 +276,8 @@ STACK|CHANGESET.RoleARN           #ROLE_ARN used for ACTIONs performed on by the
                                   #Def: STS TEMP_TOKEN (i.e. based on current PRINCIPAL)
 
 STACK|CHANGESET.Tags              #TAG_PAIRS
-aws:cloudformation:*              #TAGs always on STACK. Also on the STACK's RESOURCEs, but only for specific RESTYPEs
+aws:cloudformation:*              #TAGs always on STACK
+                                  #Also on the STACK's RESOURCEs, but only for specific RESTYPEs
 aws:cloudformation:stack-id       #STACK_MID
 aws:cloudformation:stack-name     #'STACK'
 aws:cloudformation:logical-id     #'RESOURCE'
@@ -1746,7 +1747,7 @@ RES_PAYLOAD.NoEcho                #BOOL (def: false). Like PARAM.* but for RES_P
                                   #Not if delete. Not if Status 'FAILED'
 
 LAMBDA ==>                        #REQ is REQ_PAYLOAD. No RES
-cfn-response                      #Module. Present only when FUNCTION was bundled as NEW_FUNC_CODE.ZipFile (not S3)
+cfn-response                      #Node module. Present only when FUNCTION was bundled as NEW_FUNC_CODE.ZipFile (not S3)
 CFN_RESPONSE.send(REQ_PAYLOAD,
  CONTEXT, RES_PAYLOAD.Status,     #Call REQ_PAYLOAD.ResponseURL
  RES_PAYLOAD.Data                 #Def PhysicalResourceId: 'LOG_STREAM' (CONTEXT.logStreamName)
@@ -1779,7 +1780,7 @@ DescribeType()                    #Req: ETYPE
 ETYPE                             #Extension
 ETYPE.Arn                         #ETYPE_ARN. arn:aws:cloudformation:REGION:ACCOUNT_ID:type/ETYPE_KIND/ETYPE
 ETYPE.TypeName                    #'ETYPE'. RESTYPE of ETYPE. Must be 'ORG::SERVICE::NAME'
-                                  #If MODULE: must append '::MODULE'
+                                  #If MODULE: must append '::MODULE' (as is)
                                   #ORG|SERVICE|NAME must be min 2 chars, max 64 chars, [[::alnum::]]
                                   #ORG cannot be Custom, Dev, AWS|AWZN|Amazon or Alexa|ASK
 ETYPE.TimeCreated                 #DATE
@@ -1811,7 +1812,7 @@ ETYPE.ExecutionRoleArn            #ROLE_ARN used when running|testing ETYPE
                                   #  - resource|hooks: 'resources.cloudformation.amazonaws.com'
                                   #  - hooks: also 'hooks.cloudformation.amazonaws.com'
                                   #Must use COND_KEY SourceAccount ACCOUNT_ID, SourceArn ETYPE_ARN
-                                  #Not needed for modules
+                                  #Not needed for MODULEs
 resource-role.yaml                #STACK TEMPLATE with STACK OUTPUT ExecutionRoleArn ROLE_ARN, used by PublishType()
 
 ETYPE.LoggingConfig               #ETYPE_LOG. ETYPE logging
@@ -1987,6 +1988,7 @@ ETYPE.AutoUpdate                  #BOOL (def: true). Automatically enable new mi
 ETYPE.Schema                      #'ESCHEMA_JSON'
                                   #Declarative description of ETYPE
                                   #ETYPE_KIND-specific
+                                  #Located in root directory, named `schema.json`
                                   #Max 16MB
 
 ESCHEMA.type
@@ -2013,7 +2015,11 @@ ESCHEMA_HANDLER|ESCHEMA_TAGGING   #Required 'PERMISSION'_ARR
  .permissions                     #PERMISSION can be either PACTION, or custom ones
                                   #Used to scaffold IAM POLICYs
 
+cfn init                          #Scaffold new ETYPE's files: SCHEMA, handlers, tests, build logic
+--force                           #Allow overwriting
+
 cfn validate                      #Validate ETYPE's SCHEMA against syntax errors
+                                  #With MODULEs, also generates SCHEMA
 
 cfn generate                      #Generate ETYPE's HANDLERs runtime code
                                   #Also creates contract tests
@@ -2054,7 +2060,7 @@ ETYPE_CONF_ERROR
  .TypeConfigurationIdentifier     #ETYPE_CONF. Same shape as BatchDescribeTypeConfigurations() request
 
 ETYPE_CONF                        #Configuration passed to an ETYPE, for this ACCOUNT|REGION
-                                  #Not with modules
+                                  #Not with MODULEs
 ETYPE_CONF.Arn                    #ETYPE_CONF_ARN. arn:aws:cloudformation:REGION:ACCOUNT_ID:type-configuration/ETYPE_CONF
 ETYPE_CONF.Alias                  #'ETYPE_CONF'. Must be [[:alnum:]], max 256 chars
 ETYPE_CONF.LastUpdated            #DATE|null
@@ -2298,9 +2304,6 @@ CLOUDWATCH LOGS ==>               #LOG_GROUP: 'LOG_GROUP'
                                              \=+===============================+=/
 
 
-cfn init                          #Scaffold new resource ETYPE's files: SCHEMA, handlers, tests, build logic
---force                           #Allow overwriting
-
 PLUGIN ==>                        #TypeScript|Python|Go|Java binary used by `cfn init` for language-specific code generation
 
 FRAMEWORK ==>                     #TypeScript|Python|Go|Java client library to use in HANDLERs
@@ -2481,19 +2484,66 @@ BASE_MODEL.getTypeName()->STR     #'ETYPE'
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:       EXTENSIONS MODULE       :==(
+                                            )==:  EXTENSIONS MODULE TEMPLATE   :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
-https://docs.aws.amazon.com/cloudformation-cli/latest/userguide/modules.html
-https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/template-macros.html#template-macros-author???: part mentioning modules
+EXTENSIONS MODULE ==>             #Similar to AWS::Include, but more features
+                                  #I.e. meant for group of RESOURCEs
+                                  #Can contain other MODULEs (max 3 depth levels)
 
-EXTENSIONS MODULE ==>             #Language agnostic
+fragments/FILE.json               #TEMPLATE_FRAGMENT, i.e. TEMPLATE declaring the MODULE
+                                  #Must define TEMPLATE.Resources
+                                  #Should not have sibling file. FILE is usually named `sample`
 
-ESCHEMA.properties.*              #JSON_SCHEMA
-ESCHEMA.properties.Resource       #JSON_SCHEMA
-ESCHEMA.properties.Parameters     #JSON_SCHEMA
+MACRO ==>                         #Works like a MACRO, i.e. expands to its child RESOURCEs during TEMPLATE processing
+                                  #Since MACRO cannot include other MACROs:
+                                  #  - MACROs cannot include MODULEs
+                                  #  - MODULEs cannot include MACROs
+                                  #When using SET|STACK|CHANGESET.UsePreviousTemplate, reverting to post-processed TEMPLATE, i.e. without MODULE
+
+SELF-CONTAINED ==>                #Must be self-contained, i.e. isolate TEMPLATE_FRAGMENT from PARENT_TEMPLATE, except for MODULE parameters|outputs
+                                  #MODULE cannot use:
+                                  #  - nested STACK|SET
+                                  #  (if public MODULE)
+                                  #  - CUSTOM_RESOURCE
+                                  #  (but its RESOURCEs can)
+                                  #  - TAGs
+                                  #  - RESOURCE.CreationPolicy STR, RESOURCE.UpdatePolicy STR, RESOURCE.UpdateReplacePolicy 'Snapshot'
+
+MODULE PARAMETERS ==>             #Defined as TEMPLATE_FRAGMENT.Parameters
+                                  #Passed as RESOURCE.Properties in PARENT_TEMPLATE (like RESPROPs)
+
+MODULE OUTPUTS ==>                #TEMPLATE_FRAGMENT.Outputs become STACK OUTPUTs in PARENT_TEMPLATE
+                                  #  - namespaced as 'MODULE_RESOURCE.OUTPUT'
+                                  #But cannot use EXPORT and { Fn::ImportValue: 'EXPORT' }
+                                  #How to GetAtt???
+
+RESOURCE.Metadata                 #The following must be specified if RESTYPE is not AWS managed, i.e. must be enabled
+ETYPE.RequiredActivatedTypes      #REQUIRED_ETYPE_ARR. ETYPEs of all RESOURCEs not AWS managed
+RESOURCE.Metadata.OriginalTypeName#'RESTYPE'
+RESOURCE.Metadata.PublisherId
+RESOURCE.Metadata
+ .RegionalPublisherId.REGION      #PUBLISHER_MID
+RESOURCE.Metadata
+ .SupportMajorVersions
+REQUIRED_ETYPE
+ .SupportedMajorVersions          #NUM_ARR. Allowed major versions
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:   EXTENSIONS MODULE SCHEMA    :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+ESCHEMA.properties
+ .Resources.RESOURCE              #JSON_SCHEMA. TEMPLATE.Resources
+
+ESCHEMA.properties
+ .Parameters.RESPROP              #JSON_SCHEMA. MODULE parameters
 
 ESCHEMA.handlers.resolve          #ESCHEMA_HANDLER
 
@@ -2501,13 +2551,22 @@ ESCHEMA_HANDLER.timeoutInMinutes
 ESCHEMA.replacementStrategy       #Like resource ETYPE
 ESCHEMA.moduleLink                #Like ESCHEMA.resourceLink
 
-ETYPE.RequiredActivatedTypes      #REQUIRED_ETYPE_ARR
-REQUIRED_ETYPE
- .SupportedMajorVersions          #NUM_ARR
 
-STACK_RESOURCE.ModuleInfo         #MODULE
-MODULE.LogicalIdHierarchy         #STR
-MODULE.TypeHierarchy              #STR
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:    EXTENSIONS MODULE USAGE    :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+USING MODULE ==>                  #Used like a normal RESOURCE
+
+MODULE_RESOURCE[.]RESOURCE        #Must be used instead of 'RESOURCE' when it is inside a MODULE
+MODULE_RESOURCE                   #MODULE's LogicalResourceId
+
+STACK_RESOURCE.ModuleInfo         #Parent MODULE that contained this STACK_RESOURCE
+MODULE.LogicalIdHierarchy         #'MODULE_RESOURCE/...'
+MODULE.TypeHierarchy              #'MODULE_RESTYPE/...'
 
 
                                              /=+===============================+=\
