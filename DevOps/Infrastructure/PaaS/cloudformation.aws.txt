@@ -276,6 +276,10 @@ STACK|CHANGESET.RoleARN           #ROLE_ARN used for ACTIONs performed on by the
                                   #Def: STS TEMP_TOKEN (i.e. based on current PRINCIPAL)
 
 STACK|CHANGESET.Tags              #TAG_PAIRS
+aws:cloudformation:*              #TAGs always on STACK. Also on the STACK's RESOURCEs, but only for specific RESTYPEs
+aws:cloudformation:stack-id       #STACK_MID
+aws:cloudformation:stack-name     #'STACK'
+aws:cloudformation:logical-id     #'RESOURCE'
 
 https://REGION.console.aws
  .amazon.com/cloudformation/home
@@ -1744,12 +1748,8 @@ custom-resource-helper            #Project bootstrapping a CUSTOM_RESOURCE's Lam
                                              \=+===============================+=/
 
 
-https://docs.aws.amazon.com/cloudformation-cli/latest/userguide/resource-types.html
-https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/resource-type-schemas.html
-https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_RecordHandlerProgress.html
 https://docs.aws.amazon.com/cloudformation-cli/latest/userguide/modules.html
 https://docs.aws.amazon.com/cloudformation-cli/latest/userguide/hooks.html
-https://github.com/aws-cloudformation/cloudformation-resource-schema
 
 ListTypes()                       #Req: ETYPE
                                   #  - only DeprecatedStatus, Type, Visibility, ProvisioningType
@@ -1799,9 +1799,14 @@ ETYPE.ExecutionRoleArn            #ROLE_ARN used when running|testing the ETYPE
                                   #  - hooks: also 'hooks.cloudformation.amazonaws.com'
                                   #Must use COND_KEY SourceAccount ACCOUNT_ID, SourceArn ETYPE_ARN
                                   #Not needed for modules
+resource-role.yaml                #TEMPLATE defining the AWS::IAM::Role used by ETYPE, used by PublishType()
+                                  #Must define:
+                                  #  - TEMPLATE.Resources.ExecutionRole: for the ROLE
+                                  #  - TEMPLATE.Outputs.ExecutionRoleArn: for ROLE_ARN, using { Fn::GetAtt: ExecutionRole.Arn }
 
-ETYPE.LoggingConfig               #ETYPE_LOG. Log ETYPE's errors
+ETYPE.LoggingConfig               #ETYPE_LOG. ETYPE logging
 ETYPE_LOG.LogGroupName            #CloudWatch 'LOG_GROUP'
+                                  #Def: '/ETYPE-stack-ResourceHandler-RANDOM'
 ETYPE_LOG.LogRoleArn              #ROLE_ARN
 
 AwsCommunity::SERVICE::...        #Third-party ETYPEs available in registry
@@ -1868,6 +1873,9 @@ cfn submit                        #Call RegisterType()
 --no-role
 --role-arn                        #Like cfn test
 --dry-run                         #
+
+ETYPE.SchemaHandlerPackage        #S3_BUCKET_URL with all the code packaged by `cfn submit`
+                                  #Max 4KB
 
 
                                              /=+===============================+=\
@@ -1971,25 +1979,46 @@ ETYPE.AutoUpdate                  #BOOL (def: true). Automatically enable new mi
 ETYPE.Schema                      #'ESCHEMA_JSON'. ETYPE.Type-specific
                                   #Max 16MB
 
-ETYPE.SchemaHandlerPackage        #S3_BUCKET_URL with runtime code
-                                  #Only with private ETYPEs
-                                  #Max 4KB
+ESCHEMA.type
+ESCHEMA.typeName
+ESCHEMA.description
+ESCHEMA.documentationUrl
+ESCHEMA.sourceUrl                 #ETYPE.*
+
+ESCHEMA.$schema|$id|$comment|title
+ |definitions|required|allOf|anyOf
+ |oneOf                           #Like JSON schema v7
+JSON_SCHEMA                       #Like JSON schema v7 except:
+                                  #  - nested OBJs must use $ref + definitions
+                                  #     - can refer to RESTYPEs using https://schema.cloudformation.REGION.amazonaws.com/aws-SERVICE-RESOURCE.json
+                                  #  - no dynamic props: additionalProperties always false, no additionalItems|propertyNames
+                                  #  - no if|then|else|not
+                                  #  - no readOnly|writeOnly|contentMediaType|contentEncoding
+                                  #  - enum|const requires type
+                                  #  - cannot use both ESCHEMA.properties and ESCHEMA.patternProperties
+JSON_SCHEMA.insertionOrder        #BOOL (def: true). Whether ARR is ordered or not
+JSON_SCHEMA.arrayType             #Whether ARR items are primitive types ('Standard', def) or OBJs ('AttributeList')
+
+ESCHEMA_HANDLER|ESCHEMA_TAGGING   #Required 'PERMISSION'_ARR
+ .permissions                     #PERMISSION can be either PACTION, or custom ones
+                                  #Used to scaffold IAM POLICYs
 
 cfn validate                      #Validate ETYPE's SCHEMA against syntax errors
 
-cfn invoke HANDLER PATH           #Call an ETYPE's HANDLER (CREATE|READ|UPDATE|DELETE|LIST)
+cfn generate                      #Scaffolds ETYPE's HANDLERs
+                                  #Also creates contract tests
+
+cfn invoke HANDLER PATH           #Call an ETYPE's HANDLER
                                   #PATH is request as JSON
 --function-name                   #Lambda 'FUNC' (def: 'TypeFunction')
 --region                          #'REGION' (def: 'us-east-1')
 --endpoint                        #Server URL (def: 'http://127.0.0.1:3001')
 --max-reinvoke                    #NUM of retries (def: unlim)
 
-cfn generate                      #Build ETYPE's runtime code
-
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:   EXTENSIONS CONFIGURATION    :==(
+                                            )==:       EXTENSIONS CONFIG       :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
@@ -2015,14 +2044,21 @@ ETYPE_CONF_ERROR
  .TypeConfigurationIdentifier     #ETYPE_CONF. Same shape as BatchDescribeTypeConfigurations() request
 
 ETYPE_CONF                        #Configuration passed to an ETYPE, for this ACCOUNT|REGION
+                                  #Not with modules
 ETYPE_CONF.Arn                    #ETYPE_CONF_ARN. arn:aws:cloudformation:REGION:ACCOUNT_ID:type-configuration/ETYPE_CONF
 ETYPE_CONF.Alias                  #'ETYPE_CONF'. Must be [[:alnum:]], max 256 chars
 ETYPE_CONF.LastUpdated            #DATE|null
 
 ETYPE_CONF.TypeArn|TypeName|Type  #Like ETYPE.*
 
-ETYPE.ConfigurationSchema         #'JSON'
+ESCHEMA.typeConfiguration         #ETYPE_CONF_SCHEMA
+ETYPE.ConfigurationSchema         #'ETYPE_CONF_SCHEMA_JSON'
                                   #Max 60KB
+ETYPE_CONF_SCHEMA                 #JSON_SCHEMA but:
+                                  #  - top-level must have only properties|additionalProperties|required, description, allOf|anyOf|oneOf
+                                  #  - can have deprecatedProperties (like ESCHEMA)
+                                  #Must describe each property of ETYPE_CONF OBJ
+                                  #VARs must be [[:alnum:]], max 64 chars
 
 ETYPE_CONF.Configuration          #'OBJ_JSON' (def: '{}')
                                   #Should avoid secrets
@@ -2035,7 +2071,7 @@ cfn test --typeconfig PATH        #PATH to ETYPE_CONF, as JSON
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:        EXTENSIONS TEST        :==(
+                                            )==:      EXTENSIONS TEST API      :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
@@ -2046,7 +2082,7 @@ TestType()                        #Req: ETYPE
                                   #Res: ETYPE
                                   #  - Arn -> TypeVersionArn
 
-TESTS ==>                         #Automated tests performed by AWS
+CONTRACT TESTS ==>                #Automated tests performed by AWS
                                   #Depend on ETYPE.Type
                                   #Done on private ETYPEs before PublishType():
                                   #  - cannot PublishType() until ETYPE.TypeTestsStatus PASSED
@@ -2057,22 +2093,84 @@ ETYPE.TypeTestsStatus             #STR among:
                                   #  - PASSED, FAILED
 ETYPE.TypeTestsStatusDescription  #STR. Max 1KB
 
-ETYPE.LogDeliveryBucket           #'S3_BUCKET' with logs
 
-cfn test                          #Run ETYPE's tests
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:      EXTENSIONS TEST CLI      :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+cfn test                          #Run ETYPE's contract tests
+                                  #Must first run `sam local start-lambda`
+                                  #Uses AWS SAM under the hood
 --function-name                   #Lambda 'FUNC' (def: 'TestEntrypoint')
 --region
 --endpoint                        #Like cfn invoke
 --role-arn                        #ROLE_ARN (def: current)
+                                  #To log to S3, must:
+                                  #  - be allowed s3:PutObject and kms:Encrypt|Decrypt|ReEncrypt*|GenerateDataKey*|DescribeKey
+                                  #  - be assumable by both 'cloudformation.amazonaws.com' and 'resources.cloudformation.amazonaws.com'
+                                  #Def: automatically created as 'CloudFormationManagedUplo-LogAndMetricsDeliveryRol-RANDOM'
 --enforce-timeout                 #NUM (in secs, def: 1m)
                                   #Always twice for CREATE|UPDATE|DELETE (as opposed to READ|LIST)
 -- -k STR                         #Run only specific test. Same syntax as pytest -k
 -- --tb=STR                       #Reporting. Same syntax as pytest
 
+overrides.json                    #RESPROPs passed to contract tests
+                                  #Is OBJ: CREATE: RESPROP: 'VAL'
+                                  #Def: automatically generate VAL from its type defined in ESCHEMA
+                                  #For both create|update, i.e. does not work for create-only properties
+                                  #VAL can contain "{{OUTPUT}}" to inject STACK OUTPUTs
+                                  #Can use #COMMENTs
+inputs/                           #Same but:
+ inputs_NUM_create|update.json    #  - separate create|update
+                                  #  - is OBJ: RESPROP: 'VAL'
+inputs/inputs_NUM_invalid.json    #Same but for RESPROP values meant to fail
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:      EXTENSIONS RESOURCE      :==(
+                                            )==:     EXTENSIONS TEST DEBUG     :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+TestEntrypoint                    #'FUNC' to use with `sam local invoke` to run contract tests locally
+                                  #Must first run `sam local start-lambda` and pass to `sam local invoke -d PORT`
+                                  #Must also pass request payload TEST_REQ as `--event PATH_TO_TEST_REQ.json`
+TEST_REQ.action                   #'HANDLER'
+TEST_REQ.request
+ .logicalResourceIdentifier       #'RESOURCE'
+TEST_REQ.request
+ .desiredResourceState            #RESPROPs OBJ
+TEST_REQ.request
+ .clientRequestToken              #HANDLER_PROGRESS.ClientRequestToken
+TEST_REQ.credentials              #OBJ: accessKeyId, secretAccessKey, sessionToken
+TEST_REQ.callbackContext          #HANDLE_RES.CallbackContext
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:      EXTENSIONS TEST LOG      :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+ETYPE-ContractTests
+ -ETYPE_PVERSION_MID              #LOG_GROUP logging HANDLER's output during contract tests
+
+cloudformationmanageduploadinfrast
+ -artifactbucket-RANDOM           #S3 BUCKET logging contract tests' output
+CloudFormation/ContractTestResults
+ /ETYPE/RANDOM.zip                #S3 OBJECT for the above
+
+ETYPE.LogDeliveryBucket           #'S3_BUCKET' with both HANDLER's and contract tests' output
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:   EXTENSIONS RESOURCE MAIN    :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
@@ -2087,32 +2185,118 @@ ETYPE.ProvisioningType            #Which handlers are available, among:
                                   #     - updates must replace RESOURCE
                                   #  - 'FULLY_MUTABLE' (def): create|update|delete
 
-ESCHEMA.type                      #Must be 'RESOURCE'
-ESCHEMA.typeName                  #ETYPE.TypeName
 
-ESCHEMA.title                     #STR. Short description
-ESCHEMA.description               #ETYPE.Description
-ESCHEMA.$comment                  #STR. Side note
-ESCHEMA.documentationUrl          #ETYPE.DocumentationUrl
-ESCHEMA.sourceUrl                 #ETYPE.SourceUrl
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:  EXTENSIONS RESOURCE SCHEMA   :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+ESCHEMA                           #Changes tracked in repository cloudformation-resource-schema (version 2.0.9)
+ESCHEMA.properties.RESPROP        #JSON_SCHEMA describing RESPROP
+
+RESPROP_VARR                      #'VARR' to RESPROP property, as JSON pointer
+ESCHEMA.readOnlyProperties        #'RESPROP_VARR'_ARR that cannot be created|updated but are returned
+ESCHEMA.writeOnlyProperties       #'RESPROP_VARR'_ARR that are not returned but can be created|updated
+ESCHEMA.createOnlyProperties      #'RESPROP_VARR'_ARR that are not returned|updated but can be created
+                                  #I.e. requires replacement
+ESCHEMA                           #'RESPROP_VARR'_ARR that can sometimes not be updated without a replacement
+ .conditionalCreateOnlyProperties #If update fails, should retry with a replacement instead
+ESCHEMA.nonPublicProperties       #'RESPROP_VARR'_ARR that are hidden
+ESCHEMA.nonPublicDefinitions      #Same but for JSON schema definitions
+ESCHEMA.deprecatedProperties      #'RESPROP_VARR'_ARR that are deprecated
+ESCHEMA.primaryIdentifier         #'RESPROP_VARR'_ARR that identify the resource, e.g. with READ|DELETE
+                                  #If several items, composite key
+                                  #Must be returned by READ|LIST
+ESCHEMA.additionalIdentifiers     #'RESPROP_VARR'_ARR_ARR of alternative identifiers
+
+ESCHEMA.propertyTransform         #STR. JSONata expression describing how RESPROP is transformed|normalized
+ .RESPROP_VARR                    #Can specify several using '... $OR ...'
+                                  #That value is used in drift detection
+                                  #Def: use the input value
+
+ESCHEMA.replacementStrategy       #When replacing, whether should wait for creation to delete
+                                  #Either:
+                                  #  - 'create_then_delete' (def): safer
+                                  #  - 'delete_then_create': when resource is a singleton
 
 ESCHEMA.tagging                   #ESCHEMA_TAGGING
 ESCHEMA_TAGGING.taggable          #BOOL (def: true). Whether can use TAGs
 ESCHEMA_TAGGING.tagOnCreate       #BOOL (def: true). Whether can use TAGs on Create*()
 ESCHEMA_TAGGING.tagUpdatable      #BOOL (def: true). Whether TAGs are readonly
 ESCHEMA_TAGGING
- .cloudFormationSystemTags        #BOOL (def: true). Whether support cloudformation:* TAGs
-ESCHEMA_TAGGING.tagProperty       #'VARR' to property with TAGs, as a JSON reference
-                                  #Def: '/properties/Tags'
+ .cloudFormationSystemTags        #BOOL (def: true). Whether support aws:cloudformation:* TAGs
+ESCHEMA_TAGGING.tagProperty       #'RESPROP_VARR' with TAGs (def: '/properties/Tags')
 
-ESCHEMA_TAGGING.permissions       #Required 'PERMISSION'_ARR
+ESCHEMA.resourceLink              #ESCHEMA_RLINK. Resource's main URI
+ESCHEMA_RLINK.templateUri         #HTTPS 'URI', either absolute, or relative to AWS console URI
+ESCHEMA_RLINK.mappings.VAR        #'RESPROP_VARR'. URI variables to insert as ${VAR} in templateUri
+                                  #VAR must be [[:alnum:]], max 64 chars
+                                  #Builtin: awsRegion
+ESCHEMA_RLINK.$comment            #STR. Description
 
-ESCHEMA.replacementStrategy       #'create_then_delete' (def) or 'delete_then_create'
-                                  #When replacing, whether should wait for creation to delete
 
-ESCHEMA.$schema|definitions       #Like JSON schema v7
-ESCHEMA.properties                #Like JSON schema v7. RESPROPs
-ESCHEMA.additionalProperties      #Always false
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:  EXTENSIONS RESOURCE HANDLER  :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+FRAMEWORKS ==>                    #TypeScript|Python|Go|Java client library to use in HANDLERs
+
+ESCHEMA.handlers.HANDLER          #ESCHEMA_HANDLER. CRUD logic function
+                                  #HANDLER can be create|update|list|read|delete
+                                  #update cannot be upsert
+
+ESCHEMA_HANDLER.handlerSchema     #JSON_SCHEMA describing the items being returned
+                                  #Top-level can only use properties|required and allOf|anyOf|oneOf
+                                  #Only with 'list' HANDLER
+
+ESCHEMA_HANDLER.timeoutInMinutes  #NUM (def: 2h, min: 2m, max: 1.5d). HANDLER's timeout
+                                  #For create|update|delete only. Always 30s for read|list
+
+HANDLER_REQ                       #With create|update: RESOURCE OBJ
+                                  #With read|delete: OBJ with only primaryIdentifier|additionalIdentifiers
+                                  #With list: none
+
+HANDLER_RES                       #Return value of HANDLERs. Also called `ProgressEvent`
+                                  #Frameworks call RecordHandlerProgress() under-the-hood
+HANDLER_RES.ResourceModel         #HANDLER_PROGRESS.ResourceModel
+HANDLER_RES.ResourceModels        #Same but as ARR, for list HANDLER
+HANDLER_RES.NextToken             #STR. Pagination token, for list HANDLER. null if no more
+
+HANDLER_RES.OperationStatus       #HANDLER_PROGRESS.OperationStatus
+HANDLER_RES.HandlerErrorCode      #HANDLER_PROGRESS.ErrorCode
+HANDLER_RES.Message               #HANDLER_PROGRESS.StatusMessage
+
+HANDLER_RES.CallbackContext       #STR. Information meant to be passed in HANDLER_REQ of subsequent run
+                                  #Only if OperationStatus 'IN_PROGRESS'
+HANDLER_RES.CallbackDelaySeconds  #'NUM'. Call read HANDLER after NUM secs, when OperationStatus is now expected to be 'SUCCESS'
+                                  #Handled by frameworks
+                                  #This final state is called "desired-state stabilization"
+                                  #For create|update, must also satisfy "runtime-state stabilization"
+                                  #  - i.e. finished create|update and user can interact with RESOURCE
+                                  #  - also create-only RESPROPs cannot be updated anymore, etc.
+                                  #Can be 0 to indicate none.
+
+RecordHandlerProgress()           #Req: HANDLER_PROGRESS
+                                  #Res: empty
+HANDLER_PROGRESS                  #Response of a HANDLER
+                                  #I.e. HANDLER indicating to the API that it ended
+HANDLER_PROGRESS.ResourceModel    #'OBJ|ARR_JSON' of RESOURCE
+HANDLER_PROGRESS
+ .[Current]OperationStatus        #'PENDING', 'IN_PROGRESS' or 'SUCCESS|FAILED'
+HANDLER_PROGRESS.ErrorCode        #STR. Required if CurrentOperationStatus 'FAILED', optional if 'IN_PROGRESS'
+                                  #One of: AccessDenied AlreadyExists GeneralServiceException InternalFailure
+                                  # InvalidCredentials InvalidRequest NetworkFailure NotFound NotStabilized
+                                  # NotUpdatable ResourceConflict ServiceInternalError ServiceLimitExceeded Throttling
+                                  #See online doc for description
+HANDLER_PROGRESS.StatusMessage    #STR explaining OperationStatus
+HANDLER_PROGRESS
+ .ClientRequestToken              #STR. Random UUID
+HANDLER_PROGRESS.BearerToken      #STR. Authentication token created by frameworks
 
 
                                              /=+===============================+=\
@@ -2126,6 +2310,16 @@ https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/modules.html???
 https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/template-macros.html#template-macros-author???: part mentioning modules
 
 EXTENSIONS MODULE ==>             #Language agnostic
+
+ESCHEMA.properties.*              #JSON_SCHEMA
+ESCHEMA.properties.Resource       #JSON_SCHEMA
+ESCHEMA.properties.Parameters     #JSON_SCHEMA
+
+ESCHEMA.handlers.resolve          #ESCHEMA_HANDLER
+
+ESCHEMA_HANDLER.timeoutInMinutes
+ESCHEMA.replacementStrategy       #Like resource ETYPE
+ESCHEMA.moduleLink                #Like ESCHEMA.resourceLink
 
 ETYPE.RequiredActivatedTypes      #REQUIRED_ETYPE_ARR
 REQUIRED_ETYPE
@@ -2147,6 +2341,10 @@ https://docs.aws.amazon.com/cloudformation-cli/latest/userguide/resource-type-re
 
 EXTENSIONS HOOK ==>               #Run validation logic during STACK create|update
                                   #Java|Python
+
+ESCHEMA.handlers.preHANDLER       #ESCHEMA_HANDLER
+                                  #HANDLER can be Create|Update|Delete
+ESCHEMA_HANDLER.targetNames       #STR_ARR
 
 
                                              /=+===============================+=\
