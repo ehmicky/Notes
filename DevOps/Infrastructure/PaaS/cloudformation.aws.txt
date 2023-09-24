@@ -15,6 +15,9 @@ TO DOCUMENT:
   - Guard:
      - https://docs.aws.amazon.com/cfn-guard/latest/ug/what-is-guard.html
   - AWS SAM
+     - AWS::Serverless TRANSFORM:
+        - https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/transform-aws-serverless.html
+        - AWS::Serverless::* in https://awscli.amazonaws.com/v2/documentation/api/latest/reference/cloudformation/package.html
   - Pulumi:
      - https://www.pulumi.com/registry/packages/aws-native/api-docs/extensionresource/
      - https://www.pulumi.com/registry/packages/aws-native/api-docs/importvalue/
@@ -849,11 +852,17 @@ EXPORT.ExportingStackId           #STACK_MID
                                   #  - RESOURCE.Properties.RESPROP
                                   #  - TEMPLATE.Outputs.OUTPUT
                                   #  - TEMPLATE.Conditions
-                                  #  - RESOURCE.UpdatePolicy
                                   #  - RESOURCE.Metadata
+                                  #  - RESOURCE.UpdatePolicy
+                                  #  - RESOURCE.UpdateReplacePolicy|DeletionPolicy
+                                  #     - requires AWS::LanguageExtensions
+                                  #     - only !Ref, !If, !FindInMap, AWS::AccountId|Partition|Region
                                   #  - other RFUNCs
                                   #     - each RFUNC only allows specific others ("supported functions")
                                   #     - see online doc for list
+                                  #     - AWS::LanguageExtensions must be used to use:
+                                  #        - inside !Ref|!GetAtt|!FindInMap: !Ref !Base64 !FindInMap !If !Join !Sub !ToJsonString
+                                  #        - inside !FindInMap: !Split (except in DefaultValue) !Select !Length
                                   #In ARGS, NUM can also be 'NUM'
                                   #{ Ref|GetAtt|Sub } create a dependency like RESOURCE.DependsOn
 
@@ -861,6 +870,7 @@ EXPORT.ExportingStackId           #STACK_MID
                                   #No Fn::, e.g. !FindInMap
                                   #With !GetAtt: ARGS is dot-delimited list instead of ARR
                                   #Cannot do !RFUNC !RFUNC2 ARGS, but can do !RFUNC { RFUNC2: ARGS }
+                                  #Can be used with Fn::ForEach|Length|ToJsonString
 
 
                                              /=+===============================+=\
@@ -913,7 +923,8 @@ TEMPLATE.Mappings.FILTER.VAR.PROP #STR[_ARR]
                                   #Max 100 FILTERs per TEMPLATE
                                   #Max 30 VARs per FILTER
 { Fn::FindInMap:                  #Replace with FILTER.VAR.PROP
- ['FILTER', 'VAR', 'PROP'[, OBJ]]}#If no value, uses OBJ.DefaultValue VAL (def: error)
+ ['FILTER', 'VAR', 'PROP'[, OBJ]]}#If VAR|PROP not found, uses OBJ.DefaultValue VAL (def: error)
+                                  #  - requires AWS::LanguageExtensions
                                   #Meant for conditional mapping with VAR using a RFUNC
 
 { Fn::ForEach::LOOP:              #For each VAL, substitute VAR in { PROP: VAL }, then merge all in a single OBJ
@@ -921,6 +932,7 @@ TEMPLATE.Mappings.FILTER.VAR.PROP #STR[_ARR]
                                   #  - in keys: ${VAR}
                                   #  - in values: { Ref: 'VAR' } or { Fn::Sub: ['...${VAR}...'] }
                                   #LOOP must be unique name in TEMPLATE, meant only for description
+                                  #Requires AWS::LanguageExtensions
 
 
                                              /=+===============================+=\
@@ -940,10 +952,12 @@ TEMPLATE.Mappings.FILTER.VAR.PROP #STR[_ARR]
                                   #Can escape ${...} as ${!...}
 
 { Fn::Length: ARR }               #ARR.length
+                                  #Requires AWS::LanguageExtensions
 { Fn::Select: [NUM, ARR] }        #ARR[NUM] (0-index)
                                   #Error if undefined
 
 { Fn::ToJsonString: OBJ|ARR }     #'OBJ|ARR_JSON'
+                                  #Requires AWS::LanguageExtensions
 { Fn::Base64: STR }               #STR2
 
 { Fn::Cidr: ['CIDR', NUM, NUM2] } #'CIDR2'_ARR. Split CIDR into NUM CIDR2s
@@ -1604,12 +1618,10 @@ CFN_RESPONSE.send(REQ_PAYLOAD,
                                              \=+===============================+=/
 
 
-aws cloudformation package        #Replaces local 'PATH' in TEMPLATE by 's3://BUCKET/OBJECT'
+aws cloudformation package        #Replaces local 'PATH' in TEMPLATE by S3 OBJECT (as URL|OBJ, depending on RESPROP)
                                   #Automatically calls S3 PutObject()
                                   #  - 'OBJECT' name is MD5 checksum
                                   #Only for specific RESPROPs on specific RESTYPEs, documented in their respective docs
-                                  #  - ???
-                                  #  - including exception for API Gateway RestApi???
                                   #'PATH' can be relative|absolute
                                   #  - if DIR, zip it first
                                   #  - if missing, defaults to current DIR
@@ -1635,6 +1647,7 @@ aws cloudformation package        #Replaces local 'PATH' in TEMPLATE by 's3://BU
 AWS::CloudFormation::Macro        #Lambda FUNC transforming a TEMPLATE
                                   #Available for use by any STACK in current ACCOUNT
                                   #Declared|managed by the MACRO provider, not users
+                                  #Applied during STACK create|update
                                   #Performed before RFUNCs
                                   #  - i.e. response can include RFUNCs (except Fn::ImportValue)
                                   #  - but cannot include other MACROs
@@ -1673,12 +1686,14 @@ RES.errorMessage                  #'ERROR'
                                              \=+===============================+=/
 
 
-TEMPLATE.Transform                #'MACRO'_ARR to apply to whole TEMPLATE
+TEMPLATE.Transform                #'MACRO'|MACRO[_ARR] to apply to whole TEMPLATE
 STACK_TEMPLATE.DeclaredTransforms #Evaluated in order, and after any Fn::Transform
+                                  #  - AWS managed TRANSFORMs should be run after custom MACROs
+                                  #  - AWS::LanguageExtensions should be before AWS::Serverless
 
-{ Fn::Transform: OBJ }            #Apply MACRO to part of TEMPLATE
-OBJ.Name                          #'MACRO'
-OBJ.Parameters                    #OBJ2
+{ Fn::Transform: MACRO }          #Apply MACRO to part of TEMPLATE
+MACRO.Name                        #'MACRO'
+MACRO.Parameters                  #OBJ2
 
 STACK_TEMPLATE.StagesAvailable    #STR_ARR among:
                                   #  - 'Original': before MACRO
@@ -1696,12 +1711,19 @@ Capabilities                      #Required when using MACROs and either:
                                              \=+===============================+=/
 
 
-https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/transform-reference.html???
-AWS::Serverless|Include::* in https://awscli.amazonaws.com/v2/documentation/api/latest/reference/cloudformation/package.html???
-
 TRANSFORM ==>                     #AWS managed MACROs
 
-AWS::LanguageExtensions           #Allows using inside !Ref|!GetAtt: !Ref !Base64 !FindInMap !If !Join !Sub !ToJsonString
+AWS::LanguageExtensions           #Allows additional features, documented in this doc
+                                  #Its features must be inside TEMPLATE.Resources|Conditions|Outputs
+                                  #Cannot use SET|STACK|CHANGESET.UsePreviousTemplate
+
+AWS::Include                      #Includes a fragment, as is
+                                  #Must be an OBJ
+INCLUDE.Location                  #S3_URL to 'JSON|YAML'
+                                  #Can be either JSON|YAML, regardless of current TEMPLATE
+                                  #Cannot use !RFUNC shortcut notation
+                                  #Can use `aws cloudformation package`
+                                  #Cannot be inside TEMPLATE.Parameters
 
 
                                              /=+===============================+=\
