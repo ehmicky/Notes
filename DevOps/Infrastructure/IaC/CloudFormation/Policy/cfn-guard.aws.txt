@@ -98,25 +98,24 @@ TDATUM.expectations.rules.RULE    #Asserts that RULE:
                                   #     - `when CLAUSE`
                                   #     - [...] filter resolving to empty
 
-RULES                             #Newline-separated top-level:
-                                  #  - RULE ("named rule"/"rule set")
-                                  #  - CLAUSE ("unnamed rule")
-                                  #  - when|QUERY { ... } blocks
+RULES                             #Newline-separated top-level statements
                                   #Often use file extension .guard
 
 #COMMENT                          #
 
+CASE ==>                          #Keywords are case-insensitive
+
 { ... }                           #Block with CLAUSEs
                                   #Can be nested
 
-rule RULE { ... }                 #"Named rule"/"rule set". RULE composed on the product of all the CLAUSEs in the block
+rule RULE { ... }                 #"Named rule"/"rule set". RULE composed of the product of all the CLAUSEs in the block
 UNNAMED RULE ==>                  #All top-level CLAUSEs are implicitely put in `rule default { ... }`
-[not] RULE                        #Can be used as a CLAUSE
-                                  #  - only with:
-                                  #     - `when`: meant to reduce verbosity by showing early errors first
-                                  #     - inside another `rule`: meant to show that a rule failed due to another
-                                  #  - the RULE is still evaluated at the top level
-                                  #  - not with `default`
+[not] RULE                        #Can be used as a CLAUSE with `when` or inside another `rule`
+                                  #Since the original `rule RULE` is still evaluated, this is meant only to improve
+                                  #reporting output, not change the overall RULES result. With:
+                                  #  - `when`: dependency, i.e. second RULE not evaluated|printed if first RULE false
+                                  #  - inside another `rule`: composition, i.e. second RULE shows it false due to first RULE
+                                  #Not with `default` RULE
 
 when CLAUSE { ... }               #Skip { ... } if CLAUSE is false
 rule RULE when ... { ... }        #Combine `rule` and `when`
@@ -130,8 +129,8 @@ this                              #Implicitely prepended to each QUERY (unless i
 QUERY OP [VAL|QUERY2]             #CLAUSE
                                   #Assertion on IDATA
 
-CLAUSE <<MESSAGE>>                #Error message displayed with cfn-guard validate|test --verbose
-                                  #Can include newlines or trailing whitespaces, ignored
+CLAUSE <<MESSAGE>>                #Error message displayed if CLAUSE false
+                                  #Can include newlines, converted to spaces
 
 CLAUSE [or]                       #Relation with next CLAUSE is either:
 CLAUSE2                           #  - and (default)
@@ -148,7 +147,7 @@ QUERY.'VAR'
 QUERY["VAR"]
 QUERY['VAR']                      #
 QUERY[NUM]                        #
-QUERY.*                           #All OBJ values
+QUERY.*                           #All OBJ|ARR values
 QUERY[*]                          #All ARR values
                                   #If not an ARR, noop
                                   #  - but does not fail
@@ -160,54 +159,43 @@ QUERY[
 
 EMPTY QUERY ==>                   #Resolves to false:
                                   #  - QUERY.VAR or QUERY[NUM] that is unknown
-                                  #     - except with `exists|empty`
                                   #  - QUERY.* or QUERY[*] on empty OBJ|ARR
-                                  #     - except with `empty`, or when followed by [...] filter
-                                  #Resolves to true:
-                                  #  - QUERY[...] resulting to empty OBJ|ARR
+                                  #Except with `exists` or `empty`
 let MVAR = QUERY
 when %MVAR !empty {
   %MVAR.QUERY2 ...
 }                                 #Common pattern to allow possibly empty queries
 
-let MVAR = VAL                    #Define MVAR as a VAL
+let MVAR = VAL|QUERY              #Define MVAR as a VAL
                                   #Lexical scope: if inside { ... }, can only be used inside it
                                   #Actual variable, not macro
-let MVAR = [some] QUERY           #Define MVAR
-                                  #If QUERY returns ARR:
-                                  #  - if `some`: only first item
-                                  #  - if only 1 item: can be used as VAL
-let MVAR = RULE                   #???
 %MVAR                             #Reference MVAR
                                   #Can be inside a QUERY, e.g. %MVAR.VAR or VAR.%MVAR
                                   #Cannot be inside <<MESSAGE>> nor REGEXP
 
+QUERY.*
+QUERY[*]
+QUERY.%ARR_MVAR                   #Resolve to ARR. The rest of the QUERY operates on each item
 [some] ARR OP ...                 #Performs OP on each ARR item
                                   #Result is and'd (def) or or'd (`some`)
-                                  #Stops at first false (def) or true (`some`), i.e. faster
-                                  #Also MFUNC???
-QUERY.*
-QUERY[*]                          #Resolve to ARR. The rest of the QUERY operates on each item
 [some] QUERY { ... }              #Each ARR item evaluates its own { ... }
                                   #Result is and'd (def) or or'd (`some`)
-                                  #Does not stop at first false (def) or true (`some`), i.e. more thorough output
 
 OP                                #One of the following
 not OP                            #
 !OP                               #Same. No space after !
 
 VAL == != VAL2                    #
-VAL IN [VAL2,...]                 #
-VAL exists                        #Is undefined
+VAL in [VAL2,...]                 #
+VAL exists                        #Is not undefined
 VAL empty                         #Is undefined, or empty STR|ARR|OBJ
 
-NUM < <= > >= NUM2                #
-NUM IN r[NUM2, NUM3]              #NUM2 <= NUM <= NUM3
+VAL < <= > >= VAL                #
+NUM in r[NUM2, NUM3]              #NUM2 <= NUM <= NUM3
                                   #Can also use r[...) r(...] r(...) to use < instead
 
-"CHAR" IN r[...]                  #Same as IN r[NUM, NUM] but with CHARs
 STR == /REGEXP/                   #
-STR IN [/REGEXP/,...]             #
+STR in [/REGEXP/,...]             #
 
 VAL is_null                       #Is null
 VAL is_bool                       #Is BOOL
@@ -218,12 +206,15 @@ VAL is_struct                     #Is OBJ
 VAL is_list                       #Is ARR
 
 VAL                               #Any JSON value|type
-/.../                             #REGEXP. Check if "/REGEXP/" is same ???
+/REGEXP/                          #Flags must use (?FLAG)
 
 MFUNC(...)                        #Execute MFUNC(...). Must be either:
                                   #  - assigned to MVAR: let MVAR = MFUNC(...)
                                   #  - on right side of OP: QUERY OP MFUNC(...)
                                   #Cannot be on left side of OP
+                                  #The ARR arguments must be either:
+                                  #  - a QUERY that resolves to an ARR
+                                  #  - %ARR_MVAR.*
 count(ARR)->NUM                   #
 join(ARR, "DELIM")->STR           #
 to_lower|to_upper(STR)->STR       #
