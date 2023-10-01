@@ -7,6 +7,7 @@
 
 TODO:
   - https://github.com/aws-cloudformation/cloudformation-guard/
+  - install and check flags and behavior
   - lambda:
      - https://docs.aws.amazon.com/cfn-guard/latest/ug/setting-up-lambda.html
      - https://github.com/aws-cloudformation/cloudformation-guard/tree/main/guard-lambda
@@ -17,15 +18,18 @@ VERSION ==>                       #3.0.1
                                   #Installed through homebrew, cargo
                                   #Or install script, which downloads GitHub release binary and install to ~/.guard/bin/cfn-guard
 
-cfn-guard                         #Policy-as-code for CloudFormation
+cfn-guard                         #Declarative JSON|YAML validation
+                                  #Meant as Policy-as-Code for CloudFormation, but can be used for anything
+                                  #Similar to JSONPath, but more advanced DSL, and uses assertions (with OPs)
 
-cfn-guard validate                #Validate rules against a TEMPLATE
---rules|-r                        #'RULE_PATH'. Can be either a file, or a DIR (it then uses DIR/*)
-                                  #Can be specified several times
---data|-d                         #'IDATA_PATH'. Can be either a file, or a DIR (it then uses DIR/*)
-                                  #Can be specified several times
+cfn-guard validate                #Validate RULEs against IDATA
+                                  #Non-0 exit code on failure
+--rules|-r                        #'RULE_FILE'
+                                  #Can be either a file, or a DIR (it then uses DIR/*)
+--data|-d                         #'IDATA_FILE'
+                                  #Can be either a file, or a DIR (it then uses DIR/*)
 --payload|-P                      #Alternative to using --rules|--data
-                                  #Provides both as an OBJ: rules 'RULE_PATH'_ARR, data 'OBJ_JSON'_ARR
+                                  #Provides both as an OBJ: rules 'RULE'_ARR, data 'IDATA'_ARR
                                   #Can be passed as stdin too
 --output-format|-o                #One of:
                                   #  - 'single-line-summary' (def)
@@ -49,10 +53,11 @@ cfn-guard validate                #Validate rules against a TEMPLATE
 --last-modified|-m                #Run --rules|--data DIR/* in mtime order
 --alphabetical|-a                 #Run --rules|--data DIR/* in alphabetical order
 
-cfn-guard test                    #Run rules against test data
-                                  #Meant to unit test the rules
+cfn-guard test                    #Validate RULEs against TDATA
+                                  #Meant to unit test RULEs
+                                  #Non-0 exit code on failure
 --rules-file|-r                   #Like cfn-guard validate --rules
---test-data|-t                    #Like cfn-guard validate --data
+--test-data|-t                    #Like cfn-guard validate --data, but as 'TDATA_FILE'
 --last-modified|-m
 --alphabetical|-a
 --verbose|-v                      #Like cfn-guard validate
@@ -68,10 +73,21 @@ cfn-guard parse-tree              #Parse rules
 --print-json|-j
 --print-yaml|-y                   #JSON (def) or YAML
 
-IDATA                             #Input data.
-                                  #Any JSON|YAML OBJ, but usually a CloudFormation TEMPLATE
+IDATA                             #Input data to `cfn-guard validate`
+                                  #Any JSON|YAML OBJ, although originally meant for CloudFormation TEMPLATEs
 
-RULE_FILE                         #File with RULE as content
+TDATA                             #Input datas to `cfn-guard test`
+                                  #JSON|YAML ARR of TDATUM
+                                  #Often filename ends with _tests.json|yaml
+TDATUM.name                       #'TEST_NAME'
+TDATUM.input                      #IDATA
+TDATUM.expectations.rules.RULE_SET#Asserts that RULE_SET:
+                                  #  - 'PASS'
+                                  #  - 'FAIL'
+                                  #  - 'SKIP', due to:
+                                  #     - `when CLAUSE`
+                                  #     - [...] filter resolving to empty
+
 RULE                              #Newline-separated CLAUSEs
                                   #Often use file extension .guard
 
@@ -118,7 +134,7 @@ QUERY[*]                          #All ARR values
 QUERY[...]
 QUERY[
   ...                             #Filter only elements with CLAUSEs true, where [...] is a block of CLAUSEs
-]                                 #Each ITEM is `this` inside [...]
+]                                 #Each ARR item is `this` inside [...]
 
 EMPTY QUERY ==>                   #Resolves to false:
                                   #  - QUERY.VAR or QUERY[NUM] that is unknown
@@ -135,37 +151,50 @@ when %MVAR !empty {
 let MVAR = VAL                    #Define MVAR as a VAL
                                   #Lexical scope: if inside { ... }, can only be used inside it
                                   #Actual variable, not macro
-let MVAR = [some] QUERY           #Define MVAR as 1|n ITEMs
-                                  #If `some`, only first ITEM
-                                  #If only 1 ITEM, can be used as VAL
+let MVAR = [some] QUERY           #Define MVAR
+                                  #If QUERY returns ARR:
+                                  #  - if `some`: only first item
+                                  #  - if only 1 item: can be used as VAL
 %MVAR                             #Reference MVAR
                                   #Can be inside a QUERY, e.g. %MVAR.VAR or VAR.%MVAR
-                                  #Cannot be inside <<MESSAGE>>
+                                  #Cannot be inside <<MESSAGE>> nor REGEXP
 
-ITEM                              #QUERY.* and QUERY[*] resolve to multiple ITEMs
-                                  #The rest of the QUERY operates on each ITEM
-                                  #Also, OP is performed on each ITEM
-QUERY { ... }                     #Each ITEM evaluates its own { ... }
-[some] CLAUSE
-[some] QUERY { ... }              #With multiple ITEMs, whether result is and'd (def) or or'd (`some`)
+[some] ARR OP ...                 #Performs OP on each ARR item
+                                  #Result is and'd (def) or or'd (`some`)
+QUERY.*
+QUERY[*]                          #Resolve to ARR. The rest of the QUERY operates on each item
+[some] QUERY { ... }              #Each ARR item evaluates its own { ... }
+                                  #Result is and'd (def) or or'd (`some`)
 
 OP                                #One of the following
 not OP
 !OP                               #
+
 VAL == != VAL2                    #
 VAL IN [VAL2,...]                 #
 VAL exists                        #Is undefined
-VAL empty                         #Is undefined, or empty ARR|OBJ
-VAL is_string|is_list|is_struct   #Is STR|ARR|OBJ
+VAL empty                         #Is undefined, or empty STR|ARR|OBJ
+
 NUM < <= > >= NUM2                #
 NUM IN r[NUM2, NUM3]              #NUM2 <= NUM <= NUM3
                                   #Can also use r[...) r(...] r(...) to use < instead
-"CHAR" IN r[...]                  #Same with CHARs
+
+"CHAR" IN r[...]                  #Same as IN r[NUM, NUM] but with CHARs
 STR == /REGEXP/                   #
 STR IN [/REGEXP/,...]             #
 
+VAL is_null                       #Is null
+VAL is_bool                       #Is BOOL
+VAL is_int                        #Is INT
+VAL is_float                      #Is FLOAT
+VAL is_string                     #Is STR
+VAL is_struct                     #Is OBJ
+VAL is_list                       #Is ARR
+
+null                              #
 true|false                        #BOOL
-NUM                               #INT|FLOAT, 8 bytes
+INT                               #8 bytes
+FLOAT                             #8 bytes
 "..."                             #STR
 /.../                             #REGEXP
 { "VAR": VAL, ... }               #OBJ
