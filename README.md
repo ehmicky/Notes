@@ -10,7 +10,7 @@ This includes notably:
      - _Transcompiled languages_: [Flow](Languages/Static_analysis/Type_checking/flow.language.txt), [CoffeeScript](Languages/CoffeeScript/coffeescript.language.txt), [Jade/Pug](Data/Markup/HTML/Transpiler/jade.language.txt), [Sass](Languages/Language_processing/Post_processing/CSS/sass.language.txt), [Less](Languages/Language_processing/Post_processing/CSS/less.language.txt), [PostCSS](Languages/Language_processing/Post_processing/CSS/postcss.language.txt), [Markdown](Data/Markup/Markdown)
   - _[Architecture](Architecture)_: [design patterns](Architecture/Code_design), [algorithms](Architecture/Code_design/Algorithms), [type theory](Architecture/Code_design/Types), [requirements analysis](Architecture/Code_design/Requirements), [dependencies](Architecture/Dependencies), [compatibility/versioning](Architecture/Dependencies/Compatibility), [async programming](Architecture/Performance/Async), [streaming](Architecture/Performance/Async/Streams), [functional programming](Architecture/Functional), [metaprogramming](Languages/Metaprogramming), [parsing theory](Languages/Metaprogramming/Parsing)
    - _[Networking](Networking)_: [HTTP](RPC/Inter_process/HTTP), [RPC](RPC) (including [REST](RPC/Inter_process/Interface_definition/IDL/REST), [GraphQL](RPC/Inter_process/Interface_definition/IDL/GraphQL), [gRPC](RPC/Inter_process/Interface_definition/IDL/gRPC)), [realtime](RPC/Realtime) (including [WebSocket](RPC/Realtime/WebSocket)), [TLS](Networking/Networking_protocols/SSL_TLS), [TCP](Networking/Networking_protocols/TCP), [IP](Networking/Networking_protocols/IP), [DNS](Networking/Networking_protocols/DNS), [load balancing](Networking/Networking_protocols/Load_balancing), [proxies](Networking/Networking_protocols/Proxy), [inter-process communication](RPC/Inter_process/Inter_process_communication), [identifiers](Data/State/Identifiers), [crawling](RPC/Client/Scraping_crawling), [tasks and messages](RPC/Messages_tasks)
- - _Frameworks_: [Node](Languages/JavaScript/Node) (including [Express](RPC/Server/Server_framework/Micro_framework/Minimalist/express.node.txt), [Sails](RPC/Server/Server_framework/MVC/Declarative/sails.express.txt), [Swagger/OpenAPI](RPC/Inter_process/API_specification/Formats/openapi.format.txt)), [React](Languages/JavaScript/JavaScript_frameworks/View/One_way_data_binding/Virtual_DOM/React), [Flux](Languages/JavaScript/State_management/Flux)/[Redux](Languages/JavaScript/State_management/Flux/Redux), [Angular](Languages/JavaScript/JavaScript_frameworks/MVC/Opiniated/angular.javascript.txt), [Backbone](Languages/JavaScript/JavaScript_frameworks/MVC/Minimalistic/Backbone))
+ - _Frameworks_: [Node](Languages/JavaScript/Node) (including [Express](RPC/Server/Server_framework/Micro_framework/Minimalist/express.node.txt), [Sails](RPC/Server/Server_framework/MVC/Declarative/sails.express.txt), [Swagger/OpenAPI](RPC/Inter_process/API_specification/Formats/openapi.format.txt)), [React](Languages/JavaScript/JavaScript_frameworks/View/One_way_data_binding/Virtual_DOM/React), [Flux](Languages/JavaScript/State_management/Flux)/[Redux](Languages/JavaScript/State_management/Flux/Redux), [Angular](Languages/JavaScript/JavaScript_frameworks/MVC/Opiniated/angular.javascript.txt), [Backbone](Languages/JavaScript/JavaScript_frameworks/MVC/Minimalistic/Backbone)
   - _[Data](Data)_: [PostgreSQL](Data/Data_types/Relations/Database/SQL.database.txt), [MongoDB](Data/Data_types/Documents/mongodb.database.txt), [Redis](Data/Data_types/Key_value/Structured/redis.database.txt), [validation](Data/Data_management/Validation), [ORM](Data/Data_management/ORM), [character encoding](Communication/Messaging/MIME), [fake data](Data/Data_management/Fake_data), [offline](Data/Data_types/Offline), [filesystems](Data/Files), [templating](Data/Markup/Templates), [serialization](Data/Serialization) (including [Protobuf](Data/Serialization/Memory_efficient/Protobuf))
   - _[Platforms](Platforms)_: [cross-platform/interoperability](Platforms/Interoperability), [mobile](Platforms/Mobile), [Chrome extensions](Platforms/Browser/Browser_extensions/Chrome/Chrome_extensions_apps.javascript.txt), [headless browsers](Platforms/Browser/Headless_browser), [OS kernels theory](Platforms/Desktop/OS), [CLI applications](Platforms/Terminal)
   - _[DevOps](DevOps)_: [containers](DevOps/Virtualization/Containers) (including [Docker](DevOps/Virtualization/Containers/Core_abstraction/docker.cli.txt)), [orchestration](DevOps/Supervision/Cluster_orchestration) (including [Kubernetes](DevOps/Supervision/Cluster_orchestration/kubernetes.cli.txt)), [AWS](DevOps/Infrastructure/IaaS/AWS.saas.txt), [deployment](DevOps/Deployment/Deployment_general), [continuous integration](DevOps/Deployment/Continuous_integration), [configuration](DevOps/Configuration)
@@ -26,11 +26,11 @@ This includes notably:
 
 # Size
 
-Number of files: 1609
+Number of files: 1789
 
-Number of lines: 238720
+Number of lines: 288141
 
-Number of pages (if it were a printed book): 9548
+Number of pages (if it were a printed book): 11525
 
 # List of files
 
@@ -39,17 +39,22 @@ Number of pages (if it were a printed book): 9548
 ### Code design
 
  - __Algorithms__
+   - __Min max__
+     - __Heap__
+       - [deno binary heap (Deno)](Architecture/Code_design/Algorithms/Min_max/Heap/deno_binary_heap.deno.txt)
+     - [min max (Theory)](Architecture/Code_design/Algorithms/Min_max/min_max.theory.txt)
    - __Search__
+     - __Search tree__
+       - [deno red black tree (Deno)](Architecture/Code_design/Algorithms/Search/Search_tree/deno_red_black_tree.deno.txt)
+       - [search tree (Theory)](Architecture/Code_design/Algorithms/Search/Search_tree/search_tree.theory.txt)
      - [graph (Theory)](Architecture/Code_design/Algorithms/Search/graph.theory.txt)
      - [hash table (Theory)](Architecture/Code_design/Algorithms/Search/hash_table.theory.txt)
      - [linked list (Theory)](Architecture/Code_design/Algorithms/Search/linked_list.theory.txt)
      - [random access array (Theory)](Architecture/Code_design/Algorithms/Search/random_access_array.theory.txt)
-     - [search tree (Theory)](Architecture/Code_design/Algorithms/Search/search_tree.theory.txt)
      - [searching (Theory)](Architecture/Code_design/Algorithms/Search/searching.theory.txt)
    - [algorithms (Theory)](Architecture/Code_design/Algorithms/algorithms.theory.txt)
    - [information theory (Theory)](Architecture/Code_design/Algorithms/information_theory.theory.txt)
    - [merge (Theory)](Architecture/Code_design/Algorithms/merge.theory.txt)
-   - [min max (Theory)](Architecture/Code_design/Algorithms/min_max.theory.txt)
    - [shortest path (Theory)](Architecture/Code_design/Algorithms/shortest_path.theory.txt)
    - [shuffle (Theory)](Architecture/Code_design/Algorithms/shuffle.theory.txt)
    - [sorting (Theory)](Architecture/Code_design/Algorithms/sorting.theory.txt)
@@ -100,6 +105,7 @@ Number of pages (if it were a printed book): 9548
          - [headway (SaaS)](Architecture/Dependencies/Compatibility/Versioning/Changelog/Generation/headway.saas.txt)
        - [changelog (Theory)](Architecture/Dependencies/Compatibility/Versioning/Changelog/changelog.theory.txt)
      - __SemVer__
+       - [deno semver (Deno)](Architecture/Dependencies/Compatibility/Versioning/SemVer/deno_semver.deno.txt)
        - [node\-semver (Node CLI)](Architecture/Dependencies/Compatibility/Versioning/SemVer/node-semver.node_cli.txt)
        - [semver\-diff (Node)](Architecture/Dependencies/Compatibility/Versioning/SemVer/semver-diff.node.txt)
      - __Version notification__
@@ -117,6 +123,9 @@ Number of pages (if it were a printed book): 9548
      - [systemjs (Node CLI)](Architecture/Dependencies/Dependency_loading/Loaders/systemjs.node_cli.txt)
      - [webpack (Node CLI)](Architecture/Dependencies/Dependency_loading/Loaders/webpack.node_cli.txt)
  - __Dependency manager__
+   - __CDN__
+     - [deno land (Deno)](Architecture/Dependencies/Dependency_manager/CDN/deno_land.deno.txt)
+     - [esm sh (SaaS)](Architecture/Dependencies/Dependency_manager/CDN/esm_sh.saas.txt)
    - __Client__
      - [bower (Node CLI)](Architecture/Dependencies/Dependency_manager/Client/bower.node_cli.txt)
      - [corepack (Node)](Architecture/Dependencies/Dependency_manager/Client/corepack.node.txt)
@@ -136,9 +145,13 @@ Number of pages (if it were a printed book): 9548
    - __Search__
      - [pkg go dev (SaaS)](Architecture/Dependencies/Dependency_manager/Search/pkg_go_dev.saas.txt)
  - __Packaging__
+   - __Binary OS packages__
+     - [deno compile (Deno)](Architecture/Dependencies/Packaging/Binary_OS_packages/deno_compile.deno.txt)
    - __OS packages__
      - [deb packaging (Theory)](Architecture/Dependencies/Packaging/OS_packages/deb_packaging.theory.txt)
  - __Runtime manager__
+   - __Deno__
+     - [dvm (Deno)](Architecture/Dependencies/Runtime_manager/Deno/dvm.deno.txt)
    - __Node__
      - [n (Node)](Architecture/Dependencies/Runtime_manager/Node/n.node.txt)
      - [nvm (Node)](Architecture/Dependencies/Runtime_manager/Node/nvm.node.txt)
@@ -152,29 +165,61 @@ Number of pages (if it were a printed book): 9548
  - __Immutable__
    - [immutable (JavaScript)](Architecture/Functional/Immutable/immutable.javascript.txt)
  - __Utilities__
+   - __Cartesian product__
+     - [deno permutation (Deno)](Architecture/Functional/Utilities/Cartesian_product/deno_permutation.deno.txt)
    - __Clone__
      - [clone (Node)](Architecture/Functional/Utilities/Clone/clone.node.txt)
    - __Equal__
      - [deep equal (Node)](Architecture/Functional/Utilities/Equal/deep_equal.node.txt)
      - [fast\-deep\-equal (Node)](Architecture/Functional/Utilities/Equal/fast-deep-equal.node.txt)
      - [fast\-equals (Node)](Architecture/Functional/Utilities/Equal/fast-equals.node.txt)
-   - __Filter__
-     - [filter\-obj (Node)](Architecture/Functional/Utilities/Filter/filter-obj.node.txt)
-     - [omit.js (Node)](Architecture/Functional/Utilities/Filter/omit.js.node.txt)
+   - __Filter arrays__
+     - [deno map non nullish (Deno)](Architecture/Functional/Utilities/Filter_arrays/deno_map_non_nullish.deno.txt)
+   - __Filter objects__
+     - [deno filter (Deno)](Architecture/Functional/Utilities/Filter_objects/deno_filter.deno.txt)
+     - [filter\-obj (Node)](Architecture/Functional/Utilities/Filter_objects/filter-obj.node.txt)
+     - [omit.js (Node)](Architecture/Functional/Utilities/Filter_objects/omit.js.node.txt)
+   - __Find__
+     - [deno find (Deno)](Architecture/Functional/Utilities/Find/deno_find.deno.txt)
    - __Get__
      - [dot\-prop (Node)](Architecture/Functional/Utilities/Get/dot-prop.node.txt)
      - [get\-value (Node)](Architecture/Functional/Utilities/Get/get-value.node.txt)
      - [object\-path (JavaScript)](Architecture/Functional/Utilities/Get/object-path.javascript.txt)
      - [safe\-get\-prop (Node)](Architecture/Functional/Utilities/Get/safe-get-prop.node.txt)
-   - __Map__
-     - [map\-obj (JavaScript)](Architecture/Functional/Utilities/Map/map-obj.javascript.txt)
+   - __Group__
+     - [deno group (Deno)](Architecture/Functional/Utilities/Group/deno_group.deno.txt)
+   - __Join__
+     - [deno join to string (Deno)](Architecture/Functional/Utilities/Join/deno_join_to_string.deno.txt)
+   - __Map objects__
+     - [deno map (Deno)](Architecture/Functional/Utilities/Map_objects/deno_map.deno.txt)
+     - [map\-obj (JavaScript)](Architecture/Functional/Utilities/Map_objects/map-obj.javascript.txt)
    - __Merge__
      - [deep\-merge (Node)](Architecture/Functional/Utilities/Merge/deep-merge.node.txt)
      - [deepmerge (Node)](Architecture/Functional/Utilities/Merge/deepmerge.node.txt)
+     - [deno deep merge (Deno)](Architecture/Functional/Utilities/Merge/deno_deep_merge.deno.txt)
      - [merge\-deep (Node)](Architecture/Functional/Utilities/Merge/merge-deep.node.txt)
    - __Once__
      - [once (Node)](Architecture/Functional/Utilities/Once/once.node.txt)
      - [onetime (Node)](Architecture/Functional/Utilities/Once/onetime.node.txt)
+   - __Partition__
+     - [deno partition (Deno)](Architecture/Functional/Utilities/Partition/deno_partition.deno.txt)
+   - __Reduce__
+     - [deno reduce (Deno)](Architecture/Functional/Utilities/Reduce/deno_reduce.deno.txt)
+   - __Sample__
+     - [deno sample (Deno)](Architecture/Functional/Utilities/Sample/deno_sample.deno.txt)
+   - __Set operation__
+     - [deno set operation (Deno)](Architecture/Functional/Utilities/Set_operation/deno_set_operation.deno.txt)
+   - __Slice__
+     - [deno take drop (Deno)](Architecture/Functional/Utilities/Slice/deno_take_drop.deno.txt)
+   - __Sort min max__
+     - [deno sort min max (Deno)](Architecture/Functional/Utilities/Sort_min_max/deno_sort_min_max.deno.txt)
+     - [sort\-on (Node)](Architecture/Functional/Utilities/Sort_min_max/sort-on.node.txt)
+   - __Sum__
+   - __Unique__
+     - [deno distinct (Deno)](Architecture/Functional/Utilities/Unique/deno_distinct.deno.txt)
+   - __Zip__
+     - [deno zip (Deno)](Architecture/Functional/Utilities/Zip/deno_zip.deno.txt)
+   - [deno sum (Deno)](Architecture/Functional/Utilities/deno_sum.deno.txt)
    - [recompose (React)](Architecture/Functional/Utilities/recompose.react.txt)
    - [reselect (Node)](Architecture/Functional/Utilities/reselect.node.txt)
    - [underscore lodash immutable (JavaScript)](Architecture/Functional/Utilities/underscore_lodash_immutable.javascript.txt)
@@ -194,11 +239,15 @@ Number of pages (if it were a printed book): 9548
      - [eventemitter2 (JavaScript)](Architecture/Performance/Async/Events/eventemitter2.javascript.txt)
      - [p\-event (Node)](Architecture/Performance/Async/Events/p-event.node.txt)
      - [propagate (Node)](Architecture/Performance/Async/Events/propagate.node.txt)
+   - __General framework__
    - __Iterators__
      - [async\-iterator\-all (Node)](Architecture/Performance/Async/Iterators/async-iterator-all.node.txt)
    - __Promises__
      - __Cancel__
+       - [deno abort (Deno)](Architecture/Performance/Async/Promises/Cancel/deno_abort.deno.txt)
        - [p\-cancelable (Node)](Architecture/Performance/Async/Promises/Cancel/p-cancelable.node.txt)
+     - __Create__
+       - [deno deferred (Deno)](Architecture/Performance/Async/Promises/Create/deno_deferred.deno.txt)
      - __Detect__
        - [is\-promise (Node)](Architecture/Performance/Async/Promises/Detect/is-promise.node.txt)
        - [p\-is\-promise (Node)](Architecture/Performance/Async/Promises/Detect/p-is-promise.node.txt)
@@ -214,26 +263,42 @@ Number of pages (if it were a printed book): 9548
        - [bluebird (JavaScript)](Architecture/Performance/Async/Promises/Helpers/bluebird.javascript.txt)
        - [q (JavaScript)](Architecture/Performance/Async/Promises/Helpers/q.javascript.txt)
      - __Map__
+       - [deno pooled map (Deno)](Architecture/Performance/Async/Promises/Map/deno_pooled_map.deno.txt)
        - [p\-all (Node)](Architecture/Performance/Async/Promises/Map/p-all.node.txt)
        - [p\-map\-series (Node)](Architecture/Performance/Async/Promises/Map/p-map-series.node.txt)
        - [p\-map (Node)](Architecture/Performance/Async/Promises/Map/p-map.node.txt)
        - [p\-props (Node)](Architecture/Performance/Async/Promises/Map/p-props.node.txt)
        - [p\-times (Node)](Architecture/Performance/Async/Promises/Map/p-times.node.txt)
+     - __Merge__
+       - [deno mux async iterator (Deno)](Architecture/Performance/Async/Promises/Merge/deno_mux_async_iterator.deno.txt)
      - __Normalize__
        - [p\-try (Node)](Architecture/Performance/Async/Promises/Normalize/p-try.node.txt)
      - __Reduce__
        - [p\-reduce (Node)](Architecture/Performance/Async/Promises/Reduce/p-reduce.node.txt)
        - [p\-waterfall (Node)](Architecture/Performance/Async/Promises/Reduce/p-waterfall.node.txt)
+     - __Split__
+       - [deno tee (Deno)](Architecture/Performance/Async/Promises/Split/deno_tee.deno.txt)
      - __Test__
        - [p\-every (Node)](Architecture/Performance/Async/Promises/Test/p-every.node.txt)
        - [p\-one (Node)](Architecture/Performance/Async/Promises/Test/p-one.node.txt)
+     - __Timeout__
+       - [deno delay (Deno)](Architecture/Performance/Async/Promises/Timeout/deno_delay.deno.txt)
+   - __Retry__
+     - [deno retry (Deno)](Architecture/Performance/Async/Retry/deno_retry.deno.txt)
    - __Signals__
      - [signal\-exit (Node)](Architecture/Performance/Async/Signals/signal-exit.node.txt)
      - [signal handler (C)](Architecture/Performance/Async/Signals/signal_handler.c.txt)
    - __Streams__
+     - __Combine__
+       - [deno stream combine (Deno)](Architecture/Performance/Async/Streams/Combine/deno_stream_combine.deno.txt)
+     - __Create__
+       - [deno streams create (Deno)](Architecture/Performance/Async/Streams/Create/deno_streams_create.deno.txt)
+       - [from (Node)](Architecture/Performance/Async/Streams/Create/from.node.txt)
      - __Errors__
        - [pump (Node)](Architecture/Performance/Async/Streams/Errors/pump.node.txt)
      - __JSON__
+       - [concatenated json (Format)](Architecture/Performance/Async/Streams/JSON/concatenated_json.format.txt)
+       - [deno json sequence (Deno)](Architecture/Performance/Async/Streams/JSON/deno_json_sequence.deno.txt)
        - [json sequence (Format)](Architecture/Performance/Async/Streams/JSON/json_sequence.format.txt)
        - [json text sequence (Format)](Architecture/Performance/Async/Streams/JSON/json_text_sequence.format.txt)
        - [jsonlines (Format)](Architecture/Performance/Async/Streams/JSON/jsonlines.format.txt)
@@ -241,12 +306,17 @@ Number of pages (if it were a printed book): 9548
        - [ndjson (Node CLI)](Architecture/Performance/Async/Streams/JSON/ndjson.node_cli.txt)
      - __Mapping__
        - [concurrent\-transform (Node)](Architecture/Performance/Async/Streams/Mapping/concurrent-transform.node.txt)
+       - [deno stream map (Deno)](Architecture/Performance/Async/Streams/Mapping/deno_stream_map.deno.txt)
        - [parallel\-transform (Node)](Architecture/Performance/Async/Streams/Mapping/parallel-transform.node.txt)
        - [rapid\-stream (Node)](Architecture/Performance/Async/Streams/Mapping/rapid-stream.node.txt)
        - [through (Node)](Architecture/Performance/Async/Streams/Mapping/through.node.txt)
        - [through2\-concurrent (Node)](Architecture/Performance/Async/Streams/Mapping/through2-concurrent.node.txt)
        - [through2 (Node)](Architecture/Performance/Async/Streams/Mapping/through2.node.txt)
        - [throughv (Node)](Architecture/Performance/Async/Streams/Mapping/throughv.node.txt)
+     - __Slice__
+       - [deno stream slice (Deno)](Architecture/Performance/Async/Streams/Slice/deno_stream_slice.deno.txt)
+     - __Split__
+       - [deno stream split (Deno)](Architecture/Performance/Async/Streams/Split/deno_stream_split.deno.txt)
      - __Waiting__
        - [end\-of\-stream (Node)](Architecture/Performance/Async/Streams/Waiting/end-of-stream.node.txt)
        - [get\-stdin (Node)](Architecture/Performance/Async/Streams/Waiting/get-stdin.node.txt)
@@ -256,13 +326,13 @@ Number of pages (if it were a printed book): 9548
        - [stream\-to\-array (Node)](Architecture/Performance/Async/Streams/Waiting/stream-to-array.node.txt)
        - [stream\-to\-promise (Node)](Architecture/Performance/Async/Streams/Waiting/stream-to-promise.node.txt)
      - [event\-stream (Node)](Architecture/Performance/Async/Streams/event-stream.node.txt)
-     - [from (Node)](Architecture/Performance/Async/Streams/from.node.txt)
  - __Caching__
    - __Fingerprints__
      - [versionator (Express)](Architecture/Performance/Caching/Fingerprints/versionator.express.txt)
    - __HTTP__
      - __Conditional__
        - [cacheable\-request (Node)](Architecture/Performance/Caching/HTTP/Conditional/cacheable-request.node.txt)
+       - [deno etag (Deno)](Architecture/Performance/Caching/HTTP/Conditional/deno_etag.deno.txt)
        - [etag (Node)](Architecture/Performance/Caching/HTTP/Conditional/etag.node.txt)
        - [fresh (Node)](Architecture/Performance/Caching/HTTP/Conditional/fresh.node.txt)
        - [http\-cache\-semantics (Node)](Architecture/Performance/Caching/HTTP/Conditional/http-cache-semantics.node.txt)
@@ -279,30 +349,37 @@ Number of pages (if it were a printed book): 9548
      - [moize (JavaScript)](Architecture/Performance/Caching/Memoization/moize.javascript.txt)
    - [caching (Theory)](Architecture/Performance/Caching/caching.theory.txt)
  - __Compression__
-   - __Brotli__
-     - [brotli.js (Node)](Architecture/Performance/Compression/Brotli/brotli.js.node.txt)
-     - [iltorb (Node)](Architecture/Performance/Compression/Brotli/iltorb.node.txt)
-   - __Gzip__
-     - [gulp\-gzip (Gulp)](Architecture/Performance/Compression/Gzip/gulp-gzip.gulp.txt)
    - __HTTP__
      - [compressible (Node)](Architecture/Performance/Compression/HTTP/compressible.node.txt)
      - [compression (Express)](Architecture/Performance/Compression/HTTP/compression.express.txt)
      - [decompress\-response (Node)](Architecture/Performance/Compression/HTTP/decompress-response.node.txt)
-   - __LZMA__
-     - [decompress\-tarxz (Node)](Architecture/Performance/Compression/LZMA/decompress-tarxz.node.txt)
-     - [js\-lzma (JavaScript)](Architecture/Performance/Compression/LZMA/js-lzma.javascript.txt)
-     - [libarchivejs (JavaScript)](Architecture/Performance/Compression/LZMA/libarchivejs.javascript.txt)
-     - [lzma\-js (JavaScript)](Architecture/Performance/Compression/LZMA/lzma-js.javascript.txt)
-     - [lzma\-native (Node)](Architecture/Performance/Compression/LZMA/lzma-native.node.txt)
-     - [lzmajs (JavaScript)](Architecture/Performance/Compression/LZMA/lzmajs.javascript.txt)
-     - [node\-xz (Node)](Architecture/Performance/Compression/LZMA/node-xz.node.txt)
+   - __Protocols__
+     - __Brotli__
+       - [brotli.js (Node)](Architecture/Performance/Compression/Protocols/Brotli/brotli.js.node.txt)
+       - [iltorb (Node)](Architecture/Performance/Compression/Protocols/Brotli/iltorb.node.txt)
+     - __Gzip__
+       - [gulp\-gzip (Gulp)](Architecture/Performance/Compression/Protocols/Gzip/gulp-gzip.gulp.txt)
+     - __LZMA__
+       - [decompress\-tarxz (Node)](Architecture/Performance/Compression/Protocols/LZMA/decompress-tarxz.node.txt)
+       - [js\-lzma (JavaScript)](Architecture/Performance/Compression/Protocols/LZMA/js-lzma.javascript.txt)
+       - [libarchivejs (JavaScript)](Architecture/Performance/Compression/Protocols/LZMA/libarchivejs.javascript.txt)
+       - [lzma\-js (JavaScript)](Architecture/Performance/Compression/Protocols/LZMA/lzma-js.javascript.txt)
+       - [lzma\-native (Node)](Architecture/Performance/Compression/Protocols/LZMA/lzma-native.node.txt)
+       - [lzmajs (JavaScript)](Architecture/Performance/Compression/Protocols/LZMA/lzmajs.javascript.txt)
+       - [node\-xz (Node)](Architecture/Performance/Compression/Protocols/LZMA/node-xz.node.txt)
+     - __zpaq__
+       - [libzpaq (C++)](Architecture/Performance/Compression/Protocols/zpaq/libzpaq.c%2B%2B.txt)
+   - __Types__
+     - __Varint__
+       - [varint (Deno)](Architecture/Performance/Compression/Types/Varint/varint.deno.txt)
+       - [varint (Theory)](Architecture/Performance/Compression/Types/Varint/varint.theory.txt)
    - [compression (Theory)](Architecture/Performance/Compression/compression.theory.txt)
    - [compression algos (Theory)](Architecture/Performance/Compression/compression_algos.theory.txt)
-   - __zpaq__
-     - [libzpaq (C++)](Architecture/Performance/Compression/zpaq/libzpaq.c%2B%2B.txt)
  - __Concurrency__
    - __Debugging__
      - [go concurrency debugging (CLI)](Architecture/Performance/Concurrency/Debugging/go_concurrency_debugging.cli.txt)
+   - __Locks__
+     - [deno flocks (Deno)](Architecture/Performance/Concurrency/Locks/deno_flocks.deno.txt)
    - [concurrency (Theory)](Architecture/Performance/Concurrency/concurrency.theory.txt)
  - __Lazy calculation__
    - __Lazy loading__
@@ -318,6 +395,7 @@ Number of pages (if it were a printed book): 9548
      - [p\-limit (Node)](Architecture/Performance/Limiting/Concurrency/p-limit.node.txt)
    - __Debounce__
      - [debounce\-fn (Node)](Architecture/Performance/Limiting/Debounce/debounce-fn.node.txt)
+     - [deno debounce (Deno)](Architecture/Performance/Limiting/Debounce/deno_debounce.deno.txt)
      - [p\-debounce (Node)](Architecture/Performance/Limiting/Debounce/p-debounce.node.txt)
    - __Throttle__
      - __Rate limiting__
@@ -350,6 +428,7 @@ Number of pages (if it were a printed book): 9548
    - __Benchmark__
      - [benchmark.js (JavaScript)](Architecture/Performance/Performance_testing/Benchmark/benchmark.js.javascript.txt)
      - [benchmarkjs (JavaScript)](Architecture/Performance/Performance_testing/Benchmark/benchmarkjs.javascript.txt)
+     - [deno bench (Deno)](Architecture/Performance/Performance_testing/Benchmark/deno_bench.deno.txt)
      - [go test bench (CLI)](Architecture/Performance/Performance_testing/Benchmark/go_test_bench.cli.txt)
      - [matcha (JavaScript)](Architecture/Performance/Performance_testing/Benchmark/matcha.javascript.txt)
      - [nanobench (JavaScript)](Architecture/Performance/Performance_testing/Benchmark/nanobench.javascript.txt)
@@ -391,13 +470,15 @@ Number of pages (if it were a printed book): 9548
    - __JWT__
      - [jws (Node)](Architecture/Security/Authentication/JWT/jws.node.txt)
      - [jwt (Format)](Architecture/Security/Authentication/JWT/jwt.format.txt)
+     - [pgjwt (Postgres)](Architecture/Security/Authentication/JWT/pgjwt.postgres.txt)
  - __Authorization__
    - __Framework__
-     - [IAM STS (AWS)](Architecture/Security/Authorization/Framework/IAM_STS.aws.txt)
+     - [IAM (AWS)](Architecture/Security/Authorization/Framework/IAM.aws.txt)
+     - [STS (AWS)](Architecture/Security/Authorization/Framework/STS.aws.txt)
      - [connect\-roles (Express)](Architecture/Security/Authorization/Framework/connect-roles.express.txt)
    - __OAuth__
      - __Client__
-       - [oauth (JavaScript)](Architecture/Security/Authorization/OAuth/Client/oauth.javascript.txt)
+       - [oauth js (JavaScript)](Architecture/Security/Authorization/OAuth/Client/oauth_js.javascript.txt)
      - __Server__
        - [oauth2orize (Node)](Architecture/Security/Authorization/OAuth/Server/oauth2orize.node.txt)
        - [passport\-oauth2 (Express)](Architecture/Security/Authorization/OAuth/Server/passport-oauth2.express.txt)
@@ -426,6 +507,8 @@ Number of pages (if it were a printed book): 9548
      - [crypta attacks (Theory)](Architecture/Security/Cryptography/Cryptanalyse/crypta_attacks.theory.txt)
      - [crypta classique attacks (Theory)](Architecture/Security/Cryptography/Cryptanalyse/crypta_classique_attacks.theory.txt)
      - [cryptanalyse (Theory)](Architecture/Security/Cryptography/Cryptanalyse/cryptanalyse.theory.txt)
+   - __Database__
+     - [vault (Postgres)](Architecture/Security/Cryptography/Database/vault.postgres.txt)
    - __Email__
      - [openPGP (GUI)](Architecture/Security/Cryptography/Email/openPGP.gui.txt)
    - __History__
@@ -445,13 +528,15 @@ Number of pages (if it were a printed book): 9548
      - [information security (Theory)](Architecture/Security/Cryptography/Theory/information_security.theory.txt)
      - [random (Theory)](Architecture/Security/Cryptography/Theory/random.theory.txt)
  - __Security general__
-   - __Sanitization__
-     - [sprintf.js (JavaScript)](Architecture/Security/Security_general/Sanitization/sprintf.js.javascript.txt)
    - __Web__
      - [Web security (Theory)](Architecture/Security/Security_general/Web/Web_security.theory.txt)
      - [cors (Express)](Architecture/Security/Security_general/Web/cors.express.txt)
      - [csurf (Express)](Architecture/Security/Security_general/Web/csurf.express.txt)
      - [helmet (Express)](Architecture/Security/Security_general/Web/helmet.express.txt)
+   - __XSS__
+     - __Sanitize__
+       - __HTML__
+         - [deno escape (Deno)](Architecture/Security/Security_general/XSS/Sanitize/HTML/deno_escape.deno.txt)
  - __Steganography__
    - [steganography (Theory)](Architecture/Security/Steganography/steganography.theory.txt)
    - [stego logiciels (CLI GUI)](Architecture/Security/Steganography/stego_logiciels.cli_gui.txt)
@@ -498,6 +583,7 @@ Number of pages (if it were a printed book): 9548
    - [iconv\-lite (Node)](Communication/Messaging/MIME/iconv-lite.node.txt)
    - [jschardet (Node)](Communication/Messaging/MIME/jschardet.node.txt)
    - [media\-typer (Node)](Communication/Messaging/MIME/media-typer.node.txt)
+   - [media types (Deno)](Communication/Messaging/MIME/media_types.deno.txt)
    - [mime\-db (JSON)](Communication/Messaging/MIME/mime-db.json.txt)
    - [mime\-types (Node)](Communication/Messaging/MIME/mime-types.node.txt)
    - [mime (Node)](Communication/Messaging/MIME/mime.node.txt)
@@ -544,6 +630,7 @@ Number of pages (if it were a printed book): 9548
        - [jsonschema (Node)](Data/Data_management/Validation/General/JSON_schema/jsonschema.node.txt)
        - [jsv (JavaScript)](Data/Data_management/Validation/General/JSON_schema/jsv.javascript.txt)
        - [kriszyp json schema (JavaScript)](Data/Data_management/Validation/General/JSON_schema/kriszyp_json_schema.javascript.txt)
+       - [pg jsonschema (Postgres)](Data/Data_management/Validation/General/JSON_schema/pg_jsonschema.postgres.txt)
        - [revalidator (JavaScript)](Data/Data_management/Validation/General/JSON_schema/revalidator.javascript.txt)
        - [tv4 (JavaScript)](Data/Data_management/Validation/General/JSON_schema/tv4.javascript.txt)
        - [z\-schema (JavaScript)](Data/Data_management/Validation/General/JSON_schema/z-schema.javascript.txt)
@@ -586,11 +673,14 @@ Number of pages (if it were a printed book): 9548
    - __Databases__
      - __Client only__
        - [localforage (JavaScript)](Data/Data_types/Offline/Databases/Client_only/localforage.javascript.txt)
+     - __Local__
+       - __On disk__
+         - [deno kv (Deno)](Data/Data_types/Offline/Databases/Local/On_disk/deno_kv.deno.txt)
    - __utilities__
      - [offline (JavaScript)](Data/Data_types/Offline/utilities/offline.javascript.txt)
  - __Relations__
    - __Database__
-     - [SQL (Database)](Data/Data_types/Relations/Database/SQL.database.txt)
+     - [postgres (Database)](Data/Data_types/Relations/Database/postgres.database.txt)
      - [rds (AWS)](Data/Data_types/Relations/Database/rds.aws.txt)
    - __Population__
      - [backbone\-relational (Backbone)](Data/Data_types/Relations/Population/backbone-relational.backbone.txt)
@@ -604,6 +694,7 @@ Number of pages (if it were a printed book): 9548
  - __Files general__
    - __Archives__
      - __Tar__
+       - [deno archive (Deno)](Data/Files/Files_general/Archives/Tar/deno_archive.deno.txt)
        - [gulp\-tar (Gulp)](Data/Files/Files_general/Archives/Tar/gulp-tar.gulp.txt)
        - [node\-tar (Node)](Data/Files/Files_general/Archives/Tar/node-tar.node.txt)
        - [tar\-stream (Node)](Data/Files/Files_general/Archives/Tar/tar-stream.node.txt)
@@ -622,61 +713,101 @@ Number of pages (if it were a printed book): 9548
        - [yazl (Node)](Data/Files/Files_general/Archives/Zip/yazl.node.txt)
        - [zip.js (Node)](Data/Files/Files_general/Archives/Zip/zip.js.node.txt)
    - __Commands__
-     - __Atomic write__
-       - [fast\-write\-atomic (Node)](Data/Files/Files_general/Commands/Atomic_write/fast-write-atomic.node.txt)
-       - [fs\-write\-stream\-atomic (Node)](Data/Files/Files_general/Commands/Atomic_write/fs-write-stream-atomic.node.txt)
-       - [write\-file\-atomic (Node)](Data/Files/Files_general/Commands/Atomic_write/write-file-atomic.node.txt)
-       - [write\-files\-atomic (Node)](Data/Files/Files_general/Commands/Atomic_write/write-files-atomic.node.txt)
      - __Cache files__
        - [find\-cache\-dir (Node)](Data/Files/Files_general/Commands/Cache_files/find-cache-dir.node.txt)
-     - __Copying__
-       - [cp\-file (Node)](Data/Files/Files_general/Commands/Copying/cp-file.node.txt)
-       - [cpy (Node)](Data/Files/Files_general/Commands/Copying/cpy.node.txt)
-     - __Creating directory__
-       - [make\-dir (Node)](Data/Files/Files_general/Commands/Creating_directory/make-dir.node.txt)
-       - [mkdirp (Node)](Data/Files/Files_general/Commands/Creating_directory/mkdirp.node.txt)
-     - __Deleting__
-       - [del (Node)](Data/Files/Files_general/Commands/Deleting/del.node.txt)
-       - [rimraf (Node)](Data/Files/Files_general/Commands/Deleting/rimraf.node.txt)
+     - __Check__
+       - [deno exists (Deno)](Data/Files/Files_general/Commands/Check/deno_exists.deno.txt)
+       - [locate\-path (Node)](Data/Files/Files_general/Commands/Check/locate-path.node.txt)
+       - [path\-exists (Node)](Data/Files/Files_general/Commands/Check/path-exists.node.txt)
+       - [path\-type (Node)](Data/Files/Files_general/Commands/Check/path-type.node.txt)
+     - __Copy__
+       - [cp\-file (Node)](Data/Files/Files_general/Commands/Copy/cp-file.node.txt)
+       - [cpy (Node)](Data/Files/Files_general/Commands/Copy/cpy.node.txt)
+       - [deno copy (Deno)](Data/Files/Files_general/Commands/Copy/deno_copy.deno.txt)
+     - __Create directory__
+       - [deno mkdir (Deno)](Data/Files/Files_general/Commands/Create_directory/deno_mkdir.deno.txt)
+       - [make\-dir (Node)](Data/Files/Files_general/Commands/Create_directory/make-dir.node.txt)
+       - [mkdirp (Node)](Data/Files/Files_general/Commands/Create_directory/mkdirp.node.txt)
+     - __Delete__
+       - [del (Node)](Data/Files/Files_general/Commands/Delete/del.node.txt)
+       - [deno remove (Deno)](Data/Files/Files_general/Commands/Delete/deno_remove.deno.txt)
+       - [rimraf (Node)](Data/Files/Files_general/Commands/Delete/rimraf.node.txt)
+     - __Ensure__
+       - [deno ensure (Deno)](Data/Files/Files_general/Commands/Ensure/deno_ensure.deno.txt)
      - __Error handling__
        - [graceful\-fs (Node)](Data/Files/Files_general/Commands/Error_handling/graceful-fs.node.txt)
-     - __Finding__
-       - __Checking__
-         - [locate\-path (Node)](Data/Files/Files_general/Commands/Finding/Checking/locate-path.node.txt)
-         - [path\-exists (Node)](Data/Files/Files_general/Commands/Finding/Checking/path-exists.node.txt)
-         - [path\-type (Node)](Data/Files/Files_general/Commands/Finding/Checking/path-type.node.txt)
+     - __Find__
        - __Globbing__
-         - [glob\-stream (Node)](Data/Files/Files_general/Commands/Finding/Globbing/glob-stream.node.txt)
-         - [glob (Node)](Data/Files/Files_general/Commands/Finding/Globbing/glob.node.txt)
-       - __List__
-         - [fs\-readdir\-recursive (Node)](Data/Files/Files_general/Commands/Finding/List/fs-readdir-recursive.node.txt)
-         - [readdir\-enhanced (Node)](Data/Files/Files_general/Commands/Finding/List/readdir-enhanced.node.txt)
-         - [readdirp (Node)](Data/Files/Files_general/Commands/Finding/List/readdirp.node.txt)
-         - [recursive\-readdir (Node)](Data/Files/Files_general/Commands/Finding/List/recursive-readdir.node.txt)
+         - [deno expand glob (Deno)](Data/Files/Files_general/Commands/Find/Globbing/deno_expand_glob.deno.txt)
+         - [glob\-stream (Node)](Data/Files/Files_general/Commands/Find/Globbing/glob-stream.node.txt)
+         - [glob (Node)](Data/Files/Files_general/Commands/Find/Globbing/glob.node.txt)
        - __Root__
-         - [escalade (Node)](Data/Files/Files_general/Commands/Finding/Root/escalade.node.txt)
-         - [find\-up (Node)](Data/Files/Files_general/Commands/Finding/Root/find-up.node.txt)
-         - [pkg\-dir (Node)](Data/Files/Files_general/Commands/Finding/Root/pkg-dir.node.txt)
-     - __Moving__
-       - [move\-concurrently (Node)](Data/Files/Files_general/Commands/Moving/move-concurrently.node.txt)
-       - [move\-file (Node)](Data/Files/Files_general/Commands/Moving/move-file.node.txt)
-       - [node\-mv (Node)](Data/Files/Files_general/Commands/Moving/node-mv.node.txt)
+         - [escalade (Node)](Data/Files/Files_general/Commands/Find/Root/escalade.node.txt)
+         - [find\-up (Node)](Data/Files/Files_general/Commands/Find/Root/find-up.node.txt)
+         - [pkg\-dir (Node)](Data/Files/Files_general/Commands/Find/Root/pkg-dir.node.txt)
+     - __Hard links__
+       - [deno link (Deno)](Data/Files/Files_general/Commands/Hard_links/deno_link.deno.txt)
+     - __List__
+       - __Deep__
+         - [deno walk (Deno)](Data/Files/Files_general/Commands/List/Deep/deno_walk.deno.txt)
+         - [fs\-readdir\-recursive (Node)](Data/Files/Files_general/Commands/List/Deep/fs-readdir-recursive.node.txt)
+         - [readdir\-enhanced (Node)](Data/Files/Files_general/Commands/List/Deep/readdir-enhanced.node.txt)
+         - [readdirp (Node)](Data/Files/Files_general/Commands/List/Deep/readdirp.node.txt)
+         - [recursive\-readdir (Node)](Data/Files/Files_general/Commands/List/Deep/recursive-readdir.node.txt)
+       - __Shallow__
+         - [deno readdir (Deno)](Data/Files/Files_general/Commands/List/Shallow/deno_readdir.deno.txt)
+     - __Metadata__
+       - [deno stat (Deno)](Data/Files/Files_general/Commands/Metadata/deno_stat.deno.txt)
+     - __Move__
+       - [deno rename (Deno)](Data/Files/Files_general/Commands/Move/deno_rename.deno.txt)
+       - [move\-concurrently (Node)](Data/Files/Files_general/Commands/Move/move-concurrently.node.txt)
+       - [move\-file (Node)](Data/Files/Files_general/Commands/Move/move-file.node.txt)
+       - [node\-mv (Node)](Data/Files/Files_general/Commands/Move/node-mv.node.txt)
+     - __Open__
+       - [deno open (Deno)](Data/Files/Files_general/Commands/Open/deno_open.deno.txt)
+     - __Read__
+       - [deno read file (Deno)](Data/Files/Files_general/Commands/Read/deno_read_file.deno.txt)
+     - __Symlinks__
+       - __Create__
+         - [deno symlink (Deno)](Data/Files/Files_general/Commands/Symlinks/Create/deno_symlink.deno.txt)
+       - __Read__
+         - [deno readlink (Deno)](Data/Files/Files_general/Commands/Symlinks/Read/deno_readlink.deno.txt)
      - __Temporary files__
+       - [deno temp (Deno)](Data/Files/Files_general/Commands/Temporary_files/deno_temp.deno.txt)
        - [node\-temp (Node)](Data/Files/Files_general/Commands/Temporary_files/node-temp.node.txt)
        - [node\-tmp (Node)](Data/Files/Files_general/Commands/Temporary_files/node-tmp.node.txt)
        - [temp\-dir (Node)](Data/Files/Files_general/Commands/Temporary_files/temp-dir.node.txt)
        - [temp\-write (Node)](Data/Files/Files_general/Commands/Temporary_files/temp-write.node.txt)
        - [tempfile (Node)](Data/Files/Files_general/Commands/Temporary_files/tempfile.node.txt)
        - [tempy (Node)](Data/Files/Files_general/Commands/Temporary_files/tempy.node.txt)
+     - __Truncate__
+       - [deno truncate (Deno)](Data/Files/Files_general/Commands/Truncate/deno_truncate.deno.txt)
      - __Unnecessary files__
        - [junk (Node)](Data/Files/Files_general/Commands/Unnecessary_files/junk.node.txt)
-     - __Watchers__
-       - [chokidar (Node)](Data/Files/Files_general/Commands/Watchers/chokidar.node.txt)
-       - [gaze (Node)](Data/Files/Files_general/Commands/Watchers/gaze.node.txt)
-       - [glob\-watcher (Node)](Data/Files/Files_general/Commands/Watchers/glob-watcher.node.txt)
+     - __Watch__
+       - [chokidar (Node)](Data/Files/Files_general/Commands/Watch/chokidar.node.txt)
+       - [deno watch (Deno)](Data/Files/Files_general/Commands/Watch/deno_watch.deno.txt)
+       - [gaze (Node)](Data/Files/Files_general/Commands/Watch/gaze.node.txt)
+       - [glob\-watcher (Node)](Data/Files/Files_general/Commands/Watch/glob-watcher.node.txt)
+     - __Write__
+       - __Atomic__
+         - [fast\-write\-atomic (Node)](Data/Files/Files_general/Commands/Write/Atomic/fast-write-atomic.node.txt)
+         - [fs\-write\-stream\-atomic (Node)](Data/Files/Files_general/Commands/Write/Atomic/fs-write-stream-atomic.node.txt)
+         - [write\-file\-atomic (Node)](Data/Files/Files_general/Commands/Write/Atomic/write-file-atomic.node.txt)
+         - [write\-files\-atomic (Node)](Data/Files/Files_general/Commands/Write/Atomic/write-files-atomic.node.txt)
+       - __Generic__
+         - [deno write file (Deno)](Data/Files/Files_general/Commands/Write/Generic/deno_write_file.deno.txt)
+   - __File paths__
+     - [deno path (Deno)](Data/Files/Files_general/File_paths/deno_path.deno.txt)
    - __Filesystem abstraction__
+     - [deno io (Deno)](Data/Files/Files_general/Filesystem_abstraction/deno_io.deno.txt)
+     - [deno resource (Deno)](Data/Files/Files_general/Filesystem_abstraction/deno_resource.deno.txt)
+     - [file descriptor (Os)](Data/Files/Files_general/Filesystem_abstraction/file_descriptor.os.txt)
      - [vinyl (Node)](Data/Files/Files_general/Filesystem_abstraction/vinyl.node.txt)
    - [file uri scheme (Identifier)](Data/Files/Files_general/file_uri_scheme.identifier.txt)
+ - __Virtual filesystem__
+   - __Fuse__
+     - [s3fs fuse (CLI)](Data/Files/Virtual_filesystem/Fuse/s3fs_fuse.cli.txt)
 
 ### Markup
 
@@ -692,6 +823,9 @@ Number of pages (if it were a printed book): 9548
    - __Syntax__
      - [markdown (Language)](Data/Markup/Markdown/Syntax/markdown.language.txt)
  - __Templates__
+   - __Flat strings__
+     - [deno printf (Deno)](Data/Markup/Templates/Flat_strings/deno_printf.deno.txt)
+     - [sprintf.js (JavaScript)](Data/Markup/Templates/Flat_strings/sprintf.js.javascript.txt)
    - __HTML__
      - [classnames (JavaScript)](Data/Markup/Templates/HTML/classnames.javascript.txt)
    - __Strings__
@@ -703,9 +837,13 @@ Number of pages (if it were a printed book): 9548
 
 ### Serialization
 
+ - __Binary__
+   - __Utilities__
+     - [deno binary (Deno)](Data/Serialization/Binary/Utilities/deno_binary.deno.txt)
  - __Concatenation__
    - __Front\-matter__
      - [front\-matter (Node)](Data/Serialization/Concatenation/Front-matter/front-matter.node.txt)
+     - [front matter (Deno)](Data/Serialization/Concatenation/Front-matter/front_matter.deno.txt)
      - [gray\-matter (Node)](Data/Serialization/Concatenation/Front-matter/gray-matter.node.txt)
      - [markdown\-to\-json (CLI)](Data/Serialization/Concatenation/Front-matter/markdown-to-json.cli.txt)
  - __JSON like__
@@ -744,10 +882,18 @@ Number of pages (if it were a printed book): 9548
    - __JSON5__
      - [JSON5 (Format)](Data/Serialization/JSON_like/JSON5/JSON5.format.txt)
      - [json5 (JavaScript)](Data/Serialization/JSON_like/JSON5/json5.javascript.txt)
+   - __JSONC__
+     - [deno jsonc (Deno)](Data/Serialization/JSON_like/JSONC/deno_jsonc.deno.txt)
+     - [jsonc (Format)](Data/Serialization/JSON_like/JSONC/jsonc.format.txt)
  - __Memory efficient__
    - __Protobuf__
      - [protobuf (Format)](Data/Serialization/Memory_efficient/Protobuf/protobuf.format.txt)
      - [protobufjs (JavaScript)](Data/Serialization/Memory_efficient/Protobuf/protobufjs.javascript.txt)
+ - __Print__
+   - [concordance (Node)](Data/Serialization/Print/concordance.node.txt)
+   - [deno inspect (Deno)](Data/Serialization/Print/deno_inspect.deno.txt)
+   - [jsfmt (JavaScript)](Data/Serialization/Print/jsfmt.javascript.txt)
+   - [pretty\-format (JavaScript)](Data/Serialization/Print/pretty-format.javascript.txt)
  - __Query__
    - __JSON__
      - __JSON path__
@@ -775,11 +921,14 @@ Number of pages (if it were a printed book): 9548
    - __TOML__
      - __Parsers serializers__
        - [toml\-node (JavaScript)](Data/Serialization/Simplistic/TOML/Parsers_serializers/toml-node.javascript.txt)
+       - [toml (Deno)](Data/Serialization/Simplistic/TOML/Parsers_serializers/toml.deno.txt)
      - [toml (Format)](Data/Serialization/Simplistic/TOML/toml.format.txt)
  - __Table__
    - __CSV__
+     - __Parser serializer__
+       - [csv (Deno)](Data/Serialization/Table/CSV/Parser_serializer/csv.deno.txt)
+       - [csv (Node)](Data/Serialization/Table/CSV/Parser_serializer/csv.node.txt)
      - __Syntax__
-       - [csv (Node)](Data/Serialization/Table/CSV/Syntax/csv.node.txt)
        - [dsv tsv csv (Format)](Data/Serialization/Table/CSV/Syntax/dsv_tsv_csv.format.txt)
    - __Excel__
      - __Parsing serializing__
@@ -791,27 +940,27 @@ Number of pages (if it were a printed book): 9548
      - __Linting__
        - [yamllint (CLI)](Data/Serialization/Type_rich/YAML/Linting/yamllint.cli.txt)
      - __Parser serializer__
+       - [deno yaml (Deno)](Data/Serialization/Type_rich/YAML/Parser_serializer/deno_yaml.deno.txt)
        - [js\-yaml (JavaScript)](Data/Serialization/Type_rich/YAML/Parser_serializer/js-yaml.javascript.txt)
        - [yaml.js (JavaScript)](Data/Serialization/Type_rich/YAML/Parser_serializer/yaml.js.javascript.txt)
      - [yaml (Format)](Data/Serialization/Type_rich/YAML/yaml.format.txt)
- - [concordance (Node)](Data/Serialization/concordance.node.txt)
- - [jsfmt (JavaScript)](Data/Serialization/jsfmt.javascript.txt)
- - [pretty\-format (JavaScript)](Data/Serialization/pretty-format.javascript.txt)
  - [serialization formats (Summary)](Data/Serialization/serialization_formats.summary.txt)
 
 ### State
 
  - __Client server state__
    - __Cookies__
-     - __Integrity__
-       - [cookie\-signature (Node)](Data/State/Client_server_state/Cookies/Integrity/cookie-signature.node.txt)
      - __Parsing__
        - [cookie\-parser (Express)](Data/State/Client_server_state/Cookies/Parsing/cookie-parser.express.txt)
        - [cookie (Node)](Data/State/Client_server_state/Cookies/Parsing/cookie.node.txt)
+       - [deno cookie (Deno)](Data/State/Client_server_state/Cookies/Parsing/deno_cookie.deno.txt)
        - [jquery\-cookie (jQuery)](Data/State/Client_server_state/Cookies/Parsing/jquery-cookie.jquery.txt)
        - [js\-cookie (JavaScript)](Data/State/Client_server_state/Cookies/Parsing/js-cookie.javascript.txt)
      - __Session__
        - [express\-session (Express)](Data/State/Client_server_state/Cookies/Session/express-session.express.txt)
+     - __Sign__
+       - [cookie\-signature (Node)](Data/State/Client_server_state/Cookies/Sign/cookie-signature.node.txt)
+       - [deno secure cookie map (Deno)](Data/State/Client_server_state/Cookies/Sign/deno_secure_cookie_map.deno.txt)
    - __General__
      - [connect\-flash (Express)](Data/State/Client_server_state/General/connect-flash.express.txt)
      - [express\-state (Express)](Data/State/Client_server_state/General/express-state.express.txt)
@@ -819,13 +968,20 @@ Number of pages (if it were a printed book): 9548
    - [database theory (Theory)](Data/State/Databases_general/database_theory.theory.txt)
  - __Identifiers__
    - __Decentralized__
+     - __ULID__
+       - [ulid (Identifier)](Data/State/Identifiers/Decentralized/ULID/ulid.identifier.txt)
      - __UUID__
+       - [deno uuid (Deno)](Data/State/Identifiers/Decentralized/UUID/deno_uuid.deno.txt)
        - [uuid (Identifier)](Data/State/Identifiers/Decentralized/UUID/uuid.identifier.txt)
        - [uuidjs (Node)](Data/State/Identifiers/Decentralized/UUID/uuidjs.node.txt)
+     - [snowflake (Identifier)](Data/State/Identifiers/Decentralized/snowflake.identifier.txt)
+     - [ulid (Deno)](Data/State/Identifiers/Decentralized/ulid.deno.txt)
+     - [ulid (JavaScript)](Data/State/Identifiers/Decentralized/ulid.javascript.txt)
    - __Full\-content__
      - [data uri (Identifier)](Data/State/Identifiers/Full-content/data_uri.identifier.txt)
    - __Hash__
      - [ni (Identifier)](Data/State/Identifiers/Hash/ni.identifier.txt)
+     - [pg hashids (Postgres)](Data/State/Identifiers/Hash/pg_hashids.postgres.txt)
      - [sigmund (Node)](Data/State/Identifiers/Hash/sigmund.node.txt)
    - __Human\-friendly__
      - [nih (Identifier)](Data/State/Identifiers/Human-friendly/nih.identifier.txt)
@@ -857,6 +1013,7 @@ Number of pages (if it were a printed book): 9548
    - [abstract algebra (Theory)](Data_science/Computation/Math/abstract_algebra.theory.txt)
    - [algebra (Theory)](Data_science/Computation/Math/algebra.theory.txt)
    - [algebra equations (Theory)](Data_science/Computation/Math/algebra_equations.theory.txt)
+   - [analysis (Theory)](Data_science/Computation/Math/analysis.theory.txt)
    - [arithmetic (Theory)](Data_science/Computation/Math/arithmetic.theory.txt)
    - [calculus (Theory)](Data_science/Computation/Math/calculus.theory.txt)
    - [combinatorics (Theory)](Data_science/Computation/Math/combinatorics.theory.txt)
@@ -871,6 +1028,7 @@ Number of pages (if it were a printed book): 9548
    - [numeral history (Theory)](Data_science/Computation/Math/numeral_history.theory.txt)
    - [numeral systems (Theory)](Data_science/Computation/Math/numeral_systems.theory.txt)
    - [numerical analysis (Theory)](Data_science/Computation/Math/numerical_analysis.theory.txt)
+   - [order theory (Theory)](Data_science/Computation/Math/order_theory.theory.txt)
    - [set theory (Theory)](Data_science/Computation/Math/set_theory.theory.txt)
    - [statistics theory (Theory)](Data_science/Computation/Math/statistics_theory.theory.txt)
    - [survey (Theory)](Data_science/Computation/Math/survey.theory.txt)
@@ -902,8 +1060,10 @@ Number of pages (if it were a printed book): 9548
        - [chalk (Node CLI)](Design/Visual/Colors/Terminal/Apply/chalk.node_cli.txt)
        - [colorette (Node)](Design/Visual/Colors/Terminal/Apply/colorette.node.txt)
        - [colors.js (Node)](Design/Visual/Colors/Terminal/Apply/colors.js.node.txt)
+       - [deno set colors (Deno)](Design/Visual/Colors/Terminal/Apply/deno_set_colors.deno.txt)
        - [kleur (Node)](Design/Visual/Colors/Terminal/Apply/kleur.node.txt)
      - __Detection__
+       - [deno color enabled (Deno)](Design/Visual/Colors/Terminal/Detection/deno_color_enabled.deno.txt)
        - [supports\-color (Node)](Design/Visual/Colors/Terminal/Detection/supports-color.node.txt)
  - __Typography__
    - [typography (Theory)](Design/Visual/Typography/typography.theory.txt)
@@ -913,6 +1073,8 @@ Number of pages (if it were a printed book): 9548
 ### Configuration
 
  - __Configuration data__
+   - __Dotenv__
+     - [dotenv (Deno)](DevOps/Configuration/Configuration_data/Dotenv/dotenv.deno.txt)
    - [cosmiconfig (Node)](DevOps/Configuration/Configuration_data/cosmiconfig.node.txt)
    - [docker\-gen (Docker)](DevOps/Configuration/Configuration_data/docker-gen.docker.txt)
    - [dockerize (Docker)](DevOps/Configuration/Configuration_data/dockerize.docker.txt)
@@ -949,12 +1111,42 @@ Number of pages (if it were a printed book): 9548
    - __PaaS__
      - [netlify (SaaS)](DevOps/Infrastructure/CDN/PaaS/netlify.saas.txt)
    - [cloudfront (AWS)](DevOps/Infrastructure/CDN/cloudfront.aws.txt)
+ - __FaaS serverless__
+   - __IaaS__
+     - [lambda (AWS)](DevOps/Infrastructure/FaaS_serverless/IaaS/lambda.aws.txt)
+   - __PaaS__
+     - [deno deploy (Deno)](DevOps/Infrastructure/FaaS_serverless/PaaS/deno_deploy.deno.txt)
+ - __IaC__
+   - __CloudFormation__
+     - __CLI__
+       - [aws\-cfn\-control (CLI)](DevOps/Infrastructure/IaC/CloudFormation/CLI/aws-cfn-control.cli.txt)
+       - [cfn\-teleport (CLI)](DevOps/Infrastructure/IaC/CloudFormation/CLI/cfn-teleport.cli.txt)
+       - [rain (CLI)](DevOps/Infrastructure/IaC/CloudFormation/CLI/rain.cli.txt)
+       - [sceptre (CLI)](DevOps/Infrastructure/IaC/CloudFormation/CLI/sceptre.cli.txt)
+     - __Core__
+       - [cdk (AWS)](DevOps/Infrastructure/IaC/CloudFormation/Core/cdk.aws.txt)
+       - [cloudformation (AWS)](DevOps/Infrastructure/IaC/CloudFormation/Core/cloudformation.aws.txt)
+     - __Diagrams__
+       - [aws\-cloudformation\-stacks\-graph (CLI)](DevOps/Infrastructure/IaC/CloudFormation/Diagrams/aws-cloudformation-stacks-graph.cli.txt)
+       - [cfn\-diagram (CLI)](DevOps/Infrastructure/IaC/CloudFormation/Diagrams/cfn-diagram.cli.txt)
+     - __Linting__
+       - [cfn\-lint (AWS)](DevOps/Infrastructure/IaC/CloudFormation/Linting/cfn-lint.aws.txt)
+     - __Policy__
+       - [cfn\-guard (AWS)](DevOps/Infrastructure/IaC/CloudFormation/Policy/cfn-guard.aws.txt)
+   - __Pulumi__
+     - [pulumi (SaaS)](DevOps/Infrastructure/IaC/Pulumi/pulumi.saas.txt)
+     - [pulumi aws (SaaS)](DevOps/Infrastructure/IaC/Pulumi/pulumi_aws.saas.txt)
  - __IaaS__
-   - [AWS (SaaS)](DevOps/Infrastructure/IaaS/AWS.saas.txt)
-   - [ec2 (AWS)](DevOps/Infrastructure/IaaS/ec2.aws.txt)
+   - __AWS__
+     - [aws api (AWS)](DevOps/Infrastructure/IaaS/AWS/aws_api.aws.txt)
+     - [aws cli (AWS)](DevOps/Infrastructure/IaaS/AWS/aws_cli.aws.txt)
+     - [aws config (AWS)](DevOps/Infrastructure/IaaS/AWS/aws_config.aws.txt)
+     - [aws general (AWS)](DevOps/Infrastructure/IaaS/AWS/aws_general.aws.txt)
+     - [aws javascript (AWS)](DevOps/Infrastructure/IaaS/AWS/aws_javascript.aws.txt)
+   - __Compute__
+     - [ec2 (AWS)](DevOps/Infrastructure/IaaS/Compute/ec2.aws.txt)
  - __PaaS__
    - [beanstalk (AWS)](DevOps/Infrastructure/PaaS/beanstalk.aws.txt)
-   - [cloudformation (AWS)](DevOps/Infrastructure/PaaS/cloudformation.aws.txt)
    - [heroku (SaaS)](DevOps/Infrastructure/PaaS/heroku.saas.txt)
  - __SaaS__
    - [Google APIs (SaaS)](DevOps/Infrastructure/SaaS/Google_APIs.saas.txt)
@@ -1025,6 +1217,7 @@ Number of pages (if it were a printed book): 9548
      - [typedoc (Node)](Dev_helpers/Coding/Documentation/From_code_itself/typedoc.node.txt)
    - __From comments__
      - __Generators__
+       - [deno doc (Deno)](Dev_helpers/Coding/Documentation/From_comments/Generators/deno_doc.deno.txt)
        - [documentation.js (Node)](Dev_helpers/Coding/Documentation/From_comments/Generators/documentation.js.node.txt)
        - [dox (Node)](Dev_helpers/Coding/Documentation/From_comments/Generators/dox.node.txt)
        - [doxygen (Many)](Dev_helpers/Coding/Documentation/From_comments/Generators/doxygen.many.txt)
@@ -1064,7 +1257,12 @@ Number of pages (if it were a printed book): 9548
        - [husky (Node)](Dev_helpers/Coding/Version_control/Git/git/husky.node.txt)
      - [lint\-staged (CLI)](Dev_helpers/Coding/Version_control/Git/lint-staged.cli.txt)
    - __GitHub__
+     - __Apps__
+       - [github apps (SaaS)](Dev_helpers/Coding/Version_control/GitHub/Apps/github_apps.saas.txt)
      - [github (SaaS)](Dev_helpers/Coding/Version_control/GitHub/github.saas.txt)
+     - [github api (SaaS)](Dev_helpers/Coding/Version_control/GitHub/github_api.saas.txt)
+     - [github cli (CLI)](Dev_helpers/Coding/Version_control/GitHub/github_cli.cli.txt)
+     - [github webhooks (SaaS)](Dev_helpers/Coding/Version_control/GitHub/github_webhooks.saas.txt)
 
 ### Insights
 
@@ -1076,14 +1274,13 @@ Number of pages (if it were a printed book): 9548
        - [errorhandler (Express)](Dev_helpers/Insights/Logging/Automatic_logging/Errors/errorhandler.express.txt)
      - __Network interaction__
        - [cloudtrail (AWS)](Dev_helpers/Insights/Logging/Automatic_logging/Network_interaction/cloudtrail.aws.txt)
-   - __Beautifying__
-     - [http errors (Node)](Dev_helpers/Insights/Logging/Beautifying/http_errors.node.txt)
    - __Dashboard__
      - [bugsnag (SaaS)](Dev_helpers/Insights/Logging/Dashboard/bugsnag.saas.txt)
    - __Logger__
      - __Server side__
        - [consola (Node)](Dev_helpers/Insights/Logging/Logger/Server_side/consola.node.txt)
        - [debug (Node)](Dev_helpers/Insights/Logging/Logger/Server_side/debug.node.txt)
+       - [deno log (Deno)](Dev_helpers/Insights/Logging/Logger/Server_side/deno_log.deno.txt)
        - [log4js (Node)](Dev_helpers/Insights/Logging/Logger/Server_side/log4js.node.txt)
        - [pino (Node)](Dev_helpers/Insights/Logging/Logger/Server_side/pino.node.txt)
        - [signale (Node)](Dev_helpers/Insights/Logging/Logger/Server_side/signale.node.txt)
@@ -1092,18 +1289,28 @@ Number of pages (if it were a printed book): 9548
    - __Request logging__
      - [express\-winston (Node)](Dev_helpers/Insights/Logging/Request_logging/express-winston.node.txt)
      - [morgan (Express)](Dev_helpers/Insights/Logging/Request_logging/morgan.express.txt)
+   - __Shape__
+     - __HTTP__
+       - [deno http errors (Deno)](Dev_helpers/Insights/Logging/Shape/HTTP/deno_http_errors.deno.txt)
+       - [http errors (Node)](Dev_helpers/Insights/Logging/Shape/HTTP/http_errors.node.txt)
  - __Monitoring__
    - __Custom metrics__
      - __Alerting__
        - [vitalsigns (Node)](Dev_helpers/Insights/Monitoring/Custom_metrics/Alerting/vitalsigns.node.txt)
    - __Host metrics__
+     - __Alerting__
+       - [cloudwatch alarms (AWS)](Dev_helpers/Insights/Monitoring/Host_metrics/Alerting/cloudwatch_alarms.aws.txt)
      - __Collecting__
+       - [cloudwatch contributor insights (AWS)](Dev_helpers/Insights/Monitoring/Host_metrics/Collecting/cloudwatch_contributor_insights.aws.txt)
+       - [cloudwatch metrics (AWS)](Dev_helpers/Insights/Monitoring/Host_metrics/Collecting/cloudwatch_metrics.aws.txt)
+       - [cloudwatch observability (AWS)](Dev_helpers/Insights/Monitoring/Host_metrics/Collecting/cloudwatch_observability.aws.txt)
        - [hot\-shots (Node)](Dev_helpers/Insights/Monitoring/Host_metrics/Collecting/hot-shots.node.txt)
        - [statsd\-client (Node)](Dev_helpers/Insights/Monitoring/Host_metrics/Collecting/statsd-client.node.txt)
        - [statsd (Node)](Dev_helpers/Insights/Monitoring/Host_metrics/Collecting/statsd.node.txt)
        - [statsd protocol (Protocol)](Dev_helpers/Insights/Monitoring/Host_metrics/Collecting/statsd_protocol.protocol.txt)
      - __Collecting dashboard__
-       - [cloudwatch (AWS)](Dev_helpers/Insights/Monitoring/Host_metrics/Collecting_dashboard/cloudwatch.aws.txt)
+     - __Dashboard__
+       - [cloudwatch dashboard (AWS)](Dev_helpers/Insights/Monitoring/Host_metrics/Dashboard/cloudwatch_dashboard.aws.txt)
    - __Uptime monitoring__
      - __Health checks__
        - [grpc\-health\-check (Node)](Dev_helpers/Insights/Monitoring/Uptime_monitoring/Health_checks/grpc-health-check.node.txt)
@@ -1165,6 +1372,7 @@ Number of pages (if it were a printed book): 9548
        - [supertest (Node)](Dev_helpers/Quality_assurance/Testing/Assertions/HTTP/supertest.node.txt)
      - [ava assertions (Node CLI)](Dev_helpers/Quality_assurance/Testing/Assertions/ava_assertions.node_cli.txt)
      - [chai (JavaScript)](Dev_helpers/Quality_assurance/Testing/Assertions/chai.javascript.txt)
+     - [deno assertions (Deno)](Dev_helpers/Quality_assurance/Testing/Assertions/deno_assertions.deno.txt)
      - [expect more (JavaScript)](Dev_helpers/Quality_assurance/Testing/Assertions/expect_more.javascript.txt)
      - [jasmine assertions (JavaScript)](Dev_helpers/Quality_assurance/Testing/Assertions/jasmine_assertions.javascript.txt)
      - [jasmine matchers (JavaScript)](Dev_helpers/Quality_assurance/Testing/Assertions/jasmine_matchers.javascript.txt)
@@ -1212,6 +1420,7 @@ Number of pages (if it were a printed book): 9548
      - __V8__
        - __Core__
          - [c8 (Node)](Dev_helpers/Quality_assurance/Testing/Coverage/V8/Core/c8.node.txt)
+         - [deno coverage (Deno)](Dev_helpers/Quality_assurance/Testing/Coverage/V8/Core/deno_coverage.deno.txt)
          - [v8\-to\-instanbul (Node)](Dev_helpers/Quality_assurance/Testing/Coverage/V8/Core/v8-to-instanbul.node.txt)
        - __Merging__
          - [v8\-coverage\-merge (Node)](Dev_helpers/Quality_assurance/Testing/Coverage/V8/Merging/v8-coverage-merge.node.txt)
@@ -1225,6 +1434,7 @@ Number of pages (if it were a printed book): 9548
      - [testing quick (Go)](Dev_helpers/Quality_assurance/Testing/Data_driven_test/testing_quick.go.txt)
    - __Diff testing__
      - [ava snapshots (Node CLI)](Dev_helpers/Quality_assurance/Testing/Diff_testing/ava_snapshots.node_cli.txt)
+     - [deno snapshots (Deno)](Dev_helpers/Quality_assurance/Testing/Diff_testing/deno_snapshots.deno.txt)
      - [go examples (CLI)](Dev_helpers/Quality_assurance/Testing/Diff_testing/go_examples.cli.txt)
      - [jest snapshots (JavaScript)](Dev_helpers/Quality_assurance/Testing/Diff_testing/jest_snapshots.javascript.txt)
      - [node snapshots (Node)](Dev_helpers/Quality_assurance/Testing/Diff_testing/node_snapshots.node.txt)
@@ -1237,6 +1447,7 @@ Number of pages (if it were a printed book): 9548
        - [jest modules (JavaScript)](Dev_helpers/Quality_assurance/Testing/Mocking/Dependencies/jest_modules.javascript.txt)
      - __Generic__
        - [chai\-spies (JavaScript)](Dev_helpers/Quality_assurance/Testing/Mocking/Generic/chai-spies.javascript.txt)
+       - [deno mock (Deno)](Dev_helpers/Quality_assurance/Testing/Mocking/Generic/deno_mock.deno.txt)
        - [jasmine spies (JavaScript)](Dev_helpers/Quality_assurance/Testing/Mocking/Generic/jasmine_spies.javascript.txt)
        - [jest mocks (JavaScript)](Dev_helpers/Quality_assurance/Testing/Mocking/Generic/jest_mocks.javascript.txt)
        - [node tests mocks (Node)](Dev_helpers/Quality_assurance/Testing/Mocking/Generic/node_tests_mocks.node.txt)
@@ -1254,9 +1465,11 @@ Number of pages (if it were a printed book): 9548
      - __Specific framework__
        - [enzyme (React)](Dev_helpers/Quality_assurance/Testing/Mocking/Specific_framework/enzyme.react.txt)
      - __Timers__
+       - [deno time (Deno)](Dev_helpers/Quality_assurance/Testing/Mocking/Timers/deno_time.deno.txt)
        - [fake timers (JavaScript)](Dev_helpers/Quality_assurance/Testing/Mocking/Timers/fake_timers.javascript.txt)
        - [jasmine timers (JavaScript)](Dev_helpers/Quality_assurance/Testing/Mocking/Timers/jasmine_timers.javascript.txt)
        - [jest timers (JavaScript)](Dev_helpers/Quality_assurance/Testing/Mocking/Timers/jest_timers.javascript.txt)
+       - [mocktimers (Node)](Dev_helpers/Quality_assurance/Testing/Mocking/Timers/mocktimers.node.txt)
    - __Platforms__
      - __Browsers__
        - [karma (CLI)](Dev_helpers/Quality_assurance/Testing/Platforms/Browsers/karma.cli.txt)
@@ -1283,6 +1496,7 @@ Number of pages (if it were a printed book): 9548
      - [jest reporters (Node CLI)](Dev_helpers/Quality_assurance/Testing/Reporting/jest_reporters.node_cli.txt)
      - [mocha reporters (Node CLI)](Dev_helpers/Quality_assurance/Testing/Reporting/mocha_reporters.node_cli.txt)
      - [node\-tap reporters (JavaScript CLI)](Dev_helpers/Quality_assurance/Testing/Reporting/node-tap_reporters.javascript_cli.txt)
+     - [node\-test reporters (Node CLI)](Dev_helpers/Quality_assurance/Testing/Reporting/node-test_reporters.node_cli.txt)
    - __Smoke testing__
      - [cigar (CLI)](Dev_helpers/Quality_assurance/Testing/Smoke_testing/cigar.cli.txt)
      - [dredd (JavaScript)](Dev_helpers/Quality_assurance/Testing/Smoke_testing/dredd.javascript.txt)
@@ -1291,6 +1505,7 @@ Number of pages (if it were a printed book): 9548
      - [gremlins.js (JavaScript)](Dev_helpers/Quality_assurance/Testing/Stress_testing/gremlins.js.javascript.txt)
    - __Test runner__
      - [ava (Node CLI)](Dev_helpers/Quality_assurance/Testing/Test_runner/ava.node_cli.txt)
+     - [deno test (Deno)](Dev_helpers/Quality_assurance/Testing/Test_runner/deno_test.deno.txt)
      - [go test (CLI)](Dev_helpers/Quality_assurance/Testing/Test_runner/go_test.cli.txt)
      - [jasmine (Node CLI)](Dev_helpers/Quality_assurance/Testing/Test_runner/jasmine.node_cli.txt)
      - [jest (Node CLI)](Dev_helpers/Quality_assurance/Testing/Test_runner/jest.node_cli.txt)
@@ -1344,6 +1559,9 @@ Number of pages (if it were a printed book): 9548
      - [jshint (Node CLI)](Languages/Coding_style/Linting/JavaScript/jshint.node_cli.txt)
    - __JavaScript CSS__
      - [hound (SaaS)](Languages/Coding_style/Linting/JavaScript_CSS/hound.saas.txt)
+   - __TypeScript__
+     - [deno lint (Deno)](Languages/Coding_style/Linting/TypeScript/deno_lint.deno.txt)
+     - [typescript eslint (Node CLI)](Languages/Coding_style/Linting/TypeScript/typescript_eslint.node_cli.txt)
    - [remark\-lint (Node CLI)](Languages/Coding_style/Linting/remark-lint.node_cli.txt)
 
 ### CoffeeScript
@@ -1368,6 +1586,13 @@ Number of pages (if it were a printed book): 9548
 
  - __Data binding__
    - [stickit (Backbone)](Languages/JavaScript/Data_binding/stickit.backbone.txt)
+ - __Deno__
+   - __Node deno__
+     - [deno2node (Deno)](Languages/JavaScript/Deno/Node_deno/deno2node.deno.txt)
+     - [denoify (Node)](Languages/JavaScript/Deno/Node_deno/denoify.node.txt)
+     - [dnt (Deno)](Languages/JavaScript/Deno/Node_deno/dnt.deno.txt)
+     - [node shims (Deno)](Languages/JavaScript/Deno/Node_deno/node_shims.deno.txt)
+   - [deno (JavaScript)](Languages/JavaScript/Deno/deno.javascript.txt)
  - __JavaScript core__
    - [JavaScript (Language)](Languages/JavaScript/JavaScript_core/JavaScript.language.txt)
  - __JavaScript frameworks__
@@ -1426,6 +1651,7 @@ Number of pages (if it were a printed book): 9548
      - [jsfmt (Node)](Languages/Language_processing/Beautifiers/JavaScript/jsfmt.node.txt)
      - [uglify beautify (Node CLI)](Languages/Language_processing/Beautifiers/JavaScript/uglify_beautify.node_cli.txt)
    - __Multi language__
+     - [deno fmt (Deno)](Languages/Language_processing/Beautifiers/Multi_language/deno_fmt.deno.txt)
      - [prettier (Node CLI)](Languages/Language_processing/Beautifiers/Multi_language/prettier.node_cli.txt)
  - __Minification__
    - __CSS__
@@ -1459,6 +1685,7 @@ Number of pages (if it were a printed book): 9548
        - [shift (Format)](Languages/Metaprogramming/Parsing/AST_format/JavaScript/shift.format.txt)
      - __TypeScript__
        - [tsestree (Format)](Languages/Metaprogramming/Parsing/AST_format/TypeScript/tsestree.format.txt)
+       - [typescript\-eslint\-parser (Node)](Languages/Metaprogramming/Parsing/AST_format/TypeScript/typescript-eslint-parser.node.txt)
    - __Parse tokenize__
      - __CSS__
        - [gonzales\-pe (Node)](Languages/Metaprogramming/Parsing/Parse_tokenize/CSS/gonzales-pe.node.txt)
@@ -1477,6 +1704,7 @@ Number of pages (if it were a printed book): 9548
      - __JavaScript__
        - [acorn\-walk (Node)](Languages/Metaprogramming/Parsing/Traverse/JavaScript/acorn-walk.node.txt)
        - [eslint\-visitor\-keys (Node)](Languages/Metaprogramming/Parsing/Traverse/JavaScript/eslint-visitor-keys.node.txt)
+       - [typescript\-eslint\-visitor\-keys (Node)](Languages/Metaprogramming/Parsing/Traverse/JavaScript/typescript-eslint-visitor-keys.node.txt)
    - [parsing (Theory)](Languages/Metaprogramming/Parsing/parsing.theory.txt)
  - __Source maps__
    - __Concatenation__
@@ -1554,6 +1782,8 @@ Number of pages (if it were a printed book): 9548
        - [ts\-node (Node)](Languages/Static_analysis/Type_checking/TypeScript/Core/ts-node.node.txt)
        - [typescript (Language)](Languages/Static_analysis/Type_checking/TypeScript/Core/typescript.language.txt)
      - __Testing__
+       - [deno test types (Deno)](Languages/Static_analysis/Type_checking/TypeScript/Testing/deno_test_types.deno.txt)
+       - [ts\-expect (Node)](Languages/Static_analysis/Type_checking/TypeScript/Testing/ts-expect.node.txt)
        - [tsd (Node)](Languages/Static_analysis/Type_checking/TypeScript/Testing/tsd.node.txt)
    - [flow (Language)](Languages/Static_analysis/Type_checking/flow.language.txt)
 
@@ -1649,6 +1879,8 @@ Number of pages (if it were a printed book): 9548
 ### Networking protocols
 
  - __DNS__
+   - __Client__
+     - [deno dns (Deno)](Networking/Networking_protocols/DNS/Client/deno_dns.deno.txt)
    - [DNS (Protocol)](Networking/Networking_protocols/DNS/DNS.protocol.txt)
    - __Registration__
      - [route53 (AWS)](Networking/Networking_protocols/DNS/Registration/route53.aws.txt)
@@ -1668,17 +1900,24 @@ Number of pages (if it were a printed book): 9548
      - [http\-proxy (Node)](Networking/Networking_protocols/Proxy/HTTP/http-proxy.node.txt)
      - [proxy\-addr (Node)](Networking/Networking_protocols/Proxy/HTTP/proxy-addr.node.txt)
      - [request\-ip (Node)](Networking/Networking_protocols/Proxy/HTTP/request-ip.node.txt)
- - __SSL TLS__
-   - __HTTPS__
-     - [HTTPS (Protocol)](Networking/Networking_protocols/SSL_TLS/HTTPS/HTTPS.protocol.txt)
-   - __Library__
-     - [express\-enforces\-ssl (Express)](Networking/Networking_protocols/SSL_TLS/Library/express-enforces-ssl.express.txt)
-   - [SSL (Protocol)](Networking/Networking_protocols/SSL_TLS/SSL.protocol.txt)
+   - __Localhost__
+     - [localtunnel (Node)](Networking/Networking_protocols/Proxy/Localhost/localtunnel.node.txt)
  - __Service discovery__
    - [DHCP (Protocol)](Networking/Networking_protocols/Service_discovery/DHCP.protocol.txt)
  - __TCP__
+   - __Library__
+     - [deno tcp (Deno)](Networking/Networking_protocols/TCP/Library/deno_tcp.deno.txt)
    - [TCP (Protocol)](Networking/Networking_protocols/TCP/TCP.protocol.txt)
+ - __TLS__
+   - __HTTPS__
+     - [HTTPS (Protocol)](Networking/Networking_protocols/TLS/HTTPS/HTTPS.protocol.txt)
+   - __Library__
+     - [deno tls (Deno)](Networking/Networking_protocols/TLS/Library/deno_tls.deno.txt)
+     - [express\-enforces\-ssl (Express)](Networking/Networking_protocols/TLS/Library/express-enforces-ssl.express.txt)
+   - [SSL (Protocol)](Networking/Networking_protocols/TLS/SSL.protocol.txt)
  - __UDP__
+   - __Library__
+     - [deno udp (Deno)](Networking/Networking_protocols/UDP/Library/deno_udp.deno.txt)
    - [UDP (Protocol)](Networking/Networking_protocols/UDP/UDP.protocol.txt)
 
 ## Platforms
@@ -1744,6 +1983,8 @@ Number of pages (if it were a printed book): 9548
        - [autoprefixer (Node CLI)](Platforms/Interoperability/Browser/CSS/Transpiler/autoprefixer.node_cli.txt)
        - [cssnext (PostCSS)](Platforms/Interoperability/Browser/CSS/Transpiler/cssnext.postcss.txt)
    - __Device identification__
+     - __User agent__
+       - [deno user agent (Deno)](Platforms/Interoperability/Browser/Device_identification/User_agent/deno_user_agent.deno.txt)
      - [express\-device (Express)](Platforms/Interoperability/Browser/Device_identification/express-device.express.txt)
      - [session.js (JavaScript)](Platforms/Interoperability/Browser/Device_identification/session.js.javascript.txt)
    - __Feature support__
@@ -1763,6 +2004,7 @@ Number of pages (if it were a printed book): 9548
      - [passwd\-user (Node)](Platforms/Interoperability/OS/Environment_variables/passwd-user.node.txt)
      - [username (Node)](Platforms/Interoperability/OS/Environment_variables/username.node.txt)
    - __Identification__
+     - [deno os (Deno)](Platforms/Interoperability/OS/Identification/deno_os.deno.txt)
      - [getos (Node)](Platforms/Interoperability/OS/Identification/getos.node.txt)
      - [is\-windows (Node)](Platforms/Interoperability/OS/Identification/is-windows.node.txt)
      - [is\-wsl (Node)](Platforms/Interoperability/OS/Identification/is-wsl.node.txt)
@@ -1783,6 +2025,7 @@ Number of pages (if it were a printed book): 9548
      - [is\-root (Node)](Platforms/Interoperability/OS/Permissions/is-root.node.txt)
      - [isexe (Node)](Platforms/Interoperability/OS/Permissions/isexe.node.txt)
    - __Spawn__
+     - [deno command (Deno)](Platforms/Interoperability/OS/Spawn/deno_command.deno.txt)
      - [execa (Node)](Platforms/Interoperability/OS/Spawn/execa.node.txt)
      - [node\-cross\-spawn (Node)](Platforms/Interoperability/OS/Spawn/node-cross-spawn.node.txt)
      - [npm\-path (Node)](Platforms/Interoperability/OS/Spawn/npm-path.node.txt)
@@ -1806,9 +2049,11 @@ Number of pages (if it were a printed book): 9548
      - __Flags__
        - [caporal (Node)](Platforms/Terminal/CLI/Input/Flags/caporal.node.txt)
        - [commander (Node)](Platforms/Terminal/CLI/Input/Flags/commander.node.txt)
+       - [deno flags (Deno)](Platforms/Terminal/CLI/Input/Flags/deno_flags.deno.txt)
        - [minimist (Node)](Platforms/Terminal/CLI/Input/Flags/minimist.node.txt)
        - [yargs (Node)](Platforms/Terminal/CLI/Input/Flags/yargs.node.txt)
      - __Prompt__
+       - [deno prompt (Deno)](Platforms/Terminal/CLI/Input/Prompt/deno_prompt.deno.txt)
        - [enquirer (Node)](Platforms/Terminal/CLI/Input/Prompt/enquirer.node.txt)
        - [inquirer (Node)](Platforms/Terminal/CLI/Input/Prompt/inquirer.node.txt)
        - [prompts (Node)](Platforms/Terminal/CLI/Input/Prompt/prompts.node.txt)
@@ -1821,10 +2066,12 @@ Number of pages (if it were a printed book): 9548
          - [has\-ansi (Node)](Platforms/Terminal/CLI/Interactive/ANSI_sequences/Detection/has-ansi.node.txt)
        - __Normalization__
          - [cli\-truncate (Node)](Platforms/Terminal/CLI/Interactive/ANSI_sequences/Normalization/cli-truncate.node.txt)
+         - [deno strip color (Deno)](Platforms/Terminal/CLI/Interactive/ANSI_sequences/Normalization/deno_strip_color.deno.txt)
          - [slice\-ansi (Node)](Platforms/Terminal/CLI/Interactive/ANSI_sequences/Normalization/slice-ansi.node.txt)
          - [string\-width (Node)](Platforms/Terminal/CLI/Interactive/ANSI_sequences/Normalization/string-width.node.txt)
          - [strip\-ansi\-stream (Node)](Platforms/Terminal/CLI/Interactive/ANSI_sequences/Normalization/strip-ansi-stream.node.txt)
          - [strip\-ansi (Node)](Platforms/Terminal/CLI/Interactive/ANSI_sequences/Normalization/strip-ansi.node.txt)
+         - [unicode\-width (Deno)](Platforms/Terminal/CLI/Interactive/ANSI_sequences/Normalization/unicode-width.deno.txt)
          - [wrap\-ansi (Node)](Platforms/Terminal/CLI/Interactive/ANSI_sequences/Normalization/wrap-ansi.node.txt)
        - [ansi sequences (Theory)](Platforms/Terminal/CLI/Interactive/ANSI_sequences/ansi_sequences.theory.txt)
      - __Cursor__
@@ -1885,6 +2132,7 @@ Number of pages (if it were a printed book): 9548
      - [ky (JavaScript)](RPC/Client/Simple_client/HTTP/ky.javascript.txt)
      - [needle (Node)](RPC/Client/Simple_client/HTTP/needle.node.txt)
      - [node\-fetch (Node)](RPC/Client/Simple_client/HTTP/node-fetch.node.txt)
+     - [pgsql http (Postgres)](RPC/Client/Simple_client/HTTP/pgsql_http.postgres.txt)
      - [phin (Node)](RPC/Client/Simple_client/HTTP/phin.node.txt)
      - [postman (GUI)](RPC/Client/Simple_client/HTTP/postman.gui.txt)
      - [qwest (JavaScript)](RPC/Client/Simple_client/HTTP/qwest.javascript.txt)
@@ -1909,6 +2157,8 @@ Number of pages (if it were a printed book): 9548
 
 ### Inter process
 
+ - __API gateway__
+   - [api gateway (AWS)](RPC/Inter_process/API_gateway/api_gateway.aws.txt)
  - __API specification__
    - __Formats__
      - [agreed (Format)](RPC/Inter_process/API_specification/Formats/agreed.format.txt)
@@ -1953,6 +2203,7 @@ Number of pages (if it were a printed book): 9548
      - [multiparty (Express)](RPC/Inter_process/HTTP/Body/multiparty.express.txt)
    - __Content negotiation__
      - [content\-type (Node)](RPC/Inter_process/HTTP/Content_negotiation/content-type.node.txt)
+     - [deno negotiation (Deno)](RPC/Inter_process/HTTP/Content_negotiation/deno_negotiation.deno.txt)
      - [negotiator accepts (Node)](RPC/Inter_process/HTTP/Content_negotiation/negotiator_accepts.node.txt)
      - [type\-is (Node)](RPC/Inter_process/HTTP/Content_negotiation/type-is.node.txt)
      - [vary (Node)](RPC/Inter_process/HTTP/Content_negotiation/vary.node.txt)
@@ -1964,8 +2215,10 @@ Number of pages (if it were a printed book): 9548
      - [li (Node)](RPC/Inter_process/HTTP/Headers/li.node.txt)
      - [node\-parse\-prefer\-header (Node)](RPC/Inter_process/HTTP/Headers/node-parse-prefer-header.node.txt)
    - __Methods__
+     - [deno http methods (Deno)](RPC/Inter_process/HTTP/Methods/deno_http_methods.deno.txt)
      - [method\-override (Express)](RPC/Inter_process/HTTP/Methods/method-override.express.txt)
    - __Statuses__
+     - [deno http status (Deno)](RPC/Inter_process/HTTP/Statuses/deno_http_status.deno.txt)
      - [statuses (Node)](RPC/Inter_process/HTTP/Statuses/statuses.node.txt)
    - __Streaming__
      - [range\-parser (Node)](RPC/Inter_process/HTTP/Streaming/range-parser.node.txt)
@@ -2036,11 +2289,16 @@ Number of pages (if it were a printed book): 9548
    - [undertaker (Node)](RPC/Messages_tasks/Task_coordination/undertaker.node.txt)
  - __Task queue__
    - [sqs (AWS)](RPC/Messages_tasks/Task_queue/sqs.aws.txt)
+ - __Task scheduler__
+   - __cron__
+     - [pg cron (Postgres)](RPC/Messages_tasks/Task_scheduler/cron/pg_cron.postgres.txt)
 
 ### Realtime
 
  - __Realtime server__
    - [express.io (Express)](RPC/Realtime/Realtime_server/express.io.express.txt)
+ - __Server sent events__
+   - [deno server sent events (Deno)](RPC/Realtime/Server_sent_events/deno_server_sent_events.deno.txt)
  - __Syndication__
    - __Formats__
      - [rss 2 (Format)](RPC/Realtime/Syndication/Formats/rss_2.format.txt)
@@ -2050,12 +2308,19 @@ Number of pages (if it were a printed book): 9548
  - __WebSocket__
    - __Server__
      - [WebSocket (Protocol)](RPC/Realtime/WebSocket/Server/WebSocket.protocol.txt)
+     - [deno websocket (Deno)](RPC/Realtime/WebSocket/Server/deno_websocket.deno.txt)
      - [engine.io (Node)](RPC/Realtime/WebSocket/Server/engine.io.node.txt)
      - [socket.io (Node)](RPC/Realtime/WebSocket/Server/socket.io.node.txt)
      - [ws (Node CLI)](RPC/Realtime/WebSocket/Server/ws.node_cli.txt)
 
 ### Server
 
+ - __API generation__
+   - __From database__
+     - [postgrest (CLI)](RPC/Server/API_generation/From_database/postgrest.cli.txt)
+ - __BaaS__
+   - __From database__
+     - [supabase (SaaS)](RPC/Server/BaaS/From_database/supabase.saas.txt)
  - __Server framework__
    - __MVC__
      - __Declarative__
@@ -2068,6 +2333,7 @@ Number of pages (if it were a printed book): 9548
        - [micro framework declarative (Summary)](RPC/Server/Server_framework/Micro_framework/Declarative/micro_framework_declarative.summary.txt)
        - [swagger2 koa (Node)](RPC/Server/Server_framework/Micro_framework/Declarative/swagger2_koa.node.txt)
      - __Minimalist__
+       - [deno http (Deno)](RPC/Server/Server_framework/Micro_framework/Minimalist/deno_http.deno.txt)
        - [express (Node)](RPC/Server/Server_framework/Micro_framework/Minimalist/express.node.txt)
  - __Static server__
    - __Directory listing__
@@ -2078,6 +2344,7 @@ Number of pages (if it were a printed book): 9548
      - __S3__
        - [s3 (AWS)](RPC/Server/Static_server/For_production/S3/s3.aws.txt)
        - [scottyjs (CLI)](RPC/Server/Static_server/For_production/S3/scottyjs.cli.txt)
+     - [deno file server (Deno)](RPC/Server/Static_server/For_production/deno_file_server.deno.txt)
      - [glacier (AWS)](RPC/Server/Static_server/For_production/glacier.aws.txt)
      - [serve\-static (Express)](RPC/Server/Static_server/For_production/serve-static.express.txt)
      - [st (Express)](RPC/Server/Static_server/For_production/st.express.txt)
@@ -2219,7 +2486,6 @@ Number of pages (if it were a printed book): 9548
  - [atime ctime mtime](To_sort/Bash_Unix/atime_ctime_mtime.txt)
  - [buffering](To_sort/Bash_Unix/buffering.txt)
  - [character block special files](To_sort/Bash_Unix/character_block_special_files.txt)
- - [classe posix](To_sort/Bash_Unix/classe_posix.txt)
  - [droits d acces](To_sort/Bash_Unix/droits_d_acces.txt)
  - [fifo unamedpipe](To_sort/Bash_Unix/fifo_unamedpipe.txt)
  - [human readable sizes](To_sort/Bash_Unix/human_readable_sizes.txt)
@@ -2373,12 +2639,14 @@ Number of pages (if it were a printed book): 9548
      - [jquery\-timeago (jQuery)](Types/Date_time/Date_time_general/Date_popovers/jquery-timeago.jquery.txt)
    - __Utilities__
      - __Duration serializing__
+       - [deno fmt duration (Deno)](Types/Date_time/Date_time_general/Utilities/Duration_serializing/deno_fmt_duration.deno.txt)
        - [ms (Node CLI)](Types/Date_time/Date_time_general/Utilities/Duration_serializing/ms.node_cli.txt)
        - [pretty\-hrtime (Node)](Types/Date_time/Date_time_general/Utilities/Duration_serializing/pretty-hrtime.node.txt)
        - [pretty\-ms (Node)](Types/Date_time/Date_time_general/Utilities/Duration_serializing/pretty-ms.node.txt)
        - [pretty\-time (Node)](Types/Date_time/Date_time_general/Utilities/Duration_serializing/pretty-time.node.txt)
      - [date\-fns (JavaScript)](Types/Date_time/Date_time_general/Utilities/date-fns.javascript.txt)
      - [day.js (JavaScript)](Types/Date_time/Date_time_general/Utilities/day.js.javascript.txt)
+     - [deno datetime (Deno)](Types/Date_time/Date_time_general/Utilities/deno_datetime.deno.txt)
      - [js\-joda (JavaScript)](Types/Date_time/Date_time_general/Utilities/js-joda.javascript.txt)
      - [luxon (JavaScript)](Types/Date_time/Date_time_general/Utilities/luxon.javascript.txt)
      - [moment (JavaScript)](Types/Date_time/Date_time_general/Utilities/moment.javascript.txt)
@@ -2393,9 +2661,10 @@ Number of pages (if it were a printed book): 9548
          - [source map vlq (Format)](Types/Numbers/Numbers_general/Arbitrary_precision/Integers/Source_map_VLQ/source_map_vlq.format.txt)
          - [vlq (JavaScript)](Types/Numbers/Numbers_general/Arbitrary_precision/Integers/Source_map_VLQ/vlq.javascript.txt)
  - __Units__
-   - __Bytes__
-     - [bytes (Node)](Types/Numbers/Units/Bytes/bytes.node.txt)
    - __Human friendly units__
+     - __Bytes__
+       - [bytes (Node)](Types/Numbers/Units/Human_friendly_units/Bytes/bytes.node.txt)
+       - [deno bytes (Deno)](Types/Numbers/Units/Human_friendly_units/Bytes/deno_bytes.deno.txt)
 
 ### Strings
 
@@ -2415,10 +2684,10 @@ Number of pages (if it were a printed book): 9548
    - __Encoding__
      - __base64 base32 hex octal__
        - [base64\-js (JavaScript)](Types/Strings/Strings_general/Encoding/base64_base32_hex_octal/base64-js.javascript.txt)
+       - [base64\_58 32 85 hex (Deno)](Types/Strings/Strings_general/Encoding/base64_base32_hex_octal/base64_58_32_85_hex.deno.txt)
        - [base64 base32 hex octal (Format)](Types/Strings/Strings_general/Encoding/base64_base32_hex_octal/base64_base32_hex_octal.format.txt)
        - [js\-base64 (JavaScript)](Types/Strings/Strings_general/Encoding/base64_base32_hex_octal/js-base64.javascript.txt)
        - [mathiasbynens base64 (JavaScript)](Types/Strings/Strings_general/Encoding/base64_base32_hex_octal/mathiasbynens_base64.javascript.txt)
-     - [base64 base32 hex octal (Format)](Types/Strings/Strings_general/Encoding/base64_base32_hex_octal.format.txt)
    - __Manipulation__
      - __Case__
        - [camelcase\-keys (Node)](Types/Strings/Strings_general/Manipulation/Case/camelcase-keys.node.txt)
@@ -2436,33 +2705,45 @@ Number of pages (if it were a printed book): 9548
        - [redent (Node)](Types/Strings/Strings_general/Manipulation/Indent/redent.node.txt)
        - [strip\-indent (Node)](Types/Strings/Strings_general/Manipulation/Indent/strip-indent.node.txt)
      - __Newline__
-       - [detect\-newline (Node)](Types/Strings/Strings_general/Manipulation/Newline/detect-newline.node.txt)
+       - __Detect__
+         - [deno detect newline (Deno)](Types/Strings/Strings_general/Manipulation/Newline/Detect/deno_detect_newline.deno.txt)
+         - [detect\-newline (Node)](Types/Strings/Strings_general/Manipulation/Newline/Detect/detect-newline.node.txt)
+       - __Format__
+         - [deno format newline (Deno)](Types/Strings/Strings_general/Manipulation/Newline/Format/deno_format_newline.deno.txt)
+       - __Strip__
+         - [strip\-final\-newline (Node)](Types/Strings/Strings_general/Manipulation/Newline/Strip/strip-final-newline.node.txt)
      - __Slugify__
        - [simov slugify (JavaScript)](Types/Strings/Strings_general/Manipulation/Slugify/simov_slugify.javascript.txt)
        - [sindresorhus slugify (Node)](Types/Strings/Strings_general/Manipulation/Slugify/sindresorhus_slugify.node.txt)
      - __Utilities__
        - [pluralize (JavaScript)](Types/Strings/Strings_general/Manipulation/Utilities/pluralize.javascript.txt)
-       - [strip\-final\-newline (Node)](Types/Strings/Strings_general/Manipulation/Utilities/strip-final-newline.node.txt)
        - [underscore.string (JavaScript)](Types/Strings/Strings_general/Manipulation/Utilities/underscore.string.javascript.txt)
        - [yn (Node)](Types/Strings/Strings_general/Manipulation/Utilities/yn.node.txt)
    - __Matching__
      - __Globbing__
        - __Braces__
          - [brace\-expansion (JavaScript)](Types/Strings/Strings_general/Matching/Globbing/Braces/brace-expansion.javascript.txt)
-       - __Full__
-         - [minimatch (Node)](Types/Strings/Strings_general/Matching/Globbing/Full/minimatch.node.txt)
+       - __Detection__
+         - [deno isglob (Deno)](Types/Strings/Strings_general/Matching/Globbing/Detection/deno_isglob.deno.txt)
+       - __Format__
+         - [globbing (Format)](Types/Strings/Strings_general/Matching/Globbing/Format/globbing.format.txt)
+       - __Match__
+         - [deno glob (Deno)](Types/Strings/Strings_general/Matching/Globbing/Match/deno_glob.deno.txt)
+         - [minimatch (Node)](Types/Strings/Strings_general/Matching/Globbing/Match/minimatch.node.txt)
      - __Path__
        - [common\-path\-prefix (JavaScript)](Types/Strings/Strings_general/Matching/Path/common-path-prefix.javascript.txt)
+       - [deno common (Deno)](Types/Strings/Strings_general/Matching/Path/deno_common.deno.txt)
      - __RegExp__
        - __Escape__
+         - [deno regexp escape (Deno)](Types/Strings/Strings_general/Matching/RegExp/Escape/deno_regexp_escape.deno.txt)
          - [escape\-string\-regexp (Node)](Types/Strings/Strings_general/Matching/RegExp/Escape/escape-string-regexp.node.txt)
+       - __Format__
+         - [posix class (Format)](Types/Strings/Strings_general/Matching/RegExp/Format/posix_class.format.txt)
        - __Replace__
          - [gulp\-replace (Gulp)](Types/Strings/Strings_general/Matching/RegExp/Replace/gulp-replace.gulp.txt)
        - __Tokenize__
          - [ret (Node)](Types/Strings/Strings_general/Matching/RegExp/Tokenize/ret.node.txt)
      - [balanced\-match (JavaScript)](Types/Strings/Strings_general/Matching/balanced-match.javascript.txt)
-   - __Sorting__
-     - [sort\-on (Node)](Types/Strings/Strings_general/Sorting/sort-on.node.txt)
    - __Validation__
      - [validator.js (JavaScript)](Types/Strings/Strings_general/Validation/validator.js.javascript.txt)
 
