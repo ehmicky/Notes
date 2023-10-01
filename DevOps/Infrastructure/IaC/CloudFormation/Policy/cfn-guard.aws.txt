@@ -7,6 +7,9 @@
 
 TODO:
   - https://github.com/aws-cloudformation/cloudformation-guard/
+  - lambda:
+     - https://docs.aws.amazon.com/cfn-guard/latest/ug/setting-up-lambda.html
+     - https://github.com/aws-cloudformation/cloudformation-guard/tree/main/guard-lambda
   - https://github.com/aws-cloudformation/aws-guard-rules-registry
   - https://github.com/aws-cloudformation/resource-schema-guard-rail
 
@@ -17,21 +20,18 @@ VERSION ==>                       #3.0.1
 cfn-guard                         #Policy-as-code for CloudFormation
 
 cfn-guard validate                #Validate rules against a TEMPLATE
---data|-d                         #STR. Provides the name of a file or directory for data files in either JSON or YAML format.
-                                  #If you provide a directory, Guard evaluates the specified rules against all data files in the directory.
-                                  #The directory must contain only data files; it cannot contain both data and rules files.
-                                  #If you specify the --payload flag, don't specify the --data option.
---rules|-r                        #STR. Provides the name of a rules file or a directory of rules files.
-                                  #If you provide a directory, Guard evaluates all rules in the directory against the specified data.
-                                  #The directory must contain only rules files; it cannot contain both data and rules files.
-                                  #If you specify the --payload flag, do not specify the --rules option.
--P, --payload                     #Allows you to provide rules and data in the following JSON format via stdin:
-                                  #  {"rules":["<rules 1>", "<rules 2>", ...], "data":["<data 1>", "<data 2>", ...]}
-                                  #For example:
-                                  #  {"data": ["{\"Resources\":{\"NewVolume\":{\"Type\":\"AWS::EC2::Volume\",\"Properties\":{\"Size\":500,\"Encrypted\":false,\"AvailabilityZone\":\"us-west-2b\"}},\"NewVolume2\":{\"Type\":\"AWS::EC2::Volume\",\"Properties\":{\"Size\":50,\"Encrypted\":false,\"AvailabilityZone\":\"us-west-2c\"}}},\"Parameters\":{\"InstanceName\":\"TestInstance\"}}","{\"Resources\":{\"NewVolume\":{\"Type\":\"AWS::EC2::Volume\",\"Properties\":{\"Size\":500,\"Encrypted\":false,\"AvailabilityZone\":\"us-west-2b\"}},\"NewVolume2\":{\"Type\":\"AWS::EC2::Volume\",\"Properties\":{\"Size\":50,\"Encrypted\":false,\"AvailabilityZone\":\"us-west-2c\"}}},\"Parameters\":{\"InstanceName\":\"TestInstance\"}}"], "rules" : [ "Parameters.InstanceName == \"TestInstance\"","Parameters.InstanceName == \"TestInstance\"" ]}
-                                  #For "rules", specify a string list of rules files. For "data", specify a string list of data files.
-                                  #If you specify the --payload flag, don't specify the --rules or --data options.
---output-format|-o                #One of 'json', 'yaml', 'single-line-summary' (def)
+--rules|-r                        #'RULE_PATH'. Can be either a file, or a DIR (it then uses DIR/*)
+                                  #Can be specified several times
+--data|-d                         #'IDATA_PATH'. Can be either a file, or a DIR (it then uses DIR/*)
+                                  #Can be specified several times
+--payload|-P                      #Alternative to using --rules|--data
+                                  #Provides both as an OBJ: rules 'RULE_PATH'_ARR, data 'OBJ_JSON'_ARR
+                                  #Can be passed as stdin too
+--output-format|-o                #One of:
+                                  #  - 'single-line-summary' (def)
+                                  #  - 'json'
+                                  #  - 'yaml'
+--print-json|-p                   #Same as --output-format json. Or for evaluation summary instead???
 --show-summary                    #Specifies the verbosity of the Guard rule evaluation summary.
                                   #One of:
                                   #  - 'all' (def): displays the full summary
@@ -41,21 +41,21 @@ cfn-guard validate                #Validate rules against a TEMPLATE
                                   #  - default: displays property paths and values, such as `Property [/Resources/vol2/Properties/Encrypted`
                                   #  - 'CFNTemplate': Guard displays the logical names of CloudFormation template resources in the output
 --verbose|-v                      #Increases the output verbosity. Can be specified multiple times.
---print-json|-p                   #Prints the output in JSON format.
---show-clause-failures|-s         #Shows clause failure including a summary.
---alphabetical|-a                 #Validates files in a directory that is ordered alphabetically.
---last-modified|-m                #Validates files in a directory that is ordered by last-modified times.
-
-cfn-guard test                    #Validate rules against a unit test file
---rules-file|-r                   #'PATH'
---test-data|-t                    #'FILE|DIR', in JSON|YAML
---last-modified|-m                #Sort DIR by mtime
---alphabetical|-a                 #Sort DIR alphabetically
---verbose|-v                      #Verbose output. Can be done multiple times
                                   #The verbose output follows the structure of the Guard rules file.
                                   #Every block in the rules file is a block in the verbose output.
                                   #The top-most block is each rule.
                                   #If there are when conditions against the rule, they appear as a sibling condition block.
+--show-clause-failures|-s         #Shows clause failure including a summary.
+--last-modified|-m                #Run --rules|--data DIR/* in mtime order
+--alphabetical|-a                 #Run --rules|--data DIR/* in alphabetical order
+
+cfn-guard test                    #Run rules against test data
+                                  #Meant to unit test the rules
+--rules-file|-r                   #Like cfn-guard validate --rules
+--test-data|-t                    #Like cfn-guard validate --data
+--last-modified|-m
+--alphabetical|-a
+--verbose|-v                      #Like cfn-guard validate
 
 cfn-guard rulegen                 #Scaffold rules from a TEMPLATE
                                   #Create one rule per RESPROP, requiring it to be equal
@@ -67,3 +67,106 @@ cfn-guard parse-tree              #Parse rules
 --output|-o                       #'PATH' (def: stdout)
 --print-json|-j
 --print-yaml|-y                   #JSON (def) or YAML
+
+IDATA                             #Input data.
+                                  #Any JSON|YAML OBJ, but usually a CloudFormation TEMPLATE
+
+RULE_FILE                         #File with RULE as content
+RULE                              #Newline-separated CLAUSEs
+                                  #Often use file extension .guard
+
+#COMMENT                          #
+
+QUERY OP [QUERY|VAL]              #CLAUSE
+                                  #Assertion on IDATA
+
+CLAUSE <<MESSAGE>>                #Error message displayed with cfn-guard validate|test --verbose
+                                  #Can include newlines or trailing whitespaces, ignored
+
+CLAUSE [or]                       #Relation between CLAUSEs is either:
+CLAUSE2                           #  - and (default)
+                                  #  - `or`
+                                  #`or` has higher priority than `and`
+
+{ ... }                           #Block with CLAUSEs
+
+QUERY { ... }                     #Sets `this` as QUERY inside { ... }
+this                              #Implicitely prepended to each QUERY
+                                  #Initially set to IDATA
+                                  #Joined with . unless QUERY starts with [
+                                  #Can also be used explicitly
+                                  #To keep track of current `this` in children { ... }, can use `let MVAR = this`
+
+when CLAUSE { ... }               #Ignore { ... } if CLAUSE is false
+
+rule RULE_SET { ... }             #CLAUSE composed on the product of all the CLAUSEs in the block
+                                  #Also called "named-rule block"
+                                  #RULE_SET can be used as a CLAUSE inside another RULE_SET's `when` or block
+rule RULE_SET when CLAUSE { ... } #Combine `rule` and `when`
+
+QUERY                             #Performed on input data OBJ
+                                  #All of the following are QUERYs, are can be chained
+VAR                               #Input data OBJ.VAR
+QUERY.VAR
+QUERY.'VAR'                       #
+QUERY[NUM]                        #
+QUERY.*                           #All OBJ values
+QUERY[*]                          #All ARR values
+                                  #If not an ARR, noop
+                                  #  - but does not fail
+                                  #  - this allows traversing values that are optionally ARRs
+QUERY[...]
+QUERY[
+  ...                             #Filter only elements with CLAUSEs true, where [...] is a block of CLAUSEs
+]                                 #Each ITEM is `this` inside [...]
+
+EMPTY QUERY ==>                   #Resolves to false:
+                                  #  - QUERY.VAR or QUERY[NUM] that is unknown
+                                  #     - except with `exists|empty`
+                                  #  - QUERY.* or QUERY[*] on empty OBJ|ARR
+                                  #     - except with `empty`, or when followed by [...] filter
+                                  #Resolves to true:
+                                  #  - QUERY[...] resulting to empty OBJ|ARR
+let MVAR = QUERY
+when %MVAR !empty {
+  %MVAR.QUERY2 ...
+}                                 #Common pattern to allow possibly empty queries
+
+let MVAR = VAL                    #Define MVAR as a VAL
+                                  #Lexical scope: if inside { ... }, can only be used inside it
+                                  #Actual variable, not macro
+let MVAR = [some] QUERY           #Define MVAR as 1|n ITEMs
+                                  #If `some`, only first ITEM
+                                  #If only 1 ITEM, can be used as VAL
+%MVAR                             #Reference MVAR
+                                  #Can be inside a QUERY, e.g. %MVAR.VAR or VAR.%MVAR
+                                  #Cannot be inside <<MESSAGE>>
+
+ITEM                              #QUERY.* and QUERY[*] resolve to multiple ITEMs
+                                  #The rest of the QUERY operates on each ITEM
+                                  #Also, OP is performed on each ITEM
+QUERY { ... }                     #Each ITEM evaluates its own { ... }
+[some] CLAUSE
+[some] QUERY { ... }              #With multiple ITEMs, whether result is and'd (def) or or'd (`some`)
+
+OP                                #One of the following
+not OP
+!OP                               #
+VAL == != VAL2                    #
+VAL IN [VAL2,...]                 #
+VAL exists                        #Is undefined
+VAL empty                         #Is undefined, or empty ARR|OBJ
+VAL is_string|is_list|is_struct   #Is STR|ARR|OBJ
+NUM < <= > >= NUM2                #
+NUM IN r[NUM2, NUM3]              #NUM2 <= NUM <= NUM3
+                                  #Can also use r[...) r(...] r(...) to use < instead
+"CHAR" IN r[...]                  #Same with CHARs
+STR == /REGEXP/                   #
+STR IN [/REGEXP/,...]             #
+
+true|false                        #BOOL
+NUM                               #INT|FLOAT, 8 bytes
+"..."                             #STR
+/.../                             #REGEXP
+{ "VAR": VAL, ... }               #OBJ
+[VAL,...]                         #ARR
