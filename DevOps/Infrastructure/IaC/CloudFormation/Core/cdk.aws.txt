@@ -378,11 +378,11 @@ cdk --debug                       #BOOL (def: false). Enable stack traces
                                              \=+===============================+=/
 
 
-{VAL}                             #RESOLVABLE. Deferred value
+RV                                #"Resolvable". Deferred value
                                   #Meant to represent RESATTRs, PARAMs, etc.
 
-Tokenization.resolve              #Resolve all RESOLVABLEs in VAL, deeply
- (VAL, OPTS)->VAL                 #TOKENs are first decoded
+Tokenization.resolve              #Resolve all RVs in VAL, deeply
+ (VAL, OPTS)->VAL                 #TKs are first decoded
                                   #  - including inside 'TOKENS'
                                   #VAL cannot be a FUNC|CONSTRUCT
                                   #Called by `cdk synth`
@@ -391,21 +391,20 @@ OPTS.preparing                    #Passed to PRODUCER's OBJ.*
 OPTS.removeEmpty                  #BOOL (def: true). Remove empty values in OBJ|ARR
 OPTS.resolver                     #Must be `new DefaultTokenResolver(new StringConcat())`
 
-Lazy.any(PRODUCER[, OPTS])
- ->RESOLVABLE                     #OPTS: omitEmptyArray BOOL (def: false): transform resolved empty ARRs to undefined
-Lazy.string(PRODUCER[, OPTS])
- ->STR_TOKEN                      #
-Lazy.list(PRODUCER[, OPTS])
- ->ARR_TOKEN                      #OPTS: omitEmpty (same as Lazy.any())
-Lazy.number(PRODUCER)->NUM_TOKEN  #
-Lazy.uncached*(...)->TOKEN        #Unless using this, all of the above memoize PRODUCER.produce()
-JsonNull                          #RESOLVABLE that resolves to null
+Lazy.any(PRODUCER[, OPTS])->RV    #OPTS: omitEmptyArray BOOL (def: false): transform resolved empty ARRs to undefined
+Lazy.string
+ (PRODUCER[, OPTS])->STR_TK       #
+Lazy.list
+ (PRODUCER[, OPTS])->ARR_TK       #OPTS: omitEmpty (same as Lazy.any())
+Lazy.number(PRODUCER)->NUM_TK     #
+Lazy.uncached*(...)->TK           #Unless using this, all of the above memoize PRODUCER.produce()
+JsonNull                          #RV that resolves to null
 
-Token.asAny(VAL)->RESOLVABLE      #Turn VAL into RESOLVABLE (unless already one)
-                                  #If VAL is TOKEN, return its RESOLVABLE as is
-Token.as*(...)[->RESOLVABLE]      #Unlike Lazy.*(...), create RESOLVABLE from a direct VAL, not deferred
+Token.asAny(VAL)->RV              #Turn VAL into RV (unless already one)
+                                  #If VAL is TK, return its RV as is
+Token.as*(...)[->RV]              #Unlike Lazy.*(...), create RV from a direct VAL, not deferred
 
-PRODUCER.produce(OBJ)->VAL        #RESOLVABLE's deferred FUNC
+PRODUCER.produce(OBJ)->VAL        #RV's deferred FUNC
                                   #Called by Tokenization.resolve()
 OBJ.scope                         #CONSTRUCT
 OBJ.documentPath                  #'PROP'_ARR. Property path within CONSTRUCT
@@ -418,13 +417,80 @@ OBJ.resolve(VAL[, OPTS])->VAL     #Reference to Tokenization.resolve(), to resol
 
                                              /=+===============================+=\
                                             /  :                               :  \
+                                            )==:             TOKEN             :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+TK                                #*_TK. Encode RV to a smaller serializable type
+                                  #Stores it in a global MAP, then returns a key to it
+
+STR_TK                            #'${Token[STR.NUM]}'
+                                  #NUM is global increment
+                                  #STR can be set using OPTS.displayHint
+                                  #  - non-[[:alnum:]._-:] converted to `.`
+                                  #  - def: 'TOKEN'
+Token.asString(VAL[,OPTS])->STR_TK#Noop if VAL is STR
+Tokenization
+ .reverseCompleteString(STR_TK)
+ [->RV]                           #undefined if not STR_TK
+
+ARR_TK                            #ARR with single element '#{TOKEN[STR.NUM]}', similar to STR_TK
+Token.asList(VAL[, OPTS])->ARR_TK #Noop if VAL is STR_ARR
+Tokenization
+ .reverseList(ARR_TK)[->RV]       #undefined if not ARR_TK
+
+NUM_TK                            #NUM. Exponent e+289 is used as a marker, integer part is global increment
+                                  #Can be decoded either as NUM or as 'NUM'
+Token.asNumber(VAL)->NUM_TK       #Noop if VAL is NUM
+Tokenization
+ .reverseNumber(NUM_TK)[->RV]     #undefined if not NUM_TK
+Tokenization.stringifyNumber
+ (NUM[_TK])->STR[_TK]             #
+
+Token.reverse(VAL[, OPTS])[->RV]  #If VAL is:
+                                  #  - TK: turn it into RV
+                                  #  - RV: return as is
+                                  #  - otherwise: undefined
+                                  #If OPTS.failConcat false (def: true), can pass 'TOKENS'
+                                  #  - only the first TK is turned into RV
+
+Tokenization
+ .isResolvable(VAL)->BOOL         #Whether is a RV
+Token.isUnresolved(VAL)->BOOL     #Whether is a RV|TK|'TOKENS'
+Token.compareStrings              #Returns ENUM TokenComparison:
+ (STR, STR2)->ENUM                #  - BOTH_UNRESOLVED|ONE_UNRESOLVED: if both|either is RV|TK|'TOKENS'
+                                  #  - DIFFERENT|SAME: otherwise, using ===
+
+'TOKENS'                          #STR that can contain STR_TK|NUM_TK (not ARR_TK)
+TOKEN_FRAG                        #Concatenation of VALs and RVs
+TOKEN_FRAG.addLiteral(VAL)        #Add VAL item
+TOKEN_FRAG.addToken(RV)           #Add RV item
+TOKEN_FRAG.length                 #NUM of items
+TOKEN_FRAG.firstValue             #First item. undefined if none
+                                  #If RV, returned as STR_TK
+TOKEN_FRAG.firstToken             #First RV item. undefined if none
+TOKEN_FRAG.tokens                 #All RVs items, as ARR
+TOKEN_FRAG.mapTokens({ mapToken })
+ ->TOKEN_FRAG2                    #Apply mapToken(RV)->RV|VAL on each RV item
+TOKEN_FRAG.join({ join })->VAL    #Reduce all items to a single one using join(VAL2, VAL3)->VAL
+                                  #RV items are passed as STR_TKs
+                                  #If 0 items, call once with 2 undefined values
+                                  #If 1 item, returned as is
+                                  #`new StringConcat()` can be used as join FUNC, to return 'TOKENS'
+Tokenization.reverseString
+ ('TOKENS')->TOKEN_FRAG           #
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
                                             )==:           REFERENCE           :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
-new Reference(VAL, CONSTRUCT      #CREF, child of RESOLVABLE
- [, 'CREF'[, ENUM]])              #Turn VAL into a RESOLVABLE
+new Reference(VAL, CONSTRUCT      #CREF, child of RV
+ [, 'CREF'[, ENUM]])              #Turn VAL into a RV
 Reference.isReference(VAL)->BOOL  #
 CREF.value                        #VAL
 CREF.target                       #CONSTRUCT related to the CREF
@@ -432,8 +498,8 @@ CREF.displayName                  #'CREF' (def: 'Reference')
 CREF.typeHint                     #ENUM ResolutionTypeHint.STRING|NUMBER|STRING_LIST
                                   #CREF.value's type
 CREF.creationStack                #Like CELEM.*
-CREF.toString()->STR_TOKEN        #
-CREF.toStringList()->ARR_TOKEN    #
+CREF.toString()->STR_TK           #
+CREF.toStringList()->ARR_TK       #
 
 CFNREF                            #{ Ref: ... } in TEMPLATE
                                   #Child of CREF
@@ -449,8 +515,8 @@ CfnReference.for                  #Reference to CELEM, either:
                                   #  - STR 'Ref': { Ref: CELEM_CID }
                                   #  - otherwise: [CELEM_CID, STR], to use in { Fn::GetAtt }
                                   #ENUM2 is CREF.typeHint
-CFNREF.assignValueForStack        #Resolves to RESOLVABLE instead of { Ref: STR }
- (CSTACK, RESOLVABLE)             #CSTACK must be CREF.target's CSTACK
+CFNREF                            #Resolves to RV instead of { Ref: STR }
+ .assignValueForStack(CSTACK, RV) #CSTACK must be CREF.target's CSTACK
 CFNREF.hasValueForStack
  (CSTACK)->BOOL                   #
 
@@ -458,7 +524,7 @@ CFNRESOURCE.getAtt                #CfnReference.for(CFNRESOURCE, STR, undefined,
  (STR[, ENUM])->CFNREF            #I.e. [CFNRESOURCE_CID, STR] or (if STR 'Ref') { Ref: CFNRESOURCE_CID }
 
 CfnRefElement                     #Child of CfnElement, but with following additional method
-CFNREFELEM.ref()->STR_TOKEN       #Resolving to { Ref: CELEM_CID }
+CFNREFELEM.ref()->STR_TK          #Resolving to { Ref: CELEM_CID }
 
 
                                              /=+===============================+=\
@@ -471,85 +537,162 @@ CFNREFELEM.ref()->STR_TOKEN       #Resolving to { Ref: CELEM_CID }
 Aws.STACK_ID|STACK_NAME|ACCOUNT_ID
  |REGION|PARTITION|URL_SUFFIX
  |NO_VALUE|NOTIFICATION_ARNS
-CSTACK.urlSuffix                  #STR_TOKEN resolving to built-in PARAM 'AWS::...'
-CSTACK.partition                  #Same but is directly a STR (not a TOKEN) providing both:
-                                  #  - CSTACK.region is not a TOKEN
+CSTACK.urlSuffix                  #STR_TK resolving to built-in PARAM 'AWS::...'
+CSTACK.partition                  #Same but is directly a STR (not a TK) providing both:
+                                  #  - CSTACK.region is not a TK
                                   #  - FFLAG @aws-cdk/core:enablePartitionLiterals
 
 new ScopedAws(CONSTRUCT)
  .stackId|stackName|accountId
  |region|partition|urlSuffix
  |notificationArns
-CSTACK.stackId|notificationArns   #STR_TOKEN resolving to built-in PARAM { Ref: 'AWS::...' }
+CSTACK.stackId|notificationArns   #STR_TK resolving to built-in PARAM { Ref: 'AWS::...' }
 
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:             TOKEN             :==(
+                                            )==:           FUNCTIONS           :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
-TOKEN                             #*_TOKEN. Encode RESOLVABLE to a smaller serializable type
-                                  #Stores it in a global MAP, then returns a key to it
+Fn.*(...)                         #Arguments can be RV|TKs
+                                  #If no RV|TK passed as argument, returns result directly
+                                  #  - only for Fn.split|select|len|toJsonString|parseDomainName()
 
-STR_TOKEN                         #'${Token[STR.NUM]}'
-                                  #NUM is global increment
-                                  #STR can be set using OPTS.displayHint
-                                  #  - non-[[:alnum:]._-:] converted to `.`
-                                  #  - def: 'TOKEN'
-Token.asString
- (VAL[, OPTS])->STR_TOKEN         #Noop if VAL is STR
-Tokenization
- .reverseCompleteString(STR_TOKEN)
- [->RESOLVABLE]                   #undefined if not STR_TOKEN
+Fn.ref(STR)->STR_TK               #{ Ref: STR }
+Fn.getAtt
+ ('RESOURCE', 'RESATTR')->RV      #{ Fn::GetAtt: ['RESOURCE', 'RESATTR'] }
+Fn.getAzs(['REGION'])->ARR_TK     #{ Fn::GetAZs: 'REGION'|'' }
 
-ARR_TOKEN                         #ARR with single element '#{TOKEN[STR.NUM]}', similar to STR_TOKEN
-Token.asList
- (VAL[, OPTS])->ARR_TOKEN         #Noop if VAL is STR_ARR
-Tokenization.reverseList
- (ARR_TOKEN)[->RESOLVABLE]        #undefined if not ARR_TOKEN
+new CfnDynamicReference           #RV resolving to '{{resolve:SERVICE:ARGS}}'
+ ('SERVICE', 'ARGS')              #SERVICE can use ENUM CfnDynamicReferenceService.SSM[_SECURE]|SECRETS_MANAGER
 
-NUM_TOKEN                         #NUM. Exponent e+289 is used as a marker, integer part is global increment
-                                  #Can be decoded either as NUM or as 'NUM'
-Token.asNumber(VAL)->NUM_TOKEN    #Noop if VAL is NUM
-Tokenization.reverseNumber
- (NUM_TOKEN)[->RESOLVABLE]        #undefined if not NUM_TOKEN
-Tokenization.stringifyNumber
- (NUM[_TOKEN])->STR[_TOKEN]       #
+Fn.importValue('EXPORT')->STR_TK  #{ Fn::ImportValue: 'EXPORT' }
+Fn.importListValue
+ ('EXPORT', NUM[, 'DELIM'])       #{ Fn::ImportValue: 'EXPORT' } + Fn.Split('DELIM', ..., NUM)
+ ->ARR_TK                         #Def 'DELIM': ','
 
-Token.reverse                     #If VAL is:
- (VAL[, OPTS])[->RESOLVABLE]      #  - TOKEN: turn it into RESOLVABLE
-                                  #  - RESOLVABLE: return as is
-                                  #  - otherwise: undefined
-                                  #If OPTS.failConcat false (def: true), can pass 'TOKENS'
-                                  #  - only the first TOKEN is turned into RESOLVABLE
+Fn.conditionIf
+ ('COND', VAL, VAL2)->RV          #{ Fn::If: ['COND', VAL, VAL2] }
+Fn.conditionEquals(VAL, VAL2)->RV #{ Fn::Equals: [VAL, VAL2] }
+Fn.conditionNot(BOOL)->RV         #{ Fn::Not: [BOOL] }
+Fn.conditionAnd|Or(BOOL_ARR)->RV  #{ Fn::And|Or: [BOOL,...] }
+                                  #If more than 10 items, nest { Fn::And|Or: [{ Fn::And|Or: [...] }, ...] }
 
-Tokenization
- .isResolvable(VAL)->BOOL         #Whether is a RESOLVABLE
-Token.isUnresolved(VAL)->BOOL     #Whether is a RESOLVABLE|TOKEN|'TOKENS'
-Token.compareStrings              #Returns ENUM TokenComparison:
- (STR, STR2)->ENUM                #  - BOTH_UNRESOLVED|ONE_UNRESOLVED: if both|either is RESOLVABLE|TOKEN|'TOKENS'
-                                  #  - DIFFERENT|SAME: otherwise, using ===
+Fn.join
+ (STR, STR2_ARR[_RV])->STR_TK     #{ Fn::Join: [STR, STR2_ARR] }
+Fn.split                          #{ Fn::Split: [STR, STR2] }
+ (STR, STR2[, NUM])->ARR[_TK]     #If NUM passed, returns TK_ARR instead
+Fn.sub(STR[, OBJ])->STR_TK        #{ Fn::Sub: STR } or { Fn::Sub: [STR, OBJ] }
 
-'TOKENS'                          #STR that can contain STR_TOKEN|NUM_TOKEN (not ARR_TOKEN)
-TOKEN_FRAG                        #Concatenation of VALs and RESOLVABLEs
-TOKEN_FRAG.addLiteral(VAL)        #Add VAL item
-TOKEN_FRAG.addToken(RESOLVABLE)   #Add RESOLVABLE item
-TOKEN_FRAG.length                 #NUM of items
-TOKEN_FRAG.firstValue             #First item. undefined if none
-                                  #If RESOLVABLE, returned as STR_TOKEN
-TOKEN_FRAG.firstToken             #First RESOLVABLE item. undefined if none
-TOKEN_FRAG.tokens                 #All RESOLVABLE items, as ARR
-TOKEN_FRAG.mapTokens({ mapToken })
- ->TOKEN_FRAG2                    #Apply mapToken(RESOLVABLE)->RESOLVABLE|VAL on each RESOLVABLE item
-TOKEN_FRAG.join({ join })->VAL    #Reduce all items to a single one using join(VAL2, VAL3)->VAL
-                                  #RESOLVABLE items are passed as STR_TOKENs
-                                  #If 0 items, call once with 2 undefined values
-                                  #If 1 item, returned as is
-                                  #`new StringConcat()` can be used as join FUNC, to return 'TOKENS'
-Tokenization.reverseString
- ('TOKENS')->TOKEN_FRAG           #
+Fn.len(ARR)->NUM_TK               #{ Fn::Length: ARR }
+Fn.select
+ (NUM, STR_ARR)->STR[_TK]         #{ Fn::Select: [NUM, STR_ARR] }
+
+Fn.toJsonString(OBJ|ARR)->STR_TK  #{ Fn::ToJsonString: OBJ|ARR }
+Fn.base64(STR)->STR_TK            #{ Fn::Base64: STR }
+
+Fn.cidr
+ ('CIDR', NUM, 'NUM2')->ARR_TK    #{ Fn::Cidr: ['CIDR', NUM, NUM2] }
+
+Fn.refAll('RESTYPE')->ARR_TK      #{ Fn::RefAll: 'RESTYPE' }
+Fn.valueOfAll
+ ('RESTYPE', 'RESATTR')->ARR_TK   #{ Fn::ValueOfAll: ['RESTYPE', 'RESATTR'] }
+Fn.valueOf
+ ('PARAM', 'RESATTR')->STR_TK     #{ Fn::ValueOf: ['PARAM', 'RESATTR'] }
+
+Fn.conditionContains
+ (STR_ARR, STR2)->RV              #{ Fn::Contains: [STR_ARR, STR2] }
+Fn.conditionEachMemberEquals
+ (STR_ARR, STR2)->RV              #{ Fn::EachMemberEquals: [STR_ARR, STR2] }
+Fn.conditionEachMemberIn
+ (STR_ARR, STR2_ARR)->RV          #{ Fn::EachMemberIn: [STR_ARR, STR2_ARR] }
+
+Fn.parseDomainName
+ ('URL')->STR[_TK]                #Get 'URL' domain name (using // and / delimiters)
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:           CONDITION           :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+new CfnCondition                  #CCOND. TEMPLATE.Conditions.COND
+ (PARENT_CONSTRUCT, 'CCOND', OPTS)#Child of CELEM
+                                  #Is also a RV that resolves to { Condition: 'CCOND_CID' }
+OPTS.expression                   #BOOL_RV
+                                  #If undefined, no COND
+
+COUTPUT_OPTS.condition            #CCOND. OUTPUT.Condition
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:           MAPPINGS            :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+
+new CfnMapping(PARENT_CONSTRUCT,  #CFILTER. TEMPLATE.Mappings.FILTER
+ 'CFILTER'[, OPTS])               #Child of CfnRefElement
+                                  #OPTS is { VAR: { PROP: VAL, ...}, ... }
+CFILTER.setValue
+ ('VAR', 'PROP', VAL)             #
+
+Fn.findInMap
+ ('FILTER', 'VAR', 'PROP'[, STR]) #
+ ->STR_TK                         #{ Fn::FindInMap: ['FILTER', 'VAR', 'PROP'[, { DefaultValue: STR }]] }
+CFILTER.findInMap                 #Same except:
+ ('VAR'[_TK], 'PROP'[_TK][, STR]) #  - automatically set 'FILTER' CID
+ ->STR[_TK]                       #  - if used in a different CSTACK than CFILTER, set a TEMPLATE.Mappings.FILTER copy
+                                  #  - automatically resolved if OPTS.lazy true and either:
+                                  #     - no OPTS.VAR.PROP, and default value STR specified
+                                  #     - neither 'VAR'|'PROP' is a TK
+OPTS.lazy                         #BOOL (def: false). Only output TEMPLATE.Mappings.FILTER if CFILTER.findInMap() is called
+                                  #Recommended
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:        PARAMETERS MAIN        :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+new CfnParameter(PARENT_CONSTRUCT,#CPARAM. TEMPLATE.Parameters.PARAM
+ 'CPARAM'[, OPTS])                #Child of CELEM
+OPTS.type                         #STR (def: 'String'). PARAM.Type
+OPTS.min|maxLength                #NUM. PARAM.Min|MaxLength
+OPTS.min|maxValue                 #NUM. PARAM.Min|MaxValue
+OPTS.allowedPattern               #'REGEXP'. PARAM.AllowedPattern
+OPTS.allowedValues                #STR_ARR. PARAM.AllowedValues
+OPTS.default                      #VAL. PARAM.Default
+OPTS.description                  #STR. PARAM.Description
+OPTS.constraintDescription        #STR. PARAM.ConstraintDescription
+OPTS.noEcho                       #BOOL. PARAM.NoEcho
+
+CPARAM.value                      #CFNREF. { Ref: 'PARAM' }
+                                  #CPARAM is also a RV that resolves to it
+CPARAM
+ .valueAsString|List|Number()->TK #{ Ref: 'PARAM' }
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:       PARAMETERS RULES        :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+new CfnRule(PARENT_CONSTRUCT,     #CRULE. TEMPLATE.Rules.RULE
+ 'CRULE'[, OPTS])                 #Child of CfnRefElement
+OPTS.ruleCondition                #BOOL. RULE.RuleCondition
+OPTS.assertions                   #OBJ_ARR: assert BOOL, assertDescription STR. RULE.Assertions
+CRULE.addAssertion(BOOL, STR)     #
 
 
                                              /=+===============================+=\
@@ -585,7 +728,7 @@ CTAGM.removeTag(..., NUM)         #  - setTag|removeTag(): 0
                                   #  - Tag TOPTS.priority: 100
                                   #  - RemoveTag TOPTS.priority: 200
 
-OPTS.renderedTags                 #{TAGS_FOBJ}
+OPTS.renderedTags                 #TAGS_FOBJ_RV
 CTAGM.renderTags                  #TAGS_OBJ (def: {}) are merged in
  ([TAGS_OBJ])->TAGS_FOBJ          #undefined if empty
 TAGS_FOBJ                         #TAGS in the format expected by CloudFormation, according to TagType
@@ -628,7 +771,7 @@ DURATION.unitLabel()->'UNIT'      #
 DURATION.plus|minus
  (DURATION2)->DURATION
 
-DURATION.isUnresolved()->BOOL     #Whether underlying duration was passed as a RESOLVABLE|TOKEN
+DURATION.isUnresolved()->BOOL     #Whether underlying duration was passed as a RV|TK
 DURATION.formatTokenToNumber()
  ->STR                            #'NUM UNIT'. Works if isUnresolved()
 
@@ -847,33 +990,131 @@ new App()                         #CAPP. Top-level PARENT_CONSTRUCT, i.e. of CST
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:            TO SORT            :==(
+                                            )==:             STACK             :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
-CID                               #STR_ARR turned into an ID:
+new Stack(PARENT_CONSTRUCT,       #CSTACK. CloudFormation STACK
+ 'CSTACK'[, SOPTS])               #Child of CONSTRUCT. Meant to be the PARENT_CONSTRUCT of other CONSTRUCTs
+                                  #STACK 'OUTPUT' name is SID
+                                  #Nested STACKs can be done, including with a non-STACK PARENT_CONSTRUCT
+Stack.isStack(VAL)->BOOL          #
+CELEM|CKRESOURCE.stack            #CSTACK
+Stack.of(CONSTRUCT)->CSTACK       #Of CONSTRUCT or any ancestor
+SOPTS|CSTACK.stackName            #'STACK' (def: 'CSTACK'). Is SID
+
+SOPTS|CKRESOURCE.env              #CENV
+ENVVAR CDK_DEFAULT_REGION         #REGION (def: Aws.REGION) as STR[_TK]
+CSTACK|CENV.region                #If not set, "region-agnostic", i.e. can only use features available in all REGIONs
+ENVVAR CDK_DEFAULT_ACCOUNT
+CSTACK|CENV.account               #ACCOUNT_ID (def: Aws.ACCOUNT_ID) as STR[_TK]
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:             MACRO             :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+CSTACK.addTransform('MACRO')      #TEMPLATE.Transform 'MACRO'[_ARR]
+                                  #AWS::LanguageExtensions is automatically added when using Fn.findInMap|len|toJsonString()
+CSTACK.templateOptions.transforms #'MACRO'_ARR
+
+Fn.transform('MACRO', OBJ)->RV    #{ Fn::Transform: { Name: 'MACRO', Parameters: OBJ } }
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:          CFNELEMENT           :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+new CfnElement                    #CONSTRUCT within a CSTACK
+ (PARENT_CONSTRUCT, 'CELEM')      #Usually corresponds to a TEMPLATE.* top-level property: Resource, Mappings, Parameters, etc.
+CfnElement.isCfnElement(VAL)->BOOL#
+CELEM.creationStack               #STR_ARR. Stack trace of CELEM's constructor
+
+CSTACK.getLogicalId(CELEM)->STR   #'CID' using NODE_PATH, excluding CSTACK (nor its parents), 'Default' or 'Resource'
+                                  #Used as:
+                                  #  - 'RESOURCE' in CloudFormation TEMPLATEs
+                                  #  - RESOURCE name's default value
+                                  #Since whole NODE_PATH is used, 'CELEM' (which is NODE.id) need only to be unique among siblings
+CELEM.logicalId                   #Same but as STR_RV
+CSTACK.renameLogicalId(STR, STR2) #If logicalId is STR2, set to STR instead
+CELEM.overrideLogicalId(STR)      #Manually set CELEM.logicalId
+METADATA 'aws:cdk:logicalId'      #CELEM.logicalId
+                                  #Not set if CONTEXT.aws:cdk:disable-logicalId-metadata true
+
+SID                               #STR used as ID:
                                   #  - remove any non-[:alnum:]
                                   #  - truncated 255 chars
-                                  #If multiple items:
+CID                               #Like SID, but using STR_ARR:
                                   #  - joined with empty delimiter
                                   #  - remove duplicates
                                   #  - appends HASH, as 8 hex chars
+                                  #When STR_ARR are parents (e.g. with CELEM), this allows composability:
+                                  #  - CID remains same unless parents change
+                                  #  - same STRs (e.g. NODE.id) result in same CID, i.e. no update
+                                  #  - i.e. allows users to namespace ID, while using in different parts of TEMPLATE
 
-new Stack(PARENT_CONSTRUCT,       #CSTACK. CloudFormation STACK
- 'CSTACK'[, SOPTS])               #Meant to be the PARENT_CONSTRUCT of other CONSTRUCTs
-                                  #STACK 'OUTPUT' name is CID
-                                  #Nested STACKs can be done, including with a non-STACK PARENT_CONSTRUCT
-Stack.isStack(VAL)->BOOL          #
-CKRESOURCE.stack                  #CSTACK
-Stack.of(CONSTRUCT)->CSTACK       #Of CONSTRUCT or any ancestor
-SOPTS|CSTACK.stackName            #'STACK' (def: CID using 'CSTACK')
 
-SOPTS|CKRESOURCE.env              #CENV
-ENVVAR CDK_DEFAULT_REGION         #REGION (def: Aws.REGION) as STR[_TOKEN]
-CSTACK|CENV.region                #If not set, "region-agnostic", i.e. can only use features available in all REGIONs
-ENVVAR CDK_DEFAULT_ACCOUNT
-CSTACK|CENV.account               #ACCOUNT_ID (def: Aws.ACCOUNT_ID) as STR[_TOKEN]
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:            OUTPUT             :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+new CfnOutput(PARENT_CONSTRUCT,
+ 'COUTPUT', OPTS)                 #COUTPUT. TEMPLATE.Outputs.OUTPUT
+OPTS.value                        #STR. OUTPUT.Value
+OPTS.description                  #STR. OUTPUT.Description
+OPTS.exportName                   #'EXPORT'. OUTPUT.ExportName
+
+COUTPUT.importValue()->STR_TK     #{ Fn::ImportValue: 'EXPORT' }
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:          CFNRESOURCE          :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+new CfnResource(PARENT_CONSTRUCT, #CFNRESOURCE. Base class of all CRESOURCEs
+ 'RESOURCE'[, OPTS])              #Inherits from CfnRefElement
+
+new CfnRESOURCE(PARENT_CONSTRUCT, #CRESOURCE. L1 CONSTRUCT, corresponding to AWS::SERVICE::RESOURCE
+ 'RESOURCE'[, OPTS])              #Inherits from CFNRESOURCE
+OPTS|CRESOURCE.RESPROP            #Like CloudFormation, but camelCase
+CRESOURCE.attrRESATTR             #Like CloudFormation
+CfnRESOURCE.CFN_RESOURCE_TYPE_NAME#'RESTYPE'
+CRESOURCE.inspect(...)???
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:           RESOURCE            :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+new Resource(PARENT_CONSTRUCT,
+ 'CKRESOURCE'[, OPTS])            #Base class for all CKRESOURCEs. Inherits from CONSTRUCT
+
+CKRESOURCE
+ .applyRemovalPolicy(ENUM)        #ENUM is RemovalPolicy. RESOURCE.DeletionPolicy
+OPTS.removalPolicy                #Available for some CKRESOURCEs, usually when default is 'Retain' (instead of 'Delete')
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:            TO SORT            :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
 
 Aspects.of(CONSTRUCT)->ASPECTS    #
 ASPECTS.add(ASPECT)               #
@@ -888,37 +1129,3 @@ EXPORTED_VARBetaNUM               #Beta features are in aws-cdk-lib/aws-SERVICE,
 CUSTOM CONSTRUCTS ==>             #When developing custom CONSTRUCTs, should put as:
                                   #  - devDependencies + peerDependencies (with ^): constructs, aws-cdk-lib, used @aws-cdk/*
                                   #  - devDependencies (with ^): jsii, aws-cdk
-
-new CfnElement
- (PARENT_CONSTRUCT, 'CELEM')      #CONSTRUCT within a CSTACK
-CfnElement.isCfnElement(VAL)->BOOL#
-CELEM.stack                       #CSTACK
-CELEM.creationStack               #STR_ARR. Stack trace of CELEM's constructor
-
-CSTACK.getLogicalId(CELEM)->STR   #'CID' using NODE_PATH, excluding CSTACK (nor its parents), 'Default' or 'Resource'
-                                  #Used as:
-                                  #  - 'RESOURCE' in CloudFormation TEMPLATEs
-                                  #  - RESOURCE name's default value
-                                  #Since whole NODE_PATH is used, 'CELEM' (which is NODE.id) need only to be unique among siblings
-CELEM.logicalId                   #Same but as {STR}
-CSTACK.renameLogicalId(STR, STR2) #If logicalId is STR2, set to STR instead
-CELEM.overrideLogicalId(STR)      #Manually set CELEM.logicalId
-METADATA 'aws:cdk:logicalId'      #CELEM.localId
-                                  #Not set if CONTEXT.aws:cdk:disable-logicalId-metadata true
-
-new CfnResource(PARENT_CONSTRUCT, #CFNRESOURCE. Base class of all CRESOURCEs
- 'RESOURCE'[, OPTS])              #Inherits from CfnRefElement
-
-new CfnRESOURCE(PARENT_CONSTRUCT, #CRESOURCE. L1 CONSTRUCT, corresponding to AWS::SERVICE::RESOURCE
- 'RESOURCE'[, OPTS])              #Inherits from CFNRESOURCE
-OPTS|CRESOURCE.RESPROP            #Like CloudFormation, but camelCase
-CRESOURCE.attrRESATTR             #Like CloudFormation
-CfnRESOURCE.CFN_RESOURCE_TYPE_NAME#'RESTYPE'
-CRESOURCE.inspect(...)???
-
-new Resource(PARENT_CONSTRUCT,
- 'CKRESOURCE'[, OPTS])            #Base class for all CKRESOURCEs. Inherits from CONSTRUCT
-
-CKRESOURCE
- .applyRemovalPolicy(ENUM)        #ENUM is RemovalPolicy. RESOURCE.DeletionPolicy
-OPTS.removalPolicy                #Available for some CKRESOURCEs, usually when default is 'Retain' (instead of 'Delete')
