@@ -11,6 +11,7 @@ TODO:
   - https://docs.aws.amazon.com/cdk/v2/guide/apps.html#lifecycle
   - https://github.com/aws/aws-cdk/tree/main/design
   - https://github.com/aws/aws-cdk/tree/main/docs
+  - https://github.com/aws/aws-cdk/blob/main/packages/%40aws-cdk/cx-api/FEATURE_FLAGS.md
   - CDK pipelines
      - https://cdkworkshop.com/20-typescript/70-advanced-topics/200-pipelines.html
   - https://github.com/aws/aws-cdk
@@ -106,6 +107,7 @@ cdk ...
 --build                           #'COMMAND' run before `cdk synth` to build the main file
 --app|-a                          #'COMMAND' run during `cdk synth` to execute the main file
                                   #E.g. with TypeScript: `ts-node PATH.ts`
+                                  #I.e. this also decide on the CAPP being used
                                   #Can also be 'ASSEMBLY_PATH' directly, avoiding `cdk synth`
                                   #  - def for `cdk deploy|import|diff`
 --output|-o                       #'ASSEMBLY_DIR' (def: single 'cdk.out' file)
@@ -114,9 +116,11 @@ CONTEXT
 --staging                         #BOOL (def: true). Copy assets to ASSEMBLY_DIR, to allow for local debugging
 
 ASSEMBLY                          #Conversion of CDK files into:
-                                  #  - CloudFormation TEMPLATE files
+                                  #  - CloudFormation TEMPLATE files, one per STACK
                                   #  - ASSET files
                                   #  - Docker images
+
+PARAM|COND                        #Usually not used, since can use imperative language instead
 
 cdk bootstrap|deploy|import
 --toolkit-stack-name              #'STACK' (def: 'CDKToolkit') created by `cdk bootstrap`
@@ -410,6 +414,73 @@ OBJ.registerPostProcessor
  (FUNC(VAL, RCONTEXT)->VAL)       #Transform VAL, once resolved
 OBJ.resolve(VAL[, OPTS])->VAL     #Reference to Tokenization.resolve(), to resolve a child value
                                   #OPTS is only: removeEmpty BOOL
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:           REFERENCE           :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+new Reference(VAL, CONSTRUCT      #CREF, child of RESOLVABLE
+ [, 'CREF'[, ENUM]])              #Turn VAL into a RESOLVABLE
+Reference.isReference(VAL)->BOOL  #
+CREF.value                        #VAL
+CREF.target                       #CONSTRUCT related to the CREF
+CREF.displayName                  #'CREF' (def: 'Reference')
+CREF.typeHint                     #ENUM ResolutionTypeHint.STRING|NUMBER|STRING_LIST
+                                  #CREF.value's type
+CREF.creationStack                #Like CELEM.*
+CREF.toString()->STR_TOKEN        #
+CREF.toStringList()->ARR_TOKEN    #
+
+CFNREF                            #{ Ref: ... } in TEMPLATE
+                                  #Child of CREF
+CfnReference.isCfnReference
+ (VAL)->BOOL                      #
+CfnReference
+ .forPseudo(STR, CONSTRUCT)       #{ Ref: STR }
+ ->CFNREF                         #CONSTRUCT is CREF.target, i.e. parent element
+CfnReference.for                  #Reference to CELEM, either:
+ (CELEM, STR[, ENUM[, ENUM2]])    #  - ENUM ReferenceRendering.FN_SUB: '${CELEM_CID[.STR]}', to use in { Fn::Sub }
+ ->CFNREF                         #     - STR is skipped when it is 'Ref'
+                                  #  - ENUM ReferenceRendering.GET_ATT_STRING: CELEM_CID.STR, to use in !GetAtt
+                                  #  - STR 'Ref': { Ref: CELEM_CID }
+                                  #  - otherwise: [CELEM_CID, STR], to use in { Fn::GetAtt }
+                                  #ENUM2 is CREF.typeHint
+CFNREF.assignValueForStack        #Resolves to RESOLVABLE instead of { Ref: STR }
+ (CSTACK, RESOLVABLE)             #CSTACK must be CREF.target's CSTACK
+CFNREF.hasValueForStack
+ (CSTACK)->BOOL                   #
+
+CFNRESOURCE.getAtt                #CfnReference.for(CFNRESOURCE, STR, undefined, ENUM)
+ (STR[, ENUM])->CFNREF            #I.e. [CFNRESOURCE_CID, STR] or (if STR 'Ref') { Ref: CFNRESOURCE_CID }
+
+CfnRefElement                     #Child of CfnElement, but with following additional method
+CFNREFELEM.ref()->STR_TOKEN       #Resolving to { Ref: CELEM_CID }
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:        BUILT-IN PARAM         :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+Aws.STACK_ID|STACK_NAME|ACCOUNT_ID
+ |REGION|PARTITION|URL_SUFFIX
+ |NO_VALUE|NOTIFICATION_ARNS
+CSTACK.urlSuffix                  #STR_TOKEN resolving to built-in PARAM 'AWS::...'
+CSTACK.partition                  #Same but is directly a STR (not a TOKEN) providing both:
+                                  #  - CSTACK.region is not a TOKEN
+                                  #  - FFLAG @aws-cdk/core:enablePartitionLiterals
+
+new ScopedAws(CONSTRUCT)
+ .stackId|stackName|accountId
+ |region|partition|urlSuffix
+ |notificationArns
+CSTACK.stackId|notificationArns   #STR_TOKEN resolving to built-in PARAM { Ref: 'AWS::...' }
 
 
                                              /=+===============================+=\
@@ -736,6 +807,46 @@ TANNOTATIONS                      #NODEs (or descendants) with this ANNOTATION
 
                                              /=+===============================+=\
                                             /  :                               :  \
+                                            )==:         FEATURE FLAGS         :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+CONTEXT.FFLAG                     #BOOL. Flag for an experimental feature
+                                  #Def: false, except for features not experimental anymore
+
+FeatureFlags.of(CONSTRUCT)->FFLAGS#
+FFLAGS.isEnabled('FFLAG')->BOOL   #
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:             STAGE             :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+new Stage(PARENT_CONSTRUCT,       #CSTAGE. Parent of CAPP, meant to be used directly only with CodePipeline
+ 'CSTAGE'[, OPTS])                #Child of CONSTRUCT
+                                  #'CSTAGE' must be [[:alnum:]-_.]
+Stage.isStage(VAL)->BOOL          #
+Stage.of(CONSTRUCT)->CSTAGE       #Find amongst ancestors
+CSTAGE.parentStage                #PARENT_CSTAGE, if PARENT_CONSTRUCT had a CSTAGE2 itself
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:              APP              :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+new App()                         #CAPP. Top-level PARENT_CONSTRUCT, i.e. of CSTACKs
+                                  #Inherits from CSTAGE
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
                                             )==:            TO SORT            :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -749,12 +860,20 @@ CID                               #STR_ARR turned into an ID:
                                   #  - remove duplicates
                                   #  - appends HASH, as 8 hex chars
 
-new App()                         #CAPP. Top-level PARENT_CONSTRUCT, i.e. of CSTACKs
-
 new Stack(PARENT_CONSTRUCT,       #CSTACK. CloudFormation STACK
- 'STACK'[, RESPROPS])             #Meant to be the PARENT_CONSTRUCT of other CONSTRUCTs
+ 'CSTACK'[, SOPTS])               #Meant to be the PARENT_CONSTRUCT of other CONSTRUCTs
                                   #STACK 'OUTPUT' name is CID
+                                  #Nested STACKs can be done, including with a non-STACK PARENT_CONSTRUCT
+Stack.isStack(VAL)->BOOL          #
 CKRESOURCE.stack                  #CSTACK
+Stack.of(CONSTRUCT)->CSTACK       #Of CONSTRUCT or any ancestor
+SOPTS|CSTACK.stackName            #'STACK' (def: CID using 'CSTACK')
+
+SOPTS|CKRESOURCE.env              #CENV
+ENVVAR CDK_DEFAULT_REGION         #REGION (def: Aws.REGION) as STR[_TOKEN]
+CSTACK|CENV.region                #If not set, "region-agnostic", i.e. can only use features available in all REGIONs
+ENVVAR CDK_DEFAULT_ACCOUNT
+CSTACK|CENV.account               #ACCOUNT_ID (def: Aws.ACCOUNT_ID) as STR[_TOKEN]
 
 Aspects.of(CONSTRUCT)->ASPECTS    #
 ASPECTS.add(ASPECT)               #
@@ -787,10 +906,6 @@ CELEM.overrideLogicalId(STR)      #Manually set CELEM.logicalId
 METADATA 'aws:cdk:logicalId'      #CELEM.localId
                                   #Not set if CONTEXT.aws:cdk:disable-logicalId-metadata true
 
-new CfnRefElement(...)            #Child of CfnElement, but with following additional method
-CFNREFELEM.ref()->STR_TOKEN       #???
-new CfnReference(...)???
-
 new CfnResource(PARENT_CONSTRUCT, #CFNRESOURCE. Base class of all CRESOURCEs
  'RESOURCE'[, OPTS])              #Inherits from CfnRefElement
 
@@ -803,10 +918,6 @@ CRESOURCE.inspect(...)???
 
 new Resource(PARENT_CONSTRUCT,
  'CKRESOURCE'[, OPTS])            #Base class for all CKRESOURCEs. Inherits from CONSTRUCT
-
-CKRESOURCE.env                    #CENV
-CENV.region                       #'REGION' (def: 'AWS::REGION')
-CENV.account                      #'ACCOUNT_ID' (def: 'AWS::ACCOUNT_ID')
 
 CKRESOURCE
  .applyRemovalPolicy(ENUM)        #ENUM is RemovalPolicy. RESOURCE.DeletionPolicy
