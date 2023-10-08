@@ -112,32 +112,57 @@ DEPENDENCY_GROUP
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:             LAZY              :==(
+                                            )==:            RESOLVE            :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
-Tokenization.resolve(...)???
-Tokenization.stringifyNumber(...)???
+{VAL}                             #RESOLVABLE. Deferred value
 
-PRODUCER.produce(RCONTEXT)[->VAL]
+Tokenization.resolve              #Resolve all RESOLVABLEs in VAL, deeply
+ (VAL, OPTS)->VAL                 #TOKENs are first decoded
+                                  #  - including inside 'TOKENS'
+                                  #VAL cannot be a FUNC|CONSTRUCT
+                                  #Called by `cdk synth`
+OPTS.scope
+OPTS.preparing                    #Passed to PRODUCER's OBJ.*
+OPTS.removeEmpty                  #BOOL (def: true). Remove empty values in OBJ|ARR
+OPTS.resolver                     #Must be `new DefaultTokenResolver(new StringConcat())`
 
-Lazy.string(PRODUCER[, LOPTS])
- ->TOKEN
-Lazy.uncached*(...)->TOKEN        #Same but do not cache PRODUCER.produce()
-
+Lazy.any(PRODUCER[, OPTS])
+ ->RESOLVABLE                     #OPTS: omitEmptyArray BOOL (def: false): transform resolved empty ARRs to undefined
+Lazy.string(PRODUCER[, OPTS])
+ ->STR_TOKEN                      #
+Lazy.list(PRODUCER[, OPTS])
+ ->ARR_TOKEN                      #OPTS: omitEmpty (same as Lazy.any())
+Lazy.number(PRODUCER)->NUM_TOKEN  #
+Lazy.uncached*(...)->TOKEN        #Unless using this, all of the above memoize PRODUCER.produce()
 JsonNull                          #RESOLVABLE that resolves to null
+
+Token.asAny(VAL)->RESOLVABLE      #Turn VAL into RESOLVABLE (unless already one)
+                                  #If VAL is TOKEN, return its RESOLVABLE as is
+Token.as*(...)[->RESOLVABLE]      #Unlike Lazy.*(...), create RESOLVABLE from a direct VAL, not deferred
+
+PRODUCER.produce(OBJ)->VAL        #RESOLVABLE's deferred FUNC
+                                  #Called by Tokenization.resolve()
+OBJ.scope                         #CONSTRUCT
+OBJ.documentPath                  #'PROP'_ARR. Property path within CONSTRUCT
+OBJ.preparing                     #BOOL (def: false). Whether final output, or only preparing it
+OBJ.registerPostProcessor
+ (FUNC(VAL, RCONTEXT)->VAL)       #Transform VAL, once resolved
+OBJ.resolve(VAL[, OPTS])->VAL     #Reference to Tokenization.resolve(), to resolve a child value
+                                  #OPTS is only: removeEmpty BOOL
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:             TOKEN             :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
 
 TOKEN                             #*_TOKEN. Encode RESOLVABLE to a smaller serializable type
                                   #Stores it in a global MAP, then returns a key to it
-Token.asAny(VAL)->RESOLVABLE      #Turn VAL into RESOLVABLE (unless already one)
-                                  #If VAL is TOKEN, apply Tokenization.reverse() first
-Token.reverse                     #If VAL is:
- (VAL[, OPTS])[->RESOLVABLE]      #  - TOKEN: turn it into RESOLVABLE
-                                  #  - RESOLVABLE: return as is
-                                  #  - otherwise: undefined
-                                  #If OPTS.failConcat false (def: true), can pass 'TOKENS'
-                                  #  - only the first TOKEN is turned into RESOLVABLE
 
 STR_TOKEN                         #'${Token[STR.NUM]}'
                                   #NUM is global increment
@@ -150,7 +175,7 @@ Tokenization
  .reverseCompleteString(STR_TOKEN)
  [->RESOLVABLE]                   #undefined if not STR_TOKEN
 
-ARR_TOKEN                         #ARR with single STR_TOKEN element
+ARR_TOKEN                         #ARR with single element '#{TOKEN[STR.NUM]}', similar to STR_TOKEN
 Token.asList
  (VAL[, OPTS])->ARR_TOKEN         #Noop if VAL is STR_ARR
 Tokenization.reverseList
@@ -161,6 +186,15 @@ NUM_TOKEN                         #NUM. Exponent e+289 is used as a marker, inte
 Token.asNumber(VAL)->NUM_TOKEN    #Noop if VAL is NUM
 Tokenization.reverseNumber
  (NUM_TOKEN)[->RESOLVABLE]        #undefined if not NUM_TOKEN
+Tokenization.stringifyNumber
+ (NUM[_TOKEN])->STR[_TOKEN]       #
+
+Token.reverse                     #If VAL is:
+ (VAL[, OPTS])[->RESOLVABLE]      #  - TOKEN: turn it into RESOLVABLE
+                                  #  - RESOLVABLE: return as is
+                                  #  - otherwise: undefined
+                                  #If OPTS.failConcat false (def: true), can pass 'TOKENS'
+                                  #  - only the first TOKEN is turned into RESOLVABLE
 
 Tokenization
  .isResolvable(VAL)->BOOL         #Whether is a RESOLVABLE
@@ -169,9 +203,7 @@ Token.compareStrings              #Returns ENUM TokenComparison:
  (STR, STR2)->ENUM                #  - BOTH_UNRESOLVED|ONE_UNRESOLVED: if both|either is RESOLVABLE|TOKEN|'TOKENS'
                                   #  - DIFFERENT|SAME: otherwise, using ===
 
-'TOKENS'                          #STR that can contain STR_TOKEN|NUM_TOKEN
-Tokenization.reverseString
- ('TOKENS')->TOKEN_FRAG           #
+'TOKENS'                          #STR that can contain STR_TOKEN|NUM_TOKEN (not ARR_TOKEN)
 TOKEN_FRAG                        #Concatenation of VALs and RESOLVABLEs
 TOKEN_FRAG.addLiteral(VAL)        #Add VAL item
 TOKEN_FRAG.addToken(RESOLVABLE)   #Add RESOLVABLE item
@@ -186,27 +218,9 @@ TOKEN_FRAG.join({ join })->VAL    #Reduce all items to a single one using join(V
                                   #RESOLVABLE items are passed as STR_TOKENs
                                   #If 0 items, call once with 2 undefined values
                                   #If 1 item, returned as is
-                                  #I.e.:
-                                  #  - STR concatenation returns 'TOKENS'
-                                  #  - ARR concatenation returns ARR of VAL|STR_TOKEN
-
-{VAL}                             #RESOLVABLE. Value resolved only at `cdk synth`-time
-RESOLVABLE.typeHint               #ENUM ResolutionTypeHint (STRING (def), NUMBER, STRING_LIST) hinting about the VAL's type
-RESOLVABLE.creationStack          #STR_ARR. Stack trace.
-                                  #Only set if CDK_DEBUG
-                                  #Printed by String(RESOLVABLE)
-
-RESOLVABLE.resolve(RCONTEXT)->VAL #
-RCONTEXT                          #Context for RESOLVABLEs
-RCONTEXT.scope                    #CONSTRUCT
-RCONTEXT.documentPath             #'VAR'_ARR. Property path in the OBJ being output
-RCONTEXT.preparing                #BOOL. Whether final output, or only preparing it
-RCONTEXT.registerPostProcessor
- (FUNC(VAL, RCONTEXT)->VAL)       #Transfer VAL, once resolved
-
-RCONTEXT.resolve(VAL[, OPTS])->VAL#Resolves a child value
-OPTS.allowIntrinsicKeys           #BOOL (def: false)???
-OPTS.removeEmpty                  #BOOL (def: false). Remove empty OBJ|ARR
+                                  #`new StringConcat()` can be used as join FUNC, to return 'TOKENS'
+Tokenization.reverseString
+ ('TOKENS')->TOKEN_FRAG           #
 
 
                                              /=+===============================+=\
