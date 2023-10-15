@@ -5,7 +5,6 @@
 
 
 To do:
-  - Pulse: https://www.prisma.io/docs/data-platform/pulse
   - Get started: https://www.prisma.io/docs/getting-started
   - All guides:
      - except:
@@ -1695,32 +1694,78 @@ HISTOGRAM prisma_client_
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:             PULSE             :==(
+                                            )==:          PULSE MAIN           :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
-PULSE ==>                         #Uses Debezium under-the-hood
+PULSE ==>                         #Realtime events on data changes (new|updated|deleted COBJ)
+                                  #Uses Debezium under-the-hood
                                   #Only Postgres
                                   #Uses Postgres logical replication
                                   #  - PCONF.wal_level 'logical'
                                   #  - recommends PCONF.max_replication_slots 20
                                   #  - recommends HCONF.wal_keep_size 2048
                                   #Connection URL must be superuser
+                                  #EVENTs are not queued, i.e. lost if no SUB listening
+                                  #No guarantee of EVENTs ordering, or exact-once
 
-CMODEL.subscribe([OPTS])
- ->>EVENT_ASYNC_ITERABLE          #
-OPTS.ACTION[.before|after]        #FILTERs. Only matching COBJs
-                                  #Def: all ACTIONs
-                                  #Can be empty OBJ, to match all
-                                  #  - before|after is then optional
-                                  #ACTION create|update uses `before`, delete uses `after`
-                                  #Cannot use FILTER search|mode, nor CMODEL.fields.FIELD
+ws://subscription.pulse.
+ prisma-data.net                  #WebSocket server
 
-EVENT.action                      #'ACTION' among:
+Bearer: JWT [C]                   #Authentication. JWT retrieved from UI
+prisma_client_version: X.Y.Z [C]  #
+connectionType: STR [C]           #'initial|reconnect'. Whether it is a connection retry or not
+
+subscription: SUB_JSON [C]        #
+SUB.query.name                    #'MODEL'
+                                  #Max 10 SUBs per MODEL
+ACTION                            #One of:
                                   #  - 'create': added ROWs
                                   #  - 'update': updated ROWs
                                   #  - 'delete': deleted ROWs
+                                  #ACTION create|update uses `before`, delete uses `after`
+SUB.query.where.ACTION            #Only subscribe to COBJs matching FILTERS
+ .before|after                    #Cannot use FILTER search|mode, nor CMODEL.fields.FIELD
+                                  #Is FILTERS but serialized as top-level 'AND' NODE:
+                                  #  - match_type 'AND|OR|NOT|contains|equals|...'
+                                  #  (only with 'AND|OR|NOT')
+                                  #  - children NODE_ARR
+                                  #  (not with 'AND|OR|NOT')
+                                  #  - property 'PROP'
+                                  #  - value VAL
+                                  #  - fieldReference BOOL: whether uses CMODEL.fields.FIELD
+                                  #  - case_insensitive BOOL: whether uses FILTER mode
+
+REQ                               #There are no WebSocket requests to send
+RES                               #WebSocket response
+                                  #Initial handshake: "Hello"
+                                  #Then: JSON_COBJ
+                                  #  - also has COBJ.__op 'c|u|d' (ACTION)
+                                  #  - Postgres: if no `replica identity full`, only primary keys with ACTION 'delete'
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:        PULSE EXTENSION        :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+@prisma/extension-pulse           #Version 0.1.8
+withPulse(OPTS)->EXTENSION        #Adds CMODEL.subscribe()
+OPTS.apiKey                       #'JWT'. Bearer [C]
+OPTS.subscriptionUrl              #'URL'. Def: ws://subscription.pulse.prisma-data.net
+
+CMODEL.subscribe([OPTS])          #Start WebSocket connection
+ ->>EVENT_ASYNC_ITERABLE|ERROR    #Does not try to reconnect on connection failure
+OPTS.ACTION[.before|after]        #FILTERS
+                                  #Def: all ACTIONs
+                                  #Can be empty OBJ, to match all
+                                  #  - before|after is then optional
+EVENT_ASYNC_ITERABLE.stop()       #
+
+EVENT                             #WebSocket RES
+EVENT.action                      #'ACTION'
 EVENT.before                      #Old COBJ. Only with 'delete'
 EVENT.after                       #New COBJ. Only with 'create|update'
-                                  #Postgres: if no `replica identity full`, only primary keys
