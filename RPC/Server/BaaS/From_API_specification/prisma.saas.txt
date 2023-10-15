@@ -5,13 +5,6 @@
 
 
 To do:
-  - Extensions: https://www.prisma.io/docs/concepts/components/prisma-client/client-extensions
-     - https://www.prisma.io/docs/reference/api-reference/prisma-client-reference#remarks-35
-        - https://www.prisma.io/docs/concepts/components/prisma-client/client-extensions#usage-of-client-level-methods-in-extended-clients
-     - https://www.prisma.io/docs/concepts/components/prisma-client/client-extensions#usage-with-nested-operations
-     - https://www.prisma.io/docs/concepts/components/prisma-client/custom-validation#input-validation-with-prisma-client-extensions
-     - https://www.prisma.io/docs/concepts/components/prisma-client/computed-fields#using-a-prisma-client-extension
-     - https://www.prisma.io/docs/concepts/components/prisma-client/custom-models#static-methods-with-prisma-client-extensions
   - Prisma Data Platform: https://www.prisma.io/docs/data-platform
   - pricing
   - Get started: https://www.prisma.io/docs/getting-started
@@ -29,6 +22,9 @@ To do:
   - fix all `???` in this doc
   - https://github.com/prisma
   - https://www.prisma.io/docs/concepts/components/prisma-schema/generators#community-generators
+  - https://www.prisma.io/docs/concepts/components/prisma-client/client-extensions/extension-examples
+  - https://www.npmjs.com/search?q=prisma%20extension
+  - look for prisma on GitHub
 
 
 VERSION ==>                       #5.4.2 (2023-10-16)
@@ -867,7 +863,7 @@ CLIENT.$on('beforeExit',FUNC()->>)#Called on process.on('beforeExit'), before $d
 CLIENT.MODEL                      #CMODEL
                                   #MODEL is lowercase'd
                                   #Fully typed according to SCHEMA, except nested|populated models
-CMODEL.name                       #'MODEL'
+CMODEL.$name                      #'MODEL'
 CMODEL.METHOD(...)->CPROMISE      #CPROMISE behaves like a PROMISE except lazy: only start on then()|catch()|await
 CPROMISE.FIELD()->CPROMISE        #Returns COBJ.FIELD instead of COBJ
                                   #FIELD is fetched in a separate database query, not a join
@@ -1502,15 +1498,58 @@ prisma:client:transaction         #CLIENT.$transaction(FUNC)
                                              \=+===============================+=/
 
 
-CLIENT.$extends                   #CLIENT2 is separate from CLIENT, but share connection pool
- (EXTENSION)->CLIENT2             #Cannot use CLIENT2.$on(...)
+CLIENT.$extends                   #Clone CLIENT, but with an additional EXTENSION
+ (EXTENSION)->CLIENT2             #CLIENT2 is separate from CLIENT, but share connection pool
+                                  #Cannot use CLIENT2.$on(...)
+CLIENT.$extends
+ (FUNC(CLIENT)->CLIENT2)->CLIENT2 #Calls and returns FUNC(), which should call and return CLIENT.$extends()
+Prisma.defineExtension(EXTENSION)
+ ->FUNC(CLIENT)->CLIENT2          #Returns FUNC that calls CLIENT.$extends(EXTENSION)
+Prisma.defineExtension
+ (FUNC(CLIENT)->CLIENT2)->FUNC    #Returns FUNC as is
+
 EXTENSION.name                    #STR. Shown in logs and error messages
 
-EXTENSION.model.MODEL             #OBJ. Mixin OBJ.* to CMODEL.*
-EXTENSION.model.$allModels        #Same but for any MODEL
+EXTENSION.model.MODEL|$allModels  #OBJ. Mixin OBJ.* to CMODEL.*
+                                  #`this` is CMODEL
 
 EXTENSION.client                  #OBJ. Mixin OBJ.* to CLIENT.*
+                                  #`this` is CLIENT
 
-Prisma.getExtensionContext        #Inside methods of:
- (this)->VAL                      #  - EXTENSION.model.*: CMODEL
-                                  #  - EXTENSION.client.*: CLIENT
+Prisma.getExtensionContext        #Returns `this` but correctly typed
+ (this)->this                     #To use inside EXTENSION.model|client's methods
+
+EXTENSION.query[.MODEL|$allModels]#Wrap CMODEL.METHOD(...)
+ .METHOD|$allOperations(OPTS)     #If no MODEL|$allModels: also wraps CLIENT.$*Raw*()
+ ->>VAL                           #Does not wrap nested reads|writes, only top-level
+OPTS.model                        #'MODEL'. undefined for CLIENT.$*Raw()
+OPTS.operation                    #'METHOD'
+OPTS.args                         #OBJ passed to CMODEL.METHOD(OBJ)
+OPTS.query                        #FUNC. Original CMODEL.METHOD. Its return value must be returned
+
+EXTENSION.result                  #MPROP. Adds COBJ.PROP to MODEL's COBJ, as returned by any CMODEL.METHOD(...)
+ .MODEL|$allModels.PROP           #PROP must not be a child MODEL
+                                  #Not usable by CMODEL.count|aggregate|groupBy()
+MPROP.compute(COBJ)->VAL          #Sets COBJ.PROP = VAL
+                                  #Defined as a `get` FUNC, i.e. lazy
+MPROP.needs.PROP                  #BOOL. If true, noop if COBJ.PROP undefined
+                                  #Only PROPs defined here are available in compute()'s argument
+
+PUBLIC EXTENSIONS ==>             #npm package name and EXTENSION.name should be prisma-extension-*
+                                  #Should have npm keywords prisma, @prisma/client, extension
+                                  #Should export Prisma.defineExtension() result, for better typing
+                                  #Should use $allModels|$allOperations, not 'MODEL|METHOD'
+@prisma/client/extension          #Must be used instead of @prisma/client in public EXTENSIONs
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:          ACCELERATE           :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+OPTS.cacheStrategy                #CACHING
+CACHING.ttl                       #NUM (in secs, def 1m). How long to cache
+CACHING.swr                       #NUM (in secs, def 1m). Once over ttl, how long to deliver stale-while-revalidate
+                                  #This means sending cached response, then updating the cache in the background
