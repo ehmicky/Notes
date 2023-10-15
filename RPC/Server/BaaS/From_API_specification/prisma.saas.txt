@@ -80,7 +80,6 @@ FORMAT ENGINE ==>                 #Engine used by `schema format`
                                   #Loaded by CLI as WASM dependency
 
 QUERY ENGINE ==>                  #Engine performing database queries, used by both the CLI and the CLIENT
-                                  #Pools database connections on local machine
                                   #Downloaded the same way as schema engine
                                   #Loaded either as a:
                                   #  - library (def):
@@ -89,13 +88,15 @@ QUERY ENGINE ==>                  #Engine performing database queries, used by b
                                   #  - binary:
                                   #     - separate executable file, as a HTTP server
                                   #     - slower due to IPC
+                                  #  - none (--no-engine):
+                                  #     - use Query engine bundled in Data proxy or Accelerate proxy, when using those
+                                  #     - as above, slower due to IPC, but smaller space, i.e. only useful for serverless functions
 
 generator.engineType
 ENVVAR PRISMA_CLIENT_ENGINE_TYPE  #ENUM library|binary. How query engine should be used by CLIENT
 ENVVAR
  PRISMA_CLI_QUERY_ENGINE_TYPE     #Same but for query engine used by CLI
-
-schema generate --no-engine       #When using neither Data Proxy nor Accelerate
+schema generate --no-engine
 ENVVAR PRISMA_GENERATE_NO_ENGINE  #With "prisma-client-js" only
 
 ENVVAR PRISMA_SCHEMA_ENGINE_BINARY#'PATH' to schema engine binary
@@ -197,13 +198,10 @@ prisma init --datasource-provider #  - "postgresql" (>=9.6): has most support
                                   #  - "sqlite"
                                   #  - "cockroachdb"
                                   #  - "mongodb" (>=4.2): has fewer features
-datasource.url                    #Connection "URL" to the main database, through connection pooler
+datasource.url                    #Connection "URL" to the main database
 POPTS.datasourceUrl               #E.g.:
 prisma init --url                 #  - Postgres: 'LIBPQ'
                                   #  - SQLite: 'file:./PATH.db'
-datasource.directUrl              #Connection "URL" to the main database, without connection pooler
-                                  #Used with prisma db|migrate|studio
-                                  #Def: same as datasource.url
 
 @prisma/adapter-*                 #ADAPTER
                                   #Fixes database connection for specific providers: neon, PlanetScale, turso
@@ -216,9 +214,6 @@ LIBPQ.options|host|connect_timeout
  |sslpassword|channel_binding     #Like Postgres
 LIBPQ.schema                      #'SCHEMA'
 LIBPQ.socket_timeout              #NUM (def: none). Query timeout
-LIBPQ.connection_limit            #NUM (def: CPUs * 2 + 1). Keep pool of connections
-LIBPQ.pool_timeout                #NUM (in sec, def: 10). If pool empty, how long to wait
-                                  #Can be 0 for Infinity
 LIBPQ.sslidentity                 #Like Postgres LIBPQ.ssl_key_file
 LIBPQ.sslcert                     #Like Postgres LIBPQ.ssl_cert_file
 LIBPQ.sslmode                     #Like Postgres, but no "allow" nor "verify-*"
@@ -851,11 +846,10 @@ ENVVAR
  PRISMA_SKIP_POSTINSTALL_GENERATE #UNless set, @prisma/client has a `postinstall` script that calls `prisma generate`
 
 new PrismaClient([POPTS])         #CLIENT
-                                  #Since each CLIENT has its pool of database connections, should instantiate only one per PROCESS
 
-CLIENT.$connect()->>              #Start pool of database connections
+CLIENT.$connect()->>              #Start database connection
                                   #Automatically called on first database query
-CLIENT.$disconnect()->>           #Stop pool of database connections
+CLIENT.$disconnect()->>           #Stop database connection
                                   #Automatically called on 'beforeExit'
 CLIENT.$on('beforeExit',FUNC()->>)#Called on process.on('beforeExit'), before $disconnect()
                                   #Only if generator.engineType 'binary'
@@ -864,8 +858,10 @@ CLIENT.MODEL                      #CMODEL
                                   #MODEL is lowercase'd
                                   #Fully typed according to SCHEMA, except nested|populated models
 CMODEL.$name                      #'MODEL'
+CMODEL.$parent                    #CMODEL2, when inside CMODEL2.$transaction(FUNC(CMODEL))
+
 CMODEL.METHOD(...)->CPROMISE      #CPROMISE behaves like a PROMISE except lazy: only start on then()|catch()|await
-CPROMISE.FIELD()->CPROMISE        #Returns COBJ.FIELD instead of COBJ
+CPROMISE.FIELD()->CPROMISE        #Returns COBJ.FIELD instead of COBJ ("fluent API")
                                   #FIELD is fetched in a separate database query, not a join
                                   #Parent must not be:
                                   #  - CMODEL.*Many()
@@ -955,7 +951,7 @@ ENVVAR NODE_ENV=production        #Like POPTS.errorFormat 'minimal'
 
 CMODEL.findMany([OPTS])->>COBJ_ARR#Get all matching COBJs, like SQL `select`
 OPTS.where|select|include|orderBy
- |cursor|take|skip                #See below
+ |cursor|take|skip|cacheStrategy  #See below
 OPTS.distinct                     #'FIELD'_ARR. Ignore COBJs with duplicate values for those FIELDs
                                   #Done at the ORM-level, not using a SQL `distinct on (...)`
 
@@ -964,12 +960,14 @@ CMODEL.findFirst[OrThrow]         #Get one matching COBJ, like SQL `select ... l
                                   #  - if `OrThrow`: throw NotFoundError
                                   #  - otherwise: returns null
 OPTS.where|select|include|orderBy
- |cursor|skip|distinct            #See below
+ |cursor|skip|distinct
+ |cacheStrategy                   #See below
 OPTS.take                         #Like below, except only 1 (def) or -1
 
 CMODEL.findUnique[OrThrow]        #Like findFirst[OrThrow]() except OPTS.where is UFILTERS and required.
  (OPTS)->>COBJ|null               #Also, optimized because multiple calls are batched into a single SQL query
-OPTS.where|select|include         #See below
+OPTS.where|select|include
+ |cacheStrategy                   #See below
 
 
                                              /=+===============================+=\
@@ -1123,16 +1121,16 @@ OPTS.select|include._count        #OPTS2 (only select|where). Special MODEL_FIEL
                                   #Must be top-level OPTS
 
 CMODEL.count([OPTS])->>NUM        #Count OBJs, like SQL `select count(*)`
-OPTS
- .where|orderBy|cursor|take|skip  #See below
+OPTS.where|orderBy|cursor|take
+ |skip|cacheStrategy              #See below
 OPTS.select                       #When used, returns COBJ, with NUM values
                                   #Can use FIELD `_all`
 
 CMODEL.aggregate(OPTS)->>OBJ      #Aggregate OBJs, like SQL AFUNCs
                                   #Returns OBJ:
                                   #  - _*.FIELD NUM: for each OPTS._*.FIELD
-OPTS
- .where|orderBy|cursor|take|skip  #See below
+OPTS.where|orderBy|cursor|take
+ |skip|cacheStrategy              #See below
 OPTS._*                           #Can use FIELD `_all`
                                   #If not _all, only non-undefined|null values
                                   #  - if only undefined values and not _count, returns `null`
@@ -1145,8 +1143,8 @@ CMODEL.groupBy(OPTS)->>ARR        #Group and aggregate OBJs, like SQL AFUNCs + `
                                   #Returns OBJ_ARR:
                                   #  - FIELD VAL: for each OPTS.by
                                   #  - _*.FIELD NUM: for each OPTS._*.FIELD
-OPTS
- .where|orderBy|cursor|take|skip  #See below
+OPTS.where|orderBy|cursor|take
+ |skip|cacheStrategy              #See below
 OPTS._count|_avg|_sum|_min|_max   #See above
 OPTS.by                           #'FIELD'[_ARR]. Like SQL `group by`
 OPTS.having.FIELD._*              #FILTERS. Like SQL `having`
@@ -1429,27 +1427,17 @@ HISTOGRAM.buckets                 #[X_NUM, Y_NUM]_ARR
 HISTOGRAM.sum                     #NUM
 HISTOGRAM.count                   #NUM
 
-GAUGE prisma_pool_connections_open#NUM of connections in pool open
-GAUGE prisma_pool_connections_idle#NUM of connections in pool open and not running a database query
-GAUGE prisma_pool_connections_busy#NUM of connections in pool open and running a database query
-GAUGE prisma_client_queries_wait  #NUM of CLIENT.COMMAND() waiting for a connection in pool
 GAUGE prisma_client_queries_active#NUM of ongoing CLIENT.COMMAND()
 
 COUNTER
  prisma_client_queries_total      #NUM of CLIENT.COMMAND() executed
 COUNTER
  prisma_datasource_queries_total  #NUM of database queries executed
-COUNTER prisma_pool_
- connections_opened_total         #NUM of connections in pool opened
-COUNTER prisma_pool_
- connections_closed_total         #NUM of connections in pool closed
 
 HISTOGRAM prisma_datasource_
  queries_duration_histogram_ms    #NUM (in ms). Duration of database queries
 HISTOGRAM prisma_client_
  queries_duration_histogram_ms    #NUM (in ms). Duration of CLIENT.COMMAND()
-HISTOGRAM prisma_client_
- queries_wait_histogram_ms        #NUM (in ms). How long CLIENT.COMMAND() are waiting for a connection in pool
 
 
                                              /=+===============================+=\
@@ -1459,7 +1447,7 @@ HISTOGRAM prisma_client_
                                              \=+===============================+=/
 
 
-@prisma/instrumentation           #Generates OpenTelemetry traces, i.e. overlapping duration spans for each CLIENT.METHOD()
+@prisma/instrumentation           #Generates OpenTelemetry traces, i.e. overlapping duration spans for each CMODEL.METHOD()
                                   #Requires PREVIEW tracing
 
 new PrismaInstrumentation([OPTS]) #INSTRUMENTATION
@@ -1469,7 +1457,7 @@ new PrismaInstrumentation([OPTS]) #INSTRUMENTATION
 OPTS.enabled                      #BOOL (def: true)
 
 SPANS ==>                         #Indentation signifies child span
-prisma:client:operation           #CLIENT.METHOD() call
+prisma:client:operation           #CMODEL.METHOD() call
   prisma:client:connect           #Connect to database
   prisma:client:serialize         #Create database query string
   prisma:engine                   #Query ENGINE
@@ -1477,7 +1465,7 @@ prisma:client:operation           #CLIENT.METHOD() call
     prisma:engine:db_query        #Perform database query
                                   #Can be specified multiple times
                                   #Include query string in tags
-    prisma:engine:serialize       #Create CLIENT.METHOD() return value, using database response
+    prisma:engine:serialize       #Create CMODEL.METHOD() return value, using database response
 
 prisma:client:transaction         #CLIENT.$transaction(FUNC)
   prisma:client:connect           #
@@ -1485,7 +1473,7 @@ prisma:client:transaction         #CLIENT.$transaction(FUNC)
     prisma:engine:connection      #
     prisma:engine:db_query        #Database query to start the transaction
     prisma:engine
-    :itx_query_builder            #CLIENT.METHOD() call in transaction
+    :itx_query_builder            #CMODEL.METHOD() call in transaction
       prisma:engine:db_query      #
       prisma:engine:serialize     #
   prisma:client:operation         #
@@ -1499,8 +1487,8 @@ prisma:client:transaction         #CLIENT.$transaction(FUNC)
 
 
 CLIENT.$extends                   #Clone CLIENT, but with an additional EXTENSION
- (EXTENSION)->CLIENT2             #CLIENT2 is separate from CLIENT, but share connection pool
-                                  #Cannot use CLIENT2.$on(...)
+ (EXTENSION)->CLIENT2             #CLIENT2 is separate from CLIENT
+                                  #Cannot use CLIENT2.$on(...) nor fluent API
 CLIENT.$extends
  (FUNC(CLIENT)->CLIENT2)->CLIENT2 #Calls and returns FUNC(), which should call and return CLIENT.$extends()
 Prisma.defineExtension(EXTENSION)
@@ -1544,12 +1532,100 @@ PUBLIC EXTENSIONS ==>             #npm package name and EXTENSION.name should be
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:          ACCELERATE           :==(
+                                            )==:       ACCELERATE PROXY        :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
+ACCELERATE ==>                    #"Accelerate" is a proxy, which forwards to database
+                                  #Not with SQLite, SQL server
+
+LIMITS ==>                        #Applies soft limits (can be changed through support email):
+                                  #  - query timeout: 10s
+                                  #  - transaction timeout: 15s
+                                  #  - response size: 5MB
+
+CACHING ==>                       #Caches responses of read-only CMODEL.METHOD(...)
+                                  #Does not cache CMODEL.*Raw*(...)
+                                  #Cache invalidation:
+                                  #  - done through UI, max 5 per day
+                                  #  - not done otherwise, e.g. not by write methods
+                                  #What's the cache key???
+
+prisma://
+ accelerate.prisma-data.net
+ /?api_key=KEY                    #To use as datasource.url
+
+datasource.directUrl              #Connection "URL" to the main database
+                                  #Unless datasource.url, it bypasses Accelerate proxy
+                                  #Used with prisma db|migrate|studio
+                                  #Def: same as datasource.url
+                                  #If Accelerate proxy used, should set it since prisma db|migrate does not work with Accelerate proxy
+
+Cache-Control: max-age=NUM [C]    #In secs. How long to cache
+Cache-Control: ...,               #In secs. Once over ttl, how long to deliver stale-while-revalidate
+ stale-while-revalidate=NUM [C]   #This means sending cached response, then updating the cache in the background
+Cache-Control: no-cache [C]       #Def: no caching
+
+Accelerate-Cache-Status: STR [S]  #One of:
+                                  #  - 'ttl': cached
+                                  #  - 'swr': delivered as stale-while-revalidate
+                                  #  - 'miss': stale
+                                  #  - 'none': no caching set
+Last-Modified: DATE [S]           #
+Cf-Ray: REQ_ID-REGION [S]         #Cloudflare request ID and REGION
+                                  #Among 300 edge locations
+Accelerate-Signature: STR [S]     #
+Accelerate-Query-Engine-Jwt:
+ JWT [C|S]                        #Authentication. Set by initial response
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:     ACCELERATE EXTENSION      :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+@prisma/extension-accelerate      #Version 0.6.2
+withAccelerate()->EXTENSION       #Adds OPTS.cacheStrategy and CPROMISE.withAccelerateInfo()
+
 OPTS.cacheStrategy                #CACHING
-CACHING.ttl                       #NUM (in secs, def 1m). How long to cache
-CACHING.swr                       #NUM (in secs, def 1m). Once over ttl, how long to deliver stale-while-revalidate
-                                  #This means sending cached response, then updating the cache in the background
+CACHING.ttl                       #NUM. Sets Cache-Control: max-age=NUM [C]
+CACHING.swr                       #NUM. Sets Cache-Control: stale-while-revalidate [C]
+
+CPROMISE.withAccelerateInfo()
+ ->CPROMISE                       #Instead of returning VAL, return OBJ: data VAL, info CINFO
+CINFO.cacheStatus                 #STR. Accelerate-Cache-Status [S]
+CINFO.lastModified                #DATE. Last-Modified [S]
+CINFO.region                      #'REGION' from Cf-Ray [S]
+CINFO.requestId                   #'REQ_ID' from Cf-Ray [S]
+CINFO.signature                   #STR. Accelerate-Signature [S]
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:      ACCELERATE POOLING       :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+CONNECTION POOLING ==>            #Accelerate uses pool of connections, as a separate proxy used after the caching proxy
+                                  #Can be shared by multiple machines, e.g. in serverless functions
+
+LIBPQ.connection_limit            #NUM (def: CPUs * 2 + 1) of connections to pool
+LIBPQ.pool_timeout                #NUM (in sec, def: 10). If pool empty, how long to wait
+                                  #Can be 0 for Infinity
+
+GAUGE prisma_pool_connections_open#NUM of connections in pool open
+GAUGE prisma_pool_connections_idle#NUM of connections in pool open and not running a database query
+GAUGE prisma_pool_connections_busy#NUM of connections in pool open and running a database query
+GAUGE prisma_client_queries_wait  #NUM of CLIENT.COMMAND() waiting for a connection in pool
+
+COUNTER prisma_pool_
+ connections_opened_total         #NUM of connections in pool opened
+COUNTER prisma_pool_
+ connections_closed_total         #NUM of connections in pool closed
+
+HISTOGRAM prisma_client_
+ queries_wait_histogram_ms        #NUM (in ms). How long CLIENT.COMMAND() are waiting for a connection in pool
