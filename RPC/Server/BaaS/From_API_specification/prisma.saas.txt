@@ -5,15 +5,10 @@
 
 
 To do:
-  - transaction: https://www.prisma.io/docs/guides/performance-and-optimization/prisma-client-transactions-guide
-  - metrics:
-     - https://www.prisma.io/docs/guides/performance-and-optimization/metrics
-     - https://www.prisma.io/docs/concepts/components/prisma-client/metrics
-  - tracing:
-     - https://www.prisma.io/docs/guides/performance-and-optimization/prisma-client-transactions-guide
-     - https://www.prisma.io/docs/concepts/components/prisma-client/opentelemetry-tracing
   - Extensions: https://www.prisma.io/docs/concepts/components/prisma-client/client-extensions
-     - remove $use(): deprecated
+     - https://www.prisma.io/docs/reference/api-reference/prisma-client-reference#remarks-35
+        - https://www.prisma.io/docs/concepts/components/prisma-client/client-extensions#usage-of-client-level-methods-in-extended-clients
+     - https://www.prisma.io/docs/concepts/components/prisma-client/client-extensions#usage-with-nested-operations
      - https://www.prisma.io/docs/concepts/components/prisma-client/custom-validation#input-validation-with-prisma-client-extensions
      - https://www.prisma.io/docs/concepts/components/prisma-client/computed-fields#using-a-prisma-client-extension
      - https://www.prisma.io/docs/concepts/components/prisma-client/custom-models#static-methods-with-prisma-client-extensions
@@ -26,6 +21,8 @@ To do:
            - Seeding your database
            - Schema prototyping with db push
         - Performance and optimization:
+           - Metrics
+           - Query tracing
            - Transactions
      - including:
         - Deno deploy
@@ -867,22 +864,10 @@ CLIENT.$disconnect()->>           #Stop pool of database connections
 CLIENT.$on('beforeExit',FUNC()->>)#Called on process.on('beforeExit'), before $disconnect()
                                   #Only if generator.engineType 'binary'
 
-CLIENT.$use                       #Adds middleware FUNC
- (FUNC(MPARAMS, MFUNC(MPARAMS)->>RES)->>RES)#Called before database queries
-                                  #FUNC() must call MFUNC(MPARAMS) to end
-MPARAMS.model                     #'MODEL'
-MPARAMS.action                    #'METHOD' of CMODEL.METHOD(OPTS) being called
-MPARAMS.args                      #OPTS_OBJ passed to CMODEL.METHOD(OPTS)
-MPARAMS.dataPath                  #'VAR'_ARR when using CPROMISE.FIELD()
-MPARAMS.runInTransaction          #BOOL. Whether uses $transaction
-
-CLIENT.$extend(OBJ)->CLIENT       #
-                                  #See https://www.prisma.io/docs/reference/api-reference/prisma-client-reference#remarks-35 ???
-                                  #Cannot use CLIENT.$use|$on(...) anymore
-
 CLIENT.MODEL                      #CMODEL
                                   #MODEL is lowercase'd
                                   #Fully typed according to SCHEMA, except nested|populated models
+CMODEL.name                       #'MODEL'
 CMODEL.METHOD(...)->CPROMISE      #CPROMISE behaves like a PROMISE except lazy: only start on then()|catch()|await
 CPROMISE.FIELD()->CPROMISE        #Returns COBJ.FIELD instead of COBJ
                                   #FIELD is fetched in a separate database query, not a join
@@ -1419,3 +1404,113 @@ CLIENT.$transaction
 OPTS.isolationLevel               #Like above
 OPTS.maxWait                      #NUM (in ms, def: 2s). Rollback if takes longer to acquire transaction lock
 OPTS.timeout                      #NUM (in ms, def: 5s). Rollback if FUNC() lasts longer
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:            METRICS            :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+CLIENT.$metrics                   #CMETRICS. Execution metrics
+                                  #Requires PREVIEW metrics
+CMETRICS.json([OPTS])->>METRICS   #
+CMETRICS.prometheus([OPTS])->>STR #Same but using Prometheus format
+
+METRICS.TYPE                      #METRIC_ARR
+                                  #TYPE can be:
+                                  #  - gauges: NUM
+                                  #  - counters: NUM always incrementing
+                                  #  - histograms
+METRIC.key                        #'METRIC' name
+METRIC.value                      #NUM (gauges|counters) or HISTOGRAM
+METRIC.description                #STR
+OPTS.globalLabels
+METRIC.labels                     #OBJ. Metadata
+
+HISTOGRAM.buckets                 #[X_NUM, Y_NUM]_ARR
+HISTOGRAM.sum                     #NUM
+HISTOGRAM.count                   #NUM
+
+GAUGE prisma_pool_connections_open#NUM of connections in pool open
+GAUGE prisma_pool_connections_idle#NUM of connections in pool open and not running a database query
+GAUGE prisma_pool_connections_busy#NUM of connections in pool open and running a database query
+GAUGE prisma_client_queries_wait  #NUM of CLIENT.COMMAND() waiting for a connection in pool
+GAUGE prisma_client_queries_active#NUM of ongoing CLIENT.COMMAND()
+
+COUNTER
+ prisma_client_queries_total      #NUM of CLIENT.COMMAND() executed
+COUNTER
+ prisma_datasource_queries_total  #NUM of database queries executed
+COUNTER prisma_pool_
+ connections_opened_total         #NUM of connections in pool opened
+COUNTER prisma_pool_
+ connections_closed_total         #NUM of connections in pool closed
+
+HISTOGRAM prisma_datasource_
+ queries_duration_histogram_ms    #NUM (in ms). Duration of database queries
+HISTOGRAM prisma_client_
+ queries_duration_histogram_ms    #NUM (in ms). Duration of CLIENT.COMMAND()
+HISTOGRAM prisma_client_
+ queries_wait_histogram_ms        #NUM (in ms). How long CLIENT.COMMAND() are waiting for a connection in pool
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:            TRACING            :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+@prisma/instrumentation           #Generates OpenTelemetry traces, i.e. overlapping duration spans for each CLIENT.METHOD()
+                                  #Requires PREVIEW tracing
+
+new PrismaInstrumentation([OPTS]) #INSTRUMENTATION
+                                  #Must be used with @opentelemetry/instrumentation:
+                                  #  - child class of InstrumentationBase
+                                  #  - must be passed to registerInstrumentations() OPTS.instrumentations
+OPTS.enabled                      #BOOL (def: true)
+
+SPANS ==>                         #Indentation signifies child span
+prisma:client:operation           #CLIENT.METHOD() call
+  prisma:client:connect           #Connect to database
+  prisma:client:serialize         #Create database query string
+  prisma:engine                   #Query ENGINE
+    prisma:engine:connection      #Connect to database
+    prisma:engine:db_query        #Perform database query
+                                  #Can be specified multiple times
+                                  #Include query string in tags
+    prisma:engine:serialize       #Create CLIENT.METHOD() return value, using database response
+
+prisma:client:transaction         #CLIENT.$transaction(FUNC)
+  prisma:client:connect           #
+  prisma:engine:itx_runner        #Query ENGINE
+    prisma:engine:connection      #
+    prisma:engine:db_query        #Database query to start the transaction
+    prisma:engine
+    :itx_query_builder            #CLIENT.METHOD() call in transaction
+      prisma:engine:db_query      #
+      prisma:engine:serialize     #
+  prisma:client:operation         #
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:           EXTENSION           :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+CLIENT.$extends                   #CLIENT2 is separate from CLIENT, but share connection pool
+ (EXTENSION)->CLIENT2             #Cannot use CLIENT2.$on(...)
+EXTENSION.name                    #STR. Shown in logs and error messages
+
+EXTENSION.model.MODEL             #OBJ. Mixin OBJ.* to CMODEL.*
+EXTENSION.model.$allModels        #Same but for any MODEL
+
+EXTENSION.client                  #OBJ. Mixin OBJ.* to CLIENT.*
+
+Prisma.getExtensionContext        #Inside methods of:
+ (this)->VAL                      #  - EXTENSION.model.*: CMODEL
+                                  #  - EXTENSION.client.*: CLIENT
