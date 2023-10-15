@@ -12,6 +12,16 @@ TODO:
 
 VERSION ==>                       #5.4.2 (2023-10-16)
 
+Done:
+  - Concept:
+     - Prisma schema
+     - Database connectors
+  - Reference: all but:
+     - Prisma Client API reference
+     - Prisma CLI reference
+     - Error message reference
+     - Environment variables reference
+
 
 
                                              /=+===============================+=\
@@ -66,10 +76,10 @@ POPTS.datasource                  #Same as OBJ
                                   #Cannot set provider
 
 datasource.provider               #"DB_PROVIDER". Database type ("connector") among:
-                                  #  - "postgresql", "mysql", "sqlserver"
+                                  #  - "postgresql" (>=9.6), "mysql", "sqlserver"
                                   #  - "sqlite"
                                   #  - "cockroachdb"
-                                  #  - "mongodb"
+                                  #  - "mongodb" (>=4.2)
 datasource.url                    #Connection "URL" to the main database, through connection pooler if any
 POPTS.datasourceUrl               #E.g.:
                                   #  - Postgres: 'LIBPQ'
@@ -78,22 +88,27 @@ datasource.directUrl              #Connection "URL" to the main database, withou
                                   #Used with prisma db|migrate|studio
 datasource.shadowDatabaseUrl      #Connection "URL" to the shadow database used by Prisma Migrate
 
-datasource.relationMode           #ENUM. Whether @relation:
-                                  #  - "foreignKeys":
-                                  #     - creates a database foreign key
-                                  #     - default with most databases
-                                  #     - usually recommended
-                                  #  - "prisma":
-                                  #     - emulates foreign key at the ORM layer
-                                  #     - default with "mongodb"
-
-datasource.schemas                #Database "SCHEMA"_ARR available to @@schema
+LIBPQ.*                           #In connection 'URL', different from Postgres ones
+LIBPQ.options|host|connect_timeout
+ |application_name|sslcert
+ |sslpassword|channel_binding     #Like Postgres
+LIBPQ.schema                      #'SCHEMA'
+LIBPQ.socket_timeout              #NUM (def: none). Query timeout
+LIBPQ.connection_limit            #NUM (def: CPUs * 2 + 1). Keep pool of connections
+LIBPQ.pool_timeout                #NUM (in sec, def: 10). If pool empty, how long to wait
+LIBPQ.sslidentity                 #Like Postgres LIBPQ.ssl_key_file
+LIBPQ.sslcert                     #Like Postgres LIBPQ.ssl_cert_file
+LIBPQ.sslmode                     #Like Postgres, but no "allow" nor "verify-*"
+LIBPQ.sslaccept                   #'accept_invalid_certs' (def) or 'strict'
+                                  #Whether to allow missing values in certificates
+LIBPQ.pgbouncer                   #BOOL (def: false). When using pgBouncer
 
 datasource.extensions             #ARR of EXTENSION[(ARG: "VAL",...)]
                                   #Postgres EXTENSIONs. ARGs (all optional):
                                   #  - version "EVERSION"
                                   #  - schema "SCHEMA"
                                   #  - map "EXTENSION2": like @map but for "EXTENSION"
+                                  #Requires PREVIEW postgresqlExtensions
 
 
                                              /=+===============================+=\
@@ -104,11 +119,18 @@ datasource.extensions             #ARR of EXTENSION[(ARG: "VAL",...)]
 
 
 model MODEL {
-  FIELD FTYPE [@ATTR]...          #MODEL. Database TABLE
+  FIELD FTYPE [@ATTR]...          #Database TABLE
   ...                             #Can use MODEL as FTYPE
   [@@ATTR]                        #With any database
   ...                             #JavaScript client: OBJ|ARR
 }                                 #In schema: ???
+
+view VIEW { ... }                 #Database VIEW
+                                  #Same syntax and behavior as MODEL
+                                  #With any database
+                                  #Requires PREVIEW views
+./prisma/views/SCHEMA/VIEW.sql    #SQL query of VIEW
+                                  #Created by `prisma db pull`
 
 type OBJ_TYPE { ... }             #"Composite type"
                                   #Same syntax as `model MODEL`
@@ -127,7 +149,7 @@ enum ENUM { ... }                 #Same syntax as `model MODEL`, except no FTYPE
                                   #JavaScript client: ???
                                   #In schema: FIELD
 
-MODEL|ENUM|OBJ_TYPE               #Name must be [[:alnum:]_] and not start with _ nor digit
+MODEL|VIEW|ENUM|OBJ_TYPE          #Name must be [[:alnum:]_] and not start with _ nor digit
                                   #Usually CamelCase, singular
                                   #Cannot be one of the JavaScript reserved keywords, nor "Prisma[Client]"
 
@@ -278,8 +300,33 @@ Unsupported("TYPE")               #Database type called exactly TYPE
 
 @map(STR)                         #Database COL name
                                   #Def: "FIELD"
-                                  #Meant when "FIELD" contains invalid characters
+                                  #Meant when:
+                                  #  - "FIELD" contains invalid characters
+                                  #  - want a different name in API than in database
 @@map(STR)                        #Same but for database MODEL name
+
+@ignore                           #Omit FIELD in JavaScript client, except in raw queries
+                                  #If no @default, cannot create|update|upsert MODEL
+                                  #But works with prisma db|migrate
+                                  #Done at the ORM-level, i.e. on any database
+@@ignore                          #Same but for a MODEL
+
+@@schema("SCHEMA")                #MODEL's database "SCHEMA"
+                                  #Only with Posgres, SQL server, CDB
+                                  #Requires PREVIEW "multiSchema"
+datasource.schemas                #Database "SCHEMA"_ARR available to @@schema
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:        SCHEMA DEFAULT         :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+@updatedAt                        #Set on each MODEL update (unless overridden) with current time
+                                  #DateTime FTYPE
+                                  #Done at ORM-level, i.e. for any database
 
 @default(OPTS[.value])            #FIELD's default VAL
                                   #For any database
@@ -287,31 +334,41 @@ Unsupported("TYPE")               #Database type called exactly TYPE
 OPTS.map                          #STR. Only for SQL server
 OPTS.value                        #Default VAL
                                   #Can also use any of the following
+
 now()                             #DateTime FTYPE
                                   #With most databases: current_timestamp
                                   #MongoDB: done at ORM-level
+
 uuid()                            #String FTYPE
                                   #Done at ORM-level, i.e. for any database
                                   #UUIDv4
 cuid()                            #String FTYPE
                                   #Done at ORM-level, i.e. for any database
                                   #CUID1 (min 30 chars)
+
 autoincrement()                   #Postgres: serial2|4|8, SQLite: AUTOINCREMENT, also with MySQL, SQL server, CDB
                                   #Int FTYPE
                                   #  - Postgres: Int @db.[Small|Big]Int
                                   #Not with MongoDB
+
 dbgenerated('EXPR')               #Database-specific EXPR, e.g. FUNC(), OPs, etc.
                                   #Not with MongoDB
+
 auto()                            #ObjectId
                                   #String @db.ObjectId FTYPE
                                   #Must use @map("_id")
                                   #Only with MongoDB
+
 sequence(...)                     #SEQUENCE table
                                   #Only with CDB
 
-@updatedAt                        #Set on each MODEL update (unless overridden) with current time
-                                  #DateTime FTYPE
-                                  #Done at ORM-level, i.e. for any database
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:         SCHEMA INDEX          :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
 
 @id[(OPTS)]                       #Primary key constraint on one FIELD
                                   #Only one per MODEL
@@ -325,12 +382,14 @@ sequence(...)                     #SEQUENCE table
                                   #     - String|Bytes @db.ObjectId
                                   #     - optional: @default(auto())
                                   #Cannot be on optional FIELD
-OPTS.sort|map|length|clustered    #Like @@index
+OPTS.map|length|clustered         #Like @@index
+OPTS.sort                         #Like @@index
+                                  #Only with SQL server
 
 @@id(OPTS)                        #Like @id, but on multiple FIELDs
                                   #Not with MongoDB
-OPTS.fields|name|sort|map|length
- |clustered                       #Like @@index
+OPTS.sort|map|length|clustered    #Like @id
+OPTS.fields|name                  #Like @@index
 
 @unique[(OPTS)]                   #Unique constraint on one FIELD
                                   #For any database
@@ -339,8 +398,12 @@ OPTS.sort|map|length|clustered    #Like @@index
 
 @@unique(OPTS[.fields])           #Like @unique, but on multiple FIELDs
                                   #With MongoDB: index must be created manually
-OPTS.fields|name|sort|map|length
- |clustered                       #Like @@index
+OPTS.sort|map|length|clustered    #Like @unique
+OPTS.fields|name                  #Like @@index
+
+@@fulltext(OPTS.fields)           #Text search index
+                                  #Only with MySQL, MongoDB
+                                  #Requires PREVIEW fullTextIndex
 
 @@index(OPTS[.fields])            #Database index
 OPTS.fields                       #ARR of FIELD_VARR[(OPTS)]
@@ -350,15 +413,29 @@ OPTS.name                         #Dynamic 'FIELD' created with combination of a
 OPTS.sort                         #ENUM. Asc (def) or Desc
 OPTS.map                          #Database 'INDEX' name
                                   #Database INDEX can already exist
-                                  #Def: "TABLE_FIELD..._unique"
+                                  #Def:
+                                  #  - if database INDEX already exist: re-use its name
+                                  #  - @[@]id: "TABLE_pkey"
+                                  #  - @[@]unique: "TABLE_FIELD..._unique"
+                                  #  - @[@]index: "TABLE_FIELD..._index"
+                                  #  - @relation: "TABLE_FIELD..._fkey"
                                   #Not with MySQL, MongoDB
 OPTS.type                         #ENUM. ACCESS_METHOD
-                                  #Can be BTree (def), Gist, Gin, SpGist, Brin
+                                  #Can be BTree (def), Gist, Gin, SpGist, Brin, Hash
                                   #Only with Postgres
 OPTS.ops                          #ENUM. OPCLASS
+                                  #Can be raw("OPCLASS") if value not available in ENUM
                                   #Only with Postgres
 OPTS.length                       #NUM. Only with MySQL
 OPTS.clustered                    #BOOL. Only with SQL server
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:       SCHEMA RELATIONS        :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
 
 @relation(OPTS)                   #Foreign key source|destination constraint on FIELDs
                                   #MODEL FTYPE, i.e. must be on populated FIELD, with key being a separate one
@@ -372,15 +449,14 @@ OPTS.references                   #FIELD_VARR_ARR of destination
 OPTS.onUpdate|onDelete            #ENUM among NoAction (def) or Cascade
                                   #Like SQL `references ... on update|delete ACTION`
 
-@ignore                           #Omit FIELD in JavaScript client, except in raw queries
-                                  #If no @default, cannot create|update|upsert MODEL
-                                  #But works with prisma db|migrate
-                                  #Done at the ORM-level, i.e. on any database
-@@ignore                          #Same but for a MODEL
-
-@@schema("SCHEMA")                #MODEL's database "SCHEMA"
-                                  #Only with Posgres, SQL server, CDB
-                                  #Requires PREVIEW "multiSchema"
+datasource.relationMode           #ENUM. Whether @relation:
+                                  #  - "foreignKeys":
+                                  #     - creates a database foreign key
+                                  #     - default with most databases
+                                  #     - usually recommended
+                                  #  - "prisma":
+                                  #     - emulates foreign key at the ORM layer
+                                  #     - default with "mongodb"
 
 
                                              /=+===============================+=\
@@ -437,7 +513,7 @@ generator.previewFeatures         #STR_ARR. Beta opt-in PREVIEW features
                                              \=+===============================+=/
 
 
-@prisma/client                    #
+@prisma/client                    #Node.js client
 
 new PrismaClient([POPTS])         #CLIENT
 
