@@ -5,14 +5,6 @@
 
 
 To do:
-  - Prisma Client: https://www.prisma.io/docs/concepts/components/prisma-client
-     - done:
-        - "Handling exceptions and errors"
-     - including:
-        - $executeRaw(), $queryRaw(), $runCommandRaw()
-        - $transaction
-           - see all references in https://www.prisma.io/docs/reference/api-reference/prisma-client-reference
-        - $metrics
   - Relations:
      - https://www.prisma.io/docs/concepts/components/prisma-schema/relations
      - introspection: https://www.prisma.io/docs/concepts/components/introspection#relations
@@ -50,13 +42,23 @@ To do:
      - upsert(): https://www.prisma.io/docs/reference/api-reference/prisma-client-reference#upsert-1
      - delete(): https://www.prisma.io/docs/reference/api-reference/prisma-client-reference#delete-1
      - deleteMany(): https://www.prisma.io/docs/reference/api-reference/prisma-client-reference#deletemany-1
+     - count(): https://www.prisma.io/docs/concepts/components/prisma-client/aggregation-grouping-summarizing#count-relations
      - UFILTERS: https://www.prisma.io/docs/reference/api-reference/prisma-client-reference#one-to-one-relations
      - UPDATE set: https://www.prisma.io/docs/reference/api-reference/prisma-client-reference#set
      - UPDATE connect: https://www.prisma.io/docs/reference/api-reference/prisma-client-reference#connect
      - UPDATE connectOrCreate: https://www.prisma.io/docs/reference/api-reference/prisma-client-reference#connectorcreate
      - UPDATE disconnect: https://www.prisma.io/docs/reference/api-reference/prisma-client-reference#disconnect
+  - raw queries: https://www.prisma.io/docs/concepts/components/prisma-client/raw-database-access
+  - transaction:
+     - https://www.prisma.io/docs/concepts/components/prisma-client/transactions
+     - see all references of $transaction in https://www.prisma.io/docs/reference/api-reference/prisma-client-reference
+  - metrics: https://www.prisma.io/docs/concepts/components/prisma-client/metrics
+  - tracing: https://www.prisma.io/docs/concepts/components/prisma-client/opentelemetry-tracing
   - Extensions: https://www.prisma.io/docs/concepts/components/prisma-client/client-extensions
      - remove $use(): deprecated
+     - https://www.prisma.io/docs/concepts/components/prisma-client/custom-validation#input-validation-with-prisma-client-extensions
+     - https://www.prisma.io/docs/concepts/components/prisma-client/computed-fields#using-a-prisma-client-extension
+     - https://www.prisma.io/docs/concepts/components/prisma-client/custom-models#static-methods-with-prisma-client-extensions
   - Prisma Data Platform: https://www.prisma.io/docs/data-platform
   - pricing
   - Get started: https://www.prisma.io/docs/getting-started
@@ -110,6 +112,7 @@ ENVVAR CHECKPOINT_DISABLE=1       #Do not send anonymous CLI usage telemetry
 
 
 ENGINE ==>                        #Rust libraries used by the TypeScript components (CLI, CLIENT)
+                                  #When bundling, must make sure those are included
 
 PSL ==>                           #Engine used to parse|serialize|validate|format SCHEMA
                                   #Used by schema|format|query engines, i.e. as a Rust dependency
@@ -162,7 +165,7 @@ ENVVAR PRISMA_CLI_BINARY_TARGETS  #Can be:
                                   #  - "darwin[-arm64]"
                                   #  - "windows"
 
-ENVVAR DEBUG=engine               #Debug logs
+ENVVAR DEBUG=prisma:engine        #Engine-related debug logs
 
 
                                              /=+===============================+=\
@@ -323,9 +326,10 @@ FIELD                             #Database COL name
                                   #Must be [[:alnum:]_] and not start with _ nor digit
                                   #Usually camelCase
                                   #Cannot be "AND|OR|NOT"
-
 FIELD_VARR                        #FIELD name
                                   #Can be dot-delimited for OBJ_TYPE
+FIELDS                            #FIELD name
+                                  #Can be nested OBJ for OBJ_TYPE
 
 FTYPE?                            #Optional FTYPE
                                   #Most databases: `not null`
@@ -568,10 +572,6 @@ OPTS.sort|map|length|clustered    #Like @@index
                                   #With MongoDB: index must be created manually
 OPTS.sort|map|length|clustered    #Like @unique
 OPTS.fields|name                  #Like @@index
-
-@@fulltext(OPTS.fields)           #Text search index
-                                  #Only with MySQL, MongoDB
-                                  #Requires PREVIEW fullTextIndex
 
 @@index(OPTS[.fields])            #Database index
 OPTS.fields                       #ARR of FIELD_VARR[(OPTS)]
@@ -941,7 +941,7 @@ PLOG_OPT.level                    #'LEVEL' among:
                                   #  - 'warn' (def)
                                   #  - 'info'
                                   #  - 'query': debug, including all SQL queries
-ENVVAR DEBUG=prisma:client        #Debug logs
+ENVVAR DEBUG=prisma:client        #CLIENT-related debug logs
 
 PLOG_OPT.emit                     #STR among:
                                   #  - 'stdout' (def): print to stdout
@@ -978,11 +978,15 @@ OPTS.take                         #NUM (can be negative). Only return first|last
 OPTS.skip                         #NUM of COBJs to skip, like SQL `offset`
 OPTS.cursor                       #UFILTERS. Pagination: start at the matching COBJ
                                   #Should use OPTS.skip 1 to avoid repeating the matching COBJ
-OPTS.distinct                     #'FIELD'_ARR. Ignore COBJs with duplicate values for those FIELDs, like SQL `distinct on (...)`
+OPTS.distinct                     #'FIELD'_ARR. Ignore COBJs with duplicate values for those FIELDs
+                                  #Done at the ORM-level, not using a SQL `distinct on (...)`
 OPTS.select|include               #See below
 
 OPTS.orderBy                      #ORDER[_ARR], like SQL `order by`
-ORDER.FIELD                       #FORDER[.sort]
+ORDER.FIELDS[._*]                 #FORDER[.sort]
+                                  #With groupBy():
+                                  #  - can order by _* (_count, etc.)
+                                  #  - FIELD must be among the ones grouped (OPTS.by)
 FORDER.sort                       #'asc|desc'. Sort by VAL
 FORDER.count                      #'asc|desc'. Sort by ARR.length
 FORDER.nulls                      #'first' (def) or 'last'
@@ -1065,7 +1069,7 @@ NUM_UPDATE multiply|divide        #NUM2. NUM *= /= NUM2
 
 OBJ_UPDATE update                 #OBJ2. Shallow merge
                                   #Fail if OBJ undefined
-OBJ_UPDATE upsert                 #Same but does not fail if OBJ undefined
+OBJ_UPDATE upsert.set|update      #OBJ2. Set with `set` if OBJ undefined, shallow merge with `update` otherwise
 
 ARR_UPDATE push                   #VAL[_ARR]. ARR.push(VAL[,...])
                                   #Only with Postgres, MongoDB
@@ -1106,7 +1110,8 @@ CMODEL.aggregate(OPTS)->>OBJ      #Aggregate OBJs, like SQL AFUNCs
 OPTS
  .where|orderBy|cursor|take|skip  #See above
 OPTS._*                           #Can use FIELD `_all`
-                                  #If not _all, only non-null values
+                                  #If not _all, only non-undefined|null values
+                                  #  - if only undefined values and not _count, returns `null`
 OPTS._count[.FIELD]               #BOOL. Like SQL `select count(*)`
                                   #Def FIELD: _all
 OPTS._avg|_sum.FIELD              #BOOL. Like SQL `select avg|sum()`
@@ -1120,7 +1125,7 @@ OPTS
  .where|orderBy|cursor|take|skip  #See above
 OPTS._count|_avg|_sum|_min|_max   #See above
 OPTS.by                           #'FIELD'[_ARR]. Like SQL `group by`
-OPTS.having.FIELD[._*]            #FILTERS. Like SQL `having`
+OPTS.having.FIELD._*              #FILTERS. Like SQL `having`
                                   #_* is _count|etc.
 
 
@@ -1146,7 +1151,9 @@ Prisma.validator                  #Workaround to add correct TypeScript types to
  (...)(FILTERS)->FILTERS          #Should prefer instead `const FILTERS = { ... } satisfies TYPE`
                                   #Also for OPTS.orderBy
 
-Prisma.DbNull                     #undefined, i.e. database NULL
+undefined                         #As input: always ignored
+                                  #In this documentation, can also mean DbNull
+Prisma.DbNull                     #Database NULL. With MongoDB, it is actually undefined
                                   #In FILTERS|COBJ|UPDATES
 Prisma.JsonNull                   #null in JSON value
 null                              #In FILTERS|COBJ|UPDATES
@@ -1184,7 +1191,13 @@ STR_FILTER starts|endsWith        #STR2
 FILTER mode                       #'insensitive'. Make other FILTERs case-insensitive
                                   #JSON_FILTER: always case-sensitive
                                   #STR_FILTER search (text search): always case-insensitive
-                                  #Not Postgres nor MongoDB: always case-insensitive
+                                  #Implemented by:
+                                  #  - Postgres: use a non-deterministic COLLATION
+                                  #     - citext: always case-insensitive
+                                  #     - not with COLLATION C|POSIX
+                                  #  - MongoDB: use a /REGEXP/i
+                                  #  - others: case-insensitive by default
+                                  #     - can be changed using a different COLLATION
 
 ARR_FILTER                        #Only with Postgres, CDB, MongoDB
 ARR_FILTER has                    #VAL. ARR.includes(VAL) && ARR.length !== 0
@@ -1192,6 +1205,7 @@ ARR_FILTER hasEvery               #ARR2. ARR2.every(VAL => ARR.includes(VAL)) &&
 ARR_FILTER hasSome                #ARR2. ARR2.some(VAL => ARR.includes(VAL)) && ARR2.length !== 0
 ARR_FILTER isEmpty                #BOOL. ARR.length === 0
 
+OBJ_[ARR_]FILTER                  #Not with findUnique|count|aggregate|groupBy()
 OBJ_FILTER                        #Can be used for MODELs too
 OBJ_FILTER is[Not]                #FILTERS. Whether OBJ partially matches it
 
@@ -1219,6 +1233,10 @@ JSON_FILTER array_starts|ends_with#VAL. ARR.at(0|-1) === VAL
 
 TEXT SEARCH ==>                   #Only with Postgres, MySQL
                                   #Requires PREVIEW fullTextSearch
+
+@@fulltext(OPTS.fields)           #Text search index
+                                  #Only with MySQL, MongoDB
+                                  #Requires PREVIEW fullTextIndex
 
 STR_FILTER search                 #STR2. Text search filtering
                                   #Database-specific syntax, e.g. 'TSQUERY' with Postgres
