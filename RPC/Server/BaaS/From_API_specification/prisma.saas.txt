@@ -5,9 +5,7 @@
 
 
 To do:
-  - pagination: https://github.com/deptyped/prisma-extension-pagination
-  - testing:
-     - https://github.com/Quramy/jest-prisma
+  - mocking:
      - https://github.com/morintd/prismock
   - diagram:
      - https://github.com/keonik/prisma-erd-generator
@@ -770,6 +768,10 @@ AST ==>                           #Generators manipulate AST
 @mrleebo/prisma-ast              ##Alternative AST serializer|parser. Not documented yet
 prisma-schema-dsl                ##Alternative AST serializer|parser. Not documented yet
 
+@prisma/generator-helper          #Package to create generators
+                                  #At the moment, it is kept undocumented
+                                  #Not documented yet
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -1391,13 +1393,15 @@ OPTS.cursor                       #UFILTERS. Pagination: start at the matching C
 prisma-extension-paginate        ##Version 0.5.0
 EXTENSION_PAGINATE
  ([QOPTS])->EXTENSION            ##
+QOPTS.pages                      ##QPOPTS
+QOPTS.cursor                     ##QCOPTS
 
 CMODEL.paginate(OPTS)
- .withPages([QOPTS])
- ->>[COBJ_ARR, META]             ##Calls CMODEL.findMany(OPTS)
-QOPTS.limit                      ##NUM (no def). Page size, used to compute OPTS.skip|take
-QOPTS.includePageCount           ##BOOL (def: false). Whether to include META.*Count
-QOPTS.page                       ##NUM (def: 1). Used to compute OPTS.skip
+ .withPages([QPOPTS])
+ ->>[COBJ_ARR, META]             ##Calls CMODEL.findMany(OPTS) once
+QPOPTS.limit                     ##NUM (no def). Page size, used to compute OPTS.skip|take
+QPOPTS.includePageCount          ##BOOL (def: false). Whether to include META.*Count
+QPOPTS.page                      ##NUM (def: 1). Used to compute OPTS.skip
 META.currentPage                 ##NUM
 META.previousPage                ##NUM. False if OPTS.page 1
 META.nextPage                    ##NUM. False if COBJ_ARR.length < OPTS.limit
@@ -1405,8 +1409,16 @@ META.isFirstPage|isLastPage      ##BOOL
 META.pageCount|totalCount        ##NUM. Computed using CMODEL.count()
 
 CMODEL.paginate(OPTS)
- .withCursor([QOPTS])
- ->>[COBJ_ARR, META]             ##Calls CMODEL.findMany(OPTS)
+ .withCursor([QCOPTS])
+ ->>[COBJ_ARR, META]             ##Calls CMODEL.findMany(OPTS) once
+QCOPTS.limit                     ##NUM (no def). Page size, used to compute OPTS.take
+QCOPTS.getCursor(COBJ)->'CURSOR' ##Def: COBJ.id.toString()
+QCOPTS.parseCursor
+ ('CURSOR')->UFILTERS            ##Used as OPTS.cursor. Def: { id: 'CURSOR' }
+QCOPTS.before|after              ##'CURSOR', passed to QCOPTS.parseCursor()
+META.startCursor                 ##To use as QCOPTS.before, to paginate backwards
+META.endCursor                   ##To use as QCOPTS.after, to paginate forwards
+META.hasPreviousPage|hasNextPage ##BOOL
 
 
                                              /=+===============================+=\
@@ -1595,7 +1607,7 @@ OPTS.isolationLevel               #ENUM Prisma.TransactionIsolationLevel:
                                   #Not with MongoDB
 
 CLIENT.$transaction
- (FUNC(CLIENT)->>VAL[, OPTS])
+ (FUNC(CLIENT2)->>VAL[, OPTS])
  ->>VAL                           #Run FUNC() inside a database transaction
 OPTS.isolationLevel               #Like above
 OPTS.maxWait                      #NUM (in ms, def: 2s). Rollback if takes longer to acquire transaction lock
@@ -1996,3 +2008,67 @@ generator
 generator.schemaId               ##STR (def: none). JSON schema $id
 generator.includeRequiredFields  ##BOOL (def: false). Set JSON schema `required`
 generator.persistOriginalType    ##BOOL (def: false). Set JSON schema `originalType: 'FTYPE'`
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:          TEST HELPER          :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+@quramy/jest-prisma[-node]       ##Automatic transaction on each test(), always rollbacked
+ /environment                    ##To set as JEST_CONF.testEnvironment
+                                 ##Uses jsdom|node ENV
+                                 ##Version 1.7.1
+JEST_CONF.testEnvironmentOptions ##OPTS
+// @jest-environment-options OPTS##Same for a single test()
+jestPrisma                       ##Global variable
+
+jestPrisma.client                ##CLIENT automatically:
+                                 ##  - created
+                                 ##  - $[dis]connect() on beforeAll|afterAll()
+                                 ##  - $transaction() on each test()
+jestPrisma.originalClient        ##Like jestPrisma.client except can be used anywhere, not just inside describe|test|beforeEach()
+jestPrisma                       ##Sets custom CLIENT
+ .initializeClient(CLIENT)       ##Must be done in JEST_CONF.setupFilesAfterEnv
+OPTS.databaseUrl                 ##datasource.url. Def: ENVVAR DATABASE_URL
+
+OPTS.disableRollback             ##BOOL. If false (def), rollback transaction of each test()
+OPTS.maxWait|timeout             ##CLIENT.$transaction() OPTS.maxWait|timeout
+OPTS.enableExperimentalRollback  ##BOOL. Behavior of CLIENT.$transaction() inside a test():
+ InTransaction                   ##  - false (def): noop
+                                 ##  - true: use SQL savepoint
+                                 ##     - does not work with MongoDB
+                                 ##Only with jestPrisma.client. jestPrisma.originalClient uses native behavior
+
+OPTS.verboseQuery                ##BOOL (def: false). Print database queries
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:            MOCKING            :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+prismock                         ##Version 1.22.0
+
+new PrismockClient()             ##Mocked CLIENT, in-memory
+CLIENT.getData()->OBJ            ##In-memory database contents, as { MODEL: COBJ_ARR, ... }
+CLIENT.reset()                   ##Resets data
+
+NOT SUPPORTED ==>                ##  - CMODEL.groupBy()
+                                 ##  - OPTS.select with CMODEL.count()
+                                 ##  - nested set|delete|disconnect
+                                 ##  - FILTER search|is|isEmpty|equals|has*
+                                 ##  - JSON_FILTERs
+                                 ##  - UPDATE set|push
+                                 ##  - @[@]unique, @updatedAt
+                                 ##  - dbgenerated()
+                                 ##  - @relation OPTS.onUpdate|onDelete, except SetNull|Cascade with onDelete
+
+NOOP ==>                         ##  - $[dis]connect(), $on(), $extends
+                                 ##  - $*Raw(), $transaction()
+
+prisma-mock                      ##Alternative, not documented yet
