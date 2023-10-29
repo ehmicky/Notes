@@ -159,7 +159,7 @@ cdk bootstrap ['ENVIRONMENT'...]  #Deploy the "toolkit", a STACK needed for depl
 --cloudformation-execution        #POLICY_ARN_ARR attached to the ROLE deploying
  -policies                        #Def: allow all
 --trust                           #'ACCOUNT_ID'_ARR used as Principal in the POLICY, for any PACTIONs
---trust-for-lookup                #Same but only for read-only PACTIONs
+--trust-for-lookup                #Same but only for lookupRoleArn
 
 --show-template                   #BOOL (def: false). Instead of actual bootstrapping, print the current CLI's bootstrapping template to stdout for customization
 --template                        #STR. Use the template from the given file instead of the built-in one
@@ -1527,13 +1527,16 @@ CONTEXT.aws:cdk:version-reporting
 AOPTS|SOPTS.analyticsReporting
 cdk --version-reporting           #BOOL (def: true). Output TEMPLATE.Resources.CDKMetadata
 TEMPLATE.Resources.CDKMetadata    #Type 'AWS::CDK::Metadata'
-                                  #Properties.Analytics 'v2:deflate64:[X.Y.Z!]MODULE/EXPORT,...'
+                                  #Properties.Analytics 'v2:deflate64:X.Y.Z!MODULE/EXPORT,...'
                                   #  - list of CONSTRUCTs used
-                                  #  - e.g. @aws-cdk/core.{Stack,Construct,CfnResource} or @aws-solutions-constructs/aws-apigateway-lambda.Function
-                                  #  - the last part is gzip'd then base64'd
+                                  #  - uses {...} instead of repeating subparts, e.g. @aws-cdk/core.{Stack,Construct,CfnResource}
+                                  #  - the part after 'v2:deflate64:' is gzip'd then base64'd
                                   #Used for analytics, or notifying of security vulnerabilities
-FactName
- .CDK_METADATA_RESOURCE_AVAILABLE #RFACT for 'YES|NO': whether REGION supports TEMPLATE.Resources.CDKMetadata
+
+FactName                          #RFACT for 'YES|NO': whether REGION supports TEMPLATE.Resources.CDKMetadata
+ .CDK_METADATA_RESOURCE_AVAILABLE #If CSTACK.region is:
+                                  #  - not supported: skip it
+                                  #  - agnostic, use TEMPLATE.Resources.CDKMetadata.Condition { Fn::Or: [{ Fn::Equals: ['AWS::Region', 'REGION'] },...] }
 
 
                                              /=+===============================+=\
@@ -1629,6 +1632,28 @@ CCUSTOM_RESOURCE.getAttString
 
                                              /=+===============================+=\
                                             /  :                               :  \
+                                            )==:             SYNTH             :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+
+STAGE.synth([OPTS])->ASSEMBLY     #
+OPTS.force                        #BOOL. If false (def), memoize
+OPTS.skipValidation               #???
+OPTS.validateOnSynthesis          #???
+
+AOPTS.treeMetadata                #BOOL. If true (def), creates TreeMetadata (???)
+
+Aspects.of(CONSTRUCT)->ASPECTS    #
+ASPECTS.add(ASPECT)               #
+ASPECTS.all()->ASPECT_ARR         #
+ASPECT.visit                      #FUNC(CONSTRUCT) to call during `cdk synth`
+                                  #Called on both CONSTRUCT and its descendants
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
                                             )==:            ASSETS             :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -1670,88 +1695,160 @@ TODO: parts in NestedStack??? https://github.com/aws/aws-cdk/blob/fce26b635d0ef2
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:           MANIFEST            :==(
+                                            )==:           ARTIFACT            :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
-ASSEMBLY_DIR/manifest.json       #MANIFEST_OBJ
-
-Manifest.saveAssemblyManifest
- (MANIFEST_OBJ, 'PATH')           #
-
-MANIFEST_OBJ                      #A JSON schema is available for it named `cloud-assembly.schema.json`
-MANIFEST_OBJ.version              #STR
-
-MANIFEST_OBJ.artifacts.ARTIFACT_ID#ARTIFACT
+MANIFEST.artifacts.ARTIFACT_ID    #ARTIFACT
 ARTIFACT.type                     #One of:
-                                  #  - 'aws:cloudformation:stack': STACK
-                                  #  - 'cdk:tree': TREE
                                   #  - 'cdk:asset-manifest': MANIFEST
+                                  #  - 'cdk:tree': TREE
                                   #  - 'cdk:cloud-assembly': nested ASSEMBLY
+                                  #  - 'aws:cloudformation:stack': STACK
 ARTIFACT.displayName              #STR
 ARTIFACT.environment              #'ENVIRONMENT'
 ARTIFACT.dependencies             #'ARTIFACT_ID'_ARR to deploy first
 
 ARTIFACT.properties               #APROPS
 
+TREE_APROPS                       #APROPS when ARTIFACT.type is 'cdk:tree'
+TREE_APROPS.file                  #'PATH'
+
+MANIFEST_APROPS                   #APROPS when ARTIFACT.type is 'cdk:asset-manifest'
+MANIFEST_APROPS.file              #'PATH'
+MANIFEST_APROPS
+ .requiresBootstrapStackVersion   #STR
+MANIFEST_APROPS
+.bootstrapStackVersionSsmParameter#STR
+
+NASSEMBLY_APROPS                  #APROPS when ARTIFACT.type is 'cdk:cloud-assembly'
+NASSEMBLY_APROPS.directoryName    #'DIR'
+NASSEMBLY_APROPS.displayName      #STR
+
 STACK_APROPS                      #APROPS when ARTIFACT.type is 'aws:cloudformation:stack'
 APROPS.templateFile               #'PATH' to CloudFormation TEMPLATE
+APROPS.stackTemplateAssetObjectUrl#'URL'
+APROPS.validateOnSynth            #BOOL
+
 APROPS.stackName                  #'STACK'. STACK.StackName
-APROPS.assumeRoleArn              #'ROLE_ARN'. STACK.RoleARN
-APROPS.assumeRoleExternalId       #STR. ASSUMED_ROLE_REQ.ExternalId with ROLE_ARN
 APROPS.parameters                 #PARAMS_OBJ. STACK.Parameters
 APROPS.tags                       #OBJ. STACK.Tags
 APROPS.terminationProtection      #BOOL. STACK.EnableTerminationProtection
 
-TREE_APROPS                       #APROPS when ARTIFACT.type is 'cdk:tree'
+APROPS
+ .cloudFormationExecutionRoleArn  #'ROLE_ARN'. STACK.RoleARN
 
-MANIFEST_APROPS                   #APROPS when ARTIFACT.type is 'cdk:asset-manifest'
+APROPS.assumeRoleArn              #'ROLE_ARN' used to call CloudFormation API
+APROPS.assumeRoleExternalId       #STR. ASSUMED_ROLE_REQ.ExternalId with assumeRoleArn
+APROPS
+ .requiresBootstrapStackVersion   #STR
+APROPS
+.bootstrapStackVersionSsmParameter#STR
 
-NASSEMBLY_APROPS                  #APROPS when ARTIFACT.type is 'cdk:cloud-assembly'
+APROPS.lookupRole                 #LOOKUP_ROLE. ROLE used as OPTS.lookupRoleArn with ContextProvider
+LOOKUP_ROLE.arn                   #ROLE_ARN
+LOOKUP_ROLE.assumeRoleExternalId
+ |requiresBootstrapStackVersion
+|bootstrapStackVersionSsmParameter#Same as above but for lookupRole instead of assumeRoleArn
 
 ARTIFACT.metadata.VAR             #METADATA_ARR
 METADATA.type                     #One of:
                                   #  - 'aws:cdk:asset': ASSET
                                   #  - 'aws:cdk:info|warning|error': logs
                                   #  - 'aws:cdk:logicalId': CloudFormation 'RESOURCE' name
+                                  #  (only with ARTIFACT.type 'aws:cloudformation:stack')
                                   #  - 'aws:cdk:stack-tags': STACK.Tags
 METADATA.data                     #VAL among:
-                                  #  - asset: ASSET_METADATA
+                                  #  - asset: ASSET_MD
                                   #  - info|warning|error: 'MESSAGE'
                                   #  - logicalId: 'RESOURCE'
                                   #  - stack-tags: TAG_PAIRS
 METADATA.trace                    #STR_ARR. Stack trace on creation
 
-ASSET_METADATA.id                 #STR
-ASSET_METADATA.packaging          #Can be 'file', 'zip' or 'container-image'
-ASSET_METADATA.sourceHash         #STR
-ASSET_METADATA.path               #'PATH'
 
-FILE_ASSET_METADATA               #ASSET_METADATA with packaging 'file|zip'
-FILE_ASSET_METADATA
- .s3BucketParameter               #STACK 'PARAM' with S3 'BUCKET'
-FILE_ASSET_METADATA.s3KeyParameter#STACK 'PARAM' with S3 'OBJECT'
-FILE_ASSET_METADATA
- .artifactHashParameter           #STACK 'PARAM' with HASH
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:           MANIFEST            :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
 
-CONTAINER_ASSET_METADATA          #ASSET_METADATA with packaging 'container-image'
-CONTAINER_ASSET_METADATA
- .repositoryName                  #ECR 'REPO'
-CONTAINER_ASSET_METADATA.imageTag #STR. Docker image tag
-CONTAINER_ASSET_METADATA.file     #'PATH' to Dockerfile
-CONTAINER_ASSET_METADATA.buildArgs#OBJ. `docker build` arguments
-CONTAINER_ASSET_METADATA.buildSsh #STR. `docker build` SSH argument
-CONTAINER_ASSET_METADATA
- .buildSecrets                    #OBJ. `docker build` secrets
-CONTAINER_ASSET_METADATA.target   #STR. `docker build` target
-CONTAINER_ASSET_METADATA.outputs  #STR_ARR. `docker build` outputs
-CONTAINER_ASSET_METADATA
- .networkMode                     #STR `docker create --network`
-CONTAINER_ASSET_METADATA.platform #STR
 
-CONTAINER_ASSET_METADATA.cacheFrom#CONTAINER_CACHE_ARR
-CONTAINER_ASSET_METADATA.cacheTo  #CONTAINER_CACHE
+ASSEMBLY_DIR/manifest.json        #MANIFEST
+
+Manifest|MANIFEST.version         #Currently 34.0.0
+
+Manifest.saveAssemblyManifest
+ (MANIFEST, 'PATH')               #Save to 'PATH', as JSON
+Manifest.loadAssembly
+ ('PATH'[, OPTS])->MANIFEST       #Inverse
+OPTS.skipVersionCheck             #BOOL. If false (def), ensure Manifest.version >= MANIFEST.version
+OPTS.skipEnumCheck                #BOOL (def: false). Allows MANIFEST.** values to contain invalid type when it is an enum
+OPTS.topoSort                     #BOOL (def: true)
+
+MANIFEST.runtime.libraries.LIBRARY#'VERSION'
+
+MANIFEST.missing                  #MISSING_CONTEXT_ARR. PCONTEXT.* which could not be found (see OPTS.dummyValue above)
+MISSING_CONTEXT.provider          #'SERVICE'
+MISSING_CONTEXT.key               #PCONTEXT.* 'VAR' name
+MISSING_CONTEXT.props             #PCONTEXT.* OBJ value
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:            ASSETS             :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+Manifest.saveAssetManifest
+ (ASSET, 'PATH')                  #Save to 'PATH', as JSON
+Manifest.loadAssetManifest
+ ('PATH')->ASSET                  #Inverse
+
+ASSET.version                     #STR
+ASSET.files.ASSET_ID              #FASSET
+ASSET.dockerImages.IMAGE_ID       #IASSET
+FASSET|IASSET.source              #F|IASSET_SRC
+F|IASSET_SRC.executable           #['COMMAND'[, 'ARG',...]]
+F|IASSET.destinations.ID          #F|IASSET_DEST
+F|IASSET_DEST.region              #'REGION'
+F|IASSET_DEST.assumeRoleArn
+ |assumeRoleExternalId            #Like APROPS.*
+
+ASSET_MD.id                       #STR
+ASSET_MD|FASSET_SRC.packaging     #Can be 'file', 'zip' or 'container-image'
+ASSET_MD|FASSET_SRC.path          #'PATH'
+ASSET_MD.sourceHash               #STR
+
+FASSET_MD                         #ASSET_MD with packaging 'file|zip'
+FASSET_MD.s3BucketParameter       #STACK 'PARAM' with S3 'BUCKET'
+FASSET_DEST.bucketName            #S3 'BUCKET'
+FASSET_MD.s3KeyParameter          #STACK 'PARAM' with S3 'OBJECT'
+FASSET_DEST.objectKey             #S3 'OBJECT'
+FASSET_MD.artifactHashParameter   #STACK 'PARAM' with HASH
+
+IASSET_MD                         #ASSET_MD with packaging 'container-image'
+IASSET_MD|DEST.repositoryName     #ECR 'REPO'
+IASSET_MD|DEST.imageTag           #STR. Docker image tag
+IASSET_SRC.directory              #'DIR' of Dockerfile
+IASSET_SRC.dockerFile             #'FILENAME' (def: 'Dockerfile') of Dockerfile
+IASSET_MD.file                    #'DIR/FILENAME' to Dockerfile
+IASSET_MD.buildArgs
+IASSET_SRC.dockerBuildArgs        #OBJ. `docker build` arguments
+IASSET_MD.buildSsh
+IASSET_SRC.dockerBuildSsh         #STR. `docker build` SSH argument
+IASSET_MD.buildSecrets
+IASSET_SRC.dockerBuildSecrets     #OBJ. `docker build` secrets
+IASSET_MD.target
+IASSET_SRC.dockerBuildTarget      #STR. `docker build` target
+IASSET_MD.outputs
+IASSET_SRC.dockerOutputs          #STR_ARR. `docker build` outputs
+IASSET_MD|SRC.networkMode         #STR `docker create --network`
+IASSET_MD|SRC.platform            #STR
+
+IASSET_MD|SRC.cacheFrom           #CONTAINER_CACHE_ARR
+IASSET_MD|SRC.cacheTo             #CONTAINER_CACHE
 CONTAINER_CACHE.type              #STR. Docker cache backend, e.g. 'inline', 'local', 'registry', 's3', 'azblob', 'gha'
 CONTAINER_CACHE.params            #OBJ. Docker cache configuration
 
@@ -1777,6 +1874,24 @@ NODE.inspect                      #Can override as FUNC(INSPECTOR), to set TATTR
                                   #Called on `cdk synth`
 INSPECTOR.attributes              #TATTRS
 INSPECTOR.addAttribute('VAR', VAL)#TATTRS.VAR = VAL
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:           INTEGRITY           :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+Manifest.saveIntegManifest
+ (ITG, 'PATH')                    #Save to 'PATH', as JSON
+Manifest.loadIntegManifest
+ ('PATH')->ITG                    #Inverse
+
+ITG.version                       #STR
+ITG.enableLookups                 #BOOL
+ITG.synthContext.VAR              #'VAL'
+ITG.testCases.TEST                #ITG_TEST. Not documented yet???
 
 
                                              /=+===============================+=\
@@ -1818,11 +1933,6 @@ CSTACK.availabilityZones          #'AZ'_ARR
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
-
-Aspects.of(CONSTRUCT)->ASPECTS    #
-ASPECTS.add(ASPECT)               #
-ASPECTS.all()->ASPECT_ARR         #
-ASPECT.visit(CONSTRUCT)           #FUNC to call on CONSTRUCT during `cdk synth`
 
 CUSTOM CONSTRUCTS ==>             #When developing custom CONSTRUCTs, should put as:
                                   #  - devDependencies + peerDependencies (with ^): constructs, aws-cdk-lib, used @aws-cdk/*
