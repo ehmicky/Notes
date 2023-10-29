@@ -365,9 +365,10 @@ ContextProvider.getValue          #Used by SERVICEs to compute a value then cach
 OPTS.provider                     #'SERVICE'
 OPTS.props.*                      #PCONTEXT.* OBJ (def: {})
 OPTS.props.account|region         #Def: CSTACK.account|region, if OPTS.includeEnvironment true (def)
-OPTS.dummyValue                   #Default VAL to use in next round:
-                                  #  - if some PCONTEXT.* cannot found, `cdk synth` and ContextProvider are computed again
-                                  #  - this allows SERVICEs to use each other PCONTEXT.*
+OPTS.dummyValue                   #Default VAL to use in next round
+                                  #This is due to ContextProvider.getValue() being sync and ContextProviderPlugin.getValue() being async
+                                  #The first round of `cdk synth` uses the dummyValue
+                                  #Then the actual value is computed, and a new round of `cdk synth` is performed
 
 ContextProviderPlugin
  .getValue(OPTS)->>VAL            #Defined by each SERVICE using PCONTEXT
@@ -432,6 +433,7 @@ OBJ.resolve(VAL[, OPTS])->VAL     #Reference to Tokenization.resolve(), to resol
 
 
 TK                                #*_TK. Encode RV to a smaller serializable type
+                                  #Goal: allows concatenating it in 'TOKENS' string
                                   #Stores it in a global MAP, then returns a key to it
 
 STR_TK                            #'${Token[STR.NUM]}'
@@ -537,24 +539,6 @@ CFNRESOURCE.getAtt                #CfnReference.for(CFNRESOURCE, 'RESATTR', unde
 
 CfnRefElement                     #Inherits CfnElement
 CFNREFELEM.ref                    #STR_TK resolving to { Ref: CELEM_CID }
-
-CROSS-STACK REFERENCES ==>        #When a CREF's target is in a different CSTACK
-                                  #Resolved during `cdk synth` by automatically adding PARAMs and OUTPUTs
-                                  #If:
-                                  #  - targetting a [deep] parent CSTACK2:
-                                  #     - declare CREF in parent
-                                  #     - pass to nested through PARAMs
-                                  #  - targetting a [deep] nested CSTACK2:
-                                  #     - declare CREF in nested
-                                  #     - pass to parent through STACK OUTPUTs and { Fn::ImportValue }
-                                  #  - otherwise: same but also add CSTACK dependency
-                                  #Only if both CSTACKs are in same CAPP, ACCOUNT_ID and REGION (including agnostic Aws.ACCOUNT_ID|REGION)
-                                  #Not if CFNREF.assignValueForStack() already called
-
-SOPTS.crossRegionReferences       #BOOL (def: false). Allows CREF to target a CSTACK in a different REGION (except agnostic Aws.REGION)
-                                  #Also makes CKRESOURCE.getResourceNameAttribute() not use CKRESOURCE.physicalName when STACKs differ only per REGION
-                                  #To finish??? https://github.com/aws/aws-cdk/blob/22168b183417d446d6a5113cee569b4c814f10d8/packages/aws-cdk-lib/core/lib/private/refs.ts#L220
-                                  #And https://github.com/aws/aws-cdk/tree/main/packages/aws-cdk-lib/core/lib/custom-resource-provider
 
 
                                              /=+===============================+=\
@@ -758,8 +742,11 @@ DURATION.formatTokenToNumber()
 
 
 Arn.format
- (ARN_OBJ[, CSTACK])->'ARN'       #CSTACK.partition|region|account are used as defaults
+ (ARN_OBJ[, CSTACK])->'ARN'
+CSTACK.formatArn(ARN_OBJ)->'ARN'  #CSTACK.partition|region|account are used as defaults
 Arn.split
+ ('ARN'[_TK], ENUM)->ARN_OBJ
+CSTACK.splitArn
  ('ARN'[_TK], ENUM)->ARN_OBJ      #ENUM is ARN_OBJ.ArnFormat
 
 ARN_OBJ.partition                 #'PARTITION'|undefined
@@ -1089,6 +1076,10 @@ process.env.CDK_DEFAULT_ACCOUNT   #Same but for current 'ACCOUNT_ID'
                                   #Takes into account --profile|--ec2-creds|--container-creds|--http-options
                                   #Cannot be overridden
 
+CSTACK.availabilityZones          #'AZ'_ARR
+                                  #Retrieved using ec2 describeAvailabilityZones() (with State 'available')
+                                  #Performed by ContextProvider (dummy 'AZ': 'dummy1a|b|c')
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -1233,6 +1224,46 @@ CSTACK.exportValue                #Same except OPTS.name 'EXPORT' is auto-genera
                                   #  - repeat if deep nesting
 CSTACK.exportStringListValue
  (...)->ARR_TK                    #Same but when value is a STR_ARR
+
+CROSS-STACK REFERENCES ==>        #When a CREF's target is in a different CSTACK
+                                  #Resolved during `cdk synth` by automatically adding PARAMs and OUTPUTs
+                                  #If:
+                                  #  - targetting a [deep] parent CSTACK2:
+                                  #     - declare CREF in parent
+                                  #     - pass to nested through PARAMs
+                                  #  - targetting a [deep] nested CSTACK2:
+                                  #     - declare CREF in nested
+                                  #     - pass to parent through STACK OUTPUTs and { Fn::ImportValue }
+                                  #  - otherwise: same but also add CSTACK dependency
+                                  #Only if both CSTACKs are in same CAPP, ACCOUNT_ID and REGION (including agnostic Aws.ACCOUNT_ID|REGION)
+                                  #Not if CFNREF.assignValueForStack() already called
+
+SOPTS.crossRegionReferences       #BOOL (def: false). Allows CREF to target a CSTACK in a different REGION (except agnostic Aws.REGION)
+                                  #Also makes CKRESOURCE.getResourceNameAttribute() not use CKRESOURCE.physicalName when STACKs differ only per REGION
+                                  #To finish??? https://github.com/aws/aws-cdk/blob/22168b183417d446d6a5113cee569b4c814f10d8/packages/aws-cdk-lib/core/lib/private/refs.ts#L220
+                                  #And https://github.com/aws/aws-cdk/tree/main/packages/aws-cdk-lib/core/lib/custom-resource-provider
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:      STACK DEPENDENCIES       :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+CSTACK.add|removeDependency       #Dependency between STACKs
+ (CSTACK2)                        #Can be nested
+                                  #Can be different top-level STACKs
+CSTACK.dependencies()->CSTACK2_ARR#
+ENVVAR CDK_DEBUG_DEPS=true        #Debug logs for STACK dependencies
+
+CFNRESOURCE.add|removeDependency  #Either:
+ (CFNRESOURCE2)                   #  - in same top-level STACK: TEMPLATE.Resources.RESOURCE.DependsOn
+                                  #     - if one is in a nested STACK: use parent RESOURCEs in common parent STACK2
+                                  #  - otherwise: add a STACK dependency
+CFNRESOURCE
+ .obtain[Resource]Dependencies()
+ ->CFNRESOURCE2_ARR               #Including|excluding STACK dependencies
 
 
                                              /=+===============================+=\
@@ -1475,28 +1506,6 @@ OPTS.traceFromFunction            #FUNC (def: addMetadata), to start CMETADATA.t
 
 ENVVAR CDK_DEBUG=true
 cdk --debug                       #BOOL (def: false). Enable stack traces
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:         DEPENDENCIES          :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-CSTACK.add|removeDependency       #Dependency between STACKs
- (CSTACK2)                        #Can be nested
-                                  #Can be different top-level STACKs
-CSTACK.dependencies()->CSTACK2_ARR#
-ENVVAR CDK_DEBUG_DEPS=true        #Debug logs for STACK dependencies
-
-CFNRESOURCE.add|removeDependency  #Either:
- (CFNRESOURCE2)                   #  - in same top-level STACK: TEMPLATE.Resources.RESOURCE.DependsOn
-                                  #     - if one is in a nested STACK: use parent RESOURCEs in common parent STACK2
-                                  #  - otherwise: add a STACK dependency
-CFNRESOURCE
- .obtain[Resource]Dependencies()
- ->CFNRESOURCE2_ARR               #Including|excluding STACK dependencies
 
 
                                              /=+===============================+=\
