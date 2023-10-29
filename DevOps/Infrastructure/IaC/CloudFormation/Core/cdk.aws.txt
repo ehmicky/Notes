@@ -7,7 +7,7 @@
 
 TODO:
   - to continue: document aws-cdk-lib from its codebase
-     - currently documenting Resource, then CustomResource, then Stack, then Stage, then App
+     - currently documenting Stack, then NestedStack, then Stage, then App
   - https://docs.aws.amazon.com/cdk/api/v2/docs/aws-construct-library.html
   - https://docs.aws.amazon.com/cdk/v2/guide/home.html
      - stopped at "Concepts"
@@ -142,7 +142,6 @@ cdk bootstrap ['ENVIRONMENT'...]  #Deploy the "toolkit", a STACK needed for depl
  -configuration                   #BOOL (def: true). Use S3 PUBLIC_BLOCK
 
 --qualifier                       #STR. String which must be unique for each bootstrap stack. You must configure it on your CDK app if you change this from the default.
---termination-protection          #BOOL (def: false). STACK.EnableTerminationProtection
 --tags|-t                         #OBJ. STACK.Tags
 
 --cloudformation-execution        #POLICY_ARN_ARR attached to the ROLE deploying
@@ -330,8 +329,8 @@ DEPENDENCY_GROUP
 
 CONTEXT                           #Data associated with NODEs
 
-NODE.setContext('VAR', 'VAL')     #Inherited by children, which can override it
-                                  #Should be set before adding children, since their constructor might check it
+NODE.setContext('VAR', 'VAL')     #Inherited by child NODEs, which can override it
+                                  #Should be set before adding child NODEs, since their constructor might check it
 NODE.getContext('VAR')->'VAL'     #Throw if not found
 NODE.tryGetContext('VAR')->'VAL'  #undefined if not found
 NODE.getAllContext([OBJ2])->OBJ   #OBJ2 (def: {}) is shallow merged
@@ -439,6 +438,7 @@ Token.compareStrings              #Returns ENUM TokenComparison:
                                   #  - DIFFERENT|SAME: otherwise, using ===
 
 'TOKENS'                          #STR that can contain multiple STR_TK|NUM_TK (not ARR_TK)
+                                  #Automatically converted to { Fn::Join }, if necessary
 Tokenization.reverseString
  ('TOKENS')->TOKEN_FRAG           #
 TOKEN_FRAG                        #Concatenation of VALs and RVs
@@ -465,7 +465,7 @@ TOKEN_FRAG.join({ join })->VAL    #Reduce all items to a single one using join(V
                                              \=+===============================+=/
 
 
-new Reference(VAL,PARENT_CONSTRUCT#CREF, child of RV
+new Reference(VAL,PARENT_CONSTRUCT#CREF. Inherits RV
  [, 'CREF'[, ENUM]])              #Turn VAL into a RV
 Reference.isReference(VAL)->BOOL  #
 CREF.value                        #VAL
@@ -479,7 +479,7 @@ CREF.toString()->STR_TK           #
 CREF.toStringList()->ARR_TK       #
 
 CFNREF                            #{ Ref } or { Fn::GetAtt } in TEMPLATE
-                                  #Child of CREF
+                                  #Inherits CREF
 CfnReference.isCfnReference
  (VAL)->BOOL                      #
 CfnReference
@@ -500,8 +500,26 @@ CFNREF.hasValueForStack
 CFNRESOURCE.getAtt                #CfnReference.for(CFNRESOURCE, 'RESATTR', undefined, ENUM)
  ('RESATTR'[, ENUM])->CFNREF      #I.e. [CFNRESOURCE_CID, 'RESATTR']
 
-CfnRefElement                     #Child of CfnElement, but with following additional method
-CFNREFELEM.ref()->STR_TK          #Resolving to { Ref: CELEM_CID }
+CfnRefElement                     #Inherits CfnElement
+CFNREFELEM.ref                    #STR_TK resolving to { Ref: CELEM_CID }
+
+CROSS-STACK REFERENCES ==>        #When a CREF's target is in a different CSTACK
+                                  #Resolved during `cdk synth` by automatically adding PARAMs and OUTPUTs
+                                  #If:
+                                  #  - targetting a [deep] parent CSTACK2:
+                                  #     - declare CREF in parent
+                                  #     - pass to nested through PARAMs
+                                  #  - targetting a [deep] nested CSTACK2:
+                                  #     - declare CREF in nested
+                                  #     - pass to parent through STACK OUTPUTs and { Fn::ImportValue }
+                                  #  - otherwise: same but also add CSTACK dependency
+                                  #Only if both CSTACKs are in same CAPP, ACCOUNT_ID and REGION (including agnostic Aws.ACCOUNT_ID|REGION)
+                                  #Not if CFNREF.assignValueForStack() already called
+
+SOPTS.crossRegionReferences       #BOOL (def: false). Allows CREF to target a CSTACK in a different REGION (except agnostic Aws.REGION)
+                                  #Also makes CKRESOURCE.getResourceNameAttribute() not use CKRESOURCE.physicalName when STACKs differ only per REGION
+                                  #To finish??? https://github.com/aws/aws-cdk/blob/22168b183417d446d6a5113cee569b4c814f10d8/packages/aws-cdk-lib/core/lib/private/refs.ts#L220
+                                  #And https://github.com/aws/aws-cdk/tree/main/packages/aws-cdk-lib/core/lib/custom-resource-provider
 
 
                                              /=+===============================+=\
@@ -569,7 +587,7 @@ Fn.select
 
 Fn.toJsonString(OBJ|ARR)->STR_TK  #{ Fn::ToJsonString: OBJ|ARR }
 new CfnJson(PARENT_CONSTRUCT,     #RV that resolves to { Fn::ToJsonString: OBJ|ARR }
- 'CJSON', { value: OBJ|ARR })     #Also child of CONSTRUCT
+ 'CJSON', { value: OBJ|ARR })     #Also inherits CONSTRUCT
                                   #https://github.com/aws/aws-cdk/blob/main/packages/aws-cdk-lib/core/lib/cfn-json.ts ???
 
 Fn.base64(STR)->STR_TK            #{ Fn::Base64: STR }
@@ -621,6 +639,7 @@ CTAGS.remove('KEY', [, TOPTS])    #Add|remove TAGs, using underlying CTAGM
 
 
 CRESOURCE.tags|cdkTagManager
+CSTACK.tags
 TagManager.of(CRESOURCE)->CTAGM   #CTAGM (v1|v2, depending on RESOURCE)
 new TagManager(TAGTYPE_ENUM,      #CTAGM. RESPROP Tags
  'RESTYPE'[, TAGS_OBJ[, OPTS]])   #TAGS_OBJ is renderTags()'s value
@@ -909,7 +928,7 @@ FFLAGS.isEnabled('FFLAG')->BOOL   #
 
 
 new Stage(PARENT_CONSTRUCT,       #CSTAGE. Parent of CAPP, meant to be used directly only with CodePipeline
- 'CSTAGE'[, SSOPTS])              #Child of CONSTRUCT
+ 'CSTAGE'[, SSOPTS])              #Inherits CONSTRUCT
                                   #'CSTAGE' must be [[:alnum:]-_.]
 Stage.isStage(VAL)->BOOL          #
 Stage.of(CONSTRUCT)->CSTAGE       #Find amongst ancestors
@@ -924,7 +943,7 @@ CSTAGE.parentStage                #PARENT_CSTAGE, if PARENT_CONSTRUCT had a CSTA
 
 
 new App()                         #CAPP. Top-level PARENT_CONSTRUCT, i.e. of CSTACKs
-                                  #Child of CSTAGE
+                                  #Inherits CSTAGE
 
 
                                              /=+===============================+=\
@@ -934,16 +953,34 @@ new App()                         #CAPP. Top-level PARENT_CONSTRUCT, i.e. of CST
                                              \=+===============================+=/
 
 
-new Stack(PARENT_CONSTRUCT,       #CSTACK. CloudFormation STACK
- 'CSTACK'[, SOPTS])               #Child of CONSTRUCT. Meant to be the PARENT_CONSTRUCT of other CONSTRUCTs
-                                  #STACK 'OUTPUT' name is SID
-                                  #Nested STACKs can be done, including with a non-STACK PARENT_CONSTRUCT
+new Stack([PARENT_CONSTRUCT,      #CSTACK. CloudFormation STACK
+ ['CSTACK'[, SOPTS]]])            #Inherits CONSTRUCT
+                                  #Def PARENT_CONSTRUCT: ???
+                                  #Def 'CSTACK': 'Default'
 Stack.isStack(VAL)->BOOL          #
 CELEM|CKRESOURCE.stack            #CSTACK
 Stack.of(CONSTRUCT)->CSTACK       #Of CONSTRUCT or any ancestor
-SOPTS|CSTACK.stackName            #'STACK' (def: 'CSTACK'). Is SID
 
-CSTACK.nested                     #BOOL. Whether nested STACK
+SOPTS|CSTACK.stackName            #'STACK' name, as used in CloudFormation
+                                  #By default, same as 'CSTACK'
+                                  #If there is a CSTAGE.stageName 'CSTAGE': prefixed to it
+                                  #  - if FFLAG @aws-cdk/core:includePrefixInUniqueNameGeneration: use SID
+
+SOPTS.description                 #STR. STACK.Description
+CSTACK.templateOptions
+ .templateFormatVersion           #STR. STACK.AWSTemplateFormatVersion
+
+SOPTS.suppressTemplateIndentation #BOOL. If false (def), indent|prettify TEMPLATE file created by `cdk synth`
+
+cdk bootstrap
+--termination-protection
+SOPTS|CSTACK.terminationProtection#BOOL (def: false). STACK.EnableTerminationProtection
+
+CONTEXT
+ .@aws-cdk/core:stackResourceLimit#Max NUM of RESOURCEs (def|max: 500)
+
+CSTACK.nested                     #BOOL. Whether is a nested CSTACK
+                                  #I.e. any CSTACK with a [in]direct parent NODE that is another CSTACK2
 CSTACK.nestedStackParent          #Parent CSTACK2 (undefined if none)
 CSTACK.nestedStackResource        #If nested STACK: CFNRESOURCE of itself in the parent CSTACK2
                                   #If top-level STACK: undefined
@@ -1094,6 +1131,7 @@ Fn.transform('MACRO', OBJ)->RV    #{ Fn::Transform: { Name: 'MACRO', Parameters:
 
 new CfnElement                    #CONSTRUCT within a CSTACK
  (PARENT_CONSTRUCT, 'CELEM')      #Usually corresponds to a TEMPLATE.* top-level property: Resource, Mappings, Parameters, etc.
+                                  #TEMPLATE.* top-level properties are shallowly merged
 CfnElement.isCfnElement(VAL)->BOOL#
 CELEM.creationStack               #STR_ARR. Stack trace of CELEM's constructor
 
@@ -1128,21 +1166,21 @@ CID                               #Like SID, but using STR_ARR:
                                              \=+===============================+=/
 
 
-new CfnOutput(PARENT_CONSTRUCT,   #COUTPUT. TEMPLATE.Outputs.OUTPUT
- 'COUTPUT', OPTS)                 #Child of CELEM
+new CfnOutput(PARENT_CONSTRUCT,   #COUTPUT. TEMPLATE.Outputs.OUTPUT_SID
+ 'COUTPUT', OPTS)                 #Inherits CELEM
 OPTS.value                        #STR. OUTPUT.Value
 OPTS.description                  #STR. OUTPUT.Description
 OPTS.exportName                   #'EXPORT'. OUTPUT.ExportName
 
 COUTPUT.importValue()->STR_TK     #{ Fn::ImportValue: 'EXPORT' }
 
-CSTACK.exportValue                #Create TEMPLATE.Outputs.OUTPUT { value: VAL, exportName: OPTS.name }
+CSTACK.exportValue                #Create TEMPLATE.Outputs.OUTPUT_SID { value: VAL, exportName: OPTS.name }
  (VAL, OPTS)->STR_TK              #Return { Fn::ImportValue: 'EXPORT' }
 CSTACK.exportValue                #Same except OPTS.name 'EXPORT' is auto-generated
  (CREF[_TK])->STR_TK              #CREF's target must be either in same CSTACK or in a nested one.
                                   #If in a nested one:
-                                  #  - in nested CSTACK2, creates TEMPLATE.Outputs.OUTPUT { value: CREF }
-                                  #  - in parent CSTACK, creates TEMPLATE.Outputs.OUTPUT { value: { Fn::GetAtt: [CSTACK2, 'Outputs.OUTPUT'] } }
+                                  #  - in nested CSTACK2, creates TEMPLATE.Outputs.OUTPUT_SID { value: CREF }
+                                  #  - in parent CSTACK, creates TEMPLATE.Outputs.OUTPUT_SID { value: { Fn::GetAtt: [CSTACK2, 'Outputs.OUTPUT'] } }
                                   #  - repeat if deep nesting
 CSTACK.exportStringListValue
  (...)->ARR_TK                    #Same but when value is a STR_ARR
@@ -1156,7 +1194,7 @@ CSTACK.exportStringListValue
 
 
 new CfnCondition                  #CCOND. TEMPLATE.Conditions.COND
- (PARENT_CONSTRUCT, 'CCOND', OPTS)#Child of CELEM
+ (PARENT_CONSTRUCT, 'CCOND', OPTS)#Inherits CELEM
                                   #Is also a RV that resolves to { Condition: 'CCOND_CID' }
 OPTS.expression                   #BOOL_RV
                                   #If undefined, no COND
@@ -1173,7 +1211,7 @@ COUTPUT_OPTS.condition            #CCOND. OUTPUT.Condition
 
 
 new CfnMapping(PARENT_CONSTRUCT,  #CFILTER. TEMPLATE.Mappings.FILTER
- 'CFILTER'[, OPTS])               #Child of CfnRefElement
+ 'CFILTER'[, OPTS])               #Inherits CfnRefElement
                                   #OPTS is { VAR: { PROP: VAL, ...}, ... }
 CFILTER.setValue
  ('VAR', 'PROP', VAL)             #
@@ -1199,7 +1237,7 @@ OPTS.lazy                         #BOOL (def: false). Only output TEMPLATE.Mappi
 
 
 new CfnParameter(PARENT_CONSTRUCT,#CPARAM. TEMPLATE.Parameters.PARAM
- 'CPARAM'[, OPTS])                #Child of CELEM
+ 'CPARAM'[, OPTS])                #Inherits CELEM
 OPTS.type                         #STR (def: 'String'). PARAM.Type
 OPTS.min|maxLength                #NUM. PARAM.Min|MaxLength
 OPTS.min|maxValue                 #NUM. PARAM.Min|MaxValue
@@ -1224,7 +1262,7 @@ CPARAM
 
 
 new CfnRule(PARENT_CONSTRUCT,     #CRULE. TEMPLATE.Rules.RULE
- 'CRULE'[, OPTS])                 #Child of CfnRefElement
+ 'CRULE'[, OPTS])                 #Inherits CfnRefElement
 OPTS.ruleCondition                #BOOL. RULE.RuleCondition
 OPTS.assertions                   #OBJ_ARR: assert BOOL, assertDescription STR
                                   #RULE.Assertions
@@ -1239,7 +1277,7 @@ CRULE.addAssertion(BOOL, STR)     #
 
 
 new CfnResource(PARENT_CONSTRUCT, #CFNRESOURCE. Base class of all CRESOURCEs
- 'CFNRESOURCE', OPTS)             #Child of CfnRefElement
+ 'CFNRESOURCE', OPTS)             #Inherits CfnRefElement
 CfnResource.isCfnResource
  (CONSTRUCT)->BOOL                #
 
@@ -1276,7 +1314,7 @@ CFNRESOURCE
  .addProperty[Deletion]Override
  (...)                            #Same for TEMPLATE.Resources.RESOURCE.Properties.VARR
 
-PROTECTED METHODS ==>             #Following are to override by child classes
+PROTECTED METHODS ==>             #Following are to override by subclasses
 CFNRESOURCE.shouldSynthesize      #FUNC()->BOOL (def: always true).
                                   #If false, omit CFNRESOURCE in TEMPLATE.Resources.*
 CFNRESOURCE                       #Compute TEMPLATE.Resource.RESOURCE.Properties, before RV resolution
@@ -1350,6 +1388,8 @@ TEMPLATE.Resources.RESOURCE
                                              \=+===============================+=/
 
 
+CSTACK.addMetadata('VAR', VAL)    #TEMPLATE.Metadata.VAR = VAL
+
 cdk metadata [STACKS]             #Print TEMPLATE.Metadata
 
 CONTEXT.aws:cdk:version-reporting
@@ -1408,24 +1448,6 @@ CFNRESOURCE
  .obtain[Resource]Dependencies()
  ->CFNRESOURCE2_ARR               #Including|excluding STACK dependencies
 
-TODO:
-  - https://github.com/aws/aws-cdk/blob/main/packages/aws-cdk-lib/core/lib/private/refs.ts ???
-  - CSTACK crossRegionReferences???
-  - see again note about OPTS.crossRegionReferences in CKRESOURCE.getResourceNameAttribute()???
-CFNREF.assignValueForStack(...)   #Automatically called on `cdk synth` (unless already called):
-                                  #  - consumer is source CSTACK, producer is target CSTACK2
-                                  #  - only if CSTACKs are different, yet within same:
-                                  #     - CAPP
-                                  #     - ACCOUNT_ID (including agnostic Aws.ACCOUNT_ID)
-                                  #     - REGION (including agnostic Aws.REGION) unless CSTACK's OPTS.crossRegionReferences true
-                                  #  - cases:
-                                  #     - if targetting a parent CSTACK2
-                                  #        -
-                                  #     - usually:
-                                  #        - add CSTACK dependency
-                                  #        - ???
-                                  #  - to continue: https://github.com/aws/aws-cdk/blob/1310a26dcce712796264871453a58102d5f27931/packages/aws-cdk-lib/core/lib/private/refs.ts#L79 ???
-
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -1457,8 +1479,8 @@ INSPECTOR.addAttribute('VAR', VAL)#TATTRS.VAR = VAL
                                              \=+===============================+=/
 
 
-new Resource(PARENT_CONSTRUCT,    #Base class for all CKRESOURCEs
- 'CKRESOURCE'[, CKOPTS])          #Child of CONSTRUCT
+new Resource(PARENT_CONSTRUCT,    #CKRESOURCE. Group of CRESOURCEs
+ 'CKRESOURCE'[, CKOPTS])          #Inherits CONSTRUCT
 Resource.isResource(VAL)->BOOL    #
 
 Resource.isOwnedResource          #Whether there is a direct child CRESOURCE named 'Default' or 'Resource'
@@ -1468,14 +1490,11 @@ CKRESOURCE.applyRemovalPolicy(...)#Same as CKRESOURCE.node.defaultChild.applyRem
 CKOPTS.physicalName               #'NAME'[_TK] of main child CRESOURCE's
                                   #Is SERVICE-specific 'NAME', not CloudFormation 'RESOURCE', nor SERVICE-specific MID
                                   #If undefined (def: STR_TK resolving to undefined): auto-generated by CloudFormation
-CKRESOURCE.physicalName           #'NAME'[_TK]. Readonly. Protected, i.e. only in child classes.
+CKRESOURCE.physicalName           #'NAME'[_TK]. Readonly. Protected, i.e. only in subclasses.
 
 CKRESOURCE                        #Resolves to 'NAME' passed as input
  .getResourceNameAttribute        #However, if used cross-account|region, resolves to CKRESOURCE.physicalName instead
- ('NAME')->'NAME'_TK              #  - i.e. CKRESOURCE's STACK and consuming CONSTRUCT's STACK2 are in a different:
-                                  #     - ACCOUNT
-                                  #     - or REGION
-                                  #        - unless STACK2 was passed OPTS.crossRegionReferences true
+ ('NAME')->'NAME'_TK              #  - i.e. CKRESOURCE's STACK and consuming CONSTRUCT's STACK2 are in a different ACCOUNT or REGION
                                   #  - unless CKRESOURCE.physicalName is TK
 CKRESOURCE                        #Same except resolves to 'ARN'
  .getResourceArnAttribute         #If cross-account|region, uses ARN_OBJ instead
@@ -1491,10 +1510,34 @@ PhysicalName.GENERATE_IF_NEEDED   #When passed to CKOPTS.physicalName, same as u
                                   #     - STACK.region (must be set and not RV)
                                   #     - 'STACK' (full)
                                   #     - NODE's 'SID' (full)
-CKRESOURCE.generatePhysicalName() #Protected method to override in child classes, to customize the 'NAME' auto-generated by PhysicalName.GENERATE_IF_NEEDED
+CKRESOURCE.generatePhysicalName() #Protected method to override in subclasses, to customize the 'NAME' auto-generated by PhysicalName.GENERATE_IF_NEEDED
  ->STR                            #E.g. can call super.generatePhysicalName() and prepend a prefix
 
-new CustomResource(...)??? Child of CKRESOURCE
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:        CUSTOM RESOURCE        :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+new CustomResource
+ (PARENT_CONSTRUCT,               #CUSTOM_RESOURCE
+ 'CCUSTOM_RESOURCE', OPTS)        #Inherits CKRESOURCE
+
+OPTS.resourceType                 #'Custom::CUSTOM' (def: 'AWS::CloudFormation::CustomResource')
+
+OPTS.properties                   #RESPROPS_OBJ (def: {}). TEMPLATE.Resource.RESOURCE.Properties
+OPTS.pascalCaseProperties         #BOOL (def: false). Convert OPTS.properties from camelCase to PascalCase
+OPTS.serviceToken                 #SNS_TOPIC_ARN|LAMBDA_FUNC_ARN. RESPROP ServiceToken
+
+OPTS.removalPolicy                #ENUM (def: DESTROY) passed to CFNRESOURCE.applyRemovalPolicy()
+
+CCUSTOM_RESOURCE.ref              #STR_TK resolving to { Ref: CID } targetting underlying CFNRESOURCE
+CCUSTOM_RESOURCE.getAtt
+ ('RESATTR')->CFNREF
+CCUSTOM_RESOURCE.getAttString
+ ('RESATTR')->STR_TK              #Like CFNRESOURCE.getAtt()
 
 
                                              /=+===============================+=\
