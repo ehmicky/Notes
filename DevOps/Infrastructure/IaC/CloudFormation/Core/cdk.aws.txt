@@ -336,13 +336,44 @@ NODE.tryGetContext('VAR')->'VAL'  #undefined if not found
 NODE.getAllContext([OBJ2])->OBJ   #OBJ2 (def: {}) is shallow merged
 
 cdk --context|-c                  #OBJ. Set CONTEXT. Key is '[STACK:]KEY' (def: all STACKs)
---lookups                         #BOOL (def: true). Perform CONTEXT lookups
-                                  #`cdk synth` fails if this is disabled and context lookups need to be performed
 
 cdk context                       #Delete CONTEXT cached in cdk.context.json
 --clear                           #BOOL (def: false). Delete whole cache
 --reset|-e                        #'VAR' to delete from cache
 --force|-f                        #BOOL (def: false). Do not fail if 'VAR' missing
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:       CONTEXT PROVIDER        :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+*.fromLookup                      #Most SERVICEs that use ContextProvider.getValue() do so inside this type of static method
+ (CONSTRUCT, STR, ...)            #STR is a C[K]RESOURCE 'NAME'|MID. ... are additional options
+ ->>C[K]RESOURCE                  #The method uses AWS API calls to retrieve the resource by id, then cache it on CONTEXT
+
+cdk --no-lookups                  #Disables ContextProvider
+
+ContextProvider.getValue          #Used by SERVICEs to compute a value then cache it on filesystem using CONTEXT
+ (CONSTRUCT, OPTS)->{ value: VAL }#Value is computed on first call, using ContextProviderPlugin.getValue()
+                                  #Value is cached on CONTEXT:
+                                  #  - 'VAR' is 'SERVICE:VARR=VAL:...'
+                                  #  - but documented here as OBJ (PCONTEXT.*)
+OPTS.provider                     #'SERVICE'
+OPTS.props.*                      #PCONTEXT.* OBJ (def: {})
+OPTS.props.account|region         #Def: CSTACK.account|region, if OPTS.includeEnvironment true (def)
+OPTS.dummyValue                   #Default VAL to use in next round:
+                                  #  - if some PCONTEXT.* cannot found, `cdk synth` and ContextProvider are computed again
+                                  #  - this allows SERVICEs to use each other PCONTEXT.*
+
+ContextProviderPlugin
+ .getValue(OPTS)->>VAL            #Defined by each SERVICE using PCONTEXT
+this.aws                          #SDK_PROVIDER, used to make API calls
+OPTS.*                            #PCONTEXT.*
+OPTS.lookupRoleArn                #ROLE 'cdk-${Qualifier}-lookup-role-ACCOUNT_ID-REGION'
+                                  #Created by `cdk bootstrap`. Used to perform readonly PACTIONs
 
 
                                              /=+===============================+=\
@@ -364,6 +395,8 @@ OPTS.scope
 OPTS.preparing                    #Passed to PRODUCER's OBJ.*
 OPTS.removeEmpty                  #BOOL (def: true). Remove empty values in OBJ|ARR
 OPTS.resolver                     #Must be `new DefaultTokenResolver(new StringConcat())`
+
+CSTACK.resolve(VAL)->VAL          #Same as Tokenization.resolve() with OPTS.scope CSTACK
 
 Lazy.any(PRODUCER[, OPTS])->RV    #OPTS: omitEmptyArray BOOL (def: false): transform resolved empty ARRs to undefined
 Lazy.string
@@ -474,6 +507,7 @@ CREF.target                       #CONSTRUCT targetted by the CREF
 CREF.displayName                  #'CREF' (def: 'Reference')
 CREF.typeHint                     #ENUM ResolutionTypeHint.STRING|NUMBER|STRING_LIST
                                   #CREF.value's type
+                                  #Should be correctly set for proper serialization
 CREF.creationStack                #Like CELEM.*
 CREF.toString()->STR_TK           #
 CREF.toStringList()->ARR_TK       #
@@ -610,6 +644,14 @@ Fn.conditionEachMemberIn
 
 Fn.parseDomainName
  ('URL')->STR[_TK]                #Get 'URL' domain name (using // and / delimiters)
+
+CSTACK.toJSON(VAL[, NUM])->STR_TK #Resolves to JSON.stringify(VAL)
+                                  #NUM is identation (def: 0)
+                                  #Handles VAL (or descendant) being:
+                                  #  - RV|TK|'TOKENS': resolved
+                                  #  - CloudFormation !FUNCs: kept as is and joined with { Fn::Join }
+                                  #Although CSTACK's method, it is unrelated to CSTACK
+CSTACK.toYamlString(VAL)->STR_TK  #Same with YAML
 
 
                                              /=+===============================+=\
@@ -942,7 +984,7 @@ CSTAGE.parentStage                #PARENT_CSTAGE, if PARENT_CONSTRUCT had a CSTA
                                              \=+===============================+=/
 
 
-new App()                         #CAPP. Top-level PARENT_CONSTRUCT, i.e. of CSTACKs
+new App([AOPTS])                  #CAPP. Top-level PARENT_CONSTRUCT, i.e. of CSTACKs
                                   #Inherits CSTAGE
 
 
@@ -970,14 +1012,20 @@ SOPTS.description                 #STR. STACK.Description
 CSTACK.templateOptions
  .templateFormatVersion           #STR. STACK.AWSTemplateFormatVersion
 
-SOPTS.suppressTemplateIndentation #BOOL. If false (def), indent|prettify TEMPLATE file created by `cdk synth`
-
 cdk bootstrap
 --termination-protection
 SOPTS|CSTACK.terminationProtection#BOOL (def: false). STACK.EnableTerminationProtection
 
 CONTEXT
  .@aws-cdk/core:stackResourceLimit#Max NUM of RESOURCEs (def|max: 500)
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:         NESTED STACK          :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
 
 CSTACK.nested                     #BOOL. Whether is a nested CSTACK
                                   #I.e. any CSTACK with a [in]direct parent NODE that is another CSTACK2
@@ -1393,7 +1441,8 @@ CSTACK.addMetadata('VAR', VAL)    #TEMPLATE.Metadata.VAR = VAL
 cdk metadata [STACKS]             #Print TEMPLATE.Metadata
 
 CONTEXT.aws:cdk:version-reporting
---version-reporting               #BOOL (def: true). Output TEMPLATE.Resources.CDKMetadata
+AOPTS|SOPTS.analyticsReporting
+cdk --version-reporting           #BOOL (def: true). Output TEMPLATE.Resources.CDKMetadata
 TEMPLATE.Resources.CDKMetadata    #Type 'AWS::CDK::Metadata'
                                   #Properties.Analytics 'v2:deflate64:[X.Y.Z!]MODULE/EXPORT,...'
                                   #  - list of CONSTRUCTs used
@@ -1547,6 +1596,19 @@ CCUSTOM_RESOURCE.getAttString
                                              \=+===============================+=/
 
 
+CSTACK.artifactId                 #'ARTIFACT_ID'. Like CSTACK.stackName, but without 'CSTAGE'
+CSTACK.templateFile               #'ARTIFACT_ID.template.json'. Location of TEMPLATE created by `cdk synth`
+SOPTS.suppressTemplateIndentation #BOOL. If false (def), indent|prettify TEMPLATE file created by `cdk synth`
+
+AOPTS.defaultStackSynthesizer     #CSYNTH. `cdk synth` logic
+SOPTS|CSTACK.synthesizer          #No need to document: it is mostly here to distinguish from v1 behavior
+
+BSTR                              #STR with following template variables
+${AWS::Partition}                 #'PARTITION'
+${AWS::AccountId}                 #CSTACK.accountId, unless agnostic
+${AWS::Region}                    #CSTACK.region, unless agnostic
+${Qualifier}                      #Set by CONTEXT.@aws-cdk/core:bootstrapQualifier (def: 'hnb659fds')
+
 cdk deploy
 --asset-parallelism               #BOOL (def: false). Build|publish assets in parallel
 --asset-prebuild                  #BOOL (def: true). Build all assets before deploying the first stack (useful for failing Docker builds)
@@ -1559,6 +1621,23 @@ cdk --staging                     #BOOL (def: true). Copy assets to ASSEMBLY_DIR
 --asset-metadata                  #BOOL (def: true). Output RESOURCE.Metadata['aws:asset:*']
 TEMPLATE.Resources.RESOURCE
  .Metadata['aws:asset:*']         #Assets, when used
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:     PERMISSIONS BOUNDARY      :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+SOPTS.permissionsBoundary         #CSTACK_PERM_BOUNDARY
+                                  #Set RESPROP PermissionsBoundary PERM_BOUNDARY_ARN for all USERs|ROLEs of the STACK
+PermissionsBoundary
+ .fromName('PERM_BOUNDARY'_BSTR)
+ ->CSTACK_PERM_BOUNDARY           #
+PermissionsBoundary
+ .fromArn(PERM_BOUNDARY_ARN_BSTR)
+ ->CSTACK_PERM_BOUNDARY           #
 
 
                                              /=+===============================+=\
