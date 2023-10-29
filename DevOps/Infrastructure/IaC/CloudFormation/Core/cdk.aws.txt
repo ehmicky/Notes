@@ -465,11 +465,12 @@ TOKEN_FRAG.join({ join })->VAL    #Reduce all items to a single one using join(V
                                              \=+===============================+=/
 
 
-new Reference(VAL, CONSTRUCT      #CREF, child of RV
+new Reference(VAL,PARENT_CONSTRUCT#CREF, child of RV
  [, 'CREF'[, ENUM]])              #Turn VAL into a RV
 Reference.isReference(VAL)->BOOL  #
 CREF.value                        #VAL
-CREF.target                       #CONSTRUCT related to the CREF
+CREF.target                       #CONSTRUCT targetted by the CREF
+                                  #As opposed to the PARENT_CONSTRUCT, which consumes it
 CREF.displayName                  #'CREF' (def: 'Reference')
 CREF.typeHint                     #ENUM ResolutionTypeHint.STRING|NUMBER|STRING_LIST
                                   #CREF.value's type
@@ -477,7 +478,7 @@ CREF.creationStack                #Like CELEM.*
 CREF.toString()->STR_TK           #
 CREF.toStringList()->ARR_TK       #
 
-CFNREF                            #{ Ref: ... } in TEMPLATE
+CFNREF                            #{ Ref } or { Fn::GetAtt } in TEMPLATE
                                   #Child of CREF
 CfnReference.isCfnReference
  (VAL)->BOOL                      #
@@ -491,7 +492,7 @@ CfnReference.for(CELEM,           #Reference to CELEM, either:
                                   #  - ENUM ReferenceRendering.FN_SUB: '${CELEM_CID[.RESATTR]}', to use in { Fn::Sub }
                                   #     - 'RESATTR' is skipped when 'Ref'
                                   #ENUM2 is CREF.typeHint
-CFNREF                            #Resolves to RV instead of { Ref: STR }
+CFNREF                            #Resolves to RV instead of { Ref|Fn::GetAtt }
  .assignValueForStack(CSTACK, RV) #CSTACK must be CREF.target's CSTACK
 CFNREF.hasValueForStack
  (CSTACK)->BOOL                   #
@@ -689,6 +690,33 @@ DURATION.formatTokenToNumber()
 
                                              /=+===============================+=\
                                             /  :                               :  \
+                                            )==:              ARN              :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+Arn.format
+ (ARN_OBJ[, CSTACK])->'ARN'       #CSTACK.partition|region|account are used as defaults
+Arn.split
+ ('ARN'[_TK], ENUM)->ARN_OBJ      #ENUM is ARN_OBJ.ArnFormat
+
+ARN_OBJ.partition                 #'PARTITION'|undefined
+ARN_OBJ.service                   #'SERVICE'
+ARN_OBJ.region                    #'REGION'|undefined
+ARN_OBJ.account                   #'ACCOUNT_ID'|undefined
+ARN_OBJ.resource                  #'RESTYPE'
+ARN_OBJ.resourceName              #'[...]NAME'
+ARN_OBJ.arnFormat                 #ENUM|undefined. Format of ARN, among ENUM ArnFormat:
+                                  #  - SLASH_RESOURCE_NAME: '...:RESTYPE:[NAMEPATH/]NAME'
+                                  #  - COLON_RESOURCE_NAME: '...:RESTYPE:[NAMEPATH:]NAME'
+                                  #  - SLASH_RESOURCE_SLASH_RESOURCE_NAME: '...:RESTYPE:[/NAMEPATH]/NAME'
+                                  #  - NO_RESOURCE_NAME: '...:RESTYPE[[/NAMEPATH]/NAME]'
+                                  #     - ARN_OBJ.resource is 'RESTYPE[[/NAMEPATH]/NAME]' and ARN_OBJ.resourceName undefined
+                                  #     - can use Arn.extractResourceName('ARN', 'RESTYPE')->'[/NAMEPATH]/NAME'
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
                                             )==:          ANNOTATIONS          :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -881,7 +909,7 @@ FFLAGS.isEnabled('FFLAG')->BOOL   #
 
 
 new Stage(PARENT_CONSTRUCT,       #CSTAGE. Parent of CAPP, meant to be used directly only with CodePipeline
- 'CSTAGE'[, OPTS])                #Child of CONSTRUCT
+ 'CSTAGE'[, SSOPTS])              #Child of CONSTRUCT
                                   #'CSTAGE' must be [[:alnum:]-_.]
 Stage.isStage(VAL)->BOOL          #
 Stage.of(CONSTRUCT)->CSTAGE       #Find amongst ancestors
@@ -923,18 +951,46 @@ SOPTS|CSTACK.stackName            #'STACK' (def: 'CSTACK'). Is SID
                                              \=+===============================+=/
 
 
-ENVVAR CDK_DEFAULT_REGION         #REGION (def: Aws.REGION) as STR[_TK]
+UNKNOWN_REGION
+UNKNOWN_ACCOUNT
                                   #If not set, "region-agnostic", i.e. can only use features available in all REGIONs
+
+ENVVAR CDK_DEFAULT_REGION         #REGION specified in ENVVARs (e.g. AWS_[DEFAULT_]REGION) or AWS CONFIG|CREDS (see its doc)
+                                  #If none: 'us-east-1'
+                                  #Only used if passed to SSOPTS|SOPTS|CKRESOURCE.env.region
+                                  #Takes into account --profile|--ec2-creds
 ENVVAR CDK_DEFAULT_ACCOUNT        #ACCOUNT_ID (def: Aws.ACCOUNT_ID) as STR[_TK]
 
+SSOPTS.env                        #CENV, at STAGE-level
+                                  #Def: parent STAGE (if none, undefined)
+CSTAGE|CENV.region|account        #Same as above
+
 SOPTS.env                         #CENV, at STACK-level
-                                  #Def: ENVVAR CDK_DEFAULT_*
+                                  #Def: same as STAGE (if none, Aws.REGION|ACCOUNT_ID)
+                                  #  - `environment`: 'ENVIRONMENT'
+                                  #  - if Aws.REGION|ACCOUNT_ID -> UKNOWN_REGION|ACCOUNT in 'ENVIRONMENT' but not in region|account
+                                  #  - partition, availabilityZones, regionalFact
+                                  #  - ENVVAR CDK_DEFAULT_* set by CLI???
+                                  #  - STACK.account|region|environment
 CSTACK|CENV.region|account        #Same as above
 
 CKRESOURCE.env                    #CEVENT, at CKRESOURCE-level
                                   #Def: same as STACK
 CKOPTS.region|account             #Same as above
 CKOPTS.environmentFromArn         #Alternative to CKOPTS.region|account, using any 'ARN' instead
+
+'ENVIRONMENT'                     #'aws://ACCOUNT/REGION'
+                                  #ACCOUNT|REGION can be 'unknown-account|region' for UNKNOWN_ACCOUNT|REGION
+EnvironmentUtils.make
+ ('ACCOUNT', 'REGION')
+ ->ENVIRONMENT_OBJ                #
+EnvironmentUtils.format
+ ('ACCOUNT', 'REGION')
+ ->'ENVIRONMENT'                  #
+EnvironmentUtils.parse
+ ('ENVIRONMENT')->ENVIRONMENT_OBJ #
+ENVIRONMENT_OBJ.account|region    #'ACCOUNT|REGION'
+ENVIRONMENT_OBJ.environment       #'ENVIRONMENT'
 
 
                                              /=+===============================+=\
@@ -1296,24 +1352,41 @@ new Resource(PARENT_CONSTRUCT,    #Base class for all CKRESOURCEs
  'CKRESOURCE'[, CKOPTS])          #Child of CONSTRUCT
 Resource.isResource(VAL)->BOOL    #
 
-Resource.isOwnedResource
- (CONSTRUCT)->BOOL                #Whether NODE.defaultChild is a CRESOURCE
+Resource.isOwnedResource          #Whether there is a direct child CRESOURCE named 'Default' or 'Resource'
+ (CONSTRUCT)->BOOL                #Means CKRESOURCE is a wrapper around it, and other children are just associated to it
+CKRESOURCE.applyRemovalPolicy(...)#Same as CKRESOURCE.node.defaultChild.applyRemovalPolicy(...)
 
-CKOPTS.physicalName               #'RESOURCE_MID'
-                                  #Def: STR_TK resolving to undefined, i.e. assigned by CloudFormation
-                                  #Can be PhysicalName.GENERATE_IF_NEEDED
-CKRESOURCE.physicalName           #Same but protected, i.e. only in child classes. Readonly
+CKOPTS.physicalName               #'NAME'[_TK] of main child CRESOURCE's
+                                  #Is SERVICE-specific 'NAME', not CloudFormation 'RESOURCE', nor SERVICE-specific MID
+                                  #If undefined (def: STR_TK resolving to undefined): auto-generated by CloudFormation
+CKRESOURCE.physicalName           #'NAME'[_TK]. Readonly. Protected, i.e. only in child classes.
 
-CKRESOURCE                        #STR_TK resolves to either:
- .getResourceNameAttribute(STR)   #  - STR
- ->STR_TK                         #  - if used cross-account: CKRESOURCE.physicalName
-                                  #     - i.e. CKRESOURCE's STACK and consuming CONSTRUCT's STACK2 are in a different ACCOUNT + REGION
-                                  #     - only if STACK2 was passed OPTS.crossRegionReferences true
-                                  #     - only if CKRESOURCE.physicalName is RV|TK|'TOKENS'
+CKRESOURCE                        #Resolves to 'NAME' passed as input
+ .getResourceNameAttribute        #However, if used cross-account|region, resolves to CKRESOURCE.physicalName instead
+ ('NAME')->'NAME'_TK              #  - i.e. CKRESOURCE's STACK and consuming CONSTRUCT's STACK2 are in a different:
+                                  #     - ACCOUNT
+                                  #     - or REGION
+                                  #        - unless STACK2 was passed OPTS.crossRegionReferences true
+                                  #  - unless CKRESOURCE.physicalName is TK
+CKRESOURCE                        #Same except resolves to 'ARN'
+ .getResourceArnAttribute         #If cross-account|region, uses ARN_OBJ instead
+ ('ARN', ARN_OBJ)->'ARN'_TK       #  - ARN_OBJ.resourceName must include `CKRESOURCE.physicalName`
+PhysicalName.GENERATE_IF_NEEDED   #When passed to CKOPTS.physicalName, same as undefined except:
+                                  #  - when calling CKRESOURCE.getResourceName|ArnAttribute() on cross-account|region
+                                  #  - then set CKRESOURCE.physicalName to auto-generated 'NAME', and use it
+                                  #Auto-generated 'NAME' (61 chars) is concatenation of:
+                                  #  - 'STACK' (first 25 chars, lowercase'd)
+                                  #  - NODE's 'SID' (first 24 chars)
+                                  #  - SHA256 hash (first 12 chars) of:
+                                  #     - STACK.account (must be set and not RV)
+                                  #     - STACK.region (must be set and not RV)
+                                  #     - 'STACK' (full)
+                                  #     - NODE's 'SID' (full)
+CKRESOURCE.generatePhysicalName() #Protected method to override in child classes, to customize the 'NAME' auto-generated by PhysicalName.GENERATE_IF_NEEDED
+ ->STR                            #E.g. can call super.generatePhysicalName() and prepend a prefix
 
-CKRESOURCE
- .applyRemovalPolicy(ENUM)        #ENUM is RemovalPolicy. RESOURCE.DeletionPolicy
-CKOPTS.removalPolicy              #Available for some CKRESOURCEs, usually when default is 'Retain' (instead of 'Delete')
+CFNREF.assignValueForStack(...)   #Automatically called on `cdk synth` (unless already called):
+                                  #  - consumer is source CSTACK, producer is target CSTACK2
 
 new CustomResource(...)??? Child of CKRESOURCE
 
