@@ -7,7 +7,7 @@
 
 TODO:
   - to continue: document aws-cdk-lib from its codebase
-     - currently documenting Stack, then NestedStack, then Stage, then App
+     - currently documenting Stage, then App
   - https://docs.aws.amazon.com/cdk/api/v2/docs/aws-construct-library.html
   - https://docs.aws.amazon.com/cdk/v2/guide/home.html
      - stopped at "Concepts"
@@ -175,8 +175,8 @@ cdk deploy [STACKS...]            #Deploy STACKS
                                   #  - 'events': fully displayed
 
 --concurrency                     #Max NUM (def: 1) on ongoing deploys
-CONTEXT.aws:cdk:bundling-stacks
---building-stacks                 #'GLOB' (def: '**')???
+CONTEXT.aws:cdk:bundling-stacks   #'GLOB' (def: '**'). Bundle STACKs.
+--building-stacks                 #Only for STACKs with a 'NODE_PATH' matching GLOB
 
 --watch                           #BOOL (def: false). Deploy on file change
                                   #Implies --hotswap-fallback by default
@@ -957,7 +957,7 @@ FFLAGS.isEnabled('FFLAG')->BOOL   #
                                              \=+===============================+=/
 
 
-new Stage(PARENT_CONSTRUCT,       #CSTAGE. Parent of CAPP, meant to be used directly only with CodePipeline
+new Stage(PARENT_CONSTRUCT,       #CSTAGE. Parent of CAPP
  'CSTAGE'[, SSOPTS])              #Inherits CONSTRUCT
                                   #'CSTAGE' must be [[:alnum:]-_.]
 Stage.isStage(VAL)->BOOL          #
@@ -972,7 +972,8 @@ CSTAGE.parentStage                #PARENT_CSTAGE, if PARENT_CONSTRUCT had a CSTA
                                              \=+===============================+=/
 
 
-new App([AOPTS])                  #CAPP. Top-level PARENT_CONSTRUCT, i.e. of CSTACKs
+new App([AOPTS])                  #CAPP. Group of CSTACKs to deploy together
+                                  #Must be top-level PARENT_CONSTRUCT
                                   #Inherits CSTAGE
 
 
@@ -996,10 +997,10 @@ SOPTS|CSTACK.stackName            #'STACK' name, as used in CloudFormation
                                   #If there is a CSTAGE.stageName 'CSTAGE': prefixed to it
                                   #  - if FFLAG @aws-cdk/core:includePrefixInUniqueNameGeneration: use SID
 
-SOPTS.description                 #STR. STACK.Description
+SOPTS.description
+CSTACK.templateOptions.description#STR. STACK.Description
 CSTACK.templateOptions
  .templateFormatVersion           #STR. STACK.AWSTemplateFormatVersion
-
 cdk bootstrap
 --termination-protection
 SOPTS|CSTACK.terminationProtection#BOOL (def: false). STACK.EnableTerminationProtection
@@ -1015,11 +1016,42 @@ CONTEXT
                                              \=+===============================+=/
 
 
-CSTACK.nested                     #BOOL. Whether is a nested CSTACK
-                                  #I.e. any CSTACK with a [in]direct parent NODE that is another CSTACK2
+new NestedStack(PARENT_CONSTRUCT, #NSTACK. Inherits from CSTACK
+ 'NSTACK'[, OPTS])                #Nested STACK
+                                  #Parent CSTACK is found using PARENT_CONSTRUCT
+                                  #  - i.e. can be indirect parent
+NestedStack.isNestedStack
+ (VAL)->BOOL                      #
+
+CSTACK.nested                     #BOOL. Whether is a NSTACK
 CSTACK.nestedStackParent          #Parent CSTACK2 (undefined if none)
-CSTACK.nestedStackResource        #If nested STACK: CFNRESOURCE of itself in the parent CSTACK2
-                                  #If top-level STACK: undefined
+CSTACK.nestedStackResource        #If NSTACK: CFNRESOURCE of itself in the parent CSTACK2
+                                  #Otherwise: undefined
+
+OPTS.env|crossRegionReferences
+ |permissionBoundary              #Cannot specify: uses parent instead
+OPTS.analyticsReporting
+ |terminationProtection
+ |suppressTemplateIndentation     #Cannot specify: only meaningful for top-level STACK
+NSTACK.syntherizer                #Forwards to parent
+
+NSTACK.nestedStackResource        #Underlying CRESOURCE of type 'AWS::CloudFormation::Stack'
+OPTS.description                  #Like CSTACK.*
+OPTS.parameters                   #OBJ (def: {}). STACK.Parameters
+NSTACK.setParameter('PARAM','VAL')#
+OPTS.timeout                      #DURATION (def: none). STACK.TimeoutInMinutes
+OPTS.notificationArns             #SNS_TOPIC_ARN_ARR (def: [])
+OPTS.removalPolicy                #ENUM (def: DESTROY). See CFNRESOURCE.applyRemovalPolicy()
+OPTS.tags                         #Cannot specify, but can still set TAGS after construction
+
+OPTS.stackName                    #Cannot specify
+NSTACK.stackName                  #STR_TK resolving to:
+                                  #  - inside NSTACK: 'AWS::StackName'
+                                  #  - outside NSTACK: { Ref } to NSTACK + { Fn::Split: ['/', ...] } + { Fn::Select: [1, ...] }
+NSTACK.stackId                    #STR_TK resolving to:
+                                  #  - inside NSTACK: 'AWS::StackId'
+                                  #  - outside NSTACK: { Ref } to NSTACK
+NSTACK.templateFile               #'ARTIFACT_ID.nested.template.json'
 
 
                                              /=+===============================+=\
@@ -1075,14 +1107,6 @@ process.env.CDK_DEFAULT_ACCOUNT   #Same but for current 'ACCOUNT_ID'
                                   #Only used if passed to SSOPTS|SOPTS|CKRESOURCE.env.account
                                   #Takes into account --profile|--ec2-creds|--container-creds|--http-options
                                   #Cannot be overridden
-
-CSTACK.availabilityZones          #'AZ'_ARR
-                                  #Retrieved using ec2 describeAvailabilityZones() (with State 'available')
-                                  #Performed by ContextProvider (dummy 'AZ': 'dummy1a|b|c')
-                                  #If CTACK.account|region agnostic, returns either:
-                                  #  - CONTEXT.aws:cdk:availability-zones:fallback '???'
-                                  #  - [{ Fn::Select: [0, { Fn::GetAZs: '' }] },
-                                  #     { Fn::Select: [1, { Fn::GetAZs: '' }] }] as a STR_TK
 
 
                                              /=+===============================+=\
@@ -1256,15 +1280,21 @@ SOPTS.crossRegionReferences       #BOOL (def: false). Allows CREF to target a CS
 
 
 CSTACK.add|removeDependency       #Dependency between STACKs
- (CSTACK2)                        #Can be nested
-                                  #Can be different top-level STACKs
+ (CSTACK2)                        #If CSTACK2 is:
+                                  #  - same: noop
+                                  #  - nested: noop, because already dependent
+                                  #  - parent: not allowed, because cycle
+                                  #  - not parent|nested but have common ancestor CSTACK3:
+                                  #     - in CSTACK3, link CSTACK[2] using TEMPLATE.Resources.RESOURCE.DependsOn
+                                  #  - different top-level: kept in `manifest.json`, ensuring those are deployed serially
+                                  #Must be in same CSTAGE
 CSTACK.dependencies()->CSTACK2_ARR#
 ENVVAR CDK_DEBUG_DEPS=true        #Debug logs for STACK dependencies
 
-CFNRESOURCE.add|removeDependency  #Either:
- (CFNRESOURCE2)                   #  - in same top-level STACK: TEMPLATE.Resources.RESOURCE.DependsOn
-                                  #     - if one is in a nested STACK: use parent RESOURCEs in common parent STACK2
-                                  #  - otherwise: add a STACK dependency
+CFNRESOURCE.add|removeDependency  #If same STACK: TEMPLATE.Resources.RESOURCE.DependsOn
+ (CFNRESOURCE2)                   #Otherwise: use STACK dependency
+CFNRESOURCE.replaceDependency
+ (CFNRESOURCE2, CFNRESOURCE3)     #Same as removeDependency(CFNRESOURCE2) + addDependency(CFNRESOURCE3)
 CFNRESOURCE
  .obtain[Resource]Dependencies()
  ->CFNRESOURCE2_ARR               #Including|excluding STACK dependencies
@@ -1473,6 +1503,7 @@ TEMPLATE.Resources.RESOURCE
 
 
 CSTACK.addMetadata('VAR', VAL)    #TEMPLATE.Metadata.VAR = VAL
+CSTACK.templateOptions.metadata   #OBJ
 
 cdk metadata [STACKS]             #Print TEMPLATE.Metadata
 
@@ -1615,7 +1646,7 @@ CSTACK.templateFile               #'ARTIFACT_ID.template.json'. Location of TEMP
 SOPTS.suppressTemplateIndentation #BOOL. If false (def), indent|prettify TEMPLATE file created by `cdk synth`
 
 AOPTS.defaultStackSynthesizer     #CSYNTH. `cdk synth` logic
-SOPTS|CSTACK.synthesizer          #No need to document: it is mostly here to distinguish from v1 behavior
+SOPTS|CSTACK.synthesizer          #No need to change the default one
 
 BSTR                              #STR with following template variables
 ${AWS::Partition}                 #'PARTITION'
@@ -1636,6 +1667,8 @@ cdk --staging                     #BOOL (def: true). Copy assets to ASSEMBLY_DIR
 TEMPLATE.Resources.RESOURCE
  .Metadata['aws:asset:*']         #Assets, when used
 
+TODO: parts in NestedStack??? https://github.com/aws/aws-cdk/blob/fce26b635d0ef2c443ca6d4e390a90f586130f05/packages/aws-cdk-lib/core/lib/nested-stack.ts#L226C60-L226C72
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -1644,7 +1677,7 @@ TEMPLATE.Resources.RESOURCE
                                              \=+===============================+=/
 
 
-SOPTS.permissionsBoundary         #CSTACK_PERM_BOUNDARY
+SSOPTS|SOPTS.permissionsBoundary  #CSTACK_PERM_BOUNDARY
                                   #Set RESPROP PermissionsBoundary PERM_BOUNDARY_ARN for all USERs|ROLEs of the STACK
 PermissionsBoundary
  .fromName('PERM_BOUNDARY'_BSTR)
@@ -1652,6 +1685,22 @@ PermissionsBoundary
 PermissionsBoundary
  .fromArn(PERM_BOUNDARY_ARN_BSTR)
  ->CSTACK_PERM_BOUNDARY           #
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:              EC2              :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+CSTACK.availabilityZones          #'AZ'_ARR
+                                  #Retrieved using ec2 describeAvailabilityZones() (with State 'available')
+                                  #Performed by ContextProvider (dummy 'AZ': 'dummy1a|b|c')
+                                  #If CTACK.account|region agnostic, returns either:
+                                  #  - CONTEXT.aws:cdk:availability-zones:fallback '???'
+                                  #  - [{ Fn::Select: [0, { Fn::GetAZs: '' }] },
+                                  #     { Fn::Select: [1, { Fn::GetAZs: '' }] }] as a STR_TK
 
 
                                              /=+===============================+=\
