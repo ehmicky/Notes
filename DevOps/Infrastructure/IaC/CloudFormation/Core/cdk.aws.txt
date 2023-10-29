@@ -325,10 +325,14 @@ this.aws                          #SDK_PROVIDER, used to make API calls
 OPTS.*                            #PCONTEXT.*
 
 OPTS.lookupRoleArn                #ROLE used by ContextProviderPlugin
+DZOPTS
+ .useLookupRoleForStackOperations #BOOL (def: true). If false, disables OPTS.lookupRoleArn, i.e. undefined
 STACK_APROPS.lookupRole           #LOOKUP_ROLE. OPTS.lookupRoleArn's value
-                                  #Is ROLE 'cdk-${Qualifier}-lookup-role-ACCOUNT_ID-REGION'
-LOOKUP_ROLE.arn                   #ROLE_ARN
-LOOKUP_ROLE.assumeRoleExternalId  #Like STACK_APROPS but for LOOKUP_ROLE
+DZOPTS.lookupRoleArn              #ROLE_ARN
+LOOKUP_ROLE.arn                   #Def: ROLE BSTR 'cdk-${Qualifier}-lookup-role-${AWS::AccountId}-${AWS::Region}'
+CSYNTH.lookupRole                 #Can be undefined: using CLI's credentials
+LOOKUP_ROLE.assumeRoleExternalId
+DZOPTS.lookupRoleExternalId       #STR (def: none). ASSUMED_ROLE_REQ.ExternalId with assumeRoleArn
 
 
                                              /=+===============================+=\
@@ -971,8 +975,10 @@ SOPTS.tags                        #OBJ. STACK.Tags
                                   #ALso used as:
                                   #  - STACK_APROPS.Tags
                                   #  - CMETADATA 'aws:cdk:stack-tags'
-STACK_APROPS                      #'ROLE_ARN'. STACK.RoleARN
- .cloudFormationExecutionRoleArn  #Is ROLE 'cdk-${Qualifier}-cfn-exec-role-ACCOUNT_ID-REGION'
+STACK_APROPS|CSYNTH
+ .cloudFormationExecutionRoleArn  #'ROLE_ARN'. STACK.RoleARN
+DZOPTS                            #Def: ROLE BSTR 'cdk-${Qualifier}-cfn-exec-role-${AWS::AccountId}-${AWS::Region}'
+ .cloudFormationExecutionRole     #Can be undefined: using CLI's credentials
 
 CONTEXT
  .@aws-cdk/core:stackResourceLimit#Max NUM of RESOURCEs (def|max: 500)
@@ -1632,15 +1638,6 @@ SYOPTS.skipValidation             #BOOL. If false (def), call all NODE.validate(
                                              \=+===============================+=/
 
 
-STAGE.artifactId                  #For root STAGE: ''
-                                  #For nested STAGE: 'assembly-NODE_PATH' (with / -> -)
-
-BSTR                              #STR with following template variables
-${AWS::Partition}                 #'PARTITION'
-${AWS::AccountId}                 #CSTACK.accountId, unless agnostic
-${AWS::Region}                    #CSTACK.region, unless agnostic
-${Qualifier}                      #Set by CONTEXT.@aws-cdk/core:bootstrapQualifier (def: 'hnb659fds')
-
 cdk deploy
 --asset-parallelism               #BOOL (def: false). Build|publish assets in parallel
 --asset-prebuild                  #BOOL (def: true). Build all assets before deploying the first stack (useful for failing Docker builds)
@@ -1749,10 +1746,18 @@ SOPTS|CSTACK.synthesizer          #CSYNTH. Produces STACK|ASSET ARTIFACTs
 
 new DefaultStackSynthesizer
  ([DZOPTS])                       #Default CSYNTH
-new CliCredentialsStackSynthesizer
- ([CZOPTS])                       #CSYNTH
-new BootstraplessSynthesizer
- ([BZOPTS])                       #CSYNTH
+
+new CliCredentialsStackSynthesizer#CSYNTH. Same but always use CLI credentials
+ ([DZOPTS])                       #  - i.e. no DZOPTS.*Role*|ExternalId
+                                  #Also, no BootstrapVersion check
+                                  #  - i.e. no DZOPTS.*BootstrapVersion*
+
+new BootstraplessSynthesizer      #CSYNTH that does not need `cdk bootstrap` to have been run, i.e. no:
+ ([BZOPTS])                       #  - DZOPTS.*Role*|ExternalId except deployRoleArn, cloudFormationExecutionRoleArn
+                                  #  - BootstrapVersion check
+                                  #     - i.e. no DZOPTS.*BootstrapVersion*
+                                  #  - DZOPTS.qualifier
+                                  #  - CSYNTH.add*Asset(), DZOPTS.bucketPrefix|dockerTagPrefix, DZOPTS.fileAssetsBucketName|imageAssetsRepositoryName
 
 
                                              /=+===============================+=\
@@ -1775,9 +1780,10 @@ STACK_APROPS
  .stackTemplateAssetObjectUrl     #FASSET_RES.s3ObjectUrlWithPlaceholders, i.e. TEMPLATE is uploaded to S3 as a FASSET
 
 STACK_APROPS.assumeRoleArn        #'ROLE_ARN' used to call CloudFormation API
-                                  #Is ROLE 'cdk-${Qualifier}-deploy-role-ACCOUNT_ID-REGION'
-STACK_APROPS.assumeRoleExternalId #STR. ASSUMED_ROLE_REQ.ExternalId with assumeRoleArn
-                                  #Always empty
+DZOPTS|CSYNTH.deployRoleArn       #Def: ROLE BSTR 'cdk-${Qualifier}-deploy-role-${AWS::AccountId}-${AWS::Region}'
+                                  #Can be undefined: using CLI's credentials
+STACK_APROPS.assumeRoleExternalId
+DZOPTS.deployRoleExternalId       #STR (def: none). ASSUMED_ROLE_REQ.ExternalId with assumeRoleArn
 
 
                                              /=+===============================+=\
@@ -1787,8 +1793,8 @@ STACK_APROPS.assumeRoleExternalId #STR. ASSUMED_ROLE_REQ.ExternalId with assumeR
                                              \=+===============================+=/
 
 
-STACK_ARTIFACT.metadata./NODE_PATH#CMETADATA_ARR. Associated metadata
-NODE.metadata                     #Unlike STACK|RESOURCE.Metadata, part of ASSEMBLY, not of CloudFormation
+STACK_ARTIFACT.metadata./NODE_PATH#CMETADATA_ARR. NODE-related information kept in ASSEMBLY
+NODE.metadata                     #Unlike STACK|RESOURCE.Metadata: not present in CloudFormation TEMPLATE
 
 NODE.addMetadata
  ('VAR', VAL[, OPTS])             #Add a CMETADATA
@@ -1819,14 +1825,14 @@ Manifest.saveAssetManifest
 Manifest.loadAssetManifest
  ('PATH')->ASSETS                 #Inverse
 
-ASSETS.version                    #STR
+ASSETS.version                    #STR. Same value as MANIFEST.version
 
 ASSET.source                      #ASSET_SRC. Local data
 ASSET                             #ASSET_DEST. Where to upload
  .destinations.ACCOUNT_ID-REGION  #If agnostic, use 'current_account|current_region'
 ASSET_DEST.region                 #'REGION'. If agnostic, undefined
 
-ASSET_MD.id                       #STR
+ASSET_MD                          #CMETADATA 'aws:cdk:asset'
 
 
                                              /=+===============================+=\
@@ -1840,28 +1846,39 @@ ASSETS.files.FILE_HASH            #FASSET. ASSET that is a local file
 CSYNTH.addFileAsset
  (FASSET_NEW)->FASSET_RES         #
 
+FASSET_MD|SRC|NEW.packaging       #'file' or 'zip'
+
 FASSET_MD|FASSET_SRC.path
 FASSET_NEW.fileName               #'PATH' to local file
-FASSET_MD|NEW.sourceHash          #'FILE_HASH', i.e. SHA256 'HASH_HEX' of file contents
+
+FASSET_MD|NEW.sourceHash
+ASSET_MD.id                       #'FILE_HASH', i.e. SHA256 'HASH_HEX' of file contents
 FASSET_MD.artifactHashParameter   #STACK 'PARAM' with 'FILE_HASH'
-FASSET_MD|SRC|NEW.packaging       #'file' or 'zip'
 
 FASSET_SRC|NEW.executable         #['COMMAND'[, 'ARG',...]]. Alternative to FASSET_SRC.path, using command stdout instead
                                   #Cannot use FASSET_SRC.packaging
 
 FASSET_DEST.bucketName            #S3 'BUCKET'
-                                  #Is 'cdk-${Qualifier}-assets-ACCOUNT_ID-REGION'
+DZOPTS.fileAssetsBucketName       #Def: BSTR 'cdk-${Qualifier}-assets-${AWS::AccountId}-${AWS::Region}'
+FASSET_RES.bucketName             #Same, but as BSUB
 FASSET_MD.s3BucketParameter       #STACK 'PARAM' with S3 'BUCKET'
 FASSET_DEST.objectKey             #S3 'OBJECT'
                                   #Is 'FILE_HASH.EXT' with 'EXT' taken from local file 'PATH', or '.zip' if packaging 'zip'
+FASSET_RES.objectKey              #Same, but as BSUB
 FASSET_MD.s3KeyParameter          #STACK 'PARAM' with S3 'OBJECT'
-
-FASSET_DEST.assumeRoleArn         #Like STACK_APROPS.* but for uploading to S3
-                                  #Is ROLE 'cdk-${Qualifier}-file-publishing-role-ACCOUNT_ID-REGION'
-FASSET_DEST.assumeRoleExternalId  #Like STACK_APROPS.* but for uploading to S3
+DZOPTS.bucketPrefix               #STR (def: '') prefixing S3 'OBJECT'
 
 FASSET_RES
  .s3ObjectUrlWithPlaceholders     #'s3://BUCKET/OBJECT' to TEMPLATE uploaded to S3
+FASSET_RES.s3ObjectUrl            #Same, but as BSUB
+FASSET_RES.httpUrl                #BSUB 'https://s3.${AWS::Region}.amazonaws.com/BUCKET/OBJECT'
+
+FASSET_DEST.assumeRoleArn         #Like STACK_APROPS.* but for uploading to S3
+DZOPTS.fileAssetPublishingRoleArn #Def: ROLE BSTR 'cdk-${Qualifier}-file-publishing-role-${AWS::AccountId}-${AWS::Region}'
+                                  #Can be undefined: using CLI's credentials
+FASSET_DEST.assumeRoleExternalId
+DZOPTS
+ .fileAssetPublishingExternalId   #STR (def: none). ASSUMED_ROLE_REQ.ExternalId with assumeRoleArn
 
 FASSET_NEW.deployTime             #BOOL (def: false). Delete from S3 after `cdk deploy`
                                   #E.g. Lambda FUNC are copied during deploy, i.e. can be deleted
@@ -1874,34 +1891,59 @@ FASSET_NEW.deployTime             #BOOL (def: false). Delete from S3 after `cdk 
                                              \=+===============================+=/
 
 
-ASSETS.dockerImages.IMAGE_ID      #IASSET. ASSET that is a Docker container
+ASSETS.dockerImages
+ .[IMAGE_NAME-]IMAGE_HASH         #IASSET. ASSET that is a Docker container
+CSYNTH.addDockerImageAsset
+ (IASSET_NEW)->IASSET_RES         #
 
 IASSET_MD.packaging               #'container-image'
-IASSET_MD|DEST.repositoryName     #ECR 'REPO'
-IASSET_MD|DEST.imageTag           #STR. Docker image tag
-IASSET_SRC.directory              #'DIR' of Dockerfile
-IASSET_SRC.dockerFile             #'FILENAME' (def: 'Dockerfile') of Dockerfile
-IASSET_MD.file                    #'DIR/FILENAME' to Dockerfile
-IASSET_MD.buildArgs
-IASSET_SRC.dockerBuildArgs        #OBJ. `docker build` arguments
-IASSET_MD.buildSsh
-IASSET_SRC.dockerBuildSsh         #STR. `docker build` SSH argument
-IASSET_MD.buildSecrets
-IASSET_SRC.dockerBuildSecrets     #OBJ. `docker build` secrets
-IASSET_MD.target
-IASSET_SRC.dockerBuildTarget      #STR. `docker build` target
-IASSET_MD.outputs
-IASSET_SRC.dockerOutputs          #STR_ARR. `docker build` outputs
-IASSET_MD|SRC.networkMode         #STR `docker create --network`
-IASSET_MD|SRC.platform            #STR
 
-IASSET_MD|SRC.cacheFrom           #CONTAINER_CACHE_ARR
-IASSET_MD|SRC.cacheTo             #CONTAINER_CACHE
+IASSET_SRC.directory
+IASSET_NEW.directoryName          #'DIR' of Dockerfile
+IASSET_SRC|NEW.dockerFile         #'FILENAME' (def: 'Dockerfile') of Dockerfile
+IASSET_MD.file                    #'DIR/FILENAME' to Dockerfile
+
+IASSET_NEW.assetName              #'IMAGE_NAME'
+IASSET_MD|NEW.sourceHash
+IASSET_MD.id                      #'IMAGE_HASH'
+
+IASSET_SRC|NEW.executable         #['COMMAND'[, 'ARG',...]]. Alternative to FASSET_SRC.directoryName, using command stdout instead
+                                  #Cannot use IASSET_SRC.dockerBuildArgs|dockerBuildTarget|dockerOutputs|dockerFile
+
+IASSET_MD.buildArgs
+IASSET_SRC|NEW.dockerBuildArgs    #OBJ. `docker build` arguments
+IASSET_MD.buildSsh
+IASSET_SRC|NEW.dockerBuildSsh     #STR. `docker build` SSH argument
+IASSET_MD.buildSecrets
+IASSET_SRC|NEW.dockerBuildSecrets #OBJ. `docker build` secrets
+IASSET_MD.target
+IASSET_SRC|NEW.dockerBuildTarget  #STR. `docker build` target
+IASSET_MD.outputs
+IASSET_SRC|NEW.dockerOutputs      #STR_ARR. `docker build` outputs
+IASSET_MD|SRC|NEW.networkMode     #STR `docker create --network`
+IASSET_MD|SRC|NEW.platform        #STR
+
+IASSET_MD|SRC|NEW.cacheFrom       #CONTAINER_CACHE_ARR
+IASSET_MD|SRC|NEW.cacheTo         #CONTAINER_CACHE
 CONTAINER_CACHE.type              #STR. Docker cache backend, e.g. 'inline', 'local', 'registry', 's3', 'azblob', 'gha'
 CONTAINER_CACHE.params            #OBJ. Docker cache configuration
 
+IASSET_MD|DEST.repositoryName     #ECR 'REPO'
+DZOPTS.imageAssetsRepositoryName  #Def: BSTR 'cdk-${Qualifier}-container-assets-${AWS::AccountId}-${AWS::Region}'
+IASSET_RES.repositoryName         #Same but as BSUB
+IASSET_MD|DEST.imageTag           #Docker 'IMAGE_TAG'
+                                  #Is 'IMAGE_HASH'
+IASSET_RES.imageTag               #Same but as BSUB
+DZOPTS.dockerTagPrefix            #STR (def: '') prefixing 'IMAGE_TAG'
+
+IASSET_RES.imageUri               #BSUB '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${REPO}:${IMAGE_TAG}'
+
 IASSET_DEST.assumeRoleArn         #Like STACK_APROPS.* but for uploading to ECR
-IASSET_DEST.assumeRoleExternalId  #Like STACK_APROPS.* but for uploading to ECR
+DZOPTS.imageAssetPublishingRoleArn#Def: ROLE BSTR 'cdk-${Qualifier}-image-publishing-role-${AWS::AccountId}-${AWS::Region}'
+                                  #Can be undefined: using CLI's credentials
+IASSET_DEST.assumeRoleExternalId
+DZOPTS
+ .imageAssetPublishingExternalId  #STR (def: none). ASSUMED_ROLE_REQ.ExternalId with assumeRoleArn
 
 
                                              /=+===============================+=\
@@ -1914,6 +1956,9 @@ IASSET_DEST.assumeRoleExternalId  #Like STACK_APROPS.* but for uploading to ECR
 NASSEMBLY_ARTIFACT.properties     #NASSEMBLY_APROPS
 NASSEMBLY_APROPS.directoryName    #'DIR'
 NASSEMBLY_APROPS.displayName      #STR
+
+STAGE.artifactId                  #For root STAGE: ''
+                                  #For nested STAGE: 'assembly-NODE_PATH' (with / -> -)
 
 
                                              /=+===============================+=\
@@ -1941,14 +1986,18 @@ ITG.testCases.TEST                #ITG_TEST. Not documented yet???
                                              \=+===============================+=/
 
 
+cdk bootstrap --qualifier
+CONTEXT
+ .@aws-cdk/core:bootstrapQualifier
+DZOPTS.qualifier                  #'BOOTSTRAP_MID'
+CSYNTH.bootstrapQualifier         #Def: 'hnb659fds'
+
 MANIFEST_APROPS|STACK_APROPS
-|LOOKUP_ROLE                      #STR. SSM path to bootstrap's format version
-.bootstrapStackVersionSsmParameter#Def: '/cdk-bootstrap/${Qualifier}/version'
-MANIFEST_APROPS|STACK_APROPS      #NUM. Currently always 6
+|LOOKUP_ROLE|DZOPTS               #STR. SSM path to bootstrap's format version
+.bootstrapStackVersionSsmParameter#Def: BSTR '/cdk-bootstrap/${Qualifier}/version'
+MANIFEST_APROPS|STACK_APROPS
+ |LOOKUP_ROLE                     #NUM. Currently always 6
  .requiresBootstrapStackVersion   #Minimum bootstrap format version supported by cdk
-LOOKUP_ROLE.assumeRoleExternalId
- |requiresBootstrapStackVersion
-|bootstrapStackVersionSsmParameter#
 
 TEMPLATE                          #PARAM of type 'AWS::SSM::Parameter::Value<String>'
  .Parameters.BootstrapVersion     #Value is bootstrapStackVersionSsmParameter
@@ -1956,6 +2005,15 @@ TEMPLATE                          #PARAM of type 'AWS::SSM::Parameter::Value<Str
                                   #Created by `cdk synth`
 TEMPLATE                          #RULE that ensure that ensure that BootstrapVersion PARAM >= requiresBootstrapStackVersion NUM
  .Rules.CheckBootstrapVersion     #Created by `cdk synth`
+DZOPTS
+ .generateBootstrapVersionRule    #BOOL (def: true). If false, do not generate TEMPLATE.*.*BootstrapVersion
+
+BSTR                              #STR with following template variables
+BSUB                              #Like BSTR but resolved to a STR_TK of { Fn::Sub: BSTR } if account|region is agnostic
+${AWS::Partition}                 #'PARTITION'
+${AWS::AccountId}                 #CSTACK.accountId, unless agnostic (kept as is)
+${AWS::Region}                    #CSTACK.region, unless agnostic (kept as is)
+${Qualifier}                      #'BOOTSTRAP_MID'
 
 cdk bootstrap|deploy|import
 --toolkit-stack-name              #'STACK' (def: 'CDKToolkit') created by `cdk bootstrap`
@@ -1974,7 +2032,6 @@ cdk bootstrap ['ENVIRONMENT'...]  #Deploy the "toolkit", a STACK needed for depl
 --public-access-block
  -configuration                   #BOOL (def: true). Use S3 PUBLIC_BLOCK
 
---qualifier                       #STR. String which must be unique for each bootstrap stack. You must configure it on your CDK app if you change this from the default.
 --tags|-t                         #OBJ. STACK.Tags
 
 --cloudformation-execution        #POLICY_ARN_ARR attached to the ROLE deploying
