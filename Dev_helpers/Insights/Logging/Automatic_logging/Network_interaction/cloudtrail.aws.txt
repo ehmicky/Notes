@@ -128,7 +128,7 @@ TRAIL.IsMultiRegionTrail          #BOOL (def: false, recommended: true). Whether
 DATASTORE.MultiRegionEnabled      #For TRAIL, it duplicates it across REGIONs ("shadow TRAIL").
 CHANNEL_SOURCE.ApplyToAllRegions  #Shadow TRAILs can be used for CloudTrail ACTIONs but:
                                   #  - only readonly ones
-                                  #  - only use current REGION
+                                  #  - only for its own REGION
                                   #LOG_FILE|DIGEST_FILE:
                                   #  - processed in own REGION, by shadow TRAIL
                                   #     - including signing with PUBLIC_KEY, which is REGION-specific
@@ -173,7 +173,7 @@ DATASTORE.OrganizationEnabled     #Work similarly to TRAIL.IsMultiRegionTrail:
 TRAIL_PREFIX/AWSLogs/ORG
  /ACCOUNT_ID/...                  #Instead of TRAIL_PREFIX/AWSLogs/ACCOUNT_ID/... if TRAIL.IsOrganizationTrail true
 
-LOG_VALIDATION_REQ.AccountId      #ACCOUNT_ID. Noop unless TRAIL.IsOrganizationTrail true
+aws validate-logs --account-id    #ACCOUNT_ID. Noop unless TRAIL.IsOrganizationTrail true
 
 AWSServiceRoleForCloudTrail       #SERVICE_LINKED_ROLE used by TRAIL.IsOrganizationTrail, DATASTORE.OrganizationEnabled and ORG_ADMIN.DelegatedAdminAccountId
                                   #Created automatically by ACTIONs setting those properties
@@ -243,6 +243,58 @@ CLOUDTRAIL PROCESSING LIBRARY ==> #Java library that allows running code on each
                                   #Uses a SQS QUEUE
                                   #Could also achieve this using S3 Object Lambda, S3 Batch, or S3 NOTIFICATIONS_LAMBDA
                                   #Not documented yet
+
+trailscraper                     ##Version 0.8.1
+--verbose                        ##
+
+trailscraper download            ##Download LOG_FILE
+                                 ##Requires PACTIONs s3::ListBucket
+--org-id                         ##ORG_ID
+                                 ##Can be specified multiple times
+--account-id                     ##ACCOUNT_ID
+                                 ##Can be specified multiple times
+--region                         ##'REGION'
+--bucket                         ##S3 'BUCKET'
+--prefix                         ##S3 'PREFIX' (including trailing slash)
+--log-dir                        ##Output 'DIR' (def: '~/.trailscraper/logs')
+                                 ##Filename is same as LOG_FILE's
+--from                           ##'DATE' or 'DURATION' (def: '-1days')
+                                 ##Year|month|day, not hour|minute|seconds
+                                 ##Format: see `dateparser` Python package
+--to                             ##'DATE', 'DURATION' or 'now' (def)
+--wait                           ##BOOL (def: false). Wait until LOG_EVENTs after --to are found
+--parallelism                    ##NUM (def 10) of files to download in parallel
+
+trailscraper select              ##List LOG_EVENTs. Prints ALL_LOG_EVENTS
+--log-dir
+--from
+--to                             ##Like `trailscraper download`
+--use-cloudtrail-api             ##Call LookupEvents()
+                                 ##Def: use --log-dir instead, after `trailscraper download`
+--filter-assumed-role-arn        ##ROLE_ARN that performed LOG_EVENT
+                                 ##I.e. Filter by LOG_EVENT.userIdentity.sessionContext.sessionIssuer.arn,
+                                 ##with LOG_EVENT.userIdentity.type 'AssumedRole'
+                                 ##Can be specified multiple times
+
+ALL_LOG_EVENTS                   ##JSON_OBJ: Records LOG_EVENT_ARR
+
+trailscraper last-event-timestamp##Print most recent LOG_EVENT.eventTime
+--log-dir                        ##Like `trailscraper download`
+
+trailscraper generate            ##Print IAM POLICY_DOC allowing all actions from a list of LOG_EVENTs
+                                 ##Must pass ALL_LOG_EVENTS as stdin
+                                 ##STATEMENT:
+                                 ##  - Action: LOG_EVENT.eventSource|eventName
+                                 ##     - maps some often-used PACTIONs that do not match same name,
+                                 ##       e.g. 's3:CreateMultipartUpload' -> 's3:PutObject', or ApiGateway
+                                 ##  - Resource: LOG_EVENT.Resources[*].ARN
+
+trailscraper guess               ##Transform IAM POLICY_DOC to add all ACTIONs on same SERVICE + resource
+                                 ##E.g. s3:PutObject -> s3:PutObject|GetObject|ListObjects|...
+                                 ##Must pass POLICY DOC as stdin
+--only                           ##STR. Only ACTIONs starting with STR
+                                 ##Among: 'Create', 'Put', 'Update', 'List', 'Describe', 'Get', 'Delete', 'Attach', 'Detach'
+                                 ##Can be specified multiple times
 
 
                                              /=+===============================+=\
@@ -506,21 +558,19 @@ DIGEST_FILE
                                              \=+===============================+=/
 
 
-ValidateLogs()                    #Req: LOG_VALIDATION_REQ
-                                  #Res: LOG_VALIDATION_RES
-
-LOG_VALIDATION_REQ                #Validate LOG_FILEs|DIGEST_FILEs in a time period, using hashes and signatures
+aws cloudtrail validate-logs      #Validate LOG_FILEs|DIGEST_FILEs in a time period, using hashes and signatures
                                   #CLI-only
-LOG_VALIDATION_REQ.TrailArn       #TRAIL_ARN
-LOG_VALIDATION_REQ.StartTime      #'DATE'
-LOG_VALIDATION_REQ.EndTime        #'DATE' (def: now)
-LOG_VALIDATION_REQ
- .S3Bucket|S3Prefix               #'BUCKET|OBJECT' of DIGEST_FILE (def: last one)
-LOG_VALIDATION_REQ.Verbose        #BOOL. Whether to print LOG_VALIDATION_RES_LINEs.
+
+--trail-arn                       #TRAIL_ARN
+--start-time                      #'DATE'
+--end-time                        #'DATE' (def: now)
+--s3-bucket
+--s3-prefix                       #'BUCKET|OBJECT' of DIGEST_FILE (def: last one)
+--verbose                         #BOOL. Whether to print LOG_VALIDATION_RES_LINEs.
                                   #If false (def), only for main DIGEST_FILE.
 
-LOG_VALIDATION_RES                #TSV output:
-                                  #  - one LOG_VALIDATION_RES_LINE per DIGEST_FILE|LOG_FILE
+OUTPUT ==>                        #One LOG_VALIDATION_RES_LINE per DIGEST_FILE|LOG_FILE, as TSV
+                                  #Then:
                                   #  - DIGEST_FILE.oldest|newestEventTime
                                   #  - NUM of DIGEST_FILEs|LOG_FILEs [in]valid
 LOG_VALIDATION_RES_LINE[0]        #'Digest file' or 'Log file'
@@ -1167,16 +1217,14 @@ QUERY_STATS.ExecutionTimeInMillis #NUM of ms the QUERY has been running
                                              \=+===============================+=/
 
 
-VerifyQueryResults()              #Req: QUERY_VERIFY_REQ
-                                  #Res: QUERY_VERIFY_RES
+aws cloudtrail                    #Check integrity of QUERY_RESULTS_FILEs using QUERY_RESULTS_SIGN
+ verify-query-results             #CLI-only
 
-QUERY_VERIFY_REQ                  #Check integrity of QUERY_RESULTS_FILEs using QUERY_RESULTS_SIGN
-                                  #CLI-only
-QUERY_VERIFY_REQ
- .S3Bucket|S3Prefix               #'BUCKET|OBJECT' to QUERY_RESULTS_SIGN
-QUERY_VERIFY_REQ.LocalExportPath  #Same as local '/PATH'
+--s3-bucket
+--s3-prefix                       #'BUCKET|OBJECT' to QUERY_RESULTS_SIGN
+--local-export-path               #Same as local '/PATH'
 
-QUERY_VERIFY_RES                  #TSV output: one QUERY_VERIFY_RES_LINE per QUERY_RESULTS_FILE|QUERY_RESULTS_SIGN
+OUTPUT ==>                        #One QUERY_VERIFY_RES_LINE per QUERY_RESULTS_FILE|QUERY_RESULTS_SIGN, as TSV
 QUERY_VERIFY_RES_LINE[0]          #'Query result file' or 'Sign file'
 QUERY_VERIFY_RES_LINE[1]          #'s3://LOG_BUCKET/OBJECT'
 QUERY_VERIFY_RES_LINE[2]          #'Successfully ...' or 'ValidationError: ...'
