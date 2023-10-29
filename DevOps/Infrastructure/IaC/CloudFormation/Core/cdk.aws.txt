@@ -323,8 +323,12 @@ ContextProviderPlugin
  .getValue(OPTS)->>VAL            #Defined by each SERVICE using PCONTEXT
 this.aws                          #SDK_PROVIDER, used to make API calls
 OPTS.*                            #PCONTEXT.*
-OPTS.lookupRoleArn                #ROLE 'cdk-${Qualifier}-lookup-role-ACCOUNT_ID-REGION'
-                                  #Created by `cdk bootstrap`. Used to perform readonly PACTIONs
+
+OPTS.lookupRoleArn                #ROLE used by ContextProviderPlugin
+STACK_APROPS.lookupRole           #LOOKUP_ROLE. OPTS.lookupRoleArn's value
+                                  #Is ROLE 'cdk-${Qualifier}-lookup-role-ACCOUNT_ID-REGION'
+LOOKUP_ROLE.arn                   #ROLE_ARN
+LOOKUP_ROLE.assumeRoleExternalId  #Like STACK_APROPS but for LOOKUP_ROLE
 
 
                                              /=+===============================+=\
@@ -600,9 +604,6 @@ TagManager.isTaggable[V2]
  (CRESOURCE)->BOOL                #Whether has TAGS
 
 OPTS.tags                         #TAGS_FOBJ. TEMPLATE.Resources.RESOURCE.Properties.TAGPROP
-                                  #For CSTACK, used as:
-                                  #  - STACK.Tags
-                                  #  - CMETADATA 'aws:cdk:stack-tags'
 CRESOURCE.tagsRaw                 #TAPROP is RESTYPE-specific
 
 Tags.of(CRESOURCE)->CTAGS         #
@@ -952,6 +953,12 @@ Stack.isStack(VAL)->BOOL          #
 CELEM|CKRESOURCE.stack            #CSTACK
 Stack.of(CONSTRUCT)->CSTACK       #Of CONSTRUCT or any ancestor
 
+SOPTS|CSTACK|STACK_APROPS         #'STACK' name, as used in CloudFormation
+ .stackName                       #By default, same as 'CSTACK'
+                                  #'STAGE' prefixed to it
+                                  #  - unless ''
+                                  #  - if FFLAG @aws-cdk/core:includePrefixInUniqueNameGeneration: use SID
+
 SOPTS.description
 CSTACK.templateOptions.description#STR. STACK.Description
 CSTACK.templateOptions
@@ -960,6 +967,12 @@ cdk bootstrap
 --termination-protection
 SOPTS|CSTACK|STACK_APROPS
  .terminationProtection           #BOOL (def: false). STACK.EnableTerminationProtection
+SOPTS.tags                        #OBJ. STACK.Tags
+                                  #ALso used as:
+                                  #  - STACK_APROPS.Tags
+                                  #  - CMETADATA 'aws:cdk:stack-tags'
+STACK_APROPS                      #'ROLE_ARN'. STACK.RoleARN
+ .cloudFormationExecutionRoleArn  #Is ROLE 'cdk-${Qualifier}-cfn-exec-role-ACCOUNT_ID-REGION'
 
 CONTEXT
  .@aws-cdk/core:stackResourceLimit#Max NUM of RESOURCEs (def|max: 500)
@@ -1348,6 +1361,8 @@ CPARAM.value                      #CFNREF. { Ref: 'PARAM' }
 CPARAM
  .valueAsString|List|Number()->TK #{ Ref: 'PARAM' }
 
+STACK_APROPS.parameters           #PARAMS_OBJ. STACK.Parameters
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -1695,7 +1710,6 @@ ARTIFACT.type                     #One of:
                                   #  - 'aws:cloudformation:stack': STACK_ARTIFACT
                                   #  - 'cdk:asset-manifest': ASSETS
                                   #  - 'cdk:cloud-assembly': nested ASSEMBLY
-ARTIFACT.properties               #APROPS
 
 
                                              /=+===============================+=\
@@ -1707,7 +1721,7 @@ ARTIFACT.properties               #APROPS
 
 ASSEMBLY_DIR/tree.json            #TREE. Full CONSTRUCT tree
                                   #ARTIFACT_ID is 'Tree'
-
+TREE_ARTIFACT.properties.file     #'PATH' to TREE
 AOPTS.treeMetadata                #BOOL (def: true). If false, do not create TREE
 
 TREE.version                      #'tree-0.1'
@@ -1722,8 +1736,23 @@ NODE.inspect                      #Can override as FUNC(INSPECTOR), to set TATTR
 INSPECTOR.attributes              #TATTRS
 INSPECTOR.addAttribute('VAR', VAL)#TATTRS.VAR = VAL
 
-TREE_APROPS                       #APROPS when ARTIFACT.type is 'cdk:tree'
-TREE_APROPS.file                  #'PATH' to TREE
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:          SYNTHESIZER          :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+AOPTS.defaultStackSynthesizer
+SOPTS|CSTACK.synthesizer          #CSYNTH. Produces STACK|ASSET ARTIFACTs
+
+new DefaultStackSynthesizer
+ ([DZOPTS])                       #Default CSYNTH
+new CliCredentialsStackSynthesizer
+ ([CZOPTS])                       #CSYNTH
+new BootstraplessSynthesizer
+ ([BZOPTS])                       #CSYNTH
 
 
                                              /=+===============================+=\
@@ -1735,46 +1764,20 @@ TREE_APROPS.file                  #'PATH' to TREE
 
 STACK_ARTIFACT                    #ARTIFACT that is a STACK definition + its TEMPLATE
 STACK_ARTIFACT.displayName        #'NODE_PATH' of CSTACK
+STACK_ARTIFACT.properties         #STACK_APROPS
 
-AOPTS.defaultStackSynthesizer     #CSYNTH. Produces the STACK ARTIFACT
-SOPTS|CSTACK.synthesizer          #No need to change the default one
-
-CliCredentialsStackSynthesizer???
-
-STACK_APROPS                      #APROPS for STACK_ARTIFACT
 CSTACK.artifactId                 #'ARTIFACT_ID'. Is CSTACK.stackName, but without 'STAGE' prefix
-SOPTS|CSTACK|STACK_APROPS         #'STACK' name, as used in CloudFormation
- .stackName                       #By default, same as 'CSTACK'
-                                  #'STAGE' prefixed to it
-                                  #  - unless ''
-                                  #  - if FFLAG @aws-cdk/core:includePrefixInUniqueNameGeneration: use SID
 
 CSTACK|STACK_APROPS.templateFile  #'ARTIFACT_ID[.nested].template.json', i.e. 'PATH' to CloudFormation TEMPLATE
                                   #If NSTACK: `.nested`
-                                  #Added as a FASSET uploaded to S3:
-                                  #  - DEST_ID: 'ACCOUNT_ID-REGION'
-                                  #     - if agnostic, use 'current_account|current_region'
-                                  #  - S3 BUCKET: 'cdk-${Qualifier}-assets-ACCOUNT_ID-REGION'
-                                  #  - S3 OBJECT + FILE_ID: FASSET_MID.sourceHash
-                                  #  - assumeRoleArn: ROLE 'cdk-${Qualifier}-file-publishing-role-ACCOUNT_ID-REGION'
 SOPTS.suppressTemplateIndentation #BOOL. If false (def), indent|prettify TEMPLATE file created by `cdk synth`
-
 STACK_APROPS
- .stackTemplateAssetObjectUrl     #'s3://BUCKET/OBJECT' to TEMPLATE uploaded to S3
-
-STACK_APROPS.parameters           #PARAMS_OBJ. STACK.Parameters
-STACK_APROPS.tags                 #OBJ. STACK.Tags
-
-STACK_APROPS
- .cloudFormationExecutionRoleArn  #'ROLE_ARN'. STACK.RoleARN
+ .stackTemplateAssetObjectUrl     #FASSET_RES.s3ObjectUrlWithPlaceholders, i.e. TEMPLATE is uploaded to S3 as a FASSET
 
 STACK_APROPS.assumeRoleArn        #'ROLE_ARN' used to call CloudFormation API
                                   #Is ROLE 'cdk-${Qualifier}-deploy-role-ACCOUNT_ID-REGION'
 STACK_APROPS.assumeRoleExternalId #STR. ASSUMED_ROLE_REQ.ExternalId with assumeRoleArn
                                   #Always empty
-
-STACK_APROPS.lookupRole           #LOOKUP_ROLE. ROLE used as OPTS.lookupRoleArn with ContextProvider
-LOOKUP_ROLE.arn                   #ROLE_ARN
 
 
                                              /=+===============================+=\
@@ -1809,29 +1812,21 @@ cdk --debug                       #BOOL (def: false). Enable stack traces
 
 ASSEMBLY_DIR/                     #ASSETS. Sets of local data to upload to S3 or ECR, for a specific STACK
  STACK_ARTIFACT_ID.assets.json    #ARTIFACT_ID is 'STACK_ARTIFACT_ID.assets'
+ASSETS_ARTIFACT.properties.file   #'PATH' to ASSETS
 
 Manifest.saveAssetManifest
  (ASSETS, 'PATH')                 #Save to 'PATH', as JSON
 Manifest.loadAssetManifest
  ('PATH')->ASSETS                 #Inverse
 
-MANIFEST_APROPS                   #APROPS when ARTIFACT.type is 'cdk:asset-manifest'
-MANIFEST_APROPS.file              #'PATH' to ASSETS
-
 ASSETS.version                    #STR
 
 ASSET.source                      #ASSET_SRC. Local data
-ASSET.destinations.DEST_ID        #ASSET_DEST. Where to upload
-ASSET_DEST.region                 #'REGION'
-ASSET_DEST.assumeRoleArn          #Like APROPS.* but for uploading to S3|ECR
-ASSET_DEST.assumeRoleExternalId   #Like APROPS.* but for uploading to S3|ECR
+ASSET                             #ASSET_DEST. Where to upload
+ .destinations.ACCOUNT_ID-REGION  #If agnostic, use 'current_account|current_region'
+ASSET_DEST.region                 #'REGION'. If agnostic, undefined
 
 ASSET_MD.id                       #STR
-ASSET_MD|FASSET_SRC.path          #'PATH' to local file
-ASSET_MD.sourceHash               #SHA256 'HASH_HEX' of file contents
-ASSET_SRC.executable              #['COMMAND'[, 'ARG',...]]. Alternative to FASSET_SRC.path, using command stdout instead
-                                  #Cannot use FASSET_SRC.packaging
-
 
 
                                              /=+===============================+=\
@@ -1841,16 +1836,35 @@ ASSET_SRC.executable              #['COMMAND'[, 'ARG',...]]. Alternative to FASS
                                              \=+===============================+=/
 
 
-ASSETS.files.FILE_ID              #FASSET. ASSET that is a local file
+ASSETS.files.FILE_HASH            #FASSET. ASSET that is a local file
+CSYNTH.addFileAsset
+ (FASSET_NEW)->FASSET_RES         #
 
-FASSET_MD|SRC.packaging           #'file' or 'zip'
+FASSET_MD|FASSET_SRC.path
+FASSET_NEW.fileName               #'PATH' to local file
+FASSET_MD|NEW.sourceHash          #'FILE_HASH', i.e. SHA256 'HASH_HEX' of file contents
+FASSET_MD.artifactHashParameter   #STACK 'PARAM' with 'FILE_HASH'
+FASSET_MD|SRC|NEW.packaging       #'file' or 'zip'
 
-FASSET_MD.s3BucketParameter       #STACK 'PARAM' with S3 'BUCKET'
+FASSET_SRC|NEW.executable         #['COMMAND'[, 'ARG',...]]. Alternative to FASSET_SRC.path, using command stdout instead
+                                  #Cannot use FASSET_SRC.packaging
+
 FASSET_DEST.bucketName            #S3 'BUCKET'
-FASSET_MD.s3KeyParameter          #STACK 'PARAM' with S3 'OBJECT'
+                                  #Is 'cdk-${Qualifier}-assets-ACCOUNT_ID-REGION'
+FASSET_MD.s3BucketParameter       #STACK 'PARAM' with S3 'BUCKET'
 FASSET_DEST.objectKey             #S3 'OBJECT'
+                                  #Is 'FILE_HASH.EXT' with 'EXT' taken from local file 'PATH', or '.zip' if packaging 'zip'
+FASSET_MD.s3KeyParameter          #STACK 'PARAM' with S3 'OBJECT'
 
-FASSET_MD.artifactHashParameter   #STACK 'PARAM' with HASH
+FASSET_DEST.assumeRoleArn         #Like STACK_APROPS.* but for uploading to S3
+                                  #Is ROLE 'cdk-${Qualifier}-file-publishing-role-ACCOUNT_ID-REGION'
+FASSET_DEST.assumeRoleExternalId  #Like STACK_APROPS.* but for uploading to S3
+
+FASSET_RES
+ .s3ObjectUrlWithPlaceholders     #'s3://BUCKET/OBJECT' to TEMPLATE uploaded to S3
+
+FASSET_NEW.deployTime             #BOOL (def: false). Delete from S3 after `cdk deploy`
+                                  #E.g. Lambda FUNC are copied during deploy, i.e. can be deleted
 
 
                                              /=+===============================+=\
@@ -1886,6 +1900,9 @@ IASSET_MD|SRC.cacheTo             #CONTAINER_CACHE
 CONTAINER_CACHE.type              #STR. Docker cache backend, e.g. 'inline', 'local', 'registry', 's3', 'azblob', 'gha'
 CONTAINER_CACHE.params            #OBJ. Docker cache configuration
 
+IASSET_DEST.assumeRoleArn         #Like STACK_APROPS.* but for uploading to ECR
+IASSET_DEST.assumeRoleExternalId  #Like STACK_APROPS.* but for uploading to ECR
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -1894,7 +1911,7 @@ CONTAINER_CACHE.params            #OBJ. Docker cache configuration
                                              \=+===============================+=/
 
 
-NASSEMBLY_APROPS                  #APROPS when ARTIFACT.type is 'cdk:cloud-assembly'
+NASSEMBLY_ARTIFACT.properties     #NASSEMBLY_APROPS
 NASSEMBLY_APROPS.directoryName    #'DIR'
 NASSEMBLY_APROPS.displayName      #STR
 
