@@ -20,6 +20,7 @@ TODO:
         - https://github.com/aws/aws-cdk/blob/main/tools/%40aws-cdk/spec2cdk/lib/cdk/cloudformation-mapping.ts#L237
      - CfnParse: https://github.com/aws/aws-cdk/blob/main/packages/aws-cdk-lib/core/lib/helpers-internal/cfn-parse.ts
   - https://github.com/cdklabs/cdk-from-cfn
+     - cdk migrate
   - custom-resources: https://github.com/aws/aws-cdk/tree/main/packages/aws-cdk-lib/custom-resources
   - CLI layer:
      - v1: https://github.com/aws/aws-cdk/tree/main/packages/aws-cdk-lib/lambda-layer-awscli
@@ -164,6 +165,7 @@ cdk --plugin|-p                   #'PATH|MODULE'_ARR to plugin
 --no-color                        #BOOL (def: false)
 ENVVAR CI=true
 --ci                              #BOOL (def: false). CI output.
+                                  #Logs to stdout instead of stderr
 
 --verbose|-v                      #BOOL_ARR. Verbose logs
 
@@ -177,7 +179,7 @@ ENVVAR AWS_CA_BUNDLE
 --ca-bundle-path                  #'PATH' to CA certificates for HTTPS
 --ec2creds|-i                     #BOOL (def: false). Fetch EC2 instance credentials instead of guessing EC2 instance status
 
-cdk docs                          #Open CDK docs
+cdk doc[s]                        #Open CDK docs
 --browser|-b                      #'COMMAND' to open the browser
                                   #Can use %u for the file to open
                                   #Def: xdg-open %u (Linux), open %u (macOS), start %u (Windows)
@@ -231,12 +233,12 @@ cdk deploy [STACKS...]            #Deploy STACKS to CloudFormation
 --all                             #BOOL (def: false). Deploy all STACKs
 
 --method|-m                       #Deploy using:
-                                  #  - 'direct': UpdateStack()
+                                  #  - 'direct': UpdateStack() (no progress info)
                                   #  - 'prepare-change-set': CreateChangeSet()
                                   #  - 'change-set': CreateChangeSet() + ExecuteChangeSet()
 --change-set-name                 #'CHANGESET'
---rollback                        #BOOL (def: true). STACK|CHANGESET.DisableRollback false|true
-                                  #Must not be false if some RESOURCEs are replaced
+--no-rollback|-R                  #BOOL. STACK|CHANGESET.DisableRollback BOOL (def: false)
+                                  #Must not be true if some RESOURCEs are replaced
 
 --parameters                      #OBJ. Key is '[STACK:]PARAM'. STACK|CHANGESET.Parameters
 --previous-parameters             #BOOL (def: true). Re-use PARAMs from previous deploy, except ones overridden
@@ -251,6 +253,19 @@ cdk deploy [STACKS...]            #Deploy STACKS to CloudFormation
 
 --asset-prebuild                  #BOOL (def: true). Build all assets before deploying the first stack (useful for failing Docker builds)
 --build-exclude|-E                #STR_ARR. Do not rebuild asset with the given ID
+
+--require-approval                #Whether to require manual approval for security-sensitive changes (e.g. IAM|STS-related):
+                                  #  - 'never'
+                                  #  - 'any-change': always
+                                  #  - 'broadening' (def): only if add more permissions, not remove
+
+--force|-f                        #BOOL. If false (def), fail if TEMPLATE did not change
+
+--hotswap                         #BOOL (def: false). Update RESOURCEs by making direct calls to SERVICEs instead of using CloudFormation
+                                  #If some properties are not hotswappable, ignore them
+                                  #Only supports !Ref|GetAtt|ImportValue|Join|Select|Split|Sub
+                                  #Meant for speed, for development only (since it introduces drift)
+--hotswap-fallback                #BOOL (def: false). Same but if some properties are not hotswappable, do a normal deploy instead
 
 
                                              /=+===============================+=\
@@ -269,17 +284,6 @@ CONF.watch.include|exclude        #'GLOB'. Def: ./**
 
 --logs                            #BOOL (def: true). Print CloudWatch Logs LLEVENTs from all RESOURCEs
                                   #Requires --watch
---hotswap                         #BOOL (def: false). Update RESOURCEs by making direct calls to SERVICEs instead of using CloudFormation
-                                  #If some properties are not hotswappable, ignore them
-                                  #Only supports !Ref|GetAtt|ImportValue|Join|Select|Split|Sub
-                                  #Meant for speed, for development only (since it introduces drift)
---hotswap-fallback                #BOOL (def: false). Same but if some properties are not hotswappable, do a normal deploy instead
-
---force|-f                        #BOOL. If false (def), fail if TEMPLATE did not change
---require-approval                #Whether to require manual approval for security-sensitive changes (e.g. IAM|STS-related):
-                                  #  - 'never'
-                                  #  - 'any-change': always
-                                  #  - 'broadening' (def): only if add more permissions, not remove
 
 
                                              /=+===============================+=\
@@ -303,6 +307,26 @@ cdk import [STACKS]               #Do a CHANGESET import
 
                                              /=+===============================+=\
                                             /  :                               :  \
+                                            )==:          CLI MIGRATE          :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+cdk migrate                       #Migrate from CloudFormation to CDK
+
+--language|-l                     #STR (def: 'typescript'). Like cdk init, except no 'javascript', nor 'fsharp'
+--account                         #'ACCOUNT_ID' of source STACK
+--region                          #'REGION' of source STACK
+--from-path                       #'PATH' to source TEMPLATE
+--from-stack                      #BOOL (def: false). Use source STACK's TEMPLATE
+
+--output-path                     #'DIR'
+--compress                        #BOOL (def: false). Zip output 'DIR'
+--stack-name|-n                   #'STACK'. New STACK.stackName
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
                                             )==:          CLI STACKS           :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -319,11 +343,12 @@ cdk diff [STACKS...]              #Compare production STACK with local one
                                   #Not meant for drift, but for changes not committed yet
                                   #TODO: move to `cdk-diff` doc
 --template                        #Compare with 'TEMPLATE_PATH' instead of production STACK
---context-lines                   #NUM (def: 3) of context  files
+--context-lines                   #NUM (def: 3) of context lines in diff
 --fail                            #BOOL (def: false). Exit code 1 if any difference
 --quiet|-q                        #BOOL (def: false). No output if no diff
 --security-only                   #BOOL (def: false). Only show security-sensitive changes that add more permissions
 --processed                       #BOOL (def: false). Apply MACROs processing first
+--strict                          #BOOL (def: false). Do not filter out AWS::CDK::Metadata resources or mangled non-ASCII characters
 
 
                                              /=+===============================+=\
@@ -366,13 +391,10 @@ CVAR
 DOPTS.qualifier                   #'BOOTSTRAP_MID'
 CSYNTH.bootstrapQualifier         #Def: 'hnb659fds'
 
-cdk bootstrap|deploy|import
---toolkit-stack-name              #'STACK' (def: 'CDKToolkit') created by `cdk bootstrap`
-
 cdk bootstrap ['ENVIRONMENT'...]  #Deploy the BOOTSTRAP STACK
                                   #Def 'ENVIRONMENT': current one
---execute                         #Like cdk import
 --previous-parameters             #Like cdk deploy
+--execute                         #BOOL (def: true). Whether to call ExecuteChangeSet()
 
 --bootstrap-bucket-name|-b
 --toolkit-bucket-name             #S3 'BUCKET'. Must not exist yet
@@ -387,6 +409,11 @@ cdk bootstrap ['ENVIRONMENT'...]  #Deploy the BOOTSTRAP STACK
  -policies                        #Def: allow all
 --trust                           #'ACCOUNT_ID'_ARR used as Principal in the POLICY, for any PACTIONs
 --trust-for-lookup                #Same but only for lookupRoleArn
+
+--custom-permissions-boundary
+ |-cpb                            #'PERMISSIONS_BOUNDARY'
+--example-permissions-boundary
+ |-ebp                            #BOOL (def: false). Use the example permissions boundary.
 
 --show-template                   #BOOL (def: false). Instead of actual bootstrapping, print the current CLI's bootstrapping template to stdout for customization
 --template                        #STR. Use the template from the given file instead of the built-in one
@@ -565,7 +592,7 @@ MISSING_CONTEXT.props             #PCONTEXT.* OBJ value
 
 cdk ... --notices                 #BOOL (def: false). Print ANNOTATIONs
 cdk notices                       #Print all ANNOTATIONs
-cdk acknowledge|ack [NOTICE_ID]   #Add an ACK
+cdk ack[nowledge] [NOTICE_ID]     #Add an ACK
 
 ENVVAR CDK_VALIDATION=true
 cdk synth --validation            #BOOL (def: true). Print error|warning|info ANNOTATIONs
@@ -1934,7 +1961,7 @@ new Assembly
  ('ASSEMBLY_DIR'[, LOPTS])        #Loads ASSEMBLY_DIR by using its MANIFEST
 
 cdk --output|-o
-ENVVAR CDK_OUTDIR                 #'ASSEMBLY_DIR'. Def: 'TMPDIR/cdk.outRANDOM'
+ENVVAR CDK_OUTDIR                 #'ASSEMBLY_DIR'. Def: './cdk.out' in CLI, 'TMPDIR/cdk.outRANDOM' programmatically
 SSOPTS|CSTAGE|CSESSION.outdir     #If does not exist, created
 CASSEMBLY.directory               #Cannot be specified by nested CSTAGE
 
