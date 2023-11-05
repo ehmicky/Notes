@@ -5,11 +5,34 @@
 
 
 
+SSOPTS.policyValidationBeta1      #VPOL_ARR
+VPOL.name                         #STR
+VPOL.version                      #STR
+VPOL.ruleIds                      #STR_ARR
+VPOL.validate                     #FUNC(VREQ)->VRES
+VREQ.templatePaths                #'PATH'_ARR to 'TEMPLATE' of all STACKs
+VRES.success                      #BOOL
+VRES.pluginVersion                #STR
+VRES.metadata.VAR                 #STR
+VRES.violations                   #VERROR_ARR
+VERROR.ruleName                   #STR
+VERROR.description                #STR
+VERROR.fix                        #STR
+VERROR.severity                   #STR
+VERROR.ruleMetadata.VAR           #STR
+VERROR.violatingResources         #VRES_ARR
+VRES.resourceLogicalId            #STR
+VRES.locations                    #STR_ARR
+VRES.templatePath                 #STR
+
 TODO:
-  - https://github.com/aws/aws-cdk/blob/22168b183417d446d6a5113cee569b4c814f10d8/packages/aws-cdk-lib/core/lib/private/refs.ts#L220
-  - CfnJson: https://github.com/aws/aws-cdk/blob/main/packages/aws-cdk-lib/core/lib/cfn-json.ts (already started)
-  - CfnParse: https://github.com/aws/aws-cdk/blob/main/packages/aws-cdk-lib/core/lib/cfn-parse.ts
   - validation plugins: https://github.com/aws/aws-cdk/tree/main/packages/aws-cdk-lib/core/lib/validation
+  - cloudformation-include:
+     - https://github.com/aws/aws-cdk/tree/main/packages/aws-cdk-lib/cloudformation-include
+     - spec2cdk:
+        - https://github.com/aws/aws-cdk/blob/main/tools/%40aws-cdk/spec2cdk/lib/cdk/resource-class.ts#L156
+        - https://github.com/aws/aws-cdk/blob/main/tools/%40aws-cdk/spec2cdk/lib/cdk/cloudformation-mapping.ts#L237
+     - CfnParse: https://github.com/aws/aws-cdk/blob/main/packages/aws-cdk-lib/core/lib/helpers-internal/cfn-parse.ts
   - ITG (integrity manifest)
   - https://github.com/aws/aws-cdk/tree/main/packages/aws-cdk-lib
   - https://github.com/aws/aws-cdk/tree/main/packages
@@ -964,19 +987,11 @@ CROSS-STACK REFERENCES ==>        #When a CREF's target is in a different CSTACK
                                   #Only if both CSTACKs are in same CAPP, ACCOUNT_ID and REGION (including agnostic)
                                   #Not if CFNREF.assignValueForStack() already called
 
-SOPTS.crossRegionReferences       #BOOL (def: false). Allows CREF to target a different CSTACK in a different REGION (unless agnostic)
+SOPTS.crossRegionReferences       #BOOL (def: false). Allows CREF to target a different CSTACK in a different REGION (unless agnostic):
+                                  #  - in target REGION, a CustomResource resolves CREF and exports it as SSM parameter 'EXPORT'
+                                  #  - in source REGION, another CustomResource's sets a RESATTR 'EXPORT' to '{{resolve:ssm:EXPORT}}', i.e. importing it
+                                  #     - CREF resolves to it, i.e. { GetAtt: [CUSTOM_RESOURCE_LID, 'EXPORT'] }
                                   #Also makes CKRESOURCE.getResourceNameAttribute() not use CKRESOURCE.physicalName when STACKs differ only per REGION
-
-Same CAPP, no nesting in either direction, different CSTACK
-Uses { GetAtt: [CustomResource2_LID, '/cdk/exports/EXPORT'] }
-Uses source REGION
-CustomResource2:
-  - return { Data: { /cdk/exports/EXPORT: RV resolving to '{{resolve:ssm:/cdk/exports/EXPORT}}' } }
-  - SSM PARAMs '/cdk/exports/EXPORT'
-     - TAG 'aws-cdk:strong-ref:CSTACK.stackName' 'true'
-CustomResource:
-  - create SSM PARAM '/cdk/exports/EXPORT' VAL (CREF resolved value)
-  - return nothing
 
 
                                              /=+===============================+=\
@@ -1284,11 +1299,13 @@ CKRESOURCE.physicalName           #'NAME'[_TK]. Readonly. Protected, i.e. only i
 
 CKRESOURCE                        #Resolves to 'NAME' passed as input
  .getResourceNameAttribute        #However, if used cross-account|region, resolves to CKRESOURCE.physicalName instead
- ('NAME')->'NAME'_TK              #  - i.e. CKRESOURCE's STACK and consuming CONSTRUCT's STACK2 are in a different ACCOUNT or REGION
+ ('NAME'[_TK])->'NAME'_TK         #  - i.e. CKRESOURCE's STACK and consuming CONSTRUCT's STACK2 are in a different ACCOUNT or REGION
                                   #  - unless CKRESOURCE.physicalName is TK
+                                  #Meant to expose underlying CRESOURCE.attrRESATTR (passed as argument) (of the CRESOURCE's 'NAME') as CKRESOURCE.*
 CKRESOURCE                        #Same except resolves to 'ARN'
  .getResourceArnAttribute         #If cross-account|region, uses ARN_OBJ instead
- ('ARN', ARN_OBJ)->'ARN'_TK       #  - ARN_OBJ.resourceName must include `CKRESOURCE.physicalName`
+ ('ARN'[_TK], ARN_OBJ)->'ARN'_TK  #  - ARN_OBJ.resourceName must be|include `CKRESOURCE.physicalName`
+                                  #Meant to expose underlying CRESOURCE.ref (passed as argument) as CKRESOURCE.*
 
 PhysicalName.GENERATE_IF_NEEDED   #When passed to CKOPTS.physicalName, sets as 'NAME' (61 chars, lowercase'd) concatenation of:
                                   #  - CSTACK.stackName (first 25 chars)
@@ -1648,8 +1665,8 @@ OPTS.versionId                    #'VID'
                                              \=+===============================+=/
 
 
-Fn.*(...)                         #Arguments can be RV|TKs
-                                  #If no RV|TK passed as argument, returns result directly
+Fn.*(...)                         #Arguments can be RVV
+                                  #If no RVV passed as argument, returns result directly
                                   #  - only for Fn.split|select|len|toJsonString|parseDomainName()
 
 Fn.ref(STR)->STR_TK               #{ Ref: STR }
@@ -1680,8 +1697,11 @@ Fn.select
  (NUM, STR_ARR)->STR[_TK]         #{ Fn::Select: [NUM, STR_ARR] }
 
 Fn.toJsonString(OBJ|ARR)->STR_TK  #{ Fn::ToJsonString: OBJ|ARR }
-new CfnJson(PARENT_CONSTRUCT,     #RV that resolves to { Fn::ToJsonString: OBJ|ARR }
- 'CJSON', { value: OBJ|ARR })     #Also inherits CONSTRUCT
+
+new CfnJson(PARENT_CONSTRUCT,     #CFN_JSON. RV resolving to JSON.parse(JSON.stringify(OBJ|ARR))
+ 'CFN_JSON', { value: OBJ|ARR })  #OBJ|ARR can use RVVs
+                                  #Goal: using RVV as OBJ keys
+CFN_JSON.value                    #CFNREF
 
 Fn.base64(STR)->STR_TK            #{ Fn::Base64: STR }
 
