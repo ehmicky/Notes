@@ -7,7 +7,7 @@
 
 TODO:
   - CLI: https://github.com/aws/aws-cdk/tree/main/packages/aws-cdk
-     - to do: bootstrap, synth, deploy, watch, import, list, destroy
+     - to do: deploy, watch, import, list, destroy
      - those flags are only for specific commands???
         --output --staging --asset-metadata --path-metadata --version-reporting --app --build --no-lookups
   - https://github.com/aws/aws-cdk/blob/main/DEPRECATED_APIs.md
@@ -259,25 +259,13 @@ cdk bootstrap ['ENVIRONMENT'...]  #Deploy BOOTSTRAP_STACK, one per ENVIRONMENT
                                   #Def 'ENVIRONMENT': '**'
 --previous-parameters             #Like cdk deploy
 --execute                         #BOOL (def: true). Whether to call ExecuteChangeSet()
-
 --tags|-t                         #OBJ_ARR. BOOTSTRAP_STACK.Tags
                                   #In CONFIG file, OBJ_ARR: Key 'TAG', Value 'VAL'
-
 --trust                           #'ACCOUNT_ID'_ARR to allow to assume any BOOTSTRAP_ROLE
+                                  #Current ACCOUNT always included
 
-BOOTSTRAP_STACK                   #STACK used by `cdk` CLI
-                                  #Also called "toolkit"
-                                  #Includes:
-                                  #  - ROLEs 'cdk-${Qualifier}-BOOTSTRAP_ROLE-role-${AWS::AccountId}-${AWS::Region}' among BOOTSTRAP_ROLE:
-                                  #     - 'cfn-exec': STACK.RoleARN
-                                  #     - 'deploy': `cdk deploy`
-                                  #     - 'file-publishing': FASSET upload to S3
-                                  #     - 'image-publishing': IASSET upload to ECR
-                                  #     - 'lookup': ContextProvider and some read-only CloudFormation API calls
-                                  #  - S3 BUCKET 'cdk-${Qualifier}-assets-${AWS::AccountId}-${AWS::Region}': for FASSETs
-                                  #  - ECR REPO 'cdk-${Qualifier}-container-assets-${AWS::AccountId}-${AWS::Region}': for FASSETs
-                                  #  - SSM value '/cdk-bootstrap/${Qualifier}/version'
-                                  #  - KMS KEY|ALIAS 'cdk-${Qualifier}-assets-key': if --bootstrap-customer-key
+BOOTSTRAP_STACK                   #STACK used by `cdk` CLI. Also called "toolkit"
+                                  #Includes ROLEs, S3 BUCKET and KMS KEY|ALIAS (for FASSET), ECR REPO (for IASSET), SSM parameter (for BootstrapVersion)
 
 cdk bootstrap|deploy|import
 --toolkit-stack-name              #BOOTSTRAP 'STACK' name (def: 'CDKToolkit')
@@ -290,7 +278,7 @@ CSYNTH.bootstrapQualifier         #Def: 'hnb659fds'
 
 MANIFEST_APROPS|STACK_APROPS      #STR. SSM parameter with BOOSTRAP_STACK format version
  |STACK_CARTIFACT|LOOKUP_ROL|DOPTS#Incremented each time a new release of `cdk` changes BOOTSTRAP_STACK, even if not breaking
-.bootstrapStackVersionSsmParameter#Part of BOOTSTRAP_STACK, named 'CdkBootstrapVersion', and exported as STACK OUTPUT 'BootstrapVersion'
+.bootstrapStackVersionSsmParameter#Is BOOTSTRAP_STACK.Resources.CdkBootstrapVersion, exported as STACK OUTPUT 'BootstrapVersion'
                                   #Def: '/cdk-bootstrap/${Qualifier}/version'. Can be BSTR
                                   #Current version: 19
 MANIFEST_APROPS|STACK_APROPS      #NUM. Minimum BootstrapVersion supported by `cdk`, i.e. last one with breaking change
@@ -327,9 +315,10 @@ cdk bootstrap
                                              \=+===============================+=/
 
 
-cdk synth[esize] [STACKS...]      #Convert CAPP to ASSEMBLY
+cdk synth[esize] [STACKS...]      #Produce ASSEMBLY from CAPP
                                   #Def: all STACKs
---quiet|-q                        #BOOL. If false (def), print TEMPLATE to stdout too
+                                  #Automatically called by `cdk diff|deploy|import|destroy|list|metadata`, which are the commands using ASSEMBLY
+--quiet|-q                        #BOOL. If false (def), print TEMPLATE to stdout too, if only one STACK
 
 cdk ...
 --build                           #'SHELL_COMMAND' run before `cdk synth` to build the CAPP
@@ -394,6 +383,22 @@ cdk deploy [STACKS...]            #Deploy STACKS to CloudFormation
                                   #  - AppSync, CodeBuild, StepFunctions, ECS: some of it
                                   #Meant for speed, for development only (since it introduces drift)
 --hotswap-fallback                #BOOL (def: false). Same but if some properties are not hotswappable, do a normal deploy instead
+
+STACK_APROPS|STACK_CARTIFACT      #'ROLE_ARN' used to call CloudFormation API during `cdk deploy|import` for this STACK. Can be BSTR
+ .assumeRoleArn                   #Can be '': using CLI's credentials
+DOPTS|CSYNTH.deployRoleArn        #Def: BOOTSTRAP_ROLE 'deploy', which is BOOTSTRAP_STACK.Resources.DeploymentActionRole:
+                                  #  - allowed cloudformation:CreateChangeSet|DeleteChangeSet|ExecuteChangeSet|DescribeChangeSet
+                                  #    cloudformation:CreateStack|UpdateStack|DeleteStack|DescribeStacks,
+                                  #    cloudformation:DescribeStackEvents|GetTemplate[Summary], cloudformation:UpdateTerminationProtection
+                                  #  - allowed s3:GetObject*|GetBucket*|List* on FASSET 'BUCKET'
+                                  #  - allowed s3:GetObject*|GetBucket*|List*, s3:Abort*|DeleteObject*|PutObject*
+                                  #     - only if cross-account, for CodePipeline
+                                  #  - allowed iam:PassRole to BOOTSTRAP_ROLE 'cfn-exec'
+                                  #  - allowed ssm:GetParameter on BootstrapVersion
+STACK_APROPS|STACK_CARTIFACT
+ .assumeRoleExternalId
+DOPTS.deployRoleExternalId        #STR (def: none). ASSUMED_ROLE_REQ.ExternalId with assumeRoleArn
+
 
 
                                              /=+===============================+=\
@@ -615,8 +620,10 @@ OPTS.*                            #PCONTEXT.*
 OPTS.lookupRoleArn                #LOOKUP_ROLE_ARN, used for requests
 
 STACK_APROPS|STACK_CARTIFACT      #LOOKUP_ROLE. Used for read-only requests: ContextProvider, `cdk diff`
- .lookupRole                      #Def: BOOTSTRAP_ROLE 'lookup-role'
-                                  #With `cdk diff`: if no BOOTSTRAP, uses CLI's credentials
+ .lookupRole                      #With `cdk diff`: if no BOOTSTRAP, uses CLI's credentials
+                                  #Def: BOOTSTRAP_ROLE 'lookup', which is BOOTSTRAP_STACK.Resources.LookupRole
+                                  #  - has AWS managed policy  arn:aws:iam::aws:policy/ReadOnlyAccess', i.e. readonly for all SERVICEs
+                                  #  - denied kms:Decrypt
 DOPTS.lookupRoleArn
 LOOKUP_ROLE.arn                   #ROLE_ARN. Can be BSTR
 CSYNTH.lookupRole                 #Can be '': using CLI's credentials
@@ -887,9 +894,9 @@ SOPTS.tags                        #OBJ. STACK.Tags
 cdk bootstrap|deploy|import
  |destroy --role-arn|-r
 STACK_APROPS|STCK_CARTIFACT|CSYNTH
- .cloudFormationExecutionRoleArn  #'ROLE_ARN'. STACK.RoleARN
-DOPTS                             #Def: BOOTSTRAP_ROLE 'cfn-exec'. Can be BSTR
- .cloudFormationExecutionRole     #Can be '': using CLI's credentials
+ .cloudFormationExecutionRoleArn  #'ROLE_ARN'. STACK.RoleARN. Can be BSTR
+DOPTS                             #Can be '': using CLI's credentials
+ .cloudFormationExecutionRole     #Def: BOOTSTRAP_ROLE 'cfn-exec', which is BOOTSTRAP_STACK.Resources.CloudFormationExecutionRole
 cdk bootstrap
 --cloudformation-execution        #POLICY_ARN_ARR attached to BOOTSTRAP_ROLE 'cfn-exec'
  -policies                        #Def: none if --trust, IAM AdministratorAccess otherwise
@@ -2228,13 +2235,6 @@ STACK_APROPS|STACK_CARTIFACT      #FASSET_RES.s3ObjectUrlWithPlaceholders, i.e. 
                                   #S3 OBJECT is 'cdk/STACK_ARTIFACT_ID/TEMPLATE_HASH.yml'
 STACK_CARTIFACT.template          #CloudFormation TEMPLATE OBJ
 
-STACK_APROPS|STACK_CARTIFACT      #'ROLE_ARN' used to call CloudFormation API during `cdk deploy|import` for this STACK
- .assumeRoleArn                   #Def: BOOTSTRAP_ROLE 'deploy'. Can be BSTR
-DOPTS|CSYNTH.deployRoleArn        #Can be '': using CLI's credentials
-STACK_APROPS|STACK_CARTIFACT
- .assumeRoleExternalId
-DOPTS.deployRoleExternalId        #STR (def: none). ASSUMED_ROLE_REQ.ExternalId with assumeRoleArn
-
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -2378,8 +2378,13 @@ DOPTS.bucketPrefix                #STR (def: '') prefixing S3 'OBJECT'
 
 cdk bootstrap
 --bootstrap-bucket-name|-b        #S3 'BUCKET' for FASSETs. Def: 'cdk-${Qualifier}-assets-${AWS::AccountId}-${AWS::Region}'
---toolkit-bucket-name             #Is BOOTSTRAP_STACK.Resources.StagingBucket
-                                  #Uses: ACL 'private', VERSIONING (delete former VERSIONs after 1y),
+--toolkit-bucket-name             #Is BOOTSTRAP_STACK.Resources.StagingBucket, exported as STACK OUTPUTs BucketName and BucketDomainName
+                                  #Uses:
+                                  #  - ACL 'private'
+                                  #  - VERSIONING (delete former VERSIONs after 1y)
+                                  #  - UpdateReplacePolicy|DeletePolicy 'Retain'
+                                  #  - BUCKET_POLICY requiring TLS
+                                  #     - at BOOTSTRAP_STACK.Resources.StagingBucketPolicy
 --bootstrap-kms-key-id            #KMS_KEY_ID used with BUCKET's x-amz-server-side-encryption-aws-kms-key-id [C|S] (SSE-KMS)
                                   #Def: none, i.e. uses SSE-S3
 --bootstrap-customer-key          #BOOL (def: false). Like --bootstrap-kms-key-id, but creates KMS_KEY as part of BOOTSTRAP_STACK
@@ -2392,9 +2397,11 @@ FASSET_RES
 FASSET_RES.s3ObjectUrl            #Same, but as BSUB
 FASSET_RES.httpUrl                #BSUB 'https://s3.${AWS::Region}.amazonaws.com/BUCKET/OBJECT'
 
-FASSET_DEST.assumeRoleArn         #Like STACK_APROPS.* but for uploading to S3
-DOPTS.fileAssetPublishingRoleArn  #Def: BOOTSTRAP_ROLE 'file-publishing'. Can be BSTR
-                                  #Can be '': using CLI's credentials
+FASSET_DEST.assumeRoleArn         #Like STACK_APROPS.* but for uploading to S3. Can be BSTR
+DOPTS.fileAssetPublishingRoleArn  #Can be '': using CLI's credentials
+                                  #Def: BOOTSTRAP_ROLE 'file-publishing', which is at BOOTSTRAP_STACK.Resources.FilePublishingRole:
+                                  #  - allowed s3:GetObject*|GetBucket*|GetEncryptionConfiguration|List*, s3:DeleteObject*|PutObject*|Abort*
+                                  #  - only on FASSET 'BUCKET'
 FASSET_DEST.assumeRoleExternalId
 DOPTS
  .fileAssetPublishingExternalId   #STR (def: none). ASSUMED_ROLE_REQ.ExternalId with assumeRoleArn
@@ -2441,8 +2448,11 @@ CONTAINER_CACHE.params            #OBJ. Docker cache configuration
 IASSET_NEW.assetName              #'IMAGE_NAME'
 IASSET_NEW.sourceHash             #'IMAGE_HASH'
 
-IASSET_DEST.repositoryName        #ECR 'REPO'
-DOPTS.imageAssetsRepositoryName   #Def: see BOOTSTRAP. Can be BSTR
+IASSET_DEST.repositoryName        #ECR 'REPO'. Can be BSTR
+DOPTS.imageAssetsRepositoryName   #Def: 'cdk-${Qualifier}-container-assets-${AWS::AccountId}-${AWS::Region}'
+                                  #Is BOOTSTRAP.Resources.ContainerAssetsRepository, exported as STACK OUTPUT ImageRepositoryName:
+                                  #  - ImageTagMutability 'immutable'
+                                  #  - untagged IMAGEs expiring after 1y
 IASSET_RES.repositoryName         #Same but as BSUB
 IASSET_DEST.imageTag              #Docker 'IMAGE_TAG'
                                   #Is 'IMAGE_HASH'
@@ -2451,9 +2461,12 @@ DOPTS.dockerTagPrefix             #STR (def: '') prefixing 'IMAGE_TAG'
 
 IASSET_RES.imageUri               #BSUB '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/REPO:IMAGE_TAG'
 
-IASSET_DEST.assumeRoleArn         #Like STACK_APROPS.* but for uploading to ECR
-DOPTS.imageAssetPublishingRoleArn #Def: BOOTSTRAP_ROLE 'image-publishing'. Can be BSTR
-                                  #Can be '': using CLI's credentials
+IASSET_DEST.assumeRoleArn         #Like STACK_APROPS.* but for uploading to ECR. Can be BSTR
+DOPTS.imageAssetPublishingRoleArn #Can be '': using CLI's credentials
+                                  #Def: BOOTSTRAP_ROLE 'image-publishing', which is BOOTSTRAP_STACK.Resources.ImagePublishingRole:
+                                  #  - allowed ecr:PutImage|InitiateLayerUpload|UploadLayerPart|CompleteLayerUpload,
+                                  #    ecr:BatchCheckLayerAvailability|DescribeRepositories|DescribeImages|BatchGetImage|GetDownloadUrlForLayer
+                                  #  - only on IASSET's ECR 'REPO'
 IASSET_DEST.assumeRoleExternalId
 DOPTS
  .imageAssetPublishingExternalId  #STR (def: none). ASSUMED_ROLE_REQ.ExternalId with assumeRoleArn
