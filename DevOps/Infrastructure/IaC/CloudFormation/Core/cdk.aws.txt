@@ -6,10 +6,6 @@
 
 
 TODO:
-  - SID: https://github.com/aws/aws-cdk/blob/main/packages/aws-cdk-lib/core/lib/names.ts
-  - TimeZone: https://github.com/aws/aws-cdk/blob/main/packages/aws-cdk-lib/core/lib/time-zone.ts
-  - Size: https://github.com/aws/aws-cdk/blob/main/packages/aws-cdk-lib/core/lib/size.ts
-  - SecretValue: https://github.com/aws/aws-cdk/blob/main/packages/aws-cdk-lib/core/lib/secret-value.ts
   - custom-resource-provider:
      - https://github.com/aws/aws-cdk/tree/main/packages/aws-cdk-lib/core/lib/custom-resource-provider
      - https://github.com/aws/aws-cdk/blob/22168b183417d446d6a5113cee569b4c814f10d8/packages/aws-cdk-lib/core/lib/private/refs.ts#L220
@@ -43,6 +39,8 @@ TODO:
            - HFOPTS.readers
            - HFASSET.grantRead() (https://github.com/aws/aws-cdk/blob/main/packages/aws-cdk-lib/aws-s3-assets/lib/asset.ts#L218)
            - PermissionsBoundary
+           - finish role customization documentation
+           - re-visit CustomResourceProvider parts related to IAM
         - CloudWatch METRICs: CfnRESOURCEMetricsISTAT
         - EC2: CSTACK.availabilityZones
 
@@ -375,7 +373,7 @@ cdk bootstrap ['ENVIRONMENT'...]  #Deploy the BOOTSTRAP STACK
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:           CONSTRUCT           :==(
+                                            )==:        CONSTRUCT TREE         :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
@@ -394,22 +392,13 @@ new Construct                     #CONSTRUCT. Base class for most classes
                                   #  - usually CAPP|CSTAGE
 CONSTRUCT.node                    #NODE
 
-NODE.id                           #'CONSTRUCT'
-                                  #No / (converted to --)
-                                  #undefined if root
-NODE.addr                         #STR. NODE.id of parents + current NODE, excluding ones with id 'Default'
-                                  #Is hex SHA1 hash, starting with 'c8'
-NODE.path                         #'NODE_PATH'. NODE.id of parents + current NODE, /-separated
-                                  #undefined if root
-CONSTRUCT.toString()->STR         #Like NODE.path except '<root>' if root
-
 NODE.scope                        #Current CONSTRUCT
-                                  #undefined for root
-NODE.scopes                       #Ancestors CONSTRUCT_ARR, starting with root
+                                  #If root: undefined
+NODE.scopes                       #Ancestors CONSTRUCT_ARR, starting with root, ending with PARENT_CONSTRUCT
 NODE.root                         #Root CONSTRUCT
 NODE.children                     #Direct children CONSTRUCT_ARR
 NODE.defaultChild                 #Direct child CONSTRUCT that is most important
-                                  #Def: one with id 'Default' or 'Resource'
+                                  #Def: one with id 'Resource' (or 'Default')
 NODE.findChild('CONSTRUCT')       #Among direct children
  ->CONSTRUCT                      #Exception if not found
 NODE.tryFindChild('CONSTRUCT')
@@ -423,6 +412,45 @@ NODE.lock()                       #Do not allow other NODEs to become new childr
                                   #Inherited by current children
                                   #Set by `cdk synth`
 NODE.locked                       #BOOL (def: false)
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:         CONSTRUCT ID          :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+NODE.id                           #'CONSTRUCT'
+                                  #No / (converted to --)
+                                  #undefined if root
+
+NODE.path                         #'NID'. NODE.id of ancestors + current NODE, joined with / separator
+                                  #If root: ''
+CONSTRUCT.toString()->STR         #Like NODE.path except '<root>' if root
+
+NODE.addr                         #'AID'. Like NID but SHA1 hash'd, prefixed with 'c8'
+                                  #Also excludes any NODE.id 'Default'
+                                  #  - this allows refactoring NODE hierarchy without changing AID
+
+Names.nodeUniqueId(NODE)->'CID'   #NODE.id of ancestors + current NODE, joined without separators
+Names.uniqueId(CONSTRUCT)->'CID'  #  - excluding 'Default' or 'Resource'
+                                  #  - excluding parents with name being a prefix of child, e.g. parent 'This' -> child 'ThisThat'
+                                  #  - without any non-[:alnum:]
+                                  #  - truncated 255 chars
+                                  #Also appends hash of NODE.id of ancestors + current NODE
+                                  #  - without any of above transformations, i.e. to prevent collisions
+                                  #  - unless only one ancestor
+                                  #I.e. both unique and human-friendly
+                                  #For cross-STACK IDs
+
+Names.uniqueResourceName          #Like CID except only ancestors until CSTACK (which uses its stackName)
+ (CONSTRUCT, OPTS)->'SID'         #For STACK-specific IDs, e.g. RESOURCE names (when LID not possible)
+                                  #Can also customize with following OPTS
+OPTS.prefix                       #STR (def: '')
+OPTS.separator                    #STR (def: '')
+OPTS.maxLength                    #NUM (def: 255)
+OPTS.allowedSpecialCharacters     #STR (def: ''). Additional allowed characters, inserted in new RegExp('[STR]')
 
 
                                              /=+===============================+=\
@@ -540,8 +568,8 @@ ANNOTATION.addDeprecation         #Same as addWarningV2() except:
                                   #  - throws if ENVVAR CDK_BLOCK_DEPRECATIONS set
 
 Acknowledgement.of(CONSTRUCT)->ACK#One per CAPP
-ACK.add                           #Makes warning ANNOTATION with 'WNAME' a noop
- (CONSTRUCT|'NODE_PATH', 'WNAME') #Includes CONSTRUCT's descendants
+ACK.add(CONSTRUCT|'NID', 'WNAME') #Makes warning ANNOTATION with 'WNAME' a noop
+                                  #Includes CONSTRUCT's descendants
 ANNOTATION
  .acknowledgeWarning('WNAME')     #Same except remove the CMETADATA 'aws:cdk:warning', do not just ignore it
 ACK.has(CONSTRUCT|STR)->BOOL      #
@@ -556,7 +584,7 @@ cdk --trace                       #BOOL (def: false). Print stack trace with war
 
 CARTIFACT.messages                #CANNOTATION_ARR
 CANNOTATION.level                 #'error|warning|info'
-CANNOTATION.id                    #'/NODE_PATH'
+CANNOTATION.id                    #'/NID'
 CANNOTATION.entry                 #CMETADATA
 
 
@@ -720,9 +748,10 @@ CELEM|CKRESOURCE.stack            #CSTACK
 Stack.of(CONSTRUCT)->CSTACK       #Of CONSTRUCT or any ancestor
 
 SOPTS|STACK_APROPS|STACK_CARTIFACT#'STACK' name, as used in CloudFormation
- CSTACK.stackName                 #By default, same as 'CSTACK'
-STACK_CARTIFACT.originalName      #If parent CSTAGE is nested, prefix 'STAGE'
-                                  #  - if FFLAG @aws-cdk/core:includePrefixInUniqueNameGeneration (recommended): use SID
+ |CSTACK.stackName                #Def: SID but up until CSTAGE (excluded)
+STACK_CARTIFACT.originalName      #  - i.e. if direct child: uses 'CSTACK' as is
+                                  #  - if parent CSTAGE is nested, prefix 'STAGE'
+                                  #     - if FFLAG @aws-cdk/core:includePrefixInUniqueNameGeneration (recommended): more accurate prefixing
 
 SOPTS.description
 CSTACK.templateOptions.description#STR. STACK.Description
@@ -747,7 +776,7 @@ CVAR
 CSTACK.toJSON(VAL[, NUM])->STR_TK #Resolves to JSON.stringify(VAL)
                                   #NUM is identation (def: 0)
                                   #Handles VAL (or descendant) being:
-                                  #  - RV|TK|'TOKENS': resolved
+                                  #  - RVV: resolved
                                   #  - CloudFormation !FUNCs: kept as is and joined with { Fn::Join }
                                   #Although CSTACK's method, it is unrelated to CSTACK
 CSTACK.toYamlString(VAL)->STR_TK  #Same with YAML
@@ -840,28 +869,15 @@ new CfnElement                    #CONSTRUCT within a CSTACK
                                   #TEMPLATE.* top-level properties are shallowly merged
 CELEM.creationStack               #STR_ARR. Stack trace of CELEM's constructor
 
-CSTACK.getLogicalId(CELEM)->STR   #'CID' using NODE_PATH, excluding CSTACK, 'Default' and 'Resource'
+CSTACK.getLogicalId(CELEM)->STR   #'LID'. Like 'SID' but excluding CSTACK
                                   #Used as:
                                   #  - 'RESOURCE|PARAM|...' in CloudFormation TEMPLATEs
                                   #  - RESOURCE name's default value
-                                  #Since whole NODE_PATH is used, 'CELEM' (which is NODE.id) need only to be unique among siblings
 CELEM.logicalId                   #Same but as STR_RV
 CMETADATA 'aws:cdk:logicalId'     #CELEM.logicalId
                                   #Not set if CVAR aws:cdk:disable-logicalId-metadata true
 CELEM.overrideLogicalId(STR)      #Manually set CELEM.logicalId
 CSTACK.renameLogicalId(STR, STR2) #If logicalId is STR, set to STR2 instead
-
-SID                               #STR used as ID:
-                                  #  - remove any non-[:alnum:]
-                                  #  - truncated 255 chars
-CID                               #Like SID, but using STR_ARR:
-                                  #  - joined with empty delimiter
-                                  #  - remove duplicates
-                                  #  - appends HASH, as 8 hex chars
-                                  #When STR_ARR are parents (e.g. with CELEM), this allows composability:
-                                  #  - CID remains same unless parents change
-                                  #  - same STRs (e.g. NODE.id) result in same CID, i.e. no update
-                                  #  - i.e. allows users to namespace ID, while using in different parts of TEMPLATE
 
 
                                              /=+===============================+=\
@@ -916,7 +932,7 @@ CRULE.addAssertion(BOOL, STR)     #
                                              \=+===============================+=/
 
 
-new CfnOutput(PARENT_CONSTRUCT,   #COUTPUT. TEMPLATE.Outputs.OUTPUT_SID
+new CfnOutput(PARENT_CONSTRUCT,   #COUTPUT. TEMPLATE.Outputs.OUTPUT_LID
  'COUTPUT', OPTS)                 #Inherits CELEM
 OPTS.value                        #STR. OUTPUT.Value
 OPTS.description                  #STR. OUTPUT.Description
@@ -924,13 +940,13 @@ OPTS.exportName                   #'EXPORT'. OUTPUT.ExportName
 
 COUTPUT.importValue()->STR_TK     #{ Fn::ImportValue: 'EXPORT' }
 
-CSTACK.exportValue                #Create TEMPLATE.Outputs.OUTPUT_SID { value: VAL, exportName: OPTS.name }
+CSTACK.exportValue                #Create TEMPLATE.Outputs.OUTPUT_LID { value: VAL, exportName: OPTS.name }
  (VAL, OPTS)->STR_TK              #Return { Fn::ImportValue: 'EXPORT' }
 CSTACK.exportValue                #Same except OPTS.name 'EXPORT' is auto-generated
  (CREF[_TK])->STR_TK              #CREF's target must be either in same CSTACK or in a nested one.
                                   #If in a nested one:
-                                  #  - in nested CSTACK2, creates TEMPLATE.Outputs.OUTPUT_SID { value: CREF }
-                                  #  - in parent CSTACK, creates TEMPLATE.Outputs.OUTPUT_SID { value: { Fn::GetAtt: [CSTACK2, 'Outputs.OUTPUT'] } }
+                                  #  - in nested CSTACK2, creates TEMPLATE.Outputs.OUTPUT_LID { value: CREF }
+                                  #  - in parent CSTACK, creates TEMPLATE.Outputs.OUTPUT_LID { value: { Fn::GetAtt: [CSTACK2, 'Outputs.OUTPUT'] } }
                                   #  - repeat if deep nesting
 CSTACK.exportStringListValue
  (...)->ARR_TK                    #Same but when value is a STR_ARR
@@ -938,10 +954,10 @@ CSTACK.exportStringListValue
 CROSS-STACK REFERENCES ==>        #When a CREF's target is in a different CSTACK
                                   #Resolved during `cdk synth` by automatically adding PARAMs and OUTPUTs
                                   #If:
-                                  #  - targetting a [deep] parent CSTACK2:
+                                  #  - targeting a [deep] parent CSTACK2:
                                   #     - declare CREF in parent
                                   #     - pass to nested through PARAMs
-                                  #  - targetting a [deep] nested CSTACK2:
+                                  #  - targeting a [deep] nested CSTACK2:
                                   #     - declare CREF in nested
                                   #     - pass to parent through STACK OUTPUTs and { Fn::ImportValue }
                                   #  - otherwise: same but also add CSTACK dependency
@@ -1022,7 +1038,7 @@ DEPENDENCY_GROUP
 
 new CfnCondition                  #CCOND. TEMPLATE.Conditions.COND
  (PARENT_CONSTRUCT, 'CCOND', OPTS)#Inherits CELEM
-                                  #Is also a RV that resolves to { Condition: 'CCOND_CID' }
+                                  #Is also a RV that resolves to { Condition: 'CCOND_LID' }
 OPTS.expression                   #BOOL_RV
                                   #If undefined, no COND
 
@@ -1047,7 +1063,7 @@ Fn.findInMap
  ('FILTER', 'VAR', 'PROP'[, STR]) #
  ->STR_TK                         #{ Fn::FindInMap: ['FILTER', 'VAR', 'PROP'[, { DefaultValue: STR }]] }
 CFILTER.findInMap                 #Same except:
- ('VAR'[_TK], 'PROP'[_TK][, STR]) #  - automatically set 'FILTER' CID
+ ('VAR'[_TK], 'PROP'[_TK][, STR]) #  - automatically set 'FILTER' LID
  ->STR[_TK]                       #  - if used in a different CSTACK than CFILTER, set a TEMPLATE.Mappings.FILTER copy
                                   #  - automatically resolved if OPTS.lazy true and either:
                                   #     - no OPTS.VAR.PROP, and default value STR specified
@@ -1166,7 +1182,7 @@ CZOPTS.metadata                   #OBJ. TEMPLATE.Resources.RESOURCE.Metadata
 CVAR aws:cdk:enable-path-metadata
 cdk --path-metadata               #BOOL (def: true). Enables TEMPLATE.Resources.RESOURCE.Metadata['aws:cdk:path']
 TEMPLATE.Resources.RESOURCE
- .Metadata['aws:cdk:path']        #NODE_PATH
+ .Metadata['aws:cdk:path']        #NID
 
 
                                              /=+===============================+=\
@@ -1246,13 +1262,13 @@ new Resource(PARENT_CONSTRUCT,    #CKRESOURCE. Group of
                                   #Inherits CONSTRUCT
                                   #Documented online under "Constructs" section
 
-Resource.isOwnedResource          #Whether there is a direct child CSRESOURCE named 'Default' or 'Resource'
+Resource.isOwnedResource          #Whether there is a direct child CSRESOURCE named 'Resource' (or 'Default')
  (CONSTRUCT)->BOOL                #Means CKRESOURCE is a wrapper around it, and other children are just associated to it (e.g.  POLICYs)
 CKRESOURCE.applyRemovalPolicy(...)#Same as CKRESOURCE.node.defaultChild.applyRemovalPolicy(...)
 
 CKOPTS.physicalName               #'NAME'[_TK] of main child CSRESOURCE's
-                                  #Is SERVICE-specific 'NAME', not CloudFormation 'RESOURCE', nor SERVICE-specific MID
-                                  #If undefined (def: STR_TK resolving to undefined): auto-generated by CloudFormation
+                                  #This is SERVICE-specific 'NAME', not CloudFormation 'RESOURCE', nor SERVICE-specific MID
+                                  #If undefined (def: STR_TK resolving to undefined): kept as is, i.e. only for CloudFormation RESOURCEs with default names
 CKRESOURCE.physicalName           #'NAME'[_TK]. Readonly. Protected, i.e. only in subclasses.
 
 CKRESOURCE                        #Resolves to 'NAME' passed as input
@@ -1262,24 +1278,24 @@ CKRESOURCE                        #Resolves to 'NAME' passed as input
 CKRESOURCE                        #Same except resolves to 'ARN'
  .getResourceArnAttribute         #If cross-account|region, uses ARN_OBJ instead
  ('ARN', ARN_OBJ)->'ARN'_TK       #  - ARN_OBJ.resourceName must include `CKRESOURCE.physicalName`
-PhysicalName.GENERATE_IF_NEEDED   #When passed to CKOPTS.physicalName, same as undefined except:
-                                  #  - when calling CKRESOURCE.getResourceName|ArnAttribute() on cross-account|region
-                                  #  - then set CKRESOURCE.physicalName to auto-generated 'NAME', and use it
-                                  #Auto-generated 'NAME' (61 chars) is concatenation of:
-                                  #  - 'STACK' (first 25 chars, lowercase'd)
-                                  #  - NODE's 'SID' (first 24 chars)
-                                  #  - SHA256 hash (first 12 chars) of:
-                                  #     - STACK.account (must be set and not RV)
-                                  #     - STACK.region (must be set and not RV)
-                                  #     - 'STACK' (full)
-                                  #     - NODE's 'SID' (full)
+
+PhysicalName.GENERATE_IF_NEEDED   #When passed to CKOPTS.physicalName, sets as 'NAME' (61 chars, lowercase'd) concatenation of:
+                                  #  - CSTACK.stackName (first 25 chars)
+                                  #  - NODE's 'CID' (last 24 chars)
+                                  #  - SHA256 hash (12 chars) of:
+                                  #     - CSTACK.account
+                                  #     - CSTACK.region
+                                  #     - CSTACK.stackName (full)
+                                  #     - NODE's 'CID' (full)
+                                  #Must not be agnostic account|region
+                                  #CKOPTS.physicalName remains undefined until calling CKRESOURCE.getResourceName|ArnAttribute() on cross-account|region
 CKRESOURCE.generatePhysicalName() #Protected method to override in subclasses, to customize the 'NAME' auto-generated by PhysicalName.GENERATE_IF_NEEDED
  ->STR                            #E.g. can call super.generatePhysicalName() and prepend a prefix
 
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:        CUSTOM RESOURCE        :==(
+                                            )==:    CUSTOM RESOURCE SIMPLE     :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
@@ -1296,11 +1312,38 @@ OPTS.serviceToken                 #SNS_TOPIC_ARN|LAMBDA_FUNC_ARN. RESPROP Servic
 
 OPTS.removalPolicy                #ENUM (def: DESTROY) passed to CZRESOURCE.applyRemovalPolicy()
 
-CCUSTOM_RESOURCE.ref              #STR_TK resolving to { Ref: CID } targetting underlying CZRESOURCE
+CCUSTOM_RESOURCE.ref              #STR_TK resolving to { Ref: LID } targeting underlying CZRESOURCE
 CCUSTOM_RESOURCE.getAtt
  ('RESATTR')->CFNREF
 CCUSTOM_RESOURCE.getAttString
  ('RESATTR')->STR_TK              #Like CZRESOURCE.getAtt()
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:   CUSTOM RESOURCE ADVANCED    :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+CustomResourceProvider
+ .getOrCreateProvider
+ (PARENT_CONSTRUCT, STR, OPTS)
+ ->ZCUSTOM_RESOURCE
+
+ZCUSTOM_RESOURCE.serviceToken     #LAMBDA_FUNC_ARN, as STR_TK to { Fn::GetAtt: [FUNC_LID, 'Arn'] }
+                                  #Automatically created
+OPTS.codeDirectory                #'DIR' containing index.js entry point of LAMBDA_FUNC
+                                  #Must be Node.js and export `handler` FUNC
+                                  #If:
+                                  #  - CVAR @aws-cdk/core:inlineCustomResourceIfPossible: used as LAMBDA_FUNC.Code.ZipFile
+                                  #  - otherwise: ???
+
+ZCUSTOM_RESOURCE.roleArn          #ROLE_ARN. LAMBDA_FUNC.Role, automatically created
+                                  #Uses AWS managed ROLE AWSLambdaBasicExecutionRole
+                                  #FUNC DependsOn it
+OPTS.policyStatements             #IAM POLICY STATEMENT_OBJ_ARR to add
+
 
 
                                              /=+===============================+=\
@@ -1312,6 +1355,14 @@ CCUSTOM_RESOURCE.getAttString
 
 RV                                #"Resolvable". Deferred value
                                   #Meant to represent RESATTRs, PARAMs, etc.
+Tokenization
+ .isResolvable(VAL)->BOOL         #Whether is RV
+
+RVV                               #RV|TK|'TOKENS'
+Token.isUnresolved(VAL)->BOOL     #Whether is RVV
+Token.compareStrings              #Returns ENUM TokenComparison:
+ (STR, STR2)->ENUM                #  - BOTH_UNRESOLVED|ONE_UNRESOLVED: if both|either is RVV
+                                  #  - DIFFERENT|SAME: otherwise, using ===
 
 Tokenization.resolve              #Resolve all RVs in VAL, deeply
  (VAL, OPTS)->VAL                 #TKs are first decoded
@@ -1394,13 +1445,6 @@ Tokenization.reverse              #If VAL is:
                                   #If OPTS.failConcat false (def: true), can pass 'TOKENS'
                                   #  - only the first TK is turned into RV
 
-Tokenization
- .isResolvable(VAL)->BOOL         #Whether is a RV
-Token.isUnresolved(VAL)->BOOL     #Whether is a RV|TK|'TOKENS'
-Token.compareStrings              #Returns ENUM TokenComparison:
- (STR, STR2)->ENUM                #  - BOTH_UNRESOLVED|ONE_UNRESOLVED: if both|either is RV|TK|'TOKENS'
-                                  #  - DIFFERENT|SAME: otherwise, using ===
-
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -1458,10 +1502,10 @@ CfnReference
  .forPseudo(STR, CONSTRUCT)       #{ Ref: STR }
  ->CFNREF                         #CONSTRUCT is CREF.target
 CfnReference.for(CELEM,           #Reference to CELEM, either:
- 'RESATTR|Ref'[, ENUM[, ENUM2]])  #  - 'Ref': { Ref: CELEM_CID }
- ->CFNREF                         #  - no ENUM: [CELEM_CID, 'RESATTR'], to use in { Fn::GetAtt }
-                                  #  - ENUM ReferenceRendering.GET_ATT_STRING: CELEM_CID.RESATTR, to use in !GetAtt
-                                  #  - ENUM ReferenceRendering.FN_SUB: '${CELEM_CID[.RESATTR]}', to use in { Fn::Sub }
+ 'RESATTR|Ref'[, ENUM[, ENUM2]])  #  - 'Ref': { Ref: CELEM_LID }
+ ->CFNREF                         #  - no ENUM: { Fn::GetAtt: [CELEM_LID, 'RESATTR'] }
+                                  #  - ENUM ReferenceRendering.GET_ATT_STRING: { Fn::GetAtt: 'CELEM_LID.RESATTR' }
+                                  #  - ENUM ReferenceRendering.FN_SUB: '${CELEM_LID[.RESATTR]}', to use in { Fn::Sub }
                                   #     - 'RESATTR' is skipped when 'Ref'
                                   #ENUM2 is CREF.typeHint
 CFNREF                            #Resolves to RV instead of { Ref|Fn::GetAtt }
@@ -1470,10 +1514,10 @@ CFNREF.hasValueForStack
  (CSTACK)->BOOL                   #
 
 CZRESOURCE.getAtt                 #CfnReference.for(CZRESOURCE, 'RESATTR', undefined, ENUM)
- ('RESATTR'[, ENUM])->CFNREF      #I.e. [CZRESOURCE_CID, 'RESATTR']
+ ('RESATTR'[, ENUM])->CFNREF      #I.e. { Fn::GetAtt: [CZRESOURCE_LID, 'RESATTR'] }
 
 CfnRefElement                     #Inherits CfnElement
-CFNREFELEM.ref                    #STR_TK resolving to { Ref: CELEM_CID }
+CFNREFELEM.ref                    #STR_TK resolving to { Ref: CELEM_LID }
 
 
                                              /=+===============================+=\
@@ -1507,6 +1551,57 @@ ${Qualifier}                      #'BOOTSTRAP_MID'
 
                                              /=+===============================+=\
                                             /  :                               :  \
+                                            )==:         SECRET VALUE          :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+new SecretValue(VAL[, OPTS])      #CSECRET. Inherits from RV, resolving to VAL
+CSECRET.unsafeUnwrap()->STR_TK    #
+FFLAG                             #If true (recommended), require using unsafeUnwrap(), as opposed to resolving RV directly
+ @aws-cdk/core:checkSecretUsage   #I.e. requires being explicit about where VAL is being referenced
+
+OPTS|CSECRET.typeHint             #Like CREF.typeHint (def: STRING)
+OPTS.stackTrace                   #BOOL (def: true). Whether to create CSECRET.creationStack
+CSECRET.creationStack
+CSECRET.toString()->STR_TK
+CSECRET.toStringList()->ARR_TK    #Like CREF.*
+
+SecretValue.unsafePlainText
+ (STR)->CSECRET                   #Resolving to STR
+
+SecretValue.resourceAttribute
+ (CFNREFELEM.ref)->CSECRET        #Resolving to { Ref: CELEM_LID }
+
+SecretValue.cfnParameter          #Resolving to { Ref: 'PARAM' }
+ (CPARAM)->CSECRET                #Fails if PARAM.NoEcho true
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:       DYNAMIC REFERENCE       :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+new CfnDynamicReference
+ ('SERVICE', 'ARGS')              #CDYNREF. RV resolving to '{{resolve:SERVICE:ARGS}}'
+
+SecretValue.cfnDynamicReference
+ (CDYNREF)->CSECRET               #Resolving to '{{resolve:SERVICE:ARGS}}'
+
+SecretValue.ssmSecure
+ ('NAME'[, 'VERSION'])->CSECRET   #Resolving to '{{resolve:ssm-secure:NAME[:VERSION]}}'
+
+SecretValue.secretsManager
+ ('SECRET_ID'[, OPTS])->CSECRET   #Resolving to '{{resolve:secretsmanager:SECRET_ID:SecretString[:VARR][:VSTAGE|VID]}}'
+OPTS.jsonField                    #'VARR'
+OPTS.versionStage                 #'VSTAGE'
+OPTS.versionId                    #'VID'
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
                                             )==:           FUNCTIONS           :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -1520,9 +1615,6 @@ Fn.ref(STR)->STR_TK               #{ Ref: STR }
 Fn.getAtt
  ('RESOURCE', 'RESATTR')->RV      #{ Fn::GetAtt: ['RESOURCE', 'RESATTR'] }
 Fn.getAzs(['REGION'])->ARR_TK     #{ Fn::GetAZs: 'REGION'|'' }
-
-new CfnDynamicReference
- ('SERVICE', 'ARGS')              #RV resolving to '{{resolve:SERVICE:ARGS}}'
 
 Fn.importValue('EXPORT')->STR_TK  #{ Fn::ImportValue: 'EXPORT' }
 Fn.importListValue
@@ -1661,6 +1753,39 @@ EXPIRATION
 
                                              /=+===============================+=\
                                             /  :                               :  \
+                                            )==:           TIMEZONE            :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+Timezone.TIMEZONE                 #TIMEZONE. E.g. Timezone.EUROPE_ZURICH
+Timezone.of('TIMEZONE')->TIMEZONE #
+
+TIMEZONE.timezoneName             #'TIMEZONE'. E.g. 'Europe/Zurich'
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:             SIZE              :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+Size.UNIT(NUM[_RVV])->SIZE        #
+SIZE.toUNIT([OPTS])->NUM          #Throws if RVV, unless same UNIT
+OPTS.rounding                     #How to round, among ENUM SizeRoundingBehavior:
+                                  #  - NONE: keep as float
+                                  #  - FLOOR: Math.floor()
+                                  #  - FAIL (def): throw if not integer
+
+SIZE.unit.label                   #'UNIT' among: bytes|kibibytes|mebibytes|gibibytes|tebibytes|pedibytes
+SIZE.amount                       #NUM[_RVV] (in SIZE.unit)
+SIZE.unit.inBytes                 #NUM[_RVV] (in bytes)
+SIZE.isResolved()->BOOL           #Whether NUM is RVV
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
                                             )==:             SYNTH             :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -1775,11 +1900,11 @@ CARTIFACT.hierarchicalId          #Either STACK_ARTIFACT.displayName, or 'ARTIFA
 
 
 NESTED CSTAGE ==>                 #Nested CSTAGEs automatically create a nested ASSEMBLY
-CSTAGE.artifactId                 #'assembly-NODE_PATH' (with / -> -) used as 'ARTIFACT_ID'
+CSTAGE.artifactId                 #'assembly-NID' (with / -> -) used as 'ARTIFACT_ID'
                                   #If not nested: ''
 
 CBUILDER.createNestedAssembly
- ('ARTIFACT_ID', 'NODE_PATH')     #Create nested ASSEMBLY
+ ('ARTIFACT_ID', 'NID')           #Create nested ASSEMBLY
  ->CBUILDER2                      #Same as parent one, except ASSETS_DIR -> ASSETS_DIR/ARTIFACT_ID
 CBUILDER.parentBuilder            #Parent CBUILDER2, if nested
 
@@ -1796,7 +1921,7 @@ NASSEMBLY_APROPS
  |NSSEMBLY_CARTIFACT.directoryName#'ARTIFACT_ID'
 NASSEMBLY_CARTIFACT.fullPath      #'ASSEMBLY_DIR/ARTIFACT_ID'
 NASSEMBLY_APROPS
- |NASSEMBLY_CARTIFACT.displayName #'NODE_PATH'
+ |NASSEMBLY_CARTIFACT.displayName #'NID'
 
 
                                              /=+===============================+=\
@@ -1819,7 +1944,7 @@ TREE.version                      #'tree-0.1'
 TREE.tree                         #TNODE
 TNODE.children                    #TNODE_ARR
 TNODE.id                          #'CONSTRUCT' or 'App' (for root)
-TNODE.path                        #'NODE_PATH'
+TNODE.path                        #'NID'
 
 TNODE.attributes                  #TATTRS. Node-specific information, meant only for TREE
 NODE.inspect                      #FUNC(INSPECTOR) called during `cdk synth` to set TATTRS
@@ -1870,11 +1995,12 @@ CASSEMBLY.getStackByName
 CASSEMBLY.getStackArtifact
  ('ARTIFACT_ID')->STACK_CARTIFACT #Includes nested CASSEMBLYs
 
-STACK_ARTIFACT.displayName        #'NODE_PATH' of CSTACK
-STACK_CARTIFACT.displayName       #'NODE_PATH (CSTASK.stackName)'
+STACK_ARTIFACT.displayName        #'NID' of CSTACK
+STACK_CARTIFACT.displayName       #'NID (CSTASK.stackName)'
 STACK_ARTIFACT.properties         #STACK_APROPS
 
-CSTACK.artifactId                 #'ARTIFACT_ID'. Is CSTACK.stackName, but without 'STAGE' prefix
+CSTACK.artifactId                 #'ARTIFACT_ID'. If not in a nested CSTAGE: same as CSTACK.stackName
+                                  #Otherwise: SID but excluding CSTAGE
 
 CSTACK|STACK_APROPS               #'ARTIFACT_ID[.nested].template.json', i.e. 'PATH' to CloudFormation TEMPLATE
  |STACK_CARTIFACT.templateFile    #If NSTACK: `.nested`
@@ -1900,15 +2026,15 @@ DZOPTS.deployRoleExternalId       #STR (def: none). ASSUMED_ROLE_REQ.ExternalId 
                                              \=+===============================+=/
 
 
-STACK_ARTIFACT.metadata./NODE_PATH#CMETADATA_ARR. NODE-related information kept in ASSEMBLY
+STACK_ARTIFACT.metadata./NID      #CMETADATA_ARR. NODE-related information kept in ASSEMBLY
 NODE.metadata                     #Unlike STACK|RESOURCE.Metadata: not present in CloudFormation TEMPLATE
 CARTIFACT.findMetadataByType
- ('VAR')->CMETADATA_ARR           #Also include CMETADATA.path '/NODE_PATH'
+ ('VAR')->CMETADATA_ARR           #Also include CMETADATA.path '/NID'
 
 NODE.addMetadata
  ('VAR', VAL[, OPTS])             #Add a CMETADATA
 CMETADATA.type                    #'VAR'
-CMETADATA.data                    #VAL. Can contain RV|TK|'TOKENS'
+CMETADATA.data                    #VAL. Can contain RVV
 
 CMETADATA.trace                   #STR_ARR. Stack trace.
 OPTS.stackTrace                   #BOOL (def: false). Sets CMETADATA.trace using Error.captureStackTrace()
@@ -2167,7 +2293,7 @@ UOPTS.bundling                    #BOPTS. Transform 'SOURCE_PATH_DIR' using a Do
                                   #'BDIR' is temporary DIR: the final output is moved to UASSET.absoluteStagedPath
 
 CVAR aws:cdk:bundling-stacks
---bundling-stacks                 #'GLOB' (def: '**'). Only bundle STACKs with a matching 'NODE_PATH'
+--bundling-stacks                 #'GLOB' (def: '**'). Only bundle STACKs with a matching 'NID'
 BOPTS.local.tryBundle             #FUNC('BDIR', BOPTS)->BOOL. Do not bundle if false
 
 BOPTS.outputType                  #Final 'DIR|FILE' location, among:
@@ -2536,12 +2662,12 @@ Annotations.fromStack
 
 TANNOTATIONS
  .has[No]Error|Warning|Info
- ('NODE_PATH', 'MESSAGE')         #NODE (or descendant) has [not] emitted this ANNOTATION
+ ('NID', 'MESSAGE')               #NODE (or descendant) has [not] emitted this ANNOTATION
 TANNOTATIONS                      #NODEs (or descendants) with this ANNOTATION
  .findError|Warning|Info          #OBJ:
- ('NODE_PATH', 'MESSAGE')->OBJ_ARR#  - level 'error|warning|info'
+ ('NID', 'MESSAGE')->OBJ_ARR      #  - level 'error|warning|info'
                                   #  - id 'WNAME'
-                                  #  - entry: type 'aws:cdk:error|warning|info', path 'NODE_PATH', data 'MESSAGE', trace STR_ARR
+                                  #  - entry: type 'aws:cdk:error|warning|info', path 'NID', data 'MESSAGE', trace STR_ARR
 
 
                                              /=+===============================+=\
@@ -2559,6 +2685,26 @@ PermissionsBoundary
 PermissionsBoundary
  .fromArn(PERM_BOUNDARY_ARN_BSTR)
  ->CSTACK_PERM_BOUNDARY           #
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:              IAM              :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+Role.customizeRoles               #Makes Role.fromRoleArn(...)
+ (CONSTRUCT[, OPTS])              #  - use ???
+OPTS.preventSynthesis             #BOOL (def: true)
+OPTS.usePrecreatedRoles           #{ NID: 'ROLE', ... }
+                                  #NID can be relative to CONSTRUCT's NID2
+                                  #NID must point to CONSTRUCT's descendant
+
+getCustomizeRolesConfig
+ (CONSTRUCT)->OBJ                 #
+OBJ.enabled                       #BOOL. Whether Role.customizeRoles() called
+OBJ.preventSynthesis              #BOOL. OBJ.enabled && OPTS.preventSynthesis
 
 
                                              /=+===============================+=\
