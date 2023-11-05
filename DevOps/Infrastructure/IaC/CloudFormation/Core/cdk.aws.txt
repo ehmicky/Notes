@@ -77,6 +77,9 @@ TODO:
 VERSION ==>                       #2.105.0
                                   #Monorepo, i.e. same version for all packages
 
+ENVVAR CDK_DISABLE_VERSION_CHECK  #BOOL (def: !process.stdout.isTTY). If false, prints warning if new version available
+CDK_HOME/cache/repo-version-ttl   #Caches last version for 1d
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -151,7 +154,10 @@ CONFIG                            #Either (in priority order):
                                   #  - repeatable -> ARR
                                   #  - VAR=VAL, repeatable -> OBJ
                                   #  - --FLAG=BOOL or --[no-]FLAG -> BOOL
+                                  #  - no: --verbose|ci
                                   #Can also use ENVVAR CDK__VARR
+
+ENVVAR CDK_HOME                   #Def: ~/.cdk
 
 STACKS                            #'STACK'
                                   #Can contain ? * ** (/-delimited)
@@ -164,10 +170,10 @@ cdk --plugin|-p                   #'PATH|MODULE'_ARR to plugin
 
 --no-color                        #BOOL (def: false)
 ENVVAR CI=true
---ci                              #BOOL (def: false). CI output.
-                                  #Logs to stdout instead of stderr
+--ci                              #BOOL (def: false). Logs to stdout instead of stderr
 
---verbose|-v                      #BOOL_ARR. Verbose logs
+--verbose|-v                      #NUM (def: 0). Debug logs
+                                  #Can be repeated (i.e. 2) to also log any AWS API call
 
 --profile                         #'PROFILE' (see AWS config doc)
 --role-arn|-r                     #ROLE_ARN making CloudFormation API calls
@@ -176,8 +182,10 @@ ENVVAR CI=true
 ENVVAR HTTPS_PROXY
 --proxy                           #'URL'
 ENVVAR AWS_CA_BUNDLE
---ca-bundle-path                  #'PATH' to CA certificates for HTTPS
+--ca-bundle-path                  #'PATH' to CA certificates for HTTPS, in PEM format
 --ec2creds|-i                     #BOOL (def: false). Fetch EC2 instance credentials instead of guessing EC2 instance status
+CDK_HOME/cache
+ /accounts_partitions.json        #Caches ACCOUNT_ID|PARTITION of current ACCESS_KEY_ID
 
 cdk doc[s]                        #Open CDK docs
 --browser|-b                      #'COMMAND' to open the browser
@@ -403,7 +411,8 @@ cdk bootstrap ['ENVIRONMENT'...]  #Deploy the BOOTSTRAP STACK
 --public-access-block
  -configuration                   #BOOL (def: true). Use S3 PUBLIC_BLOCK
 
---tags|-t                         #OBJ. STACK.Tags
+--tags|-t                         #OBJ_ARR. STACK.Tags
+                                  #In CONFIG file, OBJ_ARR: Key 'TAG', Value 'VAL'
 
 --cloudformation-execution        #POLICY_ARN_ARR attached to the ROLE deploying
  -policies                        #Def: allow all
@@ -512,14 +521,10 @@ OPTS.allowedSpecialCharacters     #STR (def: ''). Additional allowed characters,
 
 CONTEXT                           #Data associated with NODEs
                                   #Inherited by descendant NODEs, which can override it
-                                  #Saved on filesystem at cdk.context.json
 
-NODE.setContext('CVAR', VAL)      #Should be set before adding child NODEs, since their constructor might check it
-NODE.getContext('CVAR')->VAL      #Throw if not found
-NODE.tryGetContext('CVAR')->VAL   #undefined if not found
-NODE.getAllContext([OBJ2])->OBJ   #OBJ2 (def: {}) is shallow merged
-
-AOPTS.context                     #{ CVAR: VAL, ... } to set as CONTEXT on CAPP
+./cdk.context.json                #{ CVAR: VAL, ... } to use as CONTEXT
+                                  #Saved on new CVAR value
+AOPTS.context                     #Same for CAPP
 ENVVAR CONTEXT_ENV                #Same as 'JSON_OBJ'
 ENVVAR
  CONTEXT_OVERFLOW_LOCATION_ENV    #Same as 'PATH' to JSON file
@@ -530,6 +535,11 @@ cdk context                       #Delete cdk.context.json
 --clear                           #BOOL (def: false). Delete whole file
 --reset|-e                        #Only delete 'CVAR'
 --force|-f                        #BOOL (def: false). Do not fail if 'CVAR' missing
+
+NODE.setContext('CVAR', VAL)      #Should be set before adding child NODEs, since their constructor might check it
+NODE.getContext('CVAR')->VAL      #Throw if not found
+NODE.tryGetContext('CVAR')->VAL   #undefined if not found
+NODE.getAllContext([OBJ2])->OBJ   #OBJ2 (def: {}) is shallow merged
 
 
                                              /=+===============================+=\
@@ -585,14 +595,26 @@ MISSING_CONTEXT.props             #PCONTEXT.* OBJ value
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:          ANNOTATIONS          :==(
+                                            )==:            NOTICES            :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
-cdk ... --notices                 #BOOL (def: false). Print ANNOTATIONs
-cdk notices                       #Print all ANNOTATIONs
-cdk ack[nowledge] [NOTICE_ID]     #Add an ACK
+cdk ... --notices                 #BOOL (def: false). Print NOTICEs, warning messages on deprecated versions|components (using TNODE.constructInfo)
+cdk notices                       #Print NOTICEs
+
+CDK_HOME/cache/notices.json       #Caches NOTICEs, since they are retrieved from https://cli.cdk.dev-tools.aws.dev/notices.json
+
+cdk ack[nowledge] [NOTICE_ID]     #Do not print this NOTICE anymore with `cdk --notices` (but still shown with `cdk notices`)
+CVAR acknowledged-issue-numbers   #'NOTICE_ID'_ARR
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:          ANNOTATIONS          :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
 
 ENVVAR CDK_VALIDATION=true
 cdk synth --validation            #BOOL (def: true). Print error|warning|info ANNOTATIONs
@@ -617,12 +639,8 @@ ANNOTATION.addDeprecation         #Same as addWarningV2() except:
                                   #     - appended with 'This API will be removed in the next major release'
                                   #  - throws if ENVVAR CDK_BLOCK_DEPRECATIONS set
 
-Acknowledgement.of(CONSTRUCT)->ACK#One per CAPP
-ACK.add(CONSTRUCT|'NID', 'WNAME') #Makes warning ANNOTATION with 'WNAME' a noop
-                                  #Includes CONSTRUCT's descendants
-ANNOTATION
- .acknowledgeWarning('WNAME')     #Same except remove the CMETADATA 'aws:cdk:warning', do not just ignore it
-ACK.has(CONSTRUCT|STR)->BOOL      #
+ANNOTATION                        #Remove CMETADATA 'aws:cdk:warning', in current process
+ .acknowledgeWarning('WNAME')     #Includes CONSTRUCT's descendants
 
 ANNOTATION.addInfo('MESSAGE')     #Add CMETADATA 'aws:cdk:info'
                                   #Printed by CLI
@@ -896,7 +914,10 @@ TEMPLATE.Resources.CDKMetadata    #Type 'AWS::CDK::Metadata'
                                   #  - list of CONSTRUCTs used in this STACK
                                   #  - uses {...} instead of repeating subparts, e.g. @aws-cdk/core.{Stack,Construct,CfnResource}
                                   #  - the part after 'v2:deflate64:' is gzip'd then base64'd
-                                  #Used for analytics, or notifying of security vulnerabilities
+                                  #Used by:
+                                  #  - `cdk diff` and `cdk-validator-cfnguard` output
+                                  #  - NOTICEs
+                                  #  - analytics
 
 TNODE.constructInfo.fqn           #'MODULE/EXPORT'
 TNODE.constructInfo.version       #'X.Y.Z'
@@ -2170,8 +2191,8 @@ CMETADATA.trace                   #STR_ARR. Stack trace.
 OPTS.stackTrace                   #BOOL (def: false). Sets CMETADATA.trace using Error.captureStackTrace()
                                   #Error.stackTraceLimit is temporarily set to Infinity
 OPTS.traceFromFunction            #FUNC (def: addMetadata), to start CMETADATA.trace from
-ENVVAR CDK_DEBUG=true
-cdk --debug                       #BOOL (def: false). Enable stack traces
+ENVVAR CDK_DEBUG=true             #BOOL (def: false). Enable stack traces
+cdk --debug                       #Handles source maps (using node-source-map-support)
 
 
                                              /=+===============================+=\
