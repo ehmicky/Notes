@@ -6,9 +6,7 @@
 
 
 TODO:
-  - custom-resource-provider:
-     - https://github.com/aws/aws-cdk/tree/main/packages/aws-cdk-lib/core/lib/custom-resource-provider
-     - https://github.com/aws/aws-cdk/blob/22168b183417d446d6a5113cee569b4c814f10d8/packages/aws-cdk-lib/core/lib/private/refs.ts#L220
+  - https://github.com/aws/aws-cdk/blob/22168b183417d446d6a5113cee569b4c814f10d8/packages/aws-cdk-lib/core/lib/private/refs.ts#L220
   - CfnJson: https://github.com/aws/aws-cdk/blob/main/packages/aws-cdk-lib/core/lib/cfn-json.ts (already started)
   - CfnParse: https://github.com/aws/aws-cdk/blob/main/packages/aws-cdk-lib/core/lib/cfn-parse.ts
   - validation plugins: https://github.com/aws/aws-cdk/tree/main/packages/aws-cdk-lib/core/lib/validation
@@ -963,11 +961,22 @@ CROSS-STACK REFERENCES ==>        #When a CREF's target is in a different CSTACK
                                   #     - declare CREF in nested
                                   #     - pass to parent through STACK OUTPUTs and { Fn::ImportValue }
                                   #  - otherwise: same but also add CSTACK dependency
-                                  #Only if both CSTACKs are in same CAPP, ACCOUNT_ID and REGION (including agnostic Aws.ACCOUNT_ID|REGION)
+                                  #Only if both CSTACKs are in same CAPP, ACCOUNT_ID and REGION (including agnostic)
                                   #Not if CFNREF.assignValueForStack() already called
 
-SOPTS.crossRegionReferences       #BOOL (def: false). Allows CREF to target a CSTACK in a different REGION (unless agnostic)
+SOPTS.crossRegionReferences       #BOOL (def: false). Allows CREF to target a different CSTACK in a different REGION (unless agnostic)
                                   #Also makes CKRESOURCE.getResourceNameAttribute() not use CKRESOURCE.physicalName when STACKs differ only per REGION
+
+Same CAPP, no nesting in either direction, different CSTACK
+Uses { GetAtt: [CustomResource2_LID, '/cdk/exports/EXPORT'] }
+Uses source REGION
+CustomResource2:
+  - return { Data: { /cdk/exports/EXPORT: RV resolving to '{{resolve:ssm:/cdk/exports/EXPORT}}' } }
+  - SSM PARAMs '/cdk/exports/EXPORT'
+     - TAG 'aws-cdk:strong-ref:CSTACK.stackName' 'true'
+CustomResource:
+  - create SSM PARAM '/cdk/exports/EXPORT' VAL (CREF resolved value)
+  - return nothing
 
 
                                              /=+===============================+=\
@@ -1297,7 +1306,7 @@ CKRESOURCE.generatePhysicalName() #Protected method to override in subclasses, t
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:    CUSTOM RESOURCE SIMPLE     :==(
+                                            )==:   CUSTOM RESOURCE LOW-LEVEL   :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
@@ -1323,19 +1332,37 @@ CCUSTOM_RESOURCE.getAttString
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:   CUSTOM RESOURCE ADVANCED    :==(
+                                            )==:   CUSTOM RESOURCE INTERNAL    :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
+CustomResourceProvider            #High-level CustomResource: automatically creates LAMBDA_FUNC and its ROLE
+ .getOrCreateProvider             #Must call new CustomResource(), passing ZCUSTOM_RESOURCE.serviceToken
+ (PARENT_CONSTRUCT,               #Singleton for a given PARENT_CONSTRUCT + 'ZCUSTOM_RESOURCE'
+ 'ZCUSTOM_RESOURCE', OPTS)        #Meant only for CDK itself:
+ ->ZCUSTOM_RESOURCE               #  - uses fewer dependencies, solving circular dependencies when used within CDK itself
+                                  #  - but Provider|AwsCustomResource is better for external consumption
 CustomResourceProvider
- .getOrCreateProvider
- (PARENT_CONSTRUCT, STR, OPTS)
- ->ZCUSTOM_RESOURCE
-Not really a CustomResource???
+ .getOrCreate(...)
+ ->ZCUSTOM_RESOURCE.serviceToken  #
+
+OPTS.description                  #STR. FUNC_VERSION.Description
+OPTS.runtime                      #ENUM CustomResourceProviderRuntime.NODEJS_NUM_X (required). FUNC_VERSION.Runtime
+OPTS.memory                       #SIZE (def: 128MB, i.e. min). FUNC_VERSION.MemorySize
+OPTS.timeout                      #DURATION (def: 15m, i.e. max). FUNC_VERSION.Timeout
+OPTS.environment                  #OBJ (def: {}). FUNC_VERSION.Environment
+
+ZCUSTOM_RESOURCE.roleArn          #ROLE_ARN. LAMBDA_FUNC.Role
+                                  #Uses AWS managed ROLE AWSLambdaBasicExecutionRole
+                                  #FUNC DependsOn it
+OPTS.policyStatements             #IAM POLICY STATEMENT_OBJ_ARR to add
+ZCUSTOM_RESOURCE
+ .addToRolePolicy(STATEMENT_OBJ)  #
+
+ZCUSTOM_RESOURCE.codeHash         #'FILE_HASH'. FASSET_NEW.sourceHash
 
 ZCUSTOM_RESOURCE.serviceToken     #LAMBDA_FUNC_ARN, as STR_TK to { Fn::GetAtt: [FUNC_LID, 'Arn'] }
-                                  #Automatically created
 OPTS.codeDirectory                #'DIR' containing index.js entry point of LAMBDA_FUNC
                                   #Must be Node.js and export `handler` FUNC
                                   #Copy to a temporary DIR to exclude any *.ts
@@ -1343,24 +1370,21 @@ OPTS.codeDirectory                #'DIR' containing index.js entry point of LAMB
                                   #Uses as LAMBDA_FUNC.Code.S3Bucket|S3Key
 CMETADATA 'aws:asset:path'        #'PATH'
 CMETADATA 'aws:asset:property'    #'Code'
+
 OPTS.useCfnResponseWrapper        #BOOL. If true (def), wraps entry point, to add following features.
                                   #Performs the REQ_PAYLOAD.ResponseURL call automatically
                                   #  - retries 5 times with 1s intervals
-                                  #Wrapped entry point still uses REQ_PAYLOAD|RES_PAYLOAD but following RES_PAYLOAD.* are set:
-                                  #  - Status 'FAILED' if thrown error, 'SUCCESS' otherwise
-                                  #  - Reason ERROR.stack if throw error
-                                  #  - LogicalResourceId|StackId|RequestId: def REQ_PAYLOAD.*
-                                  #  - PhysicalResourceId: def REQ_PAYLOAD.RequestId on create, REQ_PAYLOAD.PhysicalResourceId otherwise
-                                  #REQ_PAYLOAD.ResponseURL is not available
                                   #Logs REQ_PAYLOAD|RES_PAYLOAD on console
+                                  #Wrapped entry point still uses REQ_PAYLOAD|RES_PAYLOAD but following RES_PAYLOAD.* are set
+RES_PAYLOAD.Status                #'FAILED' if thrown error, 'SUCCESS' otherwise
+RES_PAYLOAD.Reason                #ERROR.stack if thrown error
+RES_PAYLOAD.LogicalResourceId
+ |StackId|RequestId               #Def: same as REQ_PAYLOAD.*
+RES_PAYLOAD.PhysicalResourceId    #Def: REQ_PAYLOAD.RequestId on create, REQ_PAYLOAD.PhysicalResourceId otherwise
+REQ_PAYLOAD.ResponseURL           #Not available
+
 CVAR @aws-cdk/core:               #Instead of staging as FASSET, directly uses as LAMBDA_FUNC.Code.ZipFile 'DIR'
  inlineCustomResourceIfPossible   #Cannot use OPTS.useCfnResponseWrapper
-
-ZCUSTOM_RESOURCE.roleArn          #ROLE_ARN. LAMBDA_FUNC.Role, automatically created
-                                  #Uses AWS managed ROLE AWSLambdaBasicExecutionRole
-                                  #FUNC DependsOn it
-OPTS.policyStatements             #IAM POLICY STATEMENT_OBJ_ARR to add
-
 
 
                                              /=+===============================+=\
