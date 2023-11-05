@@ -11,6 +11,9 @@ diffTemplate
  (TEMPLATE_OBJ, TEMPLATE_OBJ2)
  ->DTEMPLATE                      #Compute differences between two CloudFormation TEMPLATEs
 
+DTEMPLATE.differenceCount         #NUM of differences
+DTEMPLATE.isEmpty                 #BOOL. differenceCount === 0
+
 DTEMPLATE.awsTemplateFormatVersion
  |description|transform           #DVAL. undefined if no difference
 
@@ -64,50 +67,61 @@ DVAL.oldValue|newValue            #VAL from TEMPLATE_OBJ[2]
 DVAL.isDifferent                  #BOOL. False when different syntax, but same semantics (e.g. null <=> undefined)
 DVAL.isAddition|isRemoval|isUpdate#BOOL. Depending on whether oldValue|newValue undefined
 
-DTEMPLATE.iamChanges              #DIAM
+DTEMPLATE.permissionsAnyChanges   #BOOL. DIAM|DSGROUP.hasChanges
+DTEMPLATE.permissionsBroadened    #BOOL. DIAM.permissionsBroadened || DSGROUP.rulesAdded
+
+DTEMPLATE.iamChanges              #DIAM. Differences in IAM POLICYs
+                                  #Includes RESOURCE additions|deletions
+DIAM.hasChanges                   #BOOL. Whether any differences
+DIAM.permissionsBroadened         #BOOL. Whether any difference grants more privileges
+
 DIAM.managedPolicies              #DCOLL of DMPOLICYs
-                                  #Differences in IAM USER|GROUP|ROLE.ManagedPolicyArns
-                                  #Does not include RESOURCE additions|deletions
+                                  #Differences in managed POLICYs: IAM USER|GROUP|ROLE.ManagedPolicyArns
+DIAM.summarizeManagedPolicies()   #Serialize DIAM.managedPolicies. First level is each DMPOLICY, second level is each DMPOLICY.* field
+ ->STR_ARR_ARR                    #Contains color ANSI sequences
 DMPOLICY.identityArn              #'${USER|GROUP|ROLE}'
 DMPOLICY.managedPolicyArn         #'POLICY_ARN'
 
 DIAM.statements                   #DCOLL of DSTATEMENTs
-                                  #Differences in IAM USER|GROUP|ROLE.Policies or resource-level IAM POLICYs,
-                                  #e.g. IAM ROLE.AssumeRolePolicyDocument, Lambda FUNC.Policy, ApiGateway API.Policy, etc.
-                                  #Does not include RESOURCE additions|deletions
+                                  #Differences in:
+                                  #  - inline POLICYs: IAM USER|GROUP|ROLE.Policies
+                                  #  - resource-level POLICYs: IAM ROLE.AssumeRolePolicyDocument, Lambda FUNC.Policy, ApiGateway API.Policy, etc.
+DIAM.summarizeStatements()
+ ->STR_ARR_ARR                    #Like DIAM.summarizeManagedPolicies() but for DIAM.statements
 DSTATEMENT.sid                    #STR. STATEMENT.Sid
 DSTATEMENT.effect                 #ENUM Effect Allow|Deny. STATEMENT.Effect
 DSTATEMENT.actions                #DTARGETS. STATEMENT.[Not]Actions
 DSTATEMENT.resources              #DTARGETS. STATEMENT.[Not]Resources
+                                  #Def: ['*']
+                                  #'*' is substituted to 'AWS:${USER|GROUP|ROLE}' or 'AWS:USER|GROUP|ROLE'
 DSTATEMENT.principals             #DTARGETS. STATEMENT.[Not]Principals
                                   #Def: ['*']
-                                  #'*' is substituted to:
-                                  #  - resource-level POLICYs: '${USER|GROUP|ROLE.Arn}'
-                                  #  - otherwise: 'AWS:${USER|GROUP|ROLE}'
+                                  #'*' is substituted to: '${USER|GROUP|ROLE.Arn}', 'PRINCIPAL' or '???' (if cannot guess)
 DTARGETS.not                      #BOOL
 DTARGETS.values                   #STR_ARR
 DSTATEMENT.condition              #VAL. STATEMENT.Condition
 DSTATEMENT.serializedIntrinsic    #STR. JSON serialization of STATEMENT when it contains any dynamic !FUNC
                                   #In that case, DSTATEMENT.* is: sid|condition undefined, effect Unknown, actions|resources|principals { values [], not false }
-                                  #And DSTATEMENT_OBJ: effect|action|condition '', principal '*', resource STR (serializedIntrisic)
-DSTATEMENT.render()
- ->DSTATEMENT_OBJ                 #
-DSTATEMENT_OBJ.effect             #'Allow|Deny'
-DSTATEMENT_OBJ
- .action|resource|principal       #'NOT STR', newline-separated
-DSTATEMENT_OBJ.condition          #JSON serialization, without indentation and outer brackets
 
-DCOLL.additions                   #New DSTATEMENT|DMPOLICY
-DCOLL.removals                    #Deleted DSTATEMENT|DMPOLICY
+DTEMPLATE.securityGroupChanges    #DSGROUP. Differences in EC2 egress|ingress SECURITY_GROUPs
+                                  #Includes RESOURCE additions|deletions
+DSGROUP.hasChanges                #BOOL. Whether any differences
+DSGROUP.rulesAdded                #BOOL. Whether any difference grants more privileges
+DSGROUP.summarize()->STR_ARR_ARR  #Like DIAM.summarizeManagedPolicies() but for DSGROUP
+
+DSGROUP.ingress|egress            #DCOLL of DSECRULE
+                                  #Differences in EC2 SECURITY_GROUP_INGRESS|EGRESS or SECURITY_GROUP.SecurityGroupIngress|Egress
+DSECRULE.groupId                  #STR (def: '*unknown*')
+DSECRULE.ipProtocol               #STR (def: '*unknown*')
+DSECRULE.fromPort|toPort          #NUM|undefined
+
+DSECRULE.peer                     #DPEER|undefined
+DPEER.kind                        #'cidr-ip', 'security-group' or 'prefix-list'
+DPEER.ip                          #STR. Only with 'cidr-ip'
+DPEER.securityGroupId             #STR. Only with 'security-group'
+DPEER.prefixListId                #STR. Only with 'prefix-list'
+
+DCOLL.additions                   #New DSTATEMENT|DMPOLICY|DSECRULE
+DCOLL.removals                    #Deleted DSTATEMENT|DMPOLICY|DSECRULE
 DCOLL.hasAdditions|hasRemovals    #BOOL
 DCOLL.hasChanges                  #BOOL. hasAdditions || hasRemovals
-
-Each DRESPROP: if changed RESOURCE, not 'RESTYPE' update, not deleted RESOURCE, sensitive prop (only *Policies*)
-Each DRESOURCE: if changed|new|deleted RESOURCE
-
-EgressRules: EC2 SECURITY_GROUP.SecurityGroupEgress
-IngressRules: EC2 SECURITY_GROUP.SecurityGroupIngress
-ManagedPolicies: IAM USER|GROUP|ROLE.ManagedPolicyArns
-InlineIdentityPolicies: IAM USER|GROUP|ROLE.Policies
-InlineResourcePolicy: Resource-level IAM POLICY, e.g. IAM ROLE.AssumeRolePolicyDocument, Lambda FUNC.Policy, ApiGateway API.Policy, etc.
-None: SNS SUBSCRIPTION.DeliveryPolicy|FilterPolicy, SQS QUEUE.RedrivePolicy
