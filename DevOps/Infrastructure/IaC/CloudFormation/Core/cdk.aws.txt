@@ -9,7 +9,7 @@ TODO:
   - CLI: https://github.com/aws/aws-cdk/tree/main/packages/aws-cdk
      - to do: bootstrap, synth, deploy, watch, import, list, destroy
      - those flags are only for specific commands???
-        --output --staging --role-arn --asset-metadata --path-metadata --version-reporting --app --build --no-lookups
+        --output --staging --asset-metadata --path-metadata --version-reporting --app --build --no-lookups
   - https://github.com/aws/aws-cdk/blob/main/DEPRECATED_APIs.md
   - https://github.com/aws/aws-cdk/blob/main/packages/%40aws-cdk/cx-api/FEATURE_FLAGS.md
   - https://github.com/aws/aws-cdk/tree/main/design
@@ -222,9 +222,6 @@ PHOST
 CDK_HOME/cache
  /accounts_partitions.json        #Caches ACCOUNT_ID|PARTITION of current ACCESS_KEY_ID
 
---role-arn|-r                     #ROLE_ARN making CloudFormation API calls
-                                  #Def: use current PRINCIPAL
-
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -258,15 +255,16 @@ cdk init [SCAFFOLDER]             #Scaffold files in cwd
 
 BOOTSTRAP                         #"Toolkit" STACK, which is used by `cdk` CLI
                                   #Includes:
-                                  #  - ROLEs 'cdk-${Qualifier}-BOOTSTRAP_ROLE_TYPE-role-${AWS::AccountId}-${AWS::Region}' among BOOTSTRAP_ROLE_TYPE:
-                                  #     - 'cfn-exec': default STACK.RoleARN
+                                  #  - ROLEs 'cdk-${Qualifier}-BOOTSTRAP_ROLE-role-${AWS::AccountId}-${AWS::Region}' among BOOTSTRAP_ROLE:
+                                  #     - 'cfn-exec': STACK.RoleARN
                                   #     - 'deploy': `cdk deploy`
                                   #     - 'file-publishing': FASSET upload to S3
                                   #     - 'image-publishing': IASSET upload to ECR
-                                  #     - 'lookup': ContextProvider
+                                  #     - 'lookup': ContextProvider and some read-only CloudFormation API calls
                                   #  - S3 BUCKET 'cdk-${Qualifier}-assets-${AWS::AccountId}-${AWS::Region}': for FASSETs
                                   #  - ECR REPO 'cdk-${Qualifier}-container-assets-${AWS::AccountId}-${AWS::Region}': for FASSETs
                                   #  - SSM value '/cdk-bootstrap/${Qualifier}/version'
+                                  #  - KMS KEY|ALIAS: if --bootstrap-customer-key
 
 cdk bootstrap|deploy|import
 --toolkit-stack-name              #BOOTSTRAP 'STACK' name (def: 'CDKToolkit')
@@ -274,9 +272,9 @@ cdk bootstrap|deploy|import
 MANIFEST_APROPS|STACK_APROPS
  |STACK_CARTIFACT|LOOKUP_ROL|DOPTS#STR. SSM path to bootstrap's format version
 .bootstrapStackVersionSsmParameter#Def: '/cdk-bootstrap/${Qualifier}/version'. Can be BSTR
-MANIFEST_APROPS|STACK_APROPS
- |STACK_CARTIFACT|LOOKUP_ROLE     #NUM. Currently always 6
- .requiresBootstrapStackVersion   #Minimum bootstrap format version supported by cdk
+MANIFEST_APROPS|STACK_APROPS      #NUM. Currently always 6
+ |STACK_CARTIFACT|LOOKUP_ROLE     #Minimum bootstrap format version supported by cdk
+ .requiresBootstrapStackVersion   #Makes `cdk deploy|import` fail if not
 
 TEMPLATE                          #PARAM of type 'AWS::SSM::Parameter::Value<String>'
  .Parameters.BootstrapVersion     #Value is bootstrapStackVersionSsmParameter
@@ -292,25 +290,26 @@ CVAR
 DOPTS.qualifier                   #'BOOTSTRAP_MID'
 CSYNTH.bootstrapQualifier         #Def: 'hnb659fds'
 
-cdk bootstrap ['ENVIRONMENT'...]  #Deploy the BOOTSTRAP STACK
-                                  #Def 'ENVIRONMENT': current one
+cdk bootstrap ['ENVIRONMENT'...]  #Deploy the BOOTSTRAP STACK, one per ENVIRONMENT
+                                  #Can also update existing one
+                                  #ENVIRONMENT can be 'GLOB': matched against current CAPP's CSTACK's ENVIRONMENTs
+                                  #Def 'ENVIRONMENT': '**'
 --previous-parameters             #Like cdk deploy
 --execute                         #BOOL (def: true). Whether to call ExecuteChangeSet()
 
 --bootstrap-bucket-name|-b
---toolkit-bucket-name             #S3 'BUCKET'. Must not exist yet
---bootstrap-kms-key-id            #KMS_KEY_ID used with BUCKET
---bootstrap-customer-key          #BOOL (def: false). Create a S3 x-amz-server-side-encryption-customer-key [C] used with BUCKET
+--toolkit-bucket-name             #S3 'BUCKET' for FASSETs. Must not exist yet
+--bootstrap-kms-key-id            #KMS_KEY_ID used with BUCKET's x-amz-server-side-encryption-aws-kms-key-id [C|S] (SSE-KMS)
+                                  #Def: none, i.e. uses SSE-S3
+--bootstrap-customer-key          #BOOL (def: false). Like --bootstrap-kms-key-id, but creates KMS_KEY as part of BOOTSTRAP_STACK
+                                  #Gives it ALIAS 'cdk-${Qualifier}-assets-key'
 --public-access-block
  -configuration                   #BOOL (def: true). Use S3 PUBLIC_BLOCK
 
---tags|-t                         #OBJ_ARR. STACK.Tags
+--tags|-t                         #OBJ_ARR. BOOTSTRAP_STACK.Tags
                                   #In CONFIG file, OBJ_ARR: Key 'TAG', Value 'VAL'
 
---cloudformation-execution        #POLICY_ARN_ARR attached to the ROLE deploying
- -policies                        #Def: allow all
---trust                           #'ACCOUNT_ID'_ARR used as Principal in the POLICY, for any PACTIONs
---trust-for-lookup                #Same but only for lookupRoleArn
+--trust                           #'ACCOUNT_ID'_ARR to allow to assume any BOOTSTRAP_ROLE
 
 --custom-permissions-boundary
  |-cpb                            #'PERMISSIONS_BOUNDARY'
@@ -319,9 +318,11 @@ cdk bootstrap ['ENVIRONMENT'...]  #Deploy the BOOTSTRAP STACK
 
 --show-template                   #BOOL (def: false). Dry run. Print BOOTSTRAP STACK 'TEMPLATE'
 --json|-j                         #BOOL (def: false). With --show-template, output as JSON instead of YAML
---template                        #'TEMPLATE'. Use previous output produced by --show-template
+--template                        #'TEMPLATE'. Use previous output produced by --show-template (without --json), after possible customization
 
---force|-f                        #BOOL. If false (def), fails if deploy would downgrade template version
+--force|-f                        #BOOL. If false (def), fails if:
+                                  #  - deploy would downgrade template version
+                                  #  - TEMPLATE and STACK.* did not change
 
 
                                              /=+===============================+=\
@@ -360,19 +361,21 @@ cdk deploy [STACKS...]            #Deploy STACKS to CloudFormation
 --method|-m                       #Deploy using:
                                   #  - 'direct': UpdateStack() (no progress info)
                                   #  - 'prepare-change-set': CreateChangeSet()
-                                  #  - 'change-set': CreateChangeSet() + ExecuteChangeSet()
---change-set-name                 #'CHANGESET'
---no-rollback|-R                  #BOOL. STACK|CHANGESET.DisableRollback BOOL (def: false)
+                                  #  - 'change-set' (def): CreateChangeSet() + ExecuteChangeSet()
+                                  #Automatically delete empty CHANGESETs
+--change-set-name                 #'CHANGESET' (def: 'cdk-deploy-change-set')
+--no-rollback|-R                  #BOOL. STACK.DisableRollback BOOL (def: false)
                                   #Must not be true if some RESOURCEs are replaced
+                                  #Only with --method 'direct'
 
 --parameters                      #OBJ. Key is '[STACK:]PARAM'. STACK|CHANGESET.Parameters
---previous-parameters             #BOOL (def: true). Re-use PARAMs from previous deploy, except ones overridden
+--previous-parameters             #BOOL (def: true). Re-use PARAMs from previous deploy (using PARAMVAL.UsePreviousValue true), except ones overridden
 --outputs-file|-O                 #'PATH.json' (def: stdout) to write STACK OUTPUTs to
 
 --notification-arns               #SNS TOPIC_ARN_ARR. STACK|CHANGESET.NotificationARNs
 --progress                        #How to display STACK EVENTs among:
-                                  #  - 'bar' (def): not displayed
-                                  #  - 'events': fully displayed
+                                  #  - 'events' (def if Windows, or not TTY, or --verbose): 1 per line, no progress bar, 5s poll
+                                  #  - 'bar' (def otherwise): single line being updated, with progress bar, 2s poll
 
 --concurrency                     #Max NUM (def: 1) on ongoing deploys
 
@@ -384,11 +387,16 @@ cdk deploy [STACKS...]            #Deploy STACKS to CloudFormation
                                   #  - 'any-change': always
                                   #  - 'broadening' (def): only if add more permissions, not remove
 
---force|-f                        #BOOL. If false (def), fail if TEMPLATE did not change
+--force|-f                        #BOOL. If false (def), fail if TEMPLATE and STACK.* did not change
 
 --hotswap                         #BOOL (def: false). Update RESOURCEs by making direct calls to SERVICEs instead of using CloudFormation
                                   #If some properties are not hotswappable, ignore them
                                   #Only supports !Ref|GetAtt|ImportValue|Join|Select|Split|Sub
+                                  #Does not support TEMPLATE.Outputs
+                                  #Only for updated RESOURCEs, not created|deleted ones
+                                  #Only for:
+                                  #  - Lambda: FUNC[_VERSION].Code|Environment|Description, ALIAS.FunctionVersion
+                                  #  - AppSync, CodeBuild, StepFunctions, ECS: some of it
                                   #Meant for speed, for development only (since it introduces drift)
 --hotswap-fallback                #BOOL (def: false). Same but if some properties are not hotswappable, do a normal deploy instead
 
@@ -422,7 +430,7 @@ cdk import [STACKS...]            #Do a CHANGESET import
                                   #Does not work with nested STACKs
                                   #Def: current STACK, if only one
 --change-set-name
---rollback                        #Like cdk deploy
+--no-rollback|-R                  #Like cdk deploy
 --execute                         #BOOL (def: true). Whether to call ExecuteChangeSet()
 --force|-f                        #BOOL. If false (def), abort if some existing RESOURCEs are updated|deleted
 
@@ -612,13 +620,14 @@ OPTS.*                            #PCONTEXT.*
 OPTS.lookupRoleArn                #LOOKUP_ROLE_ARN, used for requests
 
 STACK_APROPS|STACK_CARTIFACT      #LOOKUP_ROLE. Used for read-only requests: ContextProvider, `cdk diff`
- .lookupRole                      #Def: BOOTSTRAP_ROLE_TYPE 'lookup-role'
+ .lookupRole                      #Def: BOOTSTRAP_ROLE 'lookup-role'
                                   #With `cdk diff`: if no BOOTSTRAP, uses CLI's credentials
 DOPTS.lookupRoleArn
 LOOKUP_ROLE.arn                   #ROLE_ARN. Can be BSTR
 CSYNTH.lookupRole                 #Can be '': using CLI's credentials
 LOOKUP_ROLE.assumeRoleExternalId
 DOPTS.lookupRoleExternalId        #STR (def: none). ASSUMED_ROLE_REQ.ExternalId with lookupRoleArn
+cdk bootstrap --trust-for-lookup  #'ACCOUNT_ID'_ARR to allow to assume BOOTSTRAP_ROLE 'lookup'
 
 cdk --lookups
 DOPTS
@@ -879,10 +888,15 @@ SOPTS.tags                        #OBJ. STACK.Tags
                                   #ALso used as:
                                   #  - STACK_APROPS|STACK_CARTIFACT.tags
                                   #  - CMETADATA 'aws:cdk:stack-tags'
+
+cdk bootstrap|deploy|import
+ |destroy --role-arn|-r
 STACK_APROPS|STCK_CARTIFACT|CSYNTH
  .cloudFormationExecutionRoleArn  #'ROLE_ARN'. STACK.RoleARN
-DOPTS                             #Def: BOOTSTRAP_ROLE_TYPE 'cfn-exec'. Can be BSTR
+DOPTS                             #Def: BOOTSTRAP_ROLE 'cfn-exec'. Can be BSTR
  .cloudFormationExecutionRole     #Can be '': using CLI's credentials
+cdk bootstrap --cloudformation    #POLICY_ARN_ARR attached to BOOTSTRAP_ROLE 'cfn-exec'
+ -execution-policies              #Def: none if --trust, IAM AdministratorAccess otherwise
 
 CVAR
  @aws-cdk/core:stackResourceLimit #Max NUM of RESOURCEs (def|max: 500)
@@ -894,6 +908,8 @@ CSTACK.toJSON(VAL[, NUM])->STR_TK #Resolves to JSON.stringify(VAL)
                                   #  - CloudFormation !FUNCs: kept as is and joined with { Fn::Join }
                                   #Although CSTACK's method, it is unrelated to CSTACK
 CSTACK.toYamlString(VAL)->STR_TK  #Same with YAML
+
+STACK.Capabilities                #Always ['CAPABILITY_IAM', 'CAPABILITY_NAMED_IAM', 'CAPABILITY_AUTO_EXPAND']
 
 
                                              /=+===============================+=\
@@ -2203,14 +2219,14 @@ CSTACK|STACK_APROPS               #'ARTIFACT_ID[.nested].template.json', i.e. 'P
  |STACK_CARTIFACT.templateFile    #If NSTACK: `.nested`
 STACK_CARTIFACT.templateFullPath  #'ASSEMBLY_DIR/ARTIFACT_ID[.nested].template.json'
 SOPTS.suppressTemplateIndentation #BOOL. If false (def), indent|prettify TEMPLATE file
-STACK_APROPS|STACK_CARTIFACT
- .stackTemplateAssetObjectUrl     #FASSET_RES.s3ObjectUrlWithPlaceholders, i.e. TEMPLATE is uploaded to S3 as a FASSET
+STACK_APROPS|STACK_CARTIFACT      #FASSET_RES.s3ObjectUrlWithPlaceholders, i.e. TEMPLATE is uploaded to S3 as a FASSET
+ .stackTemplateAssetObjectUrl     #Only when TEMPLATE is >50KB
+                                  #S3 OBJECT is 'cdk/STACK_ARTIFACT_ID/TEMPLATE_HASH.yml'
 STACK_CARTIFACT.template          #CloudFormation TEMPLATE OBJ
 
-STACK_APROPS|STACK_CARTIFACT
- .assumeRoleArn                   #'ROLE_ARN' used to call CloudFormation API during `cdk deploy` for this STACK
-DOPTS|CSYNTH.deployRoleArn        #Def: BOOTSTRAP_ROLE_TYPE 'deploy'. Can be BSTR
-                                  #Can be '': using CLI's credentials
+STACK_APROPS|STACK_CARTIFACT      #'ROLE_ARN' used to call CloudFormation API during `cdk deploy|import` for this STACK
+ .assumeRoleArn                   #Def: BOOTSTRAP_ROLE 'deploy'. Can be BSTR
+DOPTS|CSYNTH.deployRoleArn        #Can be '': using CLI's credentials
 STACK_APROPS|STACK_CARTIFACT
  .assumeRoleExternalId
 DOPTS.deployRoleExternalId        #STR (def: none). ASSUMED_ROLE_REQ.ExternalId with assumeRoleArn
@@ -2362,7 +2378,7 @@ FASSET_RES.s3ObjectUrl            #Same, but as BSUB
 FASSET_RES.httpUrl                #BSUB 'https://s3.${AWS::Region}.amazonaws.com/BUCKET/OBJECT'
 
 FASSET_DEST.assumeRoleArn         #Like STACK_APROPS.* but for uploading to S3
-DOPTS.fileAssetPublishingRoleArn  #Def: BOOTSTRAP_ROLE_TYPE 'file-publishing'. Can be BSTR
+DOPTS.fileAssetPublishingRoleArn  #Def: BOOTSTRAP_ROLE 'file-publishing'. Can be BSTR
                                   #Can be '': using CLI's credentials
 FASSET_DEST.assumeRoleExternalId
 DOPTS
@@ -2421,7 +2437,7 @@ DOPTS.dockerTagPrefix             #STR (def: '') prefixing 'IMAGE_TAG'
 IASSET_RES.imageUri               #BSUB '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/REPO:IMAGE_TAG'
 
 IASSET_DEST.assumeRoleArn         #Like STACK_APROPS.* but for uploading to ECR
-DOPTS.imageAssetPublishingRoleArn #Def: BOOTSTRAP_ROLE_TYPE 'image-publishing'. Can be BSTR
+DOPTS.imageAssetPublishingRoleArn #Def: BOOTSTRAP_ROLE 'image-publishing'. Can be BSTR
                                   #Can be '': using CLI's credentials
 IASSET_DEST.assumeRoleExternalId
 DOPTS
