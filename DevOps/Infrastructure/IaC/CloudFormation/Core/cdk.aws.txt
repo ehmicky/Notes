@@ -40,9 +40,12 @@ TODO:
            - HFASSET.grantRead() (https://github.com/aws/aws-cdk/blob/main/packages/aws-cdk-lib/aws-s3-assets/lib/asset.ts#L218)
            - PermissionsBoundary
            - finish role customization documentation
+           - https://docs.aws.amazon.com/cdk/v2/guide/resources.html#resources_grants
            - re-visit CustomResourceProvider parts related to IAM
            - https://github.com/awslabs/aws-break-glass-role
-        - CloudWatch METRICs: CfnRESOURCEMetricsISTAT
+        - CloudWatch METRICs:
+           - CfnRESOURCEMetricsISTAT
+           - https://docs.aws.amazon.com/cdk/v2/guide/resources.html#resources_metrics
         - EC2: CSTACK.availabilityZones
   - library linting
      - https://github.com/aws/aws-cdk/tree/main/packages/%40aws-cdk/example-construct-library
@@ -503,18 +506,19 @@ NODE.locked                       #BOOL (def: false)
                                              \=+===============================+=/
 
 
-NODE.id                           #'CONSTRUCT'
+NODE.id                           #'CONSTRUCT' passed to constructor
                                   #No / (converted to --)
                                   #undefined if root
 
 NODE.path                         #'NID'. NODE.id of ancestors + current NODE, joined with / separator
                                   #If root: ''
-                                  #Meant for printing or input
+                                  #Goal: ID that shows the construct tree path, e.g. when printing or on input
 CONSTRUCT.toString()->STR         #Like NODE.path except '<root>' if root
 
 NODE.addr                         #'AID'. Like NID but SHA1 hash'd, prefixed with 'c8'
                                   #Also excludes any NODE.id 'Default'
                                   #  - this allows refactoring NODE hierarchy without changing AID
+                                  #Goal: machine-friendly ID
 
 Names.nodeUniqueId(NODE)->'CID'   #NODE.id of ancestors + current NODE, joined without separators
 Names.uniqueId(CONSTRUCT)->'CID'  #  - excluding 'Default' or 'Resource'
@@ -525,15 +529,76 @@ Names.uniqueId(CONSTRUCT)->'CID'  #  - excluding 'Default' or 'Resource'
                                   #  - without any of above transformations, i.e. to prevent collisions
                                   #  - unless only one ancestor
                                   #I.e. both unique and human-friendly
-                                  #For cross-STACK IDs
+                                  #Goal: cross-STACK IDs
 
 Names.uniqueResourceName          #Like CID except only ancestors until CSTACK (which uses its stackName)
- (CONSTRUCT, OPTS)->'SID'         #For STACK-specific IDs, e.g. RESOURCE names (when LID not possible)
+ (CONSTRUCT, OPTS)->'SID'         #Goal: STACK-specific IDs
                                   #Can also customize with following OPTS
 OPTS.prefix                       #STR (def: '')
 OPTS.separator                    #STR (def: '')
 OPTS.maxLength                    #NUM (def: 255)
 OPTS.allowedSpecialCharacters     #STR (def: ''). Additional allowed characters, inserted in new RegExp('[STR]')
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:          LOGICAL ID           :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+CSTACK.getLogicalId(CELEM)->'LID' #Like SID but excluding CSTACK
+                                  #Used as 'RESOURCE|PARAM|...' LogicalResourceId, e.g. name in TEMPLATEs
+                                  #  - CloudFormation uses it to generate the PhysicalResourceId (ARN|MID|name), with additional suffix
+CELEM.logicalId                   #Same but as STR_RV
+
+CMETADATA 'aws:cdk:logicalId'     #CELEM.logicalId
+                                  #Not set if CVAR aws:cdk:disable-logicalId-metadata true
+                                  #Used by `cdk diff`
+
+CELEM.overrideLogicalId(STR)      #Manually set CELEM.logicalId
+
+CSTACK.renameLogicalId(STR, STR2) #If logicalId is STR, set to STR2 instead
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:          PHYSICAL ID          :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+CKOPTS.physicalName               #'NAME'[_TK] of main child CSRESOURCE's
+                                  #This is SERVICE-specific 'NAME', not CloudFormation 'RESOURCE' LogicalResourceId, nor SERVICE-specific MID
+                                  #If undefined (def: STR_TK resolving to undefined): kept as is
+                                  #  - i.e. let CloudFormation generate it based on LogicalResourceId
+CKRESOURCE.physicalName           #'NAME'[_TK]. Readonly. Protected, i.e. only in subclasses.
+
+CKRESOURCE                        #Resolves to 'NAME' passed as input
+ .getResourceNameAttribute        #However, if used cross-account|region, resolves to CKRESOURCE.physicalName instead
+ ('NAME'[_TK])->'NAME'_TK         #  - i.e. CKRESOURCE's STACK and consuming CONSTRUCT's STACK2 are in a different ACCOUNT or REGION
+                                  #  - unless CKRESOURCE.physicalName is TK
+                                  #Meant when implementing a CKRESOURCE, to expose underlying CRESOURCE.attrRESATTR (passed as argument) (of the CRESOURCE's 'NAME') as CKRESOURCE.*
+CKRESOURCE                        #Same except resolves to 'ARN'
+ .getResourceArnAttribute         #If cross-account|region, uses ARN_OBJ instead
+ ('ARN'[_TK], ARN_OBJ)->'ARN'_TK  #  - ARN_OBJ.resourceName must be|include `CKRESOURCE.physicalName`
+                                  #Meant when implementing a CKRESOURCE, to expose underlying CRESOURCE.ref (passed as argument) as CKRESOURCE.*
+
+PhysicalName.GENERATE_IF_NEEDED   #When passed to CKOPTS.physicalName, sets as 'NAME' (61 chars, lowercase'd) concatenation of:
+                                  #  - CSTACK.stackName (first 25 chars)
+                                  #  - NODE's 'CID' (last 24 chars)
+                                  #  - SHA256 hash (12 chars) of:
+                                  #     - CSTACK.account
+                                  #     - CSTACK.region
+                                  #     - CSTACK.stackName (full)
+                                  #     - NODE's 'CID' (full)
+                                  #Must not be agnostic account|region
+                                  #CKOPTS.physicalName remains undefined until calling CKRESOURCE.getResourceName|ArnAttribute() on cross-account|region
+                                  #I.e. bypasses CloudFormation physicalResourceId generation, which is usually bad
+                                  #Use case: in cross-account|region consumption (see above)
+                                  #  - since CKRESOURCE use getResource*Attribute() then, which requires CKOPTS.physicalName to be set
+CKRESOURCE.generatePhysicalName() #Protected method to override in subclasses, to customize the 'NAME' auto-generated by PhysicalName.GENERATE_IF_NEEDED
+ ->STR                            #E.g. can call super.generatePhysicalName() and prepend a prefix
 
 
                                              /=+===============================+=\
@@ -980,7 +1045,7 @@ FactName                          #RFACT for 'YES|NO': whether REGION supports T
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:            ELEMENT            :==(
+                                            )==:         STACK ELEMENT         :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
@@ -989,17 +1054,6 @@ new CfnElement                    #CONSTRUCT within a CSTACK
  (PARENT_CONSTRUCT, 'CELEM')      #Usually corresponds to a TEMPLATE.* top-level property: Resource, Mappings, Parameters, etc.
                                   #TEMPLATE.* top-level properties are shallowly merged
 CELEM.creationStack               #STR_ARR. Stack trace of CELEM's constructor
-
-CSTACK.getLogicalId(CELEM)->STR   #'LID'. Like 'SID' but excluding CSTACK
-                                  #Used as 'RESOURCE|PARAM|...' LogicalResourceId, e.g. name in CloudFormation TEMPLATEs
-                                  #  - which is itself used in RESOURCE PhysicalResourceId (MID|name|ARN)
-                                  #     - sometimes with an additional suffix appended by CloudFormation
-CELEM.logicalId                   #Same but as STR_RV
-CMETADATA 'aws:cdk:logicalId'     #CELEM.logicalId
-                                  #Not set if CVAR aws:cdk:disable-logicalId-metadata true
-                                  #Used by `cdk diff`
-CELEM.overrideLogicalId(STR)      #Manually set CELEM.logicalId
-CSTACK.renameLogicalId(STR, STR2) #If logicalId is STR, set to STR2 instead
 
 
                                              /=+===============================+=\
@@ -1412,34 +1466,6 @@ new Resource(PARENT_CONSTRUCT,    #CKRESOURCE. Group of
 Resource.isOwnedResource          #Whether there is a direct child CSRESOURCE named 'Resource' (or 'Default')
  (CONSTRUCT)->BOOL                #Means CKRESOURCE is a wrapper around it, and other children are just associated to it (e.g.  POLICYs)
 CKRESOURCE.applyRemovalPolicy(...)#Same as CKRESOURCE.node.defaultChild.applyRemovalPolicy(...)
-
-CKOPTS.physicalName               #'NAME'[_TK] of main child CSRESOURCE's
-                                  #This is SERVICE-specific 'NAME', not CloudFormation 'RESOURCE', nor SERVICE-specific MID
-                                  #If undefined (def: STR_TK resolving to undefined): kept as is, i.e. only for CloudFormation RESOURCEs with default names
-CKRESOURCE.physicalName           #'NAME'[_TK]. Readonly. Protected, i.e. only in subclasses.
-
-CKRESOURCE                        #Resolves to 'NAME' passed as input
- .getResourceNameAttribute        #However, if used cross-account|region, resolves to CKRESOURCE.physicalName instead
- ('NAME'[_TK])->'NAME'_TK         #  - i.e. CKRESOURCE's STACK and consuming CONSTRUCT's STACK2 are in a different ACCOUNT or REGION
-                                  #  - unless CKRESOURCE.physicalName is TK
-                                  #Meant to expose underlying CRESOURCE.attrRESATTR (passed as argument) (of the CRESOURCE's 'NAME') as CKRESOURCE.*
-CKRESOURCE                        #Same except resolves to 'ARN'
- .getResourceArnAttribute         #If cross-account|region, uses ARN_OBJ instead
- ('ARN'[_TK], ARN_OBJ)->'ARN'_TK  #  - ARN_OBJ.resourceName must be|include `CKRESOURCE.physicalName`
-                                  #Meant to expose underlying CRESOURCE.ref (passed as argument) as CKRESOURCE.*
-
-PhysicalName.GENERATE_IF_NEEDED   #When passed to CKOPTS.physicalName, sets as 'NAME' (61 chars, lowercase'd) concatenation of:
-                                  #  - CSTACK.stackName (first 25 chars)
-                                  #  - NODE's 'CID' (last 24 chars)
-                                  #  - SHA256 hash (12 chars) of:
-                                  #     - CSTACK.account
-                                  #     - CSTACK.region
-                                  #     - CSTACK.stackName (full)
-                                  #     - NODE's 'CID' (full)
-                                  #Must not be agnostic account|region
-                                  #CKOPTS.physicalName remains undefined until calling CKRESOURCE.getResourceName|ArnAttribute() on cross-account|region
-CKRESOURCE.generatePhysicalName() #Protected method to override in subclasses, to customize the 'NAME' auto-generated by PhysicalName.GENERATE_IF_NEEDED
- ->STR                            #E.g. can call super.generatePhysicalName() and prepend a prefix
 
 CKRESOURCE_CLASS.from*            #Many CKRESOURCEs can be built using `from*` methods which allows importing already existing resources
  (...)->CKRESOURCE                #Those are used, but not imported nor present in the STACK
