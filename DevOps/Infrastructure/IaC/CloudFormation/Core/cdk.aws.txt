@@ -6,14 +6,6 @@
 
 
 TODO:
-  - cloudformation-include:
-     - https://github.com/aws/aws-cdk/tree/main/packages/aws-cdk-lib/cloudformation-include
-     - spec2cdk:
-        - https://github.com/aws/aws-cdk/blob/main/tools/%40aws-cdk/spec2cdk/lib/cdk/resource-class.ts#L156
-        - https://github.com/aws/aws-cdk/blob/main/tools/%40aws-cdk/spec2cdk/lib/cdk/cloudformation-mapping.ts#L237
-     - CfnParse: https://github.com/aws/aws-cdk/blob/main/packages/aws-cdk-lib/core/lib/helpers-internal/cfn-parse.ts
-  - https://github.com/cdklabs/cdk-from-cfn
-     - cdk migrate
   - custom-resources: https://github.com/aws/aws-cdk/tree/main/packages/aws-cdk-lib/custom-resources
   - CLI layer:
      - v1: https://github.com/aws/aws-cdk/tree/main/packages/aws-cdk-lib/lambda-layer-awscli
@@ -22,7 +14,6 @@ TODO:
      - https://github.com/aws/aws-cdk/tree/main/packages/%40aws-cdk-testing
      - https://github.com/aws/aws-cdk/tree/main/packages/%40aws-cdk/integ-runner
      - https://github.com/aws/aws-cdk/blob/main/INTEGRATION_TESTS.md
-  - decdk: https://github.com/cdklabs/decdk
   - resource specs: https://github.com/cdklabs/awscdk-service-spec
   - https://docs.aws.amazon.com/cdk/api/v2/docs/aws-construct-library.html
   - https://docs.aws.amazon.com/cdk/v2/guide/home.html
@@ -108,7 +99,7 @@ CLASS.isCLASS(VAL)->BOOL          #Many CLASSes have this method, like `instance
 
 SYNC I/O ==>                      #Due to adding logic inside constructors, logic must usually be sync
 
-PARAM|COND                        #Usually not used, since can use imperative language instead
+PARAM|COND|MACRO                  #Usually not used, since can use imperative language instead
 
 
                                              /=+===============================+=\
@@ -418,26 +409,6 @@ cdk import [STACKS]               #Do a CHANGESET import
 --record-resource-mapping|-r      #'PATH.json'. Same but as output, instead of performing the import
 
 --force|-f                        #BOOL. If false (def), only allow adding RESOURCEs, not updating|deleting them
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:          CLI MIGRATE          :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-cdk migrate                       #Migrate from CloudFormation to CDK
-
---language|-l                     #STR (def: 'typescript'). Like cdk init, except no 'javascript', nor 'fsharp'
---account                         #'ACCOUNT_ID' of source STACK
---region                          #'REGION' of source STACK
---from-path                       #'PATH' to source TEMPLATE
---from-stack                      #BOOL (def: false). Use source STACK's TEMPLATE
-
---output-path                     #'DIR'
---compress                        #BOOL (def: false). Zip output 'DIR'
---stack-name|-n                   #'STACK'. New STACK.stackName
 
 
                                              /=+===============================+=\
@@ -1553,12 +1524,82 @@ OPTS.executeBefore|After          #Only call LAMBDA_FUNC before|after those CONS
                                              \=+===============================+=/
 
 
-new CfnInclude(PARENT_CONSTRUCT,
- 'CINCLUDE', OPTS)                #CINCLUDE. CloudFormation JSON|YAML 'TEMPLATE', used as a fragment
- OPTS.templateFile                #'PATH' to TEMPLATE
+new CfnInclude(PARENT_CONSTRUCT,  #CINCLUDE. CloudFormation JSON|YAML 'TEMPLATE', used as a fragment
+ 'CINCLUDE', OPTS)                #I.e. transform CloudFormation -> CDK
+                                  #Inherits from CELEM
+OPTS.templateFile                 #'PATH' to TEMPLATE
 
-CINCLUDE.getResource
- ('RESOURCE_LID')->CRESOURCE      #
+CINCLUDE.getResource('RESOURCE')  #TEMPLATE.resources.RESOURCE
+ ->CSRESOURCE|CZRESOURCE          #CUSTOM_RESOURCEs are returned as CZRESOURCEs. All others are returned as CSRESOURCEs
+CINCLUDE.getParameter
+ ('PARAM')->CPARAM                #TEMPLATE.parameters.PARAM
+CINCLUDE.getCondition
+ ('COND')->CCOND                  #TEMPLATE.conditions.COND
+CINCLUDE.getMapping
+ ('FILTER')->CFILTER              #TEMPLATE.mappings.FILTER
+CINCLUDE.getRule
+ ('RULE')->CRULE                  #TEMPLATE.rules.RULE
+CINCLUDE.getOutput
+ ('OUTPUT')->COUTPUT              #TEMPLATE.outputs.OUTPUT
+CINCLUDE.getHook
+ ('HOOK')->CHOOK                  #TEMPLATE.hooks.HOOK
+
+OPTS.parameters                   #{ PARAM: 'VAL', ... } (def: {}) to resolve right away:
+                                  #  - substitute any 'PARAM' in !Ref|Sub with 'VAL'
+                                  #  - remove TEMPLATE.Parameters.PARAM
+
+OPTS.preserveLogicalIds           #BOOL. If true (def), CELEM.logicalId uses 'RESOURCE' name from TEMPLATE
+                                  #Otherwise, it generates a LID, i.e. default behavior of CELEM.logicalId
+                                  #I.e. should be true for apps, false for libraries
+
+OPTS.allowCyclicalReferences      #BOOL (def: false). Allow cycles in TEMPLATE.Resources.**
+                                  #Only meant when those cycles are resolved by MACROs
+
+OPTS.loadNestedStacks.RESOURCE    #OPTS2 for nested STACK 'RESOURCE' defined in TEMPLATE
+                                  #Required to create underlying NSTACK
+CINCLUDE.getNestedStack
+ ('RESOURCE')->OBJ                #Returns OBJ: stack NSTACK, includedTemplate CINCLUDE2
+CINCLUDE.loadNestedStack
+ ('RESOURCE', OPTS2)->OBJ         #Same as OPTS.loadNestedStacks.RESOURCE OPTS2 + getNestedStack()
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:            MIGRATE            :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+cdk migrate                       #Transform CloudFormation 'TEMPLATE' to CDK file, using cdk_from_cdn
+
+--language|-l                     #STR (def: 'typescript'). Same choices as cdk_from_cfn
+
+--from-path                       #'PATH' to source TEMPLATE
+
+--from-stack                      #BOOL (def: false). Alternative to --from-path: use GetTemplate() on deployed 'STACK'
+                                  #'STACK' name is --stack-name
+--account                         #'ACCOUNT_ID', with --from-stack
+--region                          #'REGION', with --from-stack
+
+--stack-name|-n                   #'STACK'. New STACK.stackName
+--output-path                     #'DIR' (def: '.')
+                                  #Output 'PATH' depends on language
+                                  #  - for TypeScript: DIR/lib/STACK-stack.ts
+                                  #Calls `cdk init app` in DIR
+--compress                        #BOOL (def: false). Zip output 'DIR'
+
+cdk_from_cfn ['TEMPLATE']         #Convert CloudFormation 'TEMPLATE' to CDK code
+ ['OUTPUT']                       #Def 'TEMPLATE': stdin
+                                  #Def 'OUTPUT': stdout
+                                  #Can choose language with cargo build --features=LANGUAGE,
+                                  #among typescript (def), golang, java, Python, csharp
+                                  #Version 0.1.2
+
+decdk                             #Transform declarative JSON CloudFormation TEMPLATE-like to CDK file
+                                  #Unlike `cdk migrate`:
+                                  #  - pro: can use core CKRESOURCEs as RESTYPEs
+                                  #  - con: not an actual CloudFormation TEMPLATE, i.e. much fewer features
+                                  #Not documented: prefer using either CloudFormation TEMPLATEs, or CDK directly
 
 
                                              /=+===============================+=\
