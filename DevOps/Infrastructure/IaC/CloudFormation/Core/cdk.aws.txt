@@ -7,7 +7,6 @@
 
 TODO:
   - https://docs.aws.amazon.com/cdk/v2/guide/home.html
-     - stopped at "Concepts"
   - https://aws.amazon.com/blogs/devops/best-practices-for-developing-cloud-applications-with-aws-cdk/
   - https://aws.amazon.com/blogs/devops/align-with-best-practices-while-creating-infrastructure-using-cdk-aspects/
   - ITG (integrity manifest)
@@ -40,12 +39,14 @@ TODO:
            - HFASSET.grantRead() (https://github.com/aws/aws-cdk/blob/main/packages/aws-cdk-lib/aws-s3-assets/lib/asset.ts#L218)
            - PermissionsBoundary
            - finish role customization documentation
+           - https://docs.aws.amazon.com/cdk/v2/guide/permissions.html
            - https://docs.aws.amazon.com/cdk/v2/guide/resources.html#resources_grants
            - re-visit CustomResourceProvider parts related to IAM
            - https://github.com/awslabs/aws-break-glass-role
         - CloudWatch METRICs:
            - CfnRESOURCEMetricsISTAT
            - https://docs.aws.amazon.com/cdk/v2/guide/resources.html#resources_metrics
+        - CloudWatch EVENTs: https://docs.aws.amazon.com/cdk/v2/guide/resources.html#resources_events
         - EC2: CSTACK.availabilityZones
   - library linting
      - https://github.com/aws/aws-cdk/tree/main/packages/%40aws-cdk/example-construct-library
@@ -123,7 +124,7 @@ CLASS.isCLASS(VAL)->BOOL          #Many CLASSes have this method, like `instance
 
 SYNC I/O ==>                      #Due to adding logic inside constructors, logic must usually be sync
 
-PARAM|COND|MACRO                  #Usually not used, since can use imperative language instead
+PARAM|COND|MACRO                  #Usually not used, since can use imperative language and CONTEXT instead
 
 
                                              /=+===============================+=\
@@ -283,7 +284,7 @@ CSYNTH.bootstrapQualifier         #Def: 'hnb659fds'
 
 MANIFEST_APROPS|STACK_APROPS      #STR. SSM parameter with BOOSTRAP_STACK format version
  |STACK_CARTIFACT|ASSETS_CARTIFACT#Incremented each time a new release of `cdk` changes BOOTSTRAP_STACK, even if not breaking
- |LOOKUP_ROL|DOPTS                #Is BOOTSTRAP_STACK.Resources.CdkBootstrapVersion, exported as STACK OUTPUT 'BootstrapVersion'
+ |LOOKUP_ROLE|DOPTS               #Is BOOTSTRAP_STACK.Resources.CdkBootstrapVersion, exported as STACK OUTPUT 'BootstrapVersion'
 .bootstrapStackVersionSsmParameter#Def: '/cdk-bootstrap/${Qualifier}/version'. Can be BSTR
                                   #Current version: 19
 MANIFEST_APROPS|STACK_APROPS
@@ -300,7 +301,8 @@ TEMPLATE                          #RULE that ensure that ensure that BootstrapVe
 DOPTS.generateBootstrapVersionRule#BOOL (def: true). If false, do not generate TEMPLATE.*.*BootstrapVersion
 
 BOOTSTRAP_TEMPLATE                #BOOTSTRAP_STACK's PARAM only meant as a change ID, with default value 'AWS CDK: Default Resources'
- .Parameters.BootstrapVariant     #I.e. must be changed each time BOOTSTRAP_STACK is customized
+ .Parameters.BootstrapVariant     #I.e. must be changed each time BOOTSTRAP_STACK is customized (including the first time)
+                                  #  - this prevents customization from being overwritten when there is a new BootstrapVersion
                                   #I.e. BootstrapVersion is for changes done by `cdk` itself, BootstrapVariant by user
 
 cdk bootstrap
@@ -509,6 +511,9 @@ NODE.locked                       #BOOL (def: false)
 NODE.id                           #'CONSTRUCT' passed to constructor
                                   #No / (converted to --)
                                   #undefined if root
+                                  #NID|AID|CID|SID|LID are used as actual identifiers instead
+                                  #  - this allows re-using NODE.id in different parts of the CONSTRUCT tree
+                                  #  - i.e. allows encapsulation and components composition
 
 NODE.path                         #'NID'. NODE.id of ancestors + current NODE, joined with / separator
                                   #If root: ''
@@ -518,7 +523,7 @@ CONSTRUCT.toString()->STR         #Like NODE.path except '<root>' if root
 NODE.addr                         #'AID'. Like NID but SHA1 hash'd, prefixed with 'c8'
                                   #Also excludes any NODE.id 'Default'
                                   #  - this allows refactoring NODE hierarchy without changing AID
-                                  #Goal: machine-friendly ID
+                                  #Goal: short machine-friendly ID
 
 Names.nodeUniqueId(NODE)->'CID'   #NODE.id of ancestors + current NODE, joined without separators
 Names.uniqueId(CONSTRUCT)->'CID'  #  - excluding 'Default' or 'Resource'
@@ -529,10 +534,10 @@ Names.uniqueId(CONSTRUCT)->'CID'  #  - excluding 'Default' or 'Resource'
                                   #  - without any of above transformations, i.e. to prevent collisions
                                   #  - unless only one ancestor
                                   #I.e. both unique and human-friendly
-                                  #Goal: cross-STACK IDs
+                                  #Goal: cross-STACK IDs, unique per CAPP
 
 Names.uniqueResourceName          #Like CID except only ancestors until CSTACK (which uses its stackName)
- (CONSTRUCT, OPTS)->'SID'         #Goal: STACK-specific IDs
+ (CONSTRUCT, OPTS)->'SID'         #Goal: cross-STACK IDs, shorter but potential duplicates per CAPP when using nested STACKs
                                   #Can also customize with following OPTS
 OPTS.prefix                       #STR (def: '')
 OPTS.separator                    #STR (def: '')
@@ -548,6 +553,7 @@ OPTS.allowedSpecialCharacters     #STR (def: ''). Additional allowed characters,
 
 
 CSTACK.getLogicalId(CELEM)->'LID' #Like SID but excluding CSTACK
+                                  #Goal: STACK-specific ID
                                   #Used as 'RESOURCE|PARAM|...' LogicalResourceId, e.g. name in TEMPLATEs
                                   #  - CloudFormation uses it to generate the PhysicalResourceId (ARN|MID|name), with additional suffix
 CELEM.logicalId                   #Same but as STR_RV
@@ -613,8 +619,13 @@ CONTEXT                           #Data associated with NODEs
 
 ./cdk.context.json                #{ CVAR: VAL, ... } to use as CONTEXT
                                   #Saved on new CVAR value
+                                  #CVAR must be namespaced, lowercase dasherized, :-separated
+                                  #Meant for values cached by ContextProvider
+                                  #  - i.e. should not be manually edited, except through `cdk context --clear|--reset`
+cdk --context|-c                  #'[STACK:]CVAR=VAL'_ARR (def: all STACKs) to use as CONTEXT
+                                  #CLI flag, i.e. can be set in cdk.json context.[STACK:]CVAR VAL too
+                                  #Meant for values not cached by ContextProvider
 AOPTS.context                     #Same for CAPP
-cdk --context|-c                  #'[STACK:]CVAR=VAL'_ARR (def: all STACKs)
 AOPTS.postCliContext              #Like AOPTS.context, but has higher priority than all above
 
 cdk context                       #Print CONTEXT
@@ -642,6 +653,11 @@ ContextProvider.getValue          #Used by SERVICEs to compute a value then cach
                                   #Value is cached on CONTEXT:
                                   #  - CVAR is serialized 'SERVICE:VARR=VAL:...'
                                   #  - but documented here as PCONTEXT.* OBJ
+                                  #Caching is both for:
+                                  #  - performance
+                                  #  - stability, like a lock file
+                                  #     - e.g. when retrieving last version of an AMI
+                                  #     - i.e. `cdk context --reset` allows upgrades
 OPTS.provider                     #'SERVICE'
 OPTS.props.*                      #PCONTEXT.* OBJ (def: {})
 OPTS.props.account|region         #Def: CSTACK.account|region, if OPTS.includeEnvironment true (def)
@@ -954,8 +970,8 @@ cdk bootstrap
 CVAR
  @aws-cdk/core:stackResourceLimit #Max NUM of RESOURCEs (def|max: 500)
 
-CSTACK.toJSON(VAL[, NUM])->STR_TK #Resolves to JSON.stringify(VAL)
-                                  #NUM is identation (def: 0)
+CSTACK.toJsonString               #Resolves to JSON.stringify(VAL)
+ (VAL[, NUM])->STR_TK             #NUM is indentation (def: 0)
                                   #Handles VAL (or descendant) being:
                                   #  - RVV: resolved
                                   #  - CloudFormation !FUNCs: kept as is and joined with { Fn::Join }
@@ -1297,7 +1313,8 @@ CZOPTS.version                    #'ETYPE_VERSION'. TEMPLATE.Resources.RESOURCE.
 CZRESOURCE.applyRemovalPolicy     #Set CZOPTS.deletionPolicy
  (ENUM|undefined[, OPTS])         #If OPTS.applyToUpdateReplacePolicy true (def), also set CZOPTS.updateReplacePolicy
                                   #ENUM is RemovalPolicy.DELETE|RETAIN|RETAIN_ON_UPDATE_OR_DELETE|SNAPSHOT
-                                  #If ENUM undefined, uses OPTS.default (def: RETAIN)
+                                  #If ENUM undefined, uses OPTS.default
+                                  #  - def: RETAIN, unlike CloudFormation where it is DELETE
                                   #If FFLAG @aws-cdk/core:validateSnapshotRemovalPolicy (recommended), throw if SNAPSHOT on invalid 'RESTYPE'
 CZOPTS.deletionPolicy             #ENUM CfnDeletionPolicy.DELETE|RETAIN|RETAIN_EXCEPT_ON_CREATE|SNAPSHOT
                                   #TEMPLATE.Resources.RESOURCE.DeletionPolicy
@@ -1401,8 +1418,27 @@ OPTS.tags                         #TAGS_FOBJ. TEMPLATE.Resources.RESOURCE.Proper
 CSRESOURCE.tagsRaw                #TAGPROP is RESTYPE-specific
 
 Tags.of(CSRESOURCE)->CTAGS        #
-CTAGS.add('KEY', 'VAL'[, TOPTS])
-CTAGS.remove('KEY', [, TOPTS])    #Add|remove TAGs, using underlying CTAGM
+CTAGS.add('KEY', 'VAL'[, TOPTS])  #Add|remove TAG, using underlying CTAGM
+CTAGS.remove('KEY', [, TOPTS])    #Uses ASPECTS, i.e. done on both CSRESOURCE and its descendants
+
+new Tag('KEY', 'VAL'[, TOPTS])    #CTAGT
+CTAGT.key                         #'KEY'
+CTAGT.value                       #'VAL'
+CTAGT.visit(CSRESOURCE)           #Add TAG, using underlying CTAGM
+                                  #Unlike CTAGS, does not use ASPECTS, i.e. not applied on descendants
+
+new RemoveTag('KEY'[, TOPTS])     #Like CTAGT but removing TAG instead
+
+TOPTS.includeResourceTypes        #'RESTYPE'_ARR. Do not set TAG unless its 'RESTYPE' matches
+                                  #Meant for CTAGS recursion on descendants
+TOPTS.excludeResourceTypes        #'RESTYPE'_ARR. Inverse
+
+TOPTS.priority                    #NUM. Merging priority when adding|removing same TAG multiple times
+                                  #Def:
+                                  #  - removing: 200
+                                  #  - adding: 100
+                                  #  - CTAGM.renderTags()'s TAGS_OBJ: 50
+                                  #  - CTAGM.setTag|removeTag(): 0
 
 
                                              /=+===============================+=\
@@ -1418,17 +1454,10 @@ TagManager.of(CSRESOURCE)->CTAGM  #CTAGM (v1|v2, depending on RESOURCE)
 new TagManager(TAGTYPE_ENUM,      #CTAGM. RESPROP Tags
  'RESTYPE'[, TAGS_OBJ[, OPTS]])   #TAGS_OBJ is renderTags()'s value
 
-CTAGM.setTag('TAG', 'VAL')        #
-CTAGM.removeTag('TAG')            #
+CTAGM.setTag('TAG', 'VAL'[, NUM]) #NUM is TOPTS.priority
+CTAGM.removeTag('TAG', NUM)       #
 CTAGM.tagValues()->TAGS_OBJ       #
 CTAGM.hasTags()->BOOL             #
-
-TOPTS.priority                    #NUM is merging priority when setting|removing 2 TAGs with same name
-CTAGM.setTag(...[, NUM])          #Def:
-CTAGM.removeTag(..., NUM)         #  - setTag|removeTag(): 0
-                                  #  - renderTags()'s TAGS_OBJ: 50
-                                  #  - Tag TOPTS.priority: 100
-                                  #  - RemoveTag TOPTS.priority: 200
 
 OPTS.renderedTags                 #TAGS_FOBJ_RV
 CTAGM.renderTags                  #TAGS_OBJ (def: {}) are merged in
@@ -1446,8 +1475,6 @@ TagType AUTOSCALING_GROUP         #Like STANDARD, but OBJ can also have propagat
 TagType NOT_TAGGABLE              #Always empty []
 
 OPTS.tagPropertyName              #'RESPROP' (def: 'tags')
-TOPTS.includeResourceTypes        #'RESTYPE'_ARR. Do not CTAGM.setTag() unless its 'RESTYPE' matches
-TOPTS.excludeResourceTypes        #'RESTYPE'_ARR. Inverse
 
 
                                              /=+===============================+=\
@@ -2121,7 +2148,7 @@ Aspects.of(CONSTRUCT)->ASPECTS    #
 ASPECTS.add(ASPECT)               #
 ASPECTS.all()->ASPECT_ARR         #
 ASPECT.visit                      #FUNC(CONSTRUCT) to call during `cdk synth`
-                                  #Called on both CONSTRUCT and its descendants
+                                  #Called on both CONSTRUCT and its descendants (excluding child CSTAGEs)
                                   #Called before resolving cross-stack references
 
 attachCustomSynthesis(CONSTRUCT,  #Calls onSynthesize() during `cdk synth`
@@ -2623,8 +2650,10 @@ DOPTS
                                              \=+===============================+=/
 
 
-new AssetStaging(PARENT_CONSTRUCT,
- 'UASSET'[, UOPTS])               #UASSET. Copies FASSET local path to ASSEMBLY_DIR, for local debugging
+new AssetStaging(PARENT_CONSTRUCT,#UASSET. Copies FASSET local path to ASSEMBLY_DIR
+ 'UASSET'[, UOPTS])               #Goals:
+                                  #  - making ASSEMBLY_DIR self-contained, i.e. able to move it
+                                  #  - local debugging
 
 cdk diff|deploy|import|destroy
  |list|metadata --staging         #BOOL (def: true). Enables copy (does not impact bundling)
