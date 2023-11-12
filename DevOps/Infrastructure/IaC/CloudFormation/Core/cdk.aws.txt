@@ -6,14 +6,6 @@
 
 
 TODO:
-  - best practices:
-     - https://docs.aws.amazon.com/cdk/v2/guide/best-practices.html
-     - https://aws.amazon.com/blogs/devops/best-practices-for-developing-cloud-applications-with-aws-cdk/
-     - https://aws.amazon.com/blogs/devops/align-with-best-practices-while-creating-infrastructure-using-cdk-aspects/
-  - ITG (integrity manifest)
-     - https://github.com/aws/aws-cdk/tree/main/packages/%40aws-cdk-testing
-     - https://github.com/aws/aws-cdk/tree/main/packages/%40aws-cdk/integ-runner
-     - https://github.com/aws/aws-cdk/blob/main/INTEGRATION_TESTS.md
   - https://github.com/ScottBrenner/aws-cdk-action
   - https://github.com/arnaskro/aws-cdk-v2-github-actions
   - custom-resources: https://github.com/aws/aws-cdk/tree/main/packages/aws-cdk-lib/custom-resources
@@ -32,6 +24,11 @@ TODO:
   - https://github.com/karlderkaefer/cdk-notifier
   - https://github.com/taichi/actions-cfn-diff
   - https://github.com/mrgrain/cdk-esbuild
+  - testing:
+     - https://github.com/aws/aws-cdk/tree/main/packages/%40aws-cdk/integ-tests-alpha
+     - https://github.com/aws/aws-cdk/tree/main/packages/%40aws-cdk/integ-runner
+     - https://github.com/aws/aws-cdk/tree/main/packages/%40aws-cdk-testing/framework-integ
+     - https://github.com/aws/aws-cdk/blob/main/INTEGRATION_TESTS.md
   - add summary
   - check currently documented SERVICEs, with the list of aws_general doc
      - including existing parts about:
@@ -102,17 +99,55 @@ JSII ==>                          #Underlying tool allowing cdk codebase to be c
                                   #Can be used when writing CONSTRUCT library or validation plugins, to make it available to those languages too
                                   #Not documented yet
 
-APP ==>                           #CAPP. Sets of related STACKs, usually for a given repository
-                                  #Single STACK: RESOURCEs always deployed together
-                                  #  - i.e. multiple STACKs: when RESOURCEs sometimes deployed separately
-
-CUSTOM CONSTRUCT ==>              #Library extending from `Construct`, directly or not
-                                  #Recommended to be its own library|repository
-                                  #Should put as devDependencies + peerDependencies (with ^):
+DEPENDENCIES ==>                  #For custom construct, should put as devDependencies + peerDependencies (with ^):
                                   #  - constructs
                                   #  - aws-cdk-lib
                                   #  - used @aws-cdk/*
                                   #Normal applications should instead set those as production dependencies
+
+CLASS.isCLASS(VAL)->BOOL          #Many CLASSes have this method, like `instanceof` but cross-realm
+                                  #Not documented
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:        BEST PRACTICES         :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+PARAM|COND|MACRO                  #Happen at deploy-time
+                                  #Instead, prefer synth-time logic: imperative language, CONTEXT
+
+SYNC I/O ==>                      #Due to adding logic inside constructors, logic must almost always be sync
+
+APP ==>                           #CAPP. Sets of related STACKs, usually for a given repository
+                                  #  - include same repository as the application non-infrastructure logic
+                                  #Single STACK: RESOURCEs always deployed together
+                                  #  - i.e. multiple STACKs: when RESOURCEs sometimes deployed separately
+
+STAGING ENVIRONMENT ==>           #For dev, staging, production, etc.
+                                  #Can:
+                                  #  - one CAPP per staging environment
+                                  #  - one CSTACK instance per staging environment
+                                  #  - pass staging environment name as CVAR:
+                                  #     - preferred because more dynamic and less boilerplate
+                                  #     - prefix CSTACK name, either:
+                                  #        - directly
+                                  #        - by instantiating child APP (preferred)
+                                  #Those all result in different 'STACK' names
+                                  #  - CDK automatically uses it in PhysicalResourceIds
+                                  #If possible, should have one ACCOUNT per staging environment
+
+INPUT ==>                         #Instead of PARAM|COND, should use either:
+                                  #  - ENVVARs
+                                  #  - CVARs (preferred), with values set either:
+                                  #     - only for current staging environment, i.e. as CONTEXT.*
+                                  #        - preferred because more dynamic, and allows `cdk --context`, not only `cdk.json`
+                                  #     - for each staging environment, i.e. as CONTEXT.STAGING_ENV.*
+
+CUSTOM CONSTRUCT ==>              #Library extending from `Construct`, directly or not
+                                  #Recommended to be its own library|repository
                                   #CDK is optimized for sharing re-usable components, bundling|wrapping resources
                                   #  - e.g. through automatic ID suffixing (CID|SID)
 
@@ -124,14 +159,6 @@ CONSTRUCT HUB ==>                 #Registry of custom constructs
                                   #  - automatic, providing published on npm
                                   #  - npm keyword `awscdk|cdk8s|cdktf` + any of the known categories (see list online)
                                   #  - must use jsii (`.jsii` in root DIR)
-
-CLASS.isCLASS(VAL)->BOOL          #Many CLASSes have this method, like `instanceof` but cross-realm
-                                  #Not documented
-
-SYNC I/O ==>                      #Due to adding logic inside constructors, logic must usually be sync
-
-PARAM|COND|MACRO                  #Happen at deploy-time
-                                  #Instead, prefer synth-time logic: imperative language, CONTEXT
 
 
                                              /=+===============================+=\
@@ -955,8 +982,8 @@ CSTAGE.parentStage                #PARENT_CSTAGE, if PARENT_CONSTRUCT had a CSTA
 OPTS.stageName                    #'STAGE'. Def: 'CSTAGE' (including '')
                                   #Prefixed with 'PARENT_STAGE-...' (if any)
 
-new App([AOPTS])                  #CAPP. Main CSTAGE
-                                  #Inherits CSTAGE
+new App([AOPTS])                  #CAPP. CSTAGE (inherits it) with automatic synth (AOPTS.autoSynth)
+                                  #Also has few smaller features, like AOPTS.context
 
 
                                              /=+===============================+=\
@@ -2353,13 +2380,14 @@ CARTIFACT.hierarchicalId          #Either STACK_ARTIFACT.displayName, or 'ARTIFA
                                              \=+===============================+=/
 
 
-NESTED CSTAGE ==>                 #Nested CSTAGEs automatically create a nested ASSEMBLY
+NESTED CSTAGE ==>                 #Nested CSTAGEs (including CAPPs) automatically create a nested ASSEMBLY
+                                  #Same as parent one, except ASSETS_DIR -> ASSETS_DIR/ARTIFACT_ID
 CSTAGE.artifactId                 #'assembly-NID' (with / -> -) used as 'ARTIFACT_ID'
                                   #If not nested: ''
 
 CBUILDER.createNestedAssembly
- ('ARTIFACT_ID', 'NID')           #Create nested ASSEMBLY
- ->CBUILDER2                      #Same as parent one, except ASSETS_DIR -> ASSETS_DIR/ARTIFACT_ID
+ ('ARTIFACT_ID', 'NID')
+ ->CBUILDER2                      #Create nested ASSEMBLY
 CBUILDER.parentBuilder            #Parent CBUILDER2, if nested
 
 CASSEMBLY.nestedAssemblies        #NASSEMBLY_CARTIFACT_ARR
