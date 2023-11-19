@@ -5,7 +5,15 @@
 
 
 
+ALTERNATIVES ==>                  #??? Both linting and policy-as-code
+
 VERSION ==>                       #2.27.201
+
+new AwsSolutionsChecks([OPTS])    #NAGPACK used to lint AWS solutions library
+new PCIDSS321Checks([OPTS])
+new NIST80053R4Checks([OPTS])
+new NIST80053R5Checks([OPTS])
+new HIPAASecurityChecks([OPTS])   #NAGPACKs based on AWS Config conformance packs
 
 new NagPack([OPTS])               #NAGPACK
                                   #Most properties|methods are protected, i.e. NAGPACK must be subclassed
@@ -20,25 +28,88 @@ NAGPACK.readPackName()->'NAGPACK' #
 
 NAGPACK.applyRule(RULE)           #Add a RULE
 RULE.node                         #CZRESOURCE
+RULE.ruleSuffixOverride           #'RULE' (def: FUNC.name of RULE.rule)
+RULE.level                        #'Warning|Error'
+RULE.info                         #STR. Description of error
+RULE.explanation                  #STR. Description of fix
 RULE.rule                         #FUNC(CZRESOURCE)->VAL, either:
-                                  #  - ENUM NagRuleCompliance.COMPLIANT
-                                  #  - ENUM NagRuleCompliance.NON_COMPLIANT
-                                  #  - '[...]'_ARR, usually referring to PhysicalResourceIds
-                                  #     - behaves like NON_COMPLIANT
-                                  #  - ENUM NagRuleCompliance.NOT_APPLICABLE
-                                  #  - throw ERROR
+                                  #  - 'Compliant': passed
+                                  #  - 'Non-Compliant': failed
+                                  #  - 'FINDING'_ARR
+                                  #     - like 'Non-Compliant' but allows ignoring by 'FINDING'
+                                  #     - 'FINDING' is '[...]', usually PhysicalResourceIds
+                                  #  - 'N/A': does not apply to this CZRESOURCE
+                                  #  - throw ERROR: syntax error in RULE configuration or on CZRESOURCE
+
+ANNOTATIONS ==>                   #A built-in LOGGER creates ANNOTATIONs on CZRESOURCE:
+                                  #  - 'Compliant', 'N/A': none
+                                  #  - 'Non-Compliant':
+                                  #     - warning|error depending on RULE.level
+                                  #     - message: 'RULE_ID[FINDING_ID]: RULE.info
+                                  #       RULE.explanation'
+                                  #  - thrown ERROR:
+                                  #     - warning
+                                  #     - message: 'CdkNagValidationFailure: ...
+                                  #       ERROR.message'
+                                  #  - 'Non-Compliant' or thrown ERROR, with IGNORED_RULE:
+                                  #     - info
+                                  #     - message: 'CdkNagSuppression[FINDING_ID]: RULE_ID was triggered but suppressed
+                                  #       IGNORED_RULE.reason'
+OPTS.verbose                      #BOOL (def: false). Whether to show second line of message
+OPTS.logIgnores                   #BOOL. If false (def), thrown ERROR with IGNORED_RULE is noop
+
+OPTS.reports                      #BOOL (def: true). Built-in LOGGER
+OPTS.reportFormats                #STR_ARR among: 'csv' (def), 'json'
+
+ASSEMBLY_DIR                      #If nested STACK, 'STACK' is CID
+ /NAGPACK-STACK-NagReport.csv     #Each message is a CSV_LINE
+ASSEMBLY_DIR                      #Same for JSON
+ /NAGPACK-STACK-NagReport.json    #Is { lines JSON_LINE_ARR }, with each message being a JSON_LINE
+JSON_LINE.ruleId
+CSV_LINE[0]                       #'RULE_ID'
+JSON_LINE.resourceId
+CSV_LINE[1]                       #CZRESOURCE's 'NODE_PATH'
+JSON_LINE.compliance              #'Compliant', 'Non-Compliant', 'UNKNOWN' (thrown ERROR), 'Suppressed' (IGNORED_RULE)
+CSV_LINE[2]                       #Noop on 'N/A'
+JSON_LINE.exceptionReason
+CSV_LINE[3]                       #IGNORED_RULE.reason ('N/A' if none)
+JSON_LINE.ruleLevel
+CSV_LINE[4]                       #RULE.level
+JSON_LINE.ruleInfo
+CSV_LINE[5]                       #RULE.info
 
 OPTS.additionalLoggers            #LOGGER_ARR
-LOGGER.onCompliance(INFO)         #Called on NagRuleCompliance.COMPLIANT
+
+LOGGER.onCompliance(INFO)         #Called on 'Compliant'
+LOGGER.onNonCompliance(INFO)      #Called on 'Non-Compliant'
+LOGGER.onSuppressed(INFO)         #Called on 'Non-Compliant', but ignored due to IGNORED_RULE
+LOGGER.onNotApplicable(INFO)      #Called on 'N/A'
+LOGGER.onError(INFO)              #Called on thrown ERROR
+LOGGER.onSuppressedError(INFO)    #Called on thrown ERROR, but ignored due to IGNORED_RULE
+
+INFO.resource                     #CZRESOURCE
+INFO.nagPackName                  #'NAGPACK'
+INFO.ruleId                       #'RULE_ID', i.e. 'NAGPACK-RULE'
+                                  #Is 'CdkNagValidationFailure' when RULE.rule threw an ERROR
+INFO.ruleInfo                     #RULE.info
+INFO.ruleExplanation              #RULE.explanation
+INFO.ruleLevel                    #RULE.level
+INFO.findingId                    #'FINDING' ('' if none)
+                                  #Only with LOGGER.onNonCompliance|onSuppressed()
+INFO.errorMessage                 #ERROR.message, when thrown
+                                  #Only with LOGGER.on[Suppressed]Error()
+INFO.suppressionReason            #IGNORED_RULE.reason
+                                  #Only with LOGGER.onSuppressed()
+INFO.errorSuppressionReason       #IGNORED_RULE.reason
+                                  #Only with LOGGER.onSuppressedError()
 
 TEMPLATE[.Resources.RESOURCE]
  .Metadata.cdk_nag
  .rules_to_suppress               #Ignore specific RULE
-IGNORED_RULE.id                   #'NAGPACK-RULE'
+IGNORED_RULE.id                   #'RULE_ID'
 IGNORED_RULE.reason               #'ERROR'
 IGNORED_RULE.is_reason_encoded    #BOOL (def: false). Whether reason is base64'd
-IGNORED_RULE.applies_to           #STR or { regex: '/REGEXP/[FLAGS]' }, RULE-specific
-                                  #Matched against '[...]'_ARR returned by some RULEs
+IGNORED_RULE.applies_to           #'FINDING' or { regex: '/REGEXP/[FLAGS]' }
 
 NagSuppressions                   #Adds TEMPLATE.Resources.RESOURCE.cdk_nag.rules_to_suppress on CZRESOURCE|CKRESOURCE
  .addResourceSuppressions         #If CKRESOURCE, applied on its `defaultChild`
@@ -51,5 +122,33 @@ NagSuppressions
  (CSTACK, 'NODE_PATH'[_ARR],
  IGNORED_RULE_ARR[, BOOL])        #Like addResourceSuppressions() but locating the RESOURCEs using a CSTACK + 'NODE_PATH'
 NagSuppressions
- .addStackSuppressions            #Like addResourceSuppressions() but for a CSTACK, i.e.  TEMPLATE.Metadata.cdk_nag.rules_to_suppress
+ .addStackSuppressions            #Like addResourceSuppressions() but for all RESOURCEs of a CSTACK, i.e. TEMPLATE.Metadata.cdk_nag.rules_to_suppress
  (CSTACK, IGNORED_RULE_ARR[,BOOL])#If BOOL true (def: false), includes nested STACKs
+
+NAGPACK
+ .packGlobalSuppressionIgnore
+OPTS.suppressionIgnoreCondition   #FORCED_RULE. Prevent an IGNORED_RULE
+RULE.ignoreSuppressionCondition   #Has a 'MESSAGE' which is added as an info ANNOTATION on CZRESOURCE
+new SuppressionIgnoreAlways
+ ('MESSAGE')                      #FORCED_RULE that applies to any RULE
+new SuppressionIgnoreErrors()     #FORCED_RULE that applies only to RULEs with level 'Error'
+new SuppressionIgnoreOr|And
+ (FORCED_RULE_ARR)                #FORCED_RULE combining multiple ones
+{ createMessage(OBJ)->'MESSAGE' } #FORCED_RULE using OBJ:
+                                  #  - reason: IGNORED_RULE.reason
+                                  #  - resource|ruleId|ruleLevel|findingId: INFO.*
+                                  #Must return '' to allow IGNORED_RULE
+
+NagRules.resolveIfPrimitive
+ (CZRESOURCE, VAL)->VAL           #Same as CSTACK.resolve(VAL), except throws when resolved VAL is an OBJ (e.g. { Ref|RFUNC })
+NagRules
+ .resolveResourceFromInstrinsic   #Same as CSTACK.resolve(VAL), except returns 'RESOURCE' when resolved VAL is
+ (CZRESOURCE, VAL)->VAL           #{ Ref: 'RESOURCE' } or { Fn::GetAtt: ['RESOURCE', 'RESATTR'] }
+
+flattenCfnReference(VAL)->STR     #Serializes:
+                                  #  - { Fn::GetAtt: ['RESOURCE', 'RESATTR'] } -> '<RESOURCE.RESATTR>'
+                                  #  - { Fn::Ref: STR } -> '<STR>'
+                                  #  - { Fn::ImportValue: 'EXPORT' } -> 'EXPORT'
+                                  #  - { Fn::Join: ['DELIM', ...] } -> joined
+                                  #  - { Fn::Sub: STR } -> STR, with ${...} -> <...>
+                                  #  - otherwise: JSON.stringify()
