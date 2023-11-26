@@ -14,7 +14,8 @@ SUMMARY ==>                       #Log group: prefix, stream, retention, tags
                                   #Metric filter: pattern, default value
                                   #Query: saved, aliases, aggregation, expressions, CloudWatch dashboard
                                   #Query fields: message VARR, LLEVENT.*, service-specific
-                                  #Query command: alias, fields|display|parse, filter|sort|limit, dedup, pattern
+                                  #Query command: alias, fields|display|parse, filter|sort|limit, dedup
+                                  #Pattern: command, difference, anomalies detector
                                   #Vended logs: LOG_STREAM|S3|Kinesis, policy
                                   #Subscription: pattern, Lambda|Kinesis, distribution, cross-account
                                   #Export: S3
@@ -642,13 +643,6 @@ dedup FIELD,...                   #Ignore LLEVENTs with same FIELDs values as pr
                                   #Undefined values are not considered duplicates
                                   #Must be either last COMMAND, or before `limit` as a last COMMAND
 
-pattern STR_EXPR                  #Automatically detect shared patterns. Produces FIELDs:
-                                  #  - @pattern STR: common substring, with * for variable parts
-                                  #     - can be used with parse COMMAND
-                                  #  - @sampleCount NUM: total of matching LLEVENTs
-                                  #  - @ratio NUM: percentage of matching LLEVENTs
-                                  #  - @severityLabel 'Error|Warning|Info|Debug': log severity
-
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -662,6 +656,7 @@ stats AFUNC(...),...              #COMMAND that groups by STR_EXPR and outputs F
                                   #  - bar chart: always
                                   #  - if group by bin(): line chart, stacked area chart, pie chart
                                   #AFUNCs follow
+                                  #Max 2 per QUERY
 
 count([*])->NUM                   #NUM of LLEVENTs
 count(FIELD)->NUM                 #NUM of LLEVENTs where FIELD is not undefined
@@ -730,6 +725,160 @@ bin('PERIOD')->'DATE'             #Same as datefloor(@timestamp, 'PERIOD')
 isValidIp[V4|6](FIELD)->BOOL      #
 isIp[V4|6]InSubnet
  (FIELD, "CIDR")->BOOL            #
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:            PATTERN            :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+pattern STR_EXPR                  #QUERY COMMAND. Automatically detect shared patterns. Produces FIELDs:
+                                  #  - @pattern STR: common substring, with '<*>' for variable parts
+                                  #     - can be used with parse COMMAND
+                                  #  - @sampleCount NUM: total of matching LLEVENTs
+                                  #  - @ratio NUM: percentage of matching LLEVENTs
+                                  #  - @severityLabel 'Error|Warning|Info|Debug': detected message severity
+                                  #Better for LLEVENTs with fairly structured, repeating message
+                                  #The UI:
+                                  #  - has a tab which automatically shows `pattern @message` on last 1000 LLEVENTs
+                                  #  - shows corrolated patterns (e.g. lines that often appear together)
+
+diff [STR]                        #QUERY COMMAND. Compare @sampleCount of `pattern @message` between LLEVENTs in periods:
+                                  #  - currently queried
+                                  #  - previous one of same length, either:
+                                  #     - immediately before
+                                  #     - STR: previousDay|previousWeek|previousMonth
+                                  #Produces same FIELDs as `pattern`, and also:
+                                  #  - difference in @sampleCount
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:       ANOMALY DETECTOR        :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+CreateLogAnomalyDetector()        #Req: DETECTOR
+                                  #  - no *TimeStamp, anomalyDetectorStatus
+                                  #  - no anomalyDetectorArn
+                                  #Res: DETECTOR
+                                  #  - only anomalyDetectorArn
+UpdateLogAnomalyDetector()        #Req: DETECTOR
+                                  #  - anomalyDetectorStatus PAUSED -> enabled BOOL
+                                  #  - no *TimeStamp, anomalyDetectorStatus
+                                  #  - no detectorName, kmsKeyId, logGroupArnList
+                                  #  - no tags
+                                  #Res: empty
+GetLogAnomalyDetector()           #Req: DETECTOR
+                                  #  - only anomalyDetectorArn
+                                  #Res: DETECTOR
+                                  #  - no tags, anomalyDetectorArn
+ListLogAnomalyDetectors()         #Req: DETECTOR
+                                  #  - only logGroupArnList ARR -> filterLogGroupArn LOG_GROUP_ARN
+                                  #Res: anomalyDetectors DETECTOR_ARR
+                                  #  - no tags
+DeleteLogAnomalyDetector()        #Req: DETECTOR
+                                  #  - only anomalyDetectorArn
+                                  #Res: empty
+
+DETECTOR                          #Find ANOMALYs
+DETECTOR.anomalyDetectorArn       #DETECTOR_ARN
+DETECTOR.detectorName             #'DETECTOR'
+DETECTOR.creationTimeStamp        #DATE_NUM
+DETECTOR.lastModifiedTimeStamp    #DATE_NUM
+
+DETECTOR.anomalyDetectorStatus    #Among:
+                                  #  - INITIALIZING
+                                  #  - TRAINING: analyze last 2 weeks. Last up to 24h
+                                  #  - ANALYZING
+                                  #  - PAUSED
+                                  #  - FAILED
+                                  #  - DELETED
+
+DETECTOR.logGroupArnList          #LOG_GROUP_ARN_ARR
+DETECTOR.filterPattern            #'FILTER_PATTERN'
+
+DETECTOR.evaluationFrequency      #How often to run among 'ONE|FIVE|TEN|FIFTEEN|THIRTY_MIN', 'ONE_HOUR' (def: 'FIVE_MIN')
+DETECTOR.anomalyVisibilityTime    #NUM of days (def 21, min 7, max 90). Max duration of ANOMALYs, before considered normal
+
+DETECTOR.kmsKeyId                 #KMS_KEY_ID (def automatically created). Encrypt ANOMALYs at rest
+
+DETECTOR.tags                     #TAGS
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:         ANOMALY ITEM          :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+UpdateAnomaly()                   #Req: ANOMALY
+                                  #  - only anomalyDetectorArn, anomalyId, patternId
+                                  #  - only one with suppressionType, suppressionPeriod
+                                  #Res: empty
+ListAnomalies()                   #Req: ANOMALY
+                                  #  - only anomalyDetectorArn
+                                  #  - only suppressed BOOL -> suppressionState '[UN]SUPPRESSED'
+                                  #Res:
+
+ANOMALY                           #Abnormal set of LLEVENTs
+                                  #Guessed by using `pattern` COMMAND + machine learning
+                                  #Only first 1500 chars of each @message
+                                  #Includes:
+                                  #  - new @pattern
+                                  #  - big changes in @ratio
+                                  #  - dynamic <*>: new value, or big changes in NUM of occurences
+ANOMALY.anomalyId                 #ANOMALY_MID
+ANOMALY.anomalyDetectorArn        #DETECTOR_ARN
+ANOMALY.logGroupArnList           #LOG_GROUP_ARN_ARR
+
+ANOMALY.firstSeen                 #DATE_NUM
+ANOMALY.lastSeen                  #DATE_NUM
+ANOMALY.histogram.DATE_NUM        #NUM of occurrences. Histogram
+
+ANOMALY.priority                  #'HIGH|MEDIUM|LOW'
+                                  #Based on NUM of occurences and on keywords like 'FATAL' or 'ERROR'
+ANOMALY.logSamples                #STR_ARR. Randomly sample @message
+ANOMALY.description               #STR. Automatically generated
+
+ANOMALY.patternId                 #MID of `pattern`
+ANOMALY.patternString             #`pattern` as STR
+ANOMALY.patternRegex              #`pattern`, as 'REGEXP'
+
+ANOMALY.patternTokens             #ANOMALY_PART_ARR. `pattern` result
+ANOMALY_PART.tokenString          #STR value, either raw value or '<*>' (dynamic)
+ANOMALY_PART.isDynamic            #BOOL
+ANOMALY_PART.dynamicTokenPosition #NUM index, if dynamic
+ANOMALY_PART.enumerations         #OBJ. If dynamic, matches values.
+                                  #Key is matched STR (max 10), value is approximate NUM of occurences
+
+ANOMALY.active                    #BOOL. Whether ongoing
+ANOMALY.state                     #One of:
+                                  #  - 'Active': ongoing
+                                  #  - 'Baseline': not ongoing
+                                  #  - 'Suppressed'
+
+ANOMALY.suppressed                #BOOL (def: false). Manually ignored
+ANOMALY.suppressedDate            #DATE_NUM
+ANOMALY.suppressedUntil           #DATE_NUM
+ANOMALY.suppressionType           #Among:
+                                  #  - 'INFINITE': no suppressedUntil
+                                  #  - 'LIMITED': suppressedUntil, defined by suppressionPeriod
+                                  #  - undefined: not suppressed anymore
+ANOMALY.suppressionPeriod         #ANOMALY_SUP_PERIOD
+ANOMALY_SUP_PERIOD.value          #NUM
+ANOMALY_SUP_PERIOD.suppressionUnit#'SECONDS|MINUTES|HOURS'
+ANOMALY.isPatternLevelSuppression #BOOL
+
+CLOUDWATCH METRICS ==>            #
+AWS/Logs/AnomalyCount             #NUM of ANOMALYs
+
+DVAR LogAnomalyDetector           #'DETECTOR'
+DVAR LogAnomalyPriority           #STR. ANOMALY.priority
 
 
                                              /=+===============================+=\
