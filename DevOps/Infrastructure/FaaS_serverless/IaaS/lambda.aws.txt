@@ -102,6 +102,7 @@ PROVISIONED CONCURRENCY ==>       #9$ per month, per provisioned CONCURRENCY, wi
                                   #  - low-utilization: high fixed cost, in exchange for high latency
 
 /TMP ==>                          #1$ per 3e7 seconds (~1 year) with EphemeralStorage.Size 1GB
+                                  #Price is proportional to Size + total duration (for all INVOCATIONs)
                                   #I.e. when MemorySize === EphemeralStorage.Size, /tmp is 4000 times cheaper than RAM
                                   #Free: none
 
@@ -224,16 +225,16 @@ FUNC_VERSION.MasterArn            #Main FUNC_VERSION_ARN. Only for Lambda@Edge
 FUNC_VERSION.FunctionName         #'FUNCTION'
 ENVVAR AWS_LAMBDA_FUNCTION_NAME   #'FUNCTION'
 
-REVISION_ID                       #Changes each time a specific model is updated.
+REVISION_ID                       #Changes each time a specific FUNC_VERSION|ALIAS|PERMISSION is updated.
                                   #Meant to pass current one to an update call so it fails if there is a concurrent update
 FUNC_VERSION.RevisionId           #'REVISION_ID'
 FUNC_VERSION.CodeSha256           #STR. SHA256 checksum
                                   #Can be used as a REVISION_ID
 
-CLOUDWATCH METRICS ==>            #All have following DVARs:
-                                  #  - Resource 'FUNCTION:QUALIFIER'
-                                  #  - FunctionName 'FUNCTION'
-                                  #  - ExecutedVersion VERSION_NUM
+CLOUDWATCH METRICS ==>            #All have following DVARs
+DVAR Resource                     #'FUNCTION:QUALIFIER'
+DVAR FunctionName                 #'FUNCTION'
+DVAR ExecutedVersion              #VERSION_NUM
 
 
                                              /=+===============================+=\
@@ -290,6 +291,24 @@ ALIAS.RoutingConfig               #Route some traffic to different FUNC_VERSIONs
                                   #  - have same Role|DeadLetterConfig as ALIAS
                                   #  - be published
                                   #  - not be '$LATEST'
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:            PUBLISH            :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+POST /functions/SHORT_FUNC_ARN    #Req: FUNC_VERSION
+ /versions                        #  - only FunctionName, RevisionId, CodeSha256, Description
+PublishVersion()                  #Res: FUNC_VERSION
+                                  #Publish a FUNC_VERSION
+                                  #Not logged by CloudTrail
+
+NEW_FUNC_VERSION.Publish          #BOOL (def: false)
+                                  #Whether is is live
+                                  #Makes it read-only
 
 
                                              /=+===============================+=\
@@ -355,10 +374,9 @@ NEW_FUNC_CODE.S3Bucket            #STR. S3 'BUCKET' storing the .zip code
                                   #  - ZipFile, i.e. S3 location automatically allocated
                                   #Can use `aws cloudformation package`
 NEW_FUNC_CODE.S3Key               #STR. S3 'OBJECT'
-NEW_FUNC_CODE
- .S3ObjectVersion                 #STR. S3 VERSION_ID
+NEW_FUNC_CODE.S3ObjectVersion     #STR. S3 VERSION_ID
 
-FUNC_CODE.RepositoryType          #STR hosting the file
+FUNC_CODE.RepositoryType          #'S3' or undefined
 FUNC_CODE.Location                #S3 'URI' to .zip archive
                                   #Only valid 10 minutes
 
@@ -394,8 +412,8 @@ CONTAINER IMAGE ==>               #Must follow OCI 1.0.0 specification
 FUNC_CODE.ResolvedImageUri        #'URI' to the container image
 [NEW_]FUNC_CODE.ImageUri          #'URI' to the container image in AWS ECR
 
-FUNC_VERSION.ImageConfigResponse  #IMAGE. Container image's configuration.
- .ImageConfig                     #Max 16KB
+FUNC_VERSION                      #IMAGE. Container image's configuration.
+ .ImageConfigResponse.ImageConfig #Max 16KB
 IMAGE.EntryPoint                  #STR_ARR. Like Docker ENTRYPOINT
 IMAGE.Command                     #STR_ARR. Like Docker CMD, i.e. arguments to EntryPoint
 IMAGE.WorkingDirectory            #STR. Like Docker WORKDIR
@@ -408,7 +426,7 @@ public.ecr.aws/lambda/            #Recommended base images
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:             LAYER             :==(
+                                            )==:          LAYER MAIN           :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
@@ -426,9 +444,16 @@ LAYER                             #Lambda layer, as output
                                   #Only if PackageType 'Zip'
                                   #Not logged by CloudTrail
                                   #Max 5 per FUNCTION
-LAYER.LayerArn                    #'arn:aws:lambda:REGION:ACCOUNT_ID:layer:LAYER_NAME'
+LAYER.LayerArn                    #LAYER_ARN. 'arn:aws:lambda:REGION:ACCOUNT_ID:layer:LAYER_NAME'
 LAYER.LayerName                   #'LAYER_NAME'
-LAYER.LatestMatchingVersion       #Most recent LAYER_VERSION
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:         LAYER VERSION         :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
 
 POST /layers/LAYER/versions       #Req: LAYER_VERSION
 PublishLayerVersion()             #  - LayerVersionArn -> LayerName 'LAYER_NAME'
@@ -455,11 +480,13 @@ DeleteLayerVersion()              #  - only Version -> VersionNumber
 LAYER_VERSION                     #Specific version of a LAYER
                                   #Only PublishLayerVersion() is logged by CloudTrail
                                  ##With Pulumi, can use skipDestroy
-LAYER_VERSION.LayerVersionArn     #'arn:aws:lambda:REGION:ACCOUNT_ID:layer:LAYER_NAME:NUM'
+LAYER_VERSION.LayerVersionArn     #LAYER_VERSION_ARN. 'arn:aws:lambda:REGION:ACCOUNT_ID:layer:LAYER_NAME:NUM'
 LAYER_VERSION.Version             #NUM
 LAYER_VERSION.CreatedDate         #'DATE'
 LAYER_VERSION.Description         #STR
 LAYER_VERSION.LicenseInfo         #STR. Open-source license identifier
+
+LAYER.LatestMatchingVersion       #Most recent LAYER_VERSION
 
 LAYER_VERSION.Content             #In input: LAYER_CONTENT_INPUT
                                   #In output: LAYER_CONTENT_OUTPUT
@@ -496,7 +523,7 @@ COND_KEY lambda:Layer             #LAYER_VERSION_ARN_ARR. Only with CreateFuncti
                                   #  - shared as LAYER, for PackageType 'Zip'
                                   #  - added manually by Dockerfile, if PackageType 'image'
                                   #Max 10 per FUNCTION
-                                  #Only partially documented
+                                  #Only partially documented for the moment
 
 EAPI                              #http://AWS_LAMBDA_RUNTIME_API/2020-01-01/extension
 POST EAPI/register                #Initializes
@@ -516,24 +543,6 @@ AWS/Lambda/
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:            PUBLISH            :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-POST /functions/SHORT_FUNC_ARN    #Req: FUNC_VERSION
- /versions                        #  - only FunctionName, RevisionId, CodeSha256, Description
-PublishVersion()                  #Res: FUNC_VERSION
-                                  #Publish a FUNC_VERSION
-                                  #Not logged by CloudTrail
-
-NEW_FUNC_VERSION.Publish          #BOOL (def: false)
-                                  #Whether is is live
-                                  #Makes it read-only
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
                                             )==:            RUNTIME            :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -549,8 +558,8 @@ FUNC_VERSION.Runtime              #STR. Runtime, among:
                                   #  - 'provided[VERSION]' with VERSION: .al2, .al2023
                                   #OS:
                                   #  - Amazon Linux 1: go*, python3.7, provided (not provided.al2)
-                                  #  - Amazon Linux 2023: >=nodejs20.x, >=python3.12, >=java21, >=dotnetcore8
                                   #  - Amazon Linux 2: all others
+                                  #  - Amazon Linux 2023: >=nodejs20.x, >=python3.12, >=java21, >=dotnetcore8
                                   #Not if PackageType 'Image'
                                  ##With Pulumi can use CW.lambda.Runtime.NodeJS10dX|... 'nodejs10.x|...'
                                  ##cfn-lint E2531|W2531: no deprecated Lambda FUNC_VERSION.Runtime
@@ -568,7 +577,7 @@ ENVVAR AWS_LAMBDA_EXEC_WRAPPER    #'PATH' to an executable script.
                                   #"Wrapper script", executed instead of FUNC_VERSION.Runtime
                                   #Script arguments are same as original Runtime
                                   #  - including argv[0], i.e. runtime binary itself
-                                  #Only with Runtime using Amazon Linux 2, except 'provided.al2'
+                                  #Not with Amazon Linux 1, nor 'provided.al2'
 INTERNAL EXTENSION ==>            #Logic that runs inside the FUNC_INSTANCE's process
                                   #Achieved by using ENVVAR AWS_LAMBDA_EXEC_WRAPPER
 
@@ -582,7 +591,7 @@ INTERNAL EXTENSION ==>            #Logic that runs inside the FUNC_INSTANCE's pr
 
 CUSTOM RUNTIME ==>                #When FUNC_VERSION.Runtime 'provided*'
                                   #FUNC_CODE|LAYER must include an executable script at '/bootstrap', which is run
-                                  #Only partially documented here
+                                  #Only partially documented for the moment
 
 ENVVAR LAMBDA_TASK_ROOT           #FUNC_CODE's 'DIR', e.g. /var/task
                                   #Used as cwd, i.e. should change cwd to it during initialization
@@ -596,8 +605,8 @@ POST RAPI/init/error              #Report error during initialization
 GET RAPI/invocation/next          #Get next INVOCATION_REQ
                                   #Request body: empty
                                   #Res: INVOCATION_REQ.Payload
-POST RAPI/invocation/REQ_ID/      #Set INVOCATION_RES
- response                         #Request body: INVOCATION_RES.ResponseBody
+POST                              #Set INVOCATION_RES
+ RAPI/invocation/REQ_ID/response  #Request body: INVOCATION_RES.ResponseBody
                                   #Res: empty
 POST RAPI/invocation/REQ_ID/error #Report error during INVOCATION
 
@@ -646,7 +655,7 @@ FUNC_VERSION.Architectures        #STR_ARR. CPU architecture. Single item, among
                                   #  - 'arm64'
                                   #     - cheaper for equivalent performance
                                   #     - must:
-                                  #        - use a Runtime with Amazon Linux 2
+                                  #        - not use a Runtime with Amazon Linux 1
                                   #        - make sure FUNC_VERSION|LAYER_VERSION's code supports ARM
                                   #Not if PackageType 'Image'
 LAYER_VERSION
@@ -671,8 +680,8 @@ MAX PROCESSES ==>                 #1e3
                                              \=+===============================+=/
 
 
-FUNC_VERSION.Environment          #'VAL'. Environment variable.
- .Variables.VAR                   #Not logged by CloudTrail
+FUNC_VERSION                      #'VAL'. Environment variable.
+ .Environment.Variables.VAR       #Not logged by CloudTrail
                                   #Max 4KB for all environment variables per FUNC_VERSION
 
 FUNC_VERSION.KMSKeyArn            #AWS KMS key ARN. Encrypt environment variables
