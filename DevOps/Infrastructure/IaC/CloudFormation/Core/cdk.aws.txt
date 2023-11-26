@@ -3448,19 +3448,25 @@ CSTATEMENT                        #'ARN'_ARR. STATEMENT.Resources
 CSTATEMENT.addAllResources()      #Same as CSTATEMENT.addResources('*')
 CSTATEMENT.hasResource            #BOOL
 
-OPTS.[not]principals              #ARR
-                                  #Ignore duplicate items
-
-OPTS|CSTATEMENT.conditions
-CSTATEMENT.addConditions(OBJ)     #{ CONDITION_OP: { COND_KEY: VAL } }. STATEMENT.Condition
-CSTATEMENT.addCondition
- ('CONDITION_OP', {COND_KEY: VAL})#
+COND_OBJ                          #{ CONDITION_OP: { COND_KEY: VAL } }. STATEMENT.Condition
+OPTS|CSTATEMENT|CCOND_PRINCIPAL
+ .conditions
+CSTATEMENT|CCOND_PRINCIPAL
+ .addConditions(COND_OBJ)         #
+CSTATEMENT|CCOND_PRINCIPAL
+ .addCondition('CONDITION_OP',
+ { COND_KEY: VAL })               #
 CSTATEMENT
  .addSourceArnCondition('ARN')    #{ ArnEquals: { aws:SourceArn: ARN } }
 CSTATMNT.addSourceAccountCondition
  ('ACCOUNT_ID')                   #{ StringEquals: { aws:SourceAccount: ACCOUNT_ID } }
 CSTATEMENT.addAccountCondition
  ('ACCOUNT_ID')                   #{ StringEquals: { sts:ExternalId: ACCOUNT_ID } }
+
+CPRINCIPAL.withConditions
+ (COND_OBJ)->CCOND_PRINCIPAL
+new PrincipalWithConditions
+ (CPRINCIPAL, COND_OBJ)           #CCOND_PRINCIPAL. Like CPRINCIPAL.*, except merges additional STATEMENT.Condition
 
 CSTATEMENT.validateForAnyPolicy() #General validation
  ->'ERROR'_ARR                    #STATEMENT.notActions|actions must not both be used
@@ -3474,15 +3480,77 @@ CSTATEMENT                        #Validation for identity-based POLICYs
 CSTATEMENT.freeze()->CSTATEMENT   #Makes read-only
 CSTATEMENT.frozen                 #BOOL (def: false)
 
-new PrincipalBase()               #CPRINCIPAL. PRINCIPAL in STATEMENT.Principal
-CPRINCIPAL.grantPrincipal         #CPRINCIPAL itself
-CPRINCIPAL.principalAccount       #'ACCOUNT_ID'. STATEMENT.Principal.AWS 'ACCOUNT_ID'
-CPRINCIPAL.assumeRoleAction       #STR. Def: 'sts:AssumeRole'
-CPRINCIPAL.addToPrincipalPolicy
- (CSTATEMENT)->OBJ                #???
+OPTS|CSTATEMENT.[not]principals   #ARR
+                                  #Ignore duplicate items
+CSTATEMENT.add[Not]Principals
+ (CPRINCIPAL_ARR)                 #
+CSTATEMENT.hasPrincipal           #BOOL
 
-CPRINCIPAL.policyFragment         #
-new PrincipalPolicyFragment
- ({ KEY: STR_ARR, ... }[, OBJ])   #CPRINCIPAL_FRAGMENT
-CPRINCIPAL_FRAGMENT.principalJson #{ KEY: STR_ARR, ... }
-CPRINCIPAL_FRAGMENT.conditions    #OBJ
+new PrincipalBase()               #CPRINCIPAL. PRINCIPAL in STATEMENT.[Not]Principal
+
+CPRINCIPAL.dedupeString()[->STR]  #Used when merging CSTATEMENTs: if two CPRINCIPALs return same STR, considered duplicates, i.e. can remove one
+ComparablePrincipal
+ .isComparablePrincipal
+ (CPRINCIPAL)->BOOL               #Whether CPRINCIPAL.dedupeString is defined
+ComparablePrincipal
+ .dedupeStringFor
+ (CPRINCIPAL)[->STR]              #Forwards dedupeString(), if defined
+
+CPRINCIPAL_OBJ                    #{ KEY: STR_ARR, ... }. STATEMENT.Principal
+CPRINCIPAL.policyFragment         #CPRINCIPAL_FRAGMENT. CPRINCIPAL's JSON form:
+new PrincipalPolicyFragment       #  - CPRINCIPAL_OBJ
+ (CPRINCIPAL_OBJ[, COND_OBJ])     #  - optionally, related COND_OBJ (all STATEMENT's CPRINCIPALs must have same one)
+CPRINCIPAL_FRAGMENT.principalJson #CPRINCIPAL_OBJ
+CPRINCIPL.toJSON()->CPRINCIPAL_OBJ#
+CPRINCIPL.toString()->STR         #JSON.stringify(CPRINCIPAL_OBJ)
+CPRINCIPAL_FRAGMENT.conditions    #COND_OBJ
+
+*.addToPrincipalPolicy            #Add STATEMENT to the POLICY of the PRINCIPAL underlying *
+ (CSTATEMENT)->OBJ                #* are different CLASSes, usually wrapping a PRINCIPAL
+                                  #Returns OBJ:
+                                  #  - statementAdded BOOL: false if issue
+                                  #  - policyDependable DEPENDABLE: for underlying POLICY
+
+CPRINCIPAL.addToAssumeRolePolicy
+ (CPOLICY_DOC)                    #Add STATEMENT allowing sts:AssumeRole to CPRINCIPAL
+CPRINCIPAL.assumeRoleAction       #'PACTION'. Override PACTION allowed by addToAssumeRolePolicy()
+CPRINCIPAL.withSessionTags()
+ ->CTAGS_PRINCIPAL
+new SessionTagsPrincipal
+ (CPRINCIPAL)                     #CTAGS_PRINCIPAL. Like CPRINCIPAL, except addToAssumeRolePolicy() also allows sts:TagSession
+
+CPRINCIPAL.grantPrincipal         #CPRINCIPAL itself. Used by GRANT???
+CPRINCIPAL.principalAccount       #'ACCOUNT_ID'. Used by GRANT???
+                                  #Set by AccountPrincipal
+
+CSTATEMENT.addArnPrincipal('ARN')
+new ArnPrincipal('ARN')           #CARN_PRINCIPAL. CPRINCIPAL with { AWS: ARN }
+CARN_PRINCIPAL
+ .inOrganization('ORG_ID')
+ ->CCOND_PRINCIPAL                #Adds COND_OBJ { StringEquals: { aws:PrincipalOrgID: 'ORG_ID' } }
+new OrganizationPrincipal('ORGID')#Like new ArnPrincipal('*').inOrganization('ORG_ID')
+
+CSTATEMENT.addAwsAccountPrincipal
+ ('ACCOUNT_ID')
+new AccountPrincipal('ACCOUNT_ID')#CPRINCIPAL with { AWS: ROOT_ARN|ACCOUNT_ID }
+
+CSTATEMENT.addServicePrincipal
+ ('SERVICE'[, OPTS])              #CPRINCIPAL with { Service: 'SERVICE_DOMAIN'_TK }
+OPTS.conditions                   #COND_OBJ
+OPTS.region                       #'REGION'
+ServicePrincipal
+ .servicePrincipalName
+ ('SERVICE')->'SERVICE_DOMAIN'_TK #
+CVAR @aws-cdk/aws-iam:            #If true (recommended), always return 'SERVICE[.REGION].amazonaws.com'
+ standardizedServicePrincipals    #If false (def), uses RFACTs, which used to be needed for some edge cases, but not anymore
+
+CSTATEMENT.addFederatedPrincipal
+ (VAL, COND_OBJ)                  #
+
+CSTATEMENT
+ .addAccountRootPrincipal()       #
+
+CSTATEMENT
+ .addAccountRootPrincipal(STR)    #
+
+CSTATEMENT.addAnyPrincipal()      #
