@@ -44,13 +44,23 @@ THROTTLING ==>                    #Max 10 requests per second, except:
 PRICING ==>                       #TRAIL:
                                   #  - 1$/5e4 management EVENTs
                                   #     - free: first copy of each management EVENT (with a given EVENT_MID)
-                                  #  - 1$/3e5 management EVENTs with INSIGHT
+                                  #     - INSIGHT: 17% more expensive (not part of free tier)
                                   #  - 1$/1e6 data EVENTs
+                                  #  - also, S3 costs
                                   #Shadow TRAILs: charged too
-                                  #DATASTORE: 1$/400MB input
-                                  #  - after 5TB: 2.5x cheaper, 25TB: 5x cheaper
-                                  #  - unlike TRAIL, no S3 costs
-                                  #  - free for 30 days: up to 5GB
+                                  #DATASTORE:
+                                  #  - EXTENDABLE_RETENTION_PRICING:
+                                  #     - 1$/1.3GB input (new EVENTs)
+                                  #     - 33% cheaper if eventCategory 'Insight|ActivityAuditLog|ConfigurationItem|Evidence'
+                                  #     - also, S3 costs: 1$/43GB (all EVENTs)
+                                  #        - free: first year for each EVENT
+                                  #           - i.e. completely free if RetentionPeriod 1 year (default)
+                                  #  - FIXED_RETENTION_PRICING:
+                                  #     - 1$/400MB input
+                                  #     - after 5TB: 2.5x cheaper, 25TB: 5x cheaper
+                                  #     - no S3 costs
+                                  #     - i.e. better if >25TB/month and|or RetentionPeriod > 1 year
+                                  #  - free for 30 days: up to 5GB (not for S3 costs)
                                   #QUERY: 1$/200GB scanned (QUERY_STATS.BytesScanned)
                                   #  - free for 30 days: up to 5GB
 
@@ -104,7 +114,7 @@ DeleteTrail()                     #Req: TRAIL
 TRAIL                             #Logs any AWS API calls to a S3 BUCKET
                                   #Some SERVICEs do not log all their ACTIONs, or sometimes none
                                   #From both user and SERVICE_ACTIONs
-                                  #If not created explicitely, a TRAIL is implicitely used but:
+                                  #If not created explicitly, a TRAIL is implicitely used but:
                                   #  - default settings
                                   #  - only LookupEvents()
                                   #Only for current REGION
@@ -322,8 +332,9 @@ LOG_EVENT.requestParameters       #PARAMS_OBJ
 LOG_EVENT.responseElements        #RESP_OBJ|null
                                   #Truncate over 100KB
                                   #Some SERVICEs do not send it
-LOG_EVENT.errorCode               #'CODE|ERROR'. Some SERVICEs show them in LOG_EVENT.responseElements instead
-LOG_EVENT.errorMessage            #Truncate over 1KB
+LOG_EVENT.errorCode               #'CODE'. Some SERVICEs show it in LOG_EVENT.responseElements instead
+LOG_EVENT.errorMessage            #Same with 'ERROR'
+                                  #Truncate over 1KB
 LOG_EVENT.additionalEventData     #OBJ. Used for some information not present in PARAMS|RESP.
                                   #Called CLOUDTRAIL_METADATA in my doc
                                   #Truncate over 28KB
@@ -599,10 +610,11 @@ LOG_VALIDATION_RES_LINE[2]        #'valid' or 'INVALID: ...'
 TRAIL.SnsTopicARN                 #SNS_TOPIC_ARN to send on log delivery, with SNS_PAYLOAD
 TRAIL.SnsTopicName                #Same but as 'SNS_TOPIC'
 
-PERMISSIONS ==>                   #Must allow PACTION SNS:Publish on the TOPIC
-                                  #  - for Principal.Service 'cloudtrail.amazonaws.com'
-                                  #  - should add COND_KEY aws:SourceArn TRAIL_ARN
-                                  #  - also kms:GenerateDataKey*|Decrypt, if TOPIC uses KMS
+PERMISSIONS ==>                   #Must allow:
+                                  #  - Principal.Service 'cloudtrail.amazonaws.com'
+                                  #  - PACTION SNS:Publish on the TOPIC
+                                  #  - COND_KEY aws:SourceArn TRAIL_ARN
+                                  #  - also PACTION kms:GenerateDataKey*|Decrypt, if TOPIC uses KMS
 
 SNS_PAYLOAD.s3Bucket              #'LOG_BUCKET'
 SNS_PAYLOAD.s3ObjectKey           #'LOG_FILE'_ARR
@@ -674,7 +686,7 @@ SELECTOR.IncludeManagementEvents  #BOOL (def: true). Whether to log management E
                                   #Those can also be "service EVENTs":
                                   #  - i.e. DEPENDENT_ACTION or SERVICE_ASYNC_ACTION
                                   #  - "non-API events": service EVENTs + IAM 'ConsoleLogin'
-SELECTOR                          #'SERVICE_DOMAIN'_ARR (def: empty) to exclude.
+SELECTOR                          #'SERVICE_DOMAIN'_ARR (def: empty) to exclude
  .ExcludeManagementEventSources   #Only for management EVENTs
                                   #Only for SERVICEs generating lots of EVENTs: 'kms|rdsdata.amazonaws.com'
 
@@ -688,7 +700,7 @@ SELECTOR.DataResources            #DATA_RESOURCE_ARR (def: empty). Which data EV
                                   #Max 250 among all SELECTORS.EventSelectors
 DATA_RESOURCE.Type                #'RESTYPE'
 DATA_RESOURCE.Values              #ARN_ARR
-                                  #If there is an NAMEPATH, can use it if trailing slash
+                                  #If there is a NAMEPATH, can use it if trailing slash
                                   #  - e.g. arn:aws:s3:::BUCKET/[NAMEPATH/] to target multiple OBJECTs
                                   #Can also be arn:aws:SERVICE for all supported RESOURCEs of that SERVICE
 
@@ -728,6 +740,7 @@ PutInsightSelectors()             #Req: INSIGHT
                                   #  - no TrailName
 GetInsightSelectors()             #Req: INSIGHT
                                   #  - only TrailName + TrailARN -> TrailName
+                                  #  - only EventDataStore
                                   #Res: INSIGHT
                                   #  - no TrailName
 
@@ -738,11 +751,18 @@ INSIGHT                           #Logs unusual ACTIONs to INSIGHT_FILE
                                   #  - but INSIGHT_FILE created every 30m
                                   #  - one EVENT for start, another for end
                                   #Per ACTION
+                                  #Use either:
+                                  #  - 1 source TRAIL, output to S3
+                                  #  - 1 source DATASTORE, output to another DATASTORE2
                                   #Only for management EVENTs
                                   #Impacted by SELECTORS filtering
                                   #  - e.g. if InsightType 'ApiCallRateInsight', SELECTOR.ReadWriteType must not be 'WriteOnly'
+
 INSIGHT.TrailARN                  #TRAIL_ARN
 INSIGHT.TrailName                 #'TRAIL'
+
+INSIGHT.EventDataStore            #Source DATASTORE_ARN
+INSIGHT.InsightsDestination       #Destination DATASTORE_ARN
 
 INSIGHT.InsightSelectors          #INSIGHT_SELECTOR_ARR
 INSIGHT_SELECTOR.InsightType      #Counts only ACTIONs that:
@@ -762,8 +782,8 @@ TRAIL.HasInsightSelectors         #BOOL. Whether there are INSIGHT_SELECTORs
 TRAIL_PREFIX/AWSLogs
  /ACCOUNT_ID/CloudTrail-Insight
  /REGION/YYYY/MM/DD/ACCOUNT_ID_
- CloudTrail-Insight_REGION_
- YYYYMMDDTHHMMZ_RANDOM.json.gz    #'INSIGHT_FILE'
+ CloudTrail-Insight_REGION_       #'INSIGHT_FILE'
+ YYYYMMDDTHHMMZ_RANDOM.json.gz    #Only with TRAIL, not DATASTORE
 
 INSIGHT_FILE                      #
 INSIGHT_FILE.eventVersion
@@ -830,7 +850,7 @@ GetEventDataStore()               #Req: DATASTORE
                                   #  - no TagsList
 ListEventDataStores()             #Req: empty
                                   #Res: EventDataStores DATASTORE_ARR
-                                  #  - no TagsList
+                                  #  - no BillingMode, TagsList
 DeleteEventDataStore()            #Req: DATASTORE
                                   #  - only EventDataStoreArn -> EventDataStore
                                   #Res: empty
@@ -846,9 +866,9 @@ DATASTORE                         #Like TRAIL but accessed through SQL QUERYs
                                   #Can also add audit EVENTs (partner|custom data)
                                   #Features related to DATASTORE|CHANNEL|AUDIT_EVENTs are called "CloudTrail lake"
                                   #DATASTORE.AdvancedEventSelectors must allow only one LOG_EVENT.eventCategory
-                                  #  - cannot be 'Insight'
-                                  #  - can be 'ActivityAuditLog': audit EVENTs
                                   #  - if 'Management|Data': automatically filled
+                                  #  - can be 'ActivityAuditLog': audit EVENTs
+                                  #  - can be 'Insight'
                                   #Max 10 per REGION
 DATASTORE.EventDataStoreArn       #DATASTORE_ARN. 'arn:aws:cloudtrail:REGION:ACCOUNT_ID:eventdatastore/DATASTORE'
 DATASTORE.Name                    #'DATASTORE'
@@ -865,7 +885,12 @@ DATASTORE                         #BOOL (def: true). Do not allow deleting DATAS
  .TerminationProtectionEnabled    #If false, deleting DATATORE waits 7 days to complete,
                                   #during which deletion can be undone with RestoreEventDataStore()
 DATASTORE.RetentionPeriod         #NUM. Delete audit EVENTs after NUM days.
-                                  #Def: 90, min: 7 days, max: 7 years
+                                  #Depending on DATASTORE.BillingMode:
+                                  #  - 'EXTENDABLE_RETENTION_PRICING': def 1 year, max 10 years
+                                  #  - 'FIXED_RETENTION_PRICING': def|max 7 years
+                                  #Min 7 days
+                                  #Decreasing default value does not change S3 cost, but increasing does
+DATASTORE.BillingMode             #'EXTENDABLE_RETENTION_PRICING' (def) or 'FIXED_RETENTION_PRICING'. Pricing option (see above)
 
 AWS/CloudTrail/HourlyDataIngested #CloudWatch METRIC with bytes/hour processed by DATASTORE
 AWS/CloudTrail/TotalDataRetained  #CloudWatch METRIC with total bytes, updated daily
@@ -1032,7 +1057,7 @@ RESOURCE_POLICY.ResourcePolicy    #IAM 'POLICY'
                                   #Min 1 PRINCIPAL. Max 8KB, 20 STATEMENTs, 50 PRINCIPALs
 
 AUDIT_EVENTS_REQ.externalId       #STR, used like COND_KEY sts:ExternalId
-CONF_KEY cloudtrail:ExternalId    #Should be used with partner CHANNEL_SOURCEs
+COND_KEY cloudtrail:ExternalId    #Should be used with partner CHANNEL_SOURCEs
 
 
                                              /=+===============================+=\
