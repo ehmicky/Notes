@@ -75,7 +75,7 @@ SUMMARY ==>                       #CLI: auth, init, bootstrap, synth, deploy, li
                                   #Assets: manifest, metadata, S3|ECR, command, publish, publishingRole, deployTime, staging, bundling, esbuild
 
 PROS FROM CLOUDFORMATION ==>      #Imperative
-                                  #Sharing components
+                                  #Components, including common cross-service resources (policies, roles, metrics, etc.)
                                   #Deploy UX (CLI, hotswap|watch, bootstrap roles)
                                   #Grouping stacks
                                   #Setting parameters
@@ -3397,11 +3397,12 @@ new Policy(PARENT_CONSTRUCT,      #CPOLICY. CKRESOURCE wrapping POLICY
                                   #  - attached to USER|ROLE|GROUP, and POLICY_DOC is not empty
                                   #  - OPTS.force true (def: false)
                                   #Is IGRANTABLE
+
 Policy.fromPolicyName
  (PARENT_CONSTRUCT, 'CPOLICY',
  'POLICY')->ICPOLICY              #
 
-OPTS|ICPOLICY.policyName          #'POLICY'
+OPTS|ICPOLICY.policyName          #'POLICY' (def: 'CPOLICY')
 
 OPTS|CPOLICY.document             #CPOLICY_DOC. POLICY.PolicyDocument
 OPTS.statements                   #CSTATEMENT_ARR
@@ -3437,6 +3438,7 @@ ICUSER|ICGROUP|ICROLE
 
 new ManagedPolicy(PARENT_CONSTRCT,#CMPOLICY. CKRESOURCE wrapping MPOLICY
  'CMPOLICY'[, OPTS])              #Is IGRANTABLE
+
 ManagedPolicy
  .fromManagedPolicyArn
  (PARENT_CONSTRUCT, 'CMPOLICY',
@@ -3761,6 +3763,7 @@ CKRESOURCE.grantACTIONS
 
 new User(PARENT_CONSTRUCT,        #CUSER. CKRESOURCE wrapping USER
  'CUSER'[, OPTS])                 #Is IGRANTABLE. Is ICPRINCIPAL
+
 User.fromUserName(PARENT_CONSTRCT,
  'CUSER', 'USER')->ICUSER         #
 User.fromUserArn(PARENT_CONSTRCT,
@@ -3783,6 +3786,7 @@ OPTS.passwordResetRequired        #BOOL (def: false). LOGIN_PROFILE.PasswordRese
 
 SSOPTS|SOPTS.permissionsBoundary  #CSTACK_PERM_BOUNDARY
                                   #Set RESPROP PermissionsBoundary PERM_BOUNDARY_ARN for all USERs|ROLEs of the STACK
+
 PermissionsBoundary
  .fromName('PERM_BOUNDARY'_BSTR)
  ->CSTACK_PERM_BOUNDARY           #
@@ -3827,6 +3831,7 @@ OPTS.serial                       #Arbitrary NUM. Can be changed to force rotati
 
 new Group(PARENT_CONSTRUCT,       #CGROUP. CKRESOURCE wrapping GROUP
  'CGROUP'[, OPTS])                #Is IGRANTABLE. Is ICPRINCIPAL
+
 Group.fromGroupArn
  (PARENT_CONSTRUCT, 'CGROUP',
  GROUP_ARN)->ICGROUP              #
@@ -3850,12 +3855,23 @@ ICGROUP.addUser(ICUSER)           #
                                              \=+===============================+=/
 
 
-new Role(PARENT_CONSTRUCT,        #CROLE. CKRESOURCE wrapping ROLE
- 'CROLE', OPTS)                   #Is IGRANTABLE. Is ICPRINCIPAL
+new Role                          #CROLE. CKRESOURCE wrapping ROLE
+ (PARENT_CONSTRUCT, 'CROLE', OPTS)#Is IGRANTABLE. Is ICPRINCIPAL
 
-CROLE.roleArn                     #ROLE_ARN. ROLE.Arn
+Role.fromRoleArn(PARENT_CONSTRUCT,
+ 'CROLE', ROLE_ARN[,OPTS])->ICROLE#
+Role.fromRoleName(PARENT_CONSTRCT,
+ 'CROLE', 'ROLE'[, OPTS])->ICROLE #
+OPTS.mutable                      #BOOL (def: true). If false, use withoutPolicyUpdates()
+                                  #Always false if cross-account (CSTACK.account !== CROLE.account)
+OPTS.addGrantsToResources         #BOOL (def: false). See below
+OPTS.defaultPolicyName            #'POLICY' name of IPOLICY (def: 'Policy')
+CVAR @aws-cdk/aws-iam:imported
+ RoleStackSafeDefaultPolicyName   #BOOL (def: false) (recommended). Append default value for OPTS.defaultPolicyName with CID
+
+ICROLE.roleArn                    #ROLE_ARN. ROLE.Arn
 CROLE.roleId                      #CFNREF_TK resolving to ROLE_MID. ROLE.RoleId
-OPTS|CROLE.roleName               #'ROLE'. ROLE.RoleName
+OPTS|ICROLE.roleName              #'ROLE'. ROLE.RoleName
 OPTS.path                         #'NAMEPATH'. ROLE.Path
 OPTS.description                  #STR. ROLE.Description
 OPTS.maxSessionDuration           #DURATION. ROLE.MaxSessionDuration
@@ -3872,15 +3888,21 @@ new SessionTagsPrincipal
  (ICPRINCIPAL)                    #CTAGS_PRINCIPAL. Like CPRINCIPAL, except sts:TagSession also allowed in session policy
 OPTS.externalIds                  #STR_ARR (def: []). Add COND_OBJ { StringEquals: { sts:ExternalId: STR_ARR } } to session policy
 
-CROLE.grant(IGRANTABLE,
+ICROLE.grant(IGRANTABLE,
  'ACTION',...)->CGRANT            #Grant ACTIONs on STATEMENT.Resource ROLE_ARN, to IGRANTABLE
-CROLE.grantPassRole
+ICROLE.grantPassRole
  (IGRANTABLE)->CGRANT             #Same with ACTION iam:PassRole
-CROLE.grantAssumeRole
+ICROLE.grantAssumeRole
  (IGRANTABLE)->CGRANT             #Same with ACTION iam:AssumeRole
 
-CROLE.withoutPolicyUpdates([OPTS])->CROLE
-OPTS.addGrantsToResources         #BOOL (def: false)
+CROLE.withoutPolicyUpdates        #Makes adding IPOLICYs|MPOLICYs or STATEMENTs (through grant*()) noop
+ ([OPTS])->CROLE2                 #Goal: managing those manually (through CROLE) instead of letting other CDK resources do it (through CROLE2)
+OPTS.addGrantsToResources         #BOOL (def: false). If true, only make identity-based grant*() noops, not resource-based
+
+new LazyRole(...)                 #Like new Role(...), except ROLE is only created if used, i.e. either:
+                                  #  - CROLE.roleId|roleName|grant*() used
+                                  #  - CROLE used as a PRINCIPAL
+                                  #No CROLE.permissionsBoundary|withoutPolicyUpdates()
 
 Role.customizeRoles               #Prevent creating ROLEs|MPOLICYs
  (CONSTRUCT[, OPTS])              #Instead, import them as ICROLEs|ICMPOLICYs (like Role.fromRoleName())
@@ -3904,6 +3926,45 @@ ASSEMBLY_DIR                      #List of ROLEs impacted by Role.customizeRoles
 
                                              /=+===============================+=\
                                             /  :                               :  \
+                                            )==:     IAM INSTANCE PROFILE      :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+
+new InstanceProfile
+ (PARENT_CONSTRUCT,
+ 'CINSTANCE_PROFILE'[, OPTS])     #CINSTANCE_PROFILE. CKRESOURCE wrapping INSTANCE_PROFILE
+
+InstanceProfile
+ .fromInstanceProfileName
+ (PARENT_CONSTRUCT,
+ 'CINSTANCE_PROFILE',
+ 'INSTANCE_PROFILE')
+ ->ICINSTANCE_PROFILE             #
+InstanceProfile
+ .fromInstanceProfileArn
+ (PARENT_CONSTRUCT,
+ 'CINSTANCE_PROFILE',
+ INSTANCE_PROFILE_ARN)
+ ->ICINSTANCE_PROFILE             #
+InstanceProfile
+ .fromInstanceProfileAttributes
+ (PARENT_CONSTRUCT,
+ 'CINSTANCE_PROFILE', OPTS)
+ ->ICINSTANCE_PROFILE             #OPTS: only instanceProfileArn|role
+
+ICINSTANCE_PROFILE
+ .instanceProfileArn              #INSTANCE_PROFILE_ARN. INSTANCE_PROFILE.Arn
+OPTS|ICISTANCE_PROFILE
+ .instanceProfileName             #'INSTANCE_PROFILE'. INSTANCE_PROFILE.InstanceProfileName
+OPTS.path                         #'NAMEPATH'. INSTANCE_PROFILE.Path
+OPTS.role                         #CROLE. INSTANCE_PROFILE.Roles
+                                  #Def: new one, assumable by ec2.amazonaws.com
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
                                             )==:       IAM SAML PROVIDER       :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -3911,6 +3972,7 @@ ASSEMBLY_DIR                      #List of ROLEs impacted by Role.customizeRoles
 
 new SamlProvider(PARENT_CONSTRUCT,
  'CSAML_PROVIDER', OPTS)          #CSAML_PROVIDER. CKRESOURCE wrapping SAML_PROVIDER
+
 SamlProvider.fromSamlProviderArn
  (PARENT_CONSTRUCT,
  'CSAML_PROVIDER',
@@ -3939,6 +4001,7 @@ new OpenIdConnectProvider         #COPENID_PROVIDER. CKRESOURCE wrapping an OPEN
  (PARENT_CONSTRUCT,               #Uses a CUSTOM_RESOURCE under-the-hood
  'COPENID_PROVIDER', OPTS)        #  - in order to provide with default value for OPTS.thumbprints
                                   #  - behaves like CSRESOURCE (CfnOpenIdConnectProvider) but is actually not one (make direct API calls instead)
+
 OpenIdConnectProvider
  .fromOpenIdConnectProviderArn
  (PARENT_CONSTRUCT,
