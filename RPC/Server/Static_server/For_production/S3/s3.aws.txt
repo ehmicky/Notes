@@ -1652,7 +1652,7 @@ x-amz-bucket-object-lock-enabled:
  STR [C]                          #'Disabled' (def) or 'Enabled'
 OBJECT_LOCK.ObjectLockEnabled     #Requires PACTIONs 's3:PutBucketObjectLockConfiguration' + 's3:PutBucketVersioning'
 x-amz-bucket-object-lock-token:   #'TOKEN' received from AWS support
- STR [C]                          #Allows changing OBJECT_LOCK.ObjectLockEnabled for an existing BUCKET
+ STR [C]                          #Allows setting OBJECT_LOCK.ObjectLockEnabled true -> false for an existing BUCKET
 
 OBJECT_LOCK.Rule.DefaultRetention #DEFAULT_RETENTION. Default OBJECT_RETENTION for OBJECTs in this BUCKET
 DEFAULT_RETENTION.Years|Days      #"Retention period". NUM used to computed default x-amz-object-lock-retain-until-date [C]
@@ -2678,6 +2678,8 @@ PERMISSIONS ==>                   #ROLE must have PACTIONs:
                                   #  - arn:aws:s3:::SOURCE_BUCKET:
                                   #     - 's3:GetReplicationConfiguration'
                                   #     - 's3:ListBucket': if replicate delete markers
+                                  #     - 's3:GetObjectRetention': if OBJECT_LOCK
+                                  #     - 's3:GetObjectLegalHold': if LEGAL_HOLD
                                   #  - arn:aws:s3:::SOURCE_BUCKET/*:
                                   #     - 's3:GetObjectVersionForReplication':
                                   #        - same as 's3:GetObjectVersion' but:
@@ -2929,13 +2931,13 @@ PutBucketLogging()                #Res: empty
 GET /BUCKET?logging               #Req: empty
 GetBucketLogging()                #Res: LOGGING
 
-LOGGING                           #Logs all requests to a BUCKET ("source")
+LOGGING                           #Logs all requests done to a BUCKET ("source")
                                   #Written to an OBJECT
                                   #Batched every few hours. Changes also take some time.
                                   #Some requests might be missing or duplicate
                                   #Must be BUCKET_OWNER
                                   #Different from CloudTrail:
-                                  #  - less features
+                                  #  - fewer features
                                   #     - except only it has:
                                   #        - LOG_LINE[6] BATCH.DELETE.OBJECT and S3.ACTION.RESOURCE
                                   #        - LOG_LINE[12|13|14|15]
@@ -2948,13 +2950,23 @@ LOGGING                           #Logs all requests to a BUCKET ("source")
                                  ##  - AWSSamples::S3BucketLoggingCompliance::Hook HOOK can require it on any BUCKET, with ETYPE_CONF:
                                  ##     - LoggingBucket 'BUCKET'
 LOGGING.LoggingEnabled            #LOG_CONF. Omit to disable
+s3BucketLoggingEnabled           ##Pulumi POLICY that checks that each BUCKET has LOGGING enabled
 LOG_CONF.TargetBucket             #'BUCKET' ("target") where to store LOG_FILE
                                   #Must be be in same REGION as logged BUCKET and have same BUCKET_OWNER
                                   #Must not use OBJECT_LOCK|LEGAL_HOLD
-LOG_CONF.TargetPrefix             #STR prefixed to 'OBJECT' storing LOG_FILE
+LOG_CONF.TargetObjectKeyFormat    #LOG_NAMING. LOG_FILE 'OBJECT' always ends with YYYY-MM-DD-HH-MM-SS-RANDOM (same as LOG_LINE[2|5])
+                                  #The date is:
+                                  #  - SimplePrefix (def) or ParitionedPrefix 'DeliveryTime': LOG_FILE write time
+                                  #  - PartitionedPrefix 'EventTime': logged request time, but HH-MM-SS is 00-00-00
+LOG_NAMING.PartitionedPrefix      #Prefix LOG_FILE 'OBJECT' ends with ACCOUNT_ID/REGION/BUCKET/YYYY/MM/DD
+ .PartitionDateSource             #ACCOUNT_ID|REGION|BUCKET is the BUCKET being logged
+                                  #The date depends on STR:
+                                  #  - 'DeliveryTime': LOG_FILE write time
+                                  #  - 'EventTime' (def): logged request time
+LOG_NAMING.SimplePrefix           #If empty OBJ (def), do not use PartitionedPrefix
+LOG_CONF.TargetPrefix             #Prefix LOG_FILE 'OBJECT' with STR. Applied before PartitionedPrefix
 
 LOG_FILE                          #TSV file, space-delimited
-                                  #'OBJECT' ends with YYYY-MM-DD-HH-MM-SS-RANDOM (same as LOG_LINE[2|5])
 LOG_LINE[0]                       #CANONICAL_ACCOUNT_ID of BUCKET_OWNER
 LOG_LINE[1]                       #'BUCKET'
 LOG_LINE[2]                       #[DD/MM/YYYY:HH:MM:SS TZ]
@@ -3001,8 +3013,6 @@ http://acs.amazonaws.com
 
 LOG_CONF.TargetGrants             #GRANT_ARR of LOG_FILE, to grant permissions to others than BUCKET_OWNER
                                   #Target BUCKET must not disable ACLs with BUCKET_OWNERSHIP_RULE.ObjectOwnership 'BucketOwnerEnforced'
-
-s3BucketLoggingEnabled           ##Pulumi POLICY that checks that each BUCKET has LOGGING enabled
 
 
                                              /=+===============================+=\
@@ -3177,13 +3187,13 @@ SLENS                             #CloudWatch METRICs under AWS/S3/Storage-Lens/
                                   #  - kept for 15 months if ADVANCED_METRICS, 14 days otherwise
 SLENS.StorageLensArn              #SLENS_ARN. arn:aws:s3:REGION:ACCOUNT_ID:storage_lens/STORAGE_LENS
 SLENS.Id                          #'SLENS'. Max 64 chars, [[:alnum:].-_]
-SLENS.IsEnabled                   #BOOL
+SLENS.IsEnabled                   #BOOL (def: false)
 SLENS.HomeRegion                  #'REGION' of SLENS itself
 
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:   STORAGE LENS FILTER/GROUP   :==(
+                                            )==: STORAGE LENS FILTER/GROUPING  :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
@@ -3227,6 +3237,51 @@ COMPARING ==>                     #Can compare grouped METRICs in UI console, as
 RECOMMENDATIONS ==>               #Based on METRICs. Only in UI console
                                   #Includes: suggestions, outliers, big increase|decrease
                                   #Only with ADVANCED_METRICS
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:      STORAGE LENS GROUP       :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+CreateStorageLensGroup()          #Req:
+                                  #Res:
+UpdateStorageLensGroup()          #Req:
+                                  #Res:
+GetStorageLensGroup()             #Req:
+                                  #Res:
+ListStorageLensGroups()           #Req:
+                                  #Res:
+DeleteStorageLensGroup()          #Req:
+                                  #Res:
+
+SLENS_BUCKET.StorageLensGroupLevel
+ .SelectionCriteria
+ .Include|Exclude.Arn             #SLENS_GROUP_ARN_ARR
+
+SLENS_GROUP.StorageLensGroupArn   #SLENS_GROUP_ARN
+SLENS_GROUP.Name                  #STR
+
+SLENS_GROUP.Filter                #SLENS_FILTER
+SLENS_GROUP.Filter.And|Or         #SLENS_FILTER
+SLENS_FILTER.MatchAnyPrefix.Prefix#STR
+SLENS_FILTER.MatchAnySuffix.Suffix#STR
+<MatchAnyTag>
+   <Tag>
+      <Key>string</Key>
+      <Value>string</Value>
+   </Tag>
+</MatchAnyTag>
+<MatchObjectAge>
+   <DaysGreaterThan>integer</DaysGreaterThan>
+   <DaysLessThan>integer</DaysLessThan>
+</MatchObjectAge>
+<MatchObjectSize>
+   <BytesGreaterThan>long</BytesGreaterThan>
+   <BytesLessThan>long</BytesLessThan>
+</MatchObjectSize>
 
 
                                              /=+===============================+=\
@@ -3331,7 +3386,7 @@ SLENS_LINE.MetricValue            #METRIC_DATUM value
 
 PERMISSIONS ==>                   #Like INVENTORY except:
                                   #  - Principal.Service 'storage-lens.s3.amazonaws.com'
-                                  #  - COND_KEY aws:SourceArn = SLENS_ARN
+                                  #  - COND_KEY aws:SourceArn SLENS_ARN
 
 ORGANIZATION PERMISSIONS ==>      #When ORGs are used:
                                   #  - must use AWSServiceRoleForS3StorageLens SERVICE_LINKED_ROLE (automatically done)
@@ -3951,8 +4006,8 @@ S3TRANSFORM.Actions               #'ACTION'_ARR among 'GetObject', 'HeadObject',
                                   #  - also allowed by LACCESSPOINT
                                   #  - but not transformed
 
-S3TRANSFORM.ContentTransformation
- .AwsLambda                       #S3CTRANSFORM
+S3TRANSFORM
+ .ContentTransformation.AwsLambda #S3CTRANSFORM
 S3CTRANSFORM.FunctionArn          #FUNC_ARN. Transforms both input and output
                                   #Must be in same REGION as LACCESSPOINT
 
