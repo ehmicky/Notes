@@ -2061,6 +2061,8 @@ EVENT_SOURCE                      #SOURCE_ACCESS_ARR
  .SourceAccessConfigurations      #Only authorize specific source
 SOURCE_ACCESS.Type                #SERVICE-specific, see below
 SOURCE_ACCESS.URI                 #'URI'|'ARN'. Value based on SOURCE_ACCESS.Type
+                                  #Can be Secret Manager SECRET_ARN
+                                  #  - PACTIONs secretsmanager:GetSecretValue|DescribeSecret
 
 AWS::Lambda::EventSourceMapping   #RESPROPs:
                                   #  - FunctionName, EventSourceArn, BatchSize, MaximumBatchingWindowInSeconds, FilterCriteria, SourceAccessConfigurations
@@ -2075,8 +2077,14 @@ AWS::Lambda::EventSourceMapping   #RESPROPs:
                                              \=+===============================+=/
 
 
+CFUNCTION_OPTS.events             #CCEVENT_SOURCE_ARR
+CFUNCTION.addEventSource          #Creates CEVENT_SOURCEs
+ (CCEVENT_SOURCE)                 #Automatically allows FUNC_VERSION.Role to relevant PACTIONs
+
 new EventSourceMapping
  (...CARGS, OPTS)                 #CEVENT_SOURCE. CKRESOURCE wrapping EVENT_SOURCE
+CFUNCTION.addEventSourceMapping
+ ('CEVENT_SOURCE', CEVENT_SOURCE) #Same as new EventSourceMapping() but with OPTS.target CFUNCTION
 EventSourceMapping
  .fromEventSourceMappingId
  (...CARGS, EVENT_SOURCE.UUID)
@@ -2103,8 +2111,10 @@ OPTS.sourceAccessConfigurations   #SOURCE_ACCESS_ARR among:
                                              \=+===============================+=/
 
 
-EVENT_SOURCE.EventSourceArn       #CLUSTER_ARN|CONNECTION_ARN
+EVENT_SOURCE.EventSourceArn       #CLUSTER_ARN or VPC_CONNECTION_ARN
                                   #Not if self-managed Kafka
+
+PERMISSIONS ==>                   #If not self-managed: kafka:DescribeCluster|GetBootstrapBrokers|ListScramSecrets
 
 EVENT_SOURCE.Topics               #STR_ARR. Names of Kafka topics
 
@@ -2131,13 +2141,13 @@ AWS/Lambda/IteratorAge            #CloudWatch METRIC with NUM of ms for stream r
 
 SOURCE_ACCESS.Type                #STR among:
                                   #  - 'SASL_SCRAM_512_AUTH'
-                                  #  - 'CLIENT_CERTIFICATE_TLS_AUTH'
-                                  #  (self-managed Kafka only)
+                                  #  (self-managed only)
+                                  #  - 'SASL_SCRAM_256_AUTH'
                                   #  - 'BASIC_AUTH'
-                                  #  - 'VPC_SUBNET'
-                                  #  - 'VPC_SECURITY_GROUP'
-                                  #  - 'SASL_SCRAM_256'
+                                  #  - 'CLIENT_CERTIFICATE_TLS_AUTH'
                                   #  - 'SERVER_ROOT_CA_CERTIFICATE'
+                                  #  - 'VPC_SECURITY_GROUP': SECURITY_GROUP_MID
+                                  #  - 'VPC_SUBNET': SUBNET_MID
 
 AWS/Lambda/OffsetLag              #CloudWatch METRIC with NUM of ms for Kafka records to be picked up
                                   #I.e. duration between last record write to a topic, and last record read
@@ -2154,6 +2164,22 @@ AWS::Lambda::EventSourceMapping   #RESPROPs: Topics, AmazonManagedKafkaEventSour
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
+
+new ManagedKafkaEventSource(OPTS) #CCEVENT_SOURCE
+OPTS.*                            #Like CEVENT_SOURCE_OPTS.* except:
+                                  #  - no target
+                                  #  - eventSourceArn -> clusterArn
+                                  #  - kafka* -> *
+OPTS.secret                       #Secret Manager ICSECRET. SOURCE_ACCESS.Type 'SASL_*', 'CLIENT_CERTIFICATE_TLS_AUTH' or 'BASIC_AUTH'
+
+new SelfManagedKafkaEventSource
+ (OPTS)                           #CCEVENT_SOURCE
+OPTS.*                            #Like ManagedKafkaEventSource
+OPTS.authenticationMethod         #STR. SOURCE_ACCESS.Type
+OPTS.rootCACertificate            #Secret Manager ICSECRET. SOURCE_ACCESS.Type 'SERVER_ROOT_CA_CERTIFICATE'
+OPTS.securityGroup                #ICSECURITY_GROUP. SOURCE_ACCESS.Type 'VPC_SECURITY_GROUP'
+OPTS.vpcSubnets                   #ICSUBNET_ARR. SOURCE_ACCESS.Type 'VPC_SUBNET'
+OPTS.vpc                          #ICVPC, to specify with OPTS.vpcSubnets
 
 CEVENT_SOURCE_OPTS.kafkaTopic     #STR. EVENT_SOURCE.Topics
 
@@ -2195,6 +2221,12 @@ AWS::Lambda::EventSourceMapping   #RESPROPs: Queues
 
 EVENT_SOURCE.EventSourceArn       #Kinesis STREAM_ARN
 
+PERMISSIONS ==>                   #PACTIONs:
+                                  #  - kinesis:GetRecords
+                                  #  - kinesis:DescribeStream[Summary|Consumer]|ListStreams
+                                  #  - kinesis:GetShardIterator|ListShards|SubscribeToShard
+                                  #  - kms:* (if needed)
+
 EVENT_SOURCE                      #Same as above, but def 0, i.e. as soon as possible
  .MaximumBatchingWindowInSeconds  #Also min 1, unless EVENT_SOURCE.BatchSize <=10
 
@@ -2219,6 +2251,11 @@ AWS::Lambda::EventSourceMapping   #RESPROPs: TumblingWindowInSeconds, Paralleliz
                                              \=+===============================+=/
 
 
+new KinesisEventSource(OPTS)      #CCEVENT_SOURCE
+OPTS.*                            #Like CEVENT_SOURCE_OPTS.* except:
+                                  #  - no target
+                                  #  - eventSourceArn -> streamArn
+
 CEVENT_SOURCE_OPTS
  .startingPosition[Timestamp]     #Like Kafka behavior above
 
@@ -2235,6 +2272,8 @@ CEVENT_SOURCE_OPTS
 
 
 EVENT_SOURCE.EventSourceArn       #DynamoDB STREAM_ARN
+
+PERMISSIONS ==>                   #PACTIONs dynamodb:ListStreams|DescribeStream|GetRecords|GetShardIterator (and kms:*)
 
 EVENT_SOURCE
  .MaximumBatchingWindowInSeconds  #Same behavior as Kinesis
@@ -2258,8 +2297,15 @@ AWSLambdaInvocation-DynamoDB      #Same but allow lambda:InvokeFunction, and do 
                                              \=+===============================+=/
 
 
+new DynamoEventSource
+ (ICTABLE, OPTS)                  #CCEVENT_SOURCE
+OPTS.*                            #Like CEVENT_SOURCE_OPTS.*, except:
+                                  #  - no target
+                                  #  - eventSourceArn -> ICTABLE
+
 CEVENT_SOURCE_OPTS
- .startingPosition[Timestamp]     #Like Kafka behavior above
+ .startingPosition
+AWS/Lambda/IteratorAge            #Like Kafka behavior above, except no 'AT_TIMESTAMP'
 
 CEVENT_SOURCE_OPTS.tumblingWindow
  |parallelizationFactor           #Like Kinesis behavior above
@@ -2300,6 +2346,8 @@ AWS::Lambda::EventSourceMapping   #RESPROPs: DocumentDBEventSourceConfig
 
 EVENT_SOURCE.EventSourceArn       #SQS QUEUE_ARN
 
+PERMISSIONS ==>                   #PACTIONs sqs:ReceiveMessage|ChangeMessageVisibility|GetQueueUrl|DeleteMessage|GetQueueAttributes (and kms:*)
+
 EVENT_SOURCE.BatchSize            #Same as above, but def 10 and (if FIFO) max 10
 EVENT_SOURCE
  .MaximumBatchingWindowInSeconds  #Same behavior as Kinesis
@@ -2319,6 +2367,11 @@ AWS::Lambda::EventSourceMapping   #RESPROPs: ScalingConfig
                                              \=+===============================+=/
 
 
+new SqsEventSource(ICQUEUE[,OPTS])#CCEVENT_SOURCE
+OPTS.*                            #Like CEVENT_SOURCE_OPTS.*, except:
+                                  #  - no target
+                                  #  - eventSourceArn -> ICQUEUE
+
 CEVENT_SOURCE_OPTS.maxConcurrency #NUM. EVENT_SOURCE.scalingConfig.maximumConcurrency
 
 
@@ -2330,7 +2383,7 @@ CEVENT_SOURCE_OPTS.maxConcurrency #NUM. EVENT_SOURCE.scalingConfig.maximumConcur
 
 
 EVENT_SOURCE.DestinationConfig    #ARN receiving response (INVOKE_PAYLOAD) on final success|error
-                                  #Only with Kinesis|DynamoDB|Kafka
+ .onSuccess|onFailure.destination #Only with Kinesis|DynamoDB|Kafka
                                   #Can be:
                                   #  - SQS QUEUE (not FIFO)
                                   #     - PACTION sqs:SendMessage
@@ -2356,7 +2409,10 @@ AWS::Lambda::EventSourceMapping   #Includes RESPROPs: DestinationConfig (only on
                                              \=+===============================+=/
 
 
-CEVENT_SOURCE_OPTS.onFailure      #???
+CEVENT_SOURCE_OPTS.onFailure      #EVENT_SOURCE.DestinationConfig.onFailure. Can be:
+                                  #  - new SqsDlq(ICQUEUE)
+                                  #  - new SnsDlq(ICTOPIC)
+                                  #  - new S3OnFailureDestination(ICBUCKET)
 
 
                                              /=+===============================+=\
