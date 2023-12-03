@@ -251,6 +251,9 @@ ICFUNCTION_OPTS.functionArn       #'FUNCTION_ARN'
 
 CFUNCTION_OPTS.description        #FUNC_VERSION.*
 
+ICFUNCTION.permissionsNode        #CFUNCTION's NODE
+                                  #Unlike CFUNCTION.node, the value is unchanged when CFUNCTION is wrapped (e.g. by SingletonFunction)
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -1339,15 +1342,22 @@ PERMISSION                        #Resource-based single-STATEMENT POLICY for a 
                                   #Permissions of other resources towards FUNC|FUNC_VERSION|ALIAS
                                   #Max POLICY_DOC size: 20KB
 PERMISSION.FunctionName           #SHORT_FUNC_VERSION_ARN
-                                  #When:
-                                  #  - FUNC_VERSION|ALIAS specified: only applies to it
-                                  #  - FUNC specified instead
-                                  #     - for PACTION lambda:InvokeFunction[Url]: only applies to FUNC
-                                  #        - including as part of PACTION lambda:*
-                                  #     - otherwise: also applies to any FUNC_VERSION|ALIAS
 PERMISSION.Qualifier              #'QUALIFIER'
                                   #Same as specifying it as part of PERMISSION.FunctionName
 PERMISSION.RevisionId             #'REVISION_ID'
+
+VERSION|ALIAS PERMISSIONS ==>     #Permissions to a:
+                                  #  - FUNC_VERSION|ALIAS: specific to it
+                                  #  - FUNC: specific to it + all its FUNC_VERSIONs|ALIASs
+                                  #However:
+                                  #  - with PACTION lambda:InvokeFunction[Url]
+                                  #     - including as part of PACTION lambda:*
+                                  #  - permissions to a FUNC only apply to invocations to FUNC itself, not to its FUNC_VERSIONs|ALIASs
+                                  #  - but can individually target both to fix this
+                                  #     - e.g. STATEMENT.Resource ['FUNC_ARN', 'FUNC_ARN:*']
+                                  #This is for both:
+                                  #  - PERMISSION (resource-based POLICY)
+                                  #  - identity-based POLICYs attached to callers
 
 PERMISSION.Statement              #'STATEMENT'
                                   #Aggregation of the following fields
@@ -1376,27 +1386,43 @@ AWS::Lambda::Permission           #RESPROPs: FunctionName, Action, Principal, So
 
 
 ICFUNCTION.addPermission
- ('CPERMISSION', CPERMISSION_OBJ) #Create a new PERMISSION with PERMISSION.FunctionName|Qualifier set
+ ('CPERMISSION', CPERMISSION_OBJ) #Create a new PERMISSION, including PERMISSION.FunctionName|Qualifier
 CPERMISSION_OBJ.scope             #CPERMISSION's PARENT_CONSTRUCT (def: ICFUNCTION)
 CPERMISSION_OBJ.action            #PERMISSION.Action (def: 'lambda:InvokeFunction')
                                   #For lambda:InvokeFunction[Url]:
-                                  #  - should use ICALIAS|ICFUNC_VERSION.addPermission()
-                                  #  - not ICFUNCTION.addPermission()
-CPERMISSION_OBJ.principal ???
-CPERMISSION_OBJ.sourceArn ???
-CPERMISSION_OBJ.sourceAccount ???
-CPERMISSION_OBJ.principalOrgID ???
+                                  #  - if an ALIAS|FUNC_VERSION exists for that FUNCTION
+                                  #  - should use ICALIAS|ICFUNC_VERSION.addPermission() instead of ICFUNCTION.addPermission()
+CPERMISSION_OBJ.principal         #PERMISSION.Principal. ICPRINCIPAL among AccountPrincipal, ArnPrincipal|OrganizationPrincipal, ServicePrincipal
+                                  #Can only have the COND_OBJ described below
+CPERMISSION_OBJ.sourceArn         #PERMISSION.SourceArn
+                                  #Def: ICPRINCIPAL's COND_OBJ.ArnLike.aws:SourceArn
+CPERMISSION_OBJ.sourceAccount     #PERMISSION.SourceAccount
+                                  #Def: ICPRINCIPAL's COND_OBJ.StringEquals.aws:SourceAccount
+CPERMISSION_OBJ.organizationId    #PERMISSION.PrincipalOrgID
+                                  #Def: ICPRINCIPAL's COND_OBJ.StringEquals.aws:PrincipalOrgID
 CPERMISSION_OBJ.eventSourceToken  #PERMISSION.*
-CPERMISSION_OBJ
- .functionUrlAuthType             #PERMISSION.*
 
-ICFUNCTION_OPTS.sameEnvironment   #BOOL??? (def true with fromFunctionName()???)
-ICFUNCTION_OPTS.skipPermissions   #BOOL (def: false)???
+ICFUNCTION.grantInvoke[Url]       #Allows PACTION lambda:InvokeFunction[Url] to IGRANTABLE (identity-based POLICY)
+ (IGRANTABLE)->CGRANT             #If either fails or cross-account, also allows it through a PERMISSION (resource-based POLICY)
+ICFUNCTION
+ .grantInvokeCompositePrincipal
+ (CPRINCIPALS)->CGRANT_ARR        #Like ICFUNCTION.grantInvoke() but on multiple PRINCIPALs
+ICFUNCTION                        #ARN_ARR targeted by ICFUNCTION.grantInvoke():
+ .resourceArnsForGrantInvoke      #  - FUNCTION: ['FUNC_ARN', 'FUNC_ARN:*'] (both FUNCTION and all its FUNC_VERSIONs|ALIASs)
+                                  #  - FUNC_VERSION: ['FUNC_VERSION_ARN']
+                                  #  - ALIAS: ['ALIAS_ARN']
 
-ICFUNCTION.grant*???
-
-ICFUNCTION.permissionsNode???
-ICFUNCTION.resourceArnsForGrantInvoke???
+ICFUNCTION_OPTS.sameEnvironment   #BOOL. When using:
+                                  #  - Function.fromFunctionArn():
+                                  #     - if different ACCOUNT than current STACK
+                                  #     - then cannot create PERMISSION on ICFUNCTION
+                                  #     - this is because PERMISSIONs must be in same ACCOUNT than FUNCTIONs they apply to
+                                  #  - Function.fromFunctionAttributes(): same but can bypass|force using ICFUNCTION_OPTS.sameEnvironment true|false
+                                  #  - Function.fromFunctionName(): always bypass since 'FUNCTION' name is looked up in current ACCOUNT
+ICFUNCTION_OPTS.skipPermissions   #If false (def), throws when ICFUNCTION.grant*():
+                                  #  - tries to add a PERMISSION
+                                  #  - but could not due to using Function.fromFunctionArn|Attributes() on a FUNCTION from another ACCOUNT
+                                  #If true, noop instead
 
 
                                              /=+===============================+=\
@@ -1766,7 +1792,7 @@ AWS/Lambda/Url4xx|5xxError        #Same but only for requests with 4**|5** respo
 AWS/Lambda/UrlRequestLatency      #CloudWatch METRIC with NUM of ms FUNC_URLs spent handling requests
 
 AWS::Lambda::Url                  #RESPROPs: TargetFunctionArn, Qualifier, AuthType, Cors
-                                  #RESATTRs: FunctionArn, FucntionUrl
+                                  #RESATTRs: FunctionArn, FunctionUrl
 AWS::Lambda::Permission           #Includes RESPROPs: FunctionUrlAuthType
 
 
@@ -1778,6 +1804,9 @@ AWS::Lambda::Permission           #Includes RESPROPs: FunctionUrlAuthType
 
 
 ICFUNCTION.addFunctionUrl???
+
+CPERMISSION_OBJ
+ .functionUrlAuthType             #PERMISSION.*
 
 
                                              /=+===============================+=\
