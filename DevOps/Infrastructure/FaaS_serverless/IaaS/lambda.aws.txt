@@ -26,6 +26,7 @@ Better understanding function versioning???
   - is each endpoint FUNC-specific or FUNC_VERSION-specific?
   - FUNC_VERSIONs cost nothing if not invoked, except for S3 cost?
      - does ZipCode has no S3 cost?
+  - also LAYER versions
 
 
                                              /=+===============================+=\
@@ -646,7 +647,7 @@ Code.fromAsset                    #NEW_FUNC_CODE.S3Bucket|S3Key, as local DIR|ar
                                   #'PATH' must be either 'DIR' or *.tar[.gz]|tgz|zip|jar
                                   #Def HFOPTS.deployTime true, i.e. deleted from S3 after `cdk deploy`
                                   #Automatically calls HFASSET.addResourceMetadata(), i.e. adds TEMPLATE.Resources.FUNCTION.Metadata:
-                                  #  - 'aws:asset:property': 'Code'
+                                  #  - 'aws:asset:property': 'Code' (in CFUNCTION) or 'Content' (in CLAYER_VERSION)
                                   #  - 'aws:asset:path': 'TARGET_PATH'
                                   #  - 'aws:asset:is-bundled': BOOL (whether HFOPTS.bundling used)
 
@@ -698,10 +699,17 @@ AWS::Lambda::Function             #Includes RESPROPs: ImageConfig
                                              \=+===============================+=/
 
 
-https://github.com/aws/aws-cdk/blob/main/packages/aws-cdk-lib/aws-lambda/lib/image-function.ts???
+new DockerImageFunction
+ (...CARGS, OPTS)                 #CFUNCTION with following changes
+OPTS.*                            #Like CFUNCTION
+OPTS.runtime                      #Always Runtime.FROM_IMAGE
+OPTS.code                         #Must be either:
+                                  #  - DockerImageCode.fromEcr(...): like Code.fromEcrImage(...)
+                                  #  - DockerImageCode.fromImageAsset(...): like Code.fromAssetImage(...)
+                                  #     - except HIOPTS.platform's default value uses ICFUNCTION_OPTS.architecture
 
 Code.fromEcrImage                 #NEW_FUNC_CODE.ImageUri|ImageConfig, as direct values
- (ECR_CREPO[,OPTS])->CCODE        #Automatically allows PACTIONs to lambda.amazonaws.com:
+ (ECR_CREPO[, OPTS])->CCODE       #Automatically allows PACTIONs to lambda.amazonaws.com:
                                   #  - ecr:GetAuthorizationToken
                                   #  - ecr:BatchCheckLayerAvailability, ecr:GetDownloadUrlForLayer, ecr:BatchGetImage
 OPTS.tagOrDigest                  #'TAG' or 'sha256:DIGEST' (def: 'latest'), to retrieve NEW_FUNC_CODE.ImageUri
@@ -720,7 +728,6 @@ Code.fromAssetImage               #NEW_FUNC_CODE.ImageUri|ImageConfig, as local 
                                   #  - 'aws:asset:docker-*': HIOPTS.* related to IASSET_NEW.docker*, but dash-case'd
 OPTS
  .cmd|entrypoint|workingDirectory #IMAGE.*
-
 
 
                                              /=+===============================+=\
@@ -755,11 +762,11 @@ LAYER.LayerName                   #'LAYER_NAME'
 
 
 POST /layers/LAYER/versions       #Req: LAYER_VERSION
-PublishLayerVersion()             #  - LayerVersionArn -> LayerName 'LAYER_NAME'
+PublishLayerVersion()             #  - LayerVersionArn -> LayerName 'LAYER_NAME'|LAYER_ARN
                                   #  - no CreatedDate, Version
                                   #Res: LAYER_VERSION
 GET /layers/LAYER                 #Req: LAYER_VERSION
- /versions/VERSION_NUM            #  - LayerVersionArn -> LayerName 'LAYER_NAME'
+ /versions/VERSION_NUM            #  - LayerVersionArn -> LayerName 'LAYER_NAME'|LAYER_ARN
 GetLayerVersion()                 #  - only Version -> VersionNumber
                                   #Res: LAYER_VERSION
 GET /layers                       #Req: LAYER_VERSION
@@ -767,16 +774,17 @@ GetLayerVersionByArn()            #  - LayerVersionArn -> Arn
                                   #  - only Version -> find
                                   #Res: LAYER_VERSION
 GET /layers/LAYER/versions        #Req: LAYER_VERSION
-ListLayerVersions()               #  - LayerVersionArn -> LayerName 'LAYER_NAME'
+ListLayerVersions()               #  - LayerVersionArn -> LayerName 'LAYER_NAME'|LAYER_ARN
                                   #  - only CompatibleRuntimes, CompatibleArchitectures
                                   #Res: LayerVersions LAYER_VERSION_ARR
                                   #  - no Content
 DELETE /layers/LAYER              #Req: LAYER_VERSION
- /versions/VERSION_NUM            #  - LayerVersionArn -> LayerName 'LAYER_NAME'
+ /versions/VERSION_NUM            #  - LayerVersionArn -> LayerName 'LAYER_NAME'|LAYER_ARN
 DeleteLayerVersion()              #  - only Version -> VersionNumber
                                   #Res: empty
 
 LAYER_VERSION                     #Specific version of a LAYER
+                                  #Versioning works like FUNCTION's
                                   #Only PublishLayerVersion() is logged by CloudTrail
                                  ##With Pulumi, can use skipDestroy
 LAYER_VERSION.LayerVersionArn     #LAYER_VERSION_ARN. 'arn:aws:lambda:REGION:ACCOUNT_ID:layer:LAYER_NAME:NUM'
@@ -797,18 +805,17 @@ LAYER_VERSION_OUTPUT.CodeSha256|
 LAYER_VERSION_OUTPUT.Location     #Like FUNC_CODE.*
 
 FUNC_VERSION.Layers               #LAYER_VERSION_SUMMARY_ARR. Layers to associate to a FUNC_VERSION
-LAYER_VERSION_SUMMARY             #Like LAYER_VERSION, but fewer fields
-LAYER_VERSION_SUMMARY.Arn         #LAYER_VERSION_ARN
-LAYER_VERSION_SUMMARY
- .CodeSize|SigningJobArn|
- SigningProfileVersionArn         #Like LAYER_VERSION_OUTPUT.*
+LAYER_VERSION_SUMMARY             #Like LAYER_VERSION, but fewer fields:
+                                  #  - LayerVersionArn -> Arn
+                                  #  - Content.CodeSize|SigningJobArn|SigningProfileVersionArn -> CodeSize|...
 COND_KEY lambda:Layer             #LAYER_VERSION_ARN_ARR. Only with CreateFunction|UpdateFunctionConfiguration()
 
 /bin
 /lib                              #Preferred location for LAYERs shared binaries|libraries
 
 AWS::Lambda::LayerVersion         #RESPROPs:
-                                  #  - LayerName, Description, LicenseInfo
+                                  #  - LayerName 'LAYER'|LAYER_ARN
+                                  #  - Description, LicenseInfo
                                   #  - Content LAYER_CONTENT_INPUT (no ZipFile)
                                   #RESATTRs: LayerVersionArn
 AWS::Lambda::Function             #Includes RESPROPs: Layers LAYER_VERSION_ARN_ARR
@@ -821,12 +828,25 @@ AWS::Lambda::Function             #Includes RESPROPs: Layers LAYER_VERSION_ARN_A
                                              \=+===============================+=/
 
 
-???
-  - https://github.com/aws/aws-cdk/blob/main/packages/aws-cdk-lib/aws-lambda/lib/layers.ts???
-  - https://github.com/aws/aws-cdk/blob/7a22501d58912f777ae0a2ad1b48af2faeb6946b/packages/aws-cdk-lib/aws-lambda/lib/function.ts#L919
-  - https://github.com/aws/aws-cdk/blob/7a22501d58912f777ae0a2ad1b48af2faeb6946b/packages/aws-cdk-lib/aws-lambda/lib/function.ts#L970
-  - CFUNCTION_OPTS.layers
-  - CFUNCTION.addLayers()
+new LayerVersion(...CARGS, OPTS)  #CLAYER_VERSION. CKRESOURCE wrapping LAYER_VERSION
+LayerVersion.fromLayerVersionArn
+ (...CARGS, 'LAYER_VERSION_ARN')
+ ->ICLAYER_VERSION                #
+LayerVersion
+ .fromLayerVersionAttributes
+ (...CARGS, OPTS)->ICLAYER_VERSION#OPTS: layerVersionArn, compatibleRuntimes
+
+ICLAYER_VERSION.layerVersionArn   #LAYER_VERSION.*
+OPTS.layerVersionName             #'LAYER'
+
+OPTS.description
+OPTS.license                      #LAYER_VERSION.*
+OPTS.code                         #CCODE. Only through S3, not ZipFile nor Docker
+OPTS.removalPolicy                #REMOVAL_POLICY (def: delete)
+
+CFUNCTION_OPTS.layers             #ICLAYER_VERSION_ARR
+CFUNCTION
+ .addLayers(ICLAYER_VERSION,...)  #
 
 
                                              /=+===============================+=\
@@ -883,8 +903,9 @@ FUNC_VERSION.Runtime              #STR. Runtime, among:
                                   #Not if PackageType 'Image'
                                  ##With Pulumi can use CW.lambda.Runtime.NodeJS10dX|... 'nodejs10.x|...'
                                  ##cfn-lint E2531|W2531: no deprecated Lambda FUNC_VERSION.Runtime
-LAYER_VERSION.CompatibleRuntimes  #STR_ARR among same values as FUNC_VERSION.Runtime
 ENVVAR AWS_EXECUTION_ENV          #'AWS_Lambda_RUNTIME'
+
+LAYER_VERSION.CompatibleRuntimes  #STR_ARR among same values as FUNC_VERSION.Runtime
 
 FUNC_VERSION.Handler              #'FILE.METHOD'. Code's entry point function name
                                   #FILE does not include '.EXT'
@@ -941,6 +962,9 @@ OPTS|CRUNTIME.isVariable          #BOOL (def: false). Target the latest version.
 OPTS.bundlingDockerImage          #ECR 'REPO' (def: 'public.ecr.aws/sam/build-NAME')
                                   #Docker image used when NEW_FUNC_VERSION.PackageType 'Image'
 CRUNTIME.bundlingImage            #DOCKER_IMAGE (see CDK doc)
+
+ICLAYER_VERSION[_OPTS]
+ .compatibleRuntimes              #CRUNTIME_ARR. LAYER_VERSION.*
 
 
                                              /=+===============================+=\
@@ -1034,6 +1058,7 @@ FUNC_VERSION.Architectures        #STR_ARR. CPU architecture. Single item, among
                                   #        - not use a Runtime with Amazon Linux 1
                                   #        - make sure FUNC_VERSION|LAYER_VERSION's code supports ARM
                                   #Not if PackageType 'Image'
+
 LAYER_VERSION
  .CompatibleArchitectures         #STR_ARR among same values as FUNC_VERSION.Architectures
 
@@ -1059,12 +1084,15 @@ AWS::Lambda::LayerVersion         #Includes RESPROPs: CompatibleArchitectures
                                              \=+===============================+=/
 
 
-ICANYFUNC.architecture            #One of:
+ICANYFUNC.architecture            #CARCH, among:
 ICFUNCTION_OPTS.architecture      #  - Architecture.X86_64 (def)
                                   #  - Architecture.ARM64
-                                  #  - Architecture.custom(STR[, STR2])
-                                  #     - STR2 is 'linux/amd64' (def) or 'linux/arm64'
+                                  #  - Architecture.custom(STR[, HIOPTS.platform])
+                                  #     - HIOPTS.platform is 'linux/amd64' (def) or 'linux/arm64', used with HIASSETs
                                   #When using FUNC_VERSION|ALIAS: forwards to underlying FUNCTION instead
+
+CLAYER_VERSION_OPTS
+ .compatibleArchitectures         #CARCH_ARR. LAYER_VERSION.*
 
 CFUNCTION_OPTS.memorySize         #FUNC_VERSION.*
 
@@ -1538,7 +1566,7 @@ CPERMISSION_OBJ.organizationId    #PERMISSION.PrincipalOrgID
                                   #Def: ICPRINCIPAL's COND_OBJ.StringEquals.aws:PrincipalOrgID
 CPERMISSION_OBJ.eventSourceToken  #PERMISSION.*
 
-ICANYFUNC.grantInvoke[Url]        #Allows PACTION lambda:InvokeFunction[Url] to IGRANTABLE (identity-based POLICY)
+ICANYFUNC.grantInvoke             #Allows PACTION lambda:InvokeFunction to IGRANTABLE (identity-based POLICY)
  (IGRANTABLE)->CGRANT             #If either fails or cross-account, also allows it through a PERMISSION (resource-based POLICY)
 ICANYFUNC
  .grantInvokeCompositePrincipal
@@ -1589,13 +1617,26 @@ LAYER_PERMISSION.VersionNumber    #NUM
 LAYER_PERMISSION.RevisionId       #'REVISION_ID'
 
 LAYER_PERMISSION.Statement
-LAYER_PERMISSION.StatementId
-LAYER_PERMISSION.Action           #Like PERMISSION.*
+LAYER_PERMISSION.StatementId      #Like PERMISSION.*
+LAYER_PERMISSION.Action           #Always 'lambda:GetLayerVersion'
 LAYER_PERMISSION.Principal        #STR. STATEMENT.Principal. 'ACCOUNT_ID|ROOT_ARN|*'.
 LAYER_PERMISSION.OrganizationId   #STR. With LAYER_PERMISSION.Principal '*', only authorize AWS accounts of that AWS organization ID.
 
 AWS::Lambda::
  LayerVersionPermission           #RESPROPs: LayerVersionArn, Action, Principal, OrganizationId
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:     PERMISSION LAYER CDK      :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+ICLAYER_VERSION.addPermission
+ ('CLAYER_PERMISSION', OPTS)      #Create a LAYER_PERMISSION
+OPTS.accountId                    #LAYER_PERMISSION.Principal
+OPTS.organizationId               #LAYER_PERMISSION.*
 
 
                                              /=+===============================+=\
@@ -1876,6 +1917,16 @@ AWS::Lambda::Url                  #Includes RESPROPs: InvokeMode
 
                                              /=+===============================+=\
                                             /  :                               :  \
+                                            )==:         STREAMING CDK         :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+CFUNC_URL_OPTS.invokeMode         #FUNC_URL.*
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
                                             )==:              URL              :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -1903,10 +1954,12 @@ FUNC_URL                          #HTTP[S] URL to invoke a FUNCTION directly
                                   #Public by default
                                   #IPv4|6
 FUNC_URL.FunctionArn              #SHORT_FUNC_ARN
+                                  #Can use an ALIAS but not a VERSION_NUM
 FUNC_URL.CreationTime             #'DATE'
 FUNC_URL.LastModifiedTime         #'DATE'
 
 FUNC_URL.FunctionUrl              #'https://URL_ID.lambda-url.REGION.on.aws'
+
 PACTION lambda:InvokeFunctionUrl  #Allow accessing the URL
 
 FUNC_URL.AuthType                 #Authentication to access the URL, among:
@@ -1939,11 +1992,27 @@ AWS::Lambda::Permission           #Includes RESPROPs: FunctionUrlAuthType
                                              \=+===============================+=/
 
 
-ICANYFUNC.addFunctionUrl???
-https://github.com/aws/aws-cdk/blob/main/packages/aws-cdk-lib/aws-lambda/lib/function-url.ts???
+new FunctionUrl(...CARGS, OPTS)   #CFUNC_URL. CKRESOURCE wrapping FUNC_URL
+ICANYFUNC.addFunctionUrl
+ (OPTS)->CFUNC_URL                #Same but sets OPTS.function ICANYFUNC
 
-CPERMISSION_OBJ
- .functionUrlAuthType             #PERMISSION.*
+CFUNC_URL.functionArn             #'FUNC_ARN'_CSATTR. FUNC_URL.*
+OPTS|CFUNC_URL.function           #ICANYFUNC (except CFUNC_VERSION)
+
+CFUNC_URL.url                     #'URL'_CSATTR. FUNC_URL.FunctionUrl
+
+CFUNC_URL|ICANYFUNC.grantInvokeUrl
+ (IGRANTABLE)->CGRANT             #Like ICANYFUNC.grantInvoke() but for PACTION lambda:InvokeFunctionUrl
+
+OPTS.authType                     #FUNC_URL.AuthType (def: 'AWS_IAM')
+CPERMISSION_OBJ                   #PERMISSION.FunctionUrlAuthType
+ .functionUrlAuthType             #Def:
+                                  #  - CFUNC_URL|ICANYFUNC.grantInvokeUrl(): 'AWS_IAM'
+                                  #  - ICANYFUNC.addPermission(): 'NONE'
+
+OPTS.cors                         #FUNC_URL.Cors
+                                  #CORS.MaxAge is DURATION
+                                  #CORS.AllowedMethods default to ['*']
 
 
                                              /=+===============================+=\
