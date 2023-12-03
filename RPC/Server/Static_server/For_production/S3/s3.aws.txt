@@ -70,6 +70,11 @@ ACCOUNT_ID.s3-control             #SERVICE_DOMAIN for ACTIONs that not BUCKET-sp
  .amazonaws.com/SVERSION          #Some ACTIONs have two variants s3[-control]: BUCKET-specific, and not
 x-amz-account-id: ACCOUNT_ID [C]  #Alternative to specifying ACCOUNT_ID in subdomain
 
+s3express-control
+ .REGION.amazonaws.com/BUCKET     #"Regional endpoint". SERVICE_DOMAIN for Express, with *Bucket*()
+BUCKET.s3express-AZ_MID
+ .REGION.amazonaws.com            #"Zonal endpoint". SERVICE_DOMAIN for Express, with *Object|Part*(), CreateSession() and HeadBucket()
+
 FORMAT ==>                        #XML REST
                                   #Uses some PARAMS|RESP headers
 
@@ -665,7 +670,8 @@ CompleteMultipartUpload()         #  - only uploadId (as query variable)
 DELETE /BUCKET/OBJECT             #Req: MUPLOAD
 AbortMultipartUpload()            #  - only uploadId
                                   #Res: empty
-                                  #PACTION 's3:AbortMultipartUpload' (automatically granted to MUPLOAD.Initiator)
+                                  #PACTION 's3:AbortMultipartUpload'
+                                  #  - automatically granted to MUPLOAD.Initiator, except with Express where it must be explicit
 
 MUPLOADS.Uploads                  #MUPLOAD_ARR
 MUPLOADS.EncodingType|Prefix
@@ -1290,37 +1296,33 @@ SLENS_METRIC
                                              \=+===============================+=/
 
 
-StorageClass 'ONEZONE_IA'         #Like STANDARD_IA, but replicates in only 1 AZ, instead of 3 for all other StorageClasses
-                                  #Still replicates as much, i.e. same durability, but more vulnerable if issues in that 1 AZ
-
-x-amz-access-point-location-type: #'AvailabilityZone'. "Directory BUCKET", as opposed to "general-purpose"
- STR [S]                          #Very low latency (<10ms)
-BUCKET.Location.Type              #Single AZ, i.e. same durability as STORAGE_CLASS 'ONEZONE_IA'
-                                  #  - can choose AZ, i.e. close to where instances located
+BUCKET.Bucket.Type                #Either 'Directory' ("Express", "Directory BUCKET") or undefined (def, "general-purpose BUCKET")
+                                  #Makes latency very low (<10ms)
                                   #Meant for frequently accessed OBJECTs
-                                  #PREFIXs are stored as actual directories, not virtual ones
-x-amz-access-point-location-name:
- 'AZ' [S]
-BUCKET.Location.Name              #'AZ'
-COND_KEY s3express:LocationName   #'AZ', only with CreateBucket()
 
-BUCKET.Bucket.Type                #Always 'Directory' when Location.Type 'AvailabilityZone'
-BUCKET.Bucket.DataRedundancy      #Always 'SingleAvailabilityZone' when Location.Type 'AvailabilityZone'
+BUCKET.Bucket.DataRedundancy      #Always 'SingleAvailabilityZone' with Express
+x-amz-access-point-location-type:
+ STR [S]
+BUCKET.Location.Type              #Always 'AvailabilityZone' with Express
 
-s3express-control
- .REGION.amazonaws.com/BUCKET     #"Regional endpoint" for S3 Express, for *Bucket*() ACTIONs
-BUCKET.s3express-AZ_MID
- .REGION.amazonaws.com            #"Zonal endpoint" for S3 Express, for *Object|Part*(), CreateSession and HeadBucket() ACTIONs
+x-amz-access-point-location-name: #AZ_MID. Required.
+ 'AZ' [S]                         #Single AZ, i.e. lower durability like STORAGE_CLASS 'ONEZONE_IA'
+BUCKET.Location.Name              #Can choose AZ, i.e. close to where instances located
+COND_KEY s3express:LocationName   #AZ_MID, only with CreateBucket()
 
-'BUCKET' must end with '--AZ_MID--x-s3'
 
-PACTIONs:
-  - s3:* -> s3express:*
-  - *Bucket*(): cannot be cross-account
-  - *Object|Part*(), HeadBucket():
-     - use s3express:CreateSession PACTION instead
-     - can be cross-account, by allowing each ACCOUNT
-     - when copying, requires s3express:CreationSession PACTION on each Express BUCKET
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:        EXPRESS CHANGES        :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+LIMITS ==>                        #Max 10 BUCKETs per REGION (soft), not 100
+                                  #If no requests for 3 months, frozen:
+                                  #  - re-activated on new request, but 503 for a few minutes
+
+'BUCKET--AZ_MID--x-s3'            #BUCKET names must end like this with Express
 
 LISTING BUCKETS ==>               #Called ListDirectoryBuckets(), not ListBuckets()
                                   #Paginates with ContinuationToken, MaxDirectoryBuckets
@@ -1328,6 +1330,7 @@ LISTING BUCKETS ==>               #Called ListDirectoryBuckets(), not ListBucket
 
 PREFIX ==>                        #Stored as actual directories, not virtual
                                   #Delimiter is always '/'
+                                  #Directories are automatically created, and empty ones deleted
 
 LISTING OBJECTS|MUPLOADS ==>      #When filtering by 'PREFIX', must end with '/'
                                   #Results not sorted
@@ -1337,43 +1340,72 @@ LISTING OBJECTS|MUPLOADS ==>      #When filtering by 'PREFIX', must end with '/'
 COPYING OBJECTS|MUPLOADS ==>      #Can copy between Express and non-Express
                                   #No COND_KEY s3:x-amz-copy-source
 
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:       EXPRESS FEATURES        :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
 INCLUDED FEATURES ==>             #Core operations on BUCKET|OBJECT
                                   #MUPLOAD
                                   #BUCKET_POLICY
+                                  #Checksums (not MD5)
+                                  #JOB (JOB_GMANIFEST.SourceBucket)
+                                  #  - not for the MANIFEST (JOB_G[G]LOCATION.Location)
+                                  #  - JOB_LAMBDA.InvocationSchemaVersion must be '2.0'
+                                  #VPC
 
 MISSING FEATURES ==>              #TAGS (on BUCKET, OBJECT), metadata
                                   #TORRENT
                                   #BUPLOAD
-                                  #Checksums, Content-Encoding
+                                  #Content-Encoding
                                   #LocationConstraint, ACCELERATE
                                   #VERSIONING: including MFA delete
-                                  #STORAGE_CLASS always 'EXPRESS_ONEZONE', i.e. no: , RESTORE, INTELLIGENT_TIERING, LIFECYCLE
                                   #OBJECT_LOCK, LEGAL_HOLD
-                                  #BUCKET_OWNER, OBJECT_OWNER
                                   #x-amz-confirm-remove-self-bucket-access
-                                  #ACL, PUBLIC_BLOCK, AGRANT: use CreateSession() instead
+                                  #STORAGE_CLASS always 'EXPRESS_ONEZONE', i.e. no RESTORE, INTELLIGENT_TIERING, LIFECYCLE
+                                  #BUCKET_OWNER, OBJECT_OWNER, ACL, PUBLIC_BLOCK, AGRANT: use CreateSession() instead
                                   #STATIC_WEBSITE
                                   #CORS
                                   #Encryption: always use SSE-S3
                                   #PAYMENT
                                   #SELECT
                                   #REPLICATION
-                                  #INVENTORY, LOGGING, MAIN_METRICS, SLENS, ANALYTICS, NOTIFICATIONS
+                                  #INVENTORY, LOGGING, SLENS, ANALYTICS, NOTIFICATIONS
+                                  #  - but can use AWS/S3/* METRICs (but not configure with MAIN_METRICS)
                                   #ACCESSPOINT, MACCESSPOINT
                                   #Object Lambda
-                                  #JOB
+                                  #CloudTrail DATA_ACTIONs (but management ACTIONs are supported)
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:      EXPRESS PERMISSIONS      :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
 
 GET /?session                     #Req: x-amz-create-session-mode [C]
 CreateSession()                   #Res: SESSION
 
 SESSION                           #STS TEMP_CREDS to use with *Object|Part*() ACTIONs
-                                  #HeadBucket|CopyObject|UploadPartCopy() do not use them, but uses s3express:CreateSession PACTION
                                   #Expiration always 5m
 SESSION.Credentials               #TEMP_CREDS
 x-amz-s3session-token: STR [C]    #Must be used when authenticating, for the SESSION_TOKEN
 
 x-amz-create-session-mode: STR [C]#'ReadOnly' or 'ReadWrite'
-COND_KEY s3express:SessionMode    #STR. Only with CreationSession()
+COND_KEY s3express:SessionMode    #STR. Only with CreateSession()
+
+s3express:*                       #Instead of s3:*, for PACTIONs
+
+s3express:CreateSession           #PACTION to use instead of *Object|Part*
+                                  #When copying, must be allowed on each Express BUCKET
+                                  #Also used by HeadBucket|CopyObject|UploadPartCopy(), although they do not use SESSION TEMP_CREDS
+
+CROSS-ACCOUNT ==>                 #Only with *Object|Part*(). Not with *Bucket*(), except HeadBucket()
+                                  #Must allow PACTIONs on each ACCOUNT
 
 
                                              /=+===============================+=\
@@ -4511,8 +4543,7 @@ JOB_LAMBDA.FunctionArn            #FUNC_ARN
 
 JOB_LAMBDA.InvocationSchemaVersion#Either:
 REQ|RES.invocationSchemaVersion   #  - '1.0' (def)
-                                  #  - '2.0': required for:
-                                  #     - JOB_LAMBDA.UserArguments
+                                  #  - '2.0': required for JOB_LAMBDA.UserArguments
 
 JOB_LAMBDA.UserArguments          #Arbitrary OBJ
 REQ.userArguments                 #Keys: max 10, max 64 chars. Values: STR, max 1KB
