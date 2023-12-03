@@ -760,11 +760,13 @@ INVOCATION_RES[_END].LogResult    #FUNCTION stdout|stderr
                                   #Last 4KB only
                                   #Base64 encoded
 
-LOGGING ==>                       #CloudWatch logs LOG_GROUP receiving all FUNCTION stdout|stderr
+[NEW_]FUNC_VERSION.LoggingConfig  #FUNC_LOGGING. CloudWatch logs LOG_GROUP receiving all FUNCTION stdout|stderr
+                                  #Includes errors during init
                                   #Automatically timestamped
                                   #Can take up to 10m
 ENVVAR AWS_LAMBDA_LOG_GROUP_NAME
-NCONTEXT.logGroupName             #'LOG_GROUP', i.e. /aws/lambda/FUNCTION
+NCONTEXT.logGroupName
+FUNC_LOGGING.LogGroup             #'LOG_GROUP', i.e. /aws/lambda/FUNCTION
 ENVVAR AWS_LAMBDA_LOG_STREAM_NAME
 NCONTEXT.logStreamName            #'LOG_STREAM', i.e. YYYY/MM/DD/[VERSION_NUM]FUNC_INSTANCE_ID
 
@@ -775,6 +777,16 @@ PERMISSIONS ==>                   #FUNC_VERSION.Role must be allowed PACTIONs:
                                   #  - logs:CreateLogStream|PutLogEvents on LOG_GROUP
 
 RLOG                              #Each request automatically logs some information, documented here as RLOG.*
+
+FUNC_LOGGING.ApplicationLogLevel  #Minimum 'LEVEL' for console.LEVEL(...), among 'TRACE', 'DEBUG', 'INFO', 'WARN', 'ERROR', 'FATAL'
+                                  #Only if FUNC_LOGGING.LogFormat 'JSON'
+FUNC_LOGGING.SystemLogLevel       #Minimum 'LEVEL' for system logs, among 'DEBUG', 'INFO', 'WARN'
+                                  #Only if FUNC_LOGGING.LogFormat 'JSON'
+
+FUNC_LOGGING.LogFormat            #Whether system logs are:
+                                  #  - 'Text' (def): flat
+                                  #  - 'JSON': OBJ
+                                  #Also applies to application logs if runtime is node|java|python
 
 
                                              /=+===============================+=\
@@ -1117,9 +1129,8 @@ INVOCATION_REQ.Payload            #'JSON'. Request payload
 INVOCATION_REQ.ClientContext      #STR. Base64-encoded context 'JSON' to pass to FUNCTION
 
 INVOCATION_RES                    #Response of an INVOCATION
-                                  #In CLI: FILE
-                                  #In SDK: OUTPUT_BLOB
-INVOCATION_RES.StatusCode         #NUM.
+                                  #In CLI: FILE, in SDK: OUTPUT_BLOB
+INVOCATION_RES.StatusCode         #NUM
                                   #On success or function error, depends on InvocationType:
                                   #  - RequestResponse: 200
                                   #  - Event: 202
@@ -1317,7 +1328,7 @@ FUNC_URL_RES.isBase64Encoded      #BOOL
                                              \=+===============================+=/
 
 
-TRIGGER ==>                       #Other AWS resource invoking a FUNCTION
+TRIGGER ==>                       #Resource from another SERVICE invoking a FUNCTION
 
 SYNC TRIGGER ==>                  #TRIGGER with InvocationType 'RequestResponse'
                                   #One of: Alexa, API Gateway, CloudFront (Lambda@Edge), Cognito, Connect,
@@ -1381,9 +1392,16 @@ DeleteEventSourceMapping()        #Res: EVENT_SOURCE
 
 EVENT_SOURCE                      #Make a FUNCTION poll for events from an AWS resource
 EVENT_SOURCE.UUID                 #EVENT_SOURCE_MID
-EVENT_SOURCE.EventSourceArn       #EVENT_SOURCE_ARN
 EVENT_SOURCE.FunctionArn          #FUNC_VERSION_ARN
 EVENT_SOURCE.LastModified         #DATE_NUM
+
+EVENT_SOURCE.EventSourceArn       #ARN of resource:
+                                  #  - MSK, self-managed Kafka: CLUSTER_ARN|CONNECTION_ARN
+                                  #  - MQ, self-managed RabbitMQ: BROKER_ARN
+                                  #  - Kinesis: STREAM_ARN
+                                  #  - DynamoDB: STREAM_ARN
+                                  #  - DocumentDB: CHANGE_STREAM_ARN
+                                  #  - SQS: QUEUE_ARN
 
 EVENT_SOURCE.State                #STR among:
                                   #  - 'Creating'
@@ -1393,8 +1411,9 @@ EVENT_SOURCE.State                #STR among:
 EVENT_SOURCE.StateTransitionReason#STR. Whether current EVENT_SOURCE.State is due to user or to system
 EVENT_SOURCE.LastProcessingResult #STR. Result of last INVOCATION
 
-EVENT_SOURCE.BatchSize            #Batch each NUM records from the source together, to pass to the function's payload,
-                                  #up to payload size limit (6MB)
+EVENT_SOURCE.BatchSize            #Batch each NUM records from the source together
+                                  #  - to pass to the function's payload
+                                  #  - up to payload size limit (6MB)
                                   #Def: 100
                                   #  - exception: 10 for SQS
                                   #Max: 1e4
@@ -1422,8 +1441,8 @@ EVENT_SOURCE                      #OBJ_ARR: Pattern 'PATTERN_JSON'
                                   #     - { $or: ARR }: ||
                                   #Max OBJ_ARR length: 5
 
-EVENT_SOURCE.ScalingConfig        #NUM. Max CONCURRENCY
- .MaximumConcurrency              #Min: 2
+EVENT_SOURCE                      #NUM. Max CONCURRENCY
+ .ScalingConfig.MaximumConcurrency#Min: 2
                                   #Max: 1e4
                                   #Only with SQS
 
@@ -1435,7 +1454,7 @@ EVENT_SOURCE.StartingPosition     #STR. Position where to start reading stream s
                                   #Only with MSK|Kinesis|DynamoDB|DocumentDB
 EVENT_SOURCE
  .StartingPositionTimestamp       #DATE_NUM when EVENT_SOURCE 'AT_TIMESTAMP'
-AWS/Lambda/IteratorAge            #CloudWatch METRIC with NUM of ms for stream records to be read.
+AWS/Lambda/IteratorAge            #CloudWatch METRIC with NUM of ms for stream records to be read
                                   #I.e. average age of starting position record
 
 EVENT_SOURCE                      #NUM (in secs). Processing window duration.
@@ -1579,8 +1598,8 @@ EVENT_INVOKE.DestinationConfig    #DESTINATION. On final success|error, send INV
                                   #  - SNS|SQS (not FIFO)
                                   #  - another FUNCTION
                                   #  - EventBridge event bus
-DESTINATION.OnSuccess|OnFailure   #ARN
- .Destination                    ##cfn-lint-serverless:
+DESTINATION                       #ARN
+ .onSuccess|onFailure.Destination##cfn-lint-serverless:
                                  ##  - aws_lambda_event_source_mapping_failure_destination (ES1001):
                                  ##     - invalid DESTINATION.OnFailure.Destination ARN
                                  ##  - aws_lambda_event_invoke_config_async_on_failure (ES1007):
@@ -1589,8 +1608,8 @@ DESTINATION.OnSuccess|OnFailure   #ARN
 AWS/Lambda/
  DestinationDeliveryErrors        #CloudWatch METRIC with NUM of DestinationConfig that failed to send
 
-FUNC_VERSION.DeadLetterConfig     #SQS|SNS_ARN (not FIFO) where to send INVOCATION_REQ on final error
- .TargetArn                       #Unlike EVENT_INVOKE.DestinationConfig.OnFailure.Destination
+FUNC_VERSION                      #SQS|SNS_ARN (not FIFO) where to send INVOCATION_REQ on final error
+ .DeadLetterConfig.TargetArn      #Unlike EVENT_INVOKE.DestinationConfig.OnFailure.Destination
                                   #  - FUNC_VERSION-specific
                                   #  - INVOCATION_REQ is payload, i.e. SQS|SNS can be used as EVENT_SOURCE
                                   #    to retry the event later
@@ -1624,16 +1643,17 @@ EVENT_SOURCE                      #Like EVENT_INVOKE.* but for receiving the bat
  .MaximumRecordAgeInSeconds       #Def: -1, i.e. not used.
                                   #Max: 1 week
                                   #Only with Kinesis|DynamoDB
-EVENT_SOURCE.DestinationConfig    #Like EVENT_INVOKE.* but for receiving the batch
-                                  #Can only send to SQS|SNS
-                                  #Only with Kinesis|DynamoDB
 
-MQ|KAFKA RETRIES ==>              #Infinite retries
+EVENT_SOURCE.DestinationConfig    #Like EVENT_INVOKE.* but for receiving the batch
+                                  #Can only send to SQS|SNS|S3
+                                  #Only with Kinesis|DynamoDB|Kafka
+
+MQ RETRIES ==>                    #Retries until message expires
 
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:          CONCURRENCY          :==(
+                                            )==:       CONCURRENCY MAIN        :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
@@ -1653,9 +1673,8 @@ ACCOUNT_LIMIT.ConcurrentExecutions#NUM. Max concurrency for all FUNCTIONs at any
                                   #     - <3e3 (us-east-1, us-west-2, eu-west-1)
                                   #     - <1e3 (us-east-2, eu-central-1, ap-northeast-1)
                                   #     - <500 (otherwise)
-ACCOUNT_LIMIT                     #NUM. Like ACCOUNT_LIMIT.ConcurrentExecutions, but minus
- .UnreservedConcurrentExecutions  #each FUNCTION's max(CONCURRENCY, PCONCURRENCY)
-                                  #Must be at least 100
+ACCOUNT_LIMIT                     #NUM. Like ACCOUNT_LIMIT.ConcurrentExecutions, but minus each FUNCTION's max(CONCURRENCY, PCONCURRENCY)
+ .UnreservedConcurrentExecutions  #Must be at least 100
 
 AWS/Lambda/ConcurrentExecutions   #CloudWatch METRIC with NUM of ongoing FUNC_INSTANCEs
 AWS/Lambda/
@@ -1690,6 +1709,14 @@ CONCURRENCY
  .ReservedConcurrentExecutions    #NUM of concurrent executions
 FUNCTION.Concurrency
  .ReservedConcurrentExecutions    #Same
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:    CONCURRENCY PROVISIONED    :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
 
 PUT /functions/SHORT_FUNC_ARN     #Req: PCONCURRENCY
  /provisioned-concurrency         #  - FunctionArn -> FunctionName SHORT_FUNC_ARN + Qualifier 'QUALIFIER'
@@ -1827,9 +1854,8 @@ NCONTEXT
  .getRemainingTimeInMillis()->NUM #NUM of ms before timeout
 NCONTEXT.memoryLimitInMB          #NUM (in MB). FUNC_VERSION.MemorySize
 
-NCONTEXT                          #BOOL
- .callbackWaitsForEmptyEventLoop  #If true (def) and HANDLER is sync (no PROMISE|callback),
-                                  #completion waits for event loop to be empty.
+NCONTEXT                          #BOOL. If true (def) and HANDLER is sync (no PROMISE|callback),
+ .callbackWaitsForEmptyEventLoop  #completion waits for event loop to be empty.
 
 NCONTEXT.identity                 #CONTEXT_IDENTITY. Information about AWS Cognity
 CONTEXT_IDENTITY.cognitoIdentityId#STR. User ID
@@ -1896,8 +1922,8 @@ x/lambda/mod.ts                   #Same as @types/aws-lambda, but for Deno
 ENVVAR PYTHON_PATH                #LAMBDA_RUNTIME_DIR
 
 /opt/python                       #
-/opt/python/lib/pythonVERSION
- /site-packages                   #Preferred location for LAYERs packages
+/opt/python
+ /lib/pythonVERSION/site-packages #Preferred location for LAYERs packages
 
 
                                              /=+===============================+=\
