@@ -398,10 +398,6 @@ AWS::Lambda::Function             #Includes RESPROPs: PackageType, Code
 
 CFUNCTION_OPTS.code               #CCODE. FUNCTION.Code|ImageConfig
 
-new InlineCode(STR)               #CCODE. NEW_FUNC_CODE.ZipFile
-new S3Code
- (ICBUCKET, 'OBJECT', VERSION_ID) #CCODE. NEW_FUNC_CODE.S3Bucket|S3Key|S3ObjectVersion
-
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -412,6 +408,7 @@ new S3Code
 
 NEW_FUNC_CODE.ZipFile             #Zip archive content, base64-encoded
                                   #Not logged to CloudTrail
+                                  #Only with Runtime node|python
                                   #In CLI: FILE, in SDK: INPUT_BLOB
 
 NEW_FUNC_CODE.S3Bucket            #STR. S3 'BUCKET' storing the .zip code
@@ -420,6 +417,7 @@ NEW_FUNC_CODE.S3Bucket            #STR. S3 'BUCKET' storing the .zip code
                                   #  - ZipFile, i.e. S3 location automatically allocated
                                   #Can use `aws cloudformation package`
 NEW_FUNC_CODE.S3Key               #STR. S3 'OBJECT'
+                                  #After FUNC_VERSION updated, can delete from S3
 NEW_FUNC_CODE.S3ObjectVersion     #STR. S3 VERSION_ID
 
 FUNC_CODE.RepositoryType          #'S3' or undefined
@@ -448,7 +446,36 @@ BLUEPRINT ==>                     #Sample NEW_FUNC_CODE.ZipFile for a given Runt
                                              \=+===============================+=/
 
 
+Code.fromInline(STR)->CCODE       #NEW_FUNC_CODE.ZipFile
 
+Code.fromBucket(ICBUCKET,
+ 'OBJECT', VERSION_ID)->CCODE     #NEW_FUNC_CODE.S3Bucket|S3Key|S3ObjectVersion, as direct values
+
+Code.fromCfnParameters
+ ([OPTS])->CCODE                  #NEW_FUNC_CODE.S3Bucket|S3Key, as STACK PARAMs
+OPTS.bucketNameParam              #CPARAM (def: new one). NEW_FUNC_CODE.S3Bucket
+OPTS.objectKeyParam               #CPARAM (def: new one). NEW_FUNC_CODE.S3Key
+CPARAM
+ .bucketNameParam|objectKeyParam  #CPARAM_LID
+CPARAM.assign(S3_CLOCATION)->OBJ  #Keys: CPARAM_LID, values: S3_CLOCATION.bucketName|objectKey
+
+Code.fromAsset                    #NEW_FUNC_CODE.S3Bucket|S3Key, as local DIR|archive
+ ('PATH'[, HFOPTS])->CCODE        #Creates a HFASSET, i.e. uploads to S3 and copies to 'TARGET_PATH' (in ASSEMBLY_DIR)
+                                  #'PATH' must be either 'DIR' or *.tar[.gz]|tgz|zip|jar
+                                  #Def HFOPTS.deployTime true, i.e. deleted from S3 after `cdk deploy`
+                                  #Automatically calls HFASSET.addResourceMetadata(), i.e. adds TEMPLATE.Resources.FUNCTION.Metadata:
+                                  #  - 'aws:asset:property': 'Code'
+                                  #  - 'aws:asset:path': 'TARGET_PATH'
+                                  #  - 'aws:asset:is-bundled': BOOL (whether HFOPTS.bundling used)
+
+Code.fromDockerBuild              #Like Code.fromAsset() but first:
+ ('PATH')->CCODE                  #  - `docker build PATH`
+                                  #  - `docker cp CONTAINER_ID:PATH2 PATH3`
+OPTS.imagePath                    #'PATH2', i.e. PATH in CONTAINER with result of `docker build`
+                                  #Def: '/asset'
+OPTS.outputPath                   #'PATH3', i.e. local PATH with result of `docker build`
+                                  #Passed to Code.fromAsset('PATH3')
+OPTS.*                            #Same as DockerImage.fromBuild(..., OPTS) (see CDK doc)
 
 
                                              /=+===============================+=\
@@ -488,6 +515,27 @@ AWS::Lambda::Function             #Includes RESPROPs: ImageConfig
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
+
+Code.fromEcrImage                 #NEW_FUNC_CODE.ImageUri|ImageConfig, as direct values
+ (ECR_CREPO[,OPTS])->CCODE        #Automatically allows PACTIONs to lambda.amazonaws.com:
+                                  #  - ecr:GetAuthorizationToken
+                                  #  - ecr:BatchCheckLayerAvailability, ecr:GetDownloadUrlForLayer, ecr:BatchGetImage
+OPTS.tagOrDigest                  #'TAG' or 'sha256:DIGEST' (def: 'latest'), to retrieve NEW_FUNC_CODE.ImageUri
+                                  #I.e. CREPO_ARN:TAG or CREPO_ARN@DIGEST
+OPTS
+ .cmd|entrypoint|workingDirectory #IMAGE.*
+
+Code.fromAssetImage               #NEW_FUNC_CODE.ImageUri|ImageConfig, as local DIR
+ ('DIR', HIOPTS)->CCODE           #Creates a HIASSET, i.e. `docker build`, uploads to ECR and copies to 'TARGET_PATH' (in ASSEMBLY_DIR)
+                                  #'DIR' must have a Dockerfile
+                                  #Automatically allows PACTIONs to lambda.amazonaws.com, like EcrImageCode
+                                  #Automatically calls HIASSET.addResourceMetadata(), i.e. adds TEMPLATE.Resources.FUNCTION.Metadata:
+                                  #  - 'aws:asset:property': 'Code.ImageUri'
+                                  #  - 'aws:asset:path': 'TARGET_PATH'
+                                  #  - 'aws:asset:dockerfile-path': 'PATH'
+                                  #  - 'aws:asset:docker-*': HIOPTS.* related to IASSET_NEW.docker*, but dash-case'd
+OPTS
+ .cmd|entrypoint|workingDirectory #IMAGE.*
 
 
 
@@ -656,6 +704,44 @@ INTERNAL EXTENSION ==>            #Logic that runs inside the FUNC_INSTANCE's pr
 
 AWS::Lambda::Function             #Includes RESPROPs: Runtime, Handler
 AWS::Lambda::LayerVersion         #Includes RESPROPs: CompatibleRuntimes
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:          RUNTIME CDK          :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+CFUNCTION[_OPTS].runtime          #CRUNTIME. FUNC_VERSION.Runtime
+
+Runtime.NODEJS[_*_*|LATEST]
+Runtime.GO[_*_*]
+Runtime.PYTHON[_*_*]
+Runtime.JAVA[_*]
+Runtime.RUBY[_*_*]
+Runtime.DOTNET[_*]
+Runtime.PROVIDED[_*]              #CRUNTIME
+Runtime.FROM_IMAGE                #CRUNTIME with NEW_FUNC_VERSION.PackageType 'Image'
+Runtime.ALL                       #All available CRUNTIMEs, as ARR
+
+new Runtime
+ ('NAME'[, FAMILY[, OPTS]])       #CRUNTIME
+CRUNTIME.name                     #'NAME', e.g. 'nodejs20.x'
+CRUNTIME.toString()->'NAME'       #
+CRUNTIME.family                   #FAMILY, i.e. RuntimeFamily ENUM NODEJS|GO|PYTHON|JAVA|RUBY|DOTNET_CORE|OTHER
+
+CRUNTIME.runtimeEquals
+ (CRUNTIME2)->BOOL                #
+
+OPTS|CRUNTIME.supportsInlineCode  #BOOL (def: false). Whether can use NEW_FUNC_CODE.ZipFile, i.e. whether node|python
+OPTS|CRUNTIME.isVariable          #BOOL (def: false). Target the latest version. Only possible with node
+
+OPTS.bundlingDockerImage          #ECR 'REPO' (def: 'public.ecr.aws/sam/build-NAME')
+                                  #Docker image used to build custom runtime
+CRUNTIME.bundlingImage            #DOCKER_IMAGE (see CDK doc)
+OPTS|CRUNTIME
+ .supportsCodeGuruProfiling       #BOOL (def: false). Whether can use CodeGuru Profiler, i.e. whether python|java
 
 
                                              /=+===============================+=\
@@ -1969,7 +2055,7 @@ AWS::Lambda::FunctionVersion|Alias#Includes RESPROPs: ProvisionedConcurrencyConf
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:          SNAP_START           :==(
+                                            )==:          SNAP START           :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
@@ -1996,6 +2082,17 @@ SNAP_START.OptimizationStatus     #Whether to apply on each separate FUNC_VERSIO
 
 AWS::Lambda::Function             #RESPROPs: SnapStart
                                   #Includes RESATTRs: ApplyOn, OptimizationStatus, SnapStartResponse
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:        SNAP START CDK         :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+CRUNTIME[_OPTS]
+ .supportsSnapStart               #BOOL (def: false). Whether can use SnapStart, i.e. whether java >=11
 
 
                                              /=+===============================+=\
