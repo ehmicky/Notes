@@ -18,9 +18,6 @@ SUMMARY ==>                       #Functions: versions|aliases, alias routing, s
                                   #Concurrency: total, reserved, provisioned
 
 Better understanding function versioning???
-  - when using FUNC_ARN in each endpoint: target latest version? all versions?
-  - is each endpoint FUNCTION-specific or FUNC_VERSION-specific?
-  - FUNC_VERSIONs cost nothing if not invoked, except for potential S3|ECR cost?
   - https://github.com/aws/aws-cdk/blob/main/packages/aws-cdk-lib/aws-lambda/README.md#versions
   - also LAYER versions
      - https://github.com/aws/aws-cdk/blob/main/packages/aws-cdk-lib/aws-lambda/README.md#layers
@@ -175,11 +172,11 @@ UpdateFunctionCode()              #  - also Publish: like NEW_FUNC_VERSION.*
                                   #  - DryRun BOOL (def: false)
                                   #Res: FUNC_VERSION
 GET /functions
- /SHORT_FUNC_VERSION_ARN          #Req: FUNC_VERSION
- /configuration                   #  - only FunctionName, Qualifier
+ /SHORT_FUNC_VERSION_ARN
+ /configuration                   #Req: empty
 GetFunctionConfiguration()        #Res: FUNC_VERSION
-GET /functions                    #Req: FUNC_VERSION
- /SHORT_FUNC_VERSION_ARN          #  - only FunctionName, Qualifier
+GET /functions
+ /SHORT_FUNC_VERSION_ARN          #Req: empty
 GetFunction()                     #Res: FUNCTION
 GET /functions                    #Req:
 ListFunctions()                   #  - FunctionVersion 'ALL': all FUNC_VERSIONs instead of only latest
@@ -188,9 +185,10 @@ ListFunctions()                   #  - FunctionVersion 'ALL': all FUNC_VERSIONs 
 GET /functions/SHORT_FUNC_ARN     #Req: FUNC_VERSION
  /versions                        #  - only FunctionName
 ListVersionsByFunction()          #Res: Versions FUNC_VERSION_ARR
-DELETE /functions                 #Req: FUNC_VERSION
- /SHORT_FUNC_VERSION_ARN          #  - only FunctionName, Qualifier
-DeleteFunction()                  #Res: empty
+DELETE /functions                 #Req: empty
+ /SHORT_FUNC_VERSION_ARN          #Res: empty
+DeleteFunction()                  #Cannot use an ALIAS_ARN
+                                  #If not specifying a VERSION_NUM, deletes FUNCTION + all FUNC_VERSIONs
 
 FUNCTION                          #AWS Lambda function
 FUNCTION.Configuration            #FUNC_VERSION
@@ -239,11 +237,12 @@ UntagResource()                   #AWS TAGS
 FUNCTION.Tags                     #Not logged by CloudTrail
 
 AWS::Lambda::Function             #RESPROPs: Tags
+                                  #Represents FUNCTION + $LATEST FUNC_VERSION
 AWS::Lambda::Function[Version]    #Includes RESPROPs: Description
 
 [I]CANYFUNC                       #Base CKRESOURCE inherited by CFUNCTION|CFUNC_VERSION|CALIAS
                                   #In code, called `IFunction` (ICANYFUNC), `FunctionBase` (CANYFUNC)
-new Function(...CARGS, OPTS)      #CFUNCTION. CKRESOURCE wrapping FUNCTION
+new Function(...CARGS, OPTS)      #CFUNCTION. CKRESOURCE wrapping FUNCTION + $LATEST FUNC_VERSION
                                   #Inherits CANYFUNC
 Function.fromFunctionName
  (...CARGS, 'FUNCTION')
@@ -297,8 +296,10 @@ ENVVAR AWS_LAMBDA_FUNCTION_NAME   #'FUNCTION'
 QUALIFIER                         #'VERSION_NUM|ALIAS'
 [SHORT_]FUNC_VERSION_ARN          #'[SHORT_]FUNC_ARN[:QUALIFIER]'
                                   #"Qualified|unqualified ARN": whether QUALIFIER is used
-                                  #Def QUALIFIER: any
-                                  #  - i.e. "FUNCTION" is "any FUNC_VERSION|ALIAS", not only latest one
+                                  #When [SHORT_]FUNC_VERSION_ARN is in URL path, QUALIFIER can always be specified either:
+                                  #  - as ':QUALIFIER' suffix to the ARN
+                                  #  - as ?Qualifier query parameter
+                                  #Def QUALIFIER: '$LATEST'
 
 DVAR FunctionName                 #'FUNCTION'. Available with all CloudWatch METRICs
 DVAR Resource                     #'FUNCTION:QUALIFIER'. Available with all CloudWatch METRICs
@@ -344,15 +345,40 @@ ENV_OPTS.removeInEdge             #BOOL (def: false). Must be true when using La
                                              \=+===============================+=/
 
 
-FUNC_VERSION                      #Immutable. Each FUNCTION.* update:
-                                  #  - creates a new FUNC_VERSION
-                                  #  - automatically increment VERSION_NUM
+POST /functions/SHORT_FUNC_ARN    #Req: FUNC_VERSION
+ /versions                        #  - only RevisionId, CodeSha256, Description
+PublishVersion()                  #Res: FUNC_VERSION
+                                  #Not logged by CloudTrail
 
-FUNC_VERSION.Version              #VERSION_NUM. Either NUM or '$LATEST'
-                                  #Similar to a git commit hash
+NEW_FUNC_VERSION.Publish          #BOOL (def: false)
+                                  #Whether should also call PublishVersion()
+
+FUNC_VERSION                      #Created by PublishVersion() (which is similar to `git commit`)
+
+FUNC_VERSION.Version              #VERSION_NUM. Automatically incremented by PublishVersion()
+                                  #Similar to a git commit `hash`
 ENVVAR AWS_LAMBDA_FUNCTION_VERSION#'NUM'
-
 DVAR ExecutedVersion              #VERSION_NUM. Available with all CloudWatch METRICs
+
+$LATEST                           #Special VERSION_NUM
+                                  #Similar to git `HEAD`
+                                  #Default VERSION_NUM of FUNC_VERSION-specific entities|ACTIONs
+                                  #New FUNC_VERSIONs are copied from $LATEST during PublishVersion()
+                                  #Always exists, including after:
+                                  #  - CreateFunction()
+                                  #  - PublishVersion()
+                                  #UpdateFunction*() always target $LATEST
+                                  #  - i.e. once published, FUNC_VERSION.* is read-only
+                                  #However other FUNC_VERSION-specific entities can still be updated for any given VERSION_NUM
+                                  #  - e.g. RUNTIME_MGMT, EVENT_INVOKE, etc.
+
+FUNCTION.*                        #Configuration that applies to all FUNC_VERSIONs
+                                  #As opposed to FUNC_VERSION.*, which is FUNC_VERSION-specific
+                                  #Some entities are FUNCTION-specific, i.e. URL uses [SHORT_]FUNC_ARN
+                                  #Others are FUNC_VERSION-specific, i.e. URL uses [SHORT_]FUNC_VERSION_ARN
+
+AWS::Lambda::Function             #Represents FUNCTION + $LATEST FUNC_VERSION
+new Function(...CARGS, OPTS)      #Never represents a FUNC_VERSION with a specific VERSION_NUM
 
 AWS::Lambda::FunctionVersion      #RESPROPs: FunctionName
                                   #RESATTRs: FunctionArn, Version
@@ -433,7 +459,7 @@ ALIAS                             #'ALIAS' pointing to a FUNC_VERSION
 ALIAS.AliasArn                    #ALIAS_ARN. 'arn:aws:lambda:REGION:ACCOUNT_ID:function:FUNCTION:ALIAS'
 ALIAS.Name                        #'ALIAS'
 ALIAS.FunctionName                #SHORT_FUNC_ARN
-ALIAS.FunctionVersion             #'VERSION_NUM'
+ALIAS.FunctionVersion             #'VERSION_NUM' (required)
 ALIAS.RevisionId                  #'REVISION_ID'
 ALIAS.Description                 #STR
 
@@ -464,24 +490,6 @@ OPTS|ICALIAS.version              #ICFUNC_VERSION
 ICALIAS.lambda                    #ICFUNCTION
 OPTS.description                  #ALIAS.*
 OPTS.additionalVersions           #OBJ_ARR: version ICFUNC_VERSION, weight NUM. ALIAS.RoutingConfig.AdditionalVersionWeights
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:            PUBLISH            :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-POST /functions/SHORT_FUNC_ARN    #Req: FUNC_VERSION
- /versions                        #  - only RevisionId, CodeSha256, Description
-PublishVersion()                  #Res: FUNC_VERSION
-                                  #Publish a FUNC_VERSION
-                                  #Not logged by CloudTrail
-
-NEW_FUNC_VERSION.Publish          #BOOL (def: false)
-                                  #Whether is is live
-                                  #Makes it read-only
 
 
                                              /=+===============================+=\
@@ -555,6 +563,9 @@ NEW_FUNC_CODE.ZipFile             #Zip archive content, base64-encoded
                                   #Only with Runtime node|python
                                   #Sometimes called "inline code"
                                   #In CLI: FILE, in SDK: INPUT_BLOB
+FUNC_CODE.Location                #S3 'URI' to .zip archive
+                                  #I.e. when using ZipFile, automatically uploaded to S3, on an AWS managed ACCOUNT
+                                  #Only valid 10 minutes
 
 NEW_FUNC_CODE.S3Bucket            #STR. S3 'BUCKET' storing the .zip code
                                   #Either:
@@ -566,8 +577,6 @@ NEW_FUNC_CODE.S3Key               #STR. S3 'OBJECT'
 NEW_FUNC_CODE.S3ObjectVersion     #STR. S3 VERSION_ID
 
 FUNC_CODE.RepositoryType          #'S3' or undefined
-FUNC_CODE.Location                #S3 'URI' to .zip archive
-                                  #Only valid 10 minutes
 
 FUNC_VERSION.CodeSize             #NUM (in bytes). Size of the zip archive
 ACCOUNT_LIMIT.TotalCodeSize       #NUM (in bytes). Max size of all FUNC_VERSION|LAYER_VERSIONs .zip files on S3, per REGION.
@@ -746,7 +755,9 @@ DeleteLayerVersion()              #  - only Version -> VersionNumber
                                   #Res: empty
 
 LAYER_VERSION                     #Specific version of a LAYER
-                                  #Versioning works like FUNCTION's
+                                  #Unlike FUNCTION:
+                                  #  - no $LATEST, i.e. always specific VERSION_NUM
+                                  #  - completely immutable
                                   #Only PublishLayerVersion() is logged by CloudTrail
                                  ##With Pulumi, can use skipDestroy
 LAYER_VERSION.LayerVersionArn     #LAYER_VERSION_ARN. 'arn:aws:lambda:REGION:ACCOUNT_ID:layer:LAYER_NAME:NUM'
@@ -956,13 +967,13 @@ POST RAPI/invocation/REQ_ID/error #Report error during INVOCATION
 
 RUNTIME_VERSION                   #Minor|patch version of a specific FUNC_VERSION.Runtime
 
-PUT /functions                    #Req: RUNTIME_MGMT
- /SHORT_FUNC_VERSION_ARN          #  - FunctionArn -> FunctionName SHORT_FUNC_ARN + Qualifier 'QUALIFIER'
+PUT /functions
+ /SHORT_FUNC_VERSION_ARN          #Req: RUNTIME_MGMT
  /runtime-management-config       #  - RuntimeVersionArn: only if UpdateRuntimeOn 'Manual'
 PutRuntimeManagementConfig()      #Res: RUNTIME_MGMT
 GET /functions
- /SHORT_FUNC_VERSION_ARN          #Req:
- /runtime-management-config       #  - only FunctionArn -> FunctionName SHORT_FUNC_ARN + Qualifier 'QUALIFIER'
+ /SHORT_FUNC_VERSION_ARN
+ /runtime-management-config       #Req: empty
 GetRuntimeManagementConfig()      #Res: RUNTIME_MGMT
 
 RUNTIME_MGMT                      #How RUNTIMEs are upgraded to new RUNTIME_VERSIONs
@@ -1393,36 +1404,34 @@ POST /functions                   #Req: PERMISSION
  /SHORT_FUNC_VERSION_ARN/policy   #  - no Statement
 AddPermission()                   #Res: PERMISSION
                                   #  - only Statement
-GET /functions                    #Req:
- /SHORT_FUNC_VERSION_ARN/policy   #  - FunctionName SHORT_FUNC_ARN + Qualifier 'QUALIFIER'
-GetPolicy()                       #Res:
-                                  #  - Policy POLICY_DOC
+GET /functions                    #Req: empty
+ /SHORT_FUNC_VERSION_ARN/policy   #Res:
+GetPolicy()                       #  - Policy POLICY_DOC
                                   #  - RevisionId STR: of the POLICY
 DELETE /functions
  /SHORT_FUNC_VERSION_ARN/policy   #Req: PERMISSION
- /STATEMENT_ID                    #  - only FunctionName|Qualifier|RevisionId|StatementId
+ /STATEMENT_ID                    #  - only RevisionId|StatementId
 RemovePermission()                #Res: empty
 
 PERMISSION                        #Resource-based single-STATEMENT POLICY for a FUNCTION|FUNC_VERSION|ALIAS
                                   #Permissions of other resources towards FUNCTION|FUNC_VERSION|ALIAS
                                   #Max POLICY_DOC size: 20KB
 
-VERSION|ALIAS PERMISSIONS ==>     #Permissions to a:
-                                  #  - FUNC_VERSION|ALIAS: specific to it
-                                  #  - FUNCTION: specific to all FUNC_VERSIONs|ALIASs
+VERSION|ALIAS PERMISSIONS ==>     #Permissions can target a:
+                                  #  - FUNC_VERSION|ALIAS
+                                  #     - cannot be '$LATEST'
+                                  #  - FUNCTION: i.e. all FUNC_VERSIONs|ALIASs
                                   #However:
                                   #  - if PACTION lambda:InvokeFunction[Url]
                                   #     - including as part of PACTION lambda:*
                                   #  - then permissions to a FUNCTION only apply to invocations to FUNCTION without any QUALIFIER
                                   #  - but can individually target both to fix this
-                                  #     - e.g. STATEMENT.Resource ['FUNC_ARN', 'FUNC_ARN:*']
+                                  #     - i.e. STATEMENT.Resource ['FUNC_ARN', 'FUNC_ARN:*'], or ['FUNC_ARN*']
                                   #This is for both:
                                   #  - PERMISSION (resource-based POLICY)
                                   #  - identity-based POLICYs attached to callers
 
-PERMISSION.FunctionName           #SHORT_FUNC_VERSION_ARN
-PERMISSION.Qualifier              #'QUALIFIER'
-                                  #Same as specifying it as part of PERMISSION.FunctionName
+PERMISSION.FunctionArn            #SHORT_FUNC_VERSION_ARN
 PERMISSION.RevisionId             #'REVISION_ID'
 
 PERMISSION.Statement              #'STATEMENT'
@@ -1430,7 +1439,7 @@ PERMISSION.Statement              #'STATEMENT'
                                   #Automatically adds STATEMENT.Resource FUNCTION|FUNC_VERSION|ALIAS_ARN
 
 PERMISSION.StatementId            #STATEMENT.Id
-PERMISSION.Action                 #'lambda:SERVICE_ACTION', 'lambda:*' or '*'. STATEMENT.Action
+PERMISSION.Action                 #'lambda:SERVICE_ACTION' or '[lambda:]*'. STATEMENT.Action
                                   #SERVICE_ACTION can only be Invoke, *Function|Alias|FunctionConcurrency|Tag*, PublishVersion, GetPolicy
 PERMISSION.Principal              #'ACCOUNT_ID|ROOT_ARN|SERVICE_DOMAIN|*'. STATEMENT.Principal.AWS|Service
                                  ##cfn-lint-serverless aws_lambda_permission_multiple_principals (WS1002): PERMISSION.Principal must have a single item
@@ -1451,7 +1460,7 @@ AWS::Lambda::Permission           #RESPROPs: FunctionName, Action, Principal, So
                                              \=+===============================+=/
 
 
-ICANYFUNC.addPermission           #Create a new PERMISSION, including PERMISSION.FunctionName|Qualifier
+ICANYFUNC.addPermission           #Create a new PERMISSION, including PERMISSION.FunctionArn
  ('CPERMISSION', CPERMISSION_OBJ) #For PACTION lambda:InvokeFunction[Url]:
                                   #  - if an ALIAS|FUNC_VERSION exists
                                   #  - should use ICALIAS|ICFUNC_VERSION.addPermission() instead of ICFUNCTION.addPermission()
@@ -1682,10 +1691,9 @@ Function.metricAllInvocations
 
 
 POST /functions                   #Req: INVOCATION_REQ
- /SHORT_FUNC_VERSION_ARN          #  - URI path: FunctionName
- /invocations                     #  - Query variable: Qualifier
-Invoke()                          #  - X-Amz-* [C] header: InvocationType|ClientContext|LogType
-                                  #  - Request payload: Payload
+ /SHORT_FUNC_VERSION_ARN          #  - URI path: FunctionArn
+ /invocations                     #  - X-Amz-* [C] header: InvocationType|ClientContext|LogType
+Invoke()                          #  - Request payload: Payload
                                   #Response: INVOCATION_RES
                                   #  - status code: StatusCode
                                   #  - X-Amz-* [S] headers: ExecutedVersion|LogResult|FunctionError
@@ -1696,9 +1704,7 @@ AWSLambdaRole                     #AWS managed POLICY to allow InvokeFunction
 
 INVOCATION_REQ                    #Request of an INVOCATION
                                  ##With Pulumi, can use triggers as TRIGGER_OBJ
-INVOCATION_REQ.FunctionName       #SHORT_FUNC_VERSION_ARN
-INVOCATION_REQ.Qualifier          #'QUALIFIER'
-                                  #Same as specifying in INVOCATION_REQ.FunctionName
+INVOCATION_REQ.FunctionArn        #SHORT_FUNC_VERSION_ARN
 
 INVOCATION_REQ.InvocationType     #STR. One of:
                                   #  - 'RequestResponse' (def): sync call
@@ -1804,28 +1810,25 @@ CFUNC_URL_OPTS.invokeMode         #FUNC_URL.*
                                              \=+===============================+=/
 
 
-POST /functions/SHORT_FUNC_ARN/url#Req: FUNC_URL
-CreateFunctionUrlConfig()         #  - FunctionArn -> FunctionName SHORT_FUNC_ARN + Qualifier 'QUALIFIER'
-                                  #  - no FunctionUrl, CreationTime, LastModifiedTime
-                                  #Res: FUNC_URL
-PUT /functions/SHORT_FUNC_ARN/url #Req: FUNC_URL
-UpdateFunctionUrlConfig()         #  - FunctionArn -> FunctionName SHORT_FUNC_ARN + Qualifier 'QUALIFIER'
-                                  #  - no FunctionUrl, CreationTime, LastModifiedTime
-                                  #Res: FUNC_URL
-GET /functions/SHORT_FUNC_ARN/url #Req: FUNC_URL
-GetFunctionUrlConfig()            #  - FunctionArn -> FunctionName SHORT_FUNC_ARN + Qualifier 'QUALIFIER'
-                                  #Res: FUNC_URL
-GET /functions/SHORT_FUNC_ARN/urls#Req: FUNC_URL
-ListFunctionUrlConfigs()          #  - FunctionArn -> FunctionName SHORT_FUNC_ARN
-                                  #Res: FunctionUrlConfigs FUNC_URL_ARR
-DELETE /functions/SHORT_FUNC_ARN  #Req: FUNC_URL
- /url                             #  - FunctionArn -> FunctionName SHORT_FUNC_ARN + Qualifier 'QUALIFIER'
+POST /functions                   #Req: FUNC_URL
+ /SHORT_FUNC_VERSION_ARN/url      #  - no FunctionUrl, CreationTime, LastModifiedTime
+CreateFunctionUrlConfig()         #Res: FUNC_URL
+PUT /functions                    #Req: FUNC_URL
+ /SHORT_FUNC_VERSION_ARN/url      #  - no FunctionUrl, CreationTime, LastModifiedTime
+UpdateFunctionUrlConfig()         #Res: FUNC_URL
+GET /functions
+ /SHORT_FUNC_VERSION_ARN/url      #Req: empty
+GetFunctionUrlConfig()            #Res: FUNC_URL
+GET /functions/SHORT_FUNC_ARN/urls#Req: empty
+ListFunctionUrlConfigs()          #Res: FunctionUrlConfigs FUNC_URL_ARR
+DELETE /functions
+ /SHORT_FUNC_VERSION_ARN/url      #Req: empty
 DeleteFunctionUrlConfig()         #Res: empty
 
 FUNC_URL                          #HTTP[S] URL to invoke a FUNCTION directly
                                   #Public by default
                                   #IPv4|6
-FUNC_URL.FunctionArn              #SHORT_FUNC_ARN
+FUNC_URL.FunctionArn              #SHORT_FUNC_VERSION_ARN
                                   #Can use an ALIAS but not a VERSION_NUM
 FUNC_URL.CreationTime             #'DATE'
 FUNC_URL.LastModifiedTime         #'DATE'
@@ -2050,22 +2053,24 @@ CFUNCTION_OPTS.tracing            #TRACING.*
                                              \=+===============================+=/
 
 
-PUT /functions/SHORT_FUNC_ARN     #Req: EVENT_INVOKE
- /event-invoke-config             #  - FunctionArn -> FunctionName SHORT_FUNC_ARN + Qualifier 'QUALIFIER'
-PutFunctionEventInvokeConfig()    #  - no LastModified
-                                  #Res: EVENT_INVOKE
-POST /functions/SHORT_FUNC_ARN    #Req: EVENT_INVOKE
- /event-invoke-config             #  - FunctionArn -> FunctionName SHORT_FUNC_ARN + Qualifier 'QUALIFIER'
-UpdateFunctionEventInvokeConfig() #  - no LastModified
-                                  #Res: EVENT_INVOKE
-GET /functions/SHORT_FUNC_ARN     #Req: EVENT_INVOKE
- /event-invoke-config             #  - only FunctionArn -> FunctionName SHORT_FUNC_ARN + Qualifier 'QUALIFIER'
+PUT /functions
+ /SHORT_FUNC_VERSION_ARN          #Req: EVENT_INVOKE
+ /event-invoke-config             #  - no LastModified
+PutFunctionEventInvokeConfig()    #Res: EVENT_INVOKE
+POST /functions
+ /SHORT_FUNC_VERSION_ARN          #Req: EVENT_INVOKE
+ /event-invoke-config             #  - no LastModified
+UpdateFunctionEventInvokeConfig() #Res: EVENT_INVOKE
+GET /functions
+ /SHORT_FUNC_VERSION_ARN
+ /event-invoke-config             #Req: empty
 GetFunctionEventInvokeConfig()    #Res: EVENT_INVOKE
-GET /functions/SHORT_FUNC_ARN     #Req: EVENT_INVOKE
- /event-invoke-config/list        #  - only FunctionArn -> FunctionName SHORT_FUNC_ARN
+GET /functions/SHORT_FUNC_ARN
+ /event-invoke-config/list        #Req: empty
 ListFunctionEventInvokeConfigs()  #Res: FunctionEventInvokeConfigs EVENT_INVOKE_ARR
-DELETE /functions/SHORT_FUNC_ARN  #Req: EVENT_INVOKE
- /event-invoke-config             #  - only FunctionArn -> FunctionName SHORT_FUNC_ARN + Qualifier 'QUALIFIER'
+DELETE /functions
+ /SHORT_FUNC_VERSION_ARN
+ /event-invoke-config             #Req: empty
 DeleteFunctionEventInvokeConfig() #Res: empty
 
 EVENT_INVOKE                      #INVOCATION configuration for InvocationType 'Event'
@@ -2717,14 +2722,14 @@ Function.metricAllThrottles
                                              \=+===============================+=/
 
 
-PUT /functions/SHORT_FUNC_ARN     #Req: CONCURRENCY
- /concurrency                     #  - also FunctionName FUNC_URL
+PUT /functions/SHORT_FUNC_ARN
+ /concurrency                     #Req: empty
 PutFunctionConcurrency()          #Res: CONCURRENCY
-GET /functions/SHORT_FUNC_ARN     #Req: CONCURRENCY
- /concurrency                     #  - also|only FunctionName FUNC_URL
+GET /functions/SHORT_FUNC_ARN
+ /concurrency                     #Req: empty
 GetFunctionConcurrency()          #Res: CONCURRENCY
-DELETE /functions/SHORT_FUNC_ARN  #Req: CONCURRENCY
- /concurrency                     #  - also|only FunctionName FUNC_URL
+DELETE /functions/SHORT_FUNC_ARN
+ /concurrency                     #Req: empty
 DeleteFunctionConcurrency()       #Res: empty
 
 CONCURRENCY                       #Reserved concurrency for a given FUNCTION.
@@ -2759,23 +2764,25 @@ CFUNCTION_OPTS
                                              \=+===============================+=/
 
 
-PUT /functions/SHORT_FUNC_ARN     #Req: PCONCURRENCY
- /provisioned-concurrency         #  - FunctionArn -> FunctionName SHORT_FUNC_ARN + Qualifier 'QUALIFIER'
-PutProvisionedConcurrencyConfig() #  - only RequestedProvisionedConcurrentExecutions -> ProvisionedConcurrentExecutions NUM
-                                  #Res: PCONCURRENCY
-GET /functions/SHORT_FUNC_ARN     #Req:
- /provisioned-concurrency         #  - only FunctionArn -> FunctionName SHORT_FUNC_ARN + Qualifier 'QUALIFIER'
+PUT /functions
+ /SHORT_FUNC_VERSION_ARN          #Req: PCONCURRENCY
+ /provisioned-concurrency         #  - only RequestedProvisionedConcurrentExecutions -> ProvisionedConcurrentExecutions NUM
+PutProvisionedConcurrencyConfig() #Res: PCONCURRENCY
+GET /functions
+ /SHORT_FUNC_VERSION_ARN
+ /provisioned-concurrency         #Req: empty
 GetProvisionedConcurrencyConfig() #Res: PCONCURRENCY
 GET /functions/SHORT_FUNC_ARN
- /provisioned-concurrency?List=ALL#Req:
-ListProvisioned                   #  - only FunctionArn -> FunctionName SHORT_FUNC_ARN
+ /provisioned-concurrency?List=ALL
+ListProvisioned                   #Req: empty
  ConcurrencyConfigs()             #Res: ProvisionedConcurrencyConfigs PCONCURRENCY_ARR
-DELETE /functions/SHORT_FUNC_ARN
- /provisioned-concurrency         #Req:
-DeleteProvisioned                 #  - only FunctionArn -> FunctionName SHORT_FUNC_ARN + Qualifier 'QUALIFIER'
+DELETE /functions
+ /SHORT_FUNC_VERSION_ARN
+ /provisioned-concurrency
+DeleteProvisioned                 #Req: empty
  ConcurrencyConfig()              #Res: empty
 
-PCONCURRENCY                      #Provisioned concurrency for a given FUNCTION.
+PCONCURRENCY                      #Provisioned concurrency for a given FUNC_VERSION
                                   #Eliminates cold start for NUM FUNC_INSTANCEs by:
                                   #  - initializing runtime|function in advance
                                   #     - done 1-2m after allocating PCONCURRENCY
@@ -2784,6 +2791,7 @@ PCONCURRENCY                      #Provisioned concurrency for a given FUNCTION.
                                   #Separate|orthogonal from reserved CONCURRENCY
                                   #  - only related to keeping FUNC_INSTANCEs up for performance
                                   #  - not related to throttling
+                                  #Must target a FUNC_VERSION, not a FUNCTION, i.e. QUALIFIER is required
                                   #Not logged by CloudTrail
 PCONCURRENCY.FunctionArn          #FUNC_VERSION_ARN
 PCONCURRENCY.LastModified         #'DATE'
