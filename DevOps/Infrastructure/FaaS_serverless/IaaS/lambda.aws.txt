@@ -7,8 +7,8 @@
 
 VERSION ==>                       #2023-11-16
 
-SUMMARY ==>                       #Functions: versions|aliases, alias routing, singleton
-                                  #Main code: zip (upload|S3) or container, sign, publish, esbuild
+SUMMARY ==>                       #Functions: versions, aliases, alias routing, singleton
+                                  #Main code: zip (upload|S3) or container, sign, esbuild
                                   #Additional code: layer, internal|external extension
                                   #Runtimes: versions|upgrades, custom, options, Node|Go|Python|Java|Ruby|DotNet, Custom|Deno
                                   #Environment: CPU, memory, envvar, /tmp, EFS, VPC, logging, insights
@@ -16,13 +16,6 @@ SUMMARY ==>                       #Functions: versions|aliases, alias routing, s
                                   #Event source: batch size|duration, filters, concurrency
                                   #Errors: timeout, retries, dead letter, tracing
                                   #Concurrency: total, reserved, provisioned
-
-Better understanding function versioning???
-  - https://github.com/aws/aws-cdk/blob/main/packages/aws-cdk-lib/aws-lambda/README.md#versions
-  - also LAYER versions
-     - https://github.com/aws/aws-cdk/blob/main/packages/aws-cdk-lib/aws-lambda/README.md#layers
-
-Re-read whole doc???
 
 
                                              /=+===============================+=\
@@ -114,6 +107,7 @@ PROVISIONED CONCURRENCY ==>       #9$ per month, per provisioned CONCURRENCY, wi
                                   #Free: none
 
 CODE STORAGE ==>                  #Free
+FUNCTION VERSIONS COUNT ==>       #Free
 
 STREAMING DATA TRANSFER ==>       #1$/125GB. Free: 6MB
 
@@ -190,7 +184,7 @@ DELETE /functions                 #Req: empty
 DeleteFunction()                  #Cannot use an ALIAS_ARN
                                   #If not specifying a VERSION_NUM, deletes FUNCTION + all FUNC_VERSIONs
 
-FUNCTION                          #AWS Lambda function
+FUNCTION                          #AWS Lambda function, including all its FUNC_VERSIONs
 FUNCTION.Configuration            #FUNC_VERSION
 FUNC_VERSION                      #FUNCTION's specific version
                                   #WAIT (GetFunction()) FunctionExists: when it exists
@@ -241,7 +235,9 @@ AWS::Lambda::Function             #RESPROPs: Tags
 AWS::Lambda::Function[Version]    #Includes RESPROPs: Description
 
 [I]CANYFUNC                       #Base CKRESOURCE inherited by CFUNCTION|CFUNC_VERSION|CALIAS
+                                  #I.e. FUNCTION + FUNC_VERSION, $LATEST or not
                                   #In code, called `IFunction` (ICANYFUNC), `FunctionBase` (CANYFUNC)
+
 new Function(...CARGS, OPTS)      #CFUNCTION. CKRESOURCE wrapping FUNCTION + $LATEST FUNC_VERSION
                                   #Inherits CANYFUNC
 Function.fromFunctionName
@@ -304,7 +300,7 @@ QUALIFIER                         #'VERSION_NUM|ALIAS'
 DVAR FunctionName                 #'FUNCTION'. Available with all CloudWatch METRICs
 DVAR Resource                     #'FUNCTION:QUALIFIER'. Available with all CloudWatch METRICs
 
-REVISION_ID                       #Changes each time a specific FUNC_VERSION|ALIAS|PERMISSION is updated.
+REVISION_ID                       #Changes each time a specific FUNC_VERSION|ALIAS|PERMISSION is updated
                                   #Meant to pass current one to an update call so it fails if there is a concurrent update
 FUNC_VERSION.RevisionId           #'REVISION_ID'
 FUNC_VERSION.CodeSha256           #STR. SHA256 checksum
@@ -355,7 +351,7 @@ NEW_FUNC_VERSION.Publish          #BOOL (def: false)
 
 FUNC_VERSION                      #Created by PublishVersion() (which is similar to `git commit`)
 
-FUNC_VERSION.Version              #VERSION_NUM. Automatically incremented by PublishVersion()
+FUNC_VERSION.Version              #VERSION_NUM. Automatically incremented by PublishVersion(), starting at 1
                                   #Similar to a git commit `hash`
 ENVVAR AWS_LAMBDA_FUNCTION_VERSION#'NUM'
 DVAR ExecutedVersion              #VERSION_NUM. Available with all CloudWatch METRICs
@@ -364,9 +360,7 @@ $LATEST                           #Special VERSION_NUM
                                   #Similar to git `HEAD`
                                   #Default VERSION_NUM of FUNC_VERSION-specific entities|ACTIONs
                                   #New FUNC_VERSIONs are copied from $LATEST during PublishVersion()
-                                  #Always exists, including after:
-                                  #  - CreateFunction()
-                                  #  - PublishVersion()
+                                  #Always exists, including after CreateFunction() or PublishVersion()
                                   #UpdateFunction*() always target $LATEST
                                   #  - i.e. once published, FUNC_VERSION.* is read-only
                                   #However other FUNC_VERSION-specific entities can still be updated for any given VERSION_NUM
@@ -380,7 +374,12 @@ FUNCTION.*                        #Configuration that applies to all FUNC_VERSIO
 AWS::Lambda::Function             #Represents FUNCTION + $LATEST FUNC_VERSION
 new Function(...CARGS, OPTS)      #Never represents a FUNC_VERSION with a specific VERSION_NUM
 
-AWS::Lambda::FunctionVersion      #RESPROPs: FunctionName
+AWS::Lambda::FunctionVersion      #Represents a FUNC_VERSION with a specific VERSION_NUM (not $LATEST)
+                                  #Each create|replace calls PublishVersion()
+                                  #  - i.e. usually trigger replaces by either:
+                                  #     - setting RESPROP CodeSha256: published on CODE change
+                                  #     - putting VERSION_NUM in RESPROP Description: published manually
+                                  #RESPROPs: FunctionName
                                   #RESATTRs: FunctionArn, Version
 
 
@@ -392,6 +391,7 @@ AWS::Lambda::FunctionVersion      #RESPROPs: FunctionName
 
 
 new Version(...CARGS, OPTS)       #CFUNC_VERSION. CKRESOURCE wrapping FUNC_VERSION
+                                  #Not for $LATEST (except when using ICANYFUNC.latestVersion)
                                   #Inherits CANYFUNC
 CFUNCTION.addVersion
  ('CFUNC_VERSION'[,OPTS.codeSha256
@@ -407,6 +407,7 @@ Version.fromVersionAttributes
 
 ICFUNC_VERSION.functionArn        #FUNC_VERSION_ARN
 ICFUNC_VERSION.version            #'VERSION_NUM'_CSATTR. FUNC_VERSION.Version
+                                  #Like AWS::CloudFormation::FunctionVersion: incremented on RESPROP changes
 ICFUNC_VERSION.qualifier          #Same except undefined with ICANYFUNC.latestVersion
 ICFUNC_VERSION.functionName       #'FUNCTION:VERSION_NUM'
 OPTS|ICFUNC_VERSION.lambda        #ICFUNCTION
@@ -415,17 +416,24 @@ CFUNC_VERSION_OPTS.description    #FUNC_VERSION.*
 CFUNC_VERSION_OPTS.removalPolicy  #REMOVAL_POLICY (def: destroy)
 
 ICANYFUNC.latestVersion           #CFUNC_VERSION with VERSION_NUM '$LATEST'
-                                  #Does not create any underlying FUNC_VERSION, just point to the latest one
+                                  #Does not provision anything, just forward to the underlying CFUNCTION
 
 CFUNCTION.currentVersion          #CFUNC_VERSION which VERSION_NUM is incremented every time any FUNCTION RESPROP changes
                                   #Does so by appending FUNC_VERSION_LID with 'CURRENT_HASH' (hash of FUNCTION RESPROPs)
                                   #Not created unless CFUNCTION.currentVersion accessed
+                                  #I.e. helper over `new Version()`, automatically handling publishing new FUNC_VERSIONs
 CFUNCTION_OPTS
  .currentVersionOptions           #CFUNC_VERSION_OPTS used with CFUNCTION.currentVersion
-Function.classifyVersionProperty  #Add|remove RESPROP to CURRENT_HASH
- ('RESPROP', BOOL)                #Def: all RESPROPs are included, except Tags, ReservedConcurrentExecutions, CodeSigningConfigArn
-CFUNCTION                         #Add a direct value to CURRENT_HASH
+Function.classifyVersionProperty  #Add|remove RESPROP to CURRENT_HASH, i.e. which one should publish new FUNC_VERSIONs
+ ('RESPROP', BOOL)                #Def: all RESPROPs are included
+                                  #  - except non-FUNC_VERSION-specific RESPROPs: Tags, ReservedConcurrentExecutions, CodeSigningConfigArn
+CFUNCTION                         #Add a direct value to CURRENT_HASH, i.e. any change to it would publish a new FUNC_VERSION
  .invalidateVersionBasedOn(STR)   #Meant for FUNCTION changes that are not in its RESPROPs, e.g. value of a SSM PARAM
+                                  #Can also be done for code change, since FUNC_CODE mostly contains URIs, not contents, except:
+                                  #  - Code.fromInline(): since it uses NEW_FUNC_CODE.ZipFile, which is contents
+                                  #  - Code.fromAsset(): since NEW_FUNC_CODE.S3Key includes 'FILE_HASH'
+                                  #  - Code.fromBucket|fromCfnParameters(): providing 'OBJECT' includes 'FILE_HASH'
+                                  #  - Code.fromDockerBuild(): since NEW_FUNC_CODE.imageUri includes 'IMAGE_TAG', which is updated when 'IMAGE_HASH' changes
 FFLAG @aws-cdk/aws-lambda:
  recognizeLayerVersion            #If true (recommended): add any LAYER (and its RESPROPs) to CURRENT_HASH
 
@@ -508,7 +516,7 @@ NEW_FUNC_VERSION.Code             #NEW_FUNC_CODE
 
 AWS::Lambda::Function             #Includes RESPROPs: PackageType, Code
 
-CFUNCTION_OPTS.code               #CCODE. FUNCTION.Code|ImageConfig,
+CFUNCTION_OPTS.code               #CCODE. FUNCTION.Code|ImageConfig
 
 
                                              /=+===============================+=\
@@ -755,8 +763,8 @@ DeleteLayerVersion()              #  - only Version -> VersionNumber
                                   #Res: empty
 
 LAYER_VERSION                     #Specific version of a LAYER
-                                  #Unlike FUNCTION:
-                                  #  - no $LATEST, i.e. always specific VERSION_NUM
+                                  #Unlike FUNCTION versions:
+                                  #  - no $LATEST, i.e. always specific version NUM
                                   #  - completely immutable
                                   #Only PublishLayerVersion() is logged by CloudTrail
                                  ##With Pulumi, can use skipDestroy
@@ -1641,7 +1649,7 @@ CFUNCTION_OPTS.codeSigningConfig  #CCODE_SIGNING. FUNC_CODE_SIGNING
                                              \=+===============================+=/
 
 
-INVOCATION                        #Single run of a FUNC_VERSION.
+INVOCATION                        #Single run of a FUNC_VERSION
                                   #Can be done by Invoke(), FUNC_URL, or TRIGGER
 
 FUNC_INSTANCE                     #When a FUNC_VERSION is first invoked, a FUNC_INSTANCE boots ("cold start"/"init"):
@@ -1763,10 +1771,10 @@ TEST EVENTS ==>                   #INVOCATION_REQs saved for test purpose
                                              \=+===============================+=/
 
 
-POST /functions/SHORT_FUNC_ARN    #Req: INVOCATION_REQ
- /response-streaming-invocations  #  - InvocationType cannot be 'Event'
-InvokeWithResponseStream()        #Res: INVOCATION_RES
-                                  #  - ResponseBody -> EventStream
+POST /functions                   #Req: INVOCATION_REQ
+ /SHORT_FUNC_VERSION_ARN          #  - InvocationType cannot be 'Event'
+ /response-streaming-invocations  #Res: INVOCATION_RES
+InvokeWithResponseStream()        #  - ResponseBody -> EventStream
                                   #  - FunctionError|LogResult -> INVOCATION_RES_END.*
                                   #No own PACTION: use 'InvokeFunction' instead
                                   #Not with CLI
@@ -1871,7 +1879,7 @@ new FunctionUrl(...CARGS, OPTS)   #CFUNC_URL. CKRESOURCE wrapping FUNC_URL
 ICANYFUNC.addFunctionUrl
  (OPTS)->CFUNC_URL                #Same but sets OPTS.function ICANYFUNC
 
-CFUNC_URL.functionArn             #'FUNC_ARN'_CSATTR. FUNC_URL.*
+CFUNC_URL.functionArn             #'FUNC_VERSION_ARN'_CSATTR. FUNC_URL.*
 OPTS|CFUNC_URL.function           #ICANYFUNC (except CFUNC_VERSION)
 
 CFUNC_URL.url                     #'URL'_CSATTR. FUNC_URL.FunctionUrl
