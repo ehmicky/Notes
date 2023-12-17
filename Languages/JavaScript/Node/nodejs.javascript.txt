@@ -116,10 +116,9 @@ ID_NUM                                          #Can be passed to clear*(...)
 ID[Symbol.dispose]()                    18.18.0*#Calls clear*(...)
 
 queueMicrotask(FUNC())                          #Add a new microtask (see DOM|JavaScript doc)
-                                                #Experimental (throw warning)
 process.nextTick(FUNC()[, ...])                 #Add a new microtask (see JavaScript doc)
                                                 #As opposed to queueMicrotask(), always processed before other microtasks,
-                                                #including when calling itself recursively.,
+                                                #including when calling itself recursively.
 
 require('timers/promises')                      #
 setTimeout(NUM[, VAL[, OPTS]])->>               #Resolves to VAL (def: undefined) after NUMms.
@@ -1144,43 +1143,51 @@ DECODER.end()->STR                              #Returns current string, but doe
                                              \=+===============================+=/
 
 
-SVAL                                            #UBUFFER or (if setEncoding() called) STR, or null if nothing to read
-OBJECT MODE ==>                                 #SVAL is any VAL (except null):
-                                                #  - encoding is ignored
-                                                #  - both ISTREAM and OSTREAM must be in objectMode
-                                                #  - ISTREAM.read() NUM argument is ignored (always 1)
-                                                #  - highWaterMark is per-SVAL
+new Readable([ROPTS])                           #ISTREAM
 
-getDefaultHighWaterMark(BOOL)           18.17.0*#Get default highWaterMark. BOOL is objectMode. Def: 16 in objectMode, 16KB otherwise.
+ROPTS|WOPTS.objectMode                          #BOOL. Whether SVAL is:
+ISTREAM.readableObjectMode                      #  - false (def): SUBUFFER
+OSTREAM.writableObjectMode                      #  - true: any VAL
+                                                #`null` always means "nothing"
+                                                #Must be same across ISTREAM|OSTREAM
+
+ROPTS.encoding                                  #Either:
+ISTREAM.readableEncoding                        #  - 'ENCODING': pushed UBUFFER are read as STR
+ISTREAM.setEncoding('ENCODING')                 #  - null (def): pushed STR are read as BUFFER
+                                                #Not used if object mode
+OSTREAM.write|end(SVAL, 'ENCODING'[, ...])      #
+OSTREAM.setDefaultEncoding('ENCODING')->OSTREAM #Def: 'utf-8'. Default value for OSTREAM.write|end()
+
+ROPTS.highWaterMark                             #NUM. Buffer size, i.e. data available for read but not read yet
+                                                #While buffer full, underlying ROPTS.read() is not called
+                                                #  - i.e. source waits before pushing more data
+                                                #If object mode, per-SVAL. Otherwise, per-byte
+WOPTS.highWaterMark                             #NUM. Buffer size, i.e. data not flushed yet
+                                                #If buffer full, OSTREAM.write() returns false
+                                                #If object mode, per-SVAL. Otherwise, per-byte
+getDefaultHighWaterMark(BOOL)->NUM      18.17.0*#Get default highWaterMark
+                                                #BOOL is objectMode
+                                                #Def: 16 in objectMode, 16KB otherwise
 setDefaultHighWaterMark(BOOL, NUM)      18.17.0*#
 
-ISTREAM ==>                                     #Input stream. Actually called Readable
-new Readable([OBJ])                             #OBJ:
-                                                #  - encoding 'ENCODING' (def: null, i.e. uses BUFFER)
-                                                #  - objectMode BOOL: see above
-                                                #  - highWaterMark NUM:
-                                                #     - buffer size
-                                                #     - on ISTREAM: data available for read but not read yet
-                                                #     - on OSTREAM: data not flushed yet
-                                                #     - if buffer full, waits
-                                                #  - signal ABORT_SIGNAL: call destroy() on cancel
+ROPTS.signal                                    #ABORT_SIGNAL. Call destroy() on cancel
+
 ISTREAM.on("readable", FUNC())                  #New chunks available, or just before "end"
 ISTREAM.on("data", FUNC(SVAL))                  #Each new chunk available. Firing FUNC() consumes that chunk.
                                                 #Not fired if ISTREAM is empty
 ISTREAM.read([UINT])->SVAL                      #Like on("data") but:
                                                 #  - sync: waits until chunk available (i.e. prefer on("data"))
                                                 #  - specify (max) chunk size UINT (def: all)
+                                                #     - if object mode, always 1
                                                 #  - SVAL is null if ISTREAM empty
-ISTREAM.on("end", FUNC())                       #When all chunks have been read
+
+ISTREAM.on("end", FUNC())                       #On success, i.e. all chunks read, i.e. ISTREAM.read()->null
+ISTREAM.on("error", FUNC(ERROR))                #On error
 ISTREAM.on("close", FUNC())                     #When underlying fd is closed (not all ISTREAM close)
-ISTREAM.on("error", FUNC(ERROR))                #
 ISTREAM.pause|resume()                          #Makes it stop|resume emit "data" events
                                                 #By default, paused unless there is a "data" listener
 ISTREAM.isPaused()                              #
 ISTREAM.readable                                #BOOL
-ISTREAM.readableEncoding                        #'ENCODING'
-ISTREAM.setEncoding('ENCODING')                 #
-ISTREAM.readableObjectMode                      #BOOL
 ISTREAM.readableHighWaterMark                   #NUM
 ISTREAM.readableLength                          #NUM. Number of bytes not read yet
 ISTREAM.readableFlowing                         #Can be:
@@ -1203,7 +1210,7 @@ ISTREAM.unpipe([OSTREAM])->ISTREAM              #Stops pipe() (def: all)
                                                 #Automatically called on OSTREAM.on('close|finish|error')
                                                 #If no more pipes, calls ISTREAM.pause()
 ISTREAM.unshift(SVAL[, 'ENCODING'])             #Put last SVAL read back in ISTREAM
-ISTREAM.destroy([ERROR])                        #
+ISTREAM.destroy([ERROR])                        #If ERROR, calls 'error' event
 ISTREAM[Symbol.asyncDispose]()          18.18.0*#Calls ISTREAM.destroy()
 ISTREAM.destroyed                               #BOOL
 ISTREAM.errored                                 #ERROR
@@ -1216,23 +1223,18 @@ Readable.from(SVAL_[ASYNC_]ITERABLE[, OBJ])     #OBJ:
  ->ISTREAM                                      #  - same as new Readable(OBJ)
                                                 #  - def objectMode is true
 
-OSTREAM ==>                                     #Output stream. Actually called Writable
-STREAM.Writable([OBJ])                          #Constructor for OSTREAM. OBJ members are:
-                                                #  - decodeStrings BOOL: if true (def), decodes to BUFFER before
-                                                #    calling underlying OSTREAM._write()
-                                                #  - objectMode|highWaterMark|signal: see above
-OSTREAM.write(SVAL[, 'ENCODING'                 #Writes chunks.
- [, FUNC(ERROR)]])->BOOL                        #FUNC() is fired when buffered + flushed.
-                                                #BOOL:
-                                                #  - false if data cannot be buffered anymore (i.e. buffer is full)
-                                                #  - i.e. should wait for OSTREAM.once('drain') before writing again
-OSTREAM.end(SVAL[, 'ENCODING'[, FUNC(ERROR)]])
- ->OSTREAM                                      #Same but for final chunk. FUNC is the finish|error event handler
+new Writable([WOPTS])                           #WOSTREAM
+WOPTS.signal                                    #See above
+WOPTS.decodeStrings                             #BOOL. If true (def), convert STR to BUFFER before calling underlying OSTREAM._write()
+OSTREAM.write(SVAL[, FUNC(ERROR)])->BOOL        #Writes chunks
+                                                #FUNC() is fired when buffered + flushed
+                                                #BOOL is false if could not write due to buffer being full
+OSTREAM.on('drain', FUNC())                     #Called when buffer was full, but not anymore
+                                                #I.e. if OSTREAM.write()->false, should wait for OSTREAM.once('drain') before writing again
+OSTREAM.end(SVAL[, FUNC(ERROR)])->OSTREAM       #Same but for final chunk. FUNC is the finish|error event handler
 OSTREAM.destroy([ERROR])                        #
 OSTREAM.destroyed                               #BOOL
-OSTREAM.setDefaultEncoding('ENCODING')->OSTREAM #Def: 'utf-8'. Used by write() and end()
 OSTREAM.writable                                #BOOL
-OSTREAM.writableObjectMode                      #BOOL
 OSTREAM.writableHighWaterMark                   #NUM
 OSTREAM.writableLength                          #NUM. Number of bytes not flushed yet
 OSTREAM.writableNeedDrain                       #BOOL. True if buffer is full and 'drain' will be emitted
