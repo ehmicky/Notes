@@ -1143,31 +1143,44 @@ DECODER.end()->STR                              #Returns current string, but doe
                                              \=+===============================+=/
 
 
-new Readable([ROPTS])                           #ISTREAM
-new Writable([WOPTS])                           #OSTREAM
+ISTREAM VS OSTREAM ==>                          #Similar: mostly FIFO queues
+                                                #However:
+                                                #  - ISTREAM: producer pushes, consumer consumes|processes
+                                                #  - OSTREAM: consumer pushes, producer consumes|processes
 
-PRODUCER SIDE ==>                               #Following methods are to implement producer side, not consumer side
-ROPTS.read(UINT)                                #Read a SVAL
-                                                #Must `this.push(SVAL)` 0-n times
+COMPARISON WITH ASYNC ITERABLES =>              #Similar to ASYNC_ITERABLEs:
+                                                #  - ISTREAM.read()->SVAL <=> yield SVAL
+                                                #  - OSTREAM.write(SVAL) <=> SVAL = yield
+                                                #But has buffering:
+                                                #  - ISTREAM: as if could call `yield` NUM times without waiting for ITERATOR.next()
+                                                #  - OSTREAM: as if could call ITERATOR.next(SVAL) NUM times without waiting for a new `yield`
+
+PRODUCER SIDE ==>                               #
+ROPTS.read(UINT)                                #Pushes a SVAL on the buffer
+                                                #Must `ISTREAM.push(SVAL)` 0-n times
                                                 #  - must be called synchronously
-                                                #  - `this.push(null)` if no more bytes, i.e. empty
+                                                #  - `ISTREAM.push(null)` if no more bytes, i.e. empty
                                                 #SVAL must be of size UINT:
                                                 #  - max of highWaterMark and ISTREAM.read()'s argument
                                                 #  - rounded up to power of 2
                                                 #SVAL size can be:
                                                 #  - < UINT: if no more bytes
-                                                #     - then should call `this.push(null)` right after last `this.push(SVAL)`
+                                                #     - then should call `ISTREAM.push(null)` right after last `ISTREAM.push(SVAL)`
                                                 #  - > UINT: to buffer more than requested
+ISTREAM.push(SVAL|null)                         #Add a SVAL at beginning of the buffer
+                                                #If null, ends ISTREAM
+ISTREAM.unshift(SVAL)                           #Add a SVAL at end of the buffer
+                                                #Meant for consumer to put back a SVAL just read
 
-ISTREAM.read([UINT])->SVAL|null                 #Reads a SVAL
-                                                #Calls ROPTS.read() exactly once
+CONSUMER SIDE ==>                               #
+new Readable([ROPTS])                           #ISTREAM
+ISTREAM.read([UINT])->SVAL|null                 #Consumes a SVAL from the buffer
+                                                #First calls ROPTS.read() exactly once
                                                 #  - even if enough buffered data
                                                 #Returns null if ISTREAM empty
                                                 #UINT is chunk size (def: any)
                                                 #  - bytes returned by ROPTS.read() but not consumed are buffered
                                                 #  - if ISTREAM's last chunk, returned SVAL might be smaller
-ISTREAM.unshift(SVAL)                           #Buffer a SVAL at end of ISTREAM
-                                                #Meant to put back a SVAL just read
 
 ISTREAM.resume()                                #Call ISTREAM.read() repeatedly, then pass to 'data'
                                                 #Automatically done by setting a 'data' listener
@@ -1186,14 +1199,16 @@ ISTREAM.on("data", FUNC(SVAL))                  #Called on each SVAL returned by
 ISTREAM.on("readable", FUNC())                  #Same as 'data' but must manually call ISTREAM.read()
                                                 #Also called when ISTREAM becomes empty
 
-PRODUCER SIDE ==>                               #Following methods are to implement producer side, not consumer side
-WOPTS.write(SVAL, 'ENCODING', FUNC([ERROR]))    #Write a SVAL
+PRODUCER SIDE ==>                               #
+WOPTS.write(SVAL, 'ENCODING', FUNC([ERROR]))    #Consumes a SVAL from the buffer
                                                 #Must call FUNC([ERROR]) once done
                                                 #Always called serially
                                                 #  - i.e. next WOPTS.write() wait for current one to complete
                                                 #  - the SVALs from the pending WOPTS.write() are buffered
 
-OSTREAM.write(SVAL[, FUNC([ERROR])])->BOOL      #Write a SVAL
+CONSUMER SIDE ==>                               #
+new Writable([WOPTS])                           #OSTREAM
+OSTREAM.write(SVAL[, FUNC([ERROR])])->BOOL      #Pushes a SVAL to the buffer
                                                 #Calls WOPTS.write() exactly once
                                                 #  - even if buffer is full
                                                 #Returns false if either:
@@ -1251,6 +1266,9 @@ OSTREAM.writableObjectMode                      #  - true: any VAL
                                                 #  - OSTREAM: not allowed
                                                 #Must be same across ISTREAM|OSTREAM
 
+ISTREAM.push|unshift(SVAL, 'ENCODING')          #SVAL's encoding
+                                                #Only for STR: always 'buffer' if UINT8ARR|BUFFER
+                                                #Def: 'utf8'
 ROPTS.encoding                                  #Type of SVAL returned by ISTREAM.read(), among:
 ISTREAM.readableEncoding                        #  - 'ENCODING': STR
                                                 #  - null (def): BUFFER
@@ -1259,12 +1277,16 @@ ISTREAM.readableEncoding                        #  - 'ENCODING': STR
                                                 #Not used if object mode
 ISTREAM.setEncoding('ENCODING')->ISTREAM        #Sets ISTREAM.readableEncoding
                                                 #Cannot be null
-ISTREAM.unshift(SVAL, 'ENCODING')               #
 
-WOPTS.decodeStrings                             #BOOL. If true (def), convert STR to BUFFER before calling underlying OSTREAM._write()
-WOPTS.write(SVAL, 'ENCODING', ...)              #
-OSTREAM.write|end(SVAL, 'ENCODING'[, ...])      #
-OSTREAM.setDefaultEncoding('ENCODING')->OSTREAM #Def: 'utf-8'. Default value for OSTREAM.write|end()
+OSTREAM.write|end(SVAL, 'ENCODING'[, ...])      #SVAL's ENCODING
+                                                #Only for STR: always 'buffer' if UINT8ARR|BUFFER
+OSTREAM.setDefaultEncoding('ENCODING')->OSTREAM #Default 'ENCODING' for OSTREAM.write|end(STR)
+                                                #Def: 'utf8'
+                                                #Cannot be null
+WOPTS.write(SVAL, 'ENCODING', ...)              #SVAL's ENCODING, as specified by OSTREAM.write|end()
+WOPTS.decodeStrings                             #BOOL. If true (def), convert STR to BUFFER before calling WOPTS.write()
+                                                #I.e. always calls WOPTS.write(Buffer.from(SVAL, 'ENCODING'), 'buffer', ...)
+                                                #If false, keep SVAL|'ENCODING' as is
 
 ROPTS.highWaterMark                             #NUM. Buffer size, i.e. data available for read but not read yet
 ISTREAM.readableHighWaterMark                   #While buffer full, underlying ROPTS.read() is not called
