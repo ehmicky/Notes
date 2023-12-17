@@ -1144,6 +1144,94 @@ DECODER.end()->STR                              #Returns current string, but doe
 
 
 new Readable([ROPTS])                           #ISTREAM
+new Writable([WOPTS])                           #OSTREAM
+
+PRODUCER SIDE ==>                               #Following methods are to implement producer side, not consumer side
+ROPTS.read(UINT)                                #Read a SVAL of size UINT
+                                                #Must `this.push(SVAL)` 0-n times
+                                                #Must `this.push(null)` if no more bytes, i.e. empty
+                                                #  - including after calling last `this.push(SVAL)`
+                                                #`this.push()` must be called synchronously
+                                                #UINT is:
+                                                #  - max of highWaterMark and ISTREAM.read()'s argument
+                                                #  - rounded up to power of 2
+
+ISTREAM.read([UINT])->SVAL|null                 #Reads a SVAL
+                                                #Calls ROPTS.read() exactly once
+                                                #  - even if enough buffered data
+                                                #Returns null if ISTREAM empty
+                                                #UINT is chunk size (def: any)
+                                                #  - bytes returned by ROPTS.read() but not consumed are buffered
+                                                #  - if ISTREAM's last chunk, returned SVAL might be smaller
+ISTREAM.unshift(SVAL)                           #Buffer a SVAL at end of ISTREAM
+                                                #Meant to put back a SVAL just read
+
+ISTREAM.resume()                                #Call ISTREAM.read() repeatedly, then pass to 'data'
+                                                #Automatically done by setting a 'data' listener
+ISTREAM.pause()                                 #Inverse
+ISTREAM.isPaused()->BOOL                        #
+ISTREAM.readableFlowing                         #Can be:
+                                                #  - false: paused
+                                                #  - null: not paused, but either:
+                                                #     - first 'data' not called yet
+                                                #     - last 'data' called, i.e. ISTREAM empty
+                                                #  - true: not paused, otherwise
+ISTREAM.readableDidRead                         #BOOL. Whether 'data' was called
+ISTREAM.readable                                #BOOL
+
+ISTREAM.on("data", FUNC(SVAL))                  #Called on each SVAL returned by ISTREAM.read()
+ISTREAM.on("readable", FUNC())                  #Same as 'data' but must manually call ISTREAM.read()
+                                                #Also called when ISTREAM becomes empty
+
+PRODUCER SIDE ==>                               #Following methods are to implement producer side, not consumer side
+WOPTS.write(SVAL, 'ENCODING', FUNC([ERROR]))    #Write a SVAL
+                                                #Must call FUNC([ERROR]) once done
+                                                #Always called serially
+                                                #  - i.e. next WOPTS.write() wait for current one to complete
+                                                #  - the SVALs from the pending WOPTS.write() are buffered
+
+OSTREAM.write(SVAL[, FUNC([ERROR])])->BOOL      #Write a SVAL
+                                                #Calls WOPTS.write() exactly once
+                                                #  - even if buffer is full
+                                                #Returns false if buffer is full
+                                                #FUNC() called once done
+OSTREAM.end(SVAL[, FUNC([ERROR])])->OSTREAM     #Same but for final SVAL
+
+OSTREAM.on('drain', FUNC())                     #Called when:
+                                                #  - buffer was full, i.e. some OSTREAM.write() returned false
+                                                #  - buffer is now empty
+                                                #I.e. if OSTREAM.write()->false, should wait for OSTREAM.once('drain') before writing again
+OSTREAM.writableNeedDrain                       #BOOL. True if 'drain' will be emitted in future
+OSTREAM.writable                                #BOOL
+
+OSTREAM.cork()                                  #Prevent WOPTS.write(), i.e. force buffering
+                                                #Can be called several times, in which case uncork() must be done several times.
+                                                #Goal: call WOPTS.write() all at once
+                                                #  - e.g. when writing a lot of small I/O, to make them all flush at once
+OSTREAM.writableCorked                          #NUM of times to call uncork()
+
+ISTREAM|OSTREAM.destroy([ERROR])                #Abort stream, unless it has already ended
+                                                #If ERROR, calls 'error' event
+ISTREAM|OSTREAM.destroyed                       #BOOL
+ISTREAM[Symbol.asyncDispose]()          18.18.0*#Calls ISTREAM.destroy()
+ROPTS|WOPTS.signal                              #ABORT_SIGNAL. Call destroy([ERROR]) on abort([ERROR])
+
+ISTREAM.on("end", FUNC())                       #On success, i.e. all chunks read, i.e. ISTREAM.read()->null
+ISTREAM.readableEnded                           #BOOL. Whether 'end' event was fired.
+
+OSTREAM.on("finish", FUNC())                    #Fired on OSTREAM.end() success
+OSTREAM.writableFinished                        #BOOL. Whether OSTREAM.end() was called successfully
+OSTREAM.writableEnded                           #BOOL. Whether OSTREAM.end() was called, successfully or not
+
+ISTREAM|OSTREAM.on("error", FUNC(ERROR))        #On error
+ISTREAM|OSTREAM.errored                         #ERROR
+ISTREAM.readableAborted                         #BOOL. Whether 'end' event was fired after erroring or being destroyed
+OSTREAM.writableAborted                         #BOOL. Whether destroyed|errored before 'finish' event was fired.
+Readable.isDisturbed(ISTREAM|RSTREAM)->BOOL     #Whether either data was read or stream was cancelled
+
+ISTREAM|OSTREAM.on("close", FUNC())             #When underlying fd is closed
+                                                #Only emitted if there is one
+OSTREAM.closed                                  #BOOL. Whether 'close' event was fired
 
 ROPTS|WOPTS.objectMode                          #BOOL. Whether SVAL is:
 ISTREAM.readableObjectMode                      #  - false (def): SUBUFFER
@@ -1155,50 +1243,29 @@ ROPTS.encoding                                  #Either:
 ISTREAM.readableEncoding                        #  - 'ENCODING': pushed UBUFFER are read as STR
 ISTREAM.setEncoding('ENCODING')                 #  - null (def): pushed STR are read as BUFFER
                                                 #Not used if object mode
+ISTREAM.unshift(SVAL, 'ENCODING')               #
+WOPTS.decodeStrings                             #BOOL. If true (def), convert STR to BUFFER before calling underlying OSTREAM._write()
+WOPTS.write(SVAL, 'ENCODING', ...)              #
 OSTREAM.write|end(SVAL, 'ENCODING'[, ...])      #
 OSTREAM.setDefaultEncoding('ENCODING')->OSTREAM #Def: 'utf-8'. Default value for OSTREAM.write|end()
 
 ROPTS.highWaterMark                             #NUM. Buffer size, i.e. data available for read but not read yet
-                                                #While buffer full, underlying ROPTS.read() is not called
+ISTREAM.readableHighWaterMark                   #While buffer full, underlying ROPTS.read() is not called
                                                 #  - i.e. source waits before pushing more data
-                                                #If object mode, per-SVAL. Otherwise, per-byte
+                                                #"Size" is:
+                                                #  - object mode: number of VALs
+                                                #  - otherwise: number of bytes
 WOPTS.highWaterMark                             #NUM. Buffer size, i.e. data not flushed yet
-                                                #If buffer full, OSTREAM.write() returns false
-                                                #If object mode, per-SVAL. Otherwise, per-byte
+OSTREAM.writableHighWaterMark                   #If buffer full, OSTREAM.write() returns false
+                                                #"Size" is like for ISTREAM
 getDefaultHighWaterMark(BOOL)->NUM      18.17.0*#Get default highWaterMark
                                                 #BOOL is objectMode
                                                 #Def: 16 in objectMode, 16KB otherwise
 setDefaultHighWaterMark(BOOL, NUM)      18.17.0*#
 
-ROPTS.signal                                    #ABORT_SIGNAL. Call destroy() on cancel
+ISTREAM.readableLength                          #NUM of bytes buffered, i.e. not read yet
+OSTREAM.writableLength                          #NUM of bytes buffered, i.e. not flushed yet
 
-ISTREAM.on("readable", FUNC())                  #New chunks available, or just before "end"
-ISTREAM.on("data", FUNC(SVAL))                  #Each new chunk available. Firing FUNC() consumes that chunk.
-                                                #Not fired if ISTREAM is empty
-ISTREAM.read([UINT])->SVAL                      #Like on("data") but:
-                                                #  - sync: waits until chunk available (i.e. prefer on("data"))
-                                                #  - specify (max) chunk size UINT (def: all)
-                                                #     - if object mode, always 1
-                                                #  - SVAL is null if ISTREAM empty
-
-ISTREAM.on("end", FUNC())                       #On success, i.e. all chunks read, i.e. ISTREAM.read()->null
-ISTREAM.on("error", FUNC(ERROR))                #On error
-ISTREAM.on("close", FUNC())                     #When underlying fd is closed (not all ISTREAM close)
-ISTREAM.pause|resume()                          #Makes it stop|resume emit "data" events
-                                                #By default, paused unless there is a "data" listener
-ISTREAM.isPaused()                              #
-ISTREAM.readable                                #BOOL
-ISTREAM.readableHighWaterMark                   #NUM
-ISTREAM.readableLength                          #NUM. Number of bytes not read yet
-ISTREAM.readableFlowing                         #Can be:
-                                                #  - null: when all data has been consumed, or stream has not started been read yet
-                                                #  - true: when stream is being read, i.e. after on('data')
-                                                #  - false: when stream is being paused, i.e. after pause()
-ISTREAM.readableDidRead                         #BOOL. Whether 'data' was fired
-ISTREAM.readableEnded                           #BOOL. Whether 'end' event was fired.
-ISTREAM.readableAborted                         #BOOL. Whether 'end' event was fired after erroring or being destroyed
-Readable.isDisturbed(ISTREAM|RSTREAM)
- ->BOOL                                         #Whether either data was read or stream was cancelled
 ISTREAM.pipe(OSTREAM[, { end: BOOL }])->OSTREAM #Does ISTREAM.on("data", SVAL => OSTREAM.write(SVAL))
                                                 #Automatically handles backpressure:
                                                 #  - if OSTREAM is full
@@ -1209,11 +1276,7 @@ ISTREAM.pipe(OSTREAM[, { end: BOOL }])->OSTREAM #Does ISTREAM.on("data", SVAL =>
 ISTREAM.unpipe([OSTREAM])->ISTREAM              #Stops pipe() (def: all)
                                                 #Automatically called on OSTREAM.on('close|finish|error')
                                                 #If no more pipes, calls ISTREAM.pause()
-ISTREAM.unshift(SVAL[, 'ENCODING'])             #Put last SVAL read back in ISTREAM
-ISTREAM.destroy([ERROR])                        #If ERROR, calls 'error' event
-ISTREAM[Symbol.asyncDispose]()          18.18.0*#Calls ISTREAM.destroy()
-ISTREAM.destroyed                               #BOOL
-ISTREAM.errored                                 #ERROR
+OSTREAM.on("[un]pipe", FUNC(ISTREAM))           #Fired by ISTREAM.[un]pipe()
 
 ISTREAM ITERATION ==>                           #ISTREAM is an ASYNC_ITERABLE
 ISTREAM.iterator([OPTS])->ASYNC_ITERATOR        #OPTS:
@@ -1222,35 +1285,6 @@ ISTREAM.iterator([OPTS])->ASYNC_ITERATOR        #OPTS:
 Readable.from(SVAL_[ASYNC_]ITERABLE[, OBJ])     #OBJ:
  ->ISTREAM                                      #  - same as new Readable(OBJ)
                                                 #  - def objectMode is true
-
-new Writable([WOPTS])                           #WOSTREAM
-WOPTS.signal                                    #See above
-WOPTS.decodeStrings                             #BOOL. If true (def), convert STR to BUFFER before calling underlying OSTREAM._write()
-OSTREAM.write(SVAL[, FUNC(ERROR)])->BOOL        #Writes chunks
-                                                #FUNC() is fired when buffered + flushed
-                                                #BOOL is false if could not write due to buffer being full
-OSTREAM.on('drain', FUNC())                     #Called when buffer was full, but not anymore
-                                                #I.e. if OSTREAM.write()->false, should wait for OSTREAM.once('drain') before writing again
-OSTREAM.end(SVAL[, FUNC(ERROR)])->OSTREAM       #Same but for final chunk. FUNC is the finish|error event handler
-OSTREAM.destroy([ERROR])                        #
-OSTREAM.destroyed                               #BOOL
-OSTREAM.writable                                #BOOL
-OSTREAM.writableHighWaterMark                   #NUM
-OSTREAM.writableLength                          #NUM. Number of bytes not flushed yet
-OSTREAM.writableNeedDrain                       #BOOL. True if buffer is full and 'drain' will be emitted
-OSTREAM.[un]cork()                              #cork() forces buffering to disk, uncork() flushes
-                                                #Can be called several times, in which case uncork() must be done several times.
-                                                #To do when writing a lot of small I/O, to make them all flush at once.
-OSTREAM.writableCorked                          #NUM of times to call uncork()
-OSTREAM.on("close", FUNC())                     #Like ISTREAM
-OSTREAM.closed                                  #BOOL. Whether 'close' event was fired
-OSTREAM.on("finish", FUNC())                    #Fired when end() done, i.e. all chunks are been written
-OSTREAM.writableEnded                           #BOOL. Whether end() was called
-OSTREAM.writableFinished                        #BOOL. Whether 'finish' event was fired.
-OSTREAM.writableAborted                         #BOOL. Whether destroyed|errored before 'finish' event was fired.
-OSTREAM.on("[un]pipe", FUNC(ISTREAM))           #Fired by ISTREAM.[un]pipe()
-OSTREAM.on("error", FUNC(ERROR))                #
-OSTREAM.errored                                 #ERROR
 
 finished(STREAM[, OPTS], FUNC([ERROR]))->FUNC2()#Call FUNC([ERROR]) on completion of STREAM which can be:
                                                 #  - ISTREAM
@@ -1266,6 +1300,7 @@ finished(STREAM[, OPTS], FUNC([ERROR]))->FUNC2()#Call FUNC([ERROR]) on completio
                                         18.14.0*#  - WSTREAM
                                                 #     - success: on close
                                                 #     - error: on abort|error
+                                                #Not finished???
                                                 #On:
                                                 #  (success)
                                                 #  - all: 'end', 'finish', 'close', destroy()
