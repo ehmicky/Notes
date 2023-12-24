@@ -1158,9 +1158,9 @@ COMPARISON WITH ASYNC ITERABLES =>              #Similar to ASYNC_ITERABLEs:
                                                 #  - ISTREAM: as if could call `yield` NUM times without waiting for ITERATOR.next()
                                                 #  - OSTREAM: as if could call ITERATOR.next(SVAL) NUM times without waiting for a new `yield`
 
-IOPTS|OOPTS
- .construct|read|write[v]|final|destroy(...)    #Meant to be defined by stream producer, not consumer
-ISTREAM|OSTREAM.prototype._METHOD(...)          #Alternative to IOPTS|OOPTS.construct|read|write[v]|final|destroy(...)
+IOPTS|OOPTS.construct|read|write[v]|final
+ |destroy|transform|flush(...)                  #Meant to be defined by stream producer, not consumer
+ISTREAM|OSTREAM|TRANSFORM.prototype._METHOD(...)#Alternative to IOPTS|OOPTS.construct|read|write[v]|final|destroy|transform|flush(...)
                                                 #I.e. producer define behavior by subclassing
                                                 #  - instead of passing IOPTS|OOPTS during initialization or in constructor
 
@@ -1171,55 +1171,66 @@ IOPTS|OOPTS.construct(FUNC([ERROR]))            #Called on construction, after c
                                                 #I.e. like constructor, but async
 
 IOPTS.read(UINT)                                #Pushes a SVAL on the buffer
-                                                #Must `ISTREAM.push(SVAL)` 1-n times
-                                                #  - can be called async
-                                                #  - serialized: next IOPTS.read() wait for current one to complete
-                                                #     - i.e. for it to call ISTREAM.push() once
-                                                #  - `ISTREAM.push(null)` if no more bytes, i.e. empty
+                                                #Must `ISTREAM.push(SVAL)` 1-n times, sync|async
+                                                #Must `ISTREAM.push(null)` on end
                                                 #Must `ISTREAM.destroy(ERROR)` on sync|async error
                                                 #UINT is preferred size for SVAL
                                                 #  - value is:
                                                 #     - max of highWaterMark and ISTREAM.read()'s argument
                                                 #     - rounded up to power of 2
                                                 #  - advisory only, i.e. can push:
-                                                #     - less bytes: if no more available
+                                                #     - less bytes: if not more available
                                                 #     - more bytes: to buffer more than requested
 ISTREAM.push(SVAL|null)->BOOL                   #Add a SVAL at beginning of the buffer
                                                 #If null, ends ISTREAM
-                                                #Returns false if buffer is full or ISTREAM has ended (successfully or not)
+                                                #Returns false:
+                                                #  - if either:
+                                                #     - current IOPTS.read(UINT) pushed >= UINT
+                                                #     - ISTREAM has ended|aborted|errored
                                                 #  - IOPTS.read() should use this to know whether to stop pushing SVALs
+                                                #SVAL can be empty, although not recommended
 ISTREAM.unshift(SVAL)->BOOL                     #Same but at end of the buffer
                                                 #Meant for consumer to put back a SVAL just read
 
-ISTREAM.read([UINT])->SVAL|null                 #Calls IOPTS.read() exactly once
-                                                #Then consumes a SVAL from the buffer, from both:
-                                                #  - previous IOPTS.read() calls, if not consumed yet
-                                                #  - current IOPTS.read(), if pushed to the buffer synchronously
-                                                #Returns null if buffer is empty, which can happen if either:
-                                                #  - IOPTS.read() pushes to the buffer asynchronously
-                                                #  - ISTREAM ended (successfully or not) and all SVALs consumed???
-                                                #UINT is chunk size (def: any)
-                                                #  - bytes returned by IOPTS.read() but not consumed are buffered
-                                                #  - if ISTREAM's last chunk, returned SVAL might be smaller
+ISTREAM.read([UINT])->SVAL|null                 #Calls IOPTS.read()
+                                                #  - IOPTS.read() can push to buffer async
+                                                #  - but ISTREAM.read() does not wait for it, i.e. calls it like a sync FUNC
+                                                #Then consumes a SVAL from the buffer, right away
+                                                #  - consumes max UINT size
+                                                #     - def: Infinity
+                                                #     - can be 0
+                                                #  - max 1GB
+                                                #IOPTS.read() is serialized:
+                                                #  - if both:
+                                                #     - previous IOPTS.read() has not called ISTREAM.push()
+                                                #     - buffer is empty
+                                                #  - then delays calling IOPTS.read() until previous one calls ISTREAM.push() once
+                                                #IOPTS.read() is repeated until its ISTREAM.push() returns false
+                                                #Returns null if buffer empty
+                                                #On ISTREAM end|abort|error, buffer is kept and can still be consumed
+ISTREAM.readableDidRead                         #BOOL. Whether ISTREAM.read() was called and returned non-null at least once
 
 ISTREAM.readableFlowing                         #Can be:
                                                 #  - null:
                                                 #     - initial|default state, neither paused nor not paused
-                                                #     - set to false by calling ISTREAM.on('readable')
-                                                #     - set to true by calling ISTREAM.on('data')
-                                                #  - false: paused
                                                 #  - true:
                                                 #     - not paused
-                                                #     - calls IOPTS.read() repeatedly, waiting for each completion
-                                                #        - called even if paused, but not if `null`???
+                                                #     - calls IOPTS.read()->SVAL repeatedly, waiting for each completion
+                                                #     - SVAL discarded if no 'data' event
+                                                #     - set by first ISTREAM.on('data')
+                                                #     - cannot be set if any ISTREAM.on('readable')
+                                                #  - false:
+                                                #     - paused
+                                                #     - set by first ISTREAM.on('readable')
 ISTREAM.isPaused()->BOOL                        #Whether readableFlowing === false
-ISTREAM.resume|pause()                          #Sets ISTREAM.readableFlowing true|false
+ISTREAM.pause|resume()                          #Sets ISTREAM.readableFlowing false|true
+ISTREAM.on('pause|resume', FUNC())              #On ISTREAM.readableFlowing change
 
 ISTREAM.on('data', FUNC(SVAL))                  #Called on ISTREAM.push(SVAL)
-ISTREAM.on('readable', FUNC())                  #Same as 'data' but must manually call ISTREAM.read()
-                                                #Also called when ISTREAM becomes empty
-ISTREAM.readableDidRead                         #BOOL. Whether ISTREAM.read() was called at least once ???
-                                                #  - including through ISTREAM.resume()
+                                                #Consumes SVAL
+                                                #Only emitted if ISTREAM.readableFlowing true
+ISTREAM.on('readable', FUNC())                  #Called on ISTREAM.push(SVAL|null)
+                                                #Must manually consume SVAL, i.e. repeat ISTREAM.read() until returns null
 
 OOPTS.write(SVAL, 'ENCODING', FUNC([ERROR]))    #Consumes a SVAL from the buffer
                                                 #Must call FUNC([ERROR]) once done
@@ -1317,9 +1328,11 @@ OOPTS.decodeStrings                             #BOOL. If true (def), convert SV
                                                 #I.e. always calls OOPTS.write(Buffer.from(SVAL, 'ENCODING'), 'buffer', ...)
                                                 #If false, keep SVAL|'ENCODING' as is
 
-IOPTS|OOPTS.highWaterMark
-ISTREAM.readableHighWaterMark                   #NUM. Max buffer size
-OSTREAM.writableHighWaterMark                   #Unit is NUM of VALs in objectMode, NUM of bytes otherwise
+IOPTS|OOPTS.highWaterMark                       #NUM. Max buffer size
+ISTREAM.readableHighWaterMark                   #Unit is:
+OSTREAM.writableHighWaterMark                   #  - objectMode: NUM of VALs
+                                                #  - otherwise: NUM of bytes
+                                                #     - if ISTREAM.setEncoding() was called, NUM of chars instead
 getDefaultHighWaterMark(BOOL)->NUM      18.17.0*#Default IOPTS|OOPTS.highWaterMark
 setDefaultHighWaterMark(BOOL, NUM)      18.17.0*#BOOL is objectMode
                                                 #Def: 16 in objectMode, 16KB otherwise
@@ -1331,7 +1344,7 @@ ISTREAM.pipe(OSTREAM[, { end: BOOL }])->OSTREAM #Does ISTREAM.on("data", SVAL =>
                                                 #  - if OSTREAM's buffer is full -> ISTREAM.pause()
                                                 #  - ISTREAM.resume() on OSTREAM.on('drain') or on ISTREAM.unpipe()
                                                 #If BOOL true (def):
-                                                #  - call OSTREAM.end() on ISTREAM.on('end')
+                                                #  - call OSTREAM.end() on ISTREAM success
                                                 #  - except on process.stdout|stderr
 ISTREAM.unpipe([OSTREAM])->ISTREAM              #Stops pipe() (def: all)
                                                 #Automatically called on OSTREAM 'finish|error|close'
@@ -1397,12 +1410,29 @@ PUMP(...)                                      ##Ponyfill for pipeline() (3.0.0)
 compose(VAL...)->IOSTREAM                       #Like pipeline() except returning an IOSTREAM that is not read|consumed right away
                                         18.16.0*#Including using RSTREAM|WSTREAM|TSTREAM
                                          21.1.0*#Including child CLASSes of those
+ISTREAM.compose(VAL[, OPTS])->RSTREAM   18.16.0*#Like compose(ISTREAM, VAL)
+                                        18.16.0*#OPTS:
+                                        18.16.0*#  - signal ABORT_SIGNAL
 
-IOSTREAM ==>                                    #Implement both ISTREAM and OSTREAM. Actually called either:
-                                                #  - Stream.Duplex
-                                                #  - Stream.Transform:
-                                                #     - same but where there is a correlation between input and output (ex: crypto, but not HTTP)
-                                                #     - only semantic
+new Duplex([OPTS])                              #IOSTREAM. Pair of ISTREAM and OSTREAM not piped to each other
+IOSTREAM.*                                      #Like ISTREAM|OSTREAM.*
+IOSTREAM.destroyed                              #ISTREAM.* && OSTREAM.*
+OPTS.*                                          #Like IOPTS|ROPTS.*
+OPTS.readable|writable*                         #Like IOPTS|ROPTS.objectMode|highWaterMark
+OPTS.readable|writable                          #BOOL (def: true). If false, ends ISTREAM|OSTREAM
+OPTS.allowHalfOpen                              #BOOL (def: true). On ISTREAM 'end', call OSTREAM.end()
+
+new Transform([OPTS])                           #TRANSFORM. Pair of ISTREAM and OSTREAM piped to each other
+TRANSFORM.*                                     #Like IOSTREAM.*
+OPTS.*                                          #Like IOSTREAM
+OPTS.transform(SVAL, 'ENCODING',                #Combines IOPTS.read() and OOPTS.write() (which are implemented under the hood)
+ FUNC(ERROR|null, SVAL2|null))                  #If SVAL2 is null, ignore it
+                                                #If ISTREAM buffer full, OSTREAM.write() resolves only on next ISTREAM.read()
+OPTS.flush(FUNC(ERROR|null, SVAL|null))         #Called on OSTREAM.end() success, at same time as OOPTS.final()
+                                                #Calls OSTREAM.push(SVAL), unless null
+                                                #Meant for data that should be only written at the end
+
+new PassThrough([OPTS])                         #TRANSFORM with OPTS.transform keeping SVAL as is
 
 Duplex.from(VAL)->IOSTREAM                      #Creates IOSTREAM from VAL:
                                                 #  (read-only)
@@ -1482,22 +1512,21 @@ Stream.isErrored
  (ISTREAM|OSTREAM|RSTREAM|WSTREAM)->BOOL        #
 
 ISTREAM.toArray([OPTS])->PROMISE_ARR            #Reads all values
-ISTREAM.map(FUNC(VAL[, OPTS])                   #Add a mapping function applied when reading values.
- ->[PROMISE_]VAL[, OPTS])->RSTREAM              #Does not read values itself.
-                                                #OPTS:
+                                                #OPTS: signal ABORT_SIGNAL
+ISTREAM.map                                     #Add a mapping function applied when reading values.
+ (FUNC(VAL[, OPTS])[->[>]VAL[, OPTS2]])         #Does not read values itself.
+ ->RSTREAM                                      #OPTS[2]:
                                                 #  - signal ABORT_SIGNAL
+                                                #OPTS2:
                                                 #  - concurrency NUM (def: 1)
-                                         20.7.0*#  - highWaterMark NUM
-ISTREAM.filter(FUNC(VAL[, OPTS])                #Same but like ARR.filter()
- ->[PROMISE_]BOOL[, OPTS])->RSTREAM             #OPTS: signal, concurrency, highWaterMark
-ISTREAM.flatMap|some|every|
- reduce|forEach(...)                            #Same but like ARR.flatMap|some|every|reduce|forEach()
-ISTREAM.find(...)                               #Same but like ARR.find()
+                                         20.7.0*#  - highWaterMark NUM (def: OPTS2.concurrency * 2 - 1)
+ISTREAM.filter
+ (FUNC(VAL[, OPTS])[->[>]BOOL[, OPTS2]])
+ ->RSTREAM                                      #Same but like ARR.filter()
+ISTREAM.flatMap|some|every|reduce|forEach|find  #Same but like ARR.flatMap|some|every|reduce|forEach|find(FUNC(...), ...)
+ (FUNC(...[, OPTS]), ...[, OPTS2])              #Same OPTS[2], except no OPTS2.highWaterMark
 ISTREAM.drop|take(NUM[, OPTS])->RSTREAM         #Same but like ARR.drop|take(), i.e. exclude or only pick first NUM elements
-
-ISTREAM.compose(VAL[, OPTS])->RSTREAM   18.16.0*#Like IOSTREAM compose(VAL)
-                                        18.16.0*#OPTS:
-                                        18.16.0*#  - signal ABORT_SIGNAL
+                                                #OPTS: signal ABORT_SIGNAL
 
 
                                              /=+===============================+=\
