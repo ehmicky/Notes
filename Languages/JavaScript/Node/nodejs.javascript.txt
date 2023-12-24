@@ -1158,8 +1158,18 @@ COMPARISON WITH ASYNC ITERABLES =>              #Similar to ASYNC_ITERABLEs:
                                                 #  - ISTREAM: as if could call `yield` NUM times without waiting for ITERATOR.next()
                                                 #  - OSTREAM: as if could call ITERATOR.next(SVAL) NUM times without waiting for a new `yield`
 
-PRODUCER SIDE ==>                               #
-ROPTS.read(UINT)                                #Pushes a SVAL on the buffer
+IOPTS|OOPTS.read|write[v]|final|destroy(...)    #Meant to be defined by stream producer, not consumer
+ISTREAM|OSTREAM.prototype._METHOD(...)          #Alternative to IOPTS|OOPTS.read|write[v]|final|destroy(...)
+                                                #I.e. producer define behavior by subclassing
+                                                #  - instead of passing IOPTS|OOPTS during initialization or in constructor
+
+new Readable([IOPTS])                           #ISTREAM
+new Writable([OOPTS])                           #OSTREAM
+IOPTS|OOPTS.construct(FUNC([ERROR]))            #Called on construction, after constructor in a different microtask
+                                                #Delays any IOPTS.read|write[v]|final|destroy() until done
+                                                #I.e. like constructor, but async
+
+IOPTS.read(UINT)                                #Pushes a SVAL on the buffer
                                                 #Must `ISTREAM.push(SVAL)` 0-n times
                                                 #  - must be called synchronously
                                                 #  - `ISTREAM.push(null)` if no more bytes, i.e. empty
@@ -1176,14 +1186,12 @@ ISTREAM.push(SVAL|null)->BOOL                   #Add a SVAL at beginning of the 
 ISTREAM.unshift(SVAL)->BOOL                     #Same but at end of the buffer
                                                 #Meant for consumer to put back a SVAL just read
 
-CONSUMER SIDE ==>                               #
-new Readable([ROPTS])                           #ISTREAM
 ISTREAM.read([UINT])->SVAL|null                 #Consumes a SVAL from the buffer
-                                                #First calls ROPTS.read() exactly once
+                                                #First calls IOPTS.read() exactly once
                                                 #  - even if enough buffered data
                                                 #Returns null if ISTREAM ended (successfully or not)
                                                 #UINT is chunk size (def: any)
-                                                #  - bytes returned by ROPTS.read() but not consumed are buffered
+                                                #  - bytes returned by IOPTS.read() but not consumed are buffered
                                                 #  - if ISTREAM's last chunk, returned SVAL might be smaller
 
 ISTREAM.resume()                                #Call ISTREAM.read() repeatedly, then pass to 'data'
@@ -1203,17 +1211,14 @@ ISTREAM.on("data", FUNC(SVAL))                  #Called on each SVAL returned by
 ISTREAM.on("readable", FUNC())                  #Same as 'data' but must manually call ISTREAM.read()
                                                 #Also called when ISTREAM becomes empty
 
-PRODUCER SIDE ==>                               #
-WOPTS.write(SVAL, 'ENCODING', FUNC([ERROR]))    #Consumes a SVAL from the buffer
+OOPTS.write(SVAL, 'ENCODING', FUNC([ERROR]))    #Consumes a SVAL from the buffer
                                                 #Must call FUNC([ERROR]) once done
                                                 #Always called serially
-                                                #  - i.e. next WOPTS.write() wait for current one to complete
-                                                #  - the SVALs from the pending WOPTS.write() are buffered
+                                                #  - i.e. next OOPTS.write() wait for current one to complete
+                                                #  - the SVALs from the pending OOPTS.write() are buffered
 
-CONSUMER SIDE ==>                               #
-new Writable([WOPTS])                           #OSTREAM
 OSTREAM.write(SVAL[, FUNC([ERROR])])->BOOL      #Pushes a SVAL to the buffer
-                                                #Calls WOPTS.write() exactly once
+                                                #Calls OOPTS.write() exactly once
                                                 #  - even if buffer is full
                                                 #Returns false if either:
                                                 #  - buffer is full
@@ -1229,10 +1234,10 @@ OSTREAM.on('drain', FUNC())                     #Called when:
 OSTREAM.writableNeedDrain                       #BOOL. True if 'drain' will be emitted in future
 OSTREAM.writable                                #BOOL
 
-OSTREAM.cork()                                  #Delay WOPTS.write() until OSTREAM.uncork(), i.e. force buffering
+OSTREAM.cork()                                  #Delay OOPTS.write() until OSTREAM.uncork(), i.e. force buffering
                                                 #Does not change OSTREAM.write()'s return value
                                                 #Can be called several times, in which case uncork() must be done several times.
-                                                #Goal: call WOPTS.write() all at once
+                                                #Goal: call OOPTS.write() all at once
                                                 #  - e.g. when writing a lot of small I/O, to make them all flush at once
 OSTREAM.uncork()                                #
 OSTREAM.writableCorked                          #NUM of times to call uncork()
@@ -1240,6 +1245,7 @@ OSTREAM.writableCorked                          #NUM of times to call uncork()
 ISTREAM.on("end", FUNC())                       #On success, i.e. all chunks read, i.e. ISTREAM.read()->null
 ISTREAM.readableEnded                           #BOOL. Whether 'end' called
 
+OOPTS.final(FUNC([ERROR]))???
 OSTREAM.on("finish", FUNC())                    #Called on OSTREAM.end() success
 OSTREAM.writableFinished                        #BOOL. Whether OSTREAM.end() called, and completed, successfully
 OSTREAM.writableEnded                           #BOOL. Whether OSTREAM.end() called, even if not completed, successful or not
@@ -1248,22 +1254,23 @@ ISTREAM|OSTREAM.destroy([ERROR])                #Abort stream
                                                 #Calls 'close' (not 'end|finish')
                                                 #If ERROR, first calls 'error'
                                                 #Noop if has already ended
-ISTREAM|OSTREAM.destroyed                       #BOOL. Same as OSTREAM.closed
-                                                #I.e. whether 'close' event called, not whether destroy() called
 ISTREAM[Symbol.asyncDispose]()          18.18.0*#Calls:
                                                 #  - already ended: ISTREAM.destroy()
                                                 #  - otherwise: ISTREAM.destroy(ABORT_ERROR)
-ROPTS|WOPTS.signal                              #ABORT_SIGNAL. Call destroy([ERROR]) on abort([ERROR])
+IOPTS|OOPTS.signal                              #ABORT_SIGNAL. Call destroy([ERROR]) on abort([ERROR])
 
 ISTREAM|OSTREAM.on("error", FUNC(ERROR))        #On error
 ISTREAM|OSTREAM.errored                         #ERROR
 
-ISTREAM|OSTREAM.on("close", FUNC())             #Emitted after 'end|finish', 'error' or destroy()
+IOPTS|OOPTS.destroy(ERROR|null, FUNC([ERROR]))  #Emitted after 'end|finish', 'error' or ISTREAM|OSTREAM.destroy()
+ISTREAM|OSTREAM.destroyed                       #BOOL. Whether IOPTS|OPTS.destroy() called
+ISTREAM|OSTREAM.on("close", FUNC())             #Emitted after IOPTS|OPTS.destroy()
+IOPTS|OOPTS.emitClose                           #BOOL (def: true). Whether 'close' is emitted
 OSTREAM.closed                                  #BOOL. Whether 'close' called
 ISTREAM.readableAborted
-OSTREAM.writableAborted                         #BOOL. Whether 'close' called due to 'error' or destroy() (not to 'end|finish')
+OSTREAM.writableAborted                         #BOOL. Whether 'close' called due to 'error' or ISTREAM|OSTREAM.destroy() (not to 'end|finish')
 
-ROPTS|WOPTS.objectMode                          #BOOL. Whether SVAL is:
+IOPTS|OOPTS.objectMode                          #BOOL. Whether SVAL is:
 ISTREAM.readableObjectMode                      #  - false (def): SUBUFFER
 OSTREAM.writableObjectMode                      #  - true: any VAL
                                                 #`null` has always special meaning:
@@ -1276,7 +1283,7 @@ ENCODING ==>                                    #Only for STR
                                                 #Not used if object mode
 
 ISTREAM.push|unshift(SVAL, 'ENCODING')          #SVAL's ENCODING (def: 'utf8')
-ROPTS.encoding                                  #Convert SVAL returned by ROPTS.read(), from SUBUFFER to:
+IOPTS.encoding                                  #Convert SVAL returned by IOPTS.read(), from SUBUFFER to:
 ISTREAM.readableEncoding                        #  - 'ENCODING': STR
 ISTREAM.setEncoding('ENCODING')->ISTREAM        #  - null (def): BUFFER
                                                 #I.e. return value of ISTREAM.read()
@@ -1284,15 +1291,15 @@ ISTREAM.setEncoding('ENCODING')->ISTREAM        #  - null (def): BUFFER
 OSTREAM.write|end(SVAL, 'ENCODING'[, ...])      #SVAL's ENCODING
 OSTREAM.setDefaultEncoding('ENCODING')->OSTREAM #Default 'ENCODING' for OSTREAM.write|end(STR)
                                                 #Def: 'utf8'
-WOPTS.write(SVAL, 'ENCODING', ...)              #SVAL's ENCODING, as specified by OSTREAM.write|end()
-WOPTS.decodeStrings                             #BOOL. If true (def), convert SVAL passed to WOPTS.write(), from SUBUFFER to BUFFER
-                                                #I.e. always calls WOPTS.write(Buffer.from(SVAL, 'ENCODING'), 'buffer', ...)
+OOPTS.write(SVAL, 'ENCODING', ...)              #SVAL's ENCODING, as specified by OSTREAM.write|end()
+OOPTS.decodeStrings                             #BOOL. If true (def), convert SVAL passed to OOPTS.write(), from SUBUFFER to BUFFER
+                                                #I.e. always calls OOPTS.write(Buffer.from(SVAL, 'ENCODING'), 'buffer', ...)
                                                 #If false, keep SVAL|'ENCODING' as is
 
-ROPTS|WOPTS.highWaterMark
+IOPTS|OOPTS.highWaterMark
 ISTREAM.readableHighWaterMark                   #NUM. Max buffer size
 OSTREAM.writableHighWaterMark                   #Unit is NUM of VALs in objectMode, NUM of bytes otherwise
-getDefaultHighWaterMark(BOOL)->NUM      18.17.0*#Default ROPTS|WOPTS.highWaterMark
+getDefaultHighWaterMark(BOOL)->NUM      18.17.0*#Default IOPTS|OOPTS.highWaterMark
 setDefaultHighWaterMark(BOOL, NUM)      18.17.0*#BOOL is objectMode
                                                 #Def: 16 in objectMode, 16KB otherwise
 ISTREAM.readableLength
@@ -1317,17 +1324,17 @@ ISTREAM.iterator([OPTS])->SVAL_ASYNC_ITERATOR   #Repeatedly calls|returns ISTREA
 ISTREAM[Symbol.asyncIterable]()                 #Same, but no OPTS
  ->SVAL_ASYNC_ITERATOR                          #I.e. ISTREAM is an SVAL_ASYNC_ITERABLE
 
-Readable.from(SVAL_[ASYNC_]ITERABLE[, ROPTS])   #Each ROPTS.read() iterates over 1-n SVALs until buffer full
+Readable.from(SVAL_[ASYNC_]ITERABLE[, IOPTS])   #Each IOPTS.read() iterates over 1-n SVALs until buffer full
  ->ISTREAM                                      #When ITERABLE done: ITERABLE.return() + end ISTREAM
                                                 #When ITERABLE throws: ITERABLE.throw(ERROR) + ISTREAM.destroy(ERROR)
                                                 #SVAL cannot be null
-                                                #Def ROPTS: objectMode: true, highWaterMark 1
+                                                #Def IOPTS: objectMode: true, highWaterMark 1
                                                 #Has performance shortcuts when ITERABLE is STR|BUFFER
 
 finished(STREAM[, OPTS], FUNC([ERROR]))->FUNC2()#Call FUNC([ERROR]) on completion of STREAM which can be:
 promises.finished(STREAM[, OPTS])->>            #  - ISTREAM|OSTREAM|REQ|RES
                                                 #     - success: on 'end|finish|close'
-                                                #     - error: on abort (through destroy()) or 'error'
+                                                #     - error: on abort (through ISTREAM|OSTREAM.destroy()) or 'error'
                                         18.14.0*#  - RSTREAM
                                                 #     - success: on close|cancel
                                                 #     - error: on error
@@ -1339,7 +1346,7 @@ promises.finished(STREAM[, OPTS])->>            #  - ISTREAM|OSTREAM|REQ|RES
                                                 #OPTS:
                                                 #  - error BOOL (def: true): if false:
                                                 #     - ignore 'error' event
-                                                #     - still call FUNC(ERROR) on abort (through destroy())
+                                                #     - still call FUNC(ERROR) on abort (through ISTREAM|OSTREAM.destroy())
                                                 #     - noop with RSTREAM|WSTREAM
                                                 #  - signal ABORT_SIGNAL:
                                                 #     - call FUNC(ABORT_ERROR) on ABORT_CONTROLLER.abort()
@@ -1364,7 +1371,7 @@ promises.pipeline                               #  - if one STREAM errors then o
                                         18.16.0*#    or WSTREAM
                                                 #Can use ARR of arguments [SRC, TRANSFORM..., DEST] instead of variadic arguments
                                                 #OPTS:
-                                                #  - signal ABORT_SIGNAL: call destroy() on OSTREAM on cancel
+                                                #  - signal ABORT_SIGNAL: call ISTREAM|OSTREAM.destroy() on OSTREAM on cancel
 PUMP(...)                                      ##Ponyfill for pipeline() (3.0.0) without iterable support
 compose(VAL...)->IOSTREAM                       #Like pipeline() except returning an IOSTREAM that is not read|consumed right away
                                         18.16.0*#Including using RSTREAM|WSTREAM|TSTREAM
