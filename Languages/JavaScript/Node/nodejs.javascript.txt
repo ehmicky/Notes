@@ -3581,8 +3581,7 @@ spawn(STR[, STR2_ARR][, OPTS])->CHILDPROCESS    #Creates and runs a CHILDPROCESS
                                                 #        - "ipc":
                                                 #           - bidirectional anonymous pipe
                                                 #           - enable CHILDPROCESS.send()
-                                                #           - can only do it for one file descriptor.
-                                                #           - file descriptor will be available in child's ENVVAR NODE_CHANNEL_FD
+                                                #           - can only do it for one file descriptor
                                                 #        - "ignore": with nothing
                                                 #        - STREAM: pipe file descriptor to it (like NUM> FILE)
                                                 #        - FD_INT: same with parent file descriptor (like NUM>&FD_INT) (not on Windows)
@@ -3681,30 +3680,68 @@ CHILDPROCESS.killed                             #BOOL. Whether CHILD_PROCESS.kil
                                                 #Does not check whether CHILD_PROCESS was terminated by signal: use `exit` SIGNAME instead
 CHILDPROCESS[Symbol.dispose]()          18.18.0*#Calls CHILDPROCESS.kill()
 
-PROCESS|CHILDPROCESS.send                       #Communication:
-(VAL[, TCPSOCKET|TCPSERVER][, OPTS]             #  - parent use CHILDPROCESS.on("message") and CHILDPROCESS.send(...)
-[, FUNC([ERROR])])                              #  - child use PROCESS.on("message") and PROCESS.send(...)
+[CHILD]PROCESS.send                             #Communication:
+(VAL[, TCP|UDPSOCKET|SERVER][, OPTS]            #  - parent use CHILDPROCESS.on("message") and CHILDPROCESS.send(...)
+[, FUNC([ERROR])])->BOOL                        #  - child use PROCESS.on("message") and PROCESS.send(...)
                                                 #Child process must have been created using "ipc" (see above)
                                                 #See OPTS.serialization above for which VAL type is allowed
-                                                #Parent|child can send messages before other side has setup `message` event listener: they are buffered
-                                                #When sending a TCPSOCKET|TCPSERVER, it will be shared between parent and child:
+                                                #FUNC is fired after sending, before target received
+                                                #FUNC(ERROR):
+                                                #  - possible ERRORs:
+                                                #     - [CHILD]PROCESS.connected false: ERROR.code 'ERR_IPC_CHANNEL_CLOSED'
+                                                #     - I/O error: ERROR.sycall 'write'
+                                                #  - if not specified, emits 'error' event on PROCESS|CHILDPROCESS
+                                                #  - if OPTS.swallowErrors true (def: false): does not call FUNC nor emit 'error' event
+                                                #Can also throw ERROR (as opposed to calling FUNC(ERROR)) if invalid VAL:
+                                                #  - undefined: ERROR.code 'ERR_MISSING_ARGS'
+                                                #  - BIGNUM|SYM|FUNC: ERROR.code 'ERR_INVALID_ARG_TYPE'
+                                                #  - other serialization errors
+                                                #Returns false if either:
+                                                #  - ERROR
+                                                #  - should stop sending, due to backpressure either:
+                                                #     - max 350329 bytes
+                                                #     - max 1 message when specifying TCP|UDPSOCKET|SERVER
+                                                #     - like STREAMs highWaterMark: it is advisory only
+                                                #Parent|child can send messages before other side has setup `message` event listener:
+                                                #  - they are buffered (no limit)
+                                                #  - buffer is cleared when first 'message' event listener setup (detected using 'newListener' event)
+                                                #  - once 'message' event listener set at least once, no more buffering
+                                                #When sending a TCP|UDPSOCKET|SERVER, it will be shared between parent and child:
                                                 #  - packets will arrive randomly at both
                                                 #  - only one needs to listen
-                                                #  - for TCPSERVER, both can listen to 'connection' event
-                                                #FUNC is fired after sending, before target received.
-                                                #  - possible ERROR: other side is disconnected
-                                                #  - if not specified, emits 'error' event on PROCESS|CHILDPROCESS
+                                                #  - for TCP|UDPSERVER, both can listen to 'connection' event
                                                 #OPTS:
                                                 #  - keepOpen BOOL (def: false): see TCPSOCKET
-PROCESS.on("message",
-FUNC(VAL[, TCPSOCKET|TCPSERVER]))               #Does not hold PROCESS alive
-CHILDPROCESS.on("message",                      #Holds CHILDPROCESS alive until either parent exits, or [CHILD]PROCESS.disconnect()
-FUNC(VAL[, TCPSOCKET|TCPSERVER]))               #  - not when using once('message')
-PROCESS|CHILDPROCESS.disconnect()               #Flush all communication, then becomes impossible to do send() on either side
-CHILDPROCESS.on("disconnect", FUNC())           #Once disconnecting complete
-CHILDPROCESS.connected                          #BOOL
-[CHILD]PROCESS.channel                          #Underlying IOSTREAM for send()
-                                                #Different shape. Can ref|unref()
+[CHILD]PROCESS.on("message",
+FUNC(VAL[, TCPSOCKET|TCPSERVER]))               #Guaranteed to be received in same order as sent
+[CHILD]PROCESS.disconnect()                     #Becomes impossible to do send() on either side
+                                                #Throws if [CHILD]PROCESS.connected false
+                                                #Flushes pending messages (both TCP|UDP and others)
+[CHILD]PROCESS.connected                        #BOOL. When false:
+                                                #  - if [CHILD]PROCESS.channel not null: flushing messages (TCP|UDP only), but no new one
+                                                #  - else: no more TCP|UDP messages to flush (but might still be some non-TCP|UDP)
+[CHILD]PROCESS.on("disconnect", FUNC())         #Once flushing of messages done (both TCP|UDP and others)
+[CHILD]PROCESS.channel                          #Underlying EVENTEMITTER for send()
+                                                #Under the hood:
+                                                #  - uses a file descriptor
+                                                #     - communicated to child using ENVVAR NODE_CHANNEL_FD, but deleted by Node on subprocess start
+                                                #     - same for OPTS.serialization, communicated with ENVVAR NODE_CHANNEL_SERIALIZATION_MODE
+                                                #  - uses a named pipe, but uses recvmsg syscall (Unix) instead of read (Unix)
+                                                #     - i.e. similar to objectMode: reads|sends per-message, not per-byte
+[CHILD]PROCESS.channel.ref()                    #Keeps [CHILD]PROCESS alive
+                                                #Automatically called on [CHILD]PROCESS:
+                                                #  - on('message|disconnect')
+                                                #  - once('message|disconnect'), but removed once received
+                                                #  - send() while ongoing (i.e. until its FUNC() callback fired)
+[CHILD]PROCESS.channel.unref()                  #Automatically called on [CHILD]PROCESS:
+                                                #  - exit
+                                                #  - disconnect()
+                                                #  - removeListener('message|disconnect')
+                                                #If .ref|unref() called manually, does not do automatical call anymore
+                                                #  - e.g. if unref(), will not automatically wait for send() or once('message') to complete
+[CHILD]PROCESS.channel.fd                       #NUM
+                                                #In subprocess, same as the one specified on OPTS.stdio
+                                                #In parent, different one
 
 DIAGNOSTICS_CHANNEL.subscribe
  ('child_process', FUNC(OBJ))                   #OBJ: process CHILD_PROCESS
