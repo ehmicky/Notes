@@ -22,45 +22,34 @@ VERSION ==>                       #6.2.2
 
 PATH_PATTERN                      #URI path with template variables.
                                   #Can contain:
-                                  #  - (REGEXP)
                                   #  - :VAR
                                   #     - VAR name is any Unicode identifier character (\p{XID_Continue})
+                                  #  - (REGEXP)
                                   #  - *
+                                  #  - RAW: anything else
                                   #Cannot contain ! @ , (reserved chars)
                                   #Can \-escape any special char: () {} * ? + ; ! @ ,
-                                  #(REGEXP) and :VAR:
-                                  #  - can be followed by modifier ? +
-                                  #     - + does not stop at DELIM
-                                  #  - must be wrapped in {[PREFIX]...[SUFFIX][;SEPARATOR]}:
+                                  #Can contain {...}? or {...}+
+                                  #  - ... can be any characters, :VAR or (REGEXP)
+                                  #  - :VAR or (REGEXP) can be preceded|followed by any characters (PREFIX|SUFFIX)
+                                  #  - can be ...;SEPARATOR
                                   #     - def SEPARATOR: PREFIX + SUFFIX
 
-OPTS|TTOKENS.delimiter            #'DELIM' (def: '/')
-
-TTOKENS                           #Several TTOKENs, i.e. PATH_PATTERN parsed
-TTOKENS.tokens                    #TTOKEN_ARR
-TTOKEN                            #Path groups, either TOKEN or 'STR' (anything between TOKEN)
+TOKENS                            #Several TTOKENs, i.e. PATH_PATTERN parsed
+TOKENS.tokens                     #ARR of TOKEN|'RAW'
 
 TOKEN                             #
-TOKEN.name                        #'VAR' (if :VAR) or NUM (if (REGEXP)) or '' ({...} without :VAR|(REGEXP))
+TOKEN.name                        #'VAR' (if :VAR) or NUM (if (REGEXP)) or '' ({...}?+ without :VAR|(REGEXP))
 TOKEN.pattern                     #'REGEXP':
                                   #  - (REGEXP): as is
                                   #  - '*': [^DELIM]*
 TOKEN.modifier                    #'*', '?', '+' or ''
-TOKEN.prefix                      #'PREFIX'
-TOKEN.suffix                      #'SUFFIX'
-TOKEN.separator                   #'SEPARATOR' (if {...}? or {...}+)
+TOKEN.prefix                      #'PREFIX' (if {...:VAR}?+ or {...(REGEXP)}?+)
+TOKEN.suffix                      #'SUFFIX' (if {:VAR...}?+ or {(REGEXP)...}?+)
+TOKEN.separator                   #'SEPARATOR' (if {...}?+)
                                   #If '*': 'DELIM'
 
 PATH_REGEXP                       #REGEXP where each parenthesis group matches a TOKEN
-                                  #OPTS:
-                                  #  - sensitive BOOL (def: false): case-sensitive
-                                  #  - trailing BOOL: if true (def), optional DELIM character (e.g. trailing slash)
-                                  #  - loose BOOL (def: true): allow multiple DELIM characters in a row (e.g. two slashes)
-                                  #  - start BOOL (def: true): must match from beginning
-                                  #  - end BOOL (def: true): must match until end
-                                  #  - encodePath FUNC(STR)->STR (def: identity):
-                                  #     - serialize 'STR' TTOKENs and TOKEN.prefix|suffix
-                                  #     - should use encodeURI() if PATH_PATTERN might contain non-URI-encoded characters
 PATH_REGEXP.keys                  #TOKEN_ARR, filled by ???
 
 PARAMS                            #Template variables as OBJ
@@ -72,6 +61,24 @@ PARAMS                            #Template variables as OBJ
                                   #     - if modifier + *
                                   #     - is joined with 'PREFIX' and 'SUFFIX'
 
+OPTS.sensitive                    #BOOL (def: false). Case-sensitive
+OPTS|TOKENS.delimiter             #'DELIM' (def: '/')
+                                  #Does not stop {...}+
+OPTS.trailing                     #BOOL (def: true). DELIM character optional at the end
+OPTS.loose                        #BOOL (def: true). Allow multiple DELIM characters in a row
+OPTS.start                        #BOOL (def: true). Must match from beginning
+OPTS.end                          #BOOL (def: true). Must match until end
+OPTS.encodePath                   #FUNC(STR)->STR (def: identity)
+                                  #Transform 'RAW', 'PREFIX' and 'SUFFIX'
+                                  #Should use encodeURI() if PATH_PATTERN might contain non-URI-encoded characters
+OPTS.encode                       #FUNC(VAL)->STR or false (def, same as identity function)
+                                  #Should use encodeURIComponent()
+OPTS.decode                       #FUNC(STR)->STR or false (def, same as identity function)
+                                  #Should use decodeURIComponent()
+OPTS.validate                     #BOOL (def: true)
+                                  #Throw TypeError if PARAMS VAL matches TOKEN.name but not TOKEN.pattern, e.g. contains delimiters
+                                  #TypeError is always thrown when missing PARAMS (no TOKEN with correct TOKEN.name)
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -80,23 +87,19 @@ PARAMS                            #Template variables as OBJ
                                              \=+===============================+=/
 
 
-parse(PATH_PATTERN[, OPTS])       #PATH_PATTERN -> TTOKEN_ARR
- ->TTOKEN_ARR                     #OPTS: delimiter|encodePath
+parse(PATH_PATTERN[, OPTS])       #PATH_PATTERN -> TOKENS
+ ->TOKENS                         #OPTS: delimiter|encodePath
 
-pathToRegexp                      #PATH_PATTERN|TTOKENS -> PATH_REGEXP
- (PATH_PATTERN|TTOKENS[, OPTS])   #If PATH_PATTERN_ARR: alternatives
+pathToRegexp                      #PATH_PATTERN|TOKENS -> PATH_REGEXP
+ (PATH_PATTERN|TOKENS[, OPTS])    #If PATH_PATTERN_ARR: alternatives
  ->PATH_REGEXP                    #OPTS: delimiter|encodePath|sensitive|trailing|loose|start|end
 
-match(PATH_PATTERN|TTOKENS[,OPTS])#PATH_PATTERN|TTOKENS + 'PATH' -> PARAMS
- ->FUNC('PATH')->OBJ|false        #OBJ:
-                                  #  - params PARAMS
+match(PATH_PATTERN|TOKENS[, OPTS])#PATH_PATTERN|TOKENS + 'PATH' -> PARAMS
+ ->FUNC('PATH')                   #OBJ:
+ ->OBJ|false                      #  - params PARAMS
                                   #  - path 'PATH'
                                   #  - index NUM: first matching group in PATH_REGEXP, usually 0
-                                  #OPTS:
-                                  #  - delimiter|encodePath|sensitive|trailing|loose|start|end: see above
-                                  #  - decode FUNC(STR)->STR (def: none)
-                                  #     - should use decodeURIComponent()
-                                  #     - can also be false (same as identify function)
+                                  #OPTS: delimiter|encodePath|decode|sensitive|trailing|loose|start|end
                                   #For better matching, it is recommended to normalize 'PATH':
                                   #  - Unicode: STR.normalize()
                                   #  - squash multiple delimiters: STR.replace(/\/+/g, '/')
@@ -109,15 +112,8 @@ match(PATH_PATTERN|TTOKENS[,OPTS])#PATH_PATTERN|TTOKENS + 'PATH' -> PARAMS
                                              \=+===============================+=/
 
 
-compile                           #PATH_PATTERN|TTOKENS + PARAMS -> 'PATH'
- (PATH_PATTERN|TTOKENS[, OPTS])   #Replaces:
+compile                           #PATH_PATTERN|TOKENS + PARAMS -> 'PATH'
+ (PATH_PATTERN|TOKENS[, OPTS])    #Replaces:
  ->FUNC([PARAMS])                 #  - :VAR by PARAMS.VAR
  ->'PATH'                         #  - (...) by PARAMS[NUM]
-                                  #OPTS:
-                                  #  - delimiter|encodePath|sensitive: see above
-                                  #  - validate BOOL (def: true):
-                                  #     - throw TypeError if PARAMS VAL matches TOKEN.name but not TOKEN.pattern, e.g. contains delimiters
-                                  #     - TypeError is always thrown when missing PARAMS (no TOKEN with correct TOKEN.name)
-                                  #  - encode FUNC(VAL)->STR (def: none)
-                                  #     - should use encodeURIComponent()
-                                  #     - can also be false (same as identify function)
+                                  #OPTS: delimiter|encodePath|encode|validate|sensitive
