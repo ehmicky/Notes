@@ -5,7 +5,10 @@
 
 
 
-VERSION ==>                       #5.7.1
+VERSION ==>                       #5.16.1
+
+CHECK CHANGELOG ==>               #At https://www.prisma.io/changelog (no RSS)
+                                  #Last check: 2024-06-27
 
 GOAL ==>                          #Featureful SQL|MongoDB ORM with declarative data model
                                   #Includes: introspection|migration, logs|metrics, auto-docs, mocks, fake data, visualization
@@ -73,11 +76,16 @@ RDS PROXY ==>                     #Prisma uses prepared statements, which pins c
 POSTGREST/SUPABASE ==>            #See postgrest doc
 
 @prisma/adapter-*                 #ADAPTER
-                                  #Fixes database connection for specific providers:
-                                  #  - WebSocket: neon
-                                  #  - HTTP: PlanetScale, turso
+                                  #Customize low-level layer that executes database queries.
+                                  #Can be:
+                                  #  - custom library|setup (e.g. node-postgres): Postgres, MySQL, SQLite, SQL server, CockroachDB, MongoDB
+                                  #  - serverless database: turso, PlanetScale, neon, Cloudflare D1, Supabase
                                   #Requires PREVIEW driverAdapters
+                                  #Connection "URL" is passed to ADAPTER instead of using datasource.url
+                                  #When using custom OPATH, must use `npm install NAME@OPATH` and `import 'NAME'`
 POPTS.adapter                     #ADAPTER
+
+SERVERLESS ==>                    #See online doc for setups on Deno Deploy, Vercel, Cloudflare
 
 
                                              /=+===============================+=\
@@ -215,6 +223,7 @@ env("ENVVAR")                     #"VAL"
 
 
 prisma init                       #Scaffold ./prisma/schema.prima and ./.env
+--with-model                      #Add a dummy MODEL
 
 prisma generate|validate|format   #PATH to SCHEMA
  |studio|debug                    #Def:
@@ -772,8 +781,12 @@ DISAMBIGUATION ==>                #For implicit n-n and reverse relationships, d
                                   #  - destination|source MODEL is same
                                   #  - source MODEL has multiple foreign key FIELDs to destination MODEL
 
-PREVIEW relationJoins             #Use joins with SQL queries
-                                  #Only with Postgres and CockroachDB
+OPTS.relationLoadStrategy         #With multiple relations, whether SQL queries should use:
+                                  #  - 'join' (def):
+                                  #     - single query with SQL join
+                                  #     - only with Postgres (`lateral join`), MySQL (corrolated subquery), CockroachDB (`lateral join`)
+                                  #     - requires PREVIEW relationJoins
+                                  #  - 'query': multiple queries
 
 
                                              /=+===============================+=\
@@ -947,6 +960,7 @@ prisma migrate status             #Print information about migrations for the pr
 prisma migrate diff               #Compare 2 databases|SCHEMAs, printing result on stdout
                                   #Must have same "DB_PROVIDER"
 --script                          #Print migration SQL instead
+--output|-o                       #'FILE' (def: stdout)
 --exit-code                       #Exit code 2 if there is a diff
                                   #With|without it: exit code 1 if error
 --from|to-*                       #Must use one for each
@@ -1171,8 +1185,10 @@ LOG_OBJ.error                    ##Exception thrown by CMODEL.METHOD()
 
 
 CMODEL.findMany([OPTS])->>COBJ_ARR#Get all matching COBJs, like SQL `select`
-OPTS.where|select|include|orderBy
- |cursor|take|skip|cacheStrategy  #See below
+OPTS.where|select|include|omit
+ |orderBy|cursor|take|skip
+ |cacheStrategy
+ |relationLoadStrategy            #See below
 OPTS.distinct                     #'FIELD'_ARR. Ignore COBJs with duplicate values for those FIELDs
                                   #Done:
                                   #  - using a SQL `distinct on (...)`
@@ -1183,17 +1199,19 @@ CMODEL.findFirst[OrThrow]         #Get one matching COBJ, like SQL `select ... l
  ([OPTS])->>COBJ|null             #If none:
                                   #  - if `OrThrow`: throw NotFoundError
                                   #  - otherwise: returns null
-OPTS.where|select|include|orderBy
- |cursor|skip|distinct
- |cacheStrategy                   #See below
+OPTS.where|select|include|omit
+ |orderBy|cursor|skip|distinct
+ |cacheStrategy
+ |relationLoadStrategy            #See below
 OPTS.take                         #Like below, except only 1 (def) or -1
 
 CMODEL.findUnique[OrThrow]        #Like findFirst[OrThrow]() except OPTS.where is UFILTERS and required.
  (OPTS)->>COBJ|null               #Also, optimized because multiple calls are batched into a single SQL query
                                   #  - when done in the same tick with same OPTS.*
                                   #  - e.g. during "n+1" problem
-OPTS.where|select|include
- |cacheStrategy                   #See below
+OPTS.where|select|include|omit
+ |cacheStrategy
+ |relationLoadStrategy            #See below
 
 
                                              /=+===============================+=\
@@ -1204,17 +1222,22 @@ OPTS.where|select|include
 
 
 CMODEL.create(OPTS)->>COBJ        #Create one COBJ, like SQL `insert`
-OPTS.select|include               #See below
+OPTS.select|include|omit
+ |relationLoadStrategy            #See below
 OPTS.data                         #CREATES. Required
 CREATES.*                         #Like COBJ.*
 
 CMODEL.createMany(OPTS)->>BATCH   #Create multiple COBJs, like SQL `insert`
-                                  #Not with SQLite
 OPTS.data                         #COBJ_ARR. Required
 OPTS.skipDuplicates               #BOOL (def: false). Ignore COBJs with FIELDs that fail @[@]unique|@[@]id constraint,
                                   #i.e. another COBJ2 already exists with it.
                                   #Like SQL `insert ... on conflict do nothing`
-                                  #Not with SQL server, MongoDB
+                                  #Not with SQL server, MongoDB, SQLite
+
+CMODEL.createManyAndReturn        #Combines CMODEL.createMany() and CMODEL.findMany()
+ (OPTS)->>COBJ_ARR                #Only Postgres, CockroachDB and SQLite
+OPTS.data|skipDuplicates          #Like CMODEL.createMany()
+OPTS.select|omit|include          #Like CMODEL.findMany()
 
 CMODEL.createMany|updateMany
  |deleteMany(...)                 #"Bulk operation", i.e. actually performs several database queries in a transaction
@@ -1230,7 +1253,8 @@ CMODEL.createMany|updateMany
 CMODEL.update(OPTS)->>COBJ        #Update one COBJ, like SQL `update`
                                   #Throw NotFoundError if not found
 OPTS.where                        #See below. Required
-OPTS.select|include               #See below
+OPTS.select|include|omit
+ |relationLoadStrategy            #See below
 OPTS.data                         #UPDATES. Required
 
 CMODEL.updateMany(OPTS)->>BATCH   #Update multiple COBJs, like SQL `update`
@@ -1245,7 +1269,8 @@ CMODEL.upsert(OPTS)->>COBJ        #Like either create() or update()
                                   #  - only if single OPTS.where FIELD, and it is present in OPTS.create with the same value
                                   #  - only with Postgres, SQLite, CDB
 OPTS.where                        #See below. Required
-OPTS.select|include               #See below
+OPTS.select|include|omit
+ |relationLoadStrategy            #See below
 OPTS.create                       #Required. Like create()'s OPTS.data when COBJ does not exist
 OPTS.update                       #Required. Like update()'s OPTS.data when COBJ exists
 
@@ -1279,7 +1304,8 @@ ARR_UPDATE push                   #VAL[_ARR]. ARR.push(VAL[,...])
 CMODEL.delete(OPTS)->>COBJ        #Delete one COBJ, like SQL `delete`
                                   #Throw NotFoundError if not found
 OPTS.where                        #See below. Required
-OPTS.select|include               #See below
+OPTS.select|include|omit
+ |relationLoadStrategy            #See below
 
 CMODEL.deleteMany([OPTS])->>BATCH #Delete many COBJs, like SQL `delete`
 OPTS.where                        #See below
@@ -1398,6 +1424,9 @@ OPTS.select|include.MODEL_FIELD   #OPTS2 (only select|include|where|orderBy)
                                   #Apply OPTS2 on child MODEL (ARR or not)
                                   #Implies OPTS.include.MODEL_FIELD true
                                   #Can mix OPTS.include|select at different levels, but not same one
+
+OPTS|POPTS.omit.*                 #Like OPTS.select.* but excludes instead of including
+                                  #Requires PREVIEW omitApi
 
 
                                              /=+===============================+=\
@@ -1655,8 +1684,12 @@ OPTS.isolationLevel               #ENUM Prisma.TransactionIsolationLevel:
 CLIENT.$transaction
  (FUNC(CLIENT2)->>VAL[, OPTS])
  ->>VAL                           #Run FUNC() inside a database transaction
+POPTS.transactionOptions
+ .isolationLevel
 OPTS.isolationLevel               #Like above
+POPTS.transactionOptions.maxWait
 OPTS.maxWait                      #NUM (in ms, def: 2s). Rollback if takes longer to acquire transaction lock
+POPTS.transactionOptions.timeout
 OPTS.timeout                      #NUM (in ms, def: 5s). Rollback if FUNC() lasts longer
 
 
@@ -1824,6 +1857,59 @@ TEAM ==>                          #Can invite team members
 
                                              /=+===============================+=\
                                             /  :                               :  \
+                                            )==:         PLATFORM CLI          :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+prisma platform --early-access    #Must currently be used for all commands
+
+prisma platform
+ auth login|show|logout           #Auth CRUD. Login opens browser
+
+prisma platform workspace show    #Workspace CRUD
+prisma platform
+ project create|show
+ --workspace|-w WORKSPACE_ID      #
+
+prisma platform
+ project create|show|delete       #Project CRUD
+prisma platform project create
+--name|-n PROJECT_NAME            #
+prisma platform project delete
+prisma platform
+ environment create|show
+--project|-p PROJECT_ID           #
+
+prisma platform
+ environment create|show|delete   #Environment CRUD
+prisma platform environment create
+--name|-n ENV_NAME                #
+prisma platform environment delete
+prisma platform apikey create|show
+prisma platform
+ accelerate|pulse enable
+--environment|-e ENV_ID           #
+
+prisma platform
+ apikey create|show|delete        #API key CRUD
+prisma platform apikey create
+--name|-n APIKEY_NAME             #
+prisma platform apikey delete
+prisma platform
+ accelerate|pulse enable|disable
+--apikey APIKEY_ID                #
+
+prisma platform
+ accelerate|pulse enable          #
+--url CONNECTION_URL              #
+--region REGION                   #
+prisma platform
+ accelerate|pulse disable         #
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
                                             )==:       ACCELERATE PROXY        :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -1960,7 +2046,17 @@ PULSE ==>                         #Realtime events on data changes (new|updated|
                                   #  - recommends HCONF.wal_keep_size 2048
                                   #Connection URL must be superuser
                                   #EVENTs are not queued, i.e. lost if no SUB listening
-                                  #No guarantee of EVENTs ordering, or exact-once
+
+PRICING ==>                       #  - events count: 1$/5e4 (free), 1$/12e4 (pro), 1$/17e4 (business)
+                                  #     - free: 6e4/month
+                                  #     - consuming event with .stream(): 2x price
+                                  #  - events total size (if .stream()): 1$/20GiB
+                                  #     - free: 1GiB/month
+                                  #  - events max size: 100KiB (free), 500KiB (pro), 1MiB (business)
+
+EVENT PERSISTENCE ==>             #Guarantees EVENTs ordering, at least once
+                                  #Must be enabled in UI
+                                  #Must use .stream()
 
 ws://subscription.pulse.
  prisma-data.net                  #WebSocket server
@@ -2016,6 +2112,9 @@ OPTS.ACTION[.before|after]        #FILTERS
                                   #Can be empty OBJ, to match all
                                   #  - before|after is then optional
 EVENT_ASYNC_ITERABLE.stop()       #
+
+CMODEL.stream([OPTS])
+ ->>EVENT_ASYNC_ITERABLE|ERROR    #
 
 EVENT                             #WebSocket RES
 EVENT.action                      #'ACTION'
