@@ -632,23 +632,55 @@ hashFiles('GLOB')->'HASH'         #
 ARTIFACT ==>                      #*.zip archive that can be downloaded either:
                                   #  - in-between jobs of a build
                                   #  - in the UI of the build that uploaded it
+                                  #File permissions not kept, but can use tar to fix that
                                   #Cannot be downloaded in future builds though.
                                   #Done by the underlying RUNNER (using RUNS.plugin 'upload|download')
+                                  #Max 500 per workflow run
+
+actions/artifact                  #Underlying library, which can be used in Node.js actions
+                                  #Not documented yet
 
 actions/upload-artifact           #Action that uploads files as an artifact
-                                  #Version 3.1.3
+                                  #Version 4.3.3
 INPUTS.path                       #'FILE|DIR'[_ARR]
                                   #Can use GLOB, ~
-INPUTS.name                       #STR: artifact name. Def: 'artifact'
-                                  #If already exists, overwrite it
+INPUTS.name                       #STR (def: 'artifact'). Artifact name
 INPUTS.retention-days             #NUM of days to keep
-                                  #Min 1, max 90 (def)
+                                  #Min 1, max 90
+                                  #Def: 0, i.e. 90 but can be configured in settings
                                   #Restarted on each new commit for PRs
+INPUTS.compression-level          #NUM (def: 6). Zlib compression level
+INPUTS.if-no-files-found          #If INPUTS.path empty: 'ignore', 'warn' (def), 'error'
+INPUTS.overwrite                  #BOOL. If INPUTS.path already exists:
+                                  #  - false (def): error
+                                  #  - true: delete it first
+                                  #In either case:
+                                  #  - always errors if was uploaded by a previous JOB, as opposed to previous RUN
+                                  #  - i.e. in a matrix, INPUTS.name must include combination id
+OUTPUTS.artifact-id               #'ARTIFACT_ID'
+OUTPUTS.artifact-url              #'https://github.com/USER/REPO/actions/runs/RUN_ID/artifacts/ARTIFACT_ID'
+
+actions/upload-artifact/merge     #Action that merge multiple artifacts into a single one
+INPUT.pattern                     #'GLOB'
+INPUTS.name                       #STR (def: 'merged-artifacts'). Artifact name
+INPUTS.delete-merged              #BOOL (def: false). Delete artifacts after they have been merged
+INPUTS.separate-directories       #BOOL (def: false). Create subdirectories instead of using root
+INPUTS.
+ retention-days|compression-level
+OUTPUTS.artifact-id|artifact-url  #Same as above
 
 actions/download-artifact         #Action that download an artifact files
-                                  #Version 3.0.2
+                                  #Version 4.1.7
 INPUTS.path                       #'PATH' (def: '.')
-INPUTS.name                       #STR: artifact name (def: all)
+                                  #Can use ~
+INPUTS.name                       #STR (def: all). Artifact name
+INPUTS.pattern                    #Same as 'REGEXP'
+INPUTS.merge-multiple             #BOOL. If:
+                                  #  - false (def): one subdirectory per artifact
+                                  #  - true: merge all artifacts into same top directory
+INPUTS.repository                 #'USER/REPO' (def: current)
+INPUTS.run-id                     #'RUN_ID' (def: current)
+INPUTS.github-token               #'GITHUB_TOKEN'. Required with INPUTS.repository|run-id
 OUTPUTS.download-path             #'FILE|DIR'
 
 gh run download [RUN_ID]          #Download artifacts
@@ -656,6 +688,50 @@ gh run download [RUN_ID]          #Download artifacts
 --dir|-D                          #'DIR' (def: '.')
 --name|-n                         #'NAME'
 --pattern|-p                      #'GLOB'
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:             CACHE             :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+actions/cache                     #Combines actions/cache/save and actions/cache/restore
+                                  #Version 4.0.2
+INPUTS.path|key|restore-keys
+ |upload-chunk-size
+OUTPUTS.cache-hit                 #Same as below
+
+actions/cache/save                #Save local FILE|DIR to remote cache
+                                  #Usually at end of workflow run
+INPUTS.key                        #'KEY'
+                                  #Example: '${{matrix.os}}-NAMESPACE-${{hashFiles('GLOB')}}'
+INPUTS.path                       #'PATH' of the FILE|DIR to save. Can start with ~
+                                  #Can be several paths, newline-delimited
+                                  #Can contain GLOB
+                                  #Example: ~/.cache/pip
+INPUTS.upload-chunk-size          #NUM (in bytes)
+                                  #Multipart upload chunk size
+
+actions/cache/restore             #Restore local FILE|DIR from remote cache
+                                  #Usually at start of workflow run
+INPUTS.key                        #'KEY'
+INPUTS.restore-keys               #Fallback 'KEY\n...'
+                                  #Example: '${{matrix.os}}-NAMESPACE-'
+INPUTS.path                       #'FILE|DIR|GLOB'
+INPUTS.fail-on-cache-miss         #BOOL (def: false). Fail if no cache found
+INPUTS.lookup-only                #BOOL (def: false). Do not download cache, only check it
+OUTPUTS.cache-hit                 #BOOL. Whether cache found through INPUTS.key (not INPUTS.restore-keys)
+OUTPUTS.cache-primary-key         #Same as INPUTS.key
+OUTPUTS.cache-matched-key         #Same as INPUTS.key or INPUTS.restore-keys, whichever matched
+
+gh cache list                     #List cached files
+--key|-k                          #Starts with 'KEY'
+--ref|-r                          #Git ref, e.g. 'refs/heads/BRANCH' or 'refs/pull/NUM/merge'
+
+gh cache delete CACHE_ID|KEY      #Delete cached file
+--all|-a                          #
 
 
                                              /=+===============================+=\
@@ -698,35 +774,6 @@ KEY                               #File's ID.
                                   #  - a main save|restore KEY: using namespace prefix + file hash|timestamp
                                   #  - additional restore KEY: using namespace prefix only
                                   #Cannot contain comma
-
-gh cache list                     #List cached files
---json                            #'VAR,...'
-gh cache delete CACHE_ID|KEY      #Delete cached file
---all|-a                          #
-
-@actions/cache                    #Cache a file|directory to GitHub actions API:
-                                  #  - on action start, restore remote cached file|directory to local path
-                                  #  - on job end, if cache was missed, save local file|directory to remove cache
-                                  #Restoring cache steps:
-                                  #  - GET CACHE_URL?keys=INPUTS.key[,INPUTS.restore-keys...]
-                                  #  - GET BASE/actions/cache/FILE_PATH
-                                  #  - write to TMPCOREDIR/cache.tgz|tzst
-                                  #  - extract cache.tgz|tzst to INPUTS.path
-                                  #Saving cache steps:
-                                  #  - create TMPCOREDIR/cache.tgz|tszt from INPUTS.path
-                                  #  - POST CACHE_URL/KEY (stream the body)
-                                  #Uses 'tar' binary
-                                  #Version 3.1.0-beta.3
-INPUTS.path                       #'PATH' of the FILE|DIR to save|restore. Can start with ~
-                                  #Can be several paths, newline-delimited
-                                  #Can contain GLOB
-                                  #Example: ~/.cache/pip
-INPUTS.key                        #Main 'KEY' on save|restore
-                                  #Example: '${{matrix.os}}-NAMESPACE-${{hashFiles('GLOB')}}'
-INPUTS.restore-keys               #Fallback 'KEY\n...' on restore
-                                  #Example: '${{matrix.os}}-NAMESPACE-'
-INPUTS.upload-chunk-size          #NUM (in bytes) to divide up chunks while streaming
-OUTPUTS.cache-hit                 #'true|false' whether cache miss
 
 
                                              /=+===============================+=\
