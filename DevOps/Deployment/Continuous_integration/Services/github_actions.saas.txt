@@ -697,15 +697,29 @@ gh run download [RUN_ID]          #Download artifacts
                                              \=+===============================+=/
 
 
-actions/cache                     #Combines actions/cache/save and actions/cache/restore
+CACHING ==>                       #Uses internal GitHub actions REST API to cache files as a key-value store
+                                  #Scoped to each repository
+                                  #  - scoped to branch too, but `main` and parent branch (including in PRs) caches are available too
+                                  #  - not scoped to each matrix dimension, so need to namespace KEY with it
+                                  #Cache eviction:
+                                  #  - rotated on max 10GB per repository, based on atime
+                                  #  - also removed after 7 days if not accessed
+                                  #Can be accessed by anyone who can create PRs, i.e. should not contain confidential information
+                                  #Can be manipulated from the UI too
+
+actions/cache                     #Combines actions/cache/save and actions/cache/restore (run on `post`)
                                   #Version 4.0.2
 INPUTS.path|key|restore-keys
  |upload-chunk-size
+ |enableCrossOsArchive
+ |fail-on-cache-miss|lookup-only
+INPUTS.save-always                #BOOL. If false (def), only run actions/cache/restore if JOB succeeded
 OUTPUTS.cache-hit                 #Same as below
 
 actions/cache/save                #Save local FILE|DIR to remote cache
                                   #Usually at end of workflow run
-INPUTS.key                        #'KEY'
+INPUTS.key                        #'KEY'. Archive ID
+                                  #Max 512 chars. Cannot contain comma
                                   #Example: '${{matrix.os}}-NAMESPACE-${{hashFiles('GLOB')}}'
 INPUTS.path                       #'PATH' of the FILE|DIR to save. Can start with ~
                                   #Can be several paths, newline-delimited
@@ -713,16 +727,22 @@ INPUTS.path                       #'PATH' of the FILE|DIR to save. Can start wit
                                   #Example: ~/.cache/pip
 INPUTS.upload-chunk-size          #NUM (in bytes)
                                   #Multipart upload chunk size
+INPUTS.enableCrossOsArchive       #BOOL (def: false). Allow restoring on a different OS
 
 actions/cache/restore             #Restore local FILE|DIR from remote cache
                                   #Usually at start of workflow run
-INPUTS.key                        #'KEY'
-INPUTS.restore-keys               #Fallback 'KEY\n...'
+INPUTS.key                        #Exact 'KEY'
+INPUTS.restore-keys               #Start with 'KEY'
+                                  #Can be several 'KEY', newline-delimited
+                                  #Lower priority than INPUTS.key
+                                  #If several matches, pick only the last created one
                                   #Example: '${{matrix.os}}-NAMESPACE-'
 INPUTS.path                       #'FILE|DIR|GLOB'
 INPUTS.fail-on-cache-miss         #BOOL (def: false). Fail if no cache found
 INPUTS.lookup-only                #BOOL (def: false). Do not download cache, only check it
-OUTPUTS.cache-hit                 #BOOL. Whether cache found through INPUTS.key (not INPUTS.restore-keys)
+ENVVAR
+ SEGMENT_DOWNLOAD_TIMEOUT_MINS    #NUM (def: 10, in mins). Timeout when downloading each 1GB chunk
+OUTPUTS.cache-hit                 #'true|false'. Whether cache found through INPUTS.key (not INPUTS.restore-keys)
 OUTPUTS.cache-primary-key         #Same as INPUTS.key
 OUTPUTS.cache-matched-key         #Same as INPUTS.key or INPUTS.restore-keys, whichever matched
 
@@ -732,49 +752,6 @@ gh cache list                     #List cached files
 
 gh cache delete CACHE_ID|KEY      #Delete cached file
 --all|-a                          #
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:             CACHE             :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-CACHING ==>                       #Uses internal GitHub actions REST API to cache files as a key-value store
-                                  #Scoped to each repository
-                                  #  - scoped to branch too, but `master` and parent branch (including in PRs) caches are available too
-                                  #  - not scoped to each matrix dimension, so need to namespace KEY with it
-                                  #Cache eviction:
-                                  #  - rotated on max 5GB per repository, based on atime
-                                  #  - also removed after 7 days if not accessed
-                                  #Can be accessed by anyone who can create PRs, i.e. should not contain confidential information
-                                  #Can be manipulated from the UI too
-
-CACHE_URL                         #API endpoint
-                                  #Is BASE/actions/cache/_apis/artifactcache/caches
-                                  #  - BASE is ENVVAR ACTIONS_CACHE_URL|ACTIONS_RUNTIME_URL
-                                  #  - Authorization: Bearer BASE64_TOKEN [C] using ENVVAR ACTIONS_RUNTIME_TOKEN
-                                  #  - Accept: application/json;api-version=6.0-preview.1 [C]
-GET CACHE_URL?keys=KEY,...        #Get|restore cached file information
-                                  #Response is OBJ:
-                                  #  - cacheKey 'KEY'
-                                  #  - archiveLocation 'FILE_PATH': file is located at BASE/actions/cache/FILE_PATH
-                                  #  - scope 'USER/REPO'
-                                  #  - creationTime 'DATE'
-POST CACHE_URL/KEY                #Save cached file
-                                  #Can stream with Content-Type: application/content-stream [C]
-KEY                               #File's ID.
-                                  #On restore, it can be just the prefix
-                                  #  - if several, use the last created one
-                                  #Cache miss:
-                                  #  - when trying to restore a file that is not cached yet
-                                  #  - can use additional KEYs to retrieve a fallback instead
-                                  #So usually use:
-                                  #  - a main save|restore KEY: using namespace prefix + file hash|timestamp
-                                  #  - additional restore KEY: using namespace prefix only
-                                  #Cannot contain comma
-
 
                                              /=+===============================+=\
                                             /  :                               :  \
