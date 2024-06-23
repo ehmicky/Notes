@@ -1772,6 +1772,25 @@ prisma:client:transaction         #CLIENT.$transaction(FUNC)
   prisma:client:operation         #
 
 
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:           OPTIMIZE            :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+OPTIMIZE UI ==>                   #Query monitoring UI:
+                                  #  - latency (mean, p50, p99, max), connection time
+                                  #  - count
+                                  #  - error rate
+                                  #Built on top of @prisma/instrumentation
+                                  #  - requires PREVIEW tracing
+
+@prisma/extension-optimize        #Version 0.8.0
+withOptimize()->EXTENSION         #
+
+
                                              /=+===============================+=\
                                             /  :                               :  \
                                             )==:           EXTENSION           :==(
@@ -2045,18 +2064,15 @@ PULSE ==>                         #Realtime events on data changes (new|updated|
                                   #  - recommends PCONF.max_replication_slots 20
                                   #  - recommends HCONF.wal_keep_size 2048
                                   #Connection URL must be superuser
-                                  #EVENTs are not queued, i.e. lost if no SUB listening
 
 PRICING ==>                       #  - events count: 1$/5e4 (free), 1$/12e4 (pro), 1$/17e4 (business)
                                   #     - free: 6e4/month
-                                  #     - consuming event with .stream(): 2x price
+                                  #     - consuming event with .stream(): 2x price (3x if read twice, etc.)
                                   #  - events total size (if .stream()): 1$/20GiB
                                   #     - free: 1GiB/month
                                   #  - events max size: 100KiB (free), 500KiB (pro), 1MiB (business)
-
-EVENT PERSISTENCE ==>             #Guarantees EVENTs ordering, at least once
-                                  #Must be enabled in UI
-                                  #Must use .stream()
+                                  #     - is after base64 encoding
+                                  #  - subscribers max: 1000 (.stream()), 20 (.subscribe())
 
 ws://subscription.pulse.
  prisma-data.net                  #WebSocket server
@@ -2090,7 +2106,9 @@ RES                               #WebSocket response
                                   #Initial handshake: "Hello"
                                   #Then: JSON_COBJ
                                   #  - also has COBJ.__op 'c|u|d' (ACTION)
-                                  #  - Postgres: if no `replica identity full`, only primary keys with ACTION 'delete'
+                                  #  - Postgres: if no `replica identity full`
+                                  #     - no `before` with ACTION 'update'
+                                  #     - only primary keys with ACTION 'delete'
 
 
                                              /=+===============================+=\
@@ -2107,19 +2125,34 @@ OPTS.subscriptionUrl              #'URL'. Def: ws://subscription.pulse.prisma-da
 
 CMODEL.subscribe([OPTS])          #Start WebSocket connection
  ->>EVENT_ASYNC_ITERABLE|ERROR    #Does not try to reconnect on connection failure
+                                  #EVENTs are not queued|persisted:
+                                  #  - lost if no SUB listening
+                                  #  - does not guarantee EVENTs ordering
+                                  #  - at most once (0-1) delivery
+CMODEL.stream([OPTS])             #Similar to .subscribe() but EVENTs are queued|persisted
+ ->>EVENT_ASYNC_ITERABLE|ERROR    #  - kept if no SUB listening
+                                  #  - guarantees EVENTs ordering
+                                  #  - at least once (1+) delivery
+                                  #  - must be enabled in UI, and has a cost
+
 OPTS.ACTION[.before|after]        #FILTERS
                                   #Def: all ACTIONs
                                   #Can be empty OBJ, to match all
                                   #  - before|after is then optional
+OPTS.name                         #Cursor name STR for that specific query
+                                  #I.e. when calling .stream() again later, continue at same place
+                                  #Only with .stream()
 EVENT_ASYNC_ITERABLE.stop()       #
 
-CMODEL.stream([OPTS])
- ->>EVENT_ASYNC_ITERABLE|ERROR    #
-
 EVENT                             #WebSocket RES
+EVENT.id                          #'EVENT_ID' (ULID)
+                                  #Can be used to ignore EVENTs already processed (due to at least once delivery)
+EVENT.modelName                   #'MODEL'
 EVENT.action                      #'ACTION'
-EVENT.before                      #Old COBJ. Only with 'delete'
-EVENT.after                       #New COBJ. Only with 'create|update'
+EVENT.created                     #Old COBJ. Only with 'create'
+EVENT.before                      #Old COBJ. Only with 'update'
+EVENT.after                       #New COBJ. Only with 'update'
+EVENT.deleted                     #Old COBJ. Only with 'delete'
 
 
                                              /=+===============================+=\
