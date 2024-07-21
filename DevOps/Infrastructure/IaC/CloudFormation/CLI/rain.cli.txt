@@ -9,7 +9,7 @@ ALTERNATIVES ==>                  #See sceptre doc
 
 ALTERNATIVES FOR DIFF ==>         #See cdk diff doc
 
-VERSION ==>                       #1.7.2
+VERSION ==>                       #1.13.1
                                   #Install by downloading binaries, or through go
 
 SUMMARY ==>                       #Account: current auth, open UI
@@ -44,8 +44,8 @@ rain bootstrap|[stackset] deploy
 --yes|-y                          #No CLI confirmation input
 
 rain bootstrap|cat|console|deploy
- |forecast|info|logs|ls|pkg|rm
- |stackset|watch                  #
+ |forecast|info|logs|ls|modue|pkg
+ |rm|stackset|watch               #
 --region|-r                       #'REGION' (def: see AWS config doc)
 --profile|-p                      #AWS 'PROFILE' (def: see AWS config doc)
 
@@ -65,6 +65,7 @@ rain console [STACK]              #Open AWS UI. If STACK, to its page
 --url|-u                          #Print URL but do not open it
 --service|-s                      #'SERVICE' (def: 'cloudformation') to show
 --name|-n                         #Temporary 'USER' (def: current) to use within the console
+--logout|-l                       #Logout
 
 
                                              /=+===============================+=\
@@ -81,6 +82,15 @@ rain build RESTYPE...             #Scaffold TEMPLATE with those RESTYPEs, and pr
 --json|-j                         #Instead of YAML
 --bare|-b                         #Do not include optional RESPROPs, nor comments
 --list|-l                         #List all RESTYPEs
+--output|-o                       #'PATH'
+--schema|-s                       #Print ESCHEMA instead
+--omit-patches                    #Use ESCHEMA as is, without any patches
+--pkl-class                       #Print as Apple pkl format
+--prompt|-p                       #Use AWS Bedrock prompt (Claude)
+--model                           #Among 'claude2', 'claude3haiku', 'claude3sonnet', 'claude3opus'
+--prompt-lang                     #Among 'cfn' (TEMPLATE), 'guard' (cfn-guard), 'rego' (Open Policy Agent Rego)
+--recommend|-r [EXAMPLE]          #Choose specific EXAMPLE (def: interactive choice)
+                                  #Among 'bucket' (S3), 'ec2', 'vpc', 'ecs', 'pipeline', 'eventbridge'
 
 rain fmt [TEMPLATE_PATH...]       #Prettify TEMPLATEs (def: stdin)
                                   #Tries to use !RFUNC shortcut syntax
@@ -89,6 +99,7 @@ rain fmt [TEMPLATE_PATH...]       #Prettify TEMPLATEs (def: stdin)
 --verify|-v                       #Only set exit code 1 if not prettified
 --json|-j                         #Output as JSON. If YAML, convert it. Def: vice-versa
 --unsorted|-u                     #Unless specified, sort TEMPLATE properties using a logical order
+--node-style                      #Output YAML style among: tagged, doublequoted, singlequoted, literal, folded, quotescalars, original, flow
 
 rain merge TEMPLATE_PATH...       #Merge TEMPLATEs. Last TEMPLATE has priority
                                   #OBJs are merged, ARRs concatenated
@@ -145,17 +156,29 @@ OBJ.BucketProperty
 OBJ.KeyProperty                   #'PROP'. Insert as OBJ { 'BUCKET_PROP': 'BUCKET', 'OBJECT_PROP': 'OBJECT' } instead of STR
 OBJ.Format                        #Whether to insert as 's3://...' (def is S3) or 'https://...' (def if S3Http)
 
-!Rain::Module: PATH|URL          !#Insert RAIN_MODULE, which is similar to CloudFormation MODULE, but:
-                                  #  - meant to extend RESTYPEs
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:            MODULE             :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+RESOURCE.Type                    !#Insert RAIN_MODULE, which is similar to CloudFormation MODULE, but:
+ !Rain::Module: PATH|URL          #  - meant to extend RESTYPEs
                                   #  - use a local PATH
-                                  #It is a JSON|YAML TEMPLATE, as described below
+                                  #It is a JSON|YAML TEMPLATE
+                                  #  - TEMPLATE.Resources|Description|Parameters can be used like MODULEs
+                                  #  - but not TEMPLATE.Outputs
                                   #Can use !Rain::* itself
-TEMPLATE.Resources.ModuleExtension#Must exist, and use Metadata.Extends 'RESTYPE' instead of Type 'RESTYPE'
-                                  #It is the entrypoint being inserted
-                                  #Additional RESOURCEs can still be specified
-                                  #RESOURCE.* are merged with higher priority
-TEMPLATE.Description|Parameters   #Can be used like MODULEs
-TEMPLATE.Outputs                  #Cannot be used
+RESOURCE.Overrides.RESOURCE       #OBJ to override RAIN_MODULE TEMPLATE.Resources.RESOURCE.*
+
+rain module bootstrap             #Bootstrap a Rain::Module
+                                  #Not documented yet
+rain module publish               #Publish a Rain::Module to AWS CloudArtifact
+                                  #Not documented yet
+rain module install NAME          #Install a Rain::Module
+                                  #Not documented yet
 
 
                                              /=+===============================+=\
@@ -167,9 +190,13 @@ TEMPLATE.Outputs                  #Cannot be used
 
 rain forecast                    !#Like linting, but more about functional problems:
  TEMPLAT_PATH [STACK]             #  - RESOURCE already existing
-                                  #  - wrong IAM permissions
+                                  #  - invalid RDS Engine version, MonitoringRole*, quota
+                                  #  - invalid EC2 key pair
+                                  #  - SageMaker limits
                                   #Does not do many checks at the moment, just a few
---skip-iam                        #Do not check for wrong IAM permissions (which are slower)
+--include-iam                     #Includes check for wrong IAM permissions (which are slower)
+--ignore STR,...                  #Exclude specific check, either 'RESTYPE' or 'F...'
+--action STR                      #Among 'all' (def), 'create', 'update', 'delete'
 --type                            #'RESTYPE' (def: all)
 --role-arn
 --config|-c
@@ -185,7 +212,7 @@ rain forecast                    !#Like linting, but more about functional probl
 
 
 rain deploy TEMPLATE_PATH [STACK] #Similar to `aws cloudformation deploy`, i.e. do CreateChangeSet() then ExecuteChangeSet(), but improved
-                                  #Prints CHANGESET, with confirmation
+  [CHANGESET]                     #Prints CHANGESET, with confirmation
                                   #Shows real-time updates, including final STACK.*
 --keep|-k                         #STACK.DisableRollback true
 --termination-protection|-t       #STACK.EnableTerminationProtection true
@@ -198,14 +225,20 @@ DEPLOY_CONF.Parameters            #OBJ. STACK|SET.Parameters
 --ignore-unknown-params           #Unless set, fails on unknown PARAMs
 DEPLOY_CONF.Tags                  #OBJ. STACK|SET.Tags
 --tags                            #Same as 'TAG=VAL,...'
+--no-exec|-x                      #Do not ExecuteChangeSet(), and allow CHANGESET argument
+--changeset                       #Do not CreateChangeSet(), and allow CHANGESET argument
+--admin                           #OP.CallAs 'DELEGATED_ADMIN'
 
-rain ls [STACK]                   #Shows STACK: name, StackStatus, RESOURCEs, PARAMs, OUTPUTs
+rain ls [STACK] [CHANGESET]       #Shows STACK: name, StackStatus, RESOURCEs, PARAMs, OUTPUTs
                                   #Using DescribeStacks|ListStacks|DescribeStackResource[s]()
 --all|-a                          #For all REGIONs
+--changeset|-c                    #Shows CHANGESETs instead, and allow CHANGESET argument
+--admin                           #Like `rain deploy`
 
 rain cat STACK                    #Print STACK's TEMPLATE
 --transformed|-t                  #After MACROs applied
 --unformatted|-u                  #No prettify
+--config|-c                       #Print PARAMs and TAGs, with same format as DEPLOY_CONF
 
 rain watch STACK                  #Print STACK: StackStatus, RESOURCEs, errors
                                   #Updates every 2s
@@ -216,12 +249,15 @@ rain logs STACK ['RESOURCE']      #Calls DescribeStackEvents(), with improved ou
 --all|-a                          #Unless set, exclude some logs which are not very useful: 'Resource creation Initiated', 'User Initiated', 'Transformation succeeded'
 --chart|-c                        #Output as an HTML Gantt chart
 --days|-d                         #Since NUM (def: unlim) days ago
+--since-user-initiated|-s         #Since last EVENT with ResourceStatusReason 'User Initiated'
 --length|-l                       #Max NUM (def: unlim) of EVENTs
 
-rain rm STACK                     #Calls DeleteStack(), with improved output
+rain rm STACK [CHANGESET]         #Calls DeleteStack(), with improved output
                                   #If STACK.EnableTerminationProtection true, confirms before unsetting it
 --role-arn
---detach|-d                       #Like `rain deploy`
+--detach|-d
+--admin                           #Like `rain deploy`
+--changeset|-c                    #Delete CHANGESET instead, and allow CHANGESET argument
 
 
                                              /=+===============================+=\
