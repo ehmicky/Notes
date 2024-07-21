@@ -46,11 +46,12 @@ PAGINATION ==>                    #REQ.limit NUM (def|max: 50) + REQ|RES.nextTok
                                   #  - pagination but never used due to limit: DescribeExportTasks(), DescribeQueries(),
                                   #    DescribeResourcePolicies()
 
-THROTTLING ==>                    #800/s (REGION-specific, soft): PutLogEvents()
-                                  #25/s (REGION-specific): GetLogEvents()
-                                  #10/s (REGION-specific): FilterLogEvents()
+THROTTLING ==>                    #5000/s (REGION-specific, soft): PutLogEvents()
                                   #50/s (soft): CreateLogStream()
-                                  #5/s (soft): Describe|DeleteLogStream(), *LogGroup()
+                                  #25/s (REGION-specific): GetLogEvents|FilterLogEvents()
+                                  #25/s (soft): DescribeLogStreams()
+                                  #15/s (soft): DeleteLogStream()
+                                  #10/s (soft): *LogGroup()
                                   #5/s (not soft): all others
 
 PRICING ==>                       #New LLEVENTs: 1$/2GB
@@ -332,21 +333,65 @@ AWS/Logs/IncomingBytes            #NUM. Size of new LLEVENTs
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:             TAIL              :==(
+                                            )==:           TAIL API            :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
-LIVE TAIL ==>                     #View LLEVENTs, in CLI or UI console
-                                  #Meant for debugging
-                                  #Requires PACTION logs:Start|StopLiveTail
-                                  #Max 15 ongoing sessions (soft limit)
+StartLiveTail()                   #Req: TAIL_REQ
+                                  #Res: responseStream TAIL_RES
+PACTION StopLiveTrail             #Required for stopping trail in UI
 
-tail LOG_GROUP                    #Tail LLEVENTs in CLI
+TAIL_REQ                          #Stream any incoming LLEVENTs
+                                  #Meant for debugging
+                                  #Max 15 ongoing sessions (soft limit)
+TAIL_REQ.logGroupIdentifiers      #LOG_GROUP_ARN_ARR
+                                  #Max 10 items
+TAIL_REQ.logStreamNames           #'LOG_STREAM'_ARR
+                                  #Max 100 items
+TAIL_REQ.logStreamNamePrefixes    #STR_ARR. 'LOG_STREAM' start with any of STR
+                                  #Max 100 items
+TAIL_REQ.logEventFilterPattern    #'FILTER_PATTERN'
+
+TAIL_RES                          #HTTP stream of TAIL_CHUNKs
+                                  #Closed by the client when wants. But server also closes after 3h.
+
+TAIL_SESSION_START                #First TAIL_CHUNK
+TAIL_SESSION_START.requestId      #'REQ_ID' of StartLiveTail()
+TAIL_SESSION_START.sessionId      #STR. ID of TAIL_RES stream
+TAIL_SESSION_START
+ .logGroupIdentifiers
+ |logStreamNames
+ |logStreamNamePrefixes
+ |logEventFilterPattern           #Like TAIL_REQ.*
+
+TAIL_SESSION_UPDATE               #TAIL_CHUNK sent every second
+TAIL_SESSION_UPDATE.sessionResults#TAIL_SESSION_RES_ARR
+                                  #LLEVENTs since last TAIL_SESSION_UPDATE
+                                  #Can be empty. Max 500 items
+TAIL_SESSION_RES
+ .message|ingestionTime|timestamp #Like LLEVENT.*
+TAIL_SESSION_RES
+ .logGroupIdentifier|logStreamName#Like LLEVENTS_REQ.*
+TAIL_SESSION_UPDATE               #BOOL. True if >500 LLEVENTs were available, i.e. only first ones were picked
+ .sessionMetadata.sampled         #Last 10 TAIL_SESSION_UPDATEs are buffered, but are dropped after that
+
+TAIL_TIMEOUT_ERROR                #Last TAIL_CHUNK on timeout
+TAIL_STREAMING_ERROR              #Last TAIL_CHUNK on other errors
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:           TAIL CLI            :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+tail LOG_GROUP                    #
 --follow                          #Whether to tail or not (def)
 --log-stream-names
 --log-stream-name-prefix
---filter-pattern                  #Like FilterLogEvents()
+--filter-pattern                  #Like StartLiveTail()
 --since DATE|DURATION             #Like FilterLogEvents() startTime
                                   #DURATION is NUM + s|m|h|d|w
                                   #Def: 10m
@@ -354,10 +399,6 @@ tail LOG_GROUP                    #Tail LLEVENTs in CLI
                                   #  - detailed (def): long LLEVENT.timestamp|logStreamName|message
                                   #  - short: short LLEVENT.timestamp|message
                                   #  - json: only LLEVENT.message, as JSON
-
-LIVE TAIL ==>                     #Tail LLEVENTs in UI console
-                                  #Can filter by LOG_GROUPs (max 10), LOG_STREAMs or FILTER_PATTERNs
-                                  #Can highlight specific words
 
 PULUMI ==>                       ##`pulumi logs` shows LLEVENTs
 
@@ -654,7 +695,7 @@ GetQueryResults()                 #Req: QUERY
 QUERY                             #Advanced search|query for LLEVENTs
                                   #Called "Logs Insights"
                                   #60m timeout. Once complete, deleted after 7d
-                                  #Max 30 running at once
+                                  #Max 30 running at once (5 if INFREQUENT_ACCESS)
 QUERY.queryId                     #QUERY_MID
 QUERY.createTime                  #DATE_NUM
 
@@ -686,6 +727,7 @@ QUERY_STATS.bytesScanned          #NUM of bytes read, from QUERY_STATS.recordsSc
 CLOUDWATCH DASHBOARD ==>          #Can run|display QUERY in CloudWatch DASHBOARD's DLOG (see its doc)
 
 PACTION cloudwatch:GenerateQuery  #Allows generating QUERY_STRINGs from AI prompts in the UI
+                                  #Max 5 at once
 
 
                                              /=+===============================+=\
@@ -711,6 +753,7 @@ QUERYDEF                          #Saved 'QUERY_STRING'. Also called "saved quer
                                   #Must be either:
                                   #  - manually retrieved, then run separately with StartQuery()
                                   #  - used through UI console
+                                  #Deleted after 30d
                                   #Not logged by CloudTrail
                                   #Max 1e3 per REGION
 QUERYDEF.queryDefinitionId        #QUERYDEF_MID
@@ -822,6 +865,7 @@ parse FIELD /.../                 #REGEXP matching, extracting each (?<FIELD2>..
 filter BOOL_EXPR                  #Only keep LLEVENTs where BOOL_EXPR is true
 sort FIELD asc|desc               #Sort by FIELD
 limit NUM                         #Only keep first NUM LLEVENTs
+                                  #Def: 1e3, max: 1e4
 
 dedup FIELD,...                   #Ignore LLEVENTs with same FIELDs values as previous LLEVENTs
                                   #"previous" is based on sort order
@@ -1345,6 +1389,7 @@ DeleteSubscriptionFilter()        #Req: SUBSCRIPTION
 
 SUBSCRIPTION                      #Send a LOG_GROUP's LLEVENTs to a Lambda FUNCTION or Kinesis STREAM|FIREHOSE
                                   #On delivery failure due to 5** or throttling, retry for up to 24h
+                                  #To apply to all LOG_GROUPs of an ACCOUNT: see APOLICY below
                                   #Max 2 per LOG_GROUP
                                  ##  - cfn-lint E2529: validate it
 SUBSCRIPTION.filterName           #'SUBSCRIPTION'
@@ -1405,6 +1450,7 @@ SPAYLOAD.messageType              #Either:
                                   #  - 'CONTROL_MESSAGE': ping
 SPAYLOAD.logEvents                #LLEVENT_ARR
                                   #Only message, timestamp, and id LLEVENT_MID
+SPAYLOAD.policyLevel              #'ACCOUNT_LEVEL_POLICY' (if using APOLICY)
 
 
                                              /=+===============================+=\
@@ -1419,6 +1465,7 @@ PERMISSION ==>                    #Must use LAMBDA FUNC_VERSION.Role, not SUBSCR
                                   #  - Principal.Service 'logs.amazonaws.com'
                                   #  - PACTION lambda:InvokeFunction
                                   #  - COND_KEY aws:SourceArn LOG_GROUP_ARN
+                                  #     - ending with :* if using an APOLICY
                                   #  - COND_KEY aws:SourceAccount|SourceOrg*
 
 INVOCATION ==>                    #InvocationType 'Event'
@@ -1628,6 +1675,7 @@ DeleteDataProtectionPolicy()      #Req: DATA_POLICY
                                   #Res: empty
 
 DATA_POLICY                       #Mask sensitive data in LLEVENTs of a LOG_GROUP with ***
+                                  #To apply to all LOG_GROUPs of an ACCOUNT: see APOLICY below
                                   #Not logged by CloudTrail
 DATA_POLICY.logGroupIdentifier    #'LOG_GROUP'|LOG_GROUP_ARN
 DATA_POLICY.lastUpdatedTime       #DATE_NUM
@@ -1652,56 +1700,18 @@ AWS::Logs::LogGroup               #Includes RESPROPs: DataProtectionPolicy MASK_
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:         MASK ACCOUNT          :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-PutAccountPolicy()                #Req: ADATA_POLICY
-                                  #  - no lastUpdatedTime, accountId
-                                  #Res: accountPolicy ADATA_POLICY
-DescribeAccountPolicies()         #Req: ADATA_POLICY
-                                  #  - only policyName, policyType
-                                  #  - only accountId -> accountIdentifiers ACCOUNT_ID_ARR
-                                  #     - only when using a monitoring ACCOUNT with CloudWatch cross-account observability
-                                  #Res: accountPolicies ADATA_POLICY_ARR
-DeleteAccountPolicy()             #Req: ADATA_POLICY
-                                  #  - only policyName, policyType
-                                  #Res: empty
-
-ADATA_POLICY                      #Like DATA_POLICY but for all LOG_GROUPs in an ACCOUNT
-                                  #Requires DATA_POLICY-related PACTIONs too
-                                  #Not logged by CloudTrail
-ADATA_POLICY.policyName           #'ADATA_POLICY'
-ADATA_POLICY.lastUpdatedTime      #DATE_NUM
-
-ADATA_POLICY.accountId            #ACCOUNT_ID
-ADATA_POLICY.policyType           #Always 'DATA_PROTECTION_POLICY'
-ADATA_POLICY.scope                #Always 'ALL'
-
-ADATA_POLICY.policyDocument       #'MASK_POLICY'
-
-LOG_GROUP.inheritedProperties     #'ACCOUNT_DATA_PROTECTION' if LOG_GROUP has a ADATA_POLICY
-
-AWS::Logs::AccountPolicy          #RESPROPs: PolicyName, PolicyType, Scope, PolicyDocument STR
-                                  #RESATTRs: AccountId
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
                                             )==:          MASK POLICY          :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
-MASK_POLICY                       #'OBJ_JSON'
-                                  #Max 30KB
+MASK_POLICY                       #Max 30KB
 MASK_POLICY.Version               #Always '2021-06-01'
 MASK_POLICY.Name                  #'MASK_POLICY'
 MASK_POLICY.Description           #STR
 
-MASK_POLICY.Statements            #MASK_STATEMENT_ARR
-                                  #Must have 1 item, with MASK_OP.Deidentify|Audit
+MASK_POLICY.Statement             #MASK_STATEMENT_ARR
+                                  #Must have 2 items: with MASK_OP.Audit, then with MASK_OP.Deidentify
 MASK_STATEMENT.Sid                #'MASK_STATEMENT'
 MASK_STATEMENT.Operation          #MASK_OP
 
@@ -1746,10 +1756,18 @@ AWS/Logs/LogEventsWithFindings    #CloudWatch METRIC. NUM of LLEVENTs with maske
                                              \=+===============================+=/
 
 
-MASK_STATEMENT.DataIdentifier     #DATAID_ARN_ARR. Defines what to mask
+MASK_STATEMENT.DataIdentifier     #'DATAID'_ARR. Defines what to mask
                                   #Must be the same for each MASK_STATEMENT
-                                  #Always arn:aws:dataprotection::aws:data-identifier/DATAID
-                                  #DATAIDs are automatically managed by AWS, listed below
+
+MASK_POLICY.Configuration         #CUSTOM_DATAID_ARR
+ .CustomDataIdentifier            #Max 10 items (soft limit)
+CUSTOM_DATAID.Name                #'DATAID'
+                                  #Max 128 chars, only [:alnum:]_-
+CUSTOM_DATAID.Regex               #'REGEXP'
+                                  #Max 200 chars, only ASCII
+
+MANAGED DATAIDS ==>               #One of the following
+                                  #Always prepended by arn:aws:dataprotection::aws:data-identifier/...
                                   #Some are COUNTRY-specific
                                   #Some require a keyword nearby, with|without space, _ or -
                                   #  - see online for the list of keywords
@@ -1834,6 +1852,56 @@ OPTS.deliveryStreamName
 
 OPTS.identifiers                  #MASK_STATEMENT.DataIdentifier
                                   #ARR of DataIdentifier.*, e.g. DataIdentifier.EMAILADDRESS
+new CustomDataIdentifier
+ ('DATAID', 'REGEXP')             #CCUSTOM_DATAID. MASK_POLICY.Configuration.CustomDataIdentifier
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:   MASK/SUBSCRIPTION ACCOUNT   :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+PutAccountPolicy()                #Req: APOLICY
+                                  #  - no lastUpdatedTime, accountId
+                                  #Res: accountPolicy APOLICY
+DescribeAccountPolicies()         #Req: APOLICY
+                                  #  - only policyName, policyType
+                                  #  - only accountId -> accountIdentifiers ACCOUNT_ID_ARR
+                                  #     - only when using a monitoring ACCOUNT with CloudWatch cross-account observability
+                                  #Res: accountPolicies APOLICY_ARR
+DeleteAccountPolicy()             #Req: APOLICY
+                                  #  - only policyName, policyType
+                                  #Res: empty
+
+APOLICY                           #Like DATA_POLICY|SUBSCRIPTION but for all LOG_GROUPs in an ACCOUNT
+                                  #Requires DATA_POLICY|SUBSCRIPTION-related PACTIONs too
+                                  #Max 1 per ACCOUNT
+                                  #Not logged by CloudTrail
+APOLICY.policyName                #'APOLICY'
+APOLICY.lastUpdatedTime           #DATE_NUM
+
+APOLICY.accountId                 #ACCOUNT_ID
+APOLICY.scope                     #Always 'ALL'
+
+APOLICY.policyType                #Either:
+                                  #  - 'DATA_PROTECTION_POLICY': DATA_POLICY
+                                  #  - 'SUBSCRIPTION_FILTER_POLICY': SUBSCRIPTION
+APOLICY.policyDocument            #Either:
+                                  #  - MASK_POLICY: if policyType 'DATA_PROTECTION_POLICY'
+                                  #  - SUBSCRIPTION: if policyType 'SUBSCRIPTION_FILTER_POLICY'
+                                  #     - only DestinationArn, RoleArn, FilterPattern, Distribution
+APOLICY.selectionCriteria         #'LogGroupName NOT IN ["LOG_GROUP",...]'
+                                  #Exclude specific LOG_GROUPs
+                                  #Meant to prevent cycles if destination produces logs itself
+                                  #Only with policyType 'SUBSCRIPTION_FILTER_POLICY'
+                                  #Max 25KB
+
+LOG_GROUP.inheritedProperties     #'ACCOUNT_DATA_PROTECTION' if LOG_GROUP has a APOLICY
+
+AWS::Logs::AccountPolicy          #RESPROPs: PolicyName, PolicyType, Scope, PolicyDocument STR, SelectionCriteria
+                                  #RESATTRs: AccountId
 
 
                                              /=+===============================+=\
