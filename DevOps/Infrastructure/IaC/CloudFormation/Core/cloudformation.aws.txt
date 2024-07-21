@@ -9,7 +9,7 @@ ALTERNATIVES ==>                  #See Pulumi
 
 VERSION ==>                       #2024-07-24
 
-SUMMARY ==>                       #Template: local|API|UI|S3|SSM, validation, spec, price estimation, S3 package, metadata, policy
+SUMMARY ==>                       #Template: local|API|UI|S3|SSM, validation, generation, spec, price estimation, S3 package, metadata, policy
                                   #Stack: outputs declare|export|import, nested, role, events, SNS notifications, UI quick link, git sync, GitHub action
                                   #Resource: type, logical|physical ID, RESPROP|RESATTR, write|create-only RESPROP, DependsOn
                                   #Update: noop, replacement
@@ -56,12 +56,13 @@ REQ_ID                            #RES.ResponseMetadata.RequestId
 PAGINATION ==>                    #REQ|RES.NextToken STR
                                   #REQ.MaxResults NUM:
                                   #  - usually defined, max|def 100
+                                  #  - def 50, max 100: ListGeneratedTemplates()
                                   #  - not defined:
                                   #     - always 100: ListImports|ListExports(), DescribeChangeSet[Hooks]()
                                   #     - use 1MB chunks instead: DescribeStacks|ListStacks(), ListStackResources(),
                                   #       DescribeStackEvents(), ListChangeSets(), DescribeAccountLimits()
                                   #Always limited to 100 items: DescribeStackResources()
-                                  #No pagination in JavaScript: DescribeChangeSet[Hooks](), ListStackInstanceResourceDrifts()
+                                  #No pagination in JavaScript: DescribeChangeSet[Hooks](), ListStackInstanceResourceDrifts(), ListStackSetAutoDeploymentTargets()
 
 REQ.Client[Request]Token          #Idempotence STR, for some ACTIONs
                                   #In UI, is 'Console-ACTION-UUID'
@@ -285,43 +286,148 @@ aws cloudformation package        #Replaces local 'PATH' in TEMPLATE by S3 OBJEC
 
                                              /=+===============================+=\
                                             /  :                               :  \
+                                            )==:      GENERATED TEMPLATE       :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+CreateGeneratedTemplate()         #Req: GENERATED_TEMPLATE
+                                  #  - no GeneratedTemplateId|Name, *Time, Status[Reason]|Progress|TotalWarnings
+                                  #  - no Resources.ResourceStatus[Reason]|Warnings
+                                  #  - StackId ARN -> StackName 'STACK'|ARN
+                                  #Res: GENERATED_TEMPLATE
+                                  #  - only GeneratedTemplateId
+UpdateGeneratedTemplate()         #Req: GENERATED_TEMPLATE
+                                  #  - no GeneratedTemplateId, *Time, Status[Reason]|Progress|TotalWarnings
+                                  #  - no Resources.ResourceStatus[Reason]|Warnings
+                                  #  - no StackId
+                                  #  - GeneratedTemplateName -> [New]GeneratedTemplateName
+                                  #  - Resources -> AddResources GENERATED_RESOURCE_ARR + RemoveResources 'RESOURCE'_ARR
+                                  #  - only one with RefreshAllResources
+                                  #Res: GENERATED_TEMPLATE
+                                  #  - only GeneratedTemplateId
+ListGeneratedTemplates()          #Req: empty
+                                  #Res: Summaries GENERATED_TEMPLATE_ARR
+                                  #  - no StackId, TemplateConfiguration, Progress, TotalWarnings
+                                  #  - Resources -> NumberOfResources NUM
+DescribeGeneratedTemplate()       #Req: GENERATED_TEMPLATE
+                                  #  - only GeneratedTemplateId + GeneratedTemplateName -> GeneratedTemplateName 'GENERATED_TEMPLATE'|ARN
+                                  #Res: GENERATED_TEMPLATE
+GetGeneratedTemplate()            #Req: GENERATED_TEMPLATE
+                                  #  - only GeneratedTemplateName
+                                  #  - only one with Format
+                                  #Res: GENERATED_TEMPLATE
+                                  #  - only Status
+                                  #  - only one with TemplateBody
+DeleteGeneratedTemplate()         #Req: GENERATED_TEMPLATE
+                                  #  - only GeneratedTemplateName
+
+GENERATED_TEMPLATE                #TEMPLATE created from existing RESOURCEs
+GENERATED_TEMPLATE
+ .GeneratedTemplateId             #GENERATED_TEMPLATE_ARN
+                                  #arn:aws:cloudformation:REGION:ACCOUNT_ID:generatedtemplate/GENERATED_TEMPLATE_MID
+GENERATED_TEMPLATE
+ .GeneratedTemplateName           #'GENERATED_TEMPLATE'. Max 128 chars
+GENERATED_TEMPLATE.CreationTime   #DATE_NUM
+GENERATED_TEMPLATE.LastUpdatedTime#DATE_NUM
+
+GENERATED_TEMPLATE.StackId        #STACK_ARN of existing RESOURCEs
+GENERATED_TEMPLATE.Resources      #GENERATED_RESOURCE_ARR
+                                  #Max 500 items
+GENERATED_RESOURCE
+ .LogicalResourceId|ResourceType  #Like STACK_RESOURCE.*
+GENERATED_RESOURCE
+ .ResourceIdentifier              #Like IMPORTED_RESOURCE.*
+GENERATED_RESOURCE
+ .ResourceStatus                  #One of: 'PENDING', 'IN_PROGRESS', 'COMPLETE', 'FAILED'
+GENERATED_RESOURCE
+ .ResourceStatusReason            #Like STACK_RESOURCE.*
+
+GENERATED_TEMPLATE
+ .RefreshAllResources             #BOOL (def: false). Update TEMPLATE with new RESPROPs, if they have drifted
+
+GENERATED_TEMPLATE
+ .TemplateConfiguration
+ .UpdateReplacePolicy
+ |DeletionPolicy                  #'DELETE' or 'RETAIN'. Set each RESOURCE.*Policy
+
+GENERATED_TEMPLATE.Status         #Among:
+                                  #  - CREATE_PENDING, CREATE_IN_PROGRESS
+                                  #  - UPDATE_PENDING, UPDATE_IN_PROGRESS
+                                  #  - DELETE_PENDING, DELETE_IN_PROGRESS
+                                  #  - COMPLETE, FAILED
+GENERATED_TEMPLATE.StatusReason   #STR
+GENERATED_TEMPLATE.Progress
+ .ResourcesPending|Processing
+ |Succeeded|Failed                #NUM of GENERATED_TEMPLATE.Resources
+GENERATED_TEMPLATE.TotalWarnings  #NUM of GENERATED_RESOURCE.Warnings
+
+GENERATED_RESOURCE.Warnings       #GENERATED_WARNING_ARR
+GENERATED_WARNING.Type            #One of:
+                                  #  - 'MUTUALLY_EXCLUSIVE_PROPERTIES': some RESPROPs are both required are mutually exclusive
+                                  #     - 'PARAM' starts with 'OneOf' to indicate this
+                                  #  - 'MUTUALLY_EXCLUSIVE_TYPES': a required RESPROP has multiple possible types
+                                  #  - 'UNSUPPORTED_PROPERTIES': unsupported RESPROPs such as:
+                                  #     - required + write-only + ARR
+                                  #     - optional + write-only
+GENERATED_WARNING.Properties      #GENERATED_RESPROP_ARR
+GENERATED_RESPROP.PropertyPath    #'VARR' (/-delimited)
+GENERATED_RESPROP.Required        #BOOL
+GENERATED_RESPROP.Description     #STR
+
+GENERATED_TEMPLATE.Format         #Either 'JSON' (def) or 'YAML'
+GENERATED_TEMPLATE.TemplateBody   #Like STACK_TEMPLATE.*
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:        GENERATED SCAN         :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+StartResourceScan()
+ListResourceScans()
+DescribeResourceScan()
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:       GENERATED RELATED       :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+ListResourceScanRelatedResources()
+ListResourceScanResources()
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
                                             )==:          STACK MAIN           :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
 
 CreateStack()                     #Req: STACK
-                                  #  - no StackId, *Time, Description, Outputs, StackStatus*, ChangeSetId,
-                                  #    DriftInformation, ParentId, RootId
+                                  #  - no StackId, *Time, Description, Outputs, StackStatus*, DetailedStatus, ChangeSetId,
+                                  #    DriftInformation, ParentId, RootId, DeletionMode
                                   #  - no UsePreviousTemplate, StackPolicyDuringUpdate*
-                                  #  - also ClientRequestToken
-                                  #Res: STACK
-                                  #  - only StackId
-UpdateStack()                     #Req: STACK
-                                  #  - no *Time, Description, Outputs, StackStatus*, ChangeSetId,
-                                  #    DriftInformation, ParentId, RootId
-                                  #  - StackId|StackName -> StackName 'STACK'|STACK_MID
-                                  #  - no EnableTerminationProtection, OnFailure, Tags, TimeoutInMinutes
                                   #  - also ClientRequestToken
                                   #Res: STACK
                                   #  - only StackId
 ListStacks()                      #Req: STACK
                                   #  - only StackStatus -> StackStatusFilter STR_ARR
                                   #Res: StackSummaries STACK_ARR
-                                  #  - no Capabilities, ChangeSetId, DisableRollback, EnableTerminationProtection,
+                                  #  - no Capabilities, DetailedStatus, ChangeSetId, DisableRollback, EnableTerminationProtection,
                                   #    NotificationARNs, Outputs, Parameters, RetainExceptOnCreate, RoleARN,
-                                  #    RollbackConfiguration, Tags, TimeoutInMinutes, ResourceTypes
+                                  #    RollbackConfiguration, Tags, TimeoutInMinutes, ResourceTypes, DeletionMode
                                   #  - Description -> TemplateDescription
 DescribeStacks()                  #Req: STACK
                                   #  - only StackId|StackName -> StackName 'STACK'|STACK_MID
                                   #Res: Stacks STACK_ARR
                                   #  - no Template*, UsePreviousTemplate, OnFailure, StackPolicy*, ResourceTypes
                                   #Requires PACTION ListStacks
-DeleteStack()                     #Req: STACK
-                                  #  - only RoleARN, StackId|StackName -> StackName 'STACK'|STACK_MID
-                                  #  - only one with RetainResources
-                                  #  - also ClientRequestToken
-                                  #Res: empty
 
 STACK                             #Provisioning of a TEMPLATE
                                   #After deletion:
@@ -357,6 +463,16 @@ STACK.StackStatus                 #'STATUS_STATE'
                                   #     - not for IMPORT
                                   #     - UI provides with link to likely cause: STACK EVENT and CloudTrail LLEVENT
 STACK.StackStatusReason           #STR
+STACK.DetailedStatus              #Additional information for following STACK.StackStatus:
+                                  #  - CREATE_IN_PROGRESS:
+                                  #     - undefined: RESOURCE creation started
+                                  #     - 'CONFIGURATION_COMPLETE': RESOURCE created but still ongoing "stabilization"
+                                  #        - i.e. still launching, and being polled by CloudFormation until fully ready
+                                  #        - also called "eventual consistency check"
+                                  #        - however, other RESOURCEs that depend on it can already proceed
+                                  #  - CREATE_FAILED:
+                                  #     - 'VALIDATION_FAILED': user input error (e.g. wrong RESPROPs)
+                                  #     - undefined: other errors
 
 STACK|CHANGESET.ResourceTypes     #RESTYPE_ARR. Fail if lacks a RESTYPE used in STACK|CHANGESET
                                   #Can be 'AWS::*' (def), 'AWS::SERVICE::RESOURCE|*', 'Custom::RESOURCE|*'
@@ -527,16 +643,8 @@ EVENT.Timestamp                   #DATE
 EVENT.LogicalResourceId
  |PhysicalResourceId|ResourceType
  |StackId|StackName
- |ResourceStatus[Reason]          #Like STACK_RESOURCE.*
-EVENT.DetailedStatus              #One of:
-                                  #  - undefined
-                                  #     - if EVENT.ResourceStatus 'CREATE_IN_PROGRESS', means RESOURCE creation started
-                                  #  - 'CONFIGURATION_COMPLETE'
-                                  #     - only with EVENT.ResourceStatus 'CREATE_IN_PROGRESS'
-                                  #     - means RESOURCE was created but it is still ongoing "stabilization"
-                                  #        - i.e. still launching, and being polled by CloudFormation until fully ready
-                                  #        - also called "eventual consistency check"
-                                  #     - however, other RESOURCEs that depend on it can already proceed
+ |ResourceStatus[Reason]
+ |DetailedStatus                  #Like STACK_RESOURCE.*
 EVENT.ResourceProperties          #RESOURCE.Properties but as 'OBJ_JSON'
 
 EVENT.ClientRequestToken          #STR. 1 per OP
@@ -558,6 +666,15 @@ cfplot.py STACK                  ##Display STACK's EVENTs as a trace graph
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
+
+UpdateStack()                     #Req: STACK
+                                  #  - no *Time, Description, Outputs, StackStatus*, DetailedStatus, ChangeSetId,
+                                  #    DriftInformation, ParentId, RootId
+                                  #  - StackId|StackName -> StackName 'STACK'|STACK_MID
+                                  #  - no EnableTerminationProtection, OnFailure, Tags, TimeoutInMinutes, DeletionMode
+                                  #  - also ClientRequestToken
+                                  #Res: STACK
+                                  #  - only StackId
 
 NOOP ==>                          #No update if no RESOURCE.RESPROP has changed
 
@@ -647,6 +764,11 @@ ROLLBACK_TRIGGER.Arn              #ALARM_ARN
                                              \=+===============================+=/
 
 
+DeleteStack()                     #Req: STACK
+                                  #  - only RoleARN, StackId|StackName -> StackName 'STACK'|STACK_MID
+                                  #  - only one with RetainResources
+                                  #  - also ClientRequestToken, DeletionMode
+                                  #Res: empty
 UpdateTerminationProtection()     #Req: STACK
                                   #  - only StackName, EnableTerminationProtection
                                   #Res: STACK
@@ -674,7 +796,10 @@ STACK|CHANGESET
  .RetainExceptOnCreate            #BOOL (def: false). Force RESOURCE.DeletionPolicy 'RetainExceptOnCreate'
 
 STACK.RetainResources             #'RESOURCE'_ARR ignored by DeleteStack()
-                                  #Meant for STACKs in StackState 'DELETE_FAILED' due to issue deleting those RESOURCEs
+                                  #Meant for STACKs in StackState 'DELETE_FAILED' due to issue
+                                  #deleting those RESOURCEs (e.g. stateful RESTYPEs)
+STACK.DeletionMode                #If 'FORCE_DELETE_STACK' (def: 'STANDARD'), delete STACK if it gets stuck
+                                  #in StackState 'DELETE_FAILED' due to issue deleting some RESOURCEs
 
 STATEFUL RESTYPES ==>             #RESTYPE with data, e.g. S3 BUCKET or databases
                                   #To avoid losing data:
@@ -708,6 +833,7 @@ ListChangeSets()                  #Req: CHANGESET
                                   #    Parameters, RollbackConfiguration, Tags
 DescribeChangeSet()               #Req: CHANGESET
                                   #  - only ChangeSetName, StackName
+                                  #  - only one with IncludePropertyValues
                                   #Res: CHANGESET
                                   #Paginates CHANGESET.Changes
 ExecuteChangeSet()                #Req: CHANGESET
@@ -802,6 +928,9 @@ RESCHANGE.Action                  #Can be:
                                   #  - 'Modify': update RESOURCE
                                   #  - 'Remove': delete RESOURCE
                                   #  - 'Dynamic': unknown
+RESCHANGE.PolicyAction            #Action according to RESOURCE.Update[Replace]Policy|DeletionPolicy:
+                                  #  - 'Delete', 'Retain', 'Snapshot': like RESOURCE.DeletionPolicy
+                                  #  - 'ReplaceAndDelete|Retain|Snapshot': same but replace first
 RESCHANGE.Scope                   #'PROP'_ARR with all CHANGE_TARGET.Attribute
                                   #Which RESOURCE.PROPs are being updated
                                   #Only with Action 'Modify'
@@ -832,12 +961,20 @@ CHANGE_DETAIL.Evaluation          #Whether new value can be known before executi
                                   #  - 'Static': otherwise
 
 CHANGE_DETAIL.Target              #CHANGE_TARGET. Which property will change in TEMPLATE
-CHANGE_TARGET.Attribute           #'PROP' among: 'Properties', 'Metadata', 'CreationPolicy', 'UpdatePolicy', 'DeletionPolicy', 'Tags'
+CHANGE_TARGET.Attribute           #'PROP' among: 'Properties', 'Metadata', 'CreationPolicy', 'UpdatePolicy', 'UpdateReplacePolicy', 'DeletionPolicy', 'Tags'
 CHANGE_TARGET.Name                #'RESPROP'
                                   #Only with Attribute 'Properties'
 CHANGE_TARGET.RequiresRecreation  #'Always', 'Never' or 'Conditionally'
                                   #Whether RESPROP update requires a Replacement
                                   #Only with Attribute 'Properties'
+
+CHANGESET.IncludePropertyValues   #BOOL. If false (def), do not include the following fields
+RESCHANGE                         #'OBJ_JSON' of RESOURCE context before|after update
+ .BeforeContext|AfterContext      #I am not completely sure what this is
+CHANGE_TARGET.AttributeChangeType #One of: 'Add', 'Modify', 'Remove'
+CHANGE_TARGET.Path                #'VAR' being updated, i.e. RESOURCE.PROP.VAR
+CHANGE_TARGET                     #'VAL' before|after update
+ .BeforeValue|AfterValue          #Might be truncated
 
 
                                              /=+===============================+=\
@@ -1570,6 +1707,20 @@ INSTANCE|OP_RES.OrganizationUnitId#ORG_ROOT_ID|ORG_UNIT_ID based on DEPLOYMENT_T
 SET.OrganizationalUnitIds         #ORG_ROOT_ID|ORG_UNIT_ID_ARR based on DEPLOYMENT_TARGETs
                                   #Only with PermissionModel 'SERVICE_MANAGED'
 
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:        SET AUTO DEPLOY        :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+ListStackSet                      #Req: SET
+ AutoDeploymentTargets()          #  - only StackSetId|StackSetName -> StackSetName 'SET'|SET_MID
+                                  #  - also OP: CallAs
+                                  #Res: Summaries INSTANCE_ARR
+                                  #  - only OrganizationalUnitId, Region -> Regions ARR
+
 SET.AutoDeployment                #AUTODEPLOY
 AUTODEPLOY.Enabled                #BOOL (def: false)
                                   #Automatically add|remove INSTANCEs when new ACCOUNTs are added|removed to the ORG
@@ -2060,7 +2211,8 @@ REQ|RES_PAYLOAD.RequestId         #STR. Unique ID. Must be combined with StackId
 
 REQ_PAYLOAD.ResponseURL           #URL. Should send RES_PAYLOAD to it
                                   #Pre-signed S3 PutObject() URL
-                                  #1h timeout
+RESPROP
+ CUSTOM_RESOURCE.ServiceTimeout   #NUM (in secs, def: 1h). Timeout to send RES_PAYLOAD
 RES_PAYLOAD                       #JSON. Max 4KB
 RES_PAYLOAD.Status                #'SUCCESS|FAILED'
 RES_PAYLOAD.Reason                #STR. Required if Status 'FAILED', optional if 'SUCCESS'
