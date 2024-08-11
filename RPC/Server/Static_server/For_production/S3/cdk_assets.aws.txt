@@ -865,63 +865,114 @@ CLACCESSPOINT_OPTS.payload        #VAL. Automatically JSON stringified. S3CTRANS
 CLACCESSPOINT_OPTS
  .cloudWatchMetricsEnabled        #S3LAMBDA.*
 
-new BucketDeployment              #CBUCKET_DEPLOYMENT
- (...CARGS, OPTS)                 #Part of package aws-s3-deployment (part of CDK monorepo)
+new BucketDeployment              #CBUCKET_DEPLOYMENT. Like new Asset() except meant for public facing OBJECTs:
+ (...CARGS, OPTS)                 #  - can set static file-related headers: caching, ACL, encryption, redirect, storage class, metadata
+                                  #  - automatically prunes OBJECTs in BUCKET when either:
+                                  #     - removing OBJECTs locally
+                                  #     - removing CBUCKET_DEPLOYMENT
+                                  #  - invalidates CloudFront cache
+                                  #  - better ways to include|exclude files
+                                  #First, Source.*(...):
+                                  #  - uploads local files to a S3 SRC_BUCKET, as a .zip
+                                  #  - using new Asset() under-the-hood
+                                  #  - except Source.bucket() when OBJECTs already uploaded
+                                  #Then a CustomResource's FUNCTION:
+                                  #  - downloads and extracts the .zip
+                                  #  - uploads it to a DEST_BUCKET
+                                  #  - using `aws s3 cp|sync` under-the-hood
+                                  #Part of package aws-s3-deployment (part of CDK monorepo)
 
-On Create|Update:
-  - use temp dir TMP_DIR
-     - if OPTS.useEfs true, uses /mnt/lambda/RANDOM
-  - each s3://BUCKET/OBJECT.zip (from OPTS.sources) -> TMP_DIR/contents/OBJECT.zip
-     - if OPTS.extract true -> TMP_DIE/contents/*
-  - aws s3 sync TMP_DIR/contents DEST_BUCKET/DEST_OBJECT
-On Delete: aws s3 rm DEST_BUCKET --recursive
-  - also on Update with new DEST_BUCKET
-  - unless OPTS.retainOnDelete true (def: false)
+OPTS.sources                      #CSOURCE_ARR. OBJECTs to upload to DEST_BUCKET
+CBUCKET_DEPLOYMENT
+ .addSource(CSOURCE)              #
+CBUCKET_DEPLOYMENT.objectKeys     #ARR_TK resolving to 'OBJECT'_ARR from all CSOURCEs
 
-OPTS.role                         #CFUNCTION_OPTS.*
-                                  #Automatically gets the right permissions on the BUCKETs and CloudFront DISTRIBUTIONs
-OPTS.logGroup|vpc[Subnets]
- |memoryLimit|ephemeralStorageSize#CFUNCTION_OPTS.*
-OPTS.useEfs                       #BOOL (def: false). CFUNCTION_OPTS.filesystem
-                                  #Requires OPTS.vpc
-
-OPTS.extract                      #BOOL (def: false). ???
-
-OPTS.sources                      #CSOURCE_ARR
 Source.bucket(IBUCKET, 'OBJECT')
  ->CSOURCE                        #Zip file in S3
-Source.asset('PATH'[, HFOPTS])    #Local zip file or DIR
- ->CSOURCE                        #Uses aws-s3-assets new Asset(HFOPTS) under-the-hood
-Source.data('OBJECT', STR[_TK])   #Inline contents STR
- ->CSOURCE                        #Automatically creates a DIR with a single file in it
-                                  #Then uses aws-s3-assets new Asset() under-the-hood
-                                  #Can use STR_TK:
-                                  #  - must resolve to { Ref }, { Fn::GetAtt } or { Fn::Select }
-                                  #  - not nested, except can be wrapped by { Fn::Join }
-                                  #  - requires OPTS.extract true
-Source.json|yamlData('OBJECT',VAL)
- ->CSOURCE                        #Like Source.data() but uses CSTACK.toJson|YamlString() under-the-hood
+Source.asset('PATH'[, HFOPTS])
+ ->CSOURCE                        #Local DIR or zip file
+Source.data('FILENAME','CONTENTS')#Inline contents
+ ->CSOURCE                        #Under-the-hood creates a DIR with a single file in it
+Source.data('FILENAME', STR_TK)   #Same but using a TK
+ ->CSOURCE                        #Must resolve to { Ref }, { Fn::GetAtt } or { Fn::Select }
+                                  #Not nested, except can be wrapped by { Fn::Join }
+                                  #Cannot use OPTS.extract false
+Source.json|yamlData
+ ('FILENAME', VAL)->CSOURCE       #Like Source.data() but uses CSTACK.toJson|YamlString() under-the-hood
 
-OPTS.destinationBucket            #ICBUCKET
-OPTS.destinationKeyPrefix         #'OBJECT'
+OPTS.destinationBucket
+CBUCKET_DEPLOYMENT.deployedBucket #ICBUCKET. DEST_BUCKET
+OPTS.destinationKeyPrefix         #'/DEST_PREFIX' (def: '/'). Virtual directory, i.e. prefixes each OBJECT in DEST_BUCKET
 
-OPTS.prune                        #BOOL (def: true). Overwrite files in destination BUCKET
-OPTS.include|exclude              #'GLOB' (def: none). Filter files to copy
+OPTS.distributionPaths            #'OBJECT'_ARR (def: '/DEST_PREFIX/*', i.e. all)
+                                  #OBJECTs to invalidate CloudFront cache on each deploy
+OPTS.distribution                 #CloudFront IDISTRIBUTION used for invalidation
+
+OPTS.extract                      #BOOL (def: true). If false, upload a single OBJECT .zip in DEST_BUCKET, instead of multiple OBJECTs
+OPTS.prune                        #BOOL. If true (def), delete OBJECTs in DEST_BUCKET if they do not exist in CSOURCEs
+                                  #I.e. if false, retain OBJECTs between deploys, unless overwritten by CSOURCEs
+OPTS.retainOnDelete               #BOOL (def: true). If false, delete all OBJECTs in DEST_BUCKET (under DEST_PREFIX/*) when either:
+                                  #  - CBUCKET_DEPLOYMENT is deleted
+                                  #  - CBUCKET_DEPLOYMENT.destinationBucket is changed
+
+OPTS.exclude                      #'GLOB' (def: none). Exclude files
+                                  #Differences with Source.asset() HFOPTS.exclude 'PATH'_ARR:
+                                  #  - use globbing
+                                  #  - excluded files are taken into account by CloudFront INVALIDATION
+                                  #  - less efficient because still uploads excluded files to s3 initially
+                                  #Required when using OPTS.include
+OPTS.include                      #'GLOB' (def: '*')
 
 OPTS.metadata                     #OBJ. x-amz-meta-* [C]
 OPTS.contentDisposition|Encoding
  |Language|Type                   #STR. Content-* [C]
 OPTS.accessControl                #'ACL'. CamelCase'd, e.g. 'BucketOwnerFullControl'. x-amz-acl [C]
-OPTS.cacheControl                 #STR_ARR. Cache-Control [C]
-OPTS.expires                      #EXPIRATION. Expires [C]
 OPTS.storageClass                 #'STORAGE_CLASS'. x-amz-storage-class [C]
 OPTS.websiteRedirectLocation      #'URL'. x-amz-website-redirect-location [C]
+OPTS.signContent                  #BOOL (def: false). x-amz-checksum-ALGO [C]
 OPTS.serverSideEncryption         #STR. x-amz-server-side-encryption [C]
 OPTS
  .serverSideEncryptionAwsKmsKeyId #STR. x-amz-server-side-encryption-aws-kms-key-id [C]
 OPTS.serverSideEncryption
  CustomerAlgorithm                #STR. x-amz-server-side-encryption-customer-algorithm [C]
 
-OPTS.distribution                 #CloudFront IDISTRIBUTION
-OPTS.distributionPaths            #'/PATH'_ARR (def: '/OBJECT/*' using OPTS.destinationKeyPrefix)
-                                  #On deploy, create a CloudFront INVALIDATION
+OPTS.expires                      #EXPIRATION. Expires [C]
+OPTS.cacheControl                 #CACHE_CONTROL_ARR. Cache-Control [C]
+CacheControl.fromString(STR)
+ ->CACHE_CONTROL                  #Cache-Control: STR [C]
+CacheControl.mustRevalidate
+ |noCache|noTransform|noStore
+ |mustUnderstand|immutable
+ |proxyRevalidate()->CACHE_CONTROL#Cache-Control: STR [C], dasherized
+CacheControl
+ .setPublic|setPrivate()
+ ->CACHE_CONTROL                  #Cache-Control: public|private [C]
+CacheControl.maxAge|sMaxAge
+ |staleWhileRevalidate
+ |staleIfError(DURATION)
+ ->CACHE_CONTROL                  #Cache-Control: STR=NUM [C], dasherized
+
+OPTS.role                         #FUNC_VERSION.Role (def: automatically created)
+CBUCKET_DEPLOYMENT.handlerRole    #Automatically gets the right permissions on the BUCKETs and CloudFront DISTRIBUTION
+OPTS.memoryLimit                  #NUM (in MB, def 128). FUNC_VERSION.MemorySize
+                                  #Can customize to improve performance
+OPTS.ephemeralStorageSize         #NUM (in MB). FUNC_VERSION.EphemeralStorage.Size
+                                  #Def|min: 512MB, max: 10GB
+                                  #Should fit the OBJECTs total size
+OPTS.useEfs                       #BOOL (def: false). Use FUNC_VERSION.FileSystemConfigs
+                                  #I.e. when OPTS.ephemeralStorageSize is not enough, >10GB
+                                  #Requires OPTS.vpc
+OPTS.logGroup|vpc[Subnets]        #CFUNCTION_OPTS.*
+
+new DeployTimeSubstitutedFile
+ (...CARGS, OPTS)                 #CFILE_BUCKET_DEPLOYMENT. CBUCKET_DEPLOYMENT, but using a single file as source
+CFILE_BUCKET_DEPLOYMENT.*         #Like CBUCKET_DEPLOYMENT except:
+OPTS.*                            #  - no OPTS.sources
+                                  #  - OPTS.prune always false
+                                  #  - CBUCKET_DEPLOYMENT.deployedBucket -> CFILE_BUCKET_DEPLOYMENT.bucket
+OPTS.source                       #'PATH', used as CSOURCE
+OPTS.substitutions.VAR            #STR, replacing template {{VAR}} in file
+OPTS.destinationKey
+CFILE_BUCKET_DEPLOYMENT.objectKey #'OBJECT' (def: file contents hash)
+
+TODO: move TypeScriptSource()
