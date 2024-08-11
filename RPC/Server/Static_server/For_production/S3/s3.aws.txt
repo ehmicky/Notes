@@ -20,7 +20,7 @@ SUMMARY ==>                       #API: virtual hosting, s3|s3-control, high-lev
                                   #Metadata: custom, tags, language
                                   #Versioning: versionId, delete marker, MFA delete
                                   #Storage class: STANDARD_IA, ONEZONE_IA, GLACIER_IR, intelligent tiering, Express
-                                  #Archive restore: GLACIER|DEEP_ARCHIVE, tier, duration, select
+                                  #Archive restore: GLACIER|DEEP_ARCHIVE, tier, duration
                                   #Lifecycle: filter, [non]current, duration, storage class, expiration, delete marker, abort multipart
                                   #Lock: duration|date, bypass, legal hold
                                   #Ownership: bucket|object, BucketOwnerEnforced|ObjectWriter
@@ -28,7 +28,6 @@ SUMMARY ==>                       #API: virtual hosting, s3|s3-control, high-lev
                                   #Pre-signed URL: duration, ignore body
                                   #Static website: error document, index, redirects
                                   #Encryption: SSE-S3, [D]SSE-KMS, SSE-C
-                                  #Select: range, CSV|ndjson|Parquet, compression, SQL
                                   #Replication: source|destination, bidirectional, filter, existing OBJECTs, delete markers, RTC, batch
                                   #Inventory: filter, daily|weekly, CSV|ORC|Parquet
                                   #Requests logging
@@ -209,17 +208,6 @@ READ|WRITE|RESTORE ==>            #Express One Zone:
                                   #     - Bulk: 1$/4e4 requests, 1$/400GB
                                   #     - Standard: 1$/1e4 requests, 1$/50GB
                                   #I.e. better for rarely accessed files, e.g. backups
-
-SELECT ==>                        #Input: 1$/500GB
-                                  #  - GLACIER + Expedited: 10x more expensive
-                                  #  - GLACIER + Standard: 4x more expensive
-                                  #  - GLACIER + Bulk: 2x cheaper
-                                  #  - DEEP_ARCHIVE: free
-                                  #Output: 1$/1400GB
-                                  #  - GLACIER_IR, GLACIER + Expedited: 43x more expensive
-                                  #  - STANDARD_IA|ONEZONE_IA, GLACIER + Standard: 14x more expensive
-                                  #  - GLACIER + Bulk: 4x more expensive
-                                  #  - DEEP_ARCHIVE: free
 
 IN|OUT TRAFFIC ==>                #Internet -> S3: free
                                   #S3 -> Internet: 1$/11GB
@@ -1403,7 +1391,6 @@ MISSING FEATURES ==>              #TAGS (on BUCKET, OBJECT), metadata
                                   #CORS
                                   #Encryption: always use SSE-S3
                                   #PAYMENT
-                                  #SELECT
                                   #REPLICATION
                                   #INVENTORY, LOGGING, SLENS, ANALYTICS, NOTIFICATIONS
                                   #  - but can use AWS/S3/* METRICs (but not configure with MAIN_METRICS)
@@ -1531,7 +1518,7 @@ x-amz-restore-request-date:
 RESTORE_STATUS.IsRestoreInProgress#BOOL
 
 RESTORE.Days                      #NUM of days before copy expires
-                                  #Not with Type 'SELECT', nor INTELLIGENT_TIERING
+                                  #Not with INTELLIGENT_TIERING
 RESTORE_STATUS.RestoreExpiryDate  #'DATE' when copy expires
 
 x-amz-restore-output-path:
@@ -1539,9 +1526,6 @@ x-amz-restore-output-path:
 RESTORE.OutputLocation.S3         #RESTORE_OUTPUT
 RESTORE_OUTPUT.BucketName         #'BUCKET'
 RESTORE_OUTPUT.Prefix             #STR
-
-RESTORE.Type                      #Whether can use SelectParameters: not (def) or 'SELECT'
-RESTORE.SelectParameters          #Apply SELECT_REQ (except ScanRange, RequestProgress) on OBJECT being restored
 
 NEVENT s3:ObjectRestore:Post      #On RestoreObject() start
 NEVENT s3:ObjectRestore:Delete    #On RestoreObject() expiration
@@ -1594,7 +1578,6 @@ INTELLIGENT_TIERING               #Automatically set StorageClass to:
                                   #"Used" means any of:
                                   #  - content read|write: GetObject(), CopyObject|UploadPartCopy(), RestoreObject(),
                                   #    PutObject|CompleteMultipartUpload|ListParts()
-                                  #  - SelectObjectContent(), only for GLACIER|DEEP_ARCHIVE
                                   #  - but not metadata read|write: ListObjectsV2(), HeadObject(), etc.
                                   #Only impacts effective StorageClass: the one reported is always 'INTELLIGENT_TIERING'
                                   #Max 1e3 per BUCKET
@@ -2838,214 +2821,6 @@ x-amz-request-charged:
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:          SELECT MAIN          :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-POST /BUCKET/OBJECT               #Req: SELECT_REQ, x-amz-server-side-encryption-customer-* [C]
- ?select&select-type=2            #Res: SELECT_RES
-SelectObjectContent()             #No own PACTION: use 's3:GetObject' instead
-
-SELECT_REQ                        #Reads OBJECT but transforms it using SQL
-                                  #OBJECT must be CSV, ndjson, or Parquet
-                                  #"Record": single CSV|JSON|Parquet line (max 1MB)
-
-SELECT_REQ.ScanRange.Start|End    #NUM (in bytes) to only use part of OBJECT
-                                  #If falls in the middle of a record, process whole record
-                                  #Not with SELECT_JSON.Type 'DOCUMENT' nor SELECT_CSV.AllowQuotedRecordDelimiter true
-
-AWS/S3/[Storage-Lens/]
- SelectRequests                   #NUM of SELECT requests
-AWS/S3/[Storage-Lens/]
- SelectBytesScanned               #NUM. SELECT_STATS.BytesScanned
-AWS/S3/[Storage-Lens/]
- SelectBytesReturned              #NUM. SELECT_STATS.BytesReturned
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:        SELECT FORMATS         :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-SELECT_REQ.InputSerialization     #SELECT_INPUT. Input format
-                                  #No CSV.QuoteFields
-SELECT_REQ.OutputSerialization    #SELECT_OUTPUT. Output format
-                                  #No JSON.Type, CSV.AllowQuotedRecordDelimiter|FileHeaderInfo|Comments
-
-SELECT_INPUT.CompressionType      #'NONE' (def), 'GZIP', 'BZIP2'
-                                  #Not with Parquet
-
-SELECT_INPUT|OUTPUT.JSON          #SELECT_JSON
-SELECT_JSON.Type                  #Either:
-                                  #  - 'DOCUMENT': JSON OBJ_ARR
-                                  #  - 'LINES': ndjson
-
-SELECT_INPUT|OUTPUT.CSV           #SELECT_CSV
-SELECT_CSV.FileHeaderInfo         #Whether first line is header:
-                                  #  - 'USE': yes, and can use as "COL" in SQL
-                                  #  - 'IGNORE': yes, but cannot use as "COL" in SQL, only "_NUM"
-                                  #  - 'NONE': no
-SELECT_CSV|JSON.RecordDelimiter   #'CHAR' (def: \n)
-SELECT_CSV
- .AllowQuotedRecordDelimiter      #BOOL (def: false). Allow quoting RecordDelimiter. Slower
-SELECT_CSV.FieldDelimiter         #'CHAR' (def: ,)
-SELECT_CSV.QuoteCharacter         #'CHAR' (def: ") for quoting
-SELECT_CSV.QuoteEscapeCharacter   #'CHAR' (def: ") for escaping QuoteCharacter
-SELECT_CSV.QuoteFields            #Whether to quote, among 'ASNEEDED' (def) or 'ALWAYS'
-SELECT_CSV.Comments               #'CHAR' (def: #) used to comment a line
-
-SELECT_INPUT.Parquet              #OBJ. Use Apache Parquet
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:        SELECT RESPONSE        :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-SELECT_RES                        #Result of SELECT_REQ
-                                  #Is a stream of SELECT_MESSAGE, using Transfer-Encoding: chunked [S]
-                                  #In a nutshell, it mostly just returns CSV|JSON|Parquet data, but in multiple chunks
-                                  #In SDK, is ASYNC_ITERABLE of SELECT_MESSAGEs
-                                  #In CLI, must specify a FILE instead
-
-SELECT_MESSAGE                    #Structure:
-                                  #  - prelude:
-                                  #     - 4 bytes: message size
-                                  #     - 4 bytes: message headers size
-                                  #  - 4 bytes: CRC of prelude
-                                  #  - data:
-                                  #     - 0-n SELECT_HEADER
-                                  #     - payload
-                                  #  - 4 bytes: CRC of message, except this field itself
-
-SELECT_HEADER                     #Structure:
-                                  #  - 1 byte: name length
-                                  #  - name ':NAME'
-                                  #  - 1 byte: type, always 7
-                                  #  - 2 bytes: value length
-                                  #  - value
-SELECT_HEADER message-type 'event'#Always set except when message-type 'error'
-SELECT_HEADER content-type        #'MIME' of payload (not set if none).
-                                  #'application/octet-stream' for Records, 'text/xml' for Progress|Stats
-
-SELECT_HEADER event-type 'Records'#SELECT_MESSAGE with SELECT actual response
-                                  #Payload is 'BASE64' of CSV|JSON|Parquet 1-n records
-
-SELECT_HEADER event-type 'Cont'   #SELECT_MESSAGE with ping. No payload
-SELECT_HEADER event-type 'End'    #SELECT_MESSAGE at the end. No payload
-
-SELECT_HEADER message-type 'error'#SELECT_MESSAGE when there is an error. No payload
-SELECT_HEADER error-code          #'CODE'
-SELECT_HEADER error-message       #STR
-
-SELECT_REQ.RequestProgress.Enabled#BOOL (def: false). Enables event-type 'Progress'
-SELECT_HEADER
- event-type 'Progress'            #SELECT_MESSAGE with SELECT_RES_STATS payload, sent progressively
-SELECT_HEADER event-type 'Stats'  #SELECT_MESSAGE with SELECT_RES_STATS payload, sent at the end
-SELECT_RES_STATS.BytesScanned     #NUM of bytes as input before decompression
-SELECT_RES_STATS.BytesProcessed   #NUM of bytes as input after decompression
-SELECT_RES_STATS.BytesReturned    #NUM of bytes as output
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:          SELECT SQL           :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-SELECT_REQ.ExpressionType         #Always 'SQL'
-SELECT_REQ.Expression             #STR. SQL SELECT expression
-                                  #Max 1.3e5 chars
-
-SQL ==>                           #See Postgres for the syntax of most of what follows
-WHITESPACES ==>                   #Ignored, but cannot use newlines
-
-select VAL|* [as COL_ALIAS],...
- from S3Object                    #Operates record-wise
-select ... from S3Object.VARR     #Only if JSON
-                                  #OBJ: .VAR, ['VAR'], .*
-                                  #ARR: [NUM], [*]
-                                  #* creates one ROW per item
-                                  #Missing|empty VARs are silently skipped, including by SQL FUNCs
-                                  #Since JSON is always an ARR, always start with [*]
-select ... from S3Object          #Def ROW_ALIAS:
- [as] ROW_ALIAS                   #  - last VAR in VARR
-                                  #  - if *: _1
-select ... where BOOL_REXPR       #
-select ... limit NUM              #
-
-[ROW_ALIAS.]VARR                  #JSON: .VAR or [NUM]
-                                  #CSV: .VAR (using header) or ._NUM (1-based index)
-
-"NAME"                            #Make VARR case-sensitive. Also needed if reserved keyword
-
-VAL is [not] missing              #Missing|empty VARR
-VAL is [not] null                 #
-coalesce(VAL,...)->VAL            #
-nullif(VAL, VAL2)->VAL|null       #
-
-VAL = <> != VAL2                  #
-VAL in (VAL2,...)                 #
-case [VAL]
-when VAL2 then VAL3
-...
-[else VAL4]
-end                               #
-
-VAL < <= > >= VAL2                #
-VAL [not] between VAL2 and VAL3   #
-
-cast(VAL as TYPE)                 #Explicit type casting
-                                  #There is no implicit type casting
-
-bool                              #TYPE. true|false
-BOOL and BOOL2                    #
-BOOL or BOOL2                     #
-not BOOL                          #
-
-int[eger]                         #TYPE. 8 bytes, signed
-float                             #TYPE. 8 bytes
-decimal|numeric                   #TYPE. Fixed precision float. Max 38 significant digits, max 31 integer digits
-NUM + - * / NUM2                  #
--NUM                              #
-NUM % NUM2                        #
-
-string[(NUM)]                     #TYPE. Def NUM: 1. Max NUM: 2e9
-char[acter]_length(STR)->NUM      #
-lower|upper(STR)->STR             #
-trim([leading|trailing|both
- ['CHAR...'] from] STR)->STR      #
-substring
- (STR from NUM [for NUM2])->STR2  #NUM can be negative if NUM2 specified
-STR like 'GLOB' [escape 'CHAR']   #
-
-timestamp                         #TYPE. 'YYYY-MM-DDT[HH:MM[:SS[.SSS[SSS]]]][Z]'
-PERIOD                            #year, month, day, hour, minute, second
-                                  #Only with extract(): timezone_hour|minute
-to_timestamp(STR)->TIMESTAMP      #
-to_string
- (TIMESTAMP, 'FORMAT')->STR       #'FORMAT': see online doc
-extract
- (PERIOD from TIMESTAMP)->NUM     #
-date_add|date_diff
- (PERIOD, NUM, TIMESTAMP)
- ->TIMESTAMP2                     #
-utcnow()->TIMESTAMP               #
-
-count(SET)->NUM                   #
-min|max(NUM_SET)->NUM2            #
-sum(NUM_SET)->NUM2                #
-avg(NUM_SET)->NUM2                #
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
                                             )==:       REPLICATION MAIN        :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -4263,7 +4038,7 @@ ALLOWED ACTIONS ==>               #Can only use ACTIONs for:
                                   #  - OBJECT (read-write)
                                   #     - including RestoreObject(), ACL, TAGS, OBJECT_LOCK, LEGAL_HOLD
                                   #     - including CopyObject(), UploadPartCopy(), but only if same-REGION
-                                  #     - excluding HeadObject(), GetObjectAttributes(), GetObjectTorrent(), DeleteObjects(), PostObject(), SelectObjectContent()
+                                  #     - excluding HeadObject(), GetObjectAttributes(), GetObjectTorrent(), DeleteObjects(), PostObject()
                                   #Requester must be authenticated
 
 AWS::S3::AccessPoint              #RESPROPs: BucketAccountId, Bucket, VpcConfiguration
@@ -5034,7 +4809,7 @@ OUTPOSTS ON S3 ==>                #Not fully documented yet
                                   #     - LOG_FILE.edgeDeviceDetails: https://docs.aws.amazon.com/awscloudtrail/latest/userguide/cloudtrail-event-reference-record-contents.html
                                   #     - https://docs.aws.amazon.com/AmazonS3/latest/userguide/cloudtrail-logging-understanding-s3-entries.html#cloudtrail-logging-understanding-s3outposts-entries
 
-NOT SUPPORTED ==>                 #  - TORRENT, LocationConstraint, ACL, LOCK, LEGAL_HOLD, SELECT, RESTORE, PUBLIC_BLOCK,
+NOT SUPPORTED ==>                 #  - TORRENT, LocationConstraint, ACL, LOCK, LEGAL_HOLD, RESTORE, PUBLIC_BLOCK,
                                   #  - x-amz-confirm-remove-self-bucket-access [C], ListObjectVersions()
                                   #  - ACCESSPOINT without a VpcConfiguration
                                   #  - IPv6
