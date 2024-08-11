@@ -1,0 +1,606 @@
+
+              
+   CDK_ASSETS  
+              
+
+
+
+VERSION ==>                       #Part of CDK (see its doc)
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:      ASSET MANIFEST MAIN      :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+ASSEMBLY_DIR/                     #ASSETS. Sets of local data to upload to S3 or ECR, for a specific STACK
+ STACK_ARTIFACT_ID.assets.json    #ARTIFACT_ID is 'STACK_ARTIFACT_ID.assets'
+                                  #Is just declaration of intent. Actual uploading is done by `cdk deploy` (through CPUBLISH), including:
+                                  #  - zipping (FASSET_SRC.packaging 'zip')
+                                  #  - command execution (ASSET_SRC.executable)
+                                  #  - `docker build`
+                                  #  - upload to S3|ECR
+ASSETS_CARTIFACT.contents         #ASSETS
+
+ASSETS_ARTIFACT.properties.file   #'PATH' to ASSETS, relative to 'ASSEMBLY_DIR'
+ASSETS_CARTIFACT.file             #'PATH' to ASSETS, absolute
+
+Manifest.saveAssetManifest
+ (ASSETS, 'PATH')                 #Save to 'PATH', as JSON
+Manifest.loadAssetManifest
+ ('PATH')->ASSETS                 #Inverse
+
+ASSETS.version                    #STR. Same value as MANIFEST.version
+
+ASSET.source                      #ASSET_SRC. Local data
+ASSET.destinations.DEST_ID        #ASSET_DEST. Where to upload
+                                  #If agnostic, use 'current_account|current_region'
+ASSET_DEST.*                      #With CPUBLISH, can be BSTR
+ASSET_DEST.region                 #'REGION'. If agnostic, undefined
+
+CVAR aws:cdk:enable-asset-metadata#BOOL (def: true). Whether to set 'aws:asset:*'
+cdk diff|deploy|import|destroy    #On either CMETADATA or RESOURCE.Metadata, depending on the case
+ |list|metadata --asset-metadata  #Only for RESOURCEs that have ASSETs, documented as such here
+                                  #Used by:
+                                  #  - SAM for local workflow
+                                  #  - `cdk diff` to populate nested STACKs
+CMETADATA 'aws:asset:path'        #'PROP'. Means ASSET 'PATH' is at RESOURCE.PROP
+CMETADATA 'aws:asset:property'    #'PATH' to ASSET
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:   ASSET MANIFEST HIGH-LEVEL   :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+cdk-assets                        #Package in same monorepo
+
+AssetManifest.fromFile
+ ('ASSEMBLY_DIR/
+ STACK_ARTIFACT_ID.assets.json')
+ ->CASSETS
+new AssetManifest
+ ('ASSEMBLY_DIR', ASSETS)         #CASSETS. Higher-level view of ASSETS
+CASSETS.directory                 #'ASSEMBLY_DIR'
+
+CASSETS.entries                   #CASSET_ARR
+CASSETS.files                     #Same but only with type 'file'
+
+CASSET                            #ASSET_SRC + ASSET_DEST
+CASSET.type                       #'file' or 'docker-image'
+CASSET.id.assetId                 #'SRC_ID'
+CASSET.source|genericSource       #ASSET_SRC
+CASSET.id.destinationId           #'DEST_ID'
+CASSET
+ .destination|genericDestination  #ASSET_DEST
+
+CASSETS.select
+ (CASSET_PATTERN)->CASSETS2       #Return a subset matching specific SRC_IDs|DEST_IDs
+new DestinationPattern
+ (['SRC_ID'[, 'DEST_ID']])        #CASSET_PATTERN
+CASSET_PATTERN.toString()
+ ->'SRC_ID|*:DEST_ID:*'           #
+DestinationPattern.parse
+ ('[SRC_ID|*][:DEST_ID|*]')
+ ->CASSET_PATTERN                 #
+
+CASSETS.list()->STR_ARR           #CASSET_ARR serialized as:
+                                  #  - 'SRC_ID CASSET.type ASSET_SRC'
+                                  #  - '  - SRC_ID:DEST_ID ASSET_DEST' (for each)
+cdk-assets ls                     #Print CASSETS.list()
+--path|-p                         #'ASSEMBLY_DIR' (def: '.')
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:      ASSET MANIFEST FILE      :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+ASSETS.files.SRC_ID               #FASSET. ASSET that is a local FILE|DIR to upload to S3
+                                  #'SRC_ID' is 'FILE_HASH'
+CSYNTH.addFileAsset
+ (FASSET_NEW)->FASSET_RES         #
+
+FASSET_SRC.path
+FASSET_NEW.fileName               #'PATH' to local file
+FASSET_SRC|NEW.packaging          #'file' (FILE) or 'zip' (DIR to zip)
+FASSET_NEW.sourceHash             #'FILE_HASH', i.e. SHA256 'HASH_HEX' of file contents
+                                  #I.e. if file contents did not change, does not re-upload
+
+FASSET_SRC|NEW.executable         #['COMMAND'[, 'ARG',...]]. Alternative to FASSET_SRC.path|packaging
+                                  #Must create file, then return its absolute file path on stdout
+
+FASSET_DEST.bucketName            #S3 'BUCKET'
+DOPTS.fileAssetsBucketName        #Def: see ---bootstrap-bucket-name below. Can be BSTR
+FASSET_RES.bucketName             #Same, but as BSUB
+FASSET_DEST.objectKey             #S3 'OBJECT'
+                                  #Is 'FILE_HASH.EXT' with 'EXT' taken from local file 'PATH', or '.zip' if packaging 'zip'
+FASSET_RES.objectKey              #Same, but as BSUB
+DOPTS.bucketPrefix                #STR (def: '') prefixing S3 'OBJECT'
+
+cdk bootstrap
+--bootstrap-bucket-name|-b        #S3 'BUCKET' for FASSETs. Def: 'cdk-${Qualifier}-assets-${AWS::AccountId}-${AWS::Region}'
+--toolkit-bucket-name             #Is BOOTSTRAP_STACK.Resources.StagingBucket, exported as STACK OUTPUTs BucketName and BucketDomainName
+                                  #Uses:
+                                  #  - ACL 'private'
+                                  #  - VERSIONING (delete former VERSIONs after 1y)
+                                  #  - UpdateReplacePolicy|DeletePolicy 'Retain'
+                                  #  - BUCKET_POLICY requiring TLS
+                                  #     - at BOOTSTRAP_STACK.Resources.StagingBucketPolicy
+--bootstrap-kms-key-id            #KMS_KEY_ID used with BUCKET's x-amz-server-side-encryption-aws-kms-key-id [C|S] (SSE-KMS)
+                                  #Def: none, i.e. uses SSE-S3
+--bootstrap-customer-key          #BOOL (def: false). Like --bootstrap-kms-key-id, but creates KMS_KEY as part of BOOTSTRAP_STACK
+                                  #Is BOOTSTRAP_STACK.Resources.FileAssetsBucketEncryptionKey[Alias], with ALIAS 'cdk-${Qualifier}-assets-key'
+--public-access-block             #BOOL (def: true). Use S3 PUBLIC_BLOCK with all values true
+ -configuration                   #Noop since those are already PUBLIC_BLOCK's default values
+
+FASSET_RES
+ .s3ObjectUrlWithPlaceholders     #'s3://BUCKET/OBJECT' to TEMPLATE uploaded to S3
+FASSET_RES.s3ObjectUrl            #Same, but as BSUB
+FASSET_RES.httpUrl                #BSUB 'https://s3.${AWS::Region}.amazonaws.com/BUCKET/OBJECT'
+
+FASSET_DEST.assumeRoleArn         #Like STACK_APROPS.* but for uploading to S3. Can be BSTR
+DOPTS.fileAssetPublishingRoleArn  #Can be '': using CLI's credentials
+                                  #Def: BOOTSTRAP_ROLE 'file-publishing', which is at BOOTSTRAP_STACK.Resources.FilePublishingRole:
+                                  #  - allowed s3:GetObject*|GetBucket*|GetEncryptionConfiguration|List*, s3:DeleteObject*|PutObject*|Abort*
+                                  #  - only on FASSET 'BUCKET'
+FASSET_DEST.assumeRoleExternalId
+DOPTS
+ .fileAssetPublishingExternalId   #STR (def: none). ASSUMED_ROLE_REQ.ExternalId with assumeRoleArn
+
+FASSET_NEW.deployTime             #BOOL (def: false). Delete from S3 after `cdk deploy`
+                                  #E.g. Lambda FUNC are copied during deploy, i.e. can be deleted
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:   ASSET MANIFEST CONTAINER    :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+ASSETS.dockerImages.SRC_ID        #IASSET. ASSET that is a 'DIR' with a Dockerfile, to `docker build` then upload to ECR
+                                  #SRC_ID is '[IMAGE_NAME-]IMAGE_HASH'
+CSYNTH.addDockerImageAsset
+ (IASSET_NEW)->IASSET_RES         #
+
+IASSET_SRC.directory
+IASSET_NEW.directoryName          #'DIR' of Dockerfile
+IASSET_SRC|NEW.dockerFile         #'FILENAME' (def: 'Dockerfile'). `docker build --file FILENAME`
+
+IASSET_SRC|NEW.executable         #['COMMAND'[, 'ARG',...]]. Alternative to IASSET_SRC.directory
+                                  #Must call `docker build --tag LOCAL_TAG` and returns 'LOCAL_TAG' on stdout
+                                  #Cannot use IASSET_SRC.dockerBuildArgs|dockerBuildTarget|dockerOutputs|dockerFile
+
+IASSET_SRC|NEW.dockerBuildArgs    #OBJ. `docker build --build-arg VAR=VAL`
+IASSET_SRC|NEW.dockerBuildSsh     #STR. `docker build --ssh STR`
+IASSET_SRC|NEW.dockerBuildSecrets #OBJ. `docker build --secret id=VAR,VAL`
+IASSET_SRC|NEW.dockerBuildTarget  #STR. `docker build --target STR`
+IASSET_SRC|NEW.dockerOutputs      #STR_ARR. `docker build --output=STR`
+IASSET_SRC|NEW.networkMode        #STR. `docker build --network STR`
+IASSET_SRC|NEW.platform           #STR. `docker build --platform STR`
+
+IASSET_SRC.cacheFrom
+IASSET_NEW.dockerCacheFrom        #CONTAINER_CACHE_ARR. `docker build --cache-from type=STR,VAR=VAL,...`
+IASSET_SRC.cacheTo
+IASSET_NEW.dockerCacheTo          #CONTAINER_CACHE. `docker build --cache-to type=STR,VAR=VAL,...`
+IASSET_SRC.cacheDisabled
+IASSET_NEW.dockerCacheDisabled    #BOOL (def: false). `docker build --no-cache`
+CONTAINER_CACHE.type              #STR. Docker cache backend, e.g. 'inline', 'local', 'registry', 's3', 'azblob', 'gha'
+CONTAINER_CACHE.params            #OBJ. Docker cache configuration
+
+IASSET_NEW.assetName              #'IMAGE_NAME'
+IASSET_NEW.sourceHash             #'IMAGE_HASH'
+
+IASSET_DEST.repositoryName        #ECR 'REPO'. Can be BSTR
+DOPTS.imageAssetsRepositoryName   #Def: 'cdk-${Qualifier}-container-assets-${AWS::AccountId}-${AWS::Region}'
+                                  #Is BOOTSTRAP.Resources.ContainerAssetsRepository, exported as STACK OUTPUT ImageRepositoryName:
+                                  #  - ImageTagMutability 'immutable'
+                                  #  - untagged IMAGEs expiring after 1y
+IASSET_RES.repositoryName         #Same but as BSUB
+IASSET_DEST.imageTag              #Docker 'IMAGE_TAG'
+                                  #Is 'IMAGE_HASH'
+IASSET_RES.imageTag               #Same but as BSUB
+DOPTS.dockerTagPrefix             #STR (def: '') prefixing 'IMAGE_TAG'
+
+IASSET_RES.imageUri               #BSUB '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/REPO:IMAGE_TAG'
+
+IASSET_DEST.assumeRoleArn         #Like STACK_APROPS.* but for uploading to ECR. Can be BSTR
+DOPTS.imageAssetPublishingRoleArn #Can be '': using CLI's credentials
+                                  #Def: BOOTSTRAP_ROLE 'image-publishing', which is BOOTSTRAP_STACK.Resources.ImagePublishingRole:
+                                  #  - allowed ecr:PutImage|InitiateLayerUpload|UploadLayerPart|CompleteLayerUpload,
+                                  #    ecr:BatchCheckLayerAvailability|DescribeRepositories|DescribeImages|BatchGetImage|GetDownloadUrlForLayer
+                                  #  - only on IASSET's ECR 'REPO'
+IASSET_DEST.assumeRoleExternalId
+DOPTS
+ .imageAssetPublishingExternalId  #STR (def: none). ASSUMED_ROLE_REQ.ExternalId with assumeRoleArn
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:      ASSET STAGING MAIN       :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+new AssetStaging(...CARGS[,UOPTS])#UASSET. Copies FASSET local path to ASSEMBLY_DIR
+                                  #Goals:
+                                  #  - making ASSEMBLY_DIR self-contained, i.e. able to move it
+                                  #  - local debugging
+
+cdk diff|deploy|import|destroy
+ |list|metadata --staging         #BOOL (def: true). Enables copy (does not impact bundling)
+CVAR aws:cdk:disable-asset-staging#BOOL (def: false). Same but inverse
+
+AssetStaging.clearAssetHashCache()#Clear cache used for ASSET_HASH computation and TARGET_PATH creation
+
+UOPTS|UASSET.sourcePath           #'SOURCE_PATH' to copy. Can be DIR|FILE
+UOPTS.exclude                     #STR_ARR (def: []) to exclude from 'SOURCE_PATH'
+                                  #Not with bundling
+UOPTS.ignoreMode                  #What STR means with UOPTS.exclude:
+                                  #  - 'glob' (def): 'GLOB'
+                                  #  - 'git': .gitignore pattern
+                                  #  - 'docker': .dockerignore pattern
+UOPTS.follow                      #Whether to follow symlinks in 'SOURCE_PATH'
+                                  #  - 'always'
+                                  #  - 'never'
+                                  #  - 'external' (def): if outside 'SOURCE_PATH_DIR'
+                                  #  - 'internal-only': if inside 'SOURCE_PATH_DIR'
+                                  #Not with bundling
+
+XOPTS|CBUILDER|CSTAGE.assetOutdir #'ASSETS_DIR' (def: 'ASSEMBLY_DIR')
+UASSET.absoluteStagedPath         #'TARGET_PATH', absolute. Is 'ASSETS_DIR/asset.ASSET_HASH.EXT'
+                                  #'.EXT' is taken from 'SOURCE_PATH'
+UASSET.relativeStagedPath
+ (CSTACK)->'TARGET_PATH'          #Relative to 'ASSEMBLY_DIR'
+UASSET.packaging                  #'zip' or 'file', depending on whether 'TARGET_PATH' is 'DIR'
+                                  #No zipping: done by CPUBLISH instead
+UASSET.isArchive                  #BOOL. True if 'TARGET_PATH' not DIR and its 'EXT' is ARCHIVE_EXT, i.e. *.tar[.gz]|tgz, *.zip or *.jar
+
+UASSET.assetHash                  #'ASSET_HASH'. SHA256 hex hash.
+                                  #I.e. if does not change, does not re-upload
+UOPTS.assetHashType               #Input of 'ASSET_HASH', among:
+                                  #  - 'source' (def if no UOPTS.assetHash):
+                                  #     - input is 'SOURCE_PATH' recursive files path + contents
+                                  #     - input also includes some UOPTS.*
+                                  #  - 'output':
+                                  #     - same but using 'TARGET_PATH'
+                                  #     - only with bundling
+                                  #  - 'custom' (def if UOPTS.assetHash):
+                                  #     - input is UOPTS.assetHash STR
+                                  #     - input also includes UOPTS.bundling
+CVAR @aws-cdk/core:assetHashSalt  #STR. Additional input to 'ASSET_HASH'
+UOPTS.extraHash                   #Not with UOPTS.assetHashType 'custom'
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:     ASSET STAGING BUNDLE      :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+UOPTS.bundling                    #BOPTS. Transform 'SOURCE_PATH_DIR' using a Docker container
+                                  #Docker container:
+                                  #  - gets 'SOURCE_PATH_DIR' as /asset-input
+                                  #  - must produce /asset-output[/FILE], which is bound to 'BDIR' locally
+                                  #'BDIR' is temporary DIR: the final output is moved to UASSET.absoluteStagedPath
+AssetStaging.BUNDLING_INPUT_DIR   #'/asset-input'
+AssetStaging.BUNDLING_OUTPUT_DIR  #'/asset-output'
+
+CVAR aws:cdk:bundling-stacks
+--bundling-stacks                 #'GLOB' (def: '**'). Only bundle STACKs with a matching 'NID'
+
+BOPTS.local.tryBundle             #FUNC('BDIR', BOPTS)->BOOL
+                                  #Build programmatically instead of using a Docker container
+                                  #If success, must return true, which skips Docker container bundling
+
+BOPTS.outputType                  #Final 'DIR|FILE' location, among:
+                                  #  - 'auto-discover' (def): any of the ones below
+                                  #  - 'single-file': '/asset-output/FILE' (no siblings, not a DIR)
+                                  #  - 'archived': same but FILE must end with '.ARCHIVE_EXT'
+                                  #  - 'not-archived': '/asset-output' (must be a DIR)
+BOPTS.bundlingFileAccess          #How SOURCE_PATH_DIR and BDIR are passed as /asset-input and /asset-output to `docker`
+                                  #Either:
+                                  #  - 'BIND_MOUNT' (def):
+                                  #     - `docker run --rm -v SOURCE_PATH_DIR:/asset-input -v BDIR:/asset-output IMAGE`
+                                  #  - 'VOLUME_COPY':
+                                  #     - does:
+                                  #        - `docker cp TEMP_CONTAINER_ID:SOURCE_PATH/. TEMP_CONTAINER2:/asset-input`
+                                  #        - `docker run --rm --volume-from=TEMP_CONTAINER2 IMAGE`
+                                  #        - `docker cp TEMP_CONTAINER2:/asset-output BDIR`
+                                  #     - 'TEMP_CONTAINER2' is created with `docker run`:
+                                  #        - IMAGE is public.ecr.aws/docker/library/alpine
+                                  #        - uses `-v TEMP_VOLUME:/asset-input -v TEMP_VOLUME2:/asset-output`
+                                  #           - TEMP_VOLUME[2] through `docker volume create|rm`
+                                  #        - runs SHELL_COMMAND: mkdir -p /asset-input && chown -R USER /asset-input /asset-output
+                                  #     - no BOPTS.network
+                                  #     - slower but more portable
+
+BOPTS.image                       #DOCKER_IMAGE
+DOCKER_IMAGE                      #Utility to run `docker` programmatically
+DOCKER_IMAGE.image                #'IMAGE'
+ENVVAR CDK_DOCKER                 #'COMMAND' (def: 'docker')
+
+DockerImage.fromRegistry
+ ('IMAGE')->DOCKER_IMAGE          #
+DockerImage.fromBuild
+ ('PATH'[, OPTS])->DOCKER_IMAGE   #Calls `docker build PATH` then uses the built 'IMAGE', which is 'cdk-OPTS_HASH'
+OPTS.file                         #STR. `docker build -f`
+OPTS.buildArgs                    #OBJ. `docker build --build-arg VAR=VAL`
+OPTS.platform                     #STR. `docker build --platform`
+OPTS.targetStage                  #STR. `docker build --target`
+OPTS.cacheFrom                    #`docker build --cache-from`. OBJ_ARR: type STR, params OBJ
+OPTS.cacheTo                      #`docker build --cache-to`. OBJ_: type STR, params OBJ
+OPTS.cacheDisabled                #`docker build --no-cache`.
+
+DOCKER_IMAGE.run([OPTS])          #Calls `docker run --rm IMAGE`
+[B]OPTS.entrypoint                #['COMMAND', 'ARG',...]. `docker run ... --entrypoint COMMAND ARG...`
+[B]OPTS.command                   #'SHELL_COMMAND'. `docker run ... SHELL_COMMAND`
+[B]OPTS.securityOpt               #STR. `docker --security-opt STR`
+[B]OPTS.network                   #STR. `docker --network STR`
+OPTS.platform                     #STR. `docker --platform STR`
+[B]OPTS.user                      #STR. `docker -u STR`
+                                  #Def with BOPTS: current, or '1000:1000' on Windows
+[B]OPTS.volumesFrom               #STR_ARR. `docker --volumes-from`
+[B]OPTS.volumes                   #`docker -v PATH:PATH2:[FLAG,...]`. OBJ_ARR:
+                                  #  - hostPath 'PATH'
+                                  #  - containerPath 'PATH2'
+                                  #  - consistency BOOL (def: false): use FLAG 'delegated'
+[B]OPTS.environment               #OBJ. `docker --env VAR=VAL`
+[B]OPTS.workingDirectory          #'DIR'. `docker -w DIR`
+                                  #Def with BOPTS: '/asset-input'
+
+DOCKER_IMAGE.cp                   #Calls `docker cp CONTAINER_ID:PATH PATH2`
+ ('PATH'[, 'PATH2'])->'PATH2'     #Create temporary container, i.e. `docker create IMAGE`, and `docker rm -v CONTAINER_ID` at the end
+                                  #Def 'PATH2': '/TMPDIR/cdk-docker-cp-RANDOM'
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:      ASSET STAGING FILE       :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+aws-s3-assets                     #Package in same monorepo
+new Asset(...CARGS, HFOPTS)       #HFASSET. Like FASSET, but first uses AssetStaging
+                                  #Inherits CONSTRUCT
+                                  #Should be used to add FASSETs in CAPP
+
+HFOPTS.*                          #Like UOPTS.*
+HFOPTS.path                       #'SOURCE_PATH' of asset. Can be DIR|FILE
+HFASSET.isBundled                 #BOOL. Whether HFOPTS.bundling is used
+HFASSET.assetHash                 #Like UASSET.assetHash
+                                  #Used as FASSET_NEW.sourceHash
+HFASSET.assetPath                 #Like UASSET.absoluteStagedPath, but relative to 'ASSEMBLY_DIR'
+                                  #Used as FASSET_NEW.fileName
+HFASSET.isFile                    #BOOL. Whether UASSET.packaging 'file'
+                                  #UASSET.packaging is also used as FASSET_NEW.packaging
+HFASSET.isZipArchive              #BOOL. Whether either 'DIR' or *.tar[.gz]|tgz|zip|jar
+
+HFOPTS.deployTime                 #Like FASSET_NEW.deployTime
+HFASSET.s3BucketName              #Like FASSET_RES.bucketName
+HFASSET.s3ObjectKey               #Like FASSET_RES.objectKey
+HFASSET.s3ObjectUrl               #Like FASSET_RES.s3ObjectUrl
+HFASSET.httpUrl                   #Like FASSET_RES.httpUrl
+
+HFASSET.bucket                    #S3 CBUCKET
+HFASSET.grantRead(YGRANTABLE)     #Same as HFASSET.bucket.grantRead(...), i.e. allow reading OBJECTs
+HFOPTS.readers                    #YGRANTABLE_ARR (def: []), called using HFASSET.grantRead()
+
+HFASSET.addResourceMetadata       #Adds the following TEMPLATE.Resources.RESOURCE.Metadata:
+ (CZRESOURCE, 'PROP')             #  - 'aws:asset:property': 'PROP'
+                                  #  - 'aws:asset:path': 'TARGET_PATH'
+                                  #  - 'aws:asset:is-bundled': HFASSET.isBundled
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:     ASSET STAGING ESBUILD     :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+cdk-esbuild                       #Version 5.2.5
+
+new TypeScriptAsset(...CARGS,OPTS)#HFASSET that uses bundling, but with esbuild buildSync()
+                                  #Done locally, without a Docker image (using HFOPTS.bundling.local.tryBundle())
+OPTS.entryPoints                  #'PATH'[_ARR] or { VAR: 'PATH' } used as esbuild buildSync({ entryPoints: ENTRY })
+OPTS.buildOptions.*               #OBJ. esbuild buildSync(OBJ)
+OPTS.buildOptions.bundle          #Always true
+OPTS.buildOptions.absWorkingDir   #Source 'DIR' (def: '.')
+OPTS.buildOptions.outfile|outdir  #Target 'PATH'. Relative to 'BDIR'
+OPTS.assetHash                    #HFOPTS.assetHash
+OPTS.copyDir                      #'DIR'[_ARR] to copy to 'BDIR/DIR'
+                                  #Can be { SUBDIR: 'DIR', ... } to copy to 'BDIR/SUBDIR/DIR' instead
+                                  #Relative to OPTS.buildOptions.absWorkingDir
+                                  #Delete 'BDIR[/SUBDIR]/DIR' first if it exists
+OPTS.buildProvider                #CESBUILD (def: new EsbuildProvider())
+
+new TypeScriptCode(VAL[, OPTS])   #Lambda Code that uses TypeScriptAsset instead of HFASSET
+                                  #OPTS.* is like TypeScriptAsset, with VAL being OPTS.entryPoints
+                                  #OPTS.buildOptions default { platform: 'node', target 'nodeX' }
+                                  #Prefer NodejsFunction instead (see Lambda docs)
+
+new TypeScriptSource(VAL[, OPTS]) #Like aws-s3-deployment Source.asset() but using HFASSET
+                                  #OPTS.* is like TypeScriptAsset, with VAL being OPTS.entryPoints
+                                  #OPTS.buildOptions default { platform: 'browser' }
+
+new InlineJavaScriptCode
+ ('CODE'[, OPTS])                 #Lambda InlineCode that calls esbuild transformSync()
+new InlineTypeScriptCode(...)     #Same but using defaults loader 'ts'
+OPTS.transformOptions.*           #OBJ. esbuild transformSync('CODE', OBJ)
+                                  #Def (merged not overridden): { logLevel: 'warning', format: 'cjs', platform: 'node', target: 'nodeX', loader: 'js' }
+OPTS.transformProvider            #CESBUILD (def: new EsbuildProvider())
+
+new EsbuildProvider([OPTS])       #CESBUILD. Wraps `esbuild` module
+ENVVAR CDK_ESBUILD_MODULE_PATH    #'PATH' (def: none) to esbuild main file, used by CESBUILD.*Sync()
+OPTS.esbuildModulePath            #Def: find locally installed esbuild
+                                  #  - if not Node.js, also:
+                                  #     - find globally installed esbuild
+                                  #     - otherwise run `npm install esbuild` in a temporary DIR
+OPTS.esbuildBinaryPath            #'PATH' (def: none) to esbuild binary
+                                  #Only used to set ENVVAR ESBUILD_BINARY_PATH during CESBUILD.*Sync()
+CESBUILD.buildSync(OBJ)           #Runs esbuild buildSync(OBJ)
+CESBUILD.transformSync
+ ('CODE'[, OBJ])->'CODE'          #Runs and returns esbuild transformSync('CODE'[, OBJ]).code
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:    ASSET STAGING CONTAINER    :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+aws-ecr-assets                    #Package in same monorepo
+new DockerImageAsset              #HIASSET. Like IASSET, but first uses AssetStaging, using a `Dockerfile`
+ (...CARGS, HIOPTS)               #Inherits CONSTRUCT
+                                  #Should be used to add Dockerfile-based IASSETs in CAPP
+
+HIOPTS.*                          #Like UOPTS.*
+HIOPTS.dir                        #'SOURCE_PATH_DIR'
+                                  #Resulting 'TARGET_PATH_DIR' is used as IASSET_NEW.directoryName
+HIOPTS.exclude                    #Like UOPTS.exclude but always:
+                                  #  - include and use SOURCE_PATH_DIR/.dockerignore, if exists
+                                  #  - include HIOPTS.file
+                                  #  - exclude ASSEMBLY_DIR
+HIOPTS.ignoreMode                 #Like UOPTS.ignoreMode except default is 'docker'
+HIOPTS.extraHash                  #Cannot be specified. Instead, always use HIOPTS.PROP except if HIOPTS.invalidation.PROP false
+HIASSET.assetHash                 #Like UASSET.assetHash
+                                  #Used as IASSET_NEW.sourceHash
+
+HIOPTS.*                          #Like IASSET_NEW.docker*
+HIOPTS.assetName                  #Like IASSET_NEW.assetName
+
+HIOPTS.networkMode                #Like IASSET_NEW.networkMode, except must use one of the following
+NetworkMode.DEFAULT               #'default'
+NetworkMode.HOST                  #'host'
+NetworkMode.NONE                  #'none'
+NetworkMode
+ .fromContainer('CONTAINER_ID')   #'container:CONTAINER_ID'
+NetworkMode.custom(STR)           #STR
+
+HIOPTS.platform                   #Like IASSET_NEW.platform, except must use one of the following
+Platform.LINUX_AMD64              #'linux/amd64'
+Platform.LINUX_ARM64              #'linux/arm64'
+Platform.custom(STR)              #STR
+
+HIASSET.imageUri                  #Like IASSET_RES.imageUri
+HIASSET.imageTag                  #Like IASSET_RES.imageTag
+
+HIASSET.repository                #ECR CREPO
+
+HIASSET.addResourceMetadata       #Adds the following TEMPLATE.Resources.RESOURCE.Metadata:
+ (CZRESOURCE, 'PROP')             #  - 'aws:asset:property': 'PROP'
+                                  #  - 'aws:asset:path': 'TARGET_PATH'
+                                  #  - 'aws:asset:dockerfile-path': HIOPTS.file
+                                  #  - 'aws:asset:docker-*': HIOPTS.* related to IASSET_NEW.docker*, but dash-case'd
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:     ASSET STAGING TARBALL     :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+aws-ecr-assets                    #Package in same monorepo
+new TarballImageAsset             #HTASSET. Like IASSET, but first uses AssetStaging, using an 'IMAGE.tar'
+ (...CARGS, HIOPTS)               #Inherits CONSTRUCT
+                                  #Should be used to add IMAGE.tar-based IASSETs in CAPP
+
+HTOPTS.tarballFile                #'IMAGE.tar', created by `docker save`
+                                  #IASSET.executable calls `docker load` on resulting 'TARGET_PATH'
+
+HTASSET.assetHash                 #Like UASSET.assetHash
+                                  #Used as IASSET_NEW.sourceHash
+
+HTASSET.imageUri                  #Like IASSET_RES.imageUri
+HTASSET.imageTag                  #Like IASSET_RES.imageTag
+
+HTASSET.repository                #ECR CREPO
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:         ASSET PUBLISH         :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+cdk deploy                        #Calls CPUBLISH.buildEntry|publishEntry() on all ASSETS
+--concurrency                     #Max NUM (def: 1) on STACK to deploy in parallel
+--asset-parallelism               #BOOL (def: false). Max NUM of ASSETS to publishEntry() in parallel (8 if true, 1 if false)
+                                  #buildEntry() is always serial
+--asset-prebuild                  #BOOL (def: true). Call buildEntry() before deploying the STACK
+                                  #Regardless, publishEntry() is always done after deploying the STACK
+--force|-f                        #BOOL. If false (def):
+                                  #  - do not upload FASSET|IASSET already uploaded (using CPUBLISH.isEntryPublished())
+                                  #  - fail if TEMPLATE and STACK.* did not change
+--ignore-no-stacks                #Unless set, fails if no STACKs are currently targeted
+
+cdk-assets                        #Package in same monorepo
+                                  #CLI + programmatic
+
+cdk-assets publish [STR...]       #Calls CPUBLISH.publish()
+                                  #STR... selects only specific CASSETS, with same syntax as DestinationPattern.parse()
+--path|-p                         #'ASSEMBLY_DIR' (def: '.')
+--profile                         #AWS 'PROFILE'
+
+new AssetPublishing(CASSETS, OPTS)#CPUBLISH. Build ASSETS and publish them to S3|ECR
+
+CPUBLISH.publish()->>             #Calls buildEntry() + publishEntry() on all CASSETS
+OPTS.publishInParallel            #BOOL (def: false). Whether CASSETS ares processed serially or in parallel
+OPTS.buildAssets                  #BOOL (def: true). Whether to call buildEntry()
+OPTS.publishAssets                #BOOL (def: true). Whether to call publishEntry()
+
+CPUBLISH.buildEntry               #Creates Docker IMAGE from IASSET locally:
+ (CASSET)->>BOOL                  #  - `docker login`
+                                  #  - `docker build --tag LOCAL_TAG`
+                                  #  - `docker tag LOCAL_TAG ECR_REPO_URI:IMAGE_TAG`
+                                  #  - LOCAL_TAG is 'cdkasset-SRC_ID'
+                                  #With FASSET: noop
+
+CPUBLISH.publishEntry             #Publish local files to S3, or Docker IMAGE to ECR
+ (CASSET)->>BOOL                  #With FASSET: upload S3 OBJECT
+                                  #With IASSET: `docker push ECR_REPO_URI:IMAGE_TAG`
+
+CPUBLISH.isEntryPublished         #Whether publishEntry() already called
+ (CASSET)->>BOOL                  #With FASSET: check if S3 OBJECT exists
+                                  #With IASSET: check if ECR IMAGE exists
+
+OPTS.aws                          #Must be new DefaultAwsClient(['PROFILE'])
+                                  #If PROFILE, sets ENVVAR AWS_PROFILE
+
+OPTS.quiet                        #BOOL (def: false)
+                                  #Print `docker` commands stdout|stderr
+
+CPUBLISH.message                  #Current log 'MESSAGE'
+CPUBLISH
+ .progressListener.onPublishEvent #On CPUBLISH.message change
+ ('EVENT_TYPE', CPUBLISH)         #'EVENT_TYPE' is 'start', 'success', 'fail', 'check', 'found', 'cached', 'build', 'upload', 'debug'
+
+CPUBLISH.percentComplete          #NUM percentage of CASSETs successfully processed with CPUBLISH.buildEntry|publish[Entry]()
+CPUBLISH.failures                 #OBJ_ARR: error ERROR, asset CASSET
+                                  #Failed invocations of CPUBLISH.buildEntry|publish[Entry]()
+CPUBLISH.hasFailures              #BOOL. CPUBLISH.failures.length !== 0
+OPTS.throwOnError                 #BOOL. If true (def), throw if any failure
+CPUBLISH.abort()                  #Abort CPUBLISH.buildEntry|publish[Entry]() and make them return false
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:              CDK              :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+new BucketPolicy(...CARGS, OPTS)  #CBUCKET_POLICY. CKRESOURCE wrapping a BUCKET_POLICY
