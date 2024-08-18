@@ -53,19 +53,6 @@ CDK ASSETS ==>                    #See cdk_assets doc
 NAME ==>                          #Simple Storage Service
 
 s3.amazonaws.com                  #SERVICE_DOMAIN for BUCKET-specific ACTIONs
-BUCKET.s3.amazonaws.com           #"Virtual hosting". Same but using BUCKET as subdomain instead of /BUCKET as path.
-                                  #Preferred: /BUCKET path is deprecated
-                                  #Allows BUCKET-specific:
-                                  #  - CNAME
-                                  #  - top-level files: robots.txt, favicon.ico, etc.
-                                  #  - same origin, CORS
-                                  #Requires:
-                                  #  - specifying REGION in subdomain
-                                  #     - 301 redirection + x-amz-bucket-region: REGION2 [S] if not in right REGION
-                                  #        - with JavaScript client, requires COPTS.followRegionRedirects true
-                                  #  - CNAME == 'BUCKET' exactly, e.g. BUCKET called 'www.example.com'
-COPTS.forcePathStyle              #BOOL (def: false). Use /BUCKET instead of virtual hosting
-S3_CONF.addressing_style          #'virtual' (def) or 'path'
 
 ACCOUNT_ID.s3-control             #SERVICE_DOMAIN for ACTIONs that are not BUCKET-specific
  .amazonaws.com/SVERSION          #Some ACTIONs have two variants s3[-control]: BUCKET-specific, and not
@@ -132,14 +119,11 @@ CONF.s3                           #S3_CONF. Only used by CLI.
 
 
 aws s3 ...                        #High-level S3 CLI on top of aws s3api|s3control
+                                  #Uses both:
+                                  #  - DIR|FILE|PATH: local file path, with OS-specific syntax
+                                  #  - S3BUCKET|S3DIR|S3FILE|S3PATH
 --OPT                             #Same as other CLI commands
 --debug                           #Show HTTP request|response
-
-DIR|FILE|PATH                     #Local file path, using OS-specific syntax
-S3BUCKET                          #s3://BUCKET or s3://ACCESSPOINT_ARN
-S3DIR                             #S3BUCKET[/PREFIX/]
-S3FILE                            #S3DIR/OBJECT
-S3PATH                            #S3DIR|S3FILE
 
 HS3_CONF                          #S3_CONF, but only for `aws s3`
 HS3_CONF.max_bandwidth            #NUM[UNIT] (def: no limit) (def UNIT: 'B/s'). Max bandwidth for GetObject|PutObject()
@@ -278,10 +262,6 @@ ListBuckets()                     #Res: BUCKETS_LIST
                                   #  - no BUCKET.LocationConstraint|Bucket|Location
                                   #No pagination
                                   #PACTION named 's3:ListAllMyBuckets' instead
-DELETE /BUCKET                    #Req: empty
-DeleteBucket()                    #Res: empty
-                                  #BUCKET must be empty first
-                                 ##  - with Pulumi, can use RPROPS.forceDestroy true
 
 BUCKETS_LIST.Buckets              #BUCKET_ARR
 BUCKET                            #Like a root folder
@@ -300,13 +280,6 @@ aws s3 mb S3BUCKET                #CreateBucket()
 
 aws s3 ls                         #ListBuckets()
 
-aws s3 rb S3BUCKET                #DeleteBucket()
---force                           #If OBJECTs exist, delete them first
-                                  #Fail if OBJECTs are versioned
-
-AwsCommunity::S3::               ##With CloudFormation, deletes BUCKET if empty
- DeleteBucketContents            ##RESPROP: BucketName 'BUCKET'
-
 XW.defaultBucket                 ##With Pulumi, like new CW.s3.Bucket(...) except:
  ('BUCKET', OBJ, NRPROPS, NROPTS)##  - can set OBJ.existing.arn 'BUCKET_ARN' or name 'BUCKET'
                                  ##    to retrieve already existing BUCKET instead.
@@ -319,12 +292,105 @@ XW.requiredBucket(...)           ##Same but cannot use `skip`
 
 AWS::S3[Express]::Bucket          #RESPROPs: BucketName
                                   #RESATTRs: Arn
-AWS::S3::Bucket                   #RESATTRs:
-                                  #  - DomainName 'BUCKET.s3.amazonaws.com'
-                                  #  - RegionalDomainName 'BUCKET.s3.REGION.amazonaws.com'
-                                  #  - DualStackDomainName 'BUCKET.s3.dualstack.REGION.amazonaws.com'
-                                  #Default RESOURCE.DeletionPolicy is 'Delete' (like other RESOURCEs)
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:          BUCKET CDK           :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+new Bucket
+ (...CARGS[, CBUCKET_OPTS])       #CBUCKET. CKRESOURCE wrapping BUCKET
+Bucket.fromBucketAttributes
+ (...CARGS, ICBUCKET_OPTS)
+ ->IBUCKET                        #
+Bucket.fromBucketArn
+ (...CARGS, 'BUCKET_ARN')->IBUCKET#
+Bucket.fromBucketName
+ (...CARGS, 'BUCKET')->IBUCKET    #
+Bucket.fromCfnBucket
+ (BUCKET_CSRESOURCE)->IBUCKET     #Many ICBUCKET.* are CFNREF_TK: bucketArn, bucketName, bucket*DomainName, bucketWebsite*
+
+[I]CBUCKET|ICBUCKET_OPTS.bucketArn#BUCKET_ARN
+[I]CBUCKET[_OPTS].bucketName      #'BUCKET'. BUCKET.Name
+Bucket.validateBucketName         #Throw if invalid
+ ('BUCKET'[, BOOL])               #If BOOL true (def: false), allow _
+                                  #Automatically done by new Bucket()
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:         BUCKET DELETE         :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+DELETE /BUCKET                    #Req: empty
+DeleteBucket()                    #Res: empty
+                                  #BUCKET must be empty first
+                                 ##  - with Pulumi, can use RPROPS.forceDestroy true
+
+aws s3 rb S3BUCKET                #DeleteBucket()
+--force                           #If OBJECTs exist, delete them first
+                                  #Fail if OBJECTs are versioned
+
+AwsCommunity::S3::               ##With CloudFormation, deletes BUCKET if empty
+ DeleteBucketContents            ##RESPROP: BucketName 'BUCKET'
+
+AWS::S3::Bucket                   #Default RESOURCE.DeletionPolicy is 'Delete' (like other RESOURCEs)
                                   #  - but DeleteBucket() fails if there any OBJECTs
+
+CBUCKET_OPTS.removalPolicy        #REMOVAL_POLICY (def: RETAIN)
+                                  #Calls CKRESOURCE.applyRemovalPolicy()
+CBUCKET_OPTS.autoDeleteObjects    #BOOL (def: false). Delete all OBJECTs when BUCKET is deleted
+                                  #Includes all VERSIONs and delete markers
+                                  #While deletion is ongoing, modify BUCKET_POLICY to deny s3:PutObject to prevent race conditions
+                                  #Noop when BUCKET is just being replaced due to BUCKET.Name change
+                                  #Uses a CustomResource under-the-hood
+                                  #Allows underlying Lambda FUNC:
+                                  #  - PACTIONs s3:GetBucket*|List*|PutBucketPolicy|DeleteObject*
+                                  #  - on BUCKET and all of its OBJECTs
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:          BUCKET URLS          :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+s3.amazonaws.com/BUCKET           #Domain for BUCKET-specific ACTIONs
+                                  #Deprecated
+ICBUCKET.urlForObject()->'URL'    #'https://s3.REGION.amazonaws.com/BUCKET'
+
+BUCKET.s3.amazonaws.com           #"Virtual hosting". Same but using BUCKET as subdomain instead of /BUCKET as path.
+                                  #Allows BUCKET-specific:
+                                  #  - CNAME
+                                  #  - top-level files: robots.txt, favicon.ico, etc.
+                                  #  - same origin, CORS
+                                  #Requires:
+                                  #  - specifying REGION in subdomain
+                                  #     - 301 redirection + x-amz-bucket-region: REGION2 [S] if not in right REGION
+                                  #        - with JavaScript client, requires COPTS.followRegionRedirects true
+                                  #  - CNAME == 'BUCKET' exactly, e.g. BUCKET called 'www.example.com'
+COPTS.forcePathStyle              #BOOL (def: false). Use /BUCKET instead of virtual hosting
+S3_CONF.addressing_style          #'virtual' (def) or 'path'
+AWS::S3::Bucket                   #RESATTRs: [Regional|DualStack]DomainName 'BUCKET.s3[[.dualstack].REGION].amazonaws.com'
+[I]CBUCKET|ICBUCKET_OPTS.bucket
+ [Regional|DualStack]DomainName   #'BUCKET.s3[[.dualstack].REGION].amazonaws.com'
+ICBUCKET.virtualHostedUrlForObject#'https://BUCKET.s3[.REGION].amazonaws.com'
+ ([undefined, OPTS])->'URL'       #OPTS: regional BOOL (def: true)
+
+s3://...                          #"S3 URL", used in specific instances
+                                  #Can also use ACCESSPOINT_ARN instead of BUCKET
+S3BUCKET                          #s3://BUCKET
+ICBUCKET.s3UrlForObject()
+ ->'s3://BUCKET'                  #
+
+ICBUCKET_OPTS.region              #'REGION' (def: CSTACK.region)
+ICBUCKET_OPTS.account             #ACCOUNT_ID (def: CSTACK.account)
 
 
                                              /=+===============================+=\
@@ -426,6 +492,36 @@ PARAMS.Body                       #As request, RAW_OBJECT can be STR or UINT8ARR
                                   #    and x-amz-content-sha256: STREAMING-UNSIGNED-PAYLOAD-TRAILER [C]
                                   #  - requires setting PARAMS.checksumAlgorithm
 --body PATH                       #Same for CLI
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:          OBJECT URLS          :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+ICBUCKET.arnForObjects('OBJECT')
+ ->'BUCKET_ARN/OBJECT'            #
+
+ICBUCKET.urlForObject('OBJECT')
+ ->'URL'                          #'https://s3.REGION.amazonaws.com/BUCKET/OBJECT'
+
+ICBUCKET.virtualHostedUrlForObject#'https://BUCKET.s3[.REGION].amazonaws.com/OBJECT'
+ ('OBJECT'[, OPTS])->'URL'        #OPTS: regional BOOL (def: true)
+
+S3DIR                             #s3://BUCKET[/PREFIX/]
+S3FILE                            #s3://BUCKET[/PREFIX]/OBJECT
+S3PATH                            #s3://BUCKET[/PREFIX/][OBJECT]
+ICBUCKET.s3UrlForObject('OBJECT')
+ ->'s3://BUCKET/OBJECT'           #
+
+CBUCKET_OPTS.enforceSSL           #BOOL (def: false). Using BUCKET_POLICY, enforce HTTPS:
+                                  #  - if COND_KEY aws:SecureTransport false
+                                  #  - also, if COND_KEY s3:TlsVersion < CBUCKET_OPTS.minimumTLSVersion NUM (def: none)
+                                  #  - deny any PACTION
+                                  #  - on BUCKET and its OBJECTs
+                                  #  - for any PRINCIPAL
 
 
                                              /=+===============================+=\
@@ -1177,6 +1273,11 @@ SLENS_METRIC % Transfer
 
 AWS::S3::Bucket                   #Includes RESPROPs: AccelerateConfiguration.AccelerationStatus STR
 
+CBUCKET_OPTS.transferAcceleration #BOOL (def: false). ACCELERATE.Status
+ICBUCKET
+ .transferAccelerationUrlForObject#'https://BUCKET.s3-accelerate[.dualstack].amazonaws.com[/OBJECT]'
+ (['OBJECT'[, OPTS]])->'URL'      #OPTS: dualStack BOOL (def: true)
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -1275,6 +1376,8 @@ SLENS_METRIC
 
 AWS::S3::Bucket                   #Includes RESPROPs: VersioningConfiguration VERSIONING
                                   #  - no MfaDelete
+
+CBUCKET_OPTS.versioned            #BOOL (def: false). VERSIONING.Status
 
 
                                              /=+===============================+=\
@@ -1610,6 +1713,14 @@ AWS::S3::Bucket                   #Includes RESPROPs: IntelligentTieringConfigur
                                   #  - Filter.Prefix|Tags -> Prefix|TagFilters
                                   #  - no Filter.And
 
+CBUCKET_OPTS
+ .intelligentTieringConfigurations#CINTELLIGENT_TIERING_ARR. INTELLIGENT_TIERINGs
+CINTELLIGENT_TIERING.name         #INTELLIGENT_TIERING.Id
+CINTELLIGENT_TIERING
+ .[deep]archiveAccessTierTime     #DURATION. INTELLIGENT_TIERING.Tierings
+CINTELLIGENT_TIERING.prefix       #INTELLIGENT_TIERING.Filter.Prefix
+CINTELLIGENT_TIERING.tags         #TAGS_OBJ. INTELLIGENT_TIERING.Filter.Tags
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -1648,6 +1759,15 @@ AWS::S3::Bucket                   #Includes RESPROPs: LifecycleConfiguration LIF
                                   #  - ID -> Id
                                   #  - Filter.Prefix|Tags|ObjectSize* -> Prefix|TagFilters|ObjectSize*
                                   #  - no Filter.And
+
+CBUCKET_OPTS.lifecycleRules       #CLIFECYCLE_RULE_ARR. LIFECYCLE.Rules
+CBUCKET.addLifecycleRule
+ (CLIFECYCLE_RULE)                #
+CLIFECYCLE_RULE.id                #LIFECYCLE_RULE.*
+CLIFECYCLE_RULE.enabled           #BOOL (def: true). LIFECYCLE_RULE.Status
+CLIFECYCLE_RULE.prefix
+ |objectSizeGreater|LessThan      #LIFECYCLE_FILTER.*
+CLIFECYCLE_RULE.tagFilters        #TAGS_OBJ. LIFECYCLE_FILTER.Tags
 
 
                                              /=+===============================+=\
@@ -1691,6 +1811,19 @@ AWS::S3::Bucket                   #Includes RESPROPs: LifecycleConfiguration.Tra
                                   #  - Transitions.Date -> Transitions.TransitionDate
                                   #  - Transitions.Days -> Transitions.TransitionInDays
 
+CLIFECYCLE_RULE.transitions       #CTRANSITION_ARR. LIFECYCLE_RULE.Transitions
+CTRANSITION.storageClass          #StorageClass.INFREQUENT_ACCESS|ONE_ZONE_INFREQUENT_ACCESS|GLACIER
+                                  #|GLACIER_INSTANT_RETRIEVAL|DEEP_ARCHIVE|INTELLIGENT_TIERING
+                                  #TRANSITION.StorageClass
+CTRANSITION.transitionAfter       #DURATION. TRANSITION.Days
+CTRANSITION.transitionDate        #'DATE'. TRANSITION.Date
+
+CLIFECYCLE_RULE
+ .noncurrentVersionTransitions    #CNTRANSITION_ARR. LIFECYCLE_RULE.NonCurrentVersionTransitions
+CNTRANSITION.storageClass         #Like CTRANSITION.storageClass. NTRANSITION.StorageClass
+CNTRANSITION.transitionAfter      #DURATION. NTRANSITION.NoncurrentDays
+CNTRANSITION
+ .noncurrentVersionsToRetain      #NUM. NTRANSITION.NewerNoncurrentVersions
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -1733,6 +1866,14 @@ AWS::S3::Bucket                   #Includes RESPROPs: LifecycleConfiguration.Exp
                                   #  - Expiration.Date -> ExpirationDate
                                   #  - Expiration.Days -> ExpirationInDays
 
+CLIFECYCLE_RULE.expiration        #DURATION. LIFECYCLE_RULE.Expiration.Days
+CLIFECYCLE_RULE.expirationDate    #'DATE'. LIFECYCLE_RULE.Expiration.Date
+
+CLIFECYCLE_RULE
+ .noncurrentVersionExpiration     #DURATION. LIFECYCLE_RULE.NonCurrentVersionExpiration.NoncurrentDays
+CLIFECYCLE_RULE
+ .noncurrentVersionsToRetain      #NUM. LIFECYCLE_RULE.NonCurrentVersionExpiration.NewerNoncurrentVersions
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -1755,6 +1896,9 @@ SLENS_METRIC Average expired
 
 AWS::S3::Bucket                   #Includes RESPROPs: LifecycleConfiguration LIFECYCLE
                                   #  - Expiration.ExpiredObjectDeleteMarker -> ExpiredObjectDeleteMarker
+
+CLIFECYCLE_RULE
+ .expiredObjectDeleteMarker       #BOOL. EXPIRATION.ExpiredObjectDeleteMarker
 
 
                                              /=+===============================+=\
@@ -1798,6 +1942,9 @@ SLENS_METRIC % incomplete
  greater than 7 days old          #% of IncompleteMPUObjectCountOlderThan7Days/ObjectCount
 
 AWS::S3::Bucket                   #Includes RESPROPs: LifecycleConfiguration.AbortIncompleteMultipartUpload
+
+CLIFECYCLE_RULE.abortIncomplete
+ MultipartUploadAfter             #DURATION. LIFECYCLE_RULE.AbortIncompleteMultipartUpload.DaysAfterInitiation
 
 
                                              /=+===============================+=\
@@ -1872,6 +2019,10 @@ JOB_LOCK.BypassGovernanceRetention#BOOL. x-amz-bypass-governance-retention [C]
 
 AWS::S3::Bucket                   #Includes RESPROPs: ObjectLockConfiguration OBJECT_LOCK
                                   #  - ObjectLockConfiguration.ObjectLockEnabled undefined|'Enabled' -> also as ObjectLockEnabled BOOL
+
+CBUCKET_OPTS.objectLockEnabled    #BOOL (def: false). OBJECT_LOCK.ObjectLockEnabled
+CBUCKET_OPTS
+ .objectLockDefaultRetention      #ObjectLockRetention.compliance|governance(DUARTION). OBJECT_LOCK.Rule.DefaultRetention
 
 
                                              /=+===============================+=\
@@ -1969,6 +2120,8 @@ SLENS_METRIC % Object Ownership
 
 AWS::S3::Bucket                   #Includes RESPROPs: OwnershipControls BUCKET_OWNERSHIP
 
+CBUCKET_OPTS.objectOwnership      #STR (def: 'ObjectWriter'). BUCKET_OWNERSHIP_RULE.*
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -2010,6 +2163,47 @@ x-amz-confirm-remove-self-
  bucket-access: true [C]          #Forbid any further PutBucketPolicy()
 
 AWS::S3[Express]::BucketPolicy    #RESPROPs: Bucket 'BUCKET', PolicyDocument POLICY_DOC_OBJ
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:       BUCKET POLICY CDK       :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+ICBUCKET.policy                   #CBUCKET_POLICY
+                                  #Automatically set by new Bucket(), Bucket.fromCfnBucket() and BucketPolicy.fromCfnBucketPolicy()
+                                  #Left undefined by Bucket.fromBucketArn|Name|Attributes() and new BucketPolicy()
+                                  #  - CBUCKET.grant*() will be a noop
+                                  #When using [I]BUCKET, automatically validated with CBUCKET_POLICY.document.validateForResourcePolicy()
+
+new BucketPolicy(...CARGS, OPTS)  #CBUCKET_POLICY. CKRESOURCE wrapping BUCKET_POLICY
+BucketPolicy.fromCfnBucketPolicy
+ (CBUCKET_POLICY_CSRESOURCE)
+ ->CBUCKET_POLICY                 #
+CBUCKET_POLICY|OPTS.bucket        #IBUCKET. BUCKET_POLICY.Bucket
+CBUCKET_POLICY.document           #CPOLICY_DOC. BUCKET_POLICY.PolicyDocument
+                                  #Initially empty (unless using fromCfnBucketPolicy())
+CBUCKET_POLICY.applyRemovalPolicy
+ (REMOVAL_POLICY)                 #Forwards to CKRESOURCE.applyRemovalPolicy(...)
+OPTS.removalPolicy                #REMOVAL_POLICY (def: RETAIN). Calls .applyRemovalPolicy(...)
+
+ICBUCKET                          #Is RGRANTABLE, using CBUCKET_POLICY
+ICBUCKET.grant*
+ (YGRANTABLE[, 'OBJECT'])->CGRANT #Def 'OBJECT': '*'
+ICBUCKET.grantRead(...)->CGRANT   #Allows s3:getObject*|GetBucket*|List* and kms:Decrypt|DescribeKey
+ICBUCKET.grantPut(...)->CGRANT    #Allows s3:PutObject[LegalHold|Retention|[Version]Tagging]
+                                  #If FFLAG @aws-cdk/aws-s3:grantWriteWithoutAcl false (def true, recommended), use s3:PutObject* instead
+ICBUCKET.grantDelete(...)->CGRANT #Allows s3:DeleteObject
+ICBUCKET.grantWrite               #grantPut() + grantDelete() + allows kms:Decrypt|Encrypt|ReEncrypt*|GenerateDataKey*
+ (...[, 'PACTION'_ARR])->CGRANT   #'PACTION'_ARR customizes s3:*
+ICBUCKET.grantReadWrite(...)->CGRANT#grantRead() + grantWrite()
+ICBUCKET.grantPutAcl(...)->CGRANT #Allows s3:PutObject[Version]Acl
+ICBUCKET.grantPublicAccess
+ (['OBJECT'[, 'PACTION',...]])
+ ->CGRANT                         #Allows PACTIONs (def: s3:GetObject) to any PRINCIPAL
+CBUCKET_OPTS.publicReadAccess     #BOOL (def: false). Calls CBUCKET.grantPublicAccess()
 
 
                                              /=+===============================+=\
@@ -2128,6 +2322,8 @@ COND_KEY s3:x-amz-acl             #x-amz-acl [C]. Only for PACTIONs 's3:CreateBu
 
 AWS::S3::Bucket                   #Includes RESPROPs: AccessControl 'ACL' (CamelCase'd)
 
+CBUCKET_OPTS.accessControl        #'ACL'. CamelCase'd, e.g. 'BucketOwnerFullControl'
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -2170,6 +2366,11 @@ PUBLIC_BLOCK.RestrictPublicBuckets#BOOL. Ignore cross-account + public BUCKET PO
 AWS::S3::Bucket|AccessPoint
  |MultiRegionAccessPoint          #Includes RESPROPs: PublicAccessBlockConfiguration PUBLIC_BLOCK
 AWS::S3::S3ObjectLambdaAccessPoint#Includes RESATTRs: PublicAccessBlockConfiguration PUBLIC_BLOCK
+
+CBUCKET_OPTS.blockPublicAccess    #PUBLIC_BLOCK. Can be:
+                                  #  - BlockPublicAccess.BLOCK_ALL (def): PUBLIC_BLOCK.* true
+                                  #  - BlockPublicAccess.BLOCK_ACLS: PUBLIC_BLOCK.*PublicAcls true
+                                  #  - new BlockPublicAccess(OBJ)
 
 
                                              /=+===============================+=\
@@ -2611,6 +2812,31 @@ AWS::S3::Bucket                   #Includes RESPROPs: WebsiteConfiguration STATI
 
                                              /=+===============================+=\
                                             /  :                               :  \
+                                            )==:      STATIC WEBSITE CDK       :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+[I]CBUCKET.bucketWebsiteDomainName#'BUCKET.s3-website.REGION.amazonaws.com'
+                                  #With ICBUCKET (not CBUCKET), uses FactName.S3_STATIC_WEBSITE_ENDPOINT RFACT
+[I]CBUCKET|ICBUCKET_OPTS
+ .bucketWebsiteUrl                #'http://BUCKET.s3-website.REGION.amazonaws.com'
+
+CBUCKET_OPTS.websiteErrorDocument #'OBJECT'. STATIC_WEBSITE.ErrorDocument.Key
+CBUCKET_OPTS.websiteIndexDocument #'FILENAME'. STATIC_WEBSITE.IndexDocument.Suffix
+CBUCKET_OPTS.websiteRedirect      #OBJ. STATIC_WEBSITE.RedirectsAllRequestsTo
+
+CBUCKET_OPTS.websiteRoutingRules  #CROUTING_RULE_ARR. STATIC_WEBSITE.RoutingRules
+CROUTING_RULE.condition           #OBJ. ROUTING_RULE.Condition
+CROUTING_RULE.protocol|hostName
+ |httpRedirectCode                #ROUTING_RULE.Redirect.*
+CROUTING_RULE.replaceKey          #ReplaceKey.with|prefixWith(STR). ROUTING_RULE.Redirect.ReplaceKey[Prefix]With
+
+[I]CBUCKET|ICBUCKET_OPTS.isWebsite#BOOL. True if there is a STATIC_WEBSITE, i.e. OPTs.website* set
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
                                             )==:             CORS              :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -2641,6 +2867,11 @@ AWS::S3::Bucket                   #Includes RESPROPs: CorsConfiguration CORS
                                   #  - CORSRules -> CorsRules
                                   #  - ID -> Id
                                   #  - MaxAgeSeconds -> MaxAge
+
+CBUCKET_OPTS.cors                 #CCORS_RULE_ARR. CORS.CORSRules
+CBUCKET.addCorsRule(CCORS_RULE)   #
+CCORS_RULE.id|allowed*
+ |exposedHeaders|maxAge           #CORS_RULE.*
 
 
                                              /=+===============================+=\
@@ -2757,6 +2988,16 @@ BUCKET_ENCRYPTION_RULE            #BOOL, like x-amz-server-side-encryption-bucke
 AWS::S3::Bucket                   #Includes RESPROPs: BucketEncryption BUCKET_ENCRYPTION
                                   #  - Rules -> ServerSideEncryptionConfiguration
                                   #  - ApplyServerSideEncryptionByDefault -> ServerSideEncryptionByDefault
+
+CBUCKET_OPTS.encryption           #BUCKET_SSE.SSEAlgorithm, among:
+                                  #  - 'S3_MANAGED' (def): 'AES256'
+                                  #  - 'KMS[_MANAGED]': 'aws:kms'
+                                  #  - 'DSSE[_MANAGED]': 'aws:kms:dsse'
+[I]CBUCKET[_OPTS].encryptionKey   #IKMS_KEY (def: new one). BUCKET_SSE.KMSMasterKeyID
+                                  #When set, CBUCKET_OPTS.encryption:
+                                  #  - def to KMS
+                                  #  - cannot be *_MANAGED
+CBUCKET_OPTS.bucketKeyEnabled     #BOOL (def: false). BUCKET_ENCRYPTION_RULE.BucketKeyEnabled
 
 
                                              /=+===============================+=\
@@ -3112,7 +3353,7 @@ AWS::S3::Bucket                   #Includes RESPROPs: ReplicationConfiguration R
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:           INVENTORY           :==(
+                                            )==:        INVENTORY MAIN         :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
@@ -3172,6 +3413,47 @@ PERMISSIONS ==>                   #Must grant:
                                   #  - COND_KEY aws:SourceArn SOURCE_BUCKET_ARN
                                   #  - COND_KEY aws:SourceAccount|SourceOrg*
 
+AWS::S3::Bucket                   #Includes RESPROPs: InventoryConfigurations INVENTORY_ARR
+                                  #  - Filter.Prefix -> Prefix
+                                  #  - Schedule.Frequency -> ScheduleFrequency
+                                  #  - Destination.S3BucketDestination -> Destination
+                                  #  - Bucket -> BucketArn
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:         INVENTORY CDK         :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+CBUCKET_OPTS.inventories          #CINVENTORY_ARR. INVENTORYs
+                                  #Adds right permissions to BUCKET_POLICY (except no COND_KEY aws:SourceAccount|SourceOrg*)
+CBUCKET.addInventory(CINVENTORY)  #
+
+CINVENTORY.inventoryId            #'INVENTORY' (def: 'NIDInventoryNUM'). INVENTORY.Id
+CINVENTORY.enabled                #BOOL (def: true). INVENTORY.IsEnabled
+
+CINVENTORY.objectsPrefix          #INVENTORY.Filter.Prefix
+CINVENTORY.includeObjectVersions  #STR (def: 'All'). INVENTORY.IncludedObjectVersions
+CINVENTORY.optionalFields         #INVENTORY.OptionalFields
+
+CINVENTORY.frequency              #STR (def: 'Weekly'). INVENTORY.Schedule.Frequency
+
+CINVENTORY.destination            #CINVENTORY_DESTINATION. INVENTORY.Destination.S3BucketDestination
+CINVENTORY_DESTINATION.bucket     #IBUCKET. INVENTORY_DESTINATION.Bucket
+CINVENTORY_DESTINATION.bucketOwner#INVENTORY_DESTINATION.AccountId
+CINVENTORY_DESTINATION.prefix     #INVENTORY_DESTINATION.Prefix
+CINVENTORY_DESTINATION.format     #STR (def: 'CSV'). INVENTORY_DESTINATION.Format
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:        INVENTORY FILE         :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
 DEST_PREFIX/SOURCE_BUCKT/INVENTORY#DEST_PATH
 DEST_PATH/YYYY-MM-DDTHH-MMZ
  /manifest.json                   #PATH of MANIFEST
@@ -3221,12 +3503,6 @@ INVENTORY_LINE.ChecksumAlgorithm  #ALGO. OBJECT.ChecksumAlgorithm
 INVENTORY_LINE
  .ObjectAccessControlList         #'BASE64_JSON' of ACL
 INVENTORY_LINE.ObjectOwner        #OBJECT_OWNER
-
-AWS::S3::Bucket                   #Includes RESPROPs: InventoryConfigurations INVENTORY_ARR
-                                  #  - Filter.Prefix -> Prefix
-                                  #  - Schedule.Frequency -> ScheduleFrequency
-                                  #  - Destination.S3BucketDestination -> Destination
-                                  #  - Bucket -> BucketArn
 
 
                                              /=+===============================+=\
@@ -3337,6 +3613,32 @@ AWS::S3::Bucket                   #Includes RESPROPs: LoggingConfiguration LOGGI
 
                                              /=+===============================+=\
                                             /  :                               :  \
+                                            )==:          LOGGING CDK          :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+CBUCKET_OPTS                      #IBUCKET2. LOG_CONF.TargetBucket
+ .serverAccessLogsBucket          #If BUCKET2_SSE.KMSMasterKeyID set, grant kms:encrypt|decrypt to Principal.Service 'logging.s3.amazonaws.com'
+CBUCKET_OPTS
+ .serverAccessLogsPrefix          #LOG_CONF.TargetPrefix
+CBUCKET_OPTS.targetObjectKeyFormat#LOG_CONF.TargetObjectKeyFormat. Either TargetObjectKeyFormat.*:
+                                  #  - partitionedPrefix(STR): LOG_NAMING.PartitionedPrefix.PartitionDateSource
+                                  #  - simplePrefix(): LOG_NAMING.SimplePrefix
+
+FFLAG @aws-cdk/aws-s3:            #BOOL (recommended). When using LOG_CONFIG, add permission to it using:
+ serverAccessLogsUseBucketPolicy  #  - false (def): 'ACL' log-delivery-write
+                                  #  - true: use BUCKET_POLICY
+                                  #     - allow PACTION s3:PutObject
+                                  #     - Principal.Service logging.s3.amazonaws.com
+                                  #     - for Resource BUCKET/[OBJECT]*
+                                  #     (if same STACK)
+                                  #     - COND_KEY aws:SourceArn BUCKET_ARN
+                                  #     - COND_KEY aws:SourceAccount ACCOUNT_ID
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
                                             )==:         METRICS MAIN          :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -3373,6 +3675,12 @@ MAIN_METRICS DVAR BucketName      #'BUCKET'. To use on AWS/S3/*
 AWS::S3::Bucket                   #Includes RESPROPs: MetricsConfigurations MAIN_METRICS_ARR
                                   #  - Filter.Prefix|Tags|AccessPointArn -> Prefix|TagFilters|AccessPointArn
                                   #  - no Filter.And
+
+CBUCKET_OPTS.metrics              #CMAIN_METRICS_ARR. MAIN_METRICSs
+CBUCKET.addMetric(CMAIN_METRICS)  #
+CMAIN_METRIC.id                   #MAIN_METRICS.*
+CMAIN_METRIC.prefix               #MAIN_METRICS_FILTER.*
+CMAIN_METRIC.tagFilters           #TAGS_OBJ. MAIN_METRICS_FILTER.Tags
 
 
                                              /=+===============================+=\
@@ -3931,6 +4239,39 @@ AWS::S3::Bucket                   #Includes RESPROPs: NotificationConfiguration 
 
                                              /=+===============================+=\
                                             /  :                               :  \
+                                            )==:       NOTIFICATIONS CDK       :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+ICBUCKET.addEventNotification     #Add a NOTIFICATIONS
+ ('NEVENT',                       #It does not use CloudFormation AWS::S3::Bucket NotificationConfiguration
+ CNOTIFICATIONS_SNS|SQS|LAMBDA,   #  - instead, it calls PutBucketNotificationConfiguration() in a CustomResource under-the-hood
+ ...CNOTIFICATIONS_FILTER)        #  - most likely due to CloudFormation support being recent
+ICBUCKET
+ .addNEVENTNotification(...)      #Same, for s3:NEVENT:*. Only with NEVENT: ObjectCreated, ObjectRemoved
+new S3EventSourceV2               #Same as ICBUCKET.addEventNotification(..., CNOTIFICATIONS_LAMBDA, ...)
+ (ICBUCKET, OPTS)                 #But is a CCEVENT_SOURCE, i.e. passed to Lambda CFUNCTION_OPTS.events instead
+                                  #OPTS: events 'NEVENT'_ARR, filters CNOTIFICATIONS_FILTER_ARR (def: [])
+
+new *Destination(...)             #All add right permissions to BUCKET_POLICY|FUNCTION (except no COND_KEY aws:SourceAccount|SourceOrg*)
+new SnsDestination(ITOPIC)        #CNOTIFICATIONS_SNS. NOTIFICATIONS.TopicConfigurations[*]
+new SqsDestination(IQUEUE)        #CNOTIFICATIONS_SQS. NOTIFICATIONS.QueueConfigurations[*]
+new LambdaDestination(ICANYFUNC)  #CNOTIFICATIONS_LAMBDA. NOTIFICATIONS.CloudFunctionConfigurations[*]
+
+CBUCKET_OPTS.eventBridgeEnabled   #BOOL (def: false). NOTIFICATIONS.EventBridgeConfiguration
+IBUCKET
+ .enableEventBridgeNotification() #
+
+CNOTIFICATIONS_FILTER
+ .prefix|suffix                   #STR. NOTIFICATIONS_FILTER
+
+[I]CBUCKET_OPTS                   #IROLE used by CustomResource's Lambda FUNCTION
+ .notificationsHandlerRole        #Def: new one. No good reason to change it
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
                                             )==:     NOTIFICATIONS PAYLOAD     :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -4316,6 +4657,34 @@ AWS::S3ObjectLambda::AccessPoint  #RESPROPs: Name
 
                                              /=+===============================+=\
                                             /  :                               :  \
+                                            )==:    LAMBDA ACCESS POINT CDK    :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+new AccessPoint
+ (...CARGS, CLACCESSPOINT_OPTS)   #CLACCESSPOINT. CKRESOURCE wrapping LACCESSPOINT
+AccessPoint
+ .fromAccessPointAttributes
+ (...CARGS, ICLACCESSPOINT_OPTS)
+ ->ICLACCESSPOINT                 #
+
+ICLACCESSPOINT[_OPTS]
+ .accessPointArn
+ICLACCESSPOINT|CLACCESSPOINT_OPTS
+ .accessPointName
+ICLACCESSPOINT|ICLACCESSPOINT_OPTS
+ .accessPointCreationDate         #LACCESSPOINT.*
+
+ICLACCESSPOINT
+ .[regional]domainName            #'LACCESSPOINT-ACCOUNT_ID.s3-object-lambda[.REGION].amazonaws.com'
+ICLACCESSPOINT
+ .virtualHostedUrlForObject       #'https://LACCESSPOINT-ACCOUNT_ID.s3-object-lambda[.REGION].amazonaws.com[/OBJECT]'
+ (['OBJECT'[, OPTS]])->'URL'      #OPTS: regional BOOL (def: true)
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
                                             )==:  LAMBDA ACCESS POINT POLICY   :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -4406,6 +4775,14 @@ S3LAMBDA.AllowedFeatures          #STR_ARR among:
                                   #  - otherwise, it must retrieved full OBJECT and perform the slice after transformation
 
 AWS::S3ObjectLambda::AccessPoint  #RESPROPs: ObjectLambdaConfiguration S3LAMBDA
+
+CLACCESSPOINT_OPTS.bucket         #ICBUCKET. S3LAMBDA.SupportingAccessPoint
+CLACCESSPOINT_OPTS.handler        #ICANYFUNC. S3CTRANSFORM.FunctionArn
+                                  #S3TRANSFORM.Actions is always 'GetObject'
+                                  #Automatically allows ICANYFUNC to s3-object-lambda:WriteGetObjectResponse on any LACCESSPOINT
+CLACCESSPOINT_OPTS.payload        #VAL. Automatically JSON stringified. S3CTRANSFORM.FunctionPayload
+CLACCESSPOINT_OPTS
+.supportsGetObjectPartNumber|Range#BOOL (def: false). S3LAMBDA.AllowedFeatures
 
 
                                              /=+===============================+=\
@@ -4549,6 +4926,9 @@ DVAR DataSourceARN                #Either:
                                   #  - otherwise: ACCESSPOINT_ARN
 
 AWS::S3ObjectLambda::AccessPoint  #RESPROPs: ObjectLambdaConfiguration S3LAMBDA
+
+CLACCESSPOINT_OPTS
+ .cloudWatchMetricsEnabled        #S3LAMBDA.*
 
 
                                              /=+===============================+=\
