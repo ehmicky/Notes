@@ -23,26 +23,22 @@ VERSION ==>                       #7.1.0
 PATH_PATTERN                      #URI path with template variables
                                   #Can contain:
                                   #  - :VAR
-                                  #     - VAR name is \p{XID_Continue}+, i.e. roughly same as valid JavaScript identifiers
+                                  #     - VAR name is same as valid JavaScript identifiers
+                                  #        - can use other chars with :"VAR" or \-escaping
                                   #     - matches anything until DELIM
-                                  #  - (REGEXP)
-                                  #     - can be nested
-                                  #     - cannot be (?<NAME>...)
-                                  #     - not stopped by DELIM
                                   #  - *
                                   #     - same as {([^DELIM]*);DELIM}*
                                   #     - i.e. match anything (including nothing), not stopped by DELIM
                                   #  - RAW: anything else
-                                  #Can \-escape any special char: () {} * ? + ; \
-                                  #Reserved chars that must be \-escaped: ! @ ,
+                                  #Can \-escape any special char: {} * \
+                                  #Reserved chars that must be \-escaped: () [] ? + ! @ ,
                                   #Can wrap anything with {...}
-                                  #  - can be {...} {...}? {...}* or {...}+
-                                  #  - can include :VAR or (REGEXP) but only once
+                                  #  - can include :VAR but only once
                                   #     - PREFIX|SUFFIX: any characters before|after
                                   #  - can end with ;SEPARATOR
                                   #     - def SEPARATOR: PREFIX + SUFFIX (if none: '')
                                   #  - with {...}* and {...}+
-                                  #     - each match of :VAR or (REGEXP) is separated by SEPARATOR
+                                  #     - each match of :VAR is separated by SEPARATOR
                                   #     - but PREFIX|SUFFIX is before|after all matches (not each)
 
 
@@ -58,25 +54,25 @@ new TokenData(TOKEN|'RAW'_ARR
 TOKENS.tokens                     #TOKEN|'RAW'_ARR
 
 TOKEN                             #OBJ representation of PATH_PATTERN's part
+TOKEN.type                        #Can be:
+                                  #  - 'param' (if :VAR)
+                                  #  - 'wildcard' (if *)
+                                  #  - 'group' (if {...})
+                                  #  - 'text' (if 'RAW')
 TOKEN.name                        #Can be:
                                   #  - 'VAR' (if :VAR)
-                                  #  - 'NUM' (if (REGEXP))
-                                  #  - '' (if {...} without :VAR|(REGEXP))
-TOKEN.pattern                     #'REGEXP' (if (REGEXP))
-TOKEN.modifier                    #'?', '*', '+' or undefined (if {...})
-TOKEN.prefix                      #'PREFIX' (if {...:VAR} or {...(REGEXP)})
-TOKEN.suffix                      #'SUFFIX' (if {:VAR...} or {(REGEXP)...})
-TOKEN.separator                   #'SEPARATOR' (if {...}) or undefined (default one)
+                                  #  - '*' (if *)
+TOKEN.tokens                      #'...' (if {...})
 
-PATH_REGEXP                       #REGEXP where each parenthesis group matches a :VAR or (REGEXP)
-PATH_REGEXP.keys                  #TOKEN_ARR of all :VAR and (REGEXP)
+PATH_REGEXP                       #REGEXP where each parenthesis group matches a :VAR
+PATH_REGEXP.keys                  #TOKEN_ARR of all :VAR
 
-PARAMS                            #Template variables (:VAR and (REGEXP)) as OBJ
+PARAMS                            #Template variables (:VAR) as OBJ
                                   #Keys are TOKEN.name
                                   #Values can be:
                                   #  - STR
                                   #  - ARR
-                                  #     - each match of :VAR or (REGEXP) inside {...}* or {...}+ (separated by SEPARATOR)
+                                  #     - each match of :VAR inside {...}* or {...}+ (separated by SEPARATOR)
                                   #     - not if OPTS.decode|encode false
 
 
@@ -90,20 +86,17 @@ PARAMS                            #Template variables (:VAR and (REGEXP)) as OBJ
 OPTS.sensitive                    #BOOL (def: false). Case-sensitive
 
 OPTS|TOKENS.delimiter             #'DELIM' (def: '/')
-OPTS.loose                        #BOOL (def: true). Allow multiple DELIMs in a row
+                                  #Multiple DELIMs in a row are counted as separate
 OPTS.trailing                     #BOOL (def: true). End must match:
                                   #  - OPTS.trailing false + OPTS.end true: $
                                   #  - OPTS.trailing false + OPTS.end false: $ or DELIM
-                                  #  - OPTS.trailing true + OPTS.end true: $ or DELIMs$
-                                  #  - OPTS.trailing true + OPTS.end false: $ or DELIMs or DELIMs$
-                                  #DELIMs is multiple DELIMs if OPTS.loose true
-OPTS.strict                       #BOOL (def: false, recommended: true). Throw on unsafe REGEXPs
-
-OPTS.start                        #BOOL (def: true). Must match from beginning
+                                  #  - OPTS.trailing true + OPTS.end true: $ or DELIM$
+                                  #  - OPTS.trailing true + OPTS.end false: $ or DELIM or DELIM$
 OPTS.end                          #BOOL (def: true). Must match until end
+                                  #Always matches from beginning
 
-OPTS.encodePath                   #FUNC(STR)->STR (def: identity)
-                                  #Transform 'RAW', 'PREFIX' and 'SUFFIX' in PATH_PATTERN, during serialization|parsing
+OPTS.encodePath                   #FUNC('RAAW')->STR (def: identity)
+                                  #Transform 'RAW' during parsing
                                   #Should use encodeURI() if PATH_PATTERN might contain non-URI-encoded characters
 OPTS.encode                       #FUNC(VAL)->STR or false (same as identity function)
                                   #Transform PARAMS.* during serialization
@@ -111,13 +104,6 @@ OPTS.encode                       #FUNC(VAL)->STR or false (same as identity fun
 OPTS.decode                       #FUNC(STR)->STR or false (same as identity function)
                                   #Transform PARAMS.* during parsing
                                   #Def: decodeURIComponent()
-
-OPTS.validate                     #BOOL (def: true). Throws if:
-                                  #  - missing PARAM
-                                  #  - PARAM VAL does not match pattern, e.g.
-                                  #     - (PATTERN)
-                                  #     - :VAR, i.e. contains DELIM
-                                  #     - missing PREFIX|SUFFIX
 
 
                                              /=+===============================+=\
@@ -128,14 +114,14 @@ OPTS.validate                     #BOOL (def: true). Throws if:
 
 
 parse(PATH_PATTERN[, OPTS])       #PATH_PATTERN -> TOKENS
- ->TOKENS                         #OPTS: delimiter|encodePath
+ ->TOKENS                         #OPTS: encodePath
 
 pathToRegexp                      #PATH_PATTERN|TOKENS -> PATH_REGEXP
- (PATH_PATTERN|TOKENS[, OPTS])    #If PATH_PATTERN_ARR: alternatives
- ->PATH_REGEXP                    #OPTS: sensitive|delimiter|trailing|strict|loose|start|end|encodePath
+ (PATH_PATTERN|TOKENS[_ARR]       #If ARR: alternatives
+ [, OPTS])->PATH_REGEXP           #OPTS: sensitive|delimiter|trailing|end
 
 match(PATH_PATTERN|TOKENS[, OPTS])#PATH_PATTERN|TOKENS + 'PATH' -> PARAMS
- ->FUNC('PATH')                   #OPTS: sensitive|delimiter|trailing|strict|loose|start|end|encodePath|decode
+ ->FUNC('PATH')                   #OPTS: sensitive|delimiter|trailing|end|decode
  ->MATCH_RESULT|false             #For better matching, it is recommended to 'PATH'.normalize()
 MATCH_RESULT.params               #PARAMS
 MATCH_RESULT.path                 #STR. Whole part of 'PATH' that matched
@@ -153,4 +139,4 @@ compile                           #PATH_PATTERN|TOKENS + PARAMS -> 'PATH'
  (PATH_PATTERN|TOKENS[, OPTS])    #Replaces:
  ->FUNC([PARAMS])                 #  - :VAR by PARAMS.VAR
  ->'PATH'                         #  - (...) by PARAMS[NUM]
-                                  #OPTS: sensitive|delimiter|strict|loose|encodePath|encode|validate
+                                  #OPTS: delimiter|encode
