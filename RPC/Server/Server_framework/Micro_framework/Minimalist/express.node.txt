@@ -71,10 +71,8 @@ APP.use                           #MIDWR are middleware functions, i.e. meant to
 APP.use(MIDWR(ERROR, ...),...)    #ERROR_MIDWR, called if previous MIDWR calls NEXT(ERROR) or throws|rejects ERROR
  ->APP                            #Def: send 500 status code with response ERROR
 
-APP.use('ROUTE_PATH'[_ARR], ...)  #Only applies to requests to 'ROUTE_PATH[/...]' (def: '/'):
- ->APP                            #Excluding query string or hash
-                                  #Can use globbing: ? + ( ) *
-ROUTER_OPTS.caseSensitive
+APP.use(ROUTE_PATHS, ...)->APP    #Only applies to requests to 'ROUTE_PATH[/...]' (def: '/', i.e. any)
+ROUTER[_OPTS].caseSensitive
 CONF."case sensitive routing"     #BOOL (def: false). Case-sensitiveness of 'ROUTE_PATH'
 
 
@@ -85,7 +83,7 @@ CONF."case sensitive routing"     #BOOL (def: false). Case-sensitiveness of 'ROU
                                              \=+===============================+=/
 
 
-APP.use(['ROUTE_PATH', ]APP2)     #Use APP2 for requests to 'ROUTE_PATH[/...]'
+APP.use([ROUTE_PATHS, ]APP2)      #Use APP2 for requests to 'ROUTE_PATH[/...]'
  ->APP                            #Goal: sub-apps
                                   #Common pattern is to export APP, and only use APP.listen() if (!module.parent)
 
@@ -101,19 +99,24 @@ APP2.path()->'PATH'               #Ancestor 'ROUTE_PATH' (def: '')
                                              \=+===============================+=/
 
 
-APP.METHOD('ROUTE_PATH', ...)     #Like APP.use('ROUTE_PATH', ...) except only when using HTTP METHOD
- ->APP                            #  - can be 'all'
+APP.METHOD(ROUTE_PATHS, ...)->APP #Like APP.use(ROUTE_PATHS, ...) except only when using HTTP METHOD
+                                  #  - can be 'all'
                                   #  - 'get' also catches 'head'
                                   #     - unless APP.head() defined
-                                  #  - 'options' sends back 200 with Allow: METHOD,... [C] for each defined METHOD
+                                  #  - 'options' responds with 200 and Allow: METHOD,... [C] for each defined METHOD
                                   #     - unless APP.options() defined
                                   #Cannot define ERROR_MIDWR nor sub-app
-                                  #'ROUTE_PATH':
-                                  #  - must be exact match
-                                  #  - can be REGEXP (partial match)
-ROUTER_OPTS.strict
-CONF."strict routing"             #BOOL (def: false). Make APP.METHOD('ROUTE_PATH', ...) match 'ROUTE_PATH[/]'
-NEXT('route')                     #Inside APP.METHOD(), skip other APP.METHOD() or MIDWRs with same METHOD + 'ROUTE_PATH'
+                                  #ROUTE_PATHS is exact match if 'ROUTE_PATH', partial if REGEXP
+
+ROUTE_PATHS                       #Matches REQ.url (i.e. no origin)
+                                  #Either a:
+                                  #  - 'ROUTE_PATH': uses path-to-regexp (see its doc)
+                                  #  - REGEXP
+                                  #Can be an ARR of 'ROUTE_PATH'|REGEXP
+
+ROUTER[_OPTS].strict
+CONF."strict routing"             #BOOL (def: false). Allow trailing / in ROUTE_PATHS
+NEXT('route')                     #Skips the rest of the ROUTE
 
 APP.route('ROUTE_PATH')->ROUTE    #Same as APP.METHOD('ROUTE_PATH', ...)
 ROUTE.METHOD(...)->ROUTE          #Meant for re-usability
@@ -121,8 +124,12 @@ ROUTE.METHOD(...)->ROUTE          #Meant for re-usability
 APP.router
 EXPRESS.Router([ROUTER_OPTS])
  ->ROUTER                         #ROUTER is a MIDWR meant for routing
-ROUTER.use|METHOD|route|param(...)#Like APP.*(...)
-NEXT('router')                    #In a ROUTER, skip the rest of that ROUTER
+ROUTER.use|METHOD|route|param(...)#Like APP.*(...) except:
+                                  #  - when used on its own (not inside APP):
+                                  #     - manually called with ROUTER.handle()
+                                  #     - ends with ROUTER.handle() FUNC, and does not send response
+                                  #  - to mount sub-ROUTER, must call ROUTER.handle(...) inside another MIDWR or route FUNC instead
+NEXT('router')                    #Skip the rest of the ROUTER
 
 
                                              /=+===============================+=\
@@ -165,7 +172,6 @@ REQ.baseUrl                       #'ROUTE_PATH' from all APP.use('ROUTE_PATH',..
 REQ.url                           #URL relative to REQ.baseUrl
 REQ.path                          #REQ.url without '?SEARCH' nor '#HASH'
 
-REQ.route.methods.METHOD          #BOOL
 REQ.protocol                      #'http[s]'
 REQ.secure                        #BOOL. Whether 'https'
 REQ.host                          #'HOSTNAME:PORT'
@@ -198,14 +204,15 @@ CONF."trust proxy"                #Same but can also be:
                                   #Name must be [:alnum:]_
 :PARAM?                           #Optional
 
-REQ.params.PARAM                  #VAL
-REQ.params[NUM]                   #VAL when ROUTE_PATH is REGEXP
+REQ.params.PARAM                  #VAL when ROUTE_PATHS is 'ROUTE_PATH' (see path-to-regexp doc) or REGEXP (?<NAME>...)
+                                  #Calls decodeURIComponent() on values
+REQ.params[NUM]                   #Same but when ROUTE_PATHS is REGEXP (...)
 
 APP.param('PARAM'[_ARR],
  MIDWR(..., PARAM_VAL, 'PARAM'))
  ->APP                            #MIDWR that is called for ROUTE_PATHs that use :PARAM
 
-ROUTER_OPTS.mergeParams           #BOOL (def: false). Inherits parent ROUTER PARAMs
+ROUTER[_OPTS].mergeParams         #BOOL (def: false). Inherits parent ROUTER PARAMs
 
 
                                              /=+===============================+=\
@@ -391,50 +398,17 @@ RES.render(...)                   #Same as APP.render(...) except:
                                              \=+===============================+=/
 
 
-new ROUTER_EXPORT([OPTS])         #ROUTER
-ROUTER[.handle]
- (REQ, RES, FUNC([ERROR]))        #Calls matching MIDWRs|ROUTEs
-                                  #FUNC() called at end
+new ROUTER_EXPORT([ROUTER_OPTS])  #ROUTER
+                                  #Own package 'router' (version ???)
+ROUTER[.handle]                   #Handles a REQ|RES, calling matching MIDWRs|ROUTEs
+ (REQ, RES, FUNC([ERROR]))        #FUNC() called at end
 
-ROUTE_PATHS                       #Matches REQ.url (i.e. no origin)
-                                  #Can be a 'ROUTE_PATH': uses path-to-regexp (see its doc)
-                                  #Can be a REGEXP
-                                  #Can be an ARR of 'ROUTE_PATH'|REGEXP
-ROUTER.use([ROUTE_PATHS, ]MIDWR([ERROR, ]REQ, RES, NEXT([ERROR]))[_ARR],...)->ROUTER
-                                  #'ROUTE_PATH' only matches start of REQ.url
-                                  #Def 'ROUTE_PATH': '/' (i.e. any)
-                                  #If ERROR: only called when previous MIDWR called NEXT(ERROR)
-ROUTER.HTTP_METHOD|all
- (ROUTE_PATHS, FUNC,...)->ROUTER  #Same as ROUTER.route(ROUTE_PATHS).HTTP_METHOD(FUNC,...)
 ROUTER.route(ROUTE_PATHS)->ROUTE  #
-                                  #'ROUTE_PATH' matches full REQ.url
-ROUTE.HTTP_METHOD(FUNC(REQ, RES, NEXT([ERROR]))[_ARR],...)->ROUTE
-                                  #'get' also catches 'head'
-                                  #  - unless ROUTE.head() defined
-                                  #'options' sends Allow: METHOD,... [C] for each defined METHOD
-                                  #  - unless 4**|5**
-                                  #  - unless APP.options() defined
-                                  #Returning|rejecting ERROR calls NEXT(ERROR)
-ROUTE.all(...)->ROUTE             #Same for any HTTP_METHOD
+REQ.route                         #ROUTE
+ROUTE.HTTP_METHOD|all(FUNC,...)   #Same as ROUTER.*(...) but only for this ROUTE
 ROUTE.methods.HTTP_METHOD         #BOOL
 ROUTE.path                        #'ROUTE_PATH'
 
-OPTS|ROUTER.caseSensitive         #BOOL. If false (def), 'ROUTE_PATH' case-insensitive
-OPTS|ROUTER.strict                #BOOL (def: false). Allow trailing /
-
-REQ.params.PARAM                  #PARAM depends on ROUTE_PATHS:
-                                  #  - 'ROUTE_PATH': see path-to-regexp doc
-                                  #  - REGEXP: NUM if (...), NAME if (?<NAME>...)
-                                  #Calls decodeURIComponent() on values
-ROUTER.param('PARAM', MIDWR(REQ, RES, NEXT([ERROR]), PARAM_VAL, 'PARAM'))
-                                  #MIDWR that is called for ROUTE_PATHs that use that PARAM
-                                  #Returning|rejecting ERROR calls NEXT(ERROR)
-OPTS|ROUTER.mergeParams           #BOOL (def: false). Whether sub-ROUTERs inherit parent PARAMs
-
-NEXT('route')                     #Skips the rest of the ROUTE_PATHS
-NEXT('router')                    #Skips the rest of ROUTER
-
-SUB-ROUTER ==>                    #Calling ROUTER.handle(...) inside another MIDWR or ROUTE FUNC
 REQ.url                           #Does not include leading ROUTE_PATH
-REQ.baseUrl|params: might be different for sub-ROUTER???
+REQ.baseUrl???
 REQ.originalUrl???
