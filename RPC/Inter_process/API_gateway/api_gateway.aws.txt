@@ -169,6 +169,11 @@ ICAPI.url
 ICAPI.urlForPath(...)->'URL'     =#Same as ICAPI.deploymentStage.urlForPath(...)
 CAPI_OPTS.endpointExportName     =#STR. EXPORT.name of STACK OUTPUT with value ICAPI.url
 
+CSTAGE.url                       -#'https://API_MID.execute-api.REGION.amazonaws.com/[STAGE]'
+CAPI.url                         -#CAPI.defaultStage.url
+CSTAGE.callbackUrl               ~#'https://API_MID.execute-api.REGION.amazonaws.com/STAGE'
+CSTAGE.url                       ~#'wss://API_MID.execute-api.REGION.amazonaws.com/STAGE'
+
 
                                              /=+===============================+=\
                                             /  :                               :  \
@@ -280,15 +285,28 @@ AWS::ApiGatewayV2::Api          -~#RESPROPs: Name, Description, ProtocolType, Ta
 
 
 new RestApi
- (...CARGS[, CAPI_OPTS])         =#
+ (...CARGS[, CAPI_OPTS])         =#CAPI
+new HttpApi
+ (...CARGS[, CAPI_OPTS])         -#CAPI with API.protocolType 'HTTP'
+new WebSocketApi
+ (...CARGS[, CAPI_OPTS])         ~#CAPI with API.protocolType 'WEBSOCKET'
 RestApi.fromRestApiId
  (...CARGS, 'API_MID')->ICAPI    =#
 RestApi.fromRestApiAttributes
  (...CARGS, CAPI_OPTS)->ICAPI    =#CAPI_OPTS: restApiId, restApiName, rootResourceId
+HttpApi.fromHttpApiAttributes
+ (...CARGS, CAPI_OPTS)->ICAPI    -#CAPI_OPTS: httpApiId, apiEndpoint (API.apiEndpoint)
+WebSocketApi
+ .fromWebSocketApiAttributes
+ (...CARGS, CAPI_OPTS)->ICAPI    ~#CAPI_OPTS: webSocketId, apiEndpoint (API.apiEndpoint)
 
-ICAPI.restApiId                  =#API.id
-ICAPI[_OPTS].restApiName         =#'API' (def: NODE.id). API.name
-ICAPI_OPTS.description           =#API.*
+ICAPI.restApiId                  =
+CAPI.apiId                      -~#API.id
+ICAPI[_OPTS].restApiName         =
+CAPI_OPTS.apiName               -~
+CAPI_OPTS.httpApiName            -
+CAPI_OPTS.webSocketApiName       ~#'API' (def: NODE.id). API.name
+ICAPI_OPTS.description            #API.*
 
 
                                              /=+===============================+=\
@@ -384,8 +402,7 @@ CAPI_OPTS.binaryMediaTypes       =#API.*
 
 CINTEGRATION_OOPTS|CIRESP
  .contentHandling                =
-CAWS_INTEGRATION_OPTS
- |CLAMBDA_INTEGRATION_OPTS
+CANY|AWS|LAMBDA_INTEGRATION_OPTS
  .contentHandling                ~#INTEGRATION.contentHandling[Strategy]
 
 
@@ -527,7 +544,8 @@ ROUTE.routeKey                  -~#'ROUTE', as:
                                   #Can be '$default' as a catch-all
                                  ~#  - including on non-JSON request bodies
                                   #  - def: returns { message: 'Not Found' }
-API.routeSelectionExpression     ~#'ROUTE_$EXPR' used by each request
+API.routeSelectionExpression    -~#'ROUTE_$EXPR' used by each request
+                                 -#Always '${request.method} ${request.path}'
 OOPERATION.isDefaultRoute       =-#BOOL. ROUTE '$default'
                                   #Must be under OPATHDEF.x-amazon-apigateway-any-method
 
@@ -548,7 +566,7 @@ AWS::ApiGateway::Method          =#RESPROPs: RestApiId, ResourceId, HttpMethod, 
 AWS::ApiGatewayV2::Route        ~-#RESPROPs: ApiId, RouteKey, RouteResponseSelectionExpression, RequestParameters,
                                   #RequestModels, ModelSelectionExpression
                                   #RESATTRs: RouteId
-AWS::ApiGatewayV2::Api           ~#Includes RESATTRs: RouteSelectionExpression
+AWS::ApiGatewayV2::Api          ~-#Includes RESATTRs: RouteSelectionExpression
 
 
                                              /=+===============================+=\
@@ -567,6 +585,25 @@ new WebSocketRoute
 ICRESOURCE.addMethod('HTTP_METHOD'
  [, CINTEGRATION[, CROUTE_OOPTS]])
  ->CROUTE                        =#Automatically sets CROUTE_OPTS: resource, integration, options
+CAPI.addRoutes(CROUTE_OPTS)      -#Creates multiple CROUTEs, with CROUTE_OPTS:
+ ->CROUTE_ARR                     #  - routeKey -> methods 'HTTP_METHOD'_ARR (def: ['ANY']) + path '/PATH'
+                                  #  - integration, authorizer, authorizationScopes
+                                  #Automatically sets CROUTE_OPTS: httpApi
+                                  #Takes into account CAPI_OPTS.defaultAuthorizer|defaultAuthorizationScopes
+CAPI.addRoute
+ ('ROUTE', CROUTE_OPTS)->CROUTE  ~#Automatically sets CROUTE_OPTS: webSocketApi, routeKey
+
+CAPI_OPTS.defaultIntegration     -#CINTEGRATION. Creates a '$default' ROUTE
+                                  #Automatically sets CROUTE_OPTS: httpApi, routeKey, integration
+                                  #Takes into account CAPI_OPTS.defaultAuthorizer|defaultAuthorizationScopes
+CAPI_OPTS.defaultRouteOptions
+ |connectRouteOptions            ~#CROUTE_OPTS. Creates a '$default|$connect|$disconnect' ROUTE
+ |disconnectRouteOptions          #Automatically sets CROUTE_OPTS: webSocketApi, routeKey
+
+CROUTE_OPTS.options              =#CROUTE_OOPTS
+CAPI_OPTS|CRESOURCE[_OPTS]       =#CROUTE_OOPTS
+ .defaultMethodOptions            #No: requestModels, requestValidator*
+                                  #Inherited by child RESOURCEs (can override specific members)
 
 CROUTE.api                       =
 CROUTE[_OPTS].httpApi            -
@@ -578,21 +615,19 @@ CROUTE[_OPTS].resource           =#ICRESOURCE
 CROUTE[_OPTS].httpMethod         =#ROUTE.*. Normalized to uppercase
 CROUTE[_OPTS].routeKey           ~#ROUTE.*
 CROUTE_OPTS.routeKey             -#ROUTE.* among:
-                                  #  - RouteKey.DEFAULT: '$default'
-                                  #  - RouteKey.with('/PATH'[, 'HTTP_METHOD'])
+                                  #  - HttpRouteKey.DEFAULT: '$default'
+                                  #  - HttpRouteKey.with('/PATH'[, 'HTTP_METHOD'])
                                   #     - def HTTP_METHOD: 'ANY'
 CROUTE.method                    -#'HTTP_METHOD'
 CROUTE.path                      -#'/PATH' or undefined (if '$default')
 
-CROUTE_OPTS.options              =#CROUTE_OOPTS
-CAPI_OPTS|CRESOURCE[_OPTS]       =#CROUTE_OOPTS
- .defaultMethodOptions            #No: requestModels, requestValidator*
-                                  #Inherited by child RESOURCEs (can override specific members)
+CAPI_OPTS                       -~#API.*
+ .routeSelectionExpression       ~#Def: '$request.body.action'
+
 CROUTE_OOPTS.requestParameters   =#ROUTE.*
 CROUTE_OOPTS.requestModels.MIME  =#ICMODEL. ROUTE.*
 
 CAPI.methods                      #CROUTE_ARR
-
 
 
                                              /=+===============================+=\
@@ -775,10 +810,12 @@ CRRESP.responseModels.MIME       =#ICMODEL. RRESP.*
 CROUTE_OPTS.returnResponse       ~#BOOL (def: false). Adds a RRESP
 
 ICAPI|ICSTAGE.metricLatency
- ([CMETRIC_OPTS])->CMETRIC
+ ([CMETRIC_OPTS])->CMETRIC      =-#
 CROUTE.metricLatency
  (ICSTAGE[, CMETRIC_OPTS])
  ->CMETRIC                       =#
+ICAPI|ICSTAGE.metricDataProcessed
+ ([CMETRIC_OPTS])->CMETRIC       -#
 
 
                                              /=+===============================+=\
@@ -975,6 +1012,15 @@ CAPI_OPTS|CRESOURCE[_OPTS]       =#CINTEGRATION
  .defaultIntegration              #Same but lower priority, and inherited by child RESOURCEs (unless overridden)
 CROUTE_OPTS.integration         -~#CINTEGRATION. INTEGRATION + ROUTE.target
 
+new HttpRouteIntegration
+ ('CONSTRUCT')                   -
+new WebSocketRouteIntegration
+ ('CONSTRUCT')                   ~#CANY_INTEGRATION. CINTEGRATION with any INTEGRATION.type
+CANY_INTEGRATION.bind(OPTS)     -~#Must be redefined
+ ->CANY_INTEGRATION_OPTS          #OPTS: route|scope ICROUTE
+CANY_INTEGRATION_OPTS.type      -~#INTEGRATION.type
+CANY_INTEGRATION_OPTS.subtype    -#INTEGRATION.integrationSubtype
+
 new MockIntegration
  ([CMOCK_INTEGRATION_OPTS])      =
 new WebSocketMockIntegration
@@ -996,8 +1042,9 @@ CMOCK|LAMBDA_INTEGRATION_OPTS.*
 CHTTP|AWS_INTEGRATION_OPTS
  .options                        =#CINTEGRATION_OOPTS
 
+CANY_INTEGRATION_OPTS.uri       -~
 CAWS_INTEGRATION_OPTS
- .integrationUri                 ~#INTEGRATION.*
+ .integrationUri                 ~#INTEGRATION.integrationUri
 CAWS_INTEGRATION_OPTS.region     =#'REGION' of INTEGRATION.uri
 CAWS_INTEGRATION_OPTS.service    =#'SERVICE' of INTEGRATION.uri
 CAWS_INTEGRATION_OPTS.subdomain  =#STR. Subdomain: STR.SERVICE of INTEGRATION.uri
@@ -1011,6 +1058,7 @@ CHTTP_INTEGRATION_OPTS.httpMethod=#'HTTP_METHOD' (def: 'GET'). INTEGRATION.httpM
 CHTTP|VPC_INTEGRATION_OPTS.method-#'HTTP_METHOD' (def: 'ANY'). INTEGRATION.integrationMethod
 CAWS_INTEGRATION_OPTS
  .integrationHttpMethod          =#'HTTP_METHOD' (def: 'POST'). INTEGRATION.httpMethod
+CANY_INTEGRATION_OPTS.method    -~
 CAWS_INTEGRATION_OPTS
  .integrationMethod              ~#'HTTP_METHOD' (no def). INTEGRATION.integrationMethod
 
@@ -1018,25 +1066,29 @@ CINTEGRATION_OOPTS
  .requestParameters
  |requestTemplates
  |passthroughBehavior            =
-CAWS_INTEGRATION_OOPTS
+CANY|AWS_INTEGRATION_OOPTS
  .requestParameters
  |requestTemplates
  |passthroughBehavior            ~#INTEGRATION.*
-CHTTP|LAMBDA|VPC_INTEGRATION_OPTS
+CANY|HTTP|LAMBDA|VPC
+ _INTEGRATION_OPTS
  .parameterMapping               -#CREQ_PARAMS. INTEGRATION.requestParameters
 
-CAWS_INTEGRATION_OPTS
+CANY|AWS_INTEGRATION_OPTS
  .templateSelectionExpression    ~#INTEGRATION.*
 
 CINTEGRATION_OOPTS
  .credentialsRole                =
-CAWS_INTEGRATION_OPTS
+CANY|AWS_INTEGRATION_OPTS
  .credentialsRole                ~#ICROLE. INTEGRATION.credentials[Arn]
 CINTEGRATION_OOPTS
  .credentialsPassthrough         =#BOOL (def: false). INTEGRATION.credentials 'arn:aws:iam::*:user/*'
+CANY_INTEGRATION_OPTS.credentials-#INTEGRATION.credentialsArn among:
+                                  #  - IntegrationCredentials.fromRole(ICROLE)
+                                  #  - IntegrationCredentials.useCallerIdentity(): 'arn:aws:iam::*:user/*'
 
 CINTEGRATION_OOPTS.timeout       =
-CHTTP|AWS|LAMBDA|VPC
+CANY|HTTP|AWS|LAMBDA|VPC
  _INTEGRATION_OPTS.timeout      -~#DURATION. INTEGRATION.timeoutInMillis
 
 
@@ -1160,7 +1212,7 @@ CIRESP.statusCode
 
 ICAPI|ICSTAGE
  .metricIntegrationLatency
- ([CMETRIC_OPTS])->CMETRIC
+ ([CMETRIC_OPTS])->CMETRIC      =-#
 CROUTE.metricIntegrationLatency
  (ICSTAGE[, CMETRIC_OPTS])
  ->CMETRIC                       =#
@@ -1311,7 +1363,7 @@ new WebSocketLambdaIntegration   ~#Same with:
 CLAMBDA_INTEGRATION_OPTS
  .allowTestInvoke                =#BOOL (def: true). Add PERMISSION to allow running TestInvoke*()
 
-CLAMBDA_INTEGRATION_OPTS         -#INTEGRATION.* among:
+CANY|LAMBDA_INTEGRATION_OPTS     -#INTEGRATION.* among:
  .payloadFormatVersion            #  - PayloadFormatVersion.VERSION_1_0
                                   #  - PayloadFormatVersion.VERSION_2_0 (def)
                                   #  - PayloadFormatVersion.custom(STR)
@@ -1324,6 +1376,10 @@ CLAMBDA_API_OPTS
  .integrationOptions             =#CLAMBDA_INTEGRATION_OPTS
 CLAMBDA_API_OPTS.proxy           =#BOOL (def: true). Creates a {proxy+} PATHVAR on root path
                                   #Also forces a single RESOURCE|ROUTE (root path)
+
+new ApiEventSource               =#CCEVENT_SOURCE, i.e. passed to Lambda CFUNCTION_OPTS.events
+ ('HTTP_METHOD', '/PATH'          #Like new RestApi(...) but with CAPI_OPTS.defaultIntegration LambdaIntegration
+ [, CROUTE_OPTS])                 #Also creates a ROUTE
 
 
                                              /=+===============================+=\
@@ -1429,6 +1485,8 @@ AWS::ApiGatewayV2::Integration   -#Includes RESPROPs:
 
 new VpcLink
  (...CARGS[, CVPCLINK_OPTS])    =-#
+ICAPI.addVpcLink(CVPCLINK_OPTS)
+ ->VPCLINK                       -#
 VpcLink.fromVpcLinkId
  (...CARGS, 'VPCLINK_MID')
  ->ICVPCLINK                     =#
@@ -1461,7 +1519,8 @@ CINTEGRATION_OOPTS.vpcLink       =#ICVPCLINK. INTEGRATION.connectionId
                                   #     - setting CINTEGRATION_OOPTS.connectionType 'VPC_LINK' explicitely (not using default value)
 CINTEGRATION_OOPTS.connectionType=#INTEGRATION.connectionType
                                   #Def: 'VPC_LINK' if CINTEGRATION_OOPTS.vpcLink set, 'INTERNET' else
-
+CANY_INTEGRATION_OPTS
+ .connectionId|connectionType    -#INTEGRATION.*
 new HttpNlbIntegration
  ('CONSTRT', IELB_NETWORK_LISTENER
  [, CVPC_INTEGRATION_OPTS])      -
@@ -1471,8 +1530,11 @@ new HttpAlbIntegration
 new
  HttpServiceDiscoveryIntegration -#CINTEGRATION with
  ('CONSTRUCT', ICLOUD_MAP_SERVICE #  - integrationType 'HTTP_PROXY'
- [, CVPC_INTEGRATION_OPTS])       #  - VPCLINK (INTEGRATION.connectionId|connectionType)
-CVPC_INTEGRATION_OPTS
+ [, CVPC_INTEGRATION_OPTS])       #  - VPCLINK (INTEGRATION.connectionType)
+CVPC_INTEGRATION_OPTS.vpcLink    -#ICVPCLINK. INTEGRATION.connectionId
+                                  #Def: use IELB_*_LISTENER.vpc
+
+CANY|VPC_INTEGRATION_OPTS
  .secureServerName               -#TLSCONFIG.serverNameToVerify
 
 
@@ -1974,7 +2036,7 @@ CAPI_OPTS.policy                 =#API.*
 
 ICAPI.arnForExecuteApi
  (['HTTP_METHOD'[, '/PATH'
- [, 'STAGE']]])->'CALL_ROUTE_ARN'=#Def 'HTTP_METHOD'|'STAGE': '*', def '/PATH': '/*'
+ [, 'STAGE']]])->'CALL_ROUTE_ARN' #Def 'HTTP_METHOD'|'STAGE': '*', def '/PATH': '/*'
 CROUTE.methodArn                 =#'CALL_ROUTE_ARN' for this ROUTE (HTTP_METHOD + PATH) and ICAPI.deploymentStage (if any)
                                   #Any '{PATHVAR[+]}' is replaced by *
 CROUTE.testMethodArn             =#Same but with STAGE 'test-invoke-stage' (see below)
@@ -1987,6 +2049,10 @@ CROUTE.grantExecute(YGRANTABLE)
 CROUTE.grantInvoke
  (YGRANTABLE[, OPTS])->CGRANT    -#Allow execute-api:Invoke on CALL_ROUTE_ARN
 OPTS.httpMethods                 -#'HTTP_METHOD'_ARR (def: CROUTE.method)
+
+CAPI|CSTAGE
+ .grantManagementApiAccess
+ (YGRANTABLE)->CGRANT            ~#Allows execute-api:ManageConnections on CALL_ROUTE_ARN
 
 
                                              /=+===============================+=\
@@ -2488,24 +2554,25 @@ ICRESOURCE.addCorsPreflight      =#Emulates CORS.* but for v1
                                   #  - adds Vary: Origin [S]
 CAPI_OPTS|CRESOURCE[_OPTS]       =#CCORS_OPTS. Same
  .defaultCorsPreflightOptions     #Inherited by child RESOURCEs (unless overridden)
+CAPI_OPTS.corsPreflight          -#CCORS_OPTS
 
 CCORS_OPTS.statusCode            =#STATUS_NUM (def: 204)
 
-CCORS_OPTS.allowOrigins          =#'ORIGIN'_ARR. Access-Control-Allow-Origin [S]
-                                  #Can be Cors.ALL_ORIGIN, i.e. ['*']
-                                  #Uses a Velocity template with IRESP.responseTemplates so that the header value is:
+CCORS_OPTS.allowOrigins         =-#'ORIGIN'_ARR. Access-Control-Allow-Origin [S]
+                                 =#Can be Cors.ALL_ORIGIN, i.e. ['*']
+                                 =#Uses a Velocity template with IRESP.responseTemplates so that the header value is:
                                   #  - first matching 'ORIGIN' using Origin [C]
                                   #  - if none, first 'ORIGIN' in ARR
-CCORS_OPTS.allowMethods          =#'HTTP_METHOD'_ARR. Access-Control-Allow-Methods [S]
-                                  #Can be Cors.ALL_METHODS (def), i.e. ['OPTIONS', 'GET', 'PUT', 'POST', 'DELETE', 'PATCH', 'HEAD']
-CCORS_OPTS.allowHeaders          =#'HEADER'_ARR. Access-Control-Allow-Headers [S]
-                                  #Can be Cors.DEFAULT_HEADERS (def), i.e.:
+CCORS_OPTS.allowMethods         =-#'HTTP_METHOD'_ARR. Access-Control-Allow-Methods [S]
+                                 =#Can be Cors.ALL_METHODS (def), i.e. ['OPTIONS', 'GET', 'PUT', 'POST', 'DELETE', 'PATCH', 'HEAD']
+CCORS_OPTS.allowHeaders         =-#'HEADER'_ARR. Access-Control-Allow-Headers [S]
+                                 =#Can be Cors.DEFAULT_HEADERS (def), i.e.:
                                   #  - Content-Type, Authorization, X-Amz-Date, X-Api-Key, X-Amz-Security-Token
                                   #  - X-Amz-User-Agent
-CCORS_OPTS.allowCredentials      =#BOOL (def: false). Access-Control-Allow-Credentials [S]
-CCORS_OPTS.maxAge                =#DURATION. Access-Control-Max-Age [S]
+CCORS_OPTS.allowCredentials     =-#BOOL (def: false). Access-Control-Allow-Credentials [S]
+CCORS_OPTS.maxAge               =-#DURATION. Access-Control-Max-Age [S]
 CCORS_OPTS.disableCache          =#BOOL (def: false). Access-Control-Max-Age: -1 [S]
-CCORS_OPTS.exposeHeaders         =#'HEADER'_ARR. Access-Control-Expose-Headers [S]
+CCORS_OPTS.exposeHeaders        =-#'HEADER'_ARR. Access-Control-Expose-Headers [S]
 
 
                                              /=+===============================+=\
@@ -2629,13 +2696,36 @@ AWS::ApiGatewayV2::
                                              \=+===============================+=/
 
 
-new Stage(...CARGS, CSTAGE_OPTS) =#
+new Stage(...CARGS, CSTAGE_OPTS) =
+new HttpStage
+ (...CARGS, CSTAGE_OPTS)         -
+new WebSocketStage
+ (...CARGS, CSTAGE_OPTS)         ~#
+HttpApi.addStage
+ ('CONSTRUCT', CSTAGE_OPTS)
+ ->CSTAGE                        -#Automatically sets CSTAGE_OPTS: httpApi
 Stage.fromStageAttributes
  (...CARGS, CSTAGE_OPTS)->ICSTAGE=#Only CSTAGE_OPTS: restApi, stageName
+HttpStage.fromStageAttributes
+ (...CARGS, CSTAGE_OPTS)->ICSTAGE-
+WebSocketStage
+ .fromStageAttributes
+ (...CARGS, CSTAGE_OPTS)->ICSTAGE~#Only CSTAGE_OPTS: api, stageName
+
+CAPI_OPTS.createDefaultStage     -#BOOL (def: false). Creates a default CSTAGE
+                                  #Automatically sets: httpApi, autoDeploy true
+CAPI.defaultStage                -#CSTAGE created by CAPI_OPTS.createDefaultStage
 
 ICSTAGE.stageArn                 =#'STAGE_ARN'
-ICSTAGE.restApi                  =#CAPI
-ICSTAGE[_OPTS].stageName         =#STAGE.stageName (def: 'prod')
+ICSTAGE.restApi                  =
+ICSTAGE.api                     -~#CAPI
+CSTAGE_OPTS.httpApi              -
+CSTAGE_OPTS.webSocketApi         ~#ICAPI
+ICSTAGE[_OPTS].stageName          #STAGE.stageName. Def:
+                                 =#  - 'prod'
+                                 -#  - '$default'
+                                 ~#  - none
+CSTAGE_OPTS.description           #STAGE.*
 
 CSTAGE_OPTS.variables            =#STAGE.*
 
@@ -2757,6 +2847,8 @@ CAPI.deployments                  #CDEPLOYMENT_ARR
 CDEPLOYMENT[_OPTS].stageName     =#'STAGE'
 CDEPLOYMENT_OPTS.description     =#DEPLOYMENT.*
 
+CSTAGE_OPTS.autoDeploy          -~#STAGE.*
+
 CDEPLOYMENT_OPTS                 =#BOOL (def: false). Use DeletionPolicy|UpdateReplacePolicy RETAIN (instead of DESTROY)
  .retainDeployments               #This allows reverting
 
@@ -2833,24 +2925,24 @@ CSTAGE_OPTS
 
 ICAPI|ICSTAGE.metric
  ('METRIC'[, CMETRIC_OPTS])
- ->CMETRIC
+ ->CMETRIC                        #
 CROUTE.metric('METRIC', ICSTAGE
  [, CMETRIC_OPTS])->CMETRIC      =#
 ICAPI|ICSTAGE.metricCount
- ([CMETRIC_OPTS])->CMETRIC
+ ([CMETRIC_OPTS])->CMETRIC      =-#
 CROUTE.metricCount
  (ICSTAGE[, CMETRIC_OPTS])
- ->CMETRIC                       =#For AWS/ApiGateway/Count
+ ->CMETRIC                       =#
 ICAPI|ICSTAGE.metricClientError
- ([CMETRIC_OPTS])->CMETRIC
+ ([CMETRIC_OPTS])->CMETRIC      =-#
 CROUTE.metricClientError
  (ICSTAGE[, CMETRIC_OPTS])
- ->CMETRIC                       =#For AWS/ApiGateway/4XXError
+ ->CMETRIC                       =#
 ICAPI|ICSTAGE.metricServerError
- ([CMETRIC_OPTS])->CMETRIC
+ ([CMETRIC_OPTS])->CMETRIC      =-#
 CROUTE.metricServerError
  (ICSTAGE[, CMETRIC_OPTS])
- ->CMETRIC                       =#For AWS/ApiGateway/5XXError
+ ->CMETRIC                       =#
 
 
                                              /=+===============================+=\
@@ -3563,8 +3655,13 @@ CDNAME_OPTS.endpointType          #ENDPOINT.types[0] or DDNAME.endpointType (def
 CDNAME.addEndpoint(CDNAME_OPTS) -~#Add new endpoint with different CDNAME_OPTS.endpointType
                                   #Only allow CDNAME_OPTS: endpointType, certificate, certificateName, securityPolicy, ownershipCertificate
 
+ICAPI.apiEndpoint               -~#API.*
+
 CAPI_OPTS
- .disableExecuteApiEndpoint      =#API.*
+ .disableExecuteApiEndpoint      =
+CAPI[_OPTS]
+ .disableExecuteApiEndpoint      -#API.*
+
 CAPI_OPTS.endpointConfiguration  =#CENDPOINT. API.endpointConfiguration
 CAPI_OPTS|CENDPOINT.types        =#ENDPOINT.*
 
@@ -3859,6 +3956,12 @@ CDNAME_OPTS.mapping              =#ICAPI. Calls CDNAME.addBasePathMapping()
                                   #If contains subdirectories, calls CDNAME.addApiMapping() instead
 CDNAME_OPTS.basePath             =#MAPPING.basePath when using CDNAME_OPTS.mapping
 
+CSTAGE_OPTS.domainMapping       -~#CMAPPING_OPTS: domainName, mappingKey
+                                  #Like new ApiMapping() but automatically sets CMAPPING_OPTS.api|stage
+CAPI_OPTS.defaultDomainMapping   -#Same but for CAPI.defaultStage
+CSTAGE.domainUrl                 -#'https://DNAME[/BASEPATH]'
+                                  #Requires CSTAGE_OPTS.domainMapping
+
 ICAPI[_OPTS].domainName          =#CDNAME_OPTS. Creates new CDNAME + MAPPING (through CDNAME_OPTS.mapping)
 ICAPI.addDomainName
  ('CONSTRUCT', CDNAME_OPTS)
@@ -3984,6 +4087,8 @@ AWS::ApiGateway::UsagePlan       =#Includes RESPROPs: Throttle, Quota, ApiStages
 CSTAGE_OPTS
  [.methodOptions./PATH/HTTP_METOD]
  .throttlingRateLimit|BurstLimit  =#STAGE.methodSettings./PATH/HTTP_METHOD.*
+CSTAGE_OPTS.throttle
+ .rateLimit|burstLimit           -~#STAGE.defaultRouteSettings.throttling*
 
 CUSAGEPLAN_OPTS.throttle|quota   =#USAGEPLAN.*
 CAPI_STAGE.throttle              =#OBJ_ARR: method CROUTE, throttle THROTTLE
@@ -4175,6 +4280,11 @@ CAPIKEY.grantReadWrite
  (YGRANTABLE)->CGRANT            =#grantRead() + grantWrite()
 
 CAPI_OPTS.apiKeySourceType       =#API.apiKeySource
+
+CAPI_OPTS                        ~#API.apiKeySelectionExpression among:
+ .apiKeySelectionExpression       #  - WebSocketApiKeySelectionExpression.HEADER_X_API_KEY: '$request.header.x-api-key'
+                                  #  - WebSocketApiKeySelectionExpression.AUTHORIZER_USAGE_IDENTIFIER_KEY: '$context.authorizer.usageIdentifierKey'
+                                  #  - new WebSocketApiKeySelectionExpression(STR)
 
 CROUTE_OOPTS.apiKeyRequired      =
 CROUTE_OPTS.apiKeyRequired       ~#ROUTE.*
