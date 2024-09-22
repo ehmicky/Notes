@@ -517,11 +517,13 @@ RESOURCE
  .resourceMethods.HTTP_METHOD    =#ROUTE
 ROUTE.routeKey                  -~#'ROUTE', as:
                                  -#  - 'HTTP_METHOD /PATH'
+                                  #     - [[:alnum:]_-.,:{}]
+                                  #     - cannot be /[s]ping
+                                  #     - cannot end with /
                                  ~#  - any STR
                                   #Can be '$default' as a catch-all
                                  ~#  - including on non-JSON request bodies
                                   #  - def: returns { message: 'Not Found' }
-                                  #/PATH: [[:alnum:]_-.,:{}] and cannot be /[s]ping
 API.routeSelectionExpression     ~#'ROUTE_$EXPR' used by each request
 OOPERATION.isDefaultRoute       =-#BOOL. ROUTE '$default'
                                   #Must be under OPATHDEF.x-amazon-apigateway-any-method
@@ -553,15 +555,31 @@ AWS::ApiGatewayV2::Api           ~#Includes RESATTRs: RouteSelectionExpression
                                              \=+===============================+=/
 
 
-new Method(...CARGS, CROUTE_OPTS)=#
+new Method
+ (...CARGS, CROUTE_OPTS)         =#
+new HttpRoute
+ (...CARGS, CROUTE_OPTS)         -#
+new WebSocketRoute
+ (...CARGS, CROUTE_OPTS)         ~#
 ICRESOURCE.addMethod('HTTP_METHOD'
  [, CINTEGRATION[, CROUTE_OOPTS]])
  ->CROUTE                        =#Automatically sets CROUTE_OPTS: resource, integration, options
 
-CROUTE.methodId                  =#ROUTE.routeId
-CROUTE.api                       =#ICAPI
+CROUTE.api                       =
+CROUTE[_OPTS].httpApi            -
+CROUTE[_OPTS].webSocketApi       ~#ICAPI
+CROUTE.methodId                  =
+CROUTE.routeId                  -~#ROUTE_MID
+
 CROUTE[_OPTS].resource           =#ICRESOURCE
 CROUTE[_OPTS].httpMethod         =#ROUTE.*. Normalized to uppercase
+CROUTE[_OPTS].routeKey           ~#ROUTE.*
+CROUTE_OPTS.routeKey             -#ROUTE.* among:
+                                  #  - RouteKey.DEFAULT: '$default'
+                                  #  - RouteKey.with('/PATH'[, 'HTTP_METHOD'])
+                                  #     - def HTTP_METHOD: 'ANY'
+CROUTE.method                    -#'HTTP_METHOD'
+CROUTE.path                      -#'/PATH' or undefined (if '$default')
 
 CROUTE_OPTS.options              =#CROUTE_OOPTS
 CAPI_OPTS|CRESOURCE[_OPTS]       =#CROUTE_OOPTS
@@ -571,6 +589,7 @@ CROUTE_OOPTS.requestParameters   =#ROUTE.*
 CROUTE_OOPTS.requestModels.MIME  =#ICMODEL. ROUTE.*
 
 CAPI.methods                      #CROUTE_ARR
+
 
 
                                              /=+===============================+=\
@@ -749,6 +768,8 @@ CROUTE.addMethodResponse(CRRESP) =#Same
 CRRESP
  .statusCode|responseParameters  =#RRESP.*
 CRRESP.responseModels.MIME       =#ICMODEL. RRESP.*
+
+CROUTE_OPTS.returnResponse       ~#BOOL (def: false). Adds a RRESP
 
 ICAPI|ICSTAGE.metricLatency
  ([CMETRIC_OPTS])->CMETRIC
@@ -1363,16 +1384,29 @@ AWS::ApiGatewayV2::Integration   -#Includes RESPROPs:
 
 
 new VpcLink
- (...CARGS[, CVPCLINK_OPTS])     =#
+ (...CARGS[, CVPCLINK_OPTS])    =-#
 VpcLink.fromVpcLinkId
  (...CARGS, 'VPCLINK_MID')
  ->ICVPCLINK                     =#
-CVPCLINK.vpcLinkId               =#VPCLINK.id
-CVPCLINK_OPTS.vpcLinkName        =#'VPCLINK' (def: auto 'CID')
+VpcLink.fromVpcLinkAttributes
+ (...CARGS, CVPCLINK_OPTS)
+ ->ICVPCLINK                     -#CVPCLINK_OPTS: vpcLinkId, vpc
+CVPCLINK.vpcLinkId              =-#VPCLINK.id
+CVPCLINK_OPTS.vpcLinkName       =-#'VPCLINK' (def: auto 'CID')
+
 CVPCLINK_OPTS.description        =#VPCLINK.*
 CVPCLINK_OPTS.targets            =#ICELB_ARN_ARR. VPCLINK.targetArns
 CVPCLINK_OPTS.addTarget
  (ICELB_ARN,...)                 =#Same
+
+ICVPCLINK[_OPTS].vpc             -#ICVPC, used with SUBNET_SELECTION
+CVPCLINK_OPTS.subnets            -#SUBNET_SELECTION. VPCLINK.subnetIds
+                                  #Def: {subnetType: 'Private'}
+CVPCLINK_OPTS
+ .addSubnets(ISUBNET,...)        -#Same
+CVPCLINK_OPTS.securityGroups     -#ISECURITY_GROUP_ARR. VPCLINK.securityGroupIds
+CVPCLINK_OPTS.addSecurityGroups
+ (ISECURITY_GROUP,...)           -#Same
 
 CINTEGRATION_OOPTS.vpcLink       =#ICVPCLINK. INTEGRATION.connectionId
                                   #Add default value for INTEGRATION.uri:
@@ -1841,6 +1875,9 @@ ICAPI.arnForExecuteApi
 CROUTE.methodArn                 =#'CALL_ROUTE_ARN' for this ROUTE (HTTP_METHOD + PATH) and ICAPI.deploymentStage (if any)
                                   #Any '{PATHVAR[+]}' is replaced by *
 CROUTE.testMethodArn             =#Same but with STAGE 'test-invoke-stage' (see below)
+CROUTE.routeArn                  -#'CALL_ROUTE_ARN' for this ROUTE (HTTP_METHOD + PATH) and any STAGE (*)
+                                  #Uses * for HTTP_METHOD|PATH if '$default' ROUTE
+                                  #Any '{PATHVAR[+]}' is replaced by *
 
 CROUTE.grantExecute(YGRANTABLE)
  ->CGRANT                        =#Allow execute-api:Invoke on CALL_ROUTE_ARN
@@ -1938,14 +1975,22 @@ AWS::ApiGatewayV2::
                                              \=+===============================+=/
 
 
-CROUTE_OOPTS.authorizer          =#CAUTHORIZER
+CROUTE_OOPTS.authorizer          =
+CROUTE_OPTS.authorizer          -~
+CAPI[_OPTS].defaultAuthorizer    -#CAUTHORIZER. ROUTE.authorizationType|authorizerId
 
 C*AUTHORIZER
- .authorizerArn|authorizerId      =#AUTHORIZER.*
+ .authorizerArn|authorizerId     =#AUTHORIZER.*
 C*AUTHORIZER_OPTS.authorizerName =#AUTHORIZER.name (def: auto 'CID')
+C*AUTHORIZER_OPTS.authorizerName-~#AUTHORIZER.name (def: 'CONSTRUCT')
 
 C*AUTHORIZER_OPTS.identitySources=#CIDENTITY_SOURCE_ARR. AUTHORIZER.identitySource, for authorizerType 'REQUEST'
+C*AUTHORIZER_OPTS.identitySource-~#'$EXPR'_ARR. AUTHORIZER.identitySource, for JWT|Cognito
+                                  #Def:
+                                 -#  - ['$request.header.Authorization']
+                                 ~#  - ['route.request.header.Authorization']
 C*AUTHORIZER_OPTS.identitySource =#CIDENTITY_SOURCE. AUTHORIZER.identitySource, for other authorizerTypes
+                                  #Def: 'method.request.header.Authorization'
 IdentitySource.toString
  (STR, STR2)->STR                =#'STR.STR2'
 IdentitySource.context(STR)->STR =#'context.STR'
@@ -1955,6 +2000,11 @@ IdentitySource.queryString
  ('VAR')->STR                    =#'method.request.querystring.VAR'
 IdentitySource.stageVariable
  ('STAGEVAR')->STR               =#'stageVariables.STAGEVAR'
+
+new HttpNoneAuthorizer()         -
+new WebSocketNoneAuthorizer()    ~#CAUTHORIZER with authorizationType 'NONE'
+new HttpIamAuthorizer()          -
+new WebSocketIamAuthorizer()     ~#CAUTHORIZER with authorizationType 'AWS_IAM'
 
 
                                              /=+===============================+=\
@@ -1998,6 +2048,23 @@ AWS::ApiGatewayV2::
 
                                              /=+===============================+=\
                                             /  :                               :  \
+                                            )==:      AUTHORIZER JWT CDK       :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+new HttpJwtAuthorizer
+ ('CONSTRUCT', JWT.issuer
+ [, CJWT_AUTHORIZER_OPTS])       -#CAUTHORIZER with authorizationType 'JWT'
+
+CJWT_AUTHORIZER_OPTS.jwtAudience -#JWT.audience
+CROUTE_OPTS.authorizationScopes
+CAPI[_OPTS]
+ .defaultAuthorizationScopes     -#ROUTE.*
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
                                             )==:      AUTHORIZER COGNITO       :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -2005,6 +2072,8 @@ AWS::ApiGatewayV2::
 
 AUTH_TYPE 'COGNITO_USER_POOLS'   =#Authorize with Cognito USER_POOL
                                  -#Could also use type 'JWT' instead, since Cognito uses JWT
+                                  #  - JWT.issuer: https://cognito-idp.REGION.amazonaws.com/USER_POOL_MID
+                                  #  - JWT.audience: USER_POOL_CLIENT_MID_ARR
                                   #AUTHORIZER.identitySource locates the token (only in headers)
 
 AUTHORIZER.providerARNs          =#Cognito USER_POOL_ARN_ARR
@@ -2047,11 +2116,21 @@ AWS::ApiGateway::Authorizer      =#Includes RESPROPs: ProviderARNs
 
 new CognitoUserPoolsAuthorizer
  (...CARGS,
- CCOGNITO_AUTHORIZER_OPTS)        =#CAUTHORIZER with authorizerType 'COGNITO_USER_POOLS'
+ CCOGNITO_AUTHORIZER_OPTS)       =#CAUTHORIZER with authorizerType 'COGNITO_USER_POOLS'
+new HttpUserPoolAuthorizer
+ ('CONSTRUCT', ICUSER_POOL
+ [, CCOGNITO_AUTHORIZER_OPTS])   -#CAUTHORIZER for Cognito, but using 'JWT' instead
 
 CCOGNITO_AUTHORIZER_OPTS
- .cognitoUserPools                =#ICUSER_POOL_ARR. AUTHORIZER.providerARNs
-CROUTE_OOPTS.authorizationScopes  =#ROUTE.*
+ .cognitoUserPools               =#ICUSER_POOL_ARR. AUTHORIZER.providerARNs
+CCOGNITO_AUTHORIZER_OPTS
+ .userPoolRegion                 -#'REGION' of USER_POOL (def: current)
+CCOGNITO_AUTHORIZER_OPTS
+ .userPoolClients                -#ICUSER_POOL_CLIENT_ARR (def: create a single new one)
+
+CROUTE_OOPTS.authorizationScopes =
+CAPI[_OPTS]
+ .defaultAuthorizationScopes     -#ROUTE.*
 
 
                                              /=+===============================+=\
@@ -2136,18 +2215,30 @@ AWS::ApiGatewayV2::Authorizer   -~#Includes RESPROPs: AuthorizerUri, AuthorizerC
 
 
 new RequestAuthorizer(...CARGS,
- CRLAMBDA_AUTHORIZER_OPTS)       =#CAUTHORIZER with authorizerType 'REQUEST'
+ CRLAMBDA_AUTHORIZER_OPTS)       =
+new HttpLambdaAuthorizer
+ (...CARGS, ICANYFUNC
+ [, CRLAMBDA_AUTHORIZER_OPTS])   -
+new WebSocketLambdaAuthorizer
+ (...CARGS, ICANYFUNC
+ [, CRLAMBDA_AUTHORIZER_OPTS])   ~#CAUTHORIZER with authorizerType 'REQUEST'
 
 new TokenAuthorizer(...CARGS,
  CTLAMBDA_AUTHORIZER_OPTS)       =#CAUTHORIZER with authorizerType 'TOKEN'
 CTLAMBDA_AUTHORIZER_OPTS
  .validationRegex                =#'REGEXP'. AUTHORIZER.identityValidationExpression
 
+C*LAMBDA_AUTHORIZER_OPTS         -#Either [HttpLambdaResponseType.IAM] (def) or [HttpLambdaResponseType.SIMPLE]
+ .responseTypes                   #AUTHORIZER.enableSimpleResponses
+                                  #Also decides AUTHORIZER.authorizerPayloadFormatVersion '1.0'|'2.0'
+
 C*LAMBDA_AUTHORIZER_OPTS.handler =#ICANYFUNC. AUTHORIZER.authorizerUri
 C*LAMBDA_AUTHORIZER_OPTS         =#ICROLE. AUTHORIZER.authorizerCredentials
  .assumeRole                      #Automatically grants Lambda permissions:
                                   #  - if ICROLE, use an IPOLICY (no COND_KEY SourceArn)
                                   #  - else, use a PERMISSION (with COND_KEY SourceArn)
+PERMISSION ==>                  -~#Automatically add a Lambda PERMISSION (with COND_KEY SourceArn)
+                                  #Does not use a ROLE
 
 
                                              /=+===============================+=\
@@ -2172,7 +2263,18 @@ AUTHORIZER                      =-#NUM of secs to cache AUTHORIZER's Lambda FUNC
 AWS::ApiGateway::Authorizer      =#Includes RESPROPs: AuthorizerResultTtlInSeconds
 AWS::ApiGatewayV2::Authorizer    -#Includes RESPROPs: AuthorizerResultTtlInSeconds
 
-C*AUTHORIZER_OPTS.resultsCacheTtl=#DURATION. AUTHORIZER.authorizerResultTtlInSeconds
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:     AUTHORIZER CACHE CDK      :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+C*AUTHORIZER_OPTS
+ .resultsCacheTtl                 =
+CLAMBDA_AUTHORIZER_OPTS
+ .resultsCacheTtl                 -#DURATION. AUTHORIZER.authorizerResultTtlInSeconds
 
 
                                              /=+===============================+=\
@@ -3301,18 +3403,28 @@ AWS::ApiGatewayV2::Api          -~#Includes RESATTRs: ApiEndpoint, DisableExecut
 
 
 new DomainName
- (...CARGS, CDNAME_OPTS)         =#
+ (...CARGS, CDNAME_OPTS)          #
 DomainName
  .fromDomainNameAttributes
  (...CARGS, CDNAME_OPTS)
  ->ICDNAME                       =#CDNAME_OPTS: only domainName, domainNameAliasTarget, domainNameAliasHostedZoneId
+DomainName
+ .fromDomainNameAttributes
+ (...CARGS, CDNAME_OPTS)
+ ->ICDNAME                      -~#CDNAME_OPTS: only name, regionalDomainName, regionalHostedZoneId
 
-ICDNAME[_OPTS].domainName        =#DNAME.*
+ICDNAME[_OPTS].domainName        =
+CDNAME_OPTS.domainName
+ICDNAME.name                    -~#DNAME.domainName
 ICDNAME.domainNameAliasDomainName=#STR[_CSATTR]. DNAME.distributionDomainName|regionalDomainName
+ICDNAME.regionalDomainName      -~#DNAME.regionalDomainName
 ICDNAME
  .domainNameAliasHostedZoneId    =#STR[_CSATTR]. DNAME.distributionHostedZoneId|regionalHostedZoneId
+ICDNAME.regionalHostedZoneId    -~#DNAME.regionalHostedZoneId
 
-CDNAME_OPTS.endpointType         =#ENDPOINT.types[0] (def: 'REGIONAL')
+CDNAME_OPTS.endpointType          #ENDPOINT.types[0] or DDNAME.endpointType (def: 'REGIONAL')
+CDNAME.addEndpoint(CDNAME_OPTS) -~#Add new endpoint with different CDNAME_OPTS.endpointType
+                                  #Only allow CDNAME_OPTS: endpointType, certificate, certificateName, securityPolicy, ownershipCertificate
 
 CAPI_OPTS
  .disableExecuteApiEndpoint      =#API.*
@@ -3411,13 +3523,16 @@ AWS::ApiGatewayV2::DomainName   -~#Includes RESPROPs: DomainNameConfigurations O
                                              \=+===============================+=/
 
 
-CDNAME_OPTS.certificate          =#ACM ICERTIFICATE. DNAME.[regional]certificateArn
-CDNAME_OPTS.securityPolicy       =#DNAME.*
+CDNAME_OPTS.certificate           #ACM ICERTIFICATE. [D]DNAME.[regional]certificateArn
+CDNAME_OPTS.certificateName     -~#DDNAME.*
+CDNAME_OPTS.securityPolicy        #[D]DNAME.*
 
-CDNAME_OPTS.mtls                 =#CDNAME_TLS. DNAME.mutualTlsAuthentication
-CDNAME_TLS.bucket                =#ICBUCKET. DNAME_TLS.truststoreUri
-CDNAME_TLS.key                   =#'OBJECT'. DNAME_TLS.truststoreUri
-CDNAME_TLS.version               =#DNAME_TLS.truststoreVersion
+CDNAME_OPTS.mtls                  #CDNAME_TLS. DNAME.mutualTlsAuthentication
+CDNAME_TLS.bucket                 #ICBUCKET. DNAME_TLS.truststoreUri
+CDNAME_TLS.key                    #'OBJECT'. DNAME_TLS.truststoreUri
+CDNAME_TLS.version                #DNAME_TLS.truststoreVersion
+
+CDNAME_OPTS.ownershipCertificate-~#ACM ICERTIFICATE. DDNAME.*
 
 
                                              /=+===============================+=\
@@ -3563,6 +3678,7 @@ MAPPING.stage                     #'STAGE'
 AWS::ApiGateway::BasePathMapping =#RESPROPs: DomainName, BasePath, RestApiId, Stage
 AWS::ApiGatewayV2::ApiMapping   -~#RESPROPs: DomainName, ApiMappingKey, ApiId, Stage
                                   #RESATTRs: ApiMappingId
+                                  #Should DependsOn Stage
 
 
                                              /=+===============================+=\
@@ -3574,17 +3690,33 @@ AWS::ApiGatewayV2::ApiMapping   -~#RESPROPs: DomainName, ApiMappingKey, ApiId, S
 
 new BasePathMapping
  (...CARGS, CMAPPING_OPTS)       =#
-CMAPPING_OPTS.domainName         =#ICDNAME
-CMAPPING_OPTS.basePath           =#MAPPING.*
-CMAPPING_OPTS.restApi            =#ICAPI
-CMAPPING_OPTS.stage              =#CSTAGE
+new ApiMapping
+ (...CARGS, CMAPPING_OPTS)      -~#
+ApiMapping
+ .fromApiMappingAttributes
+ (...CARGS, CMAPPING_OPTS)      -~#CMAPPING_OPTS: apiMappingId
+
+CMAPPING_OPTS.domainName          #ICDNAME
+CMAPPING.domainName             -~#ICDNAME
+
+ICMAPPING.apiMappingId          -~#MAPPING.*
+
+CMAPPING_OPTS.basePath           =
+CMAPPING_OPTS.apiMappingKey
+CMAPPING.mappingKey             -~#MAPPING.*
+
+CMAPPING_OPTS.restApi            =#ICAPI. MAPPING.restApiId
+CMAPPING_OPTS.api               -~#ICAPI. MAPPING.apiId
+
+CMAPPING_OPTS.stage              =#CSTAGE. MAPPING.*
 CMAPPING_OPTS.attachToStage      =#BOOL (def: true). Make CMAPPING_OPTS.stage default to ICAPI.deploymentStage
+CMAPPING_OPTS.stage             -~#ICSTAGE (def: ICAPI.defaultStage). MAPPING.*
 
 CDNAME.addBasePathMapping
  (ICAPI[, CMAPPING_OPTS])
  ->CMAPPING                      =#Creates a MAPPING with this DNAME
 CDNAME.addApiMapping
- (ICSTAGE[, CMAPPING_OPTS])      =#Same but using AWS::ApiGateway2::ApiMapping instead
+ (ICSTAGE[, CMAPPING_OPTS])      =#Same but using ApiMapping (v2) instead
  ->CMAPPING                       #CMAPPING_OPTS: only basePath
 CDNAME_OPTS.mapping              =#ICAPI. Calls CDNAME.addBasePathMapping()
                                   #If contains subdirectories, calls CDNAME.addApiMapping() instead
@@ -3907,7 +4039,8 @@ CAPIKEY.grantReadWrite
 
 CAPI_OPTS.apiKeySourceType       =#API.apiKeySource
 
-CROUTE_OOPTS.apiKeyRequired      =#ROUTE.*
+CROUTE_OOPTS.apiKeyRequired      =
+CROUTE_OPTS.apiKeyRequired       ~#ROUTE.*
 
 
                                              /=+===============================+=\
