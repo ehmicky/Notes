@@ -383,7 +383,10 @@ CAPI_OPTS.minCompressionSize     =#SIZE. API.minimumCompressionSize
 CAPI_OPTS.binaryMediaTypes       =#API.*
 
 CINTEGRATION_OOPTS|CIRESP
- .contentHandling                =#INTEGRATION.*
+ .contentHandling                =
+CAWS_INTEGRATION_OPTS
+ |CLAMBDA_INTEGRATION_OPTS
+ .contentHandling                ~#INTEGRATION.contentHandling[Strategy]
 
 
                                              /=+===============================+=\
@@ -881,7 +884,7 @@ INTEGRATION.integrationType     -~#STR. "Backend" to forward to:
                                 =~#  - MOCK: nothing
                                   #Difference between:
                                   #  - HTTP_PROXY: pass initial request as is
-                                =-#  - AWS_PROXY:
+                                  #  - AWS_PROXY:
                                   #     - Lambda: pass initial request as a REQ with its parameters|body|context
                                  -#     - "first-class": like integrationType AWS (including mapping parameters) except:
                                   #        - only specific SERVICEs|ACTIONs
@@ -967,45 +970,77 @@ AWS::ApiGatewayV2::              -#Includes RESPROPs:
                                              \=+===============================+=/
 
 
-CROUTE_OPTS.integration          =#CINTEGRATION (def: new MockIntegration())
+CROUTE_OPTS.integration          =#CINTEGRATION (def: new MockIntegration()). INTEGRATION + ROUTE.methodIntegration
 CAPI_OPTS|CRESOURCE[_OPTS]       =#CINTEGRATION
  .defaultIntegration              #Same but lower priority, and inherited by child RESOURCEs (unless overridden)
+CROUTE_OPTS.integration         -~#CINTEGRATION. INTEGRATION + ROUTE.target
 
 new MockIntegration
- ([CMOCK_INTEGRATION_OPTS])      =#CINTEGRATION with INTEGRATION.type 'MOCK'
-
+ ([CMOCK_INTEGRATION_OPTS])      =
+new WebSocketMockIntegration
+ ('CONSTRUCT')                   ~#CINTEGRATION with INTEGRATION.type 'MOCK'
 new HttpIntegration('URI'
  [, CHTTP_INTEGRATION_OPTS])     =#CINTEGRATION with INTEGRATION.type 'HTTP[_PROXY]' and INTEGRATION.uri 'URI'
-CHTTP_INTEGRATION_OPTS.httpMethod=#'HTTP_METHOD' (def: 'GET'). INTEGRATION.httpMethod
-
+new HttpUrlIntegration
+ ('CONSTRUCT', 'URI'
+ [, CHTTP_INTEGRATION_OPTS])     -#CINTEGRATION with INTEGRATION.type 'HTTP_PROXY' and INTEGRATION.uri 'URI'
 new AwsIntegration
  (CAWS_INTEGRATION_OPTS)         =#CINTEGRATION with INTEGRATION.type 'AWS[_PROXY]'
-CAWS_INTEGRATION_OPTS.region     =#'REGION' of INTEGRATION.uri
-CAWS_INTEGRATION_OPTS.service    =#'SERVICE' of INTEGRATION.uri
-CAWS_INTEGRATION_OPTS.subdomain  =#STR. Subdomain: STR.SERVICE of INTEGRATION.uri
-CAWS_INTEGRATION_OPTS.path       =#'/PATH[?QUERY]' of INTEGRATION.uri
-CAWS_INTEGRATION_OPTS.action     =#'ACTION' of INTEGRATION.uri
-CAWS_INTEGRATION_OPTS            =#QUERY_OBJ of INTEGRATION.ur
- .actionParameters                #Only with CAWS_INTEGRATION_OPTS.action
-                                  #Automatically URI encodes keys|values
-CAWS_INTEGRATION_OPTS
- .integrationHttpMethod          =#'HTTP_METHOD' (def: 'POST'). INTEGRATION.httpMethod
-
+new WebSocketAwsIntegration
+ ('CONSTRUCT'
+ [, CAWS_INTEGRATION_OPTS])      ~#CINTEGRATION with INTEGRATION.type 'AWS'
 CHTTP|AWS|LAMDA_INTEGRATION_OPTS
  .proxy                          =#BOOL (def: true with HTTP|LAMBDA, false with AWS). INTEGRATION.type
 
 CMOCK|LAMBDA_INTEGRATION_OPTS.*
 CHTTP|AWS_INTEGRATION_OPTS
  .options                        =#CINTEGRATION_OOPTS
+
+CAWS_INTEGRATION_OPTS
+ .integrationUri                 ~#INTEGRATION.*
+CAWS_INTEGRATION_OPTS.region     =#'REGION' of INTEGRATION.uri
+CAWS_INTEGRATION_OPTS.service    =#'SERVICE' of INTEGRATION.uri
+CAWS_INTEGRATION_OPTS.subdomain  =#STR. Subdomain: STR.SERVICE of INTEGRATION.uri
+CAWS_INTEGRATION_OPTS.path       =#'/PATH[?QUERY]' of INTEGRATION.uri
+CAWS_INTEGRATION_OPTS.action     =#'ACTION' of INTEGRATION.uri
+CAWS_INTEGRATION_OPTS            =#QUERY_OBJ of INTEGRATION.uri
+ .actionParameters                #Only with CAWS_INTEGRATION_OPTS.action
+                                  #Automatically URI encodes keys|values
+
+CHTTP_INTEGRATION_OPTS.httpMethod=#'HTTP_METHOD' (def: 'GET'). INTEGRATION.httpMethod
+CHTTP_INTEGRATION_OPTS.method    -#'HTTP_METHOD' (def: 'ANY'). INTEGRATION.integrationMethod
+CAWS_INTEGRATION_OPTS
+ .integrationHttpMethod          =#'HTTP_METHOD' (def: 'POST'). INTEGRATION.httpMethod
+CAWS_INTEGRATION_OPTS
+ .integrationMethod              ~#'HTTP_METHOD' (no def). INTEGRATION.integrationMethod
+
 CINTEGRATION_OOPTS
  .requestParameters
  |requestTemplates
- |passthroughBehavior            =#INTEGRATION.*
+ |passthroughBehavior            =
+CAWS_INTEGRATION_OOPTS
+ .requestParameters
+ |requestTemplates
+ |passthroughBehavior            ~#INTEGRATION.*
+CHTTP_INTEGRATION_OPTS
+ |CLAMBDA_INTEGRATION_OPTS
+ .parameterMapping               -#CREQ_PARAMS. INTEGRATION.requestParameters
+
+CAWS_INTEGRATION_OPTS
+ .templateSelectionExpression    ~#INTEGRATION.*
+
 CINTEGRATION_OOPTS
- .credentialsRole                =#ICROLE. INTEGRATION.credentials
+ .credentialsRole                =
+CAWS_INTEGRATION_OPTS
+ .credentialsRole                ~#ICROLE. INTEGRATION.credentials[Arn]
 CINTEGRATION_OOPTS
  .credentialsPassthrough         =#BOOL (def: false). INTEGRATION.credentials 'arn:aws:iam::*:user/*'
-CINTEGRATION_OOPTS.timeout       =#DURATION. INTEGRATION.timeoutInMillis
+
+CINTEGRATION_OOPTS.timeout       =
+CHTTP_INTEGRATION_OPTS
+ |CAWS_INTEGRATION_OPTS
+ |CLAMBDA_INTEGRATION_OPTS
+ .timeout                       -~#DURATION. INTEGRATION.timeoutInMillis
 
 
                                              /=+===============================+=\
@@ -1268,9 +1303,21 @@ AWS::ApiGatewayV2::
 new LambdaIntegration(ICANYFUNC  =#CINTEGRATION with:
  [, CLAMBDA_INTEGRATION_OPTS])    #  - INTEGRATION.type 'AWS[_PROXY]'
                                   #  - INTEGRATION.uri for Lambda, without any QUALIFIER
-                                  #Automatically right PERMISSION, with COND_KEY SourceArn (not SourceAccount|SourceOrg*)
+                                  #Automatically add right PERMISSION, with COND_KEY SourceArn (not SourceAccount|SourceOrg*)
+new HttpLambdaIntegration        -
+ ('CONSTRUCT', ICANYFUNC
+ [, CLAMBDA_INTEGRATION_OPTS])
+new WebSocketLambdaIntegration   ~#Same with:
+ ('CONSTRUCT', ICANYFUNC          #  - INTEGRATION.type 'AWS_PROXY'
+ [, CLAMBDA_INTEGRATION_OPTS])    #  - INTEGRATION.integrationUri
+
 CLAMBDA_INTEGRATION_OPTS
  .allowTestInvoke                =#BOOL (def: true). Add PERMISSION to allow running TestInvoke*()
+
+CLAMBDA_INTEGRATION_OPTS         -#INTEGRATION.* among:
+ .payloadFormatVersion            #  - PayloadFormatVersion.VERSION_1_0
+                                  #  - PayloadFormatVersion.VERSION_2_0 (def)
+                                  #  - PayloadFormatVersion.custom(STR)
 
 new LambdaRestApi
  (...CARGS, CLAMBDA_API_OPTS)    =#Like new RestApi(...) but with CAPI_OPTS.defaultIntegration LambdaIntegration
@@ -1691,6 +1738,50 @@ $context                          #CONTEXT
 
                                              /=+===============================+=\
                                             /  :                               :  \
+                                            )==:        EXPRESSION CDK         :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+new ParameterMapping()           -#CREQ_PARAMS. INTEGRATION.requestParameters
+
+ParameterMapping.fromObject(OBJ)
+ ->CREQ_PARAMS                   -#
+
+CREQ_PARAMS.custom
+ ('KEY', CREQ_VAL)->CREQ_PARAMS  -#Key 'KEY'
+CREQ_PARAMS.overwritePath
+ (CREQ_VAL)->CREQ_PARAMS         -#Key 'overwrite:path'
+CREQ_PARAMS
+ .overwriteQueryString|Header
+ ('PARAM', CREQ_VAL)
+ ->CREQ_PARAMS                   -#Key 'overwrite:querystring|header.PARAM'
+CREQ_PARAMS
+ .removeQueryString|Header
+ ('PARAM')->CREQ_PARAMS          -#Key 'remove:querystring|header.PARAM'
+CREQ_PARAMS
+ .appendQueryString|Header
+ ('PARAM', CREQ_VAL)
+ ->CREQ_PARAMS                   -#Key 'append:querystring|header.PARAM'
+
+MappingValue.custom('VAL')
+ ->CREQ_VAL                      -#Value 'VAL'
+MappingValue.NONE                -#CREQ_VAL. Value ''
+MappingValue.requestPath()
+ ->CREQ_VAL                      -#Value '$request.path'
+MappingValue.requestPathParam
+ |QueryString|Header('PARAM')
+ ->CREQ_VAL                      -#Value '$request.path|querystring|header.PARAM'
+MappingValue.requestBody('VARR')
+ ->CREQ_VAL                      -#Value '$request.body.PARAM'
+MappingValue.stageVariable
+ ('STAGEVAR')->CREQ_VAL          -#Value '$stageVariables.STAGEVAR'
+MappingValue.contextVariable
+ ('VARR')->CREQ_VAL              -#Value '$context.VARR'
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
                                             )==:          VALIDATION           :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
@@ -1865,7 +1956,9 @@ AWS::ApiGateway::RestApi         =#Includes RESPROPs: Policy
 
 
 CROUTE_OOPTS|C*AUTHORIZER
- .authorizationType              =#ROUTE.* (def: 'NONE')
+ .authorizationType              =
+CCAUTHORIZER_SUMMARY
+ .authorizationType             -~#ROUTE.* (def: 'NONE')
 
 CAPI_OPTS.policy                 =#API.*
 
@@ -1880,7 +1973,10 @@ CROUTE.routeArn                  -#'CALL_ROUTE_ARN' for this ROUTE (HTTP_METHOD 
                                   #Any '{PATHVAR[+]}' is replaced by *
 
 CROUTE.grantExecute(YGRANTABLE)
- ->CGRANT                        =#Allow execute-api:Invoke on CALL_ROUTE_ARN
+ ->CGRANT                        =
+CROUTE.grantInvoke
+ (YGRANTABLE[, OPTS])->CGRANT    -#Allow execute-api:Invoke on CALL_ROUTE_ARN
+OPTS.httpMethods                 -#'HTTP_METHOD'_ARR (def: CROUTE.method)
 
 
                                              /=+===============================+=\
@@ -1975,20 +2071,49 @@ AWS::ApiGatewayV2::
                                              \=+===============================+=/
 
 
+new HttpAuthorizer
+ (...CARGS, CCAUTHORIZER_OPTS)   -
+new WebSocketAuthorizer
+ (...CARGS, CCAUTHORIZER_OPTS)   ~#CCAUTHORIZER. AUTHORIZER with any authorizationType
+
+CAUTHORIZER                       #Higher-level, authorizationType-specific API over CCAUTHORIZER
+HttpAuthorizer
+ .fromHttpAuthorizerAttributes
+ (...CARGS, CAUTHORIZER_OPTS)
+ ->ICAUTHORIZER                  -
+WebSocketAuthorizer
+.fromWebSocketAuthorizerAttributes
+ (...CARGS, CAUTHORIZER_OPTS)
+ ->ICAUTHORIZER                  ~#CAUTHORIZER_OPTS: authorizerId, authorizerType (actually AUTHORIZER.authorizationType)
+ICAUTHORIZER.bind(OPTS)         -~#Creates a CCAUTHORIZER
+ ->CCAUTHORIZER_SUMMARY           #OPTS: route ICROUTE, scope CONSTRUCT (usually ICAPI)
+
+new HttpNoneAuthorizer()         -
+new WebSocketNoneAuthorizer()    ~#CAUTHORIZER with authorizationType 'NONE'
+new HttpIamAuthorizer()          -
+new WebSocketIamAuthorizer()     ~#CAUTHORIZER with authorizationType 'AWS_IAM'
+
 CROUTE_OOPTS.authorizer          =
 CROUTE_OPTS.authorizer          -~
 CAPI[_OPTS].defaultAuthorizer    -#CAUTHORIZER. ROUTE.authorizationType|authorizerId
 
-C*AUTHORIZER
- .authorizerArn|authorizerId     =#AUTHORIZER.*
+CCAUTHORIZER_OPTS.httpApi        -
+CCAUTHORIZER_OPTS.webSocketApi   ~#ICAPI
+C*AUTHORIZER.authorizerArn       =#'AUTHORIZER_ARN'
+C*AUTHORIZER.authorizerId        =
+CCAUTHORIZER[_SUMMARY]
+ .authorizerId                  -~#AUTHORIZER.authorizerId
 C*AUTHORIZER_OPTS.authorizerName =#AUTHORIZER.name (def: auto 'CID')
-C*AUTHORIZER_OPTS.authorizerName-~#AUTHORIZER.name (def: 'CONSTRUCT')
+C[C]*AUTHORIZER_OPTS
+ .authorizerName                -~#AUTHORIZER.name (def: 'CONSTRUCT')
 
-C*AUTHORIZER_OPTS.identitySources=#CIDENTITY_SOURCE_ARR. AUTHORIZER.identitySource, for authorizerType 'REQUEST'
-C*AUTHORIZER_OPTS.identitySource-~#'$EXPR'_ARR. AUTHORIZER.identitySource, for JWT|Cognito
-                                  #Def:
+CCAUTHORIZER_OPTS.type          -~#AUTHORIZER.authorizerType
+
+CCAUTHORIZER_OPTS.identitySource-~#'$EXPR'_ARR. AUTHORIZER.identitySource
+C*AUTHORIZER_OPTS.identitySource-~#Same but def:
                                  -#  - ['$request.header.Authorization']
                                  ~#  - ['route.request.header.Authorization']
+C*AUTHORIZER_OPTS.identitySources=#CIDENTITY_SOURCE_ARR. AUTHORIZER.identitySource, for authorizerType 'REQUEST'
 C*AUTHORIZER_OPTS.identitySource =#CIDENTITY_SOURCE. AUTHORIZER.identitySource, for other authorizerTypes
                                   #Def: 'method.request.header.Authorization'
 IdentitySource.toString
@@ -2000,11 +2125,6 @@ IdentitySource.queryString
  ('VAR')->STR                    =#'method.request.querystring.VAR'
 IdentitySource.stageVariable
  ('STAGEVAR')->STR               =#'stageVariables.STAGEVAR'
-
-new HttpNoneAuthorizer()         -
-new WebSocketNoneAuthorizer()    ~#CAUTHORIZER with authorizationType 'NONE'
-new HttpIamAuthorizer()          -
-new WebSocketIamAuthorizer()     ~#CAUTHORIZER with authorizationType 'AWS_IAM'
 
 
                                              /=+===============================+=\
@@ -2057,7 +2177,9 @@ new HttpJwtAuthorizer
  ('CONSTRUCT', JWT.issuer
  [, CJWT_AUTHORIZER_OPTS])       -#CAUTHORIZER with authorizationType 'JWT'
 
-CJWT_AUTHORIZER_OPTS.jwtAudience -#JWT.audience
+CCAUTHORIZER_OPTS.jwtIssuer      -#JWT.issuer
+C[C]JWT_AUTHORIZER_OPTS
+ .jwtAudience                    -#JWT.audience
 CROUTE_OPTS.authorizationScopes
 CAPI[_OPTS]
  .defaultAuthorizationScopes     -#ROUTE.*
@@ -2228,17 +2350,22 @@ new TokenAuthorizer(...CARGS,
 CTLAMBDA_AUTHORIZER_OPTS
  .validationRegex                =#'REGEXP'. AUTHORIZER.identityValidationExpression
 
-C*LAMBDA_AUTHORIZER_OPTS         -#Either [HttpLambdaResponseType.IAM] (def) or [HttpLambdaResponseType.SIMPLE]
- .responseTypes                   #AUTHORIZER.enableSimpleResponses
-                                  #Also decides AUTHORIZER.authorizerPayloadFormatVersion '1.0'|'2.0'
-
 C*LAMBDA_AUTHORIZER_OPTS.handler =#ICANYFUNC. AUTHORIZER.authorizerUri
+CCAUTHORIZER_OPTS.authorizerUri -~#STR. AUTHORIZER.authorizerUri
 C*LAMBDA_AUTHORIZER_OPTS         =#ICROLE. AUTHORIZER.authorizerCredentials
  .assumeRole                      #Automatically grants Lambda permissions:
                                   #  - if ICROLE, use an IPOLICY (no COND_KEY SourceArn)
                                   #  - else, use a PERMISSION (with COND_KEY SourceArn)
 PERMISSION ==>                  -~#Automatically add a Lambda PERMISSION (with COND_KEY SourceArn)
                                   #Does not use a ROLE
+
+C*LAMBDA_AUTHORIZER_OPTS         -#Either [HttpLambdaResponseType.IAM] (def) or [HttpLambdaResponseType.SIMPLE]
+ .responseTypes                   #AUTHORIZER.enableSimpleResponses
+                                  #Also decides AUTHORIZER.authorizerPayloadFormatVersion '1.0'|'2.0'
+CCAUTHORIZER_OPTS
+ .payloadFormatVersion           -#STR (def: '2.0' if Lambda). AUTHORIZER.authorizerPayloadFormatVersion
+CCAUTHORIZER_OPTS
+ .enableSimpleResponses          -#AUTHORIZER.*
 
 
                                              /=+===============================+=\
@@ -2273,7 +2400,7 @@ AWS::ApiGatewayV2::Authorizer    -#Includes RESPROPs: AuthorizerResultTtlInSecon
 
 C*AUTHORIZER_OPTS
  .resultsCacheTtl                 =
-CLAMBDA_AUTHORIZER_OPTS
+C[C]LAMBDA_AUTHORIZER_OPTS
  .resultsCacheTtl                 -#DURATION. AUTHORIZER.authorizerResultTtlInSeconds
 
 
