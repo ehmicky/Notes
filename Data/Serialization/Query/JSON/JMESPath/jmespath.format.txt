@@ -7,72 +7,135 @@ ALTERNATIVES ==>                  #???
 
 VERSION ==>                       #2024-10-05
 
+                                  ┌───────────┐
+                                  │   CHAIN   │
+                                  └───────────┘
+
 JSON ==>                          #Values are JSON only
 
+EXPR                              #Everything thing in this doc is an EXPR
+                                  #I.e. chainable
+
+null                              #Result if either:
+                                  #  - no value (undefined)
+                                  #  - out-of-bound
+                                  #  - EXPR has wrong type, e.g. OBJ_EXPR[NUM]
+                                  #  - using an EXPR|operator on undefined|null value
+                                  #I.e. on problem EXPR usually just returns null
+                                  #However, it throws an error on:
+                                  #  - syntax error
+                                  #  - invalid type to FUNC() ARG
+                                  #  - ARR_EXPR[...:...:0]
+
+@                                 #Current OBJ
+                                  #At the chain start, it is the root value passed as input
+                                  #In sub-EXPR or in FUNC ARG, it is the previous EXPR
+                                  #If an EXPR, sub-EXPR or FUNC ARG does not start with @, it is implied
+                                  #  - VAR -> @.VAR
+                                  #  - [0] -> @[0]
+                                  #  - [?a == 1] -> @[?@.a == 1]
+                                  #  - length(...) -> @.length(...)
+
+PROJECTION ==>                    #When result of EXPR is an OBJ|ARR, subsequent EXPRs in the chain iterate over each member|item
+                                  #Including with .* and [*]
+
+EXPR | EXPR2                      #Like EXPR2, but with EXPR as @
+                                  #Similar to just chaining except:
+                                  #  - if EXPR was iterating over multiple items (due to projection)
+                                  #  - EXPR2 aggregates them as a single ARR as @
+                                  #E.g.:
+                                  #  - *[0] + {a: [1, 2], b: [3, 4]} -> [1, 3]
+                                  #  - * | [0] + {a: 1, b: 2} -> 1
+
+                                  ┌─────────┐
+                                  │   RAW   │
+                                  └─────────┘
+
 '...'                             #STR, as is
-                                  #' and \ must be \-escaped
+                                  #' must be \-escaped
                                   #No backslash sequence
                                   #No C0 control chars
 
 `...`                             #Any JSON value
                                   #` must be escaped as \u0060
+                                  #Must be used to pass a literal non-STR JSON value as is
+                                  #  - including for FUNC() ARGs
+                                  #  - except for NUM in ARR_EXPR[NUM[:...]]
 
-VAR                               #If no [:alnum:]_, must "-quoted
-                                  #If "-quoted, can use JSON backslash sequence like \n or \uUUUU
+                                  ┌────────────┐
+                                  │   OBJECT   │
+                                  └────────────┘
 
-null                              #Result if either:
-                                  #  - no value found, or out-of-bound
-                                  #  - EXPR has wrong type, e.g. using a slice on an OBJ
-                                  #  - using an EXPR|operator on undefined|null value
+OBJ_EXPR.VAR                      #OBJ.VAR
+                                  #VAR:
+                                  #  - if no [:alnum:]_, must "-quoted
+                                  #  - if "-quoted, can use JSON backslash sequence like \n or \uUUUU
 
-EXPR                              #Chainable. List is below
-
-PROJECTION ==>                    #When result of EXPR is an OBJ|ARR, subsequent EXPRs in the chain iterate over each member|item
-
-@                                 #Current OBJ
-                                  #At the beginning, it is the root
-                                  #In sub-EXPR or in FUNC arguments, it is the previous EXPR
-                                  #It is implied, i.e. can always omit @[.]
-                                  #  - e.g. [0][?a == 1] instead of @[0][?@.a == 1]
-
-EXPR | EXPR2                      #Like EXPR2, but @ is EXPR
-                                  #Similar to just chaining except no projection
-                                  #  - e.g. if EXPR contains *, EXPR2 does not iterate over each item
-
-OBJ_EXPR.VAR                      #
 OBJ_EXPR.*                        #All OBJ members
 
+                                  ┌───────────┐
+                                  │   ARRAY   │
+                                  └───────────┘
+
 ARR_EXPR[NUM]                     #NUM is 0-based, can be negative (from end)
+
 ARR_EXPR[*]                       #All ARR items
-ARR_EXPR[]                        #Same but flattens sub-ARRs
+
+ARR_EXPR[]                        #Same but flattens sub-ARRs (only one depth level)
+
 ARR_EXPR[[NUM]:[NUM2][:[NUM3]]]   #Sliced ARR
                                   #NUM|NUM2: def start|end, negative NUM is from end
                                   #NUM3 is step: def 1, negative NUM reverses
 
-OBJ[_ARR]_EXPR.[EXPR,...]         #ARR with items EXPR
-OBJ[_ARR]_EXPR.{VAR: EXPR,...}    #OBJ with keys VAR and values EXPR
+                                  ┌─────────────┐
+                                  │   BOOLEAN   │
+                                  └─────────────┘
 
-OBJ_ARR_EXPR[?EXPR OP EXPR2]      #OBJ_ARR, filtered
-                                  #OP is:
-                                  #  - == != for any type (deep comparison)
-                                  #  - < <= >= > for NUM only
+EXPR || && EXPR                   #Either BOOL logic, or chaining
+!EXPR                             #EXPR is transtyped to BOOL:
+                                  #  - null and empty STR|OBJ|ARR: false
+                                  #  - NUM: always true
 
-EXPR || && EXPR2                  #Either BOOL logic, or chaining
-!EXPR                             #EXPR is transtyped to BOOL with false for empty ARR|OBJ|STR and null
 (EXPR)                            #Parenthesis for operator priority
 
-FUNC(EXPR,...)                    #For all the FUNCs below
-                                  #EXPR's type is FUNC-specific
-                                  #Some FUNCs take &EXPR as argument, which is lazily evaluated, similar to a JavaScript FUNC
-EXPR.FUNC(EXPR,...)               #Same but @ is EXPR
+                                  ┌───────────────┐
+                                  │   TRANSFORM   │
+                                  └───────────────┘
 
-not_null(VAL,...)->VAL            #First VAL not null. Else returns null
-to_array(VAL)->ARR                #If VAL is not ARR, returns [VAL]
-to_string(VAL)->STR               #If VAL is not STR, returns JSON.stringify(VAL)
+EXPR.[EXPR,...]                   #ARR with items EXPR
+
+EXPR.{VAR: EXPR,...}              #OBJ with keys VAR and values EXPR
+
+ARR_EXPR[?EXPR OP EXPR]           #ARR, filtered
+                                  #OP is:
+                                  #  - == != for any type (deep comparison, unordered)
+                                  #  - < <= >= > for NUM only
+
+                                  ┌───────────────────┐
+                                  │   FUNCTION MAIN   │
+                                  └───────────────────┘
+
+FUNC(ARG_EXPR,...)                #Syntax for all the FUNCs below
+                                  #ARG's type is FUNC-specific
+
+EXPR.FUNC(ARG_EXPR,...)           #Same but @ is EXPR
+
+&EXPR                             #Type of some FUNC ARG
+                                  #Lazily evaluated, similar to a JavaScript FUNC
+
+                                  ┌──────────────────┐
+                                  │   FUNCTION ANY   │
+                                  └──────────────────┘
+
+type(VAL)->STR                    #Returns 'null|string|boolean|number|array|object'
+
+not_null(VAL,...)->VAL            #First VAL not null. If none, returns null
+
+                                  ┌─────────────────────┐
+                                  │   FUNCTION NUMBER   │
+                                  └─────────────────────┘
+
 to_number(VAL)->NUM               #If VAL is not NUM or 'NUM', returns null
-
-type(VAL)->'null|string|boolean|
- number|array|object'             #
 
 abs(NUM)->NUM                     #
 ceil(NUM)->NUM                    #
@@ -81,31 +144,54 @@ floor(NUM)->NUM                   #
 avg(NUM_ARR)->NUM                 #
 sum(NUM_ARR)->NUM                 #
 
-min(NUM_ARR|STR_ARR)->NUM|STR     #
-max(NUM_ARR|STR_ARR)->NUM|STR     #
-min_by(NUM_ARR|STR_ARR, &EXPR)
- ->NUM|STR                        #
-max_by(NUM_ARR|STR_ARR, &EXPR)
- ->NUM|STR                        #
+min|max(NUM_ARR)->NUM             #
+min_by|max_by(NUM_ARR, &EXPR)->NUM#
 
-contains(ARR|STR, VAL)->BOOL      #
+sort(NUM_ARR)->NUM_ARR            #
+sort_by(NUM_ARR, &EXPR)->NUM_ARR  #
 
-starts_with(STR, STR2)->BOOL      #
-ends_with(STR, STR2)->BOOL        #
+                                  ┌─────────────────────┐
+                                  │   FUNCTION STRING   │
+                                  └─────────────────────┘
 
-join(STR, STR2_ARR)->STR3         #
+to_string(VAL)->STR               #If VAL is not STR, returns JSON.stringify(VAL)
+
+length(STR)->NUM                  #In principle, in codepoints, but some implementations seem to use UTF-16 code units
+
+contains(STR, STR)->BOOL          #
+starts_with(STR, STR)->BOOL       #
+ends_with(STR, STR)->BOOL         #
+
+join(STR, STR_ARR)->STR           #
+reverse(STR)->STR                 #
+
+min|max(STR_ARR)->STR             #
+min|max_by(STR_ARR, &EXPR)->STR   #
+
+sort(STR_ARR)->STR_ARR            #
+sort_by(STR_ARR, &EXPR)->STR_ARR  #
+
+                                  ┌─────────────────────┐
+                                  │   FUNCTION OBJECT   │
+                                  └─────────────────────┘
+
+length(OBJ)->NUM                  #
 
 keys(OBJ)->STR_ARR                #Unordered
 values(OBJ)->ARR                  #Unordered
 
-length(OBJ|ARR|STR)->NUM          #STR length is in code points
+merge(OBJ,...)->OBJ               #Shallow merge
 
-merge(OBJ,...)->OBJ2              #Deep merge
+                                  ┌────────────────────┐
+                                  │   FUNCTION ARRAY   │
+                                  └────────────────────┘
 
-reverse(ARR|STR)->ARR2|STR2       #
+to_array(VAL)->ARR                #If VAL is not ARR, returns [VAL]
 
-sort(NUM_ARR|STR_ARR)->ARR2       #
-sort_by(NUM_ARR|STR_ARR, &EXPR)
- ->ARR2                           #
+length(ARR)->NUM                  #
 
-map(&EXPR, ARR)->ARR2             #
+contains(ARR, VAL)->BOOL          #
+
+reverse(ARR)->ARR                 #
+
+map(&EXPR, ARR)->ARR              #
