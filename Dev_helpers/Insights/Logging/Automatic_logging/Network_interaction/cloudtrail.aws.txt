@@ -58,6 +58,10 @@ PRICING ==>                       #TRAIL:
                                   #QUERY: 1$/200GB scanned (QUERY_STATS.BytesScanned)
                                   #  - free for 30 days: up to 5GB
 
+                                  ┌──────────┐
+                                  │   AUTH   │
+                                  └──────────┘
+
 AWSCloudTrail_FullAccess          #AWS managed POLICY, granting:
                                   #  - cloudtrail:* on anything
                                   #  - iam:ListRoles|GetRolePolicy|GetUser: on any ROLE|USER
@@ -174,16 +178,24 @@ CTRAIL_OPTS
                                   └─────────┘
 
 ORG_ADMIN.DelegatedAdminAccountId #ACCOUNT_ID. Give same permissions as ORG's management ACCOUNT, for CloudTrail only
-                                  #Requires PACTIONs organizations:[De]registerDelegatedAdministrator|ListAWSServiceAccessForOrganization
                                   #Max 3 per ORG
 
 TRAIL.IsOrganizationTrail         #BOOL (def: false). Log SERVICEs from all ACCOUNTs in ORG
 DATASTORE.OrganizationEnabled     #Work similarly to TRAIL.IsMultiRegionTrail:
                                   #  - use shadow TRAILs, which are ACCOUNT-specific
                                   #  - LOG_FILE|DIGEST_FILE processed in own ACCOUNT, but sent to single LOG_BUCKET
-                                  #Requires PACTION organizations:ListAWSServiceAccessForOrganization
 TRAIL_PREFIX/AWSLogs/ORG
  /ACCOUNT_ID/...                  #Instead of TRAIL_PREFIX/AWSLogs/ACCOUNT_ID/... if TRAIL.IsOrganizationTrail true
+
+                                  ┌──────────────┐
+                                  │   ORG AUTH   │
+                                  └──────────────┘
+
+PACTION organizations:
+[De]registerDelegatedAdministrator#Required for ORG_ADMIN.DelegatedAdminAccountId
+PACTION organizations:
+ListAWSServiceAccess
+ ForOrganization                  #Required for ORG_ADMIN.DelegatedAdminAccountId, TRAIL.IsOrganizationTrail or DATASTORE.OrganizationEnabled
 
 AWSServiceRoleForCloudTrail       #SERVICE_LINKED_ROLE used by TRAIL.IsOrganizationTrail, DATASTORE.OrganizationEnabled and ORG_ADMIN.DelegatedAdminAccountId
                                   #Created automatically by ACTIONs setting those properties
@@ -257,15 +269,7 @@ TRAIL.S3BucketName                #S3 'LOG_BUCKET' to store LOG_FILE
                                   #Can use S3 to encrypt, archive|rotate, etc.
 TRAIL.S3KeyPrefix                 #'TRAIL_PREFIX' (def: none). Max 200 chars
 
-PERMISSIONS ==>                   #Must allow PACTIONs to Principal.Service 'cloudtrail.amazonaws.com':
-                                  #  - s3:PutObject on arn:aws:s3:::LOG_BUCKET/TRAIL_PREFIX/AWSLogs/ACCOUNT_ID/*
-                                  #     - COND_KEY aws:SourceArn TRAIL_ARN
-                                  #     - COND_KEY s3:x-amz-acl 'bucket-owner-full-control'
-                                  #  - s3:GetBucketAcl on arn:aws:s3:::LOG_BUCKET
-                                  #     - COND_KEY aws:SourceArn TRAIL_ARN
-
 TRAIL|DATASTORE.KmsKeyId          #S3 KMS_KEY_MID|ARN x-amz-server-side-encryption-aws-kms-key-id [C|S]
-                                  #Requires some kms:* PACTIONs (see S3 doc)
 
 LOG DELIVERY ==>                  #LOG_FILE created every 5 mins
                                   #Sometimes delivers same LOG_EVENT twice
@@ -277,6 +281,18 @@ TRAIL_PREFIX/AWSLogs
  /REGION/YYYY/MM/DD/
  ACCOUNT_ID_CloudTrail_REGION_
  YYYYMMDDTHHMMZ_RANDOM.json.gz    #'LOG_FILE'
+
+                                  ┌───────────────────┐
+                                  │   LOG FILE AUTH   │
+                                  └───────────────────┘
+
+PERMISSIONS ==>                   #Must allow PACTIONs to Principal.Service 'cloudtrail.amazonaws.com':
+                                  #  - s3:PutObject on arn:aws:s3:::LOG_BUCKET/TRAIL_PREFIX/AWSLogs/ACCOUNT_ID/*
+                                  #     - COND_KEY aws:SourceArn TRAIL_ARN
+                                  #     - COND_KEY s3:x-amz-acl 'bucket-owner-full-control'
+                                  #  - s3:GetBucketAcl on arn:aws:s3:::LOG_BUCKET
+                                  #     - COND_KEY aws:SourceArn TRAIL_ARN
+                                  #If using KMS, requires some kms:* PACTIONs too (see S3 doc)
 
                                   ┌──────────────────┐
                                   │   LOG FILE CLI   │
@@ -685,12 +701,6 @@ aws cloudtrail validate-logs      #Validate LOG_FILEs|DIGEST_FILEs in a time per
 TRAIL.SnsTopicARN                 #SNS_TOPIC_ARN to send on log delivery, with SNS_PAYLOAD
 TRAIL.SnsTopicName                #Same but as 'SNS_TOPIC'
 
-PERMISSIONS ==>                   #Must allow:
-                                  #  - Principal.Service 'cloudtrail.amazonaws.com'
-                                  #  - PACTION sns:Publish on the TOPIC
-                                  #  - COND_KEY aws:SourceArn TRAIL_ARN
-                                  #  - also PACTION kms:GenerateDataKey*|Decrypt, if TOPIC uses KMS
-
 SNS_PAYLOAD.s3Bucket              #'LOG_BUCKET'
 SNS_PAYLOAD.s3ObjectKey           #'LOG_FILE'_ARR
 
@@ -698,6 +708,16 @@ TRAIL_STATUS
  .LatestNotificationError
 TRAIL_STATUS
  .LatestNotificationTime          #Same as LatestDelivery* but for SNS notifications
+
+                                  ┌──────────────┐
+                                  │   SNS AUTH   │
+                                  └──────────────┘
+
+PERMISSIONS ==>                   #Must allow:
+                                  #  - Principal.Service 'cloudtrail.amazonaws.com'
+                                  #  - PACTION sns:Publish on the TOPIC
+                                  #  - COND_KEY aws:SourceArn TRAIL_ARN
+                                  #  - also PACTION kms:GenerateDataKey*|Decrypt, if TOPIC uses KMS
 
                                   ┌─────────────┐
                                   │   SNS IAC   │
@@ -718,6 +738,15 @@ TRAIL.CloudWatchLogsLogGroupArn   #LOG_GROUP_ARN. Send LOG_EVENTs to CloudWatch 
                                   #Must be same ACCOUNT
                                   #LOG_EVENTs >256KB silently ignored
 
+TRAIL_STATUS.LatestCloudWatchLogs
+ DeliveryTime                     #DATE_NUM
+TRAIL_STATUS.LatestCloudWatchLogs
+ DeliveryError                    #'ERROR'
+
+                                  ┌──────────────────────────┐
+                                  │   CLOUDWATCH LOGS AUTH   │
+                                  └──────────────────────────┘
+
 TRAIL.CloudWatchLogsRoleArn       #ROLE_ARN used to send to CloudWatch Logs
                                   #Used instead of CloudWatch Logs RESOURCE_POLICY.policyDocument
                                   #Trust policy must use Principal.Service 'cloudtrail.amazonaws.com'
@@ -726,11 +755,6 @@ TRAIL.CloudWatchLogsRoleArn       #ROLE_ARN used to send to CloudWatch Logs
                                   #  - on LOG_STREAMs:
                                   #     - 'ACCOUNT_ID_CloudTrail_REGION*'
                                   #     - 'ORG_*', if TRAIL.IsOrganizationTrail true
-
-TRAIL_STATUS.LatestCloudWatchLogs
- DeliveryTime                     #DATE_NUM
-TRAIL_STATUS.LatestCloudWatchLogs
- DeliveryError                    #'ERROR'
 
                                   ┌─────────────────────────┐
                                   │   CLOUDWATCH LOGS IAC   │
@@ -995,6 +1019,10 @@ INSIGHT_COUNT_REQ|RES.EventName   #Like EVENT.*
 
 INSIGHT_COUNT_RES.Values
 INSIGHT_COUNT_RES.Timestamps      #Like CloudWatch METRIC_DATA_RES.*
+
+                                  ┌────────────────────────┐
+                                  │   INSIGHT COUNT AUTH   │
+                                  └────────────────────────┘
 
 PACTION cloudtrail:LookupEvents   #Used by ListInsightsMetricData() instead
 
@@ -1288,15 +1316,6 @@ IMPORT_S3.S3LocationUri           #'URI' to either:
                                   #  - s3://BUCKET/TRAIL_PREFIX/AWSLogs/ACCOUNT_ID/CloudTrail[-Digest|Insight]
                                   #  - s3://BUCKET -> BUCKET/TRAIL_PREFIX/AWSLogs/ACCOUNT_ID/CloudTrail
 IMPORT_S3.S3BucketRegion          #'REGION'
-IMPORT_S3.S3BucketAccessRoleArn   #ROLE_ARN used to read BUCKET
-                                  #Must allow PACTIONs:
-                                  #  - s3:GetObject on URI/*
-                                  #     - with COND_KEY aws:SourceArn DATASTORE_ARN
-                                  #  - s3:ListBucket|GetBucketAcl on BUCKET
-                                  #     - with COND_KEY aws:SourceArn DATASTORE_ARN
-                                  #  - kms:GenerateDataKey|Decrypt, if using S3-KMS
-                                  #Trust policy must allow Principal.Service 'cloudtrail.amazonaws.com' to sts:AssumeRole
-                                  #  - with COND_KEY aws:SourceArn DATASTORE_ARN
 
 IMPORT.Destinations               #DATASTORE_ARN_ARR
 
@@ -1320,6 +1339,20 @@ IMPORT_FAILURE.ErrorMessage       #'ERROR'
 IMPORT_FAILURE.Location           #'OBJECT'
 IMPORT_FAILURE.LastUpdatedTime    #IMPORT.UpdatedTimestamp
 IMPORT_FAILURE.Status             #STR among: 'RETRY', 'SUCCEEDED', 'FAILED'
+
+                                  ┌─────────────────┐
+                                  │   IMPORT AUTH   │
+                                  └─────────────────┘
+
+IMPORT_S3.S3BucketAccessRoleArn   #ROLE_ARN used to read BUCKET
+                                  #Must allow PACTIONs:
+                                  #  - s3:GetObject on URI/*
+                                  #     - with COND_KEY aws:SourceArn DATASTORE_ARN
+                                  #  - s3:ListBucket|GetBucketAcl on BUCKET
+                                  #     - with COND_KEY aws:SourceArn DATASTORE_ARN
+                                  #  - kms:GenerateDataKey|Decrypt, if using S3-KMS
+                                  #Trust policy must allow Principal.Service 'cloudtrail.amazonaws.com' to sts:AssumeRole
+                                  #  - with COND_KEY aws:SourceArn DATASTORE_ARN
 
                                   ┌────────────────┐
                                   │   IMPORT API   │
@@ -1389,6 +1422,10 @@ QUERY.QueryAlias                  #'QUERY_TEMPLATE'
 QUERY.QueryParameters             #STR_ARR. Arguments to 'QUERY_TEMPLATE'
                                   #Max 10
 
+                                  ┌────────────────────────┐
+                                  │   QUERY REQUEST AUTH   │
+                                  └────────────────────────┘
+
 PACTION cloudtrail:GenerateQuery  #Allows generating QUERYs from AI prompts in the UI
 
                                   ┌───────────────────────┐
@@ -1432,7 +1469,6 @@ QUERY.QueryResultRows             #Results as OBJ_ARR_ARR
 
 QUERY.DeliveryS3Uri               #'s3://BUCKET' storing QUERY.QueryResultRows
                                   #If not specified, not stored in S3, but QUERY.QueryResultsRows still available
-                                  #Requires same permissions as ones for a TRAIL's BUCKET
 AWSLogs/ACCOUNT_ID/CloudTrail-Lake
  /Query/YYYY/MM/DD/QUERY_MID/     #'QUERY_RESULTS_FILE', when using QUERY.DeliveryS3Uri
  result_NUM.csv.gz                #NUM spreads results over multiple files, max 1TB each, if total is >1TB
@@ -1456,6 +1492,12 @@ QUERY_STATS.EventsMatched         #NUM of LOG_EVENTs being returned
 QUERY_STATS.EventsScanned         #NUM of LOG_EVENTs filtered by `where` clause
 QUERY_STATS.BytesScanned          #NUM of bytes read in the DATASTORE, i.e. from EventsScanned
 QUERY_STATS.ExecutionTimeInMillis #NUM of ms the QUERY has been running
+
+                                  ┌────────────────────────┐
+                                  │   QUERY RESULTS AUTH   │
+                                  └────────────────────────┘
+
+PERMISSIONS ==>                   #QUERY.DeliveryS3Uri requires same permissions as ones for a TRAIL's BUCKET
 
                                   ┌────────────────────────────┐
                                   │   QUERY RESULTS VALIDATE   │
