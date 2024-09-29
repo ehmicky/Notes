@@ -1008,47 +1008,6 @@ POST                              #Set INVOCATION_RES
                                   #Res: empty
 POST RAPI/invocation/REQ_ID/error #Report error during INVOCATION
 
-                                  ┌──────────────┐
-                                  │   CHAP ???   │
-                                  └──────────────┘
-
-With RUNTIME:
-  - PackageType 'Zip'
-     - wrapper script, must set ENVVAR ENVVAR AWS_LAMBDA_EXEC_WRAPPER to /opt/bootstrap
-     - must use LAYER: ACCOUNT_ID 753240598075, name 'LambdaAdapterLayerX86|Arm64', VERSION_NUM 23
-     - FUNC_VERSION.Handler must be *.sh???
-  - PackageType 'Image'
-     - Dockerfile must:
-        - COPY --from=public.ecr.aws/awsguru/aws-lambda-adapter:X.Y.Z[-ARCH] /lambda-adapter /opt/extensions/lambda-adapter
-
-Run server code as extension
-
-http://127.0.0.1                  #Server host
-ENVVAR AWS_LWA_PORT               #Server PORT_NUM (def: '8080')
-                                  #Must not be <=1024, 3000 or 9001
-ENVVAR AWS_LWA_REMOVE_BASE_PATH   #STR to strip from REQ.path
-ENVVAR AWS_LWA_PASS_THROUGH_PATH 	#'/PATH' (def: '/events') when called by TRIGGERs
-
-ENVVAR
- AWS_LWA_READINESS_CHECK_PATH     #'PATH' (def: '/'). Poll HTTP request every 10ms to know when server is ready
-ENVVAR
- AWS_LWA_READINESS_CHECK_PORT     #PORT_NUM (def: same as AWS_LWA_PORT)
-ENVVAR
- AWS_LWA_READINESS_CHECK_PROTOCOL #'http' (def) or 'tcp'
-ENVVAR AWS_LWA_READINESS_CHECK
- _MIN_UNHEALTHY_STATUS 	          #Minimum STATUS_NUM (def: '500') to consider server not ready
-ENVVAR AWS_LWA_ASYNC_INIT         #'BOOL' (def: 'false'). Should enable if server takes >10s to boot
-                                  #It prevents FUNC_INSTANCE to restart after 10s, which is faster and cheaper
-
-ENVVAR AWS_LWA_INVOKE_MODE 	      #'buffered' (def) or 'response_stream'. FUNC_URL.InvokeMode
-ENVVAR AWS_LWA_ENABLE_COMPRESSION #'BOOL' (def: false). Compress response body with gzip unless either:
-                                  #  - Content-Length: <32 [S]
-                                  #  - Content-Type: image* [S]
-ENVVAR                            #'HEADER' (def: 'Authorization') used for auth
- AWS_LWA_AUTHORIZATION_SOURCE 	  #Meant when using FUNC_URL.AuthType 'AWS_IAM':
-                                  #  - since it uses Authorization [C]
-                                  #  - i.e. this allows using another header for server-specific auth logic
-
                                   ┌─────────────────────┐
                                   │   RUNTIME VERSION   │
                                   └─────────────────────┘
@@ -3465,6 +3424,70 @@ ENVVAR PYTHON_PATH                #LAMBDA_RUNTIME_DIR
 /opt/python                       #
 /opt/python
  /lib/pythonVERSION/site-packages #Preferred location for LAYERs packages
+
+                                  ┌────────────────────┐
+                                  │   SERVER ADAPTER   │
+                                  └────────────────────┘
+
+aws-lambda-web-adapter            #Extension to run long-running servers on Lambda:
+                                  #  - translate Lambda request object to normal HTTP request|response
+                                  #  - use FUNC_INSTANCE initialization phase to boot server
+                                  #Version 0.8.4
+
+INSTALLATION ==>                  #Depends on PackageType 'Zip' or 'Image'
+ZIP ==>                           #Uses a wrapper script
+                                  #Must set ENVVAR ENVVAR AWS_LAMBDA_EXEC_WRAPPER to /opt/bootstrap
+                                  #Must use LAYER: ACCOUNT_ID 753240598075, name 'LambdaAdapterLayerX86|Arm64', VERSION_NUM 23
+                                  #FUNC_VERSION.Handler must be *.sh???
+IMAGE ==>                         #Dockerfile must:
+                                  #  - COPY --from=public.ecr.aws/awsguru/aws-lambda-adapter:X.Y.Z[-ARCH] /lambda-adapter /opt/extensions/lambda-adapter
+
+CALLER ==>                        #Any caller works: FUNC_URL, API Gateway, TRIGGERs, etc.
+                                  #Outside of Lambda, is a noop
+                                  #  - this allows server to still work: locally (including with SAM), on Fargate, on EC2, etc.
+
+FUNCTION CODE ==>                 #The function can register the server as if it was not in Lambda
+                                  #That's because it receives HTTP requests|responses as is, i.e. REQ|RES is normal
+                                  #The following HTTP headers are also set
+x-amzn-request-context:
+ OBJ_JSON [C]                     #When called through API Gateway Lambda INTEGRATION, its REQ.* (see its doc)
+x-amzn-lambda-context:
+ OBJ_JSON [C]                     #NCONTEXT.* (see below)
+
+ENVVAR AWS_LWA_*                  #To set as FUNC_VERSION.Environment.Variables.ENVVAR, for configuration
+ENVVAR AWS_LWA_HOST               #Server host (def: '127.0.0.1')
+ENVVAR AWS_LWA_PORT               #Server PORT_NUM (def: '8080')
+                                  #Must not be <=1024, 3000 or 9001
+ENVVAR AWS_LWA_REMOVE_BASE_PATH   #STR to strip from REQ's 'PATH'
+ENVVAR AWS_LWA_PASS_THROUGH_PATH 	#'/PATH' (def: '/events') when called by TRIGGERs
+                                  #Used with HTTP_METHOD POST
+
+ENVVAR                            #'PATH' (def: '/'). Poll HTTP GET request every 10ms to know when server is ready
+ AWS_LWA_READINESS_CHECK_PATH     #Delay FUNC_INSTANCE being marked as ready until then
+ENVVAR
+ AWS_LWA_READINESS_CHECK_PORT     #PORT_NUM (def: same as AWS_LWA_PORT)
+ENVVAR
+ AWS_LWA_READINESS_CHECK_PROTOCOL #'http' (def) or 'tcp'
+ENVVAR AWS_LWA_READINESS_CHECK
+ _MIN_UNHEALTHY_STATUS 	          #Minimum STATUS_NUM (def: '500') to consider server not ready
+ENVVAR AWS_LWA_ASYNC_INIT         #'BOOL' (def: 'false'). After 10s of readiness polling:
+                                  #  - signal that the FUNC_INSTANCE is ready
+                                  #     - this prevents FUNC_INSTANCE to restart after 10s initialization timeout,
+                                  #       which is faster and cheaper
+                                  #  - but delay any upcoming requests until readiness passes
+                                  #Should be enabled if server takes >10s to boot
+
+ENVVAR AWS_LWA_INVOKE_MODE 	      #'buffered' (def) or 'response_stream'. FUNC_URL.InvokeMode
+ENVVAR AWS_LWA_ENABLE_COMPRESSION #'BOOL' (def: false). Compress response body with gzip unless either:
+                                  #  - Content-Length: <32 [S]
+                                  #  - Content-Type: image* [S]
+ENVVAR                            #'HEADER' (def: none) to rename to Authorization [C]
+ AWS_LWA_AUTHORIZATION_SOURCE 	  #Meant when using FUNC_URL.AuthType 'AWS_IAM':
+                                  #  - since it uses Authorization [C] itself
+                                  #  - i.e. Lambda itself would use Authorization [C] for it,
+                                  #    then rename 'HEADER' to Authorization [C] for the FUNCTION's code itself
+
+TERMINATION ==>                   #When FUNC_INSTANCE is shutdown, sends SIGTERM, which can be handled (SIGKILL after 500ms)
 
                                   ┌───────────────┐
                                   │   DEBUG CLI   │
