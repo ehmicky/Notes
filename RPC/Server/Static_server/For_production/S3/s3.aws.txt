@@ -347,7 +347,7 @@ Bucket.validateBucketName         #Throw if invalid
 XW.defaultBucket                 ##With Pulumi, like new CW.s3.Bucket(...) except:
  ('BUCKET', OBJ, NRPROPS, NROPTS)##  - can set OBJ.existing.arn 'BUCKET_ARN' or name 'BUCKET'
                                  ##    to retrieve already existing BUCKET instead.
-                                 #   - OBJ.skip true to be a noop, with no outputs
+                                 ##  - OBJ.skip true to be a noop, with no outputs
 DEFAULT_BUCKET.bucket            ##BUCKET. Undefined if OBJ.existing.arn
 DEFAULT_BUCKET.bucketId.arn      ##}'BUCKET_ARN'{
 DEFAULT_BUCKET.bucketId.name     ##}'BUCKET'{
@@ -489,6 +489,14 @@ DELETE /BUCKET?tagging            #Req: empty
 DeleteBucketTagging()             #Res: empty
                                   #No own PACTION: use 's3:PutBucketTagging' instead
 
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:        BUCKET TAGS IAC        :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
 AWS::S3::Bucket                   #Includes RESPROPs: Tags TAG_PAIRS
 
 
@@ -547,7 +555,6 @@ OBJECT.Key                        #'OBJECT', its name
                                   #  - more performant when start with a random value
                                   #  - as opposed to serial integer, timestamp, etc.
                                   #Max 1KB, [[:alnum:]-_.*'()!] (should URL encode others)
-OBJECT.Location                   #'.../BUCKET/OBJECT' URL
 
 Range: bytes=NUM-NUM2 [C]
 Content-Range:
@@ -561,18 +568,38 @@ x-amz-object-attributes:
 
 RAW_OBJECT                        #OBJECT, as is
                                   #Max 5GB
-                                  #In SDK, returned as RESP.Body RESP_STREAM
+                                  #In CLI, must use --body PATH
                                  ##With Pulumi:
                                  ##  - can be set either with:
                                  ##     - RPROPS.content[Base64] STR
                                  ##     - RPROPS.source ASSET
                                  ##  - RPROPS.sourceHash 'TRIGGER'
-PARAMS.Body                       #As request, RAW_OBJECT can be STR or UINT8ARR|BUFFER|BLOB
-                                  #It can also be RSTREAM|ISTREAM:
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:        OBJECT READ SDK        :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+PARAMS.Body                       #INPUT_BLOB. Used for RAW_OBJECT in requests.
+                                  #If RSTREAM|ISTREAM:
                                   #  - uses Transfer-Encoding: chunked [C]
                                   #    and x-amz-content-sha256: STREAMING-UNSIGNED-PAYLOAD-TRAILER [C]
                                   #  - requires setting PARAMS.checksumAlgorithm
---body PATH                       #Same for CLI
+RESP.Body                         #RESP_STREAM. Used for RAW_OBJECT in responses.
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:        OBJECT READ IAC        :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+ICBUCKET.arnForObjects('OBJECT')
+ ->'OBJECT_ARN'                   #
 
 
                                              /=+===============================+=\
@@ -582,8 +609,27 @@ PARAMS.Body                       #As request, RAW_OBJECT can be STR or UINT8ARR
                                              \=+===============================+=/
 
 
-ICBUCKET.arnForObjects('OBJECT')
- ->'BUCKET_ARN/OBJECT'            #
+OBJECT.Location                   #'https://s3.REGION.amazonaws.com/BUCKET/OBJECT'
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:        OBJECT URLS CLI        :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+S3DIR                             #s3://BUCKET[/PREFIX/]
+S3FILE                            #s3://BUCKET[/PREFIX]/OBJECT
+S3PATH                            #s3://BUCKET[/PREFIX/][OBJECT]
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:        OBJECT URLS IAC        :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
 
 ICBUCKET.urlForObject('OBJECT')
  ->'URL'                          #'https://s3.REGION.amazonaws.com/BUCKET/OBJECT'
@@ -591,9 +637,6 @@ ICBUCKET.urlForObject('OBJECT')
 ICBUCKET.virtualHostedUrlForObject#'https://BUCKET.s3[.REGION].amazonaws.com/OBJECT'
  ('OBJECT'[, OPTS])->'URL'        #OPTS: regional BOOL (def: true)
 
-S3DIR                             #s3://BUCKET[/PREFIX/]
-S3FILE                            #s3://BUCKET[/PREFIX]/OBJECT
-S3PATH                            #s3://BUCKET[/PREFIX/][OBJECT]
 ICBUCKET.s3UrlForObject('OBJECT')
  ->'s3://BUCKET/OBJECT'           #
 
@@ -708,8 +751,7 @@ PutObject()                       #  - RAW_OBJECT (including PARAMS.Body STREAM)
                                   #    x-amz-checksum-ALGO [S]
 
 Expect: 100-continue [C]          #See HTTP doc
-@aws-sdk/
- middleware-expect-continue       #Always use Expect: 100-continue [C], used by S3 client
+                                  #SDK always sets it, using @aws-sdk/middleware-expect-continue
 
 NEVENT s3:ObjectCreated:Put       #On PutObject() success
 
@@ -795,13 +837,23 @@ x-amz-signature: STR [C]          #Unlike other ACTIONs, request body used in si
                                   #I.e. when authenticating with a pre-signed URL, client-side cannot modify BUPLOAD_POLICY
                                   #Using a pre-signed URL is recommended since this is done client-side
 
-@aws-sdk/s3-presigned-post        #Part of JavaScript SDK
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==: BROWSER UPLOAD SIGNATURE SDK  :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+@aws-sdk/s3-presigned-post        #Builtin in JavaScript SDK
+
 createPresignedPost
  (CLIENT, OPTS)->>OBJ             #Create pre-signed URL for PostObject()
 OPTS.Bucket                       #'BUCKET'
 OPTS.Key                          #BUPLOAD.key
 OPTS.Expires                      #BUPLOAD_POLICY.expiration, as NUM (in secs, def: 1h)
 OPTS.Conditions                   #BUPLOAD_POLICY.conditions
+
 OPTS.Fields                       #BUPLOAD.PROPs, as OBJ
 OBJ.fields                        #OBJ. Same but adds:
                                   #  - policy 'BASE64_JSON'
@@ -894,19 +946,7 @@ NEVENT s3:ObjectCreated:
 
                                              /=+===============================+=\
                                             /  :                               :  \
-                                            )==:     MULTIPART UPLOAD CLI      :==(
-                                            \  :_______________________________:  /
-                                             \=+===============================+=/
-
-
-HS3_CONF.multipart_threshold      #NUM[UNIT] (def: 8MB) (def UNIT: 'B')
-                                  #When uploading files larger than this, use a MUPLOAD
-HS3_CONF.multipart_chunksize      #MPART.Size (def: 8MB)
-
-
-                                             /=+===============================+=\
-                                            /  :                               :  \
-                                            )==:       MULTIPART HELPER        :==(
+                                            )==:     MULTIPART UPLOAD SDK      :==(
                                             \  :_______________________________:  /
                                              \=+===============================+=/
 
@@ -935,6 +975,18 @@ OBJ.total                         #NUM of bytes to be sent
 OBJ.part                          #MPART.partNumber
 OBJ.Bucket                        #'BUCKET'
 OBJ.Key                           #'OBJECT'
+
+
+                                             /=+===============================+=\
+                                            /  :                               :  \
+                                            )==:     MULTIPART UPLOAD CLI      :==(
+                                            \  :_______________________________:  /
+                                             \=+===============================+=/
+
+
+HS3_CONF.multipart_threshold      #NUM[UNIT] (def: 8MB) (def UNIT: 'B')
+                                  #When uploading files larger than this, use a MUPLOAD
+HS3_CONF.multipart_chunksize      #MPART.Size (def: 8MB)
 
 
                                              /=+===============================+=\
