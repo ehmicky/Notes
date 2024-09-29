@@ -3429,41 +3429,37 @@ ENVVAR PYTHON_PATH                #LAMBDA_RUNTIME_DIR
                                   │   SERVER ADAPTER   │
                                   └────────────────────┘
 
-aws-lambda-web-adapter            #Extension to run long-running servers on Lambda:
-                                  #  - translate Lambda request object to normal HTTP request|response
-                                  #  - use FUNC_INSTANCE initialization phase to boot server
+aws-lambda-web-adapter            #For:
+                                  #  - long-running servers
+                                  #  - and/or any server framework (Express, Next.js, Flask, etc.)
                                   #Version 0.8.4
 
-INSTALLATION ==>                  #Depends on PackageType 'Zip' or 'Image'
-ZIP ==>                           #Uses a wrapper script
-                                  #Must set ENVVAR ENVVAR AWS_LAMBDA_EXEC_WRAPPER to /opt/bootstrap
-                                  #Must use LAYER: ACCOUNT_ID 753240598075, name 'LambdaAdapterLayerX86|Arm64', VERSION_NUM 23
-                                  #FUNC_VERSION.Handler must be *.sh???
-IMAGE ==>                         #Dockerfile must:
-                                  #  - COPY --from=public.ecr.aws/awsguru/aws-lambda-adapter:X.Y.Z[-ARCH] /lambda-adapter /opt/extensions/lambda-adapter
+INSTALLATION ==>                  #It is an external extension
+                                  #Depending on PackageType:
+                                  #  - 'Zip': use LAYER: ACCOUNT_ID 753240598075, name 'LambdaAdapterLayerX86|Arm64', VERSION_NUM 23
+                                  #  - 'Image': in Dockerfile:
+                                  #     - COPY --from=public.ecr.aws/awsguru/aws-lambda-adapter:X.Y.Z[-ARCH] /lambda-adapter /opt/extensions/lambda-adapter
+
+FUNC_VERSION.Environment.Variables
+ .AWS_LWA_*                       #Configuration
 
 CALLER ==>                        #Any caller works: FUNC_URL, API Gateway, TRIGGERs, etc.
                                   #Outside of Lambda, is a noop
                                   #  - this allows server to still work: locally (including with SAM), on Fargate, on EC2, etc.
 
-FUNCTION CODE ==>                 #The function can register the server as if it was not in Lambda
-                                  #That's because it receives HTTP requests|responses as is, i.e. REQ|RES is normal
-                                  #The following HTTP headers are also set
-x-amzn-request-context:
- OBJ_JSON [C]                     #When called through API Gateway Lambda INTEGRATION, its REQ.* (see its doc)
-x-amzn-lambda-context:
- OBJ_JSON [C]                     #NCONTEXT.* (see below)
+WRAPPER SCRIPT ==>                #When PackageType is 'Zip', a "wrapper script" is used, which proxies normal RUNTIME call
+                                  #The following must be set
+ENVVAR AWS_LAMBDA_EXEC_WRAPPER    #Must be set to /opt/bootstrap
+FUNC_VERSION.Handler              #Must be either a binary or a script with shebang, e.g.:
+                                  #  - *.sh calling `node *.js`
+                                  #  - *.js with a Node shebang
+                                  #As opposed to a normal RUNTIME-specific file
 
-ENVVAR AWS_LWA_*                  #To set as FUNC_VERSION.Environment.Variables.ENVVAR, for configuration
-ENVVAR AWS_LWA_HOST               #Server host (def: '127.0.0.1')
-ENVVAR AWS_LWA_PORT               #Server PORT_NUM (def: '8080')
-                                  #Must not be <=1024, 3000 or 9001
-ENVVAR AWS_LWA_REMOVE_BASE_PATH   #STR to strip from REQ's 'PATH'
-ENVVAR AWS_LWA_PASS_THROUGH_PATH 	#'/PATH' (def: '/events') when called by TRIGGERs
-                                  #Used with HTTP_METHOD POST
-
-ENVVAR                            #'PATH' (def: '/'). Poll HTTP GET request every 10ms to know when server is ready
- AWS_LWA_READINESS_CHECK_PATH     #Delay FUNC_INSTANCE being marked as ready until then
+ENVVAR AWS_LWA_READINESS_*        #Any FUNC_INSTANCE initialization is only marked as complete once the server is ready
+                                  #I.e. the external extension allows for server startup
+                                  #It does so by polling HTTP GET request every 10ms
+ENVVAR
+ AWS_LWA_READINESS_CHECK_PATH     #'PATH' (def: '/')
 ENVVAR
  AWS_LWA_READINESS_CHECK_PORT     #PORT_NUM (def: same as AWS_LWA_PORT)
 ENVVAR
@@ -3471,11 +3467,26 @@ ENVVAR
 ENVVAR AWS_LWA_READINESS_CHECK
  _MIN_UNHEALTHY_STATUS 	          #Minimum STATUS_NUM (def: '500') to consider server not ready
 ENVVAR AWS_LWA_ASYNC_INIT         #'BOOL' (def: 'false'). After 10s of readiness polling:
-                                  #  - signal that the FUNC_INSTANCE is ready
+                                  #  - signal that the FUNC_INSTANCE initialization is complete
                                   #     - this prevents FUNC_INSTANCE to restart after 10s initialization timeout,
                                   #       which is faster and cheaper
-                                  #  - but delay any upcoming requests until readiness passes
+                                  #  - but any upcoming requests are still delayed until readiness passes
                                   #Should be enabled if server takes >10s to boot
+
+REQUEST PROXYING ==>              #The external extension proxies the request|response, translating it to a normal HTTP request|response
+                                  #I.e. the function can register the server as if it was not in Lambda, with normal REQ|RES
+                                  #The following HTTP headers are also set
+x-amzn-lambda-context:
+ OBJ_JSON [C]                     #NCONTEXT.* (see below)
+x-amzn-request-context:
+ OBJ_JSON [C]                     #When called through API Gateway Lambda INTEGRATION: its REQ.* (see its doc)
+
+ENVVAR AWS_LWA_HOST               #Server host (def: '127.0.0.1')
+ENVVAR AWS_LWA_PORT               #Server PORT_NUM (def: '8080')
+                                  #Must not be <=1024, 3000 or 9001
+ENVVAR AWS_LWA_REMOVE_BASE_PATH   #STR to strip from REQ's 'PATH'
+ENVVAR AWS_LWA_PASS_THROUGH_PATH 	#'/PATH' (def: '/events') when called by TRIGGERs
+                                  #Used with HTTP_METHOD POST
 
 ENVVAR AWS_LWA_INVOKE_MODE 	      #'buffered' (def) or 'response_stream'. FUNC_URL.InvokeMode
 ENVVAR AWS_LWA_ENABLE_COMPRESSION #'BOOL' (def: false). Compress response body with gzip unless either:
