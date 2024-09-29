@@ -653,9 +653,10 @@ IMAGE.Command                     #STR_ARR. Like Docker CMD, i.e. arguments to E
 IMAGE.WorkingDirectory            #STR. Like Docker WORKDIR
 ENV ==>                           #Automatically filled by FUNC_VERSION.Environment
 
-public.ecr.aws/lambda/            #Recommended base images
+public.ecr.aws/lambda/            #Recommended base images (called "AWS [managed] base image for Lambda")
  RUNTIME[-ARCH]                   #Follow every constraint, including implementing the custom runtime API
                                   #Exposes following ENVVARs: LAMBDA_TASK_ROOT, LAMBDA_RUNTIME_DIR
+                                  #RUNTIME can be "provided" (called "OS-only base image")
 
                                   ┌────────────────────┐
                                   │   CODE IMAGE IAC   │
@@ -987,6 +988,9 @@ CUSTOM RUNTIME ==>                #When FUNC_VERSION.Runtime 'provided*'
                                   #FUNC_CODE|LAYER must include an executable script at '/bootstrap', which is run
                                   #Only partially documented for the moment
 
+RUNTIME INTERFACE CLIENT (RIC) ==>#Client for the runtime API
+                                  #Available for every RUNTIME language, and also Rust and Go
+
 ENVVAR LAMBDA_TASK_ROOT           #FUNC_CODE's 'DIR', e.g. /var/task
                                   #Used as cwd, i.e. should change cwd to it during initialization
 
@@ -1003,6 +1007,47 @@ POST                              #Set INVOCATION_RES
  RAPI/invocation/REQ_ID/response  #Request body: INVOCATION_RES.ResponseBody
                                   #Res: empty
 POST RAPI/invocation/REQ_ID/error #Report error during INVOCATION
+
+                                  ┌──────────────┐
+                                  │   CHAP ???   │
+                                  └──────────────┘
+
+With RUNTIME:
+  - PackageType 'Zip'
+     - wrapper script, must set ENVVAR ENVVAR AWS_LAMBDA_EXEC_WRAPPER to /opt/bootstrap
+     - must use LAYER: ACCOUNT_ID 753240598075, name 'LambdaAdapterLayerX86|Arm64', VERSION_NUM 23
+     - FUNC_VERSION.Handler must be *.sh???
+  - PackageType 'Image'
+     - Dockerfile must:
+        - COPY --from=public.ecr.aws/awsguru/aws-lambda-adapter:X.Y.Z[-ARCH] /lambda-adapter /opt/extensions/lambda-adapter
+
+Run server code as extension
+
+http://127.0.0.1                  #Server host
+ENVVAR AWS_LWA_PORT               #Server PORT_NUM (def: '8080')
+                                  #Must not be <=1024, 3000 or 9001
+ENVVAR AWS_LWA_REMOVE_BASE_PATH   #STR to strip from REQ.path
+ENVVAR AWS_LWA_PASS_THROUGH_PATH 	#'/PATH' (def: '/events') when called by TRIGGERs
+
+ENVVAR
+ AWS_LWA_READINESS_CHECK_PATH     #'PATH' (def: '/'). Poll HTTP request every 10ms to know when server is ready
+ENVVAR
+ AWS_LWA_READINESS_CHECK_PORT     #PORT_NUM (def: same as AWS_LWA_PORT)
+ENVVAR
+ AWS_LWA_READINESS_CHECK_PROTOCOL #'http' (def) or 'tcp'
+ENVVAR AWS_LWA_READINESS_CHECK
+ _MIN_UNHEALTHY_STATUS 	          #Minimum STATUS_NUM (def: '500') to consider server not ready
+ENVVAR AWS_LWA_ASYNC_INIT         #'BOOL' (def: 'false'). Should enable if server takes >10s to boot
+                                  #It prevents FUNC_INSTANCE to restart after 10s, which is faster and cheaper
+
+ENVVAR AWS_LWA_INVOKE_MODE 	      #'buffered' (def) or 'response_stream'. FUNC_URL.InvokeMode
+ENVVAR AWS_LWA_ENABLE_COMPRESSION #'BOOL' (def: false). Compress response body with gzip unless either:
+                                  #  - Content-Length: <32 [S]
+                                  #  - Content-Type: image* [S]
+ENVVAR                            #'HEADER' (def: 'Authorization') used for auth
+ AWS_LWA_AUTHORIZATION_SOURCE 	  #Meant when using FUNC_URL.AuthType 'AWS_IAM':
+                                  #  - since it uses Authorization [C]
+                                  #  - i.e. this allows using another header for server-specific auth logic
 
                                   ┌─────────────────────┐
                                   │   RUNTIME VERSION   │
@@ -1821,7 +1866,9 @@ FUNC_INSTANCE                     #When a FUNC_VERSION is first invoked, a FUNC_
                                   #     - done sync, i.e. might freeze in the middle of any async ongoing logic
                                   #        - can workaround this by performing any one-time async logic in the main handler,
                                   #          but guarding it using a top-level BOOL
+                                  #  - not charged
                                   #  - max 10s
+                                  #     - otherwise, restarted, slower and charged
                                   #After each INVOCATION:
                                   #  - the FUNC_INSTANCE stays up to be re-used by the next INVOCATION
                                   #  - the environment is frozen
