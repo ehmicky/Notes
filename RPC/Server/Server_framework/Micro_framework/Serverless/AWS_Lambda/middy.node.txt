@@ -106,128 +106,6 @@ getInternal(VAL, INFO)->>OBJ      #Returns, according to VAL:
                                   #  - howevere, to avoid unhandled rejections, should make sure they cannot be rejected
 
                                   ┌─────────────┐
-                                  │   MEMOIZE   │
-                                  └─────────────┘
-
-@middy/util                       #
-processCache
- (OPTS, CFUNC(VAL2)->VAL, VAL2)   #Memoize CFUNC and call it
- ->CACHE_RES                      #VAL2 is any value, bound to CFUNC
-
-CACHE_RES.value                   #VAL returned by CFUNC
-
-OPTS.cacheKey                     #'CACHE_KEY'. Each CFUNC must have a different one
-
-OPTS.cacheExpiry                  #How long to cache, either:
-OPTS.cacheKeyExpiry.CACHE_KEY     #  - NUM (max 1d): duration in ms
-                                  #  - DATE_NUM: Unix timestamp in ms
-                                  #  - 0 (def): does not get|set cache
-                                  #  - -1: does not set cache, but get it even if expired
-                                  #     - i.e. used to cache but never expire
-                                  #If NUM (not DATE_NUM):
-                                  #  - refreshes every NUMms, calling CFUNC again
-                                  #  - stops refreshing if modifyCache|clearCache() called
-CACHE_RES.expiry                  #DATE_NUM
-
-getCache('CACHE_KEY')->CACHE_RES  #Get cache, without calling CFUNC
-                                  #If not cached, returns empty OBJ
-modifyCache('CACHE_KEY', OBJ)     #Set cached VAL as {...OBJ, ...CFUNC(VAL2, OBJ)}
-                                  #Only if already cached
-                                  #CFUNC is only called in next processCache()
-clearCache(['CACHE_KEY'[_ARR]])   #Delete cache
-
-                                  ┌────────────┐
-                                  │   CLIENT   │
-                                  └────────────┘
-
-createClient(OPTS, INFO)->>CLIENT #Create a new AWS CLIENT
-OPTS.AwsClient                    #SERVICEClient
-OPTS.awsClientOptions             #COPTS
-OPTS.awsClientAssumeRole          #'VAR'. Uses MIDDY_CONTEXT.VAR CREDS_OBJ as COPTS.credentials
-                                  #If set, must be called after @middy/sts
-                                  #  - however, can be cached, i.e. only done on first REQ
-OPTS.awsClientCapture             #FUNC(CLIENT)->CLIENT mapping it
-                                  #Requires OPTS.disablePrefetch true
-
-createPrefetchClient(OPTS)->CLIENT#Same but without OPTS.awsClientAssumeRole
-                                  #I.e. must set OPTS.awsClientOptions.credentials
-                                  #Since it does not rely on @middy/sts, can be called once at top-level
-
-canPrefetch([OPTS])->BOOL         #Hints whether should use:
-                                  #  - true (if no OPTS.awsClientAssumeRole): createPrefetchClient()
-                                  #  - false (else): createClient()
-OPTS.disablePrefetch              #BOOL (def: false). Make canPrefetch() always return false, i.e. always use createClient()
-
-catchInvalidSignatureException    #If ERROR is due to invalid STS signature (including expiration), returns CLIENT.send(COMMAND)
- (ERROR, CLIENT, COMMAND)->>RESP  #Else, throw ERROR
-                                  #Meant to retry a COMMAND on transient STS error:
-                                  #  try {
-                                  #    return await CLIENT.send(COMMAND)
-                                  #  } catch (error) {
-                                  #    return await catchInvalidSignatureException(error, CLIENT, COMMAND)
-                                  #  }
-
-OPTS.fetchData.FETCH_KEY          #PARAMS. Calls a specific COMMAND for a given AWS SERVICE
-                                  #Common pattern for multiple builtin MDWRs, created as FUNC(OPTS)->MDWR
-                                  #The specific COMMAND and FETCH_RES is documented in each SERVICE
-
-NCONTEXT.FETCH_KEY                #FETCH_RES. COMMAND's RESP, mapped
-
-MIDDY_CONTEXT.FETCH_KEY           #FETCH_RES_PROMISE
-OPTS.setToContext                 #BOOL. If false (def):
-                                  #  - sets only MIDDY_CONTEXT.FETCH_KEY, not NCONTEXT.FETCH_KEY
-                                  #  - i.e. the COMMAND is not awaited by the MDWR itself, which is faster
-                                  #  - it will be awaited instead by the next MDWR or HANDLER that retrieves FETCH_RES using getInternal()
-
-COMMAND ERRORS ==>                #If COMMAND has a STS signature error, it is retried once
-                                  #Else, any exception is propagated
-UNHANDLED REJECTED PROMISE ==>    #Can happen if the COMMAND throws, since it is not awaited right away
-                                  #This happens if the failure happens before FETCH_RES is retrieved
-                                  #Can be solved by either:
-                                  #  - using OPTS.setToContext true
-                                  #  - using synchronous or no MDWRs in-between
-                                  #  - not refreshing cache, i.e. not using OPTS.cacheExpiry
-                                  #     - then, it can still happen, but only once at FUNC_INSTANCE's first REQ
-
-CACHE ==>                         #FETCH_RES is cached
-                                  #Cache is invalidated if COMMAND fails
-OPTS.cacheKey                     #'CACHE_KEY'. Unless set, all MDWRs of same kind share the cache
-                                  #I.e. only useful if using 2+ MDWRs with same kind but different OPTS.fetchData
-
-OPTS.awsClientOptions             #COPTS passed to the CLIENT
-OPTS.awsClientAssumeRole          #'VAR'. Uses MIDDY_CONTEXT.VAR CREDS_OBJ as COPTS.credentials
-                                  #If set, must be called after @middy/sts
-OPTS.awsClientCapture             #FUNC(CLIENT)->CLIENT mapping it
-                                  #Requires OPTS.disablePrefetch true
-OPTS.disablePrefetch              #BOOL. Whether to create CLIENT during MDWR init (false, def) or 'before' STEP (true)
-                                  #Always true if OPTS.awsClientAssumeRole set
-                                  #Regardless, CLIENT is always created only once per FUNC_INSTANCE
-
-Pattern:
-  - create CLIENT
-     - for a specific SERVICE, i.e. sets OPTS.AwsClient
-  - for each OPTS.fetchData.FETCH_KEY PARAMS:
-     - perform a COMMAND
-     - retry it on STS error
-     - retrieve|transform its RESP
-     - on any exception, invalidate cache for this specific FETCH_KEY
-  - result is { FETCH_KEY: RESP_PROMISE }
-  - cache result
-     - using 'SERVICE' as OPTS.cacheKey by default, i.e. shared between all MDWRs of same type
-     - default OPTS.cacheExpiry -1, i.e. never expire
-  - all of the above is done:
-     - either:
-        - on first REQ
-        - on MDWR init
-     - depending on OPTS.awsClientAssumeRole|disablePrefetch
-  - set to MIDDY_CONTEXT.FETCH_KEY RESP_PROMISE
-  - if OPTS.setToContext true (def: false):
-     - retrieve MIDDY_CONTEXT.*
-        - with only specified FETCH_KEYs
-        - after resolving RESP_PROMISE
-     - sets to NCONTEXT.*
-
-                                  ┌─────────────┐
                                   │   TIMEOUT   │
                                   └─────────────┘
 
@@ -292,6 +170,144 @@ ERROR[_OPTS].expose               #BOOL (def: true unless STATUS_NUM 5**)
                                   #Hint whether stack trace should be shown
 
 ERROR_OPTS.*                      #Passed to Error, e.g. cause, etc.
+
+                                  ┌──────────────────┐
+                                  │   COMMAND MAIN   │
+                                  └──────────────────┘
+
+OPTS.fetchData.FETCH_KEY          #PARAMS. Calls a specific COMMAND for a given AWS SERVICE
+                                  #Common pattern for multiple builtin MDWRs, created as FUNC(OPTS)->MDWR
+                                  #The specific COMMAND and FETCH_RES is documented in each SERVICE
+
+NCONTEXT.FETCH_KEY                #FETCH_RES. COMMAND's RESP, mapped
+
+MIDDY_CONTEXT.FETCH_KEY           #FETCH_RES_PROMISE. Same but as PROMISE
+
+OPTS.setToContext                 #BOOL. If false (def):
+                                  #  - sets only MIDDY_CONTEXT.FETCH_KEY, not NCONTEXT.FETCH_KEY
+                                  #  - i.e. the COMMAND is not awaited by the MDWR itself, which is faster
+                                  #  - it will be awaited instead by the next MDWR or HANDLER that retrieves FETCH_RES using getInternal()
+
+                                  ┌───────────────────┐
+                                  │   COMMAND ERROR   │
+                                  └───────────────────┘
+
+COMMAND ERRORS ==>                #If COMMAND has a STS signature error, it is retried once
+                                  #Else, any exception is propagated
+
+UNHANDLED REJECTED PROMISE ==>    #Can happen if the COMMAND throws, since it is not awaited right away
+                                  #This happens if the failure happens before FETCH_RES is retrieved
+                                  #Can be solved by either:
+                                  #  - using OPTS.setToContext true
+                                  #  - using synchronous or no MDWRs in-between
+                                  #  - not refreshing cache, i.e. not using OPTS.cacheExpiry
+                                  #     - then, it can still happen, but only once at FUNC_INSTANCE's first REQ
+
+                                  ┌───────────────────┐
+                                  │   COMMAND CACHE   │
+                                  └───────────────────┘
+
+CACHE ==>                         #FETCH_RES is cached
+                                  #Cache is invalidated if COMMAND fails
+
+OPTS.cacheKey                     #'CACHE_KEY'. Unless set, all MDWRs of same kind share the cache
+                                  #I.e. only useful if using 2+ MDWRs with same kind but different OPTS.fetchData
+
+OPTS.cacheExpiry                  #How long to cache, either:
+OPTS.cacheKeyExpiry.CACHE_KEY     #  - -1 (def): forever
+                                  #  - 0: never
+                                  #  - NUM (max 1d): duration in ms
+                                  #  - DATE_NUM: Unix timestamp in ms
+                                  #If NUM (not DATE_NUM): refreshes every NUMms, calling COMMAND again
+
+                                  ┌────────────────────┐
+                                  │   COMMAND CLIENT   │
+                                  └────────────────────┘
+
+OPTS.awsClientOptions             #COPTS passed to the CLIENT
+
+OPTS.awsClientAssumeRole          #'VAR'. Uses MIDDY_CONTEXT.VAR CREDS_OBJ as COPTS.credentials
+                                  #If set, must be called after @middy/sts
+
+OPTS.awsClientCapture             #FUNC(CLIENT)->CLIENT mapping it
+                                  #Requires OPTS.disablePrefetch true
+
+OPTS.disablePrefetch              #BOOL. Whether to create CLIENT during MDWR init (false, def) or 'before' STEP (true)
+                                  #Always true if OPTS.awsClientAssumeRole set
+                                  #Regardless, CLIENT is always created only once per FUNC_INSTANCE
+
+                                  ┌────────┐
+                                  │   S3   │
+                                  └────────┘
+
+OPTS.fetchData.FETCH_KEY          #PARAMS. See middy doc for more info, including the other OPTS.*
+                                  #Performs GetObject(PARAMS)
+                                  #FETCH_RES is OBJECT contents:
+                                  #  - STR
+                                  #  - JSON_VAL: if Content-Type: application/[...+]json[;...] [S]
+                                  #CACHE_KEY is 's3'
+
+                                  ┌─────────────┐
+                                  │   MEMOIZE   │
+                                  └─────────────┘
+
+@middy/util                       #
+processCache
+ (OPTS, CFUNC(VAL2)->VAL, VAL2)   #Memoize CFUNC and call it
+ ->CACHE_RES                      #VAL2 is any value, bound to CFUNC
+
+CACHE_RES.value                   #VAL returned by CFUNC
+
+OPTS.cacheKey                     #'CACHE_KEY'. Each CFUNC must have a different one
+
+OPTS.cacheExpiry                  #How long to cache, either:
+OPTS.cacheKeyExpiry.CACHE_KEY     #  - NUM (max 1d): duration in ms
+                                  #  - DATE_NUM: Unix timestamp in ms
+                                  #  - 0 (def ???): does not get|set cache
+                                  #  - -1: does not set cache, but get it even if expired
+                                  #     - i.e. used to cache but never expire
+                                  #If NUM (not DATE_NUM):
+                                  #  - refreshes every NUMms, calling CFUNC again
+                                  #  - stops refreshing if modifyCache|clearCache() called
+CACHE_RES.expiry                  #DATE_NUM
+
+getCache('CACHE_KEY')->CACHE_RES  #Get cache, without calling CFUNC
+                                  #If not cached, returns empty OBJ
+modifyCache('CACHE_KEY', OBJ)     #Set cached VAL as {...OBJ, ...CFUNC(VAL2, OBJ)}
+                                  #Only if already cached
+                                  #CFUNC is only called in next processCache()
+clearCache(['CACHE_KEY'[_ARR]])   #Delete cache
+
+                                  ┌────────────┐
+                                  │   CLIENT   │
+                                  └────────────┘
+
+createClient(OPTS, INFO)->>CLIENT #Create a new AWS CLIENT
+OPTS.AwsClient                    #SERVICEClient
+OPTS.awsClientOptions             #COPTS
+OPTS.awsClientAssumeRole          #'VAR'. Uses MIDDY_CONTEXT.VAR CREDS_OBJ as COPTS.credentials
+                                  #If set, must be called after @middy/sts
+                                  #  - however, can be cached, i.e. only done on first REQ
+OPTS.awsClientCapture             #FUNC(CLIENT)->CLIENT mapping it
+                                  #Requires OPTS.disablePrefetch true
+
+createPrefetchClient(OPTS)->CLIENT#Same but without OPTS.awsClientAssumeRole
+                                  #I.e. must set OPTS.awsClientOptions.credentials
+                                  #Since it does not rely on @middy/sts, can be called once at top-level
+
+canPrefetch([OPTS])->BOOL         #Hints whether should use:
+                                  #  - true (if no OPTS.awsClientAssumeRole): createPrefetchClient()
+                                  #  - false (else): createClient()
+OPTS.disablePrefetch              #BOOL (def: false). Make canPrefetch() always return false, i.e. always use createClient()
+
+catchInvalidSignatureException    #If ERROR is due to invalid STS signature (including expiration), returns CLIENT.send(COMMAND)
+ (ERROR, CLIENT, COMMAND)->>RESP  #Else, throw ERROR
+                                  #Meant to retry a COMMAND on transient STS error:
+                                  #  try {
+                                  #    return await CLIENT.send(COMMAND)
+                                  #  } catch (error) {
+                                  #    return await catchInvalidSignatureException(error, CLIENT, COMMAND)
+                                  #  }
 
                                   ┌─────────────────────────┐
                                   │   CONTENT NEGOTIATION   │
