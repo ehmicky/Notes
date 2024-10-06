@@ -2545,6 +2545,15 @@ EVENT_SOURCE.BatchSize            #Batch each NUM records from the source togeth
 EVENT_SOURCE                      #NUM (in secs). Maximum duration to gather records for each batch
  .MaximumBatchingWindowInSeconds  #Def: 500ms, min: 0, max: 300
 
+EVENT_SOURCE.StartingPosition     #STR. Position where to start reading stream source, among:
+                                  #  - 'LATEST': at most recent time
+                                  #  - 'AT_TIMESTAMP': at specific time
+                                  #     - not with DynamoDB
+                                  #  - 'TRIM_HORIZON'
+                                  #Not with SQS nor MQ
+EVENT_SOURCE
+ .StartingPositionTimestamp       #DATE_NUM when EVENT_SOURCE 'AT_TIMESTAMP'
+
 EVENT_SOURCE                      #SOURCE_ACCESS_ARR
  .SourceAccessConfigurations      #Only authorize specific source
 SOURCE_ACCESS.Type                #SERVICE-specific, see below
@@ -2566,12 +2575,12 @@ COND_KEY lambda:FunctionArn       #FUNC_VERSION_ARN. Only with *EventSourceMappi
 
 POST /event-source-mappings       #Req: EVENT_SOURCE
 CreateEventSourceMapping()        #  - FunctionArn -> FunctionName SHORT_FUNC_VERSION_ARN
-                                  #  - no UUID, LastModified, LastProcessingResult, StateTransitionReason, FilterCriteriaError
+                                  #  - no EventSourceMappingArn, UUID, LastModified, LastProcessingResult, StateTransitionReason, FilterCriteriaError
                                   #  - State -> Enabled BOOL
                                   #Res: EVENT_SOURCE
 PUT /event-source-mappings        #Req: EVENT_SOURCE
  /EVENT_SOURCE_MID                #  - FunctionArn -> FunctionName SHORT_FUNC_VERSION_ARN
-UpdateEventSourceMapping()        #  - no UUID, LastModified, LastProcessingResult, StateTransitionReason, FilterCriteriaError
+UpdateEventSourceMapping()        #  - no EventSourceMappingArn, UUID, LastModified, LastProcessingResult, StateTransitionReason, FilterCriteriaError
                                   #  - no EventSourceArn, StartPosition*, Amazon|SelfManagedKafkaEventSourceConfig,
                                   #    SelfManagedEventSource, Queues, Topics, Tags
                                   #  - State -> Enabled BOOL
@@ -2594,9 +2603,10 @@ DeleteEventSourceMapping()        #Res: EVENT_SOURCE
                                   └────────────────────┘
 
 AWS::Lambda::EventSourceMapping   #RESPROPs:
-                                  #  - FunctionName, EventSourceArn, BatchSize, MaximumBatchingWindowInSeconds, SourceAccessConfigurations
+                                  #  - FunctionName, EventSourceArn, BatchSize, MaximumBatchingWindowInSeconds,
+                                  #    SourceAccessConfigurations, StartingPosition[Timestamp]
                                   #  - Enabled BOOL
-                                  #RESATTRs: Id
+                                  #RESATTRs: EventSourceMappingArn, Id
 
 CFUNCTION_OPTS.events             #CCEVENT_SOURCE_ARR
 ICANYFUNC.addEventSource          #Creates CEVENT_SOURCEs
@@ -2615,12 +2625,31 @@ ICEVENT_SOURCE
 ICEVENT_SOURCE
  .eventSourceMappingId            #EVENT_SOURCE.UUID
 OPTS.target                       #ICANYFUNC. EVENT_SOURCE.FunctionArn
-OPTS.eventSourceArn|batchSize     #EVENT_SOURCE.*
+OPTS.eventSourceArn|batchSize
+ |startingPosition[Timestamp]     #EVENT_SOURCE.*
 OPTS.enabled                      #BOOL (def: true). EVENT_SOURCE.State
 OPTS.maxBatchingWindow            #DURATION. EVENT_SOURCE.MaximumBatchingWindowInSeconds
 OPTS.sourceAccessConfigurations   #SOURCE_ACCESS_ARR among:
                                   #  - SourceAccessConfigurationType.STR (preferred)
                                   #  - SourceAccessConfigurationType.of(STR)
+
+                                  ┌────────────────────────┐
+                                  │   BATCH MAIN METRICS   │
+                                  └────────────────────────┘
+
+AWS/Lambda/IteratorAge            #NUM of ms for records to be read
+                                  #I.e. average age of EVENT_SOURCE.StartingPosition[Timestamp] record
+                                  #Not with Kafka
+                                  #cdk-monitoring-constructs:
+                                  #  - max: METRIC, WIDGET, MALARM MaxIteratorAge > CXALARM_OPTS.maxAgeInMillis
+                                  #  - only if CXMONITORING_OPTS.isIterator true (def)
+
+                                  ┌─────────────────────┐
+                                  │   BATCH MAIN LINT   │
+                                  └─────────────────────┘
+
+cfn-lint E3633                    #EVENT_SOURCE.StartingPosition must be set
+cfn-lint E3634                    #Do not use EVENT_SOURCE.StartingPosition when using SQS EVENT_SOURCE
 
                                   ┌────────────────────┐
                                   │   BATCH FUNCTION   │
@@ -2714,14 +2743,6 @@ EVENT_SOURCE
  .Endpoints
  .KAFKA_BOOTSTRAP_SERVERS         #Self-managed Kafka source 'HOST:PORT'_ARR
 
-EVENT_SOURCE.StartingPosition     #STR. Position where to start reading stream source, among:
-                                  #  - 'LATEST': at most recent time
-                                  #  - 'AT_TIMESTAMP': at specific time
-                                  #     - not with DynamoDB
-                                  #  - 'TRIM_HORIZON'
-EVENT_SOURCE
- .StartingPositionTimestamp       #DATE_NUM when EVENT_SOURCE 'AT_TIMESTAMP'
-
 SOURCE_ACCESS.Type                #STR among:
                                   #  - 'SASL_SCRAM_512_AUTH'
                                   #  (self-managed only)
@@ -2747,7 +2768,7 @@ AWSLambdaMSKExecutionRole         #AWS managed POLICYs for FUNC_VERSION.Role
                                   └─────────────────────┘
 
 AWS::Lambda::EventSourceMapping   #Includes RESPROPs: Topics, AmazonManagedKafkaEventSourceConfig, SelfManagedKafkaEventSourceConfig,
-                                  #SelfManagedEventSource, StartingPosition[Timestamp]
+                                  #SelfManagedEventSource
 
 new ManagedKafkaEventSource(OPTS) #CCEVENT_SOURCE
 OPTS.*                            #Like CEVENT_SOURCE_OPTS.* except:
@@ -2774,31 +2795,15 @@ CEVENT_SOURCE_OPTS                #Either:
 CEVENT_SOURCE_OPTS
  .kafkaBootstrapServers           #'HOST:PORT'_ARR. EVENT_SOURCE.SelfManagedEventSource.Endpoints.KAFKA_BOOTSTRAP_SERVERS
 
-CEVENT_SOURCE_OPTS
- .startingPosition[Timestamp]     #EVENT_SOURCE.*
-
                                   ┌─────────────────────────┐
                                   │   BATCH KAFKA METRICS   │
                                   └─────────────────────────┘
 
-AWS/Lambda/IteratorAge            #NUM of ms for stream records to be read
-                                  #I.e. average age of EVENT_SOURCE.StartingPosition[Timestamp] record
-                                  #cdk-monitoring-constructs:
-                                  #  - max: METRIC, WIDGET, MALARM MaxIteratorAge > CXALARM_OPTS.maxAgeInMillis
-                                  #  - only if CXMONITORING_OPTS.isIterator true (def)
-
-AWS/Lambda/OffsetLag              #NUM of ms for Kafka records to be picked up
+AWS/Lambda/OffsetLag              #NUM of ms for records to be picked up
                                   #I.e. duration between last record write to a topic, and last record read
                                   #cdk-monitoring-constructs:
                                   #  - max: METRIC, WIDGET, MALARM MaxOffsetLag > CXALARM_OPTS.maxOffsetLag
                                   #  - only if CXMONITORING_OPTS.isOffsetLag true (def: false)
-
-                                  ┌──────────────────────┐
-                                  │   BATCH KAFKA LINT   │
-                                  └──────────────────────┘
-
-cfn-lint E3633                    #EVENT_SOURCE.StartingPosition must be set
-cfn-lint E3634                    #Do not use EVENT_SOURCE.StartingPosition when using SQS EVENT_SOURCE
 
                                   ┌──────────────┐
                                   │   BATCH MQ   │
@@ -2820,20 +2825,57 @@ RETRIES ==>                       #Retries until message expires
 
 AWS::Lambda::EventSourceMapping   #Includes RESPROPs: Queues
 
+                                  ┌───────────────┐
+                                  │   BATCH SQS   │
+                                  └───────────────┘
+
+EVENT_SOURCE.EventSourceArn       #SQS QUEUE_ARN
+
+EVENT_SOURCE.BatchSize            #Same as above, but def 10 and (if FIFO) max 10
+EVENT_SOURCE                      #Same as above, but def 0, i.e. as soon as possible
+ .MaximumBatchingWindowInSeconds  #Also min 1, unless EVENT_SOURCE.BatchSize <=10
+
+EVENT_SOURCE                      #NUM. Max CONCURRENCY
+ .ScalingConfig.MaximumConcurrency#Min 2, max 1e4
+
+EVENT_SOURCE
+ .FunctionResponseTypes           #Either [] (def) or ['ReportBatchItemFailures']
+
+                                  ┌────────────────────┐
+                                  │   BATCH SQS AUTH   │
+                                  └────────────────────┘
+
+PACTION sqs:ReceiveMessage
+ |ChangeMessageVisibility
+ |GetQueueUrl|DeleteMessage       #Required for SQS EVENT_SOURCE
+ |GetQueueAttributes              #Also kms:*, if needed
+
+AWSLambdaSQSQueueExecutionRole    #AWS managed POLICYs for FUNC_VERSION.Role
+
+                                  ┌───────────────────┐
+                                  │   BATCH SQS IAC   │
+                                  └───────────────────┘
+
+AWS::Lambda::EventSourceMapping   #Includes RESPROPs: BatchSize, MaximumBatchingWindowInSeconds, ScalingConfig, FunctionResponseTypes
+
+new SqsEventSource(ICQUEUE[,OPTS])#CCEVENT_SOURCE
+OPTS.*                            #Like CEVENT_SOURCE_OPTS.*, except:
+                                  #  - no target
+                                  #  - eventSourceArn -> ICQUEUE
+
+CEVENT_SOURCE_OPTS.maxConcurrency #NUM. EVENT_SOURCE.scalingConfig.maximumConcurrency
+
+CEVENT_SOURCE_OPTS
+ .reportBatchItemFailures         #BOOL (def: false). EVENT_SOURCE.FunctionResponseTypes
+
                                   ┌───────────────────┐
                                   │   BATCH KINESIS   │
                                   └───────────────────┘
 
 EVENT_SOURCE.EventSourceArn       #Kinesis STREAM_ARN
 
-EVENT_SOURCE
- .FunctionResponseTypes           #Either [] (def) or ['ReportBatchItemFailures']
-
-EVENT_SOURCE                      #Same as above, but def 0, i.e. as soon as possible
- .MaximumBatchingWindowInSeconds  #Also min 1, unless EVENT_SOURCE.BatchSize <=10
-
-EVENT_SOURCE
- .StartingPosition[Timestamp]     #Like Kafka behavior above
+EVENT_SOURCE.FunctionResponseTypes
+ |MaximumBatchingWindowInSeconds  #Same as SQS
 
 EVENT_SOURCE                      #NUM (in secs). Processing window duration.
  .TumblingWindowInSeconds         #Max 900
@@ -2862,19 +2904,18 @@ AWSLambdaKinesisExecutionRole     #AWS managed POLICYs for FUNC_VERSION.Role
                                   │   BATCH KINESIS IAC   │
                                   └───────────────────────┘
 
-AWS::Lambda::EventSourceMapping   #Includes RESPROPs: FunctionResponseTypes, TumblingWindowInSeconds, ParallelizationFactor,
-                                  #BisectBatchOnFunctionError, MaximumRetryAttempts, MaximumRecordAgeInSeconds
+AWS::Lambda::EventSourceMapping   #Includes RESPROPs: FunctionResponseTypes, TumblingWindowInSeconds,
+                                  #ParallelizationFactor, BisectBatchOnFunctionError, MaximumRetryAttempts,
+                                  #MaximumRecordAgeInSeconds
 
-new KinesisEventSource(OPTS)      #CCEVENT_SOURCE
+new KinesisEventSource
+ (KINESIS_ISTREAM, OPTS)          #CCEVENT_SOURCE
 OPTS.*                            #Like CEVENT_SOURCE_OPTS.* except:
                                   #  - no target
-                                  #  - eventSourceArn -> streamArn
+                                  #  - eventSourceArn -> KINESIS_ISTREAM
 
 CEVENT_SOURCE_OPTS
- .reportBatchItemFailures         #BOOL (def: false). EVENT_SOURCE.FunctionResponseTypes
-
-CEVENT_SOURCE_OPTS
- .startingPosition[Timestamp]     #Like Kafka behavior above
+ .reportBatchItemFailures         #Same as SQS
 
 CEVENT_SOURCE_OPTS.tumblingWindow #DURATION. EVENT_SOURCE.TumblingWindowInSeconds
 CEVENT_SOURCE_OPTS
@@ -2885,30 +2926,21 @@ CEVENT_SOURCE_OPTS
 CEVENT_SOURCE_OPTS.retryAttempts  #NUM. EVENT_SOURCE.MaximumRetryAttempts
 CEVENT_SOURCE_OPTS.maxRecordAge   #DURATION. EVENT_SOURCE.maximumRecordAgeInSeconds
 
-                                  ┌───────────────────────────┐
-                                  │   BATCH KINESIS METRICS   │
-                                  └───────────────────────────┘
-
-AWS/Lambda/IteratorAge            #Like Kafka behavior above
-
                                   ┌────────────────────┐
                                   │   BATCH DYNAMODB   │
                                   └────────────────────┘
 
 EVENT_SOURCE.EventSourceArn       #DynamoDB STREAM_ARN
 
-EVENT_SOURCE
- .MaximumBatchingWindowInSeconds  #Same behavior as Kinesis
-
-EVENT_SOURCE
- .StartingPosition[Timestamp]     #Like Kafka behavior above
+EVENT_SOURCE.FunctionResponseTypes
+ |MaximumBatchingWindowInSeconds  #Same as SQS
 
 EVENT_SOURCE
  .TumblingWindowInSeconds
  |ParallelizationFactor
  |BisectBatchOnFunctionError
  |MaximumRetryAttempts
- |MaximumRecordAgeInSeconds       #Like Kinesis behavior above
+ |MaximumRecordAgeInSeconds       #Same as Kinesis
 
                                   ┌─────────────────────────┐
                                   │   BATCH DYNAMODB AUTH   │
@@ -2925,7 +2957,9 @@ AWSLambdaInvocation-DynamoDB      #Same but allow lambda:InvokeFunction, and do 
                                   │   BATCH DYNAMODB IAC   │
                                   └────────────────────────┘
 
-AWS::Lambda::EventSourceMapping   #Includes RESPROPs: FunctionResponseTypes, ???
+AWS::Lambda::EventSourceMapping   #Includes RESPROPs: FunctionResponseTypes, TumblingWindowInSeconds,
+                                  #ParallelizationFactor, BisectBatchOnFunctionError, MaximumRetryAttempts,
+                                  #MaximumRecordAgeInSeconds
 
 new DynamoEventSource
  (ICTABLE, OPTS)                  #CCEVENT_SOURCE
@@ -2934,21 +2968,12 @@ OPTS.*                            #Like CEVENT_SOURCE_OPTS.*, except:
                                   #  - eventSourceArn -> ICTABLE
 
 CEVENT_SOURCE_OPTS
- .startingPosition                #Like Kafka behavior above, except no 'AT_TIMESTAMP'
-
-CEVENT_SOURCE_OPTS
  .reportBatchItemFailures
  |tumblingWindow
  |parallelizationFactor
  |bisectBatchOnError
  |retryAttempts
  |maxRecordAge                    #Like Kinesis behavior above
-
-                                  ┌────────────────────────────┐
-                                  │   BATCH DYNAMODB METRICS   │
-                                  └────────────────────────────┘
-
-AWS/Lambda/IteratorAge            #Like Kafka behavior above
 
                                   ┌──────────────────────┐
                                   │   BATCH DOCUMENTDB   │
@@ -2964,9 +2989,6 @@ DOCUMENTDB_SOURCE.FullDocument    #Whether to send changes as:
                                   #  - 'Default': partial DOCUMENT
                                   #  - 'UpdateLookup': full DOCUMENT + delta
 
-EVENT_SOURCE
- .StartingPosition[Timestamp]     #Like Kafka behavior above
-
 SOURCE_ACCESS.Type                #'BASIC_AUTH'
 
                                   ┌──────────────────────────┐
@@ -2974,57 +2996,6 @@ SOURCE_ACCESS.Type                #'BASIC_AUTH'
                                   └──────────────────────────┘
 
 AWS::Lambda::EventSourceMapping   #Includes RESPROPs: DocumentDBEventSourceConfig
-
-                                  ┌──────────────────────────────┐
-                                  │   BATCH DOCUMENTDB METRICS   │
-                                  └──────────────────────────────┘
-
-AWS/Lambda/IteratorAge            #Like Kafka behavior above
-
-                                  ┌───────────────┐
-                                  │   BATCH SQS   │
-                                  └───────────────┘
-
-EVENT_SOURCE.EventSourceArn       #SQS QUEUE_ARN
-
-EVENT_SOURCE
- .FunctionResponseTypes           #Same behavior as Kinesis
-EVENT_SOURCE.BatchSize            #Same as above, but def 10 and (if FIFO) max 10
-EVENT_SOURCE
- .MaximumBatchingWindowInSeconds  #Same behavior as Kinesis
-
-EVENT_SOURCE                      #NUM. Max CONCURRENCY
- .ScalingConfig.MaximumConcurrency#Min 2, max 1e4
-
-EVENT_SOURCE
- .FunctionResponseTypes           #Either [] (def) or ['ReportBatchItemFailures']
-
-                                  ┌────────────────────┐
-                                  │   BATCH SQS AUTH   │
-                                  └────────────────────┘
-
-PACTION sqs:ReceiveMessage
- |ChangeMessageVisibility
- |GetQueueUrl|DeleteMessage       #Required for SQS EVENT_SOURCE
- |GetQueueAttributes              #Also kms:*, if needed
-
-AWSLambdaSQSQueueExecutionRole    #AWS managed POLICYs for FUNC_VERSION.Role
-
-                                  ┌───────────────────┐
-                                  │   BATCH SQS IAC   │
-                                  └───────────────────┘
-
-AWS::Lambda::EventSourceMapping   #Includes RESPROPs: FunctionResponseTypes, ScalingConfig, FunctionResponseTypes
-
-new SqsEventSource(ICQUEUE[,OPTS])#CCEVENT_SOURCE
-OPTS.*                            #Like CEVENT_SOURCE_OPTS.*, except:
-                                  #  - no target
-                                  #  - eventSourceArn -> ICQUEUE
-
-CEVENT_SOURCE_OPTS
- .reportBatchItemFailures         #Same behavior as Kinesis
-
-CEVENT_SOURCE_OPTS.maxConcurrency #NUM. EVENT_SOURCE.scalingConfig.maximumConcurrency
 
                                   ┌───────────────────────┐
                                   │   BATCH DESTINATION   │
