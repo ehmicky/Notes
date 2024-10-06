@@ -50,6 +50,7 @@ MHANDLER.onError(STEP)->MHANDLER  #Called if any of the following throws:
                                   └──────────┘
 
 FUNC(INFO)[->[>]RES]              #STEP
+                                  #Ordered: first registered is first run
                                   #If RES is returned:
                                   #  - no more STEP is run
                                   #  - if 'before' STEP: HANDLER not run
@@ -127,6 +128,27 @@ normalizeHttpResponse(INFO)->RES  #Normalizes INFO.response to FUNC_URL_RES or A
                                   #  - def headers: {}
                                   #Directly mutates INFO.response, then returns it
 
+                                  ┌───────────┐
+                                  │   ERROR   │
+                                  └───────────┘
+
+@middy/util                       #
+createError(STATUS_NUM
+ [, 'MESSAGE'][, ERROR_OPTS])
+ ->ERROR
+new HttpError(STATUS_NUM
+ [, 'MESSAGE'][, ERROR_OPTS])     #
+
+ERROR.name                        #STATUS-NUM-specific, e.g. 'NoContentError' for 204
+ERROR.message                     #Def: STATUS_NUM-specific, e.g. 'No Content' for 204
+
+ERROR.status[Code]                #STATUS_NUM
+
+ERROR[_OPTS].expose               #BOOL (def: true unless STATUS_NUM 5**)
+                                  #Hint whether stack trace should be shown
+
+ERROR_OPTS.*                      #Passed to Error, e.g. cause, etc.
+
                                   ┌─────────────────────────┐
                                   │   CONTENT NEGOTIATION   │
                                   └─────────────────────────┘
@@ -135,39 +157,49 @@ normalizeHttpResponse(INFO)->RES  #Normalizes INFO.response to FUNC_URL_RES or A
 HTTP-CONTENT-NEGOTIATION
  ([OPTS])->MDWR                   #
 
-OPTS.parseCharsets                #BOOL (def: true)
-OPTS.availableCharsets            #Def: none
-OPTS.defaultToFirstCharset        #BOOL (def: false)
+OPTS.parseCharsets                #BOOL (def: true). Whether to set NCONTEXT.preferredCharset[s]
+OPTS.availableCharsets            #'CHARSET'_ARR (def: any). Only allow those ones
+NCONTEXT.preferredCharsets        #'CHARSET'_ARR to use in response, based on Accept-Charset [C]
+                                  #Sorted from highest to lowest priority
+                                  #Does not set RES
+                                  #  - instead, other MDWR (e.g. @middy/http-content-encoding) must use NCONTEXT.preferredCharset[s]
+NCONTEXT.preferredCharset         #Same as:
+                                  #  - NCONTEXT.preferredCharsets[0]
+                                  #  - if undefined: OPTS.availableCharsets[0]
+                                  #     - only if OPTS.defaultToFirstCharset true (def: false)
+OPTS.failOnMismatch               #BOOL (def: true). Throw 406 if NCONTEXT.preferredCharset undefined
 
 OPTS.parseEncodings
  |availableEncodings
- |defaultToFirstEncoding          #
+ |defaultToFirstEncoding          #Same with Accept-Encoding [C] and NCONTEXT.preferredEncoding[s]
 
 OPTS.parseLanguages
  |availableLanguages
- |defaultToFirstLanguage          #
+ |defaultToFirstLanguage          #Same with Accept-Language [C] and NCONTEXT.preferredLanguage[s]
 
 OPTS.parseMediaTypes
  |availableMediaTypes
- |defaultToFirstMediaType         #
-
-OPTS.failOnMismatch               #BOOL (def: true)
+ |defaultToFirstMediaType         #Same with Accept [C] and NCONTEXT.preferredMediaType[s]
 
                                   ┌─────────────────┐
                                   │   COMPRESSION   │
                                   └─────────────────┘
 
 @middy/http-content-encoding      #
-HTTP-CONTENT-ENCODING             #Compress response body
- ([OPTS])->MDWR                   #Sets RES: body STR, headers['Content-Encoding'] 'ALGO', isBase64Encoded true
-                                  #If compressed size is bigger, do not compress
+HTTP-CONTENT-ENCODING             #Compress response body, based on Accept-Encoding [C]
+ ([OPTS])->MDWR                   #Sets RES:
+                                  #  - body STR
+                                  #  - headers['Content-Encoding'] 'ALGO'
+                                  #  - isBase64Encoded true
+                                  #Do not compress if either:
+                                  #  - no Accept-Encoding [C]
+                                  #  - compressed size is bigger
                                   #Works with Middy streamifyResponse
+                                  #Must register @middy/http-content-negotiation before (see its doc)
+                                  #  - since it relies on NCONTEXT.preferredEncoding[s]
 
 ALGO                              #'deflate', 'gzip' or 'br'
-NCONTEXT.preferredEncoding        #'ALGO'. If none, not compressed
-OPTS.overridePreferredEncoding    #'ALGO'_ARR (def: []), from highest to lower priority
-                                  #Uses NCONTEXT.preferredEncodings (must be set) instead of NCONTEXT.preferredEncoding
-                                  #Uses first intersection. If none, uses NCONTEXT.preferredEncoding
-NCONTEXT.preferredEncodings       #'ALGO'_ARR
+OPTS.overridePreferredEncoding    #'ALGO'_ARR. If set, use first ALGO that is also present in NCONTEXT.preferredEncodings
+                                  #If not set, use NCONTEXT.preferredEncoding
 
 OPTS.deflate|gzip|br              #OBJ passed to node:zlib create*Compress(OBJ)
