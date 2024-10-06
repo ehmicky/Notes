@@ -1,0 +1,82 @@
+
+                                  ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+                                  ┃   POWERTOOLS_LAMBDA_BATCH   ┃
+                                  ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+VERSION ==>                       #See AWS Lambda docs
+                                  #Package '@aws-lambda-powertools/batch'
+
+GOAL ==>                          #Helper for Lambda FUNCTIONs processing EVENT_SOURCEs
+                                  #Builtin for SQS, Kinesis, DynamoDB, but can add custom logic
+
+                                  ┌──────────┐
+                                  │   MAIN   │
+                                  └──────────┘
+
+processPartialResponse[Sync]
+ (REQ, PFUNC, PROC[, OPTS])
+ ->[>]RESP                        #Call PFUNC on each REQ.Records RECORD_ARR
+
+FUNC(RECORD, COBJ)->[>]SVAL       #PFUNC
+                                  #To make a RECORD fail: throw ERROR
+OPTS.context                      #COBJ (def: none)
+
+OPTS.processInParallel            #BOOL (def: true)
+                                  #Whether to process RECORDs sequentially or in parallel
+                                  #If sync, always sequential
+OPTS.throwOnFullBatchFailure      #BOOL. If false (def), never throws regardless of RECORD failures
+                                  #If true:
+                                  #  - if every RECORD fails
+                                  #     - as opposed to only some of them
+                                  #  - then throw an FullBatchFailureError ERROR
+                                  #     - has ERROR.recordErrors (same as PROC.errors)
+
+                                  ┌───────────────┐
+                                  │   PROCESSOR   │
+                                  └───────────────┘
+
+new BatchProcessor[Sync]('TYPE')  #PROC
+                                  #'TYPE' is 'SQS', 'KinesisDataStreams' or 'DynamoDBStreams'
+
+PROC.records|handler|options      #RECORD_ARR|PFUNC|OPTS passed to processPartialResponse[Sync]()
+
+PROC.successMessages              #SVAL_ARR for RECORDs that passed
+PROC.errors|failureMessages       #ERROR_ARR|RECORD_ARR for RECORDs that failed
+RESP.batchItemFailures            #OBJ_ARR: itemIdentifier 'ID', for RECORDs that failed
+                                  #'ID' is:
+                                  #  - SQS: RECORD.messageId
+                                  #  - Kinesis: RECORD.kinesis.sequenceNumber
+                                  #  - DynamoDB: RECORD.dynamodb.SequenceNumber
+
+                                  ┌─────────┐
+                                  │   SQS   │
+                                  └─────────┘
+
+new SqsFifoPartialProcessor()     #Like new BatchProcessorSync('SQS'), except if any RECORD fails:
+                                  #  - stops iterating
+                                  #  - fails any remaining RECORD with a SqsFifoShortCircuitError ERROR
+OPTS.skipGroupOnError             #BOOL (def: false). On RECORD failure:
+                                  #  - do not fail all remaining RECORDs
+                                  #  - but only the ones with the same RECORD.attributes.MessageGroupId
+                                  #Also ERROR is SqsFifoMessageGroupShortCircuitError instead
+
+                                  ┌────────────┐
+                                  │   CUSTOM   │
+                                  └────────────┘
+
+CUSTOM PROC ==>                   #Must inherit from BasePartialProcessor
+                                  #Must implement following methods
+
+PROC.prepare()                    #Called before .processRecord[Sync]()
+
+PROC.processRecord[Sync](RECORD)  #Called on each RECORD
+ ->[>]ARR                         #Must call PROC.handler and pass OPTS.context
+                                  #Must return either:
+                                  #  - PROC.successHandler(RECORD, SVAL)
+                                  #  - PROC.failureHandler(RECORD, ERROR)
+
+PROC.clean()                      #Called after .processRecord[Sync]()
+                                  #Must re-implement logic for OPTS.throwOnFullBatchFailure
+
+PROC.response()->RESP             #RESP is what processPartialResponse[Sync]() returns
+                                  #It can be anything, not necessarily what is documented above
