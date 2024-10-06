@@ -152,18 +152,83 @@ RES_OBJ.statusCode                #NUM. Required if returning REQ_OBJ.body, else
 RES_OBJ.headers                   #OBJ
 RES_OBJ.cookies                   #'VAR=VAL[;...]'_ARR
 
+                                  ┌───────────┐
+                                  │   ERROR   │
+                                  └───────────┘
+
+@middy/util                       #
+createError(STATUS_NUM
+ [, 'MESSAGE'][, ERROR_OPTS])
+ ->ERROR
+new HttpError(STATUS_NUM
+ [, 'MESSAGE'][, ERROR_OPTS])     #MIDDY_HTTP_ERROR
+
+ERROR.name                        #STATUS-NUM-specific, e.g. 'NoContentError' for 204
+ERROR.message                     #Def: STATUS_NUM-specific, e.g. 'No Content' for 204
+                                  #Meant to use as error response body
+
+ERROR.status[Code]                #STATUS_NUM
+                                  #Meant to use as error response status
+
+ERROR.headers                     #HEADERS_OBJ. Must be manually set
+                                  #Meant to use as error response headers
+
+ERROR[_OPTS].expose               #BOOL (def: false if STATUS_NUM 5**)
+                                  #Hint whether should be sent in error response
+
+ERROR_OPTS.*                      #Passed to Error, e.g. cause, etc.
+
+                                  ┌───────────────────┐
+                                  │   ERROR HANDLER   │
+                                  └───────────────────┘
+
+@middy/error-handler              #
+ERROR-HANDLER([OPTS])->MIDDY_MDWR #Main 'onError' STEP logic
+                                  #Sets RES
+                                  #Uses normalizeHttpResponse()
+                                  #No early return, i.e. other 'onError' STEPs still run
+                                  #Should be the last 'onError' STEP
+
+EXCEPTION_VAL                     #MIDDY_REQ.error
+                                  #Can be anything, but should try to use MIDDY_HTTP_ERROR
+EXCEPTION_VAL.statusCode          #STATUS_NUM (def: 500). Used as RES.statusCode
+EXCEPTION_VAL.headers             #HEADERS_OBJ (def: none). Merged to RES.headers (higher priority)
+EXCEPTION_VAL.message             #'MESSAGE' (def: none). Used as RES.body
+                                  #Also sets Content-Type [S] with either:
+                                  #  - 'text/plain'
+                                  #  - 'application/json' (guessed by trying to parse)
+EXCEPTION_VAL.expose              #BOOL (def: false if EXCEPTION_VAL.statusCode 5**)
+                                  #Always false if no EXCEPTION_VAL.statusCode
+                                  #If false:
+                                  #  - MIDDY_REQ.error transformed to an {statusCode, message} OBJ
+                                  #  - RES.statusCode 500
+                                  #  - RES.body OPTS.fallbackMessage (def: undefined)
+
+OPTS.logger                       #FUNC(EXCEPTION_VAL) (def: console.error) or false, to call
+
+                                  ┌───────────────────┐
+                                  │   ERROR LOGGING   │
+                                  └───────────────────┘
+
+@middy/error-logger               #
+ERROR-LOGGER([OPTS])->MIDDY_MDWR  #
+OPTS.logger                       #FUNC(MIDDY_REQ) (def: console.error) or false
+                                  #Called in 'onError' STEP
+                                  #No early return, i.e. other 'onError' STEPs still run
+                                  #Should be the first 'onError' STEP
+
                                   ┌───────────────────────┐
                                   │   NORMALIZE REQUEST   │
                                   └───────────────────────┘
 
 @middy/http-event-normalizer      #
-EVENT-NORMALIZER()->MIDDY_MDWR    #Normalizes MIDDY_REQ.event REQ:
+EVENT-NORMALIZER()->MIDDY_MDWR    #Normalizes REQ:
                                   #  - default empty OBJ for REQ.pathParameters|[multiValue]QueryStringParameters
                                   #  - camelCase (like API Gateway or FUNC_URL)
                                   #    for REQ.query_string_parameters|is_base64_encoded (like VPC)
 
 @middy/event-normalizer           #
-EVENT-NORMALIZER([OPTS])          #Normalize MIDDY_REQ.event REQ
+EVENT-NORMALIZER([OPTS])          #Normalize REQ
  ->MIDDY_MDWR                     #Mostly decoding: JSON, base64, URL encoding, etc.
                                   #SERVICE-specific, documented in each SERVICE
 
@@ -192,70 +257,20 @@ normalizeHttpResponse(MIDDY_REQ)  #Normalizes MIDDY_REQ.response to FUNC_URL_RES
                                   #  - def headers: {}
                                   #Directly mutates MIDDY_REQ.response, then returns it
 
-                                  ┌───────────┐
-                                  │   ERROR   │
-                                  └───────────┘
+                                  ┌─────────────────────┐
+                                  │   PARSE BODY JSON   │
+                                  └─────────────────────┘
 
-@middy/util                       #
-createError(STATUS_NUM
- [, 'MESSAGE'][, ERROR_OPTS])
- ->ERROR
-new HttpError(STATUS_NUM
- [, 'MESSAGE'][, ERROR_OPTS])     #
+@middy/http-json-body-parser      #
+JSON-BODY-PARSER([OPTS])          #JSON parses REQ.body
+ ->MIDDY_MDWR                     #If REQ.isBase64Encoded true, also base64 decode
+                                  #  - e.g. this is set on FUNC_URL or API Gateway
+                                  #On parsing error: MIDDY_HTTP_ERROR 415 with ERROR.cause.data INNER_ERROR
 
-ERROR.name                        #STATUS-NUM-specific, e.g. 'NoContentError' for 204
-ERROR.message                     #Def: STATUS_NUM-specific, e.g. 'No Content' for 204
-                                  #Meant to use as error response body
+OPTS.reviver                      #FUNC (def: none) passed to JSON.parse(VAL, FUNC)
 
-ERROR.status[Code]                #STATUS_NUM
-                                  #Meant to use as error response status
-
-ERROR.headers                     #HEADERS_OBJ. Must be manually set
-                                  #Meant to use as error response headers
-
-ERROR[_OPTS].expose               #BOOL (def: false if STATUS_NUM 5**)
-                                  #Hint whether should be sent in error response
-
-ERROR_OPTS.*                      #Passed to Error, e.g. cause, etc.
-
-                                  ┌───────────────────┐
-                                  │   ERROR HANDLER   │
-                                  └───────────────────┘
-
-@middy/error-handler              #
-ERROR-HANDLER([OPTS])->MIDDY_MDWR #Main 'onError' STEP logic
-                                  #Sets RES (using MIDDY_REQ.response)
-                                  #Uses normalizeHttpResponse()
-                                  #No early return, i.e. other 'onError' STEPs still run
-                                  #Should be the last 'onError' STEP
-
-EXCEPTION_VAL                     #MIDDY_REQ.error
-                                  #Can be anything, but should try to use HttpError
-EXCEPTION_VAL.statusCode          #STATUS_NUM (def: 500). Used as RES.statusCode
-EXCEPTION_VAL.headers             #HEADERS_OBJ (def: none). Merged to RES.headers (higher priority)
-EXCEPTION_VAL.message             #'MESSAGE' (def: none). Used as RES.body
-                                  #Also sets Content-Type [S] with either:
-                                  #  - 'text/plain'
-                                  #  - 'application/json' (guessed by trying to parse)
-EXCEPTION_VAL.expose              #BOOL (def: false if EXCEPTION_VAL.statusCode 5**)
-                                  #Always false if no EXCEPTION_VAL.statusCode
-                                  #If false:
-                                  #  - MIDDY_REQ.error transformed to an {statusCode, message} OBJ
-                                  #  - RES.statusCode 500
-                                  #  - RES.body OPTS.fallbackMessage (def: undefined)
-
-OPTS.logger                       #FUNC(EXCEPTION_VAL) (def: console.error) or false, to call
-
-                                  ┌───────────────────┐
-                                  │   ERROR LOGGING   │
-                                  └───────────────────┘
-
-@middy/error-logger               #
-ERROR-LOGGER([OPTS])->MIDDY_MDWR  #
-OPTS.logger                       #FUNC(MIDDY_REQ) (def: console.error) or false
-                                  #Called in 'onError' STEP
-                                  #No early return, i.e. other 'onError' STEPs still run
-                                  #Should be the first 'onError' STEP
+OPTS.disableContentTypeError      #BOOL. If false (def), fails if Content-Type [C] is not 'application/[...+]json[;...]'
+                                  #Throw MIDDY_HTTP_ERROR 415 with ERROR.cause.data 'MIME'
 
                                   ┌──────────────────┐
                                   │   COMMAND MAIN   │
