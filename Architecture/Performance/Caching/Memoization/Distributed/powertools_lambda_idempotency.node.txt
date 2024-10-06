@@ -14,20 +14,13 @@ GOAL ==>                          #Memoization with distributed machines
                                   #Optimized for AWS Lambda, but can use in other environments
 
 FLOW ==>                          #  - request logic starts
-                                  #  - while request logic is ongoing, any identical request errors
+                                  #  - while ongoing, any identical request errors
                                   #  - request logic ends
-                                  #     - if successful:
-                                  #        - result is cached
-                                  #        - any identical request re-uses it
-                                  #        - eventually, result expires
-                                  #        - any identical request errors
-                                  #        - database removes record after expiry timeout
-                                  #        - any identical request re-starts whole flow
-                                  #     - if threw:
-                                  #        - any identical request re-starts whole flow
-                                  #     - if process crashed:
-                                  #        - any identical request errors
-                                  #        - same expiry and after-expiry behavior as success
+                                  #  - if successful (not threw or process crashed)
+                                  #     - result is cached
+                                  #     - any identical request re-uses it
+                                  #     - wait for cache expiry
+                                  #  - any identical request re-starts whole flow
 
                                   ┌──────────┐
                                   │   INIT   │
@@ -111,9 +104,12 @@ COPTS.responseHook                #FUNC(CACHE_VAL, RECORD)->CACHE_VAL (def: none
                                   └────────────┘
 
 COPTS.expiresAfterSeconds         #NUM (in secs, def: 1h). Expires cache
+                                  #Over it, next MAIN_FUNC call re-caches it
 
 COPTS.lambdaContext               #FUNC()->NUM (in ms). Max duration to call MAIN_FUNC + cache its result
- .getRemainingTimeInMillis        #Over it, considers that the caching or process probably crashed
+ .getRemainingTimeInMillis        #Over it:
+                                  #  - considers that the caching or process probably crashed (e.g. Lambda INVOCATION timeout)
+                                  #  - next MAIN_FUNC call re-caches it
                                   #If eventually cached, then not considers crashed anymore
                                   #Def:
                                   #  - if MAIN_FUNC's second argument is a Lambda NCONTEXT
@@ -127,15 +123,38 @@ COPTS.lambdaContext               #FUNC()->NUM (in ms). Max duration to call MAI
 
 OPTS.persistenceStore             #STORE. Underlying logic storing CACHE_KEYs and CACHE_VALs
 
-new DynamoDBPersistenceLayer(...) #DynamoDB STORE
-                                  #Not documented yet
-
 COPTS.useLocalCache               #BOOL (def: false). Use a LRU cache locally
                                   #I.e. first try the local cache, then the STORE
                                   #I.e. in AWS Lambda:
                                   #  - each FUNC_INSTANCE will have its own local cache
                                   #  - decreasing NUM of calls made to STORE
 COPTS.maxLocalCacheSize           #NUM (def: 1000). Size of LRU cache
+
+                                  ┌────────────────────┐
+                                  │   STORE DYNAMODB   │
+                                  └────────────────────┘
+
+new DynamoDBPersistenceLayer      #DynamoDB STORE
+ (DOPTS)                          #Requires @aws-sdk/client-dynamodb and @aws-sdk/lib-dynamodb
+                                  #Requires PACTION dynamodb:Get|Put|Update|DeleteItem
+                                  #Not documented yet
+
+DOPTS.tableName                   #'TABLE'
+DOPTS.keyAttr                     #'ATTR' (def: 'id') for RECORD.idempotencyKey
+DOPTS.validationKeyAttr           #'ATTR' (def: 'validation') for RECORD.payloadHash
+DOPTS.dataAttr                    #'ATTR' (def: 'data') for RECORD.responseData
+DOPTS.expiryAttr                  #'ATTR' (def: 'expiration') for RECORD.expiryTimestamp
+DOPTS.inProgressExpiryAttr        #'ATTR' (def: 'in_progress_expiration') for RECORD.inProgressExpiryTimestamp
+DOPTS.statusAttr                  #'ATTR' (def: 'status') for RECORD.status
+
+DOPTS.sortKeyAttr                 #'ATTR'???
+                                  #Def: none
+DOPTS.staticPkValue               #???
+                                  #Def: 'idempotency#' + ENVVAR AWS_LAMBDA_FUNCTION_NAME
+
+DOPTS.awsSdkV3Client              #DynamoDB CLIENT (def: automatically created)
+                                  #Uses custom User-Agent: PT/idempotency/X.Y.Z PTEnv/AWS_Lambda_RUNTIME [C]
+DOPTS.clientConfig                #DynamoDB COPTS (def: {}). Only with default DOPTS.awsSdkV3Client
 
                                   ┌──────────────────┐
                                   │   STORE CUSTOM   │
@@ -144,17 +163,17 @@ COPTS.maxLocalCacheSize           #NUM (def: 1000). Size of LRU cache
 STORE._*(...)                     #To re-implement to create custom STOREs
                                   #Must inherit from BasePersistenceLayer, imported from '@aws-lambda-powertools/idempotency/persistence'
 
-STORE._putRecord(RECORD)->>       #Create
-                                  #Called before MAIN_FUNC call, whether cached or not
+STORE._putRecord(RECORD)->>       #Upsert
+                                  #Called before MAIN_FUNC call, whether cache hit|miss
 
 STORE._getRecord('CACHE_KEY')     #Read
- ->>RECORD                        #Called before MAIN_FUNC call, if cached
+ ->>RECORD                        #Called before MAIN_FUNC call, on cache hit
 
 STORE._updateRecord(RECORD)->>    #Update
-                                  #Called after MAIN_FUNC call success, if not cached
+                                  #Called after MAIN_FUNC call success, on cache miss
 
 STORE._deleteRecord(RECORD)->>    #Delete
-                                  #Called after MAIN_FUNC call throws, if not cached
+                                  #Called after MAIN_FUNC call throws, on cache miss
 
                                   ┌──────────────────┐
                                   │   STORE RECORD   │
@@ -199,7 +218,12 @@ new *Error
  ('MESSAGE'[,RECORD[,ERROR_OPTS]])
 ERROR.existingRecord              #RECORD. Only with some ERROR types, noted below
 
-IdempotencyItemAlreadyExistsError #To throw in STORE._putRecord() if already cached
+IdempotencyItemAlreadyExistsError #To throw in STORE._putRecord() if all of:
+                                  #  - already cached
+                                  #  - not expired (COPTS.expiresAfterSeconds)
+                                  #     - RECORD.expiryTimestamp < now
+                                  #  - not crashed (COPTS.lambdaContext.getRemainingTimeInMillis)
+                                  #     - RECORD.inProgressExpiryTimestamp < now && RECORD.status == 'INPROGRESS'
                                   #Handled by library, not exposed to users
                                   #Has a RECORD:
                                   #  - already cached one, not the one passed to STORE._putRecord()
@@ -213,13 +237,16 @@ IdempotencyItemNotFoundError      #To throw in STORE._getRecord() if not found
                                   #  - but could happen if RECORD was deleted by database (e.g. due to expiry)
                                   #    right between STORE._putRecord() and STORE._getRecord()
 
-IdempotencyAlreadyInProgressError #On MAIN_FUNC call while another call:
-                                  #  - has started (and it was not cached yet)
-                                  #  - but not ended
 IdempotencyInconsistentStateError #On either:
                                   #  - COPTS.expiresAfterSeconds: cached but expired
                                   #  - COPTS.lambdaContext.getRemainingTimeInMillis: started caching but crashed
-                                  #STORE._*() is repeated 3 times first before being throwing this error
+                                  #In principle, should rarely happen
+                                  #  - only when expiry|crash happens right between STORE._putRecord() and STORE._getRecord()
+                                  #  - also, STORE._*() is repeated 3 times first before being throwing this error
+
+IdempotencyAlreadyInProgressError #On MAIN_FUNC call while another call:
+                                  #  - has started (and it was not cached yet)
+                                  #  - but not ended
 
 IdempotencyValidationError        #On COPTS.payloadValidationJmesPath mismatch
                                   #Has a RECORD
