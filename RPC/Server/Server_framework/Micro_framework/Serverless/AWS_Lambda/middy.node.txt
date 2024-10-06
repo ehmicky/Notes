@@ -18,12 +18,6 @@ MIDDY([HANDLER][, OPTS])
 MHANDLER.handler(HANDLER)
  ->MHANDLER                       #[Re-]set HANDLER
 
-OPTS.timeoutEarlyInMillis         #NUM (in ms, def: 5)???
-OPTS.timeoutEarlyResponse         #FUNC()
-                                  #Def: ???
-
-OPTS.streamifyResponse            #BOOL (def: false)???
-
                                   ┌────────────────┐
                                   │   MIDDLEWARE   │
                                   └────────────────┘
@@ -32,12 +26,24 @@ MHANDLER.use(MDWR[_ARR])          #MDWR: before STEP, after STEP, onError STEP
  ->MHANDLER                       #Calls MHANDLER.before|after|onError()
 
 MHANDLER.before(STEP)->MHANDLER   #Called before HANDLER
+
 MHANDLER.after(STEP)->MHANDLER    #Called after HANDLER (unless it threw)
-MHANDLER.onError(STEP)->MHANDLER  #Called if HANDLER, 'before|after' STEP or OPTS.before|afterHandler|Middleware() threw
-                                  #No more HANDLER|STEP is run
+
+MHANDLER.onError(STEP)->MHANDLER  #Called if any of the following throws:
+                                  #  - HANDLER
+                                  #     - including OPTS.before|afterHandler()
+                                  #  - 'before|after' STEPs
+                                  #     - including their OPTS.before|afterMiddleware()
+                                  #  - OPTS.timeoutEarlyResponse()
+                                  #Also, not of the above is run anymore
                                   #Exception is still propagated
-                                  #If it throws itself, that value is thrown instead
-                                  #  - original exception available as ERROR.originalError
+                                  #Not called if OPTS.beforePrefetch|requestStart|requestEnd() throws
+                                  #If an 'onError' STEP throws:
+                                  #  - further 'onError' STEPs are not run
+                                  #  - its exception is thrown instead
+                                  #     - original exception available as ERROR.originalError
+                                  #OPTS.requestEnd() is always run, regardless of exceptions
+                                  #  - providing OPTS.requestStart() has ended and did not throw
 
                                   ┌──────────┐
                                   │   STEP   │
@@ -75,3 +81,36 @@ OPTS.requestEnd(INFO)[->>]        #On MHANDLER() end (including throwing)
 
 OPTS.beforeMiddleware(STR)        #Before each STEP. STR is its FUNC.name
 OPTS.afterMiddleware(STR)         #After each STEP. STR is its FUNC.name
+
+                                  ┌─────────────┐
+                                  │   TIMEOUT   │
+                                  └─────────────┘
+
+OPTS.timeoutEarlyInMillis         #NUM (in ms, def: 5)
+                                  #Time out the HANDLER NUMms before the INVOCATION itself times out (NCONTEXT.getRemainingTimeInMillis())
+                                  #'after|onError' STEPs and OPTS.* events are still run
+                                  #  - NUM should be high enough for this logic to run
+
+OPTS.timeoutEarlyResponse         #FUNC()->RES used instead of HANDLER when it times out
+                                  #Def: throw an ERROR with name 'TimeoutError' and cause.package '@middy/core'
+
+{signal: ABORT_SIGNAL}            #Passed as third argument to HANDLER
+                                  #Aborted on HANDLER timeout
+                                  #When HANDLER times out, it is short-circuited with Promise.race(), but it still runs
+                                  #I.e. must use that ABORT_SIGNAL to interrupt any ongoing logic on timeout
+
+                                  ┌───────────────┐
+                                  │   STREAMING   │
+                                  └───────────────┘
+
+OPTS.streamifyResponse            #BOOL (def: false). When using FUNC_URL.InvokeMode 'RESPONSE_STREAM' (see Lambda doc)
+                                  #Use awslambda.streamifyResponse() and awslambda.HttpResponseStream.from() under-the-hood
+
+FUNC(REQ, NCONTEXT)
+ ->>RES_OBJ[.body]                #Must be used as HANDLER instead
+
+RES_OBJ.body                      #ISTREAM|STR (def: '')
+
+RES_OBJ.statusCode                #NUM. Required if returning REQ_OBJ.body, else def 200
+RES_OBJ.headers                   #OBJ
+RES_OBJ.cookies                   #'VAR=VAL[;...]'_ARR
