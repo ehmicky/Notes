@@ -35,7 +35,7 @@ FUNC_VERSION
  .Environment.Variables.ENVVAR
 process.env.ENVVAR                #Can use either to set ENVVARs
 
-@LOGGER.idempotent(OPTS)          #TypeScript DFUNC for the main HANDLER
+@LOGGER.idempotent(OPTS)          #TypeScript DFUNC for MAIN_FUNC
                                   #Calls makeIdempotent()
 
 makeHandlerIdempotent(OPTS)       #Same but as a Middy MDWR
@@ -59,16 +59,9 @@ COPTS.eventKeyJmesPath            #JMESPath 'QUERY'
                                   #Def: none, i.e. uses whole CACHE_ARG as CACHE_KEY_RAW
 COPTS.jmesPathOptions             #CUSTOM_FUNCS (see @aws-lambda-powertools/jmespath doc)
                                   #Def: new PowertoolsFunctions()
-COPTS.throwOnNoIdempotencyKey     #BOOL (def: false)
-                                  #If true:
-                                  #  - if CACHE_KEY_RAW is falsy
-                                  #     - or is an OBJ|ARR deeply falsy
-                                  #  - i.e. probably problematic to used as a cache key
-                                  #  - then throw an error
-                                  #Regardless, whether true|false:
-                                  #  - if CACHE_KEY_RAW is null
-                                  #  - i.e. JMESPath QUERY could not find anything
-                                  #  - then do not get nor set caching
+COPTS.throwOnNoIdempotencyKey     #BOOL. If:
+                                  #  - false (def): if CACHE_KEY_RAW is null, do not get nor set caching
+                                  #  - true: if CACHE_KEY_RAW is falsy (or is an OBJ|ARR deeply falsy), throw an error
 COPTS.payloadValidationJmesPath   #JMESPath 'QUERY'
                                   #Def: none
                                   #Creates a secondary CACHE_KEY_RAW, as opposed to the primary one computed by COPTS.eventKeyJmesPath
@@ -94,6 +87,8 @@ ENVVAR AWS_LAMBDA_FUNCTION_NAME   #Prefixes CACHE_KEY
                                   └─────────────────┘
 
 CACHE_VAL                         #MAIN_FUNC's return value
+                                  #If MAIN_FUNC throws, not cached
+                                  #  - i.e. to still cache even if throws, should wrap MAIN_FUNC with try/catch
 
 COPTS.responseHook                #FUNC(CACHE_VAL, RECORD)->CACHE_VAL (def: none)
                                   #Maps CACHE_VAL after it's been retrieved from STORE (i.e. cache hit)
@@ -105,6 +100,7 @@ COPTS.responseHook                #FUNC(CACHE_VAL, RECORD)->CACHE_VAL (def: none
 
 COPTS.expiresAfterSeconds         #NUM (in secs, def: 1h). Expires cache
                                   #Over it, next MAIN_FUNC call re-caches it
+                                  #Meant for database space cleanup
 
 COPTS.lambdaContext               #FUNC()->NUM (in ms). Max duration to call MAIN_FUNC + cache its result
  .getRemainingTimeInMillis        #Over it:
@@ -130,32 +126,6 @@ COPTS.useLocalCache               #BOOL (def: false). Use a LRU cache locally
                                   #  - decreasing NUM of calls made to STORE
 COPTS.maxLocalCacheSize           #NUM (def: 1000). Size of LRU cache
 
-                                  ┌────────────────────┐
-                                  │   STORE DYNAMODB   │
-                                  └────────────────────┘
-
-new DynamoDBPersistenceLayer      #DynamoDB STORE
- (DOPTS)                          #Requires @aws-sdk/client-dynamodb and @aws-sdk/lib-dynamodb
-                                  #Requires PACTION dynamodb:Get|Put|Update|DeleteItem
-                                  #Not documented yet
-
-DOPTS.tableName                   #'TABLE'
-DOPTS.keyAttr                     #'ATTR' (def: 'id') for RECORD.idempotencyKey
-DOPTS.validationKeyAttr           #'ATTR' (def: 'validation') for RECORD.payloadHash
-DOPTS.dataAttr                    #'ATTR' (def: 'data') for RECORD.responseData
-DOPTS.expiryAttr                  #'ATTR' (def: 'expiration') for RECORD.expiryTimestamp
-DOPTS.inProgressExpiryAttr        #'ATTR' (def: 'in_progress_expiration') for RECORD.inProgressExpiryTimestamp
-DOPTS.statusAttr                  #'ATTR' (def: 'status') for RECORD.status
-
-DOPTS.sortKeyAttr                 #'ATTR'???
-                                  #Def: none
-DOPTS.staticPkValue               #???
-                                  #Def: 'idempotency#' + ENVVAR AWS_LAMBDA_FUNCTION_NAME
-
-DOPTS.awsSdkV3Client              #DynamoDB CLIENT (def: automatically created)
-                                  #Uses custom User-Agent: PT/idempotency/X.Y.Z PTEnv/AWS_Lambda_RUNTIME [C]
-DOPTS.clientConfig                #DynamoDB COPTS (def: {}). Only with default DOPTS.awsSdkV3Client
-
                                   ┌──────────────────┐
                                   │   STORE CUSTOM   │
                                   └──────────────────┘
@@ -168,6 +138,7 @@ STORE._putRecord(RECORD)->>       #Upsert
 
 STORE._getRecord('CACHE_KEY')     #Read
  ->>RECORD                        #Called before MAIN_FUNC call, on cache hit
+                                  #Should try to use consistent read (ACID)
 
 STORE._updateRecord(RECORD)->>    #Update
                                   #Called after MAIN_FUNC call success, on cache miss
@@ -224,6 +195,7 @@ IdempotencyItemAlreadyExistsError #To throw in STORE._putRecord() if all of:
                                   #     - RECORD.expiryTimestamp < now
                                   #  - not crashed (COPTS.lambdaContext.getRemainingTimeInMillis)
                                   #     - RECORD.inProgressExpiryTimestamp < now && RECORD.status == 'INPROGRESS'
+                                  #Should try to do that check as an atomic upsert (ACID), instead of a separate get + create
                                   #Handled by library, not exposed to users
                                   #Has a RECORD:
                                   #  - already cached one, not the one passed to STORE._putRecord()
@@ -247,6 +219,7 @@ IdempotencyInconsistentStateError #On either:
 IdempotencyAlreadyInProgressError #On MAIN_FUNC call while another call:
                                   #  - has started (and it was not cached yet)
                                   #  - but not ended
+                                  #When this happens, should manually retry MAIN_FUNC as this is temporary
 
 IdempotencyValidationError        #On COPTS.payloadValidationJmesPath mismatch
                                   #Has a RECORD
@@ -254,3 +227,36 @@ IdempotencyKeyError               #On COPTS.throwOnNoIdempotencyKey
 
 IdempotencyPersistenceLayerError  #Unknown ERROR in STORE._*()
 IdempotencyUnknownError           #Unknown ERROR in library itself
+
+                                  ┌────────────────────┐
+                                  │   STORE DYNAMODB   │
+                                  └────────────────────┘
+
+new DynamoDBPersistenceLayer      #DynamoDB STORE
+ (DOPTS)                          #Requires @aws-sdk/client-dynamodb and @aws-sdk/lib-dynamodb
+                                  #  - automatically included in Lambda
+                                  #Requires PACTION dynamodb:Get|Put|Update|DeleteItem
+                                  #Uses consistent reads for cache hits
+                                  #Uses conditional expressions to ensure atomicity
+
+DOPTS.tableName                   #'TABLE'
+                                  #Must be created first
+DOPTS.keyAttr                     #'ATTR' (def: 'id') for RECORD.idempotencyKey
+                                  #Must be set as partitionKey
+DOPTS.validationKeyAttr           #'ATTR' (def: 'validation') for RECORD.payloadHash
+DOPTS.dataAttr                    #'ATTR' (def: 'data') for RECORD.responseData
+                                  #Note: DynamoDB has 400KB limit, and require CACHE_VAL to be JSON-serializable
+DOPTS.expiryAttr                  #'ATTR' (def: 'expiration') for RECORD.expiryTimestamp
+                                  #Must be set as timeToLiveAttribute
+DOPTS.inProgressExpiryAttr        #'ATTR' (def: 'in_progress_expiration') for RECORD.inProgressExpiryTimestamp
+DOPTS.statusAttr                  #'ATTR' (def: 'status') for RECORD.status
+
+DOPTS.sortKeyAttr                 #If set, database ID uses a composite key with both:
+                                  #  - DOPTS.sortKeyAttr 'ATTR': RECORD.idempotencyKey
+                                  #  - DOPTS.keyAttr 'ATTR': DOPTS.staticPkValue
+                                  #I.e. meant to add DOPTS.staticPkValue to database ID
+                                  #  - def: 'idempotency#' + ENVVAR AWS_LAMBDA_FUNCTION_NAME
+
+DOPTS.awsSdkV3Client              #DynamoDB CLIENT (def: automatically created)
+                                  #Uses custom User-Agent: PT/idempotency/X.Y.Z PTEnv/AWS_Lambda_RUNTIME [C]
+DOPTS.clientConfig                #DynamoDB COPTS (def: {}). Only with default DOPTS.awsSdkV3Client
