@@ -1,0 +1,229 @@
+
+                                  ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+                                  ┃   POWERTOOLS_LAMBDA_IDEMPOTENCY   ┃
+                                  ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+VERSION ==>                       #See AWS Lambda docs
+                                  #Package '@aws-lambda-powertools/idempotency'
+
+GOAL ==>                          #Memoization with distributed machines
+                                  #Stores the state in databases (DocumentDB, or custom ones)
+                                  #Usually meant for either:
+                                  #  - idempotency in at-least once delivery hooks
+                                  #  - performance through caching
+                                  #Optimized for AWS Lambda, but can use in other environments
+
+FLOW ==>                          #  - request logic starts
+                                  #  - while request logic is ongoing, any identical request errors
+                                  #  - request logic ends
+                                  #     - if successful:
+                                  #        - result is cached
+                                  #        - any identical request re-uses it
+                                  #        - eventually, result expires
+                                  #        - any identical request errors
+                                  #        - database removes record after expiry timeout
+                                  #        - any identical request re-starts whole flow
+                                  #     - if threw:
+                                  #        - any identical request re-starts whole flow
+                                  #     - if process crashed:
+                                  #        - any identical request errors
+                                  #        - same expiry and after-expiry behavior as success
+
+                                  ┌──────────┐
+                                  │   INIT   │
+                                  └──────────┘
+
+makeIdempotent(MAIN_FUNC, OPTS)
+ ->FUNC2                          #
+
+OPTS.config                       #new IdempotencyConfig(COPTS) (def: new one with default COPTS)
+
+FUNC_VERSION
+ .Environment.Variables.ENVVAR
+process.env.ENVVAR                #Can use either to set ENVVARs
+
+@LOGGER.idempotent(OPTS)          #TypeScript DFUNC for the main HANDLER
+                                  #Calls makeIdempotent()
+
+makeHandlerIdempotent(OPTS)       #Same but as a Middy MDWR
+ ->MIDDY_MDWR                     #Imported from '@aws-lambda-powertools/idempotency/middleware'
+
+ENVVAR
+ POWERTOOLS_IDEMPOTENCY_DISABLED
+ =true|false                      #Make makeIdempotent() a noop
+
+                                  ┌───────────────┐
+                                  │   CACHE KEY   │
+                                  └───────────────┘
+
+CACHE_ARG                         #MAIN_FUNC's argument value
+OPTS.dataIndexArgument            #NUM (def: 0). Uses MAIN_FUNC's NUMth argument as CACHE_ARG
+                                  #Always 0 (i.e. REQ) when MAIN_FUNC's second ARG is a Lambda NCONTEXT
+
+CACHE_KEY_RAW                     #Cache key obtained by performing JMESPath QUERY (see JMESPath doc) on CACHE_ARG
+                                  #Since it uses JMESPath, always JSON
+COPTS.eventKeyJmesPath            #JMESPath 'QUERY'
+                                  #Def: none, i.e. uses whole CACHE_ARG as CACHE_KEY_RAW
+COPTS.jmesPathOptions             #CUSTOM_FUNCS (see @aws-lambda-powertools/jmespath doc)
+                                  #Def: new PowertoolsFunctions()
+COPTS.throwOnNoIdempotencyKey     #BOOL (def: false)
+                                  #If true:
+                                  #  - if CACHE_KEY_RAW is falsy
+                                  #     - or is an OBJ|ARR deeply falsy
+                                  #  - i.e. probably problematic to used as a cache key
+                                  #  - then throw an error
+                                  #Regardless, whether true|false:
+                                  #  - if CACHE_KEY_RAW is null
+                                  #  - i.e. JMESPath QUERY could not find anything
+                                  #  - then do not get nor set caching
+COPTS.payloadValidationJmesPath   #JMESPath 'QUERY'
+                                  #Def: none
+                                  #Creates a secondary CACHE_KEY_RAW, as opposed to the primary one computed by COPTS.eventKeyJmesPath
+                                  #It is not used as an actual cache key
+                                  #Instead it is meant for intregrity check:
+                                  #  - when saving the cache, it is computed
+                                  #  - when retrieving the cache, it is re-computed
+                                  #  - if mismatch, throws
+                                  #Goal:
+                                  #  - use a small primary CACHE_KEY_RAW (e.g. a request ID), for efficiency
+                                  #  - use a more complete secondary CACHE_KEY_RAW (e.g. the full request),
+                                  #    to ensure that each primary CACHE_KEY_RAW === exactly 1 CACHE_ARG
+
+CACHE_KEY                         #Base64 hash of CACHE_KEY_RAW
+                                  #CACHE_KEY_RAW is JSON serialized before hashing
+                                  #OBJ members are sorted for stability
+COPTS.hashFunction                #'ALGO' (def: 'md5') used for CACHE_KEY
+ENVVAR AWS_LAMBDA_FUNCTION_NAME   #Prefixes CACHE_KEY
+                                  #Used by COPTS.eventKeyJmesPath but not COPTS.payloadValidationJmesPath
+
+                                  ┌─────────────────┐
+                                  │   CACHE VALUE   │
+                                  └─────────────────┘
+
+CACHE_VAL                         #MAIN_FUNC's return value
+
+COPTS.responseHook                #FUNC(CACHE_VAL, RECORD)->CACHE_VAL (def: none)
+                                  #Maps CACHE_VAL after it's been retrieved from STORE (i.e. cache hit)
+                                  #I.e. allows compressing|coding CACHE_VAL when in STORE
+
+                                  ┌────────────┐
+                                  │   EXPIRY   │
+                                  └────────────┘
+
+COPTS.expiresAfterSeconds         #NUM (in secs, def: 1h). Expires cache
+
+COPTS.lambdaContext               #FUNC()->NUM (in ms). Max duration to call MAIN_FUNC + cache its result
+ .getRemainingTimeInMillis        #Over it, considers that the caching or process probably crashed
+                                  #If eventually cached, then not considers crashed anymore
+                                  #Def:
+                                  #  - if MAIN_FUNC's second argument is a Lambda NCONTEXT
+                                  #  - then automatically set with duration left in the INVOCATION
+                                  #Warns if not set
+                                  #  - to disable, can return very high NUM instead
+
+                                  ┌───────────────────┐
+                                  │   STORE BUILTIN   │
+                                  └───────────────────┘
+
+OPTS.persistenceStore             #STORE. Underlying logic storing CACHE_KEYs and CACHE_VALs
+
+new DynamoDBPersistenceLayer(...) #DynamoDB STORE
+                                  #Not documented yet
+
+COPTS.useLocalCache               #BOOL (def: false). Use a LRU cache locally
+                                  #I.e. first try the local cache, then the STORE
+                                  #I.e. in AWS Lambda:
+                                  #  - each FUNC_INSTANCE will have its own local cache
+                                  #  - decreasing NUM of calls made to STORE
+COPTS.maxLocalCacheSize           #NUM (def: 1000). Size of LRU cache
+
+                                  ┌──────────────────┐
+                                  │   STORE CUSTOM   │
+                                  └──────────────────┘
+
+STORE._*(...)                     #To re-implement to create custom STOREs
+                                  #Must inherit from BasePersistenceLayer, imported from '@aws-lambda-powertools/idempotency/persistence'
+
+STORE._putRecord(RECORD)->>       #Create
+                                  #Called before MAIN_FUNC call, whether cached or not
+
+STORE._getRecord('CACHE_KEY')     #Read
+ ->>RECORD                        #Called before MAIN_FUNC call, if cached
+
+STORE._updateRecord(RECORD)->>    #Update
+                                  #Called after MAIN_FUNC call success, if not cached
+
+STORE._deleteRecord(RECORD)->>    #Delete
+                                  #Called after MAIN_FUNC call throws, if not cached
+
+                                  ┌──────────────────┐
+                                  │   STORE RECORD   │
+                                  └──────────────────┘
+
+new IdempotencyRecord(RECORD_OBJ) #RECORD. Contains the CACHE_KEY, CACHE_VAL and associated data, to store in STORE
+                                  #New RECORDs are automatically created and passed to STORE._putRecord|_updateRecord|_deleteRecord()
+                                  #I.e. should only instantiate to re-create it previously stored ones in:
+                                  #  - STORE._getRecord()
+                                  #  - STORE._putRecord() to pass to IdempotencyItemAlreadyExistsError
+
+RECORD.idempotencyKey             #Main 'CACHE_KEY', from COPTS.eventKeyJmesPath
+                                  #Should use as database record id
+                                  #Defined with all STORE._*()
+
+RECORD.payloadHash                #'CACHE_KEY' from COPTS.payloadValidationJmesPath
+                                  #Should not be used as database record id
+                                  #Only defined during STORE._putRecord|_updateRecord()
+
+RECORD.responseData               #CACHE_VAL
+                                  #Only defined during STORE._updateRecord()
+
+RECORD.expiryTimestamp            #DATE_NUM (in secs), for COPTS.expiresAfterSeconds
+                                  #Only defined during STORE._putRecord|_updateRecord()
+                                  #STORE._deleteRecord() is not called on expiry
+                                  #  - i.e. STORE should implement own logic to delete expired RECORDs, e.g. database auto-expiry
+
+RECORD.inProgressExpiryTimestamp  #DATE_NUM (in ms), for COPTS.lambdaContext.getRemainingTimeInMillis
+                                  #Only defined during STORE._putRecord()
+
+RECORD.status                     #Can be:
+                                  #  - 'INPROGRESS': during STORE._putRecord()
+                                  #  - 'COMPLETED': during STORE._updateRecord()
+                                  #  - 'EXPIRED': during STORE._deleteRecord()
+
+                                  ┌────────────┐
+                                  │   ERRORS   │
+                                  └────────────┘
+
+new *Error(...)                   #Normal ERROR constructor. For most other ERROR types
+new *Error
+ ('MESSAGE'[,RECORD[,ERROR_OPTS]])
+ERROR.existingRecord              #RECORD. Only with some ERROR types, noted below
+
+IdempotencyItemAlreadyExistsError #To throw in STORE._putRecord() if already cached
+                                  #Handled by library, not exposed to users
+                                  #Has a RECORD:
+                                  #  - already cached one, not the one passed to STORE._putRecord()
+                                  #  - def: fetches it using STORE._getRecord()
+
+IdempotencyItemNotFoundError      #To throw in STORE._getRecord() if not found
+                                  #Not handled by library, exposed as is to users
+                                  #In principle, should rarely happen
+                                  #  - since STORE._getRecord() is only called if STORE._putRecord() stated that RECORD is currently cached
+                                  #     - by throwing IdempotencyItemAlreadyExistsError
+                                  #  - but could happen if RECORD was deleted by database (e.g. due to expiry)
+                                  #    right between STORE._putRecord() and STORE._getRecord()
+
+IdempotencyAlreadyInProgressError #On MAIN_FUNC call while another call:
+                                  #  - has started (and it was not cached yet)
+                                  #  - but not ended
+IdempotencyInconsistentStateError #On either:
+                                  #  - COPTS.expiresAfterSeconds: cached but expired
+                                  #  - COPTS.lambdaContext.getRemainingTimeInMillis: started caching but crashed
+                                  #STORE._*() is repeated 3 times first before being throwing this error
+
+IdempotencyValidationError        #On COPTS.payloadValidationJmesPath mismatch
+                                  #Has a RECORD
+IdempotencyKeyError               #On COPTS.throwOnNoIdempotencyKey
+
+IdempotencyPersistenceLayerError  #Unknown ERROR in STORE._*()
+IdempotencyUnknownError           #Unknown ERROR in library itself
