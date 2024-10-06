@@ -7,20 +7,22 @@
                                   │   MAIN   │
                                   └──────────┘
 
-TAGS                              #Arbitrary metadata
+TAGS ==>                          #Arbitrary metadata
                                   #Used by SERVICEs that can operate on any resource, like:
                                   #  - Resource groups, Resource Groups tagging, Resource explorer, Resource Access Manager, Tag editor
                                   #  - Cost explorer
                                   #  - IAM POLICYs (ABAC)
                                   #Max 50 per resource
                                   #  - except for aws:*, which are unlimited
-TAGS.TAG                          #STR
+
+TAGS                              #{TAG: 'VAL', ...}
                                   #Key:
                                   #  - max 128 bytes
                                   #  - naming convention: dasherized, lowercase, prefixed with "NAMESPACE:"
                                   #Value max 256 bytes
                                   #Key|value should not include PII (Personally Identifiable Information)
-TAG_PAIRS                         #Alternative syntax for TAGS. TAG_PAIR_ARR: Key 'TAG', Value STR
+
+TAG_PAIRS                         #Alternative syntax for TAGS. ARR of TAG_PAIR: Key 'TAG', Value 'VAL'
 
                                   ┌──────────┐
                                   │   AUTH   │
@@ -30,9 +32,11 @@ ABAC ==>                          #"Attribute-Based Access Control"
                                   #Using the following COND_KEYs
                                   #Some SERVICEs do not support it on all|some of their resources
                                   #  - usually because no resources, or do not have tags
+
 COND_KEY aws:PrincipalTag/TAG     #STR. Value of TAG attached to the PRINCIPAL
 COND_KEY                          #STR. Value of TAG attached to the resource
  aws|SERVICE:ResourceTag/TAG      #Whether aws: or SERVICE: is used depends on SERVICE
+
 COND_KEY aws:RequestTag/TAG       #STR. Value of a TAG part of the request payload|headers, e.g. as part of TagRESOURCE()
 COND_KEY aws:TagKeys              #'TAG'_ARR part the request payload|headers, e.g. as part of TagRESOURCE()
 
@@ -49,8 +53,7 @@ UntagRESOURCE()                   #Req: RESOURCE_TAGS
                                   #  - Tags -> TagKeys 'TAG'_ARR
                                   #Res: empty
 
-TAG ACTION NAME ==>               #One of:
-                                  #  - TagRESOURCE(), ListRESOURCETags(), UntagRESOURCE()
+ALTERNATIVE ACTION NAMES ==>      #Instead of above, can also be:
                                   #  - TagResource(), ListResourceTags(), UntagResource()
                                   #  - PutRESOURCETagging(), GetRESOURCETagging(), DeleteRESOURCETagging()
                                   #  - AddTagsToRESOURCE(), ListTagsForRESOURCE(), RemoveTagsFromRESOURCE()
@@ -66,9 +69,76 @@ RESOURCE_TAGS.Tags                #TAGS
                                   #Sometimes called TagsList
 
 RESOURCE.Tags                     #TAGS
+                                  #Alternative to using API methods, using an attribute on the RESOURCE instead
                                   #Only for specific RESOURCEs
                                   #Sometimes only on request payloads, not responses
                                   #Sometimes called TagsList
+
+                                  ┌────────────────────┐
+                                  │   IAC HIGH-LEVEL   │
+                                  └────────────────────┘
+
+TAGS ==>                          #Only for RESOURCEs that have TAGS
+TagManager.isTaggable[V2]
+ (CSRESOURCE)->BOOL               #Whether can have TAGS
+
+OPTS.tags                         #TAGS_FOBJ. TEMPLATE.Resources.RESOURCE.Properties.TAGPROP
+CSRESOURCE.tagsRaw                #TAGPROP is RESTYPE-specific
+
+Tags.of(CSRESOURCE)->CTAGS        #
+CTAGS.add('KEY', 'VAL'[, TOPTS])  #Add|remove TAG, using underlying CTAGM
+CTAGS.remove('KEY', [, TOPTS])    #Uses ASPECTS, i.e. done on both CSRESOURCE and its descendants
+
+new Tag('KEY', 'VAL'[, TOPTS])    #CTAGT
+CTAGT.key                         #'KEY'
+CTAGT.value                       #'VAL'
+CTAGT.visit(CSRESOURCE)           #Add TAG, using underlying CTAGM
+                                  #Unlike CTAGS, does not use ASPECTS, i.e. not applied on descendants
+
+new RemoveTag('KEY'[, TOPTS])     #Like CTAGT but removing TAG instead
+
+TOPTS.includeResourceTypes        #'RESTYPE'_ARR. Do not set TAG unless its 'RESTYPE' matches
+                                  #Meant for CTAGS recursion on descendants
+TOPTS.excludeResourceTypes        #'RESTYPE'_ARR. Inverse
+
+TOPTS.priority                    #NUM. Merging priority when adding|removing same TAG multiple times
+                                  #Def:
+                                  #  - removing: 200
+                                  #  - adding: 100
+                                  #  - CTAGM.renderTags()'s TAGS_OBJ: 50
+                                  #  - CTAGM.setTag|removeTag(): 0
+
+                                  ┌───────────────────┐
+                                  │   IAC LOW-LEVEL   │
+                                  └───────────────────┘
+
+CSRESOURCE.tags|cdkTagManager
+CSTACK.tags
+TagManager.of(CSRESOURCE)->CTAGM  #CTAGM (v1|v2, depending on RESOURCE)
+new TagManager(TAGTYPE_ENUM,      #CTAGM. RESPROP Tags
+ 'RESTYPE'[, TAGS_OBJ[, OPTS]])   #TAGS_OBJ is renderTags()'s value
+
+CTAGM.setTag('TAG', 'VAL'[, NUM]) #NUM is TOPTS.priority
+CTAGM.removeTag('TAG', NUM)       #
+CTAGM.tagValues()->TAGS_OBJ       #
+CTAGM.hasTags()->BOOL             #
+
+OPTS.renderedTags                 #TAGS_FOBJ_RV
+CTAGM.renderTags                  #TAGS_OBJ (def: {}) are merged in
+ ([TAGS_OBJ])->TAGS_FOBJ          #undefined if empty
+TAGS_FOBJ                         #TAGS in the format expected by CloudFormation, according to TagType
+TagType ENUM                      #Shape of TAGS, which differs per SERVICE
+TagType STANDARD                  #[{ key, value },...]. Most common
+                                  #Can also include any OBJ ("dynamic TAGs"), which are kept as is
+TagType MAP                       #TAGS_OBJ, i.e. { KEY: value, ... }. Second most common
+TagType KEY_VALUE                 #[{ Key, Value },...]. Least common
+                                  #As input, must be lowercase'd
+TagType AUTOSCALING_GROUP         #Like STANDARD, but OBJ can also have propagateAtLaunch BOOL (def: false)
+                                  #  - set as CTAGM.setTag(..., BOOL) or TOPTS.applyToLaunchedInstances
+                                  #Only for AutoScalingGroup
+TagType NOT_TAGGABLE              #Always empty []
+
+OPTS.tagPropertyName              #'RESPROP' (def: 'tags')
 
                                   ┌──────────┐
                                   │   LINT   │
