@@ -1,0 +1,138 @@
+
+                                  ┏━━━━━━━━━━━━━━━━━━━┓
+                                  ┃   AWS_SIGNATURE   ┃
+                                  ┗━━━━━━━━━━━━━━━━━━━┛
+
+AWS SIGNATURE ==>                 #Authenticate request
+                                  #Only with ACCESS_KEY, either permanent or temporary (STS)
+                                  #Not with LOGIN_PROFILE (UI only) nor SERVICE_CREDENTIAL|SSH_PUBLIC_KEY|SIGNING_CERTIFICATE (specific SERVICEs)
+
+INTEGRITY ==>                     #Signed checksum includes: ACTION, full request, date, REGION
+
+                                  ┌────────┐
+                                  │   V4   │
+                                  └────────┘
+
+VERSION 4 SIGNATURE ==>           #
+REQ.X-Amz-Algorithm               #'AWS4-HMAC-SHA256'
+REQ.X-Amz-Credential              #'ACCESS_KEY_ID/YYYYMMDD/REGION/SERVICE/aws4_request'
+REQ.X-Amz-SignedHeaders           #'HEADER;...' to include in signature
+REQ.X-Amz-Signature               #'HMAC_SHA256':
+                                  #  - of:
+                                  #     - 'AWS4-HMAC-SHA256'
+                                  #     - 'DATE'
+                                  #     - 'YYYYMMDD/REGION/SERVICE/aws4_request' ("credential scope")
+                                  #     - 'SHA256' of:
+                                  #        - HTTP method
+                                  #        - URI path
+                                  #        - query string
+                                  #        - "canonical headers"
+                                  #           - must include Host|:authority [C], [X-]Amz-* [C], Date [C], Content-Type [C], Content-Length [C], Range [C]
+                                  #           - can|should include others
+                                  #           - sorted
+                                  #           - names + values
+                                  #        - "signed headers": like canonical headers, but only keys
+                                  #        - 'SHA256' of request body
+                                  #  - signed with 'HMAC_SHA256'
+                                  #     - of:
+                                  #        - 'YYYYMMDD'
+                                  #        - 'REGION'
+                                  #        - 'SERVICE'
+                                  #        - 'aws4_request'
+                                  #     - signed with 'AWS4' + SECRET_ACCESS_KEY
+REQ.X-Amz-SecurityToken           #STS 'SESSION_TOKEN'
+REQ.X-Amz-Date                    #'DATE'
+REQ.X-Amz-Expires                 #NUM (in secs) to expire signature
+                                  #Only with some SERVICEs like S3
+
+ALTERNATIVE ==>                   #
+Authorization: AWS4-HMAC-SHA256
+ AUTH_VAR=VAL,... [C]             #
+AUTH_VAR Credential
+AUTH_VAR SignedHeaders
+AUTH_VAR Signature
+X-Amz-SecurityToken [C]
+X-Amz-Date [C]                    #Same as above
+
+                                  ┌─────────┐
+                                  │   V4A   │
+                                  └─────────┘
+
+VERSION 4A SIGNATURE ==>          #Another alternative which supports specifying more than one REGION
+                                  #Required for S3 MACCESSPOINTs
+                                  #Uses algo AWS4-ECDSA-P256-SHA256
+                                  #It seems like cannot use x-amz-content-sha256 [C]
+                                  #Requires installing @aws-sdk/signature-v4-crt (which has native dependencies)
+
+                                  ┌────────────────┐
+                                  │   V4A CONFIG   │
+                                  └────────────────┘
+
+CONFIG.sigv4a_signing_region_set
+ENVVAR
+ AWS_SIGV4A_SIGNING_REGION_SET    #'REGION'_ARR (def: current) for signature v4a
+
+                                  ┌────────┐
+                                  │   V2   │
+                                  └────────┘
+
+VERSION 2 SIGNATURE ==>           #Only for SimpleDB
+REQ.AWSAccessKeyId                #ACCESS_KEY_ID
+REQ.SignatureVersion              #2
+REQ.SignatureMethod               #'HmacSHA256'
+REQ.Signature                     #'HMAC_SHA256':
+                                  #  - of:
+                                  #     - HTTP method
+                                  #     - 'SERVICE_DOMAIN'
+                                  #     - URI path
+                                  #     - all request parameters, sorted
+                                  #        - including AWSAccessKeyId, Action, SignatureMethod, SignatureVersion, Timestamp
+                                  #  - signed with SECRET_ACCESS_KEY
+REQ.SecurityToken                 #STS 'SESSION_TOKEN'
+REQ.Timestamp                     #'DATE'
+REQ.Expires                       #'DATE'. Cannot be used together with REQ.Timestamp
+
+                                  ┌──────────────┐
+                                  │   ADVANCED   │
+                                  └──────────────┘
+
+x-amz-content-sha256: STR [C]     #Changes the value used for the "request body" part of the signature to allow for:
+                                  #  - unsigned request body
+                                  #  - chunked request body
+                                  #Only with some services (S3)
+
+x-amz-content-sha256:
+ SHA256_HASH [C]                  #Default behavior
+
+x-amz-content-sha256:             #Request body in signature is constant: UNSIGNED_PAYLOAD, i.e. not part of signature
+ UNSIGNED_PAYLOAD [C]             #Can still use x-amz-signedheaders [C] (e.g. x-amz-checksum-* [C] with S3) to validate request body
+x-amz-content-sha256:
+STREAMING-UNSIGNED-PAYLOAD-TRAILER
+[C]                               #Same but using multiple chunks
+
+x-amz-content-sha256:             #When sending the request body in multiple chunks (but in a single request):
+STREAMING-AWS4-HMAC-SHA256-PAYLOAD#  - for example with Transfer-Encoding [C]
+[C]                               #  - but can be any other way
+                                  #Each chunk is prepended by: NUM;chunk-signature=SIGNATURE
+                                  #  - NUM: chunk size, in hex
+                                  #  - SIGNATURE: signature using as request body concatenation of:
+                                  #     - previous SIGNATURE
+                                  #        - initial one is constant: STREAMING-*
+                                  #     - SHA256 of an empty string
+                                  #     - SHA256 of chunk data
+                                  #Final chunk must have empty data
+x-amz-decoded-content-length:
+ NUM [C]                          #Like Content-Length [C], but without chunk prefix lines
+Content-Encoding:
+ aws-chunked[,STR...] [C]         #Must be used instead of Content-Encoding: STR [C]
+
+x-amz-content-sha256:
+ STREAMING-AWS4-ECDSA-P256
+ -SHA256-PAYLOAD [C]              #Same as STREAMING-AWS4-HMAC-SHA256-PAYLOAD, but using signature 4a instead of 4
+
+x-amz-content-sha256:             #Like STREAMING-* except send some request headers after last chunk
+ STREAMING-*-TRAILER [C]          #Send an additional final chunk with concatenation of:
+                                  #  - HEADER:VAL (one per line)
+                                  #  - x-amz-trailer-signature:SIGNATURE
+                                  #     - SIGNATURE is same as above, but using 'HEADER:VAL' lines as data
+x-amz-trailer: HEADER,... [C]     #List of trailer headers
