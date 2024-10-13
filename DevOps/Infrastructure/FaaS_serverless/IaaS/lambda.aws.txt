@@ -9,7 +9,7 @@ SUMMARY ==>                       #Functions: versions, aliases, alias routing, 
                                   #Main code: zip (upload|S3) or container, sign, esbuild
                                   #Additional code: layer, internal|external extension
                                   #Runtimes: versions|upgrades, custom, options, Node|Python|Java|Ruby|DotNet, Custom|Deno
-                                  #Environment: CPU, memory, envvar, /tmp, EFS, VPC, logging, insights
+                                  #Environment: memory, CPU, envvar, /tmp, EFS, VPC, logging, insights
                                   #Invoke: instance, sync|async, dry, streaming, URL, destination
                                   #Event source: batch size|duration, filters, concurrency
                                   #Errors: timeout, retries, dead letter, tracing, recursion
@@ -1052,9 +1052,44 @@ CFUNCTION_OPTS                    #Either:
  .runtimeManagementMode           #  - RuntimeManagementMode.AUTO|FUNCTION_UPDATE
                                   #  - RuntimeManagementMode.manual('RUNTIME_VERSION_ARN')
 
-                                  ┌───────────────────────────┐
-                                  │   EXECUTION ENVIRONMENT   │
-                                  └───────────────────────────┘
+                                  ┌────────────┐
+                                  │   MEMORY   │
+                                  └────────────┘
+
+FUNC_VERSION.MemorySize           #NUM (in MB). Amount of memory
+                                  #Min: 128, max: 10GB
+                                  #Also allocates 1 vCPU for each 1769MB
+                                  #aws-lambda-power-tuning is a project to guess best value
+ENVVAR
+ AWS_LAMBDA_FUNCTION_MEMORY_SIZE  #'NUM'
+
+MAX PROCESSES ==>                 #1e3
+
+                                  ┌────────────────┐
+                                  │   MEMORY IAC   │
+                                  └────────────────┘
+
+AWS::Lambda::Function             #Includes RESPROPs: MemorySize
+
+CFUNCTION_OPTS.memorySize         #FUNC_VERSION.*
+
+                                  ┌─────────────────────┐
+                                  │   MEMORY VALIDATE   │
+                                  └─────────────────────┘
+
+cfn-lint-serverless aws_lambda
+ _function_default_memory
+ (ES1005)                         #FUNC_VERSION.MemorySize must be set
+
+                                  ┌─────────────────────┐
+                                  │   MEMORY FUNCTION   │
+                                  └─────────────────────┘
+
+NCONTEXT.memoryLimitInMB          #NUM (in MB). FUNC_VERSION.MemorySize
+
+                                  ┌─────────┐
+                                  │   CPU   │
+                                  └─────────┘
 
 FUNC_VERSION.Architectures        #STR_ARR. CPU architecture. Single item, among:
                                   #  - 'x86_64' (def)
@@ -1066,20 +1101,11 @@ FUNC_VERSION.Architectures        #STR_ARR. CPU architecture. Single item, among
 LAYER_VERSION
  .CompatibleArchitectures         #STR_ARR among same values as FUNC_VERSION.Architectures
 
-FUNC_VERSION.MemorySize           #NUM (in MB). Amount of memory
-                                  #Min: 128, max: 10GB
-                                  #Also allocates 1 vCPU for each 1769MB
-                                  #aws-lambda-power-tuning is a project to guess best value
-ENVVAR
- AWS_LAMBDA_FUNCTION_MEMORY_SIZE  #'NUM'
+                                  ┌─────────────┐
+                                  │   CPU IAC   │
+                                  └─────────────┘
 
-MAX PROCESSES ==>                 #1e3
-
-                                  ┌───────────────────────────────┐
-                                  │   EXECUTION ENVIRONMENT IAC   │
-                                  └───────────────────────────────┘
-
-AWS::Lambda::Function             #Includes RESPROPs: Architectures, MemorySize
+AWS::Lambda::Function             #Includes RESPROPs: Architectures
 AWS::Lambda::LayerVersion         #Includes RESPROPs: CompatibleArchitectures
 
 ICANYFUNC.architecture            #CARCH, among:
@@ -1091,15 +1117,6 @@ ICFUNCTION_OPTS.architecture      #  - Architecture.X86_64 (def)
                                   #When using FUNC_VERSION|ALIAS: forwards to underlying FUNCTION instead
 CLAYER_VERSION_OPTS
  .compatibleArchitectures         #CARCH_ARR. LAYER_VERSION.*
-CFUNCTION_OPTS.memorySize         #FUNC_VERSION.*
-
-                                  ┌────────────────────────────────────┐
-                                  │   EXECUTION ENVIRONMENT VALIDATE   │
-                                  └────────────────────────────────────┘
-
-cfn-lint-serverless aws_lambda
- _function_default_memory
- (ES1005)                         #FUNC_VERSION.MemorySize must be set
 
                                   ┌───────────────────────────┐
                                   │   ENVIRONMENT VARIABLES   │
@@ -1857,6 +1874,16 @@ FUNC_INSTANCE                     #When a FUNC_VERSION is first invoked, a FUNC_
                                   #        - FUNC_INSTANCE remains then available for other INVOCATIONs
                                   #  - not guaranteed: this happens only sometimes
 
+                                  ┌──────────────────────────┐
+                                  │   LIFECYCLE MIDDLEWARE   │
+                                  └──────────────────────────┘
+
+@middy/warmup                     #Part of Middy (see its doc)
+WARMUP([OPTS])->MIDDY_MDWR        #Make a dummy ('warmup') early response for specific requests
+                                  #Meant for requests made at regular intervals to avoid cold start
+OPTS.isWarmingUp                  #FUNC(REQ)->BOOL
+                                  #Def: if REQ.source 'serverless-plugin-warmup', which is a Serverless plugin for that purpose
+
                                   ┌───────────────────────┐
                                   │   LIFECYCLE METRICS   │
                                   └───────────────────────┘
@@ -2039,6 +2066,22 @@ STREAMING WITH CLI ==>            #Not available
 AWS::Lambda::Url                  #Includes RESPROPs: InvokeMode
 
 CFUNC_URL_OPTS.invokeMode         #FUNC_URL.*
+
+                                  ┌──────────────────────────┐
+                                  │   STREAMING MIDDLEWARE   │
+                                  └──────────────────────────┘
+
+MIDDY_OPTS.streamifyResponse      #BOOL (def: false). When using FUNC_URL.InvokeMode 'RESPONSE_STREAM' (see Lambda doc)
+                                  #Use awslambda.streamifyResponse() and awslambda.HttpResponseStream.from() under-the-hood
+                                  #Part of Middy (see its doc)
+
+FUNC(REQ, NCONTEXT)
+ ->>RES_OBJ[.body]                #Must be used as HANDLER instead
+
+RES_OBJ.statusCode                #NUM. Required if returning REQ_OBJ.body, else def 200
+RES_OBJ.headers                   #OBJ
+RES_OBJ.cookies                   #'VAR=VAL[;...]'_ARR
+RES_OBJ.body                      #ISTREAM|STR (def: '')
 
                                   ┌─────────┐
                                   │   URL   │
@@ -2252,10 +2295,6 @@ FUNCTION ERROR ==>                #Error related to the FUNCTION's code:
                                   #  - Function: error response, exception
 FINAL SUCCESS|ERROR ==>           #State after all retries, for both invocation|function error
 
-FUNC_VERSION.Timeout              #NUM (in secs). Times out for each INVOCATION
-                                  #Excludes initialization, but includes extensions
-                                  #Def: 3s, max: 15m
-
 FUNC_VERSION.Environment|
  ImageConfigResponse|
  RuntimeVersionConfig.Error       #FUNC_VERSION_ERROR. Error when Environment|ImageConfig|Runtime cannot be applied
@@ -2276,9 +2315,8 @@ PACTION xray:*                    #Required with FUNC_VERSION.Role for FUNC_VERS
                                   │   ERROR IAC   │
                                   └───────────────┘
 
-AWS::Lambda::Function             #Includes RESPROPs: Timeout, TracingConfig
+AWS::Lambda::Function             #Includes RESPROPs: TracingConfig
 
-CFUNCTION[_OPTS].timeout          #DURATION. FUNC_VERSION.*
 CFUNCTION_OPTS.tracing            #TRACING.*
                                   #Automatically allows FUNC_VERSION.Role to PACTIONs xray:PutTraceSegments|PutTelemetryRecords
 
@@ -2298,11 +2336,57 @@ Function.metricAllErrors
                                   └────────────────┘
 
 cfn-lint-serverless aws_lambda
- _function_default_timeout
- (ES1006)                         #FUNC_VERSION.Timeout must be set
-cfn-lint-serverless aws_lambda
  _function_tracing_rule
  (WS1000)                         #TRACING.Mode must be 'Active'
+
+                                  ┌─────────────┐
+                                  │   TIMEOUT   │
+                                  └─────────────┘
+
+FUNC_VERSION.Timeout              #NUM (in secs). Times out for each INVOCATION
+                                  #Excludes initialization, but includes extensions
+                                  #Def: 3s, max: 15m
+
+                                  ┌─────────────────┐
+                                  │   TIMEOUT IAC   │
+                                  └─────────────────┘
+
+AWS::Lambda::Function             #Includes RESPROPs: Timeout
+
+CFUNCTION[_OPTS].timeout          #DURATION. FUNC_VERSION.*
+
+                                  ┌──────────────────┐
+                                  │   TIMEOUT LINT   │
+                                  └──────────────────┘
+
+cfn-lint-serverless aws_lambda
+ _function_default_timeout
+ (ES1006)                         #FUNC_VERSION.Timeout must be set
+
+                                  ┌──────────────────────┐
+                                  │   TIMEOUT FUNCTION   │
+                                  └──────────────────────┘
+
+NCONTEXT
+ .getRemainingTimeInMillis()->NUM #NUM of ms before timeout
+
+                                  ┌────────────────────────┐
+                                  │   TIMEOUT MIDDLEWARE   │
+                                  └────────────────────────┘
+
+MIDDY_OPTS.timeoutEarlyInMillis   #NUM (in ms, def: 5)
+                                  #Time out the HANDLER NUMms before the INVOCATION itself times out (NCONTEXT.getRemainingTimeInMillis())
+                                  #'after|onError' STEPs and MIDDY_OPTS.* hooks are still run
+                                  #  - NUM should be high enough for this logic to run
+                                  #Part of Middy, see its doc
+
+MIDDY_OPTS.timeoutEarlyResponse   #FUNC()->RES used instead of HANDLER when it times out
+                                  #Def: throw an ERROR with name 'TimeoutError' and cause.package '@middy/core'
+
+{signal: ABORT_SIGNAL}            #Passed as third argument to HANDLER, when using Middy
+                                  #Aborted on HANDLER timeout
+                                  #When HANDLER times out, it is short-circuited with Promise.race(), but it still runs
+                                  #I.e. must use that ABORT_SIGNAL to interrupt any ongoing logic on timeout
 
                                   ┌───────────────┐
                                   │   RECURSION   │
@@ -3372,10 +3456,6 @@ NCONTEXT.invokedFunctionArn       #'FUNC_VERSION_ARN'
 NCONTEXT.functionName             #'FUNCTION'
 NCONTEXT.functionVersion          #NUM
 NCONTEXT.awsRequestId             #'REQ_ID'
-
-NCONTEXT
- .getRemainingTimeInMillis()->NUM #NUM of ms before timeout
-NCONTEXT.memoryLimitInMB          #NUM (in MB). FUNC_VERSION.MemorySize
 
 NCONTEXT                          #BOOL. If true (def, recommended):
  .callbackWaitsForEmptyEventLoop  #  - if HANDLER is sync (no PROMISE|callback)
