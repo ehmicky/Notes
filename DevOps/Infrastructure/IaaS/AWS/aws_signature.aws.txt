@@ -3,21 +3,40 @@
                                   ┃   AWS_SIGNATURE   ┃
                                   ┗━━━━━━━━━━━━━━━━━━━┛
 
-AWS SIGNATURE ==>                 #Authenticate request
-                                  #Only with ACCESS_KEY, either permanent or temporary (STS)
-                                  #Not with LOGIN_PROFILE (UI only) nor SERVICE_CREDENTIAL|SSH_PUBLIC_KEY|SIGNING_CERTIFICATE (specific SERVICEs)
+                                  ┌──────────┐
+                                  │   MAIN   │
+                                  └──────────┘
 
-INTEGRITY ==>                     #Signed checksum includes: ACTION, full request, date, REGION
+AWS SIGNATURE ==>                 #Authenticate request by passing CREDS (see AWS auth doc) in HTTP request
+
+INTEGRITY ==>                     #Request integrity is guaranteed by checksum
+                                  #It is signed with SECRET_ACCESS_KEY
+
+SCOPE ==>                         #Signature is only valid for one specific request, including:
+                                  #  - algorithm: to prevent downgrade attack (see crypto doc)
+                                  #  - DATE: to prevent replay attack
+                                  #  - REGION: unless v4a
+                                  #  - SERVICE
+                                  #The HMAC_SHA256 used to sign is itself scoped
+                                  #  - for a given day + REGION + SERVICE + SECRET_ACCESS_KEY
+                                  #  - reason: if AWS IAM servers themselves compromised,
+                                  #    attacker could only use HMAC_SHA256 in a small scope
 
                                   ┌────────┐
                                   │   V4   │
                                   └────────┘
 
-VERSION 4 SIGNATURE ==>           #
-REQ.X-Amz-Algorithm               #'AWS4-HMAC-SHA256'
-REQ.X-Amz-Credential              #'ACCESS_KEY_ID/YYYYMMDD/REGION/SERVICE/aws4_request'
-REQ.X-Amz-SignedHeaders           #'HEADER;...' to include in signature
-REQ.X-Amz-Signature               #'HMAC_SHA256':
+Authorization: AWS4-HMAC-SHA256
+ AUTH_VAR=VAL,... [C]             #
+
+AUTH_VAR Credential               #'ACCESS_KEY_ID/YYYYMMDD/REGION/SERVICE/aws4_request'
+
+AUTH_VAR SignedHeaders            #'HEADER;...' to include in signature
+                                  #Only names, i.e. guarantee that HEADER is present, but not its value
+                                  #  - e.g. useful with headers like x-amz-content-sha256 [C]
+                                  #Must be lowercase
+
+AUTH_VAR Signature                #'HMAC_SHA256':
                                   #  - of:
                                   #     - 'AWS4-HMAC-SHA256'
                                   #     - 'DATE'
@@ -31,7 +50,7 @@ REQ.X-Amz-Signature               #'HMAC_SHA256':
                                   #           - can|should include others
                                   #           - sorted
                                   #           - names + values
-                                  #        - "signed headers": like canonical headers, but only keys
+                                  #        - "signed headers": like canonical headers, but only names
                                   #        - 'SHA256' of request body
                                   #  - signed with 'HMAC_SHA256'
                                   #     - of:
@@ -40,27 +59,39 @@ REQ.X-Amz-Signature               #'HMAC_SHA256':
                                   #        - 'SERVICE'
                                   #        - 'aws4_request'
                                   #     - signed with 'AWS4' + SECRET_ACCESS_KEY
-REQ.X-Amz-SecurityToken           #STS 'SESSION_TOKEN'
-REQ.X-Amz-Date                    #'DATE'
-REQ.X-Amz-Expires                 #NUM (in secs) to expire signature
-                                  #Only with some SERVICEs like S3 pre-signed URLs
 
-ALTERNATIVE ==>                   #
-Authorization: AWS4-HMAC-SHA256
- AUTH_VAR=VAL,... [C]             #
-AUTH_VAR Credential
-AUTH_VAR SignedHeaders
-AUTH_VAR Signature
-X-Amz-SecurityToken [C]
-X-Amz-Date [C]                    #Same as above
+X-Amz-SecurityToken [C]           #STS 'SESSION_TOKEN'
+
+X-Amz-Date [C]                    #'DATE'
+
+                                  ┌────────────────────┐
+                                  │   PRE-SIGNED URL   │
+                                  └────────────────────┘
+
+PRE-SIGNED URL ==>                #Only for specific SERVICEs, e.g. S3
+                                  #Uses query parameters, i.e. URL is private
+                                  #Must be careful not to leak URL, e.g. through logging
+
+?X-Amz-Algorithm                  #'AWS4-HMAC-SHA256'
+?X-Amz-Credential
+?X-Amz-SignedHeaders
+?X-Amz-Signature
+?X-Amz-SecurityToken
+?X-Amz-Date                       #Same as above
+
+?X-Amz-Expires                    #NUM (in secs) to expire signature
+                                  #Max depends on current authentication method
+                                  #  - INSTANCE_PROFILE: 6h
+                                  #  - STS: min (36h, TEMP_CREDS)
+                                  #  - else: 7d
 
                                   ┌─────────┐
                                   │   V4A   │
                                   └─────────┘
 
-VERSION 4A SIGNATURE ==>          #Like version 4 but supports specifying more than one REGION
+VERSION 4A SIGNATURE ==>          #Like version 4 but allow multiple REGIONs
                                   #Required for S3 MACCESSPOINTs
-                                  #Uses algo AWS4-ECDSA-P256-SHA256
+                                  #Uses algo AWS4-ECDSA-P256-SHA256, i.e. public|private key pair, not HMAC
                                   #It seems like cannot use x-amz-content-sha256 [C]
 
                                   ┌────────────────┐
@@ -94,7 +125,7 @@ AUTH_SCHEME
                                   │   V2   │
                                   └────────┘
 
-VERSION 2 SIGNATURE ==>           #Only for SimpleDB
+VERSION 2 SIGNATURE ==>           #Only for SimpleDB (deprecated SERVICE)
 
 REQ.AWSAccessKeyId                #ACCESS_KEY_ID
 REQ.SignatureVersion              #2
@@ -127,8 +158,8 @@ x-amz-content-sha256:
                                   │   ADVANCED UNSIGNED BODY   │
                                   └────────────────────────────┘
 
-x-amz-content-sha256:             #Request body in signature is constant: UNSIGNED_PAYLOAD, i.e. not part of signature
- UNSIGNED_PAYLOAD [C]             #Can still use x-amz-signedheaders [C] (e.g. x-amz-checksum-* [C] with S3) to validate request body
+x-amz-content-sha256:             #Request body in signature is constant: UNSIGNED-PAYLOAD, i.e. not part of signature
+ UNSIGNED-PAYLOAD [C]             #Only for pre-signed URLs
 
                                   ┌────────────────────────┐
                                   │   ADVANCED STREAMING   │
@@ -163,4 +194,4 @@ x-amz-trailer: HEADER,... [C]     #List of trailer headers
 
 x-amz-content-sha256:
 STREAMING-UNSIGNED-PAYLOAD-TRAILER
-[C]                               #Same but unsigned request body like UNSIGNED_PAYLOAD
+[C]                               #Same but unsigned request body like UNSIGNED-PAYLOAD
