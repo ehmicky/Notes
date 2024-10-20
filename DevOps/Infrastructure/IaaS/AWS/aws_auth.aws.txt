@@ -6,12 +6,35 @@
 SIGNATURE ==>                     #See its doc
 
                                   ┌─────────────────────┐
+                                  │   CREDENTIALS SDK   │
+                                  └─────────────────────┘
+
+COPTS.credentials                 #CREDS_OBJ
+                                  #Cached, i.e. if multiple CLIENTs, should pass same CREDS_OBJ instance as COPTS.credentials
+
+@aws-sdk/credential-provider-*
+from*(...)->FUNC()->>CREDS_OBJ    #I.e. their return value can be passed to COPTS.credentials
+OPTS.logger                       #LOGGER (see AWS JavaScript doc)
+
+@aws-sdk/credential-providers
+createCredentialChain             #Combines multiple FUNC()->>CREDS_OBJ
+ (FUNC,...)->FUNC2                #Can be any of the from*() below, or a custom FUNC()->>CREDS_OBJ
+createCredentialChain(...)
+ .expireAfter(NUM)->FUNC2         #Same but with CREDS_OBJ.expiration Date.now() + NUM (in ms, min 5m)
+
+@aws-sdk/credential-provider-node
+fromNodeProviderChain([OPTS])     #Tries in order: fromEnv(), fromSSO(), fromIni(), fromProcess(),
+                                  #fromTokenFile(), fromHttp(), fromContainerMetadata(), fromInstanceMetadata()
+                                  #Def COPTS.credentials in Node.js
+
+BROWSERS ==>                      #No def COPTS.credentials
+                                  #Can only use fromTemporaryCredentials(), fromHttp(), fromWebToken(), fromCognitoIdentity[Pool]()
+
+                                  ┌─────────────────────┐
                                   │   CREDENTIALS CLI   │
                                   └─────────────────────┘
 
-aws configure [list|get|set]
-CONFIG.profile
-ENVVAR AWS[_DEFAULT]_PROFILE      #Can be used like for CONFIG (see its doc)
+aws configure [list|get|set]      #Can be used like for CONFIG (see its doc)
 
 aws configure export-credentials  #Print current CREDS_JSON
 --format                          #Can be:
@@ -26,42 +49,21 @@ aws configure export-credentials  #Print current CREDS_JSON
 --no-sign-request                 #Do not add authorization parameters
                                   #Meant to ensure no credentials is sent if request is anonymous (e.g. with S3 GetObject())
 
-                                  ┌─────────────────────┐
-                                  │   CREDENTIALS SDK   │
-                                  └─────────────────────┘
-
-COPTS.credentials                 #CREDS_OBJ
-                                  #In:
-                                  #  - Node.js: def fromNodeProviderChain()
-                                  #  - browsers:
-                                  #     - no def
-                                  #     - can only use fromTemporaryCredentials(), fromHttp(), fromWebToken(), fromCognitoIdentity[Pool]()
-                                  #Cached, i.e. if multiple CLIENTs, should pass same CREDS_OBJ instance as COPTS.credentials
-
-from*(...)->FUNC()->>CREDS_OBJ    #I.e. their return value can be passed to COPTS.credentials
-OPTS.logger                       #LOGGER (see AWS JavaScript doc)
-
-@aws-sdk/credential-providers
-createCredentialChain             #Combines multiple FUNC()->>CREDS_OBJ
- (FUNC,...)->FUNC2                #Can be any of the from*() below, or a custom FUNC()->>CREDS_OBJ
-createCredentialChain(...)
- .expireAfter(NUM)->FUNC2         #Same but with CREDS_OBJ.expiration Date.now() + NUM (in ms, min 5m)
-
-@aws-sdk/credential-provider-node
-fromNodeProviderChain([OPTS])     #Tries in order: fromEnv(), fromSSO(), fromIni(), fromProcess(),
-                                  #fromTokenFile(), fromHttp(), fromContainerMetadata(), fromInstanceMetadata()
-
                                   ┌────────────────┐
                                   │   OBJECT SDK   │
                                   └────────────────┘
 
-CREDS_OBJ.accessKeyId             #'ACCESS_KEY_ID'
-CREDS_OBJ.secretAccessKey         #'SECRET_ACCESS_KEY'
-CREDS_OBJ.sessionToken            #'SESSION_TOKEN', included in AWS signature
-CREDS_OBJ.credentialScope         #'YYYYMMDD/REGION/SERVICE/aws4_request', as used in AWS signature
+CREDS_OBJ.accessKeyId             #'ACCESS_KEY_ID' (see IAM doc)
+CREDS_OBJ.secretAccessKey         #'SECRET_ACCESS_KEY' (see IAM doc)
+CREDS_OBJ.sessionToken            #'SESSION_TOKEN'
+                                  #Uses in AWS signature, generated only with STS TEMP_CREDS (see its doc)
+
+CREDS_OBJ.credentialScope         #'YYYYMMDD/REGION/SERVICE/aws4_request', as used in AWS signature (see its doc)
                                   #Def: guessed
-                                  #Does not seem to be documented
+                                  #Can override it to restrict REGION|SERVICE
+
 CREDS_OBJ.accountId               #'ACCOUNT_ID'
+
 CREDS_OBJ.expiration              #DATE. If not set: valid only once
                                   #When <5 min of DATE, automatically try to refresh
 
@@ -81,10 +83,11 @@ CREDS_JSON.Expiration             #'DATE'
                                   │   INI CONFIG   │
                                   └────────────────┘
 
-~/.aws/credentials                #INI_CREDS
-                                  #Same format as ~/.aws/config
-                                  #But with config keys meant to be confidential
-                                  #Top-level keys: 'default' or 'PROFILE'
+~/.aws/credentials
+ENVVAR AWS_SHARED_CREDENTIALS_FILE#INI_CREDS. Same format as ~/.aws/config, but with confidential credentials
+
+CONFIG.profile
+ENVVAR AWS[_DEFAULT]_PROFILE      #PROFILE is used with INI_CREDS, like CONFIG
 
 INI_CREDS.aws_access_key_id
 INI_CREDS.aws_secret_access_key
@@ -93,6 +96,7 @@ INI_CREDS.aws_credential_scope
 INI_CREDS.aws_account_id          #Like CREDS_OBJ.*
 
 CONFIG.aws_*                      #Same as INI_CREDS.aws_*
+                                  #Prefer INI_CREDS as it separates private|public information
 
 aws-vault                         #CLI tool to encrypt INI_CREDS using an encrypted file, OS-specific keychain, pass, Yubikey
                                   #Login through temporary created ROLEs
@@ -104,14 +108,15 @@ aws-vault                         #CLI tool to encrypt INI_CREDS using an encryp
                                   └─────────────┘
 
 @aws-sdk/credential-provider-ini
-fromIni([OPTS])                   #Uses CONFIG|INI_CREDS
-OPTS.clientConfig                 #COPTS for STSClient
-OPTS.clientPlugins                #PLUGIN_ARR for STSClient
-OPTS.profile                      #'PROFILE'
-OPTS.configFilepath               #CONFIG 'PATH'
-OPTS.filepath                     #INI_CREDS 'PATH'
-OPTS.mfaCodeProvider              #FUNC(MFA_DEVICE_MID)->STR. TokenCode
-OPTS.ignoreCache                  #BOOL (def: false)
+fromIni([OPTS])                   #If INI_CREDS|CONFIG.aws_access_key_id|aws_secret_access_key set: use INI_CREDS|CONFIG.aws_*
+                                  #Else, uses CONFIG.* and guesses|calls the correct from*(...) (see below)
+                                  #In both cases, can use following OPTS
+
+OPTS.filepath                     #INI_CREDS 'PATH' (def: see above)
+OPTS.configFilepath               #CONFIG 'PATH' (def: see config doc)
+OPTS.ignoreCache                  #BOOL. If false (def), memoize contents of INI_CREDS|CONFIG
+OPTS.profile                      #'PROFILE' (def: see config doc)
+OPTS.*                            #When using another from*(...) under-the-hood, can use its OPTS too
 
                                   ┌───────────────────────────┐
                                   │   ENVIRONMENT VARIABLES   │
@@ -121,52 +126,62 @@ ENVVAR AWS_ACCESS_KEY_ID
 ENVVAR AWS_SECRET_ACCESS_KEY
 ENVVAR AWS_SESSION_TOKEN
 ENVVAR AWS_CREDENTIAL_SCOPE
-ENVVAR AWS_ACCOUNT_ID             #Like CREDS_OBJ.*
+ENVVAR AWS_ACCOUNT_ID
+ENVVAR AWS_CREDENTIAL_EXPIRATION  #Like CREDS_OBJ.*
 
                                   ┌───────────────────────────────┐
                                   │   ENVIRONMENT VARIABLES SDK   │
                                   └───────────────────────────────┘
 
 @aws-sdk/credential-provider-env
-fromEnv()                         #Uses credential AWS_* ENVVARs (see above)
+fromEnv([OPTS])                   #Uses credential AWS_* ENVVARs (see above)
+                                  #Does not use INI_CREDS|CONFIG
 
                                   ┌─────────────────┐
                                   │   ROLE CONFIG   │
                                   └─────────────────┘
 
-CONFIG.role_arn
-ENVVAR AWS_ROLE_ARN               #'ROLE'. Use STS AssumeRole()
+CONFIG.role_arn                   #'ROLE'. Use STS AssumeRole()
 
-CONFIG.source_profile             #'PROFILE' for a CONFIG to load, when using CONFIG.role_arn
-CONFIG.credential_source          #'PROFILE' for a INI_CREDS to load, when using CONFIG.role_arn
-                                  #Can be:
-                                  #  - 'Environment': use ENVVAR AWS_* instead
-                                  #  - 'Ec2InstanceMetadata':
-                                  #      - inside an EC2 container, use instance metadata
+CONFIG.source_profile             #'PROFILE' with CONFIG.aws_* credentials, when using AssumeRole()
+                                  #For the request itself, not the role being requested
+                                  #Requires CONFIG.role_arn
+CONFIG.credential_source          #Same but for INI_CREDS
+                                  #Can also be:
+                                  #  - 'Environment': like fromEnv()
+                                  #  - 'Ec2InstanceMetadata': like fromInstanceMetadata()
                                   #      - only needed when switching to another ROLE than EC2 container's one
-                                  #  - 'EcsContainer': same for ECS
+                                  #  - 'EcsContainer': like fromContainerMetadata()
 
 CONFIG.role_session_name
-ENVVAR AWS_ROLE_SESSION_NAME
 CONFIG.duration_seconds
 CONFIG.external_id                #Like STS ASSUME_ROLE_REQ.*
 CONFIG.mfa_serial                 #Like STS ASSUME_ROLE_REQ.SerialNumber
-
-CONFIG.web_identity_token_file    #'PATH' to WEB_ID_ROLE_REQ.WebIdentityToken.
-ENVVAR AWS_WEB_IDENTITY_TOKEN_FILE#Use STS AssumeRoleWithWebIdentity() instead.
 
                                   ┌──────────────┐
                                   │   ROLE SDK   │
                                   └──────────────┘
 
-fromTemporaryCredentials
- ([OPTS])                         #Uses STS AssumeRole()
-OPTS.params                       #PARAMS for AssumeRole()
+@aws-sdk/credential-provider-ini
+fromIni([OPTS])                   #If CONFIG.role_arn + CONFIG.source_profile|credential+source set, uses fromTemporaryCredentials()
+                                  #Uses:
+                                  #  - CONFIG.role_arn|role_session_name|duration_seconds|external_id|mfa_serial for OPTS.params.*
+                                  #  - CONFIG.source_profile|credential_source for OPTS.masterCredentials
+
+@aws-sdk/credential-providers
+fromTemporaryCredentials          #Uses STS AssumeRole()
+ ([OPTS])                         #Does not use INI_CREDS|CONFIG (unless fromIni())
+
+OPTS.params                       #ASSUME_ROLE_REQ for AssumeRole()
+                                  #Def ASSUME_ROLE_REQ.RoleSessionName: 'aws-sdk-js-NOW'
+OPTS.mfaCodeProvider              #FUNC(MFA_DEVICE_MID)->STR. ASSUMED_ROLE_REQ.TokenCode
+
 OPTS.masterCredentials            #CREDS_OBJ for AssumeRole()
-OPTS.clientConfig
-OPTS.clientPlugins
-OPTS.profile
-OPTS.mfaCodeProvider              #Like fromIni()
+                                  #For the request itself, not the role being requested
+                                  #Used instead of CONFIG.source_profile|credential_source
+
+OPTS.clientConfig                 #COPTS for STSClient
+OPTS.clientPlugins                #PLUGIN_ARR for STSClient
 
                                   ┌──────────────┐
                                   │   ROLE CLI   │
@@ -174,27 +189,49 @@ OPTS.mfaCodeProvider              #Like fromIni()
 
 aws sts assume-role               #See STS doc
 
+                                  ┌──────────────────┐
+                                  │   WEB IDENTITY   │
+                                  └──────────────────┘
+
+CONFIG.web_identity_token_file    #'PATH' to WEB_ID_ROLE_REQ.WebIdentityToken.
+                                  #Use STS AssumeRoleWithWebIdentity()
+
+CONFIG.source_profile
+ |credential_source|role_arn
+ |role_session_name
+ |duration_seconds                #Same as above
+
+ENVVAR AWS_ROLE_ARN
+ENVVAR AWS_ROLE_SESSION_NAME
+ENVVAR AWS_WEB_IDENTITY_TOKEN_FILE#Can be used with fromIni|fromTokenFile() (not fromWebToken())
+
                                   ┌──────────────────────┐
                                   │   WEB IDENTITY SDK   │
                                   └──────────────────────┘
 
+@aws-sdk/credential-provider-ini
+fromIni([OPTS])                   #If CONFIG.role_arn + CONFIG.web_identity_token_file set, uses fromTokenFile()
+                                  #Uses CONFIG.role_arn|web_identity_token_file|role_session_name for OPTS.roleArn|webIdentityTokenFile|roleSessionName
+                                  #Can only set following OPTS of fromTokenFile(): roleAssumerWithWebIdentity
+
 @aws-sdk/
  credential-provider-web-identity
 fromWebToken([OPTS])              #Uses STS AssumeRoleWithWebIdentity()
-OPTS.clientConfig                 #COPTS for STSClient
+                                  #Does not use INI_CREDS|CONFIG
+OPTS.clientConfig|clientPlugins   #Same as fromTemporaryCredentials()
 OPTS.roleArn
-OPTS.roleSessionName
 OPTS.durationSeconds
 OPTS.policy
 OPTS.policyArns
 OPTS.providerId
 OPTS.webIdentityToken             #WEB_ID_ROLE_REQ.*
-OPTS.assumeRoleWithWebIdentity    #FUNC(WEB_ID_ROLE_REQ)->>WEB_ID_ROLE.Credentials (def: just calls AssumeRoleWithWebIdentity())
-                                  #Can use getDefaultRoleAssumerWithWebIdentity(OBJ) to set specific WEB_ID_ROLE_REQ.* not available as OPTS.*
+OPTS.roleSessionName              #WEB_ID_ROLE_REQ.RoleSessionName. Def: 'aws-sdk-js-session-NOW'
+OPTS.roleAssumerWithWebIdentity   #With value getDefaultRoleAssumerWithWebIdentity(WEB_ID_ROLE_REQ_OBJ), to set specific WEB_ID_ROLE_REQ.* not available as OPTS.*
 
 fromTokenFile([OPTS])             #Like fromWebToken() but passing webIdentityToken as a 'PATH' instead of as a STR
-OPTS.*                            #Like fromWebToken()
+                                  #Does not use INI_CREDS|CONFIG (unless fromIni())
 OPTS.webIdentityTokenFile         #'PATH'
+OPTS.*                            #Like fromWebToken()
 
                                   ┌──────────────────────┐
                                   │   WEB IDENTITY CLI   │
@@ -221,16 +258,22 @@ SSO_CONFIG.sso_registration_scopes#"sso:account:..."
                                   │   SSO SDK   │
                                   └─────────────┘
 
+@aws-sdk/credential-provider-ini
+fromIni([OPTS])                   #If CONFIG.sso_* set, uses fromSSO()
+                                  #CONFIG.profile -> OPTS.profile (not other OPTS)???
+
 @aws-sdk/credential-provider-sso
 fromSSO([OPTS])                   #Uses Identity Center
 OPTS.client                       #SSOClient
 OPTS.clientConfig                 #COPTS for SSOClient
-OPTS.configFilePath|filepath      #Like fromIni()
 OPTS.ssoAccountId
 OPTS.ssoRoleName
 OPTS.ssoSession
 OPTS.ssoRegion
 OPTS.ssoStartUrl                  #Like [SSO_]CONFIG.sso_*
+
+OPTS.filepath|configFilepath
+ |ignoreCache|profile             #Like fromIni(), i.e. uses INI_CREDS|CONFIG
 
                                   ┌─────────────┐
                                   │   SSO CLI   │
@@ -252,12 +295,15 @@ CONFIG.credential_process         #'PROGRAM [--FLAGS...]' to get credentials fro
                                   │   PROCESS SDK   │
                                   └─────────────────┘
 
+@aws-sdk/credential-provider-ini
+fromIni([OPTS])                   #If CONFIG.credential_process set, uses fromProcess()
+                                  #CONFIG.profile -> OPTS.profile???
+
 @aws-sdk/
  credential-provider-process
 fromProcess([OPTS])               #Uses CONFIG.credential_process
-OPTS.configFilepath
-OPTS.filepath
-OPTS.ignoreCache                  #Like fromIni()
+OPTS.filepath|configFilepath
+ |ignoreCache|profile             #Like fromIni(), i.e. uses INI_CREDS|CONFIG
 
                                   ┌──────────────┐
                                   │   HTTP SDK   │
@@ -267,6 +313,7 @@ OPTS.ignoreCache                  #Like fromIni()
 fromHttp([OPTS])                  #Uses HTTPS request, which should respond with CREDS_OBJ
                                   #  - CamelCase'd
                                   #  - with also CREDS_OBJ.AccountId 'ACCOUNT_ID' (optional)
+                                  #Does not use INI_CREDS|CONFIG
 OPTS.credentialsFullUri           #'URL', in browsers (absolute)
 OPTS.awsContainer
  CredentialsFull|RelativeUri
@@ -291,6 +338,7 @@ OPTS.maxRetries                   #Like fromContainerMetadata()
 @aws-sdk/credential-provider
  -cognito-identity
 fromCognitoIdentity([OPTS])       #Uses Cognito Identity
+                                  #Does not use INI_CREDS|CONFIG
 OPTS.client                       #CognitoIdentityClient
 OPTS.clientConfig                 #COPTS for OPTS.client
 OPTS.identityId                   #IDENTIY_ID
@@ -299,6 +347,7 @@ OPTS.logins.WEB_ID_DOMAIN         #'TOKEN'
 
 fromCognitoIdentityPool
  ([OPTS])                         #Uses Cognito Identity pools
+                                  #Does not use INI_CREDS|CONFIG
 OPTS.client
 OPTS.clientConfig
 OPTS.customRoleArn
@@ -316,9 +365,11 @@ OPTS.cache                        #OBJ:
                                   └──────────────────────┘
 
 fromContainerMetadata([OPTS])     #Uses EC2 instance metadata
+                                  #Does not use INI_CREDS|CONFIG
 OPTS.timeout                      #NUM (in ms, def: 1000) for connection timeout
 OPTS.maxRetries                   #NUM (def: 0)
 
 fromInstanceMetadata([OPTS])      #Uses ECS instance metadata
+                                  #Does not use INI_CREDS|CONFIG
 OPTS.timeout
 OPTS.maxRetries                   #Like fromContainerMetadata()
