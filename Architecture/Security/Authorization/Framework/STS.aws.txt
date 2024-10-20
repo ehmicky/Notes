@@ -85,34 +85,6 @@ COND_KEY aws:TokenIssueTime       #'DATE'. Short-term CREDS creation time.
 AWSRevokeOlderSessions            #AWS managed policy to attach on a ROLE to invalidate short-term CREDS
                                   #Denies every PACTION if aws:TokenIssueTime was before now
 
-                                  ┌──────────────┐
-                                  │   LOGIN UI   │
-                                  └──────────────┘
-
-STS_LOGIN_URL                     #https://[REGION.]signin.aws.amazon.com/federation
-GET STS_LOGIN_URL                 #Req (query params):
- ?Action=getSigningToken          #  - Session 'URLENCODED_JSON' of CREDS: sessionId|sessionKey|sessionToken
-                                  #     - CREDS must have been acquired first with STS programmatically
-                                  #     - but not with GetSessionToken()
-                                  #  - SessionDuration NUM
-                                  #     - not if GetFederationToken() was used
-                                  #     - def: same as CREDS.Expiration
-                                  #Res: SigningToken 'BASE64'
-GET STS_LOGIN_URL?Action=login    #UI login
-                                  #Req (query params):
-                                  #  - SigninToken "BASE64"
-                                  #  - Destination 'URLENCODED_JSON': URL to redirect to
-                                  #  - Issuer 'URLENCODED_JSON': URL that did the authentication
-
-SAML ==>                          #Can also use a different flow, see online doc
-
-STS_SWITCH_URL                    #https://signin.aws.amazon.com/switchrole
-GET STS_SWITCH_URL                #Like STS_LOGIN_URL, but first UI login then switches role
-                                  #Req (query params):
-                                  #  - roleName 'ROLE'
-                                  #  - account 'ACCOUNT_ID'
-                                  #  - displayName STR (def: 'ROLE@ACCOUNT_ID'): UI name for ROLE
-
                                   ┌────────────────┐
                                   │   TEMP_TOKEN   │
                                   └────────────────┘
@@ -122,6 +94,9 @@ TEMP_TOKEN                        #CREDS based on current PRINCIPAL.
                                   #Permissions:
                                   #  - same as current PRINCIPAL
                                   #  - iam|sts:* -> only if MFA was used
+                                  #Goal is either:
+                                  #  - use short-term CREDS (to avoid leakage) but based on long-term CREDS
+                                  #  - enforcing MFA on specific requests
 TEMP_TOKEN.Credentials            #CREDS
 
 TEMP_TOKEN_REQ                    #Request a TEMP_TOKEN
@@ -160,8 +135,9 @@ AWSSamples::IamPoliciesRequireMfa
 
 FEDERATED_CREDS                   #CREDS based on current PRINCIPAL.
                                   #Can restrict permissions.
-                                  #I.e. superuser delegating permissions to temporary users.
-                                  #  - often authentication happens in a separate system
+                                  #I.e. superuser delegating permissions to temporary users
+                                  #Meant for authentication happening in a separate system
+                                  #  - else should prefer ROLEs
                                   #Permissions:
                                   #  - same as current PRINCIPAL, but restricted by session policy
                                   #  - iam|sts:* -> must use UI (not CLI|API)
@@ -178,6 +154,26 @@ FEDERATED_REQ.DurationSeconds
 FEDERATED_REQ.Tags                #Like ASSUME_ROLE_REQ.*
 FEDERATED_REQ.Policy
 FEDERATED_REQ.PolicyArns          #Like ASSUME_ROLE_REQ.*, except default is to deny all
+
+                                  ┌───────────────────────┐
+                                  │   FEDERATED USER UI   │
+                                  └───────────────────────┘
+
+STS_LOGIN_URL                     #https://[REGION.]signin.aws.amazon.com/federation
+
+GET STS_LOGIN_URL                 #To do programmatically
+                                  #Responds with: SigningToken 'BASE64'
+?Action                           #Always 'getSigningToken'
+?Session                          #'URLENCODED_JSON' of CREDS: sessionId|sessionKey|sessionToken
+                                  #CREDS must have been acquired first with GetFederationToken() or AssumeRole*()
+?SessionDuration                  #NUM (def: CREDS.Expiration)
+                                  #Not if GetFederationToken() was used
+
+STS_LOGIN_URL                     #UI login page
+?Action                           #Always 'login'
+?SigninToken                      #'BASE64'
+?Destination                      #'URLENCODED_JSON'. URL to redirect to
+?Issuer                           #'URLENCODED_JSON'. URL that did the authentication
 
                                   ┌────────────────────────┐
                                   │   FEDERATED USER API   │
@@ -352,171 +348,6 @@ CW.iam
                                   └───────────────┘
 
 cfn-lint E3511                    #Valid ROLE_ARN
-
-                                  ┌─────────────────┐
-                                  │   ASSUME ROLE   │
-                                  └─────────────────┘
-
-ASSUMED_ROLE                      #CREDS based on a POLICY (ROLE.AssumeRolePolicyDocument).
-                                  #Permissions: same as ROLE ("delegation")
-ASSUMED_ROLE.Credentials          #CREDS
-
-ASSUMED_ROLE.AssumedRoleUser      #ASSUMED_ROLE_USER
-ASSUMED_ROLE_USER.Arn             #ASSUMED_ROLE_ARN. 'arn:aws:sts::ACCOUNT_ID:assumed-role/ASSUMED_ROLE'
-ASSUMED_ROLE_USER.AssumedRoleId   #'ASSUMED_ROLE_MID:ASSUMED_ROLE'
-ASSUMED_ROLE.SourceIdentity       #STR. Similar to 'ASSUMED_ROLE' except:
-                                  #  - kept with role chaining
-                                  #  - i.e. identify the original entity, not most recent
-                                  #Max length 64
-ASSUMED_ROLE_REQ.ExternalId       #STR. Similar to 'ASSUMED_ROLE' except:
-                                  #  - meant for identifier which has a meaning only outside of AWS
-                                  #  - not present in CloudTrail logs
-                                  #Max length 1224
-
-ASSUMED_ROLE_REQ                  #Request an ASSUMED_ROLE
-ASSUMED_ROLE_REQ.RoleArn          #ROLE_ARN to assume
-ASSUMED_ROLE_REQ.RoleSessionName  #'ASSUMED_ROLE'
-ASSUMED_ROLE_REQ.SourceIdentity   #ASSUMED_ROLE.SourceIdentity
-
-ASSUMED_ROLE_REQ.DurationSeconds  #NUM
-
-ASSUMED_ROLE_REQ.Policy           #POLICY_DOC.
-                                  #"Session policy" restricting the identity-based permissions
-                                  #Def: allow all
-                                  #Max 2KB
-ASSUMED_ROLE_REQ.PolicyArns       #Same but as POLICY_ARN_ARR
-                                  #Max length 10
-ASSUMED_ROLE.PackedPolicySize     #0-1 percentage of size / max size of POLICY + session tags
-
-ASSUMED_ROLE_REQ.SerialNumber
-ASSUMED_ROLE_REQ.TokenCode        #Like TEMP_TOKEN_REQ.*
-
-ASSUMED_ROLE_REQ.Tags             #AWS TAGS. "Session tags"
-ASSUMED_ROLE_REQ.TransitiveTagKeys#'TAG'_ARR that should be inherited with role chaining
-                                  #Def: none
-
-ASSUMED_ROLE_REQ.ProvidedContexts #PROVIDED_CONTEXT_ARR. Max 5 items
-PROVIDED_CONTEXT.ProviderArn      #IAM identity center contextProvider ARN
-PROVIDED_CONTEXT.ContextAssertion #STR. Max 2KB
-
-                                  ┌────────────────────┐
-                                  │   ASSUME ROLE UI   │
-                                  └────────────────────┘
-
-ROLE SWITCHING UI ==>             #AssumeRole() can be done from the UI, unless either:
-                                  #  - root
-                                  #  - ASSUMED_ROLE_REQ.externalId
-                                  #  - 'ROLE' more than 64 chars
-
-                                  ┌──────────────────────┐
-                                  │   ASSUME ROLE AUTH   │
-                                  └──────────────────────┘
-
-PACTION sts:SetSourceIdentity     #Allow using ASSUMED_ROLE_REQ.SourceIdentity
-                                  #Must be done on both the PRINCIPAL, and the ROLE trust policy
-PACTION sts:TagSession            #Allow setting ASSUMED_ROLE_REQ.Tags
-
-COND_KEY sts:RoleSessionName      #ASSUMED_ROLE_REQ.RoleSessionName. Only with AssumeRole()
-COND_KEY sts:SourceIdentity       #ASSUMED_ROLE_REQ.SourceIdentity. Only with PACTIONs 'sts:AssumeRole*|SetSourceIdentity'
-COND_KEY aws:SourceIdentity       #ASSUMED_ROLE_USER|SAML_ROLE|WEB_ID_ROLE.SourceIdentity, in the requests made by the ROLE
-COND_KEY sts:ExternalId           #ASSUMED_ROLE_REQ.ExternalId. Only with AssumeRole()
-COND_KEY sts:TransitiveTagKeys    #ASSUME_ROLE_REQ.TransitiveTagKeys
-
-                                  ┌─────────────────────┐
-                                  │   ASSUME ROLE API   │
-                                  └─────────────────────┘
-
-AssumeRole()                      #Req: ASSUMED_ROLE_REQ
-                                  #Res: ASSUMED_ROLE
-
-                                  ┌────────────────────────┐
-                                  │   ASSUME ROLE CONFIG   │
-                                  └────────────────────────┘
-
-CONFIG.role_arn                   #'ROLE'. Authenticate using AssumeRole()
-
-CONFIG.source_profile             #'PROFILE' with CONFIG.aws_* credentials (see AWS auth doc), when using AssumeRole()
-                                  #For the request itself, not the role being requested
-                                  #Requires CONFIG.role_arn
-CONFIG.credential_source          #Same but for INI_CREDS
-                                  #Can also be:
-                                  #  - 'Environment': like fromEnv() (see AWS auth doc)
-                                  #  - 'Ec2InstanceMetadata': like fromInstanceMetadata() (see EC2 doc)
-                                  #      - only needed when switching to another ROLE than EC2 container's one
-                                  #  - 'EcsContainer': like fromContainerMetadata() (see ECS doc)
-
-CONFIG.role_session_name
-CONFIG.duration_seconds
-CONFIG.external_id                #Like STS ASSUME_ROLE_REQ.*
-CONFIG.mfa_serial                 #Like STS ASSUME_ROLE_REQ.SerialNumber
-
-                                  ┌─────────────────────┐
-                                  │   ASSUME ROLE SDK   │
-                                  └─────────────────────┘
-
-@aws-sdk/credential-provider-ini
-fromIni([OPTS])->CREDS_OBJ_FUNC   #If CONFIG.role_arn + CONFIG.source_profile|credential_source set, uses fromTemporaryCredentials()
-                                  #Uses:
-                                  #  - CONFIG.role_arn|role_session_name|duration_seconds|external_id|mfa_serial for OPTS.params.*
-                                  #  - CONFIG.source_profile|credential_source for OPTS.masterCredentials
-
-@aws-sdk/credential-providers
-fromTemporaryCredentials([OPTS])  #Uses AssumeRole()
- ->CREDS_OBJ_FUNC                 #Does not use INI_CREDS|CONFIG (unless fromIni())
-
-OPTS.params                       #ASSUME_ROLE_REQ
-                                  #Def ASSUME_ROLE_REQ.RoleSessionName: 'aws-sdk-js-NOW'
-OPTS.mfaCodeProvider              #FUNC(MFA_DEVICE_MID)->STR (def: none). ASSUMED_ROLE_REQ.TokenCode
-
-OPTS.masterCredentials            #CREDS_OBJ for AssumeRole() (def: current one)
-                                  #For the request itself, not the role being requested
-                                  #Used instead of CONFIG.source_profile|credential_source
-
-OPTS.clientConfig                 #COPTS for STSClient
-OPTS.clientPlugins                #PLUGIN_ARR for STSClient
-
-                                  ┌─────────────────────┐
-                                  │   ASSUME ROLE CLI   │
-                                  └─────────────────────┘
-
-CONFIG.role_arn
-CONFIG
- .source_profile|credential_source#If set, CLI automatically calls AssumeRole() (like above)
-
-~/.aws/cli/cache/HASH.json        #STS_CACHE. AssumeRole() response's local cache
-                                  #Used until the credentials expire
-                                  #Set whether AssumeRole() called:
-                                  #  - manually with `aws sts assume-role`
-                                  #  - automatically due to CONFIG.role_arn
-STS_CACHE.Credentials             #CREDS
-STS_CACHE.AssumedRoleUser         #ASSUMED_ROLE.AssumedRoleUser
-STS_CACHE.ResponseMetadata        #RequestId, HTTPStatusCode, HTTPHeaders, RetryAttempts
-
-                                  ┌─────────────────────┐
-                                  │   ASSUME ROLE IAC   │
-                                  └─────────────────────┘
-
-CSTATEMENT.addAccountCondition
- ('ACCOUNT_ID')                   #{ StringEquals: { sts:ExternalId: ACCOUNT_ID } }
-CROLE_OPTS.externalIds            #STR_ARR (def: []). Add COND_OBJ { StringEquals: { sts:ExternalId: STR_ARR } } to trust policy
-
-CPRINCIPAL.withSessionTags()
- ->CTAGS_PRINCIPAL
-new SessionTagsPrincipal
- (ICPRINCIPAL)                    #CTAGS_PRINCIPAL. Like CPRINCIPAL, except sts:TagSession also allowed in trust policy
-
-                                  ┌────────────────────────────┐
-                                  │   ASSUME ROLE MIDDLEWARE   │
-                                  └────────────────────────────┘
-
-@middy/sts                        #Part of Middy (see its doc)
-MIDDY-STS([OPTS])->MIDDY_MDWR     #
-OPTS.fetchData.FETCH_KEY          #ASSUME_ROLE_REQ. Calls AssumeRole()
-                                  #Def ASSUME_REQ_REQ.RoleSessionName: 'middy-sts-session-RANDOM'
-                                  #FETCH_RES is CREDS_OBJ (only accessKeyId|secretAccessKey|sessionToken)
-                                  #Def CACHE_KEY: 'sts'
-                                  #Should have OPTS.setToContext true, since NCONTEXT.* might be accidentally logged
-                                  #See middy doc for more info on OPTS.fetchData, including the other OPTS.*
 
                                   ┌──────────────────────┐
                                   │   INSTANCE PROFILE   │
@@ -732,6 +563,182 @@ GetServiceLinkedRoleDeletionStatus#Req: SERVICE_LINKED_ROLE_DEL_START
 AWS::IAM::ServiceLinkedRole       #RESPROPs: AWSServiceName, CustomSuffix, Description
                                   #RESATTRs: RoleName
 
+                                  ┌─────────────────┐
+                                  │   ASSUME ROLE   │
+                                  └─────────────────┘
+
+ASSUMED_ROLE                      #CREDS based on a POLICY (ROLE.AssumeRolePolicyDocument).
+                                  #Permissions: same as ROLE ("delegation")
+ASSUMED_ROLE.Credentials          #CREDS
+
+ASSUMED_ROLE.AssumedRoleUser      #ASSUMED_ROLE_USER
+ASSUMED_ROLE_USER.Arn             #ASSUMED_ROLE_ARN. 'arn:aws:sts::ACCOUNT_ID:assumed-role/ASSUMED_ROLE'
+ASSUMED_ROLE_USER.AssumedRoleId   #'ASSUMED_ROLE_MID:ASSUMED_ROLE'
+ASSUMED_ROLE.SourceIdentity       #STR. Similar to 'ASSUMED_ROLE' except:
+                                  #  - kept with role chaining
+                                  #  - i.e. identify the original entity, not most recent
+                                  #Max length 64
+ASSUMED_ROLE_REQ.ExternalId       #STR. Similar to 'ASSUMED_ROLE' except:
+                                  #  - meant for identifier which has a meaning only outside of AWS
+                                  #  - not present in CloudTrail logs
+                                  #Max length 1224
+
+ASSUMED_ROLE_REQ                  #Request an ASSUMED_ROLE
+ASSUMED_ROLE_REQ.RoleArn          #ROLE_ARN to assume
+ASSUMED_ROLE_REQ.RoleSessionName  #'ASSUMED_ROLE'
+ASSUMED_ROLE_REQ.SourceIdentity   #ASSUMED_ROLE.SourceIdentity
+
+ASSUMED_ROLE_REQ.DurationSeconds  #NUM
+
+ASSUMED_ROLE_REQ.Policy           #POLICY_DOC.
+                                  #"Session policy" restricting the identity-based permissions
+                                  #Def: allow all
+                                  #Max 2KB
+ASSUMED_ROLE_REQ.PolicyArns       #Same but as POLICY_ARN_ARR
+                                  #Max length 10
+ASSUMED_ROLE.PackedPolicySize     #0-1 percentage of size / max size of POLICY + session tags
+
+ASSUMED_ROLE_REQ.SerialNumber
+ASSUMED_ROLE_REQ.TokenCode        #Like TEMP_TOKEN_REQ.*
+
+ASSUMED_ROLE_REQ.Tags             #AWS TAGS. "Session tags"
+ASSUMED_ROLE_REQ.TransitiveTagKeys#'TAG'_ARR that should be inherited with role chaining
+                                  #Def: none
+
+ASSUMED_ROLE_REQ.ProvidedContexts #PROVIDED_CONTEXT_ARR. Max 5 items
+PROVIDED_CONTEXT.ProviderArn      #IAM identity center contextProvider ARN
+PROVIDED_CONTEXT.ContextAssertion #STR. Max 2KB
+
+                                  ┌────────────────────┐
+                                  │   ASSUME ROLE UI   │
+                                  └────────────────────┘
+
+https://                          #Calls AssumeRole()
+ signin.aws.amazon.com/switchrole #If not logged in, UI requests login first
+                                  #Can also do from the UI, if logged in, by clicking on "Switch role"
+                                  #Cannot do if either:
+                                  #  - root
+                                  #  - ASSUMED_ROLE_REQ.externalId
+                                  #  - 'ROLE' more than 64 chars
+?roleName                         #'ROLE'
+?account                          #'ACCOUNT_ID'
+?displayName                      #STR (def: 'ROLE@ACCOUNT_ID'). UI name for ROLE
+
+STS_LOGIN_URL                     #See above. Differences:
+                                  #  - URL is confidential
+                                  #  - does not require logging in
+                                  #  - can set ASSUME_ROLE_REQ.*
+
+                                  ┌──────────────────────┐
+                                  │   ASSUME ROLE AUTH   │
+                                  └──────────────────────┘
+
+PACTION sts:SetSourceIdentity     #Allow using ASSUMED_ROLE_REQ.SourceIdentity
+                                  #Must be done on both the PRINCIPAL, and the ROLE trust policy
+PACTION sts:TagSession            #Allow setting ASSUMED_ROLE_REQ.Tags
+
+COND_KEY sts:RoleSessionName      #ASSUMED_ROLE_REQ.RoleSessionName. Only with AssumeRole()
+COND_KEY sts:SourceIdentity       #ASSUMED_ROLE_REQ.SourceIdentity. Only with PACTIONs 'sts:AssumeRole*|SetSourceIdentity'
+COND_KEY aws:SourceIdentity       #ASSUMED_ROLE_USER|SAML_ROLE|WEB_ID_ROLE.SourceIdentity, in the requests made by the ROLE
+COND_KEY sts:ExternalId           #ASSUMED_ROLE_REQ.ExternalId. Only with AssumeRole()
+COND_KEY sts:TransitiveTagKeys    #ASSUME_ROLE_REQ.TransitiveTagKeys
+
+                                  ┌─────────────────────┐
+                                  │   ASSUME ROLE API   │
+                                  └─────────────────────┘
+
+AssumeRole()                      #Req: ASSUMED_ROLE_REQ
+                                  #Res: ASSUMED_ROLE
+
+                                  ┌────────────────────────┐
+                                  │   ASSUME ROLE CONFIG   │
+                                  └────────────────────────┘
+
+CONFIG.role_arn                   #'ROLE'. Authenticate using AssumeRole()
+
+CONFIG.source_profile             #'PROFILE' with CONFIG.aws_* credentials (see AWS auth doc), when using AssumeRole()
+                                  #For the request itself, not the role being requested
+                                  #Requires CONFIG.role_arn
+CONFIG.credential_source          #Same but for INI_CREDS
+                                  #Can also be:
+                                  #  - 'Environment': like fromEnv() (see AWS auth doc)
+                                  #  - 'Ec2InstanceMetadata': like fromInstanceMetadata() (see EC2 doc)
+                                  #      - only needed when switching to another ROLE than EC2 container's one
+                                  #  - 'EcsContainer': like fromContainerMetadata() (see ECS doc)
+
+CONFIG.role_session_name
+CONFIG.duration_seconds
+CONFIG.external_id                #Like STS ASSUME_ROLE_REQ.*
+CONFIG.mfa_serial                 #Like STS ASSUME_ROLE_REQ.SerialNumber
+
+                                  ┌─────────────────────┐
+                                  │   ASSUME ROLE SDK   │
+                                  └─────────────────────┘
+
+@aws-sdk/credential-provider-ini
+fromIni([OPTS])->CREDS_OBJ_FUNC   #If CONFIG.role_arn + CONFIG.source_profile|credential_source set, uses fromTemporaryCredentials()
+                                  #Uses:
+                                  #  - CONFIG.role_arn|role_session_name|duration_seconds|external_id|mfa_serial for OPTS.params.*
+                                  #  - CONFIG.source_profile|credential_source for OPTS.masterCredentials
+
+@aws-sdk/credential-providers
+fromTemporaryCredentials([OPTS])  #Uses AssumeRole()
+ ->CREDS_OBJ_FUNC                 #Does not use INI_CREDS|CONFIG (unless fromIni())
+
+OPTS.params                       #ASSUME_ROLE_REQ
+                                  #Def ASSUME_ROLE_REQ.RoleSessionName: 'aws-sdk-js-NOW'
+OPTS.mfaCodeProvider              #FUNC(MFA_DEVICE_MID)->STR (def: none). ASSUMED_ROLE_REQ.TokenCode
+
+OPTS.masterCredentials            #CREDS_OBJ for AssumeRole() (def: current one)
+                                  #For the request itself, not the role being requested
+                                  #Used instead of CONFIG.source_profile|credential_source
+
+OPTS.clientConfig                 #COPTS for STSClient
+OPTS.clientPlugins                #PLUGIN_ARR for STSClient
+
+                                  ┌─────────────────────┐
+                                  │   ASSUME ROLE CLI   │
+                                  └─────────────────────┘
+
+CONFIG.role_arn
+CONFIG
+ .source_profile|credential_source#If set, CLI automatically calls AssumeRole() (like above)
+
+~/.aws/cli/cache/HASH.json        #STS_CACHE. AssumeRole() response's local cache
+                                  #Used until the credentials expire
+                                  #Set whether AssumeRole() called:
+                                  #  - manually with `aws sts assume-role`
+                                  #  - automatically due to CONFIG.role_arn
+STS_CACHE.Credentials             #CREDS
+STS_CACHE.AssumedRoleUser         #ASSUMED_ROLE.AssumedRoleUser
+STS_CACHE.ResponseMetadata        #RequestId, HTTPStatusCode, HTTPHeaders, RetryAttempts
+
+                                  ┌─────────────────────┐
+                                  │   ASSUME ROLE IAC   │
+                                  └─────────────────────┘
+
+CSTATEMENT.addAccountCondition
+ ('ACCOUNT_ID')                   #{ StringEquals: { sts:ExternalId: ACCOUNT_ID } }
+CROLE_OPTS.externalIds            #STR_ARR (def: []). Add COND_OBJ { StringEquals: { sts:ExternalId: STR_ARR } } to trust policy
+
+CPRINCIPAL.withSessionTags()
+ ->CTAGS_PRINCIPAL
+new SessionTagsPrincipal
+ (ICPRINCIPAL)                    #CTAGS_PRINCIPAL. Like CPRINCIPAL, except sts:TagSession also allowed in trust policy
+
+                                  ┌────────────────────────────┐
+                                  │   ASSUME ROLE MIDDLEWARE   │
+                                  └────────────────────────────┘
+
+@middy/sts                        #Part of Middy (see its doc)
+MIDDY-STS([OPTS])->MIDDY_MDWR     #
+OPTS.fetchData.FETCH_KEY          #ASSUME_ROLE_REQ. Calls AssumeRole()
+                                  #Def ASSUME_REQ_REQ.RoleSessionName: 'middy-sts-session-RANDOM'
+                                  #FETCH_RES is CREDS_OBJ (only accessKeyId|secretAccessKey|sessionToken)
+                                  #Def CACHE_KEY: 'sts'
+                                  #Should have OPTS.setToContext true, since NCONTEXT.* might be accidentally logged
+                                  #See middy doc for more info on OPTS.fetchData, including the other OPTS.*
+
                                   ┌───────────────────┐
                                   │   SAML PROVIDER   │
                                   └───────────────────┘
@@ -874,6 +881,12 @@ saml:primaryGroupSID
 saml:surname
 saml:uid                          #STR_ARR COND_KEYs. To use on ROLE.AssumeRolePolicyDocument with PACTION AssumeRoleWithSAML()
 saml:x500UniqueIdentifier         #Taken from SAML_ROLE_REQ.SAMLAssertion
+
+                                  ┌──────────────────┐
+                                  │   SAML ROLE UI   │
+                                  └──────────────────┘
+
+LOGIN ==>                         #Can login in the UI. Not documented yet
 
                                   ┌───────────────────┐
                                   │   SAML ROLE API   │
@@ -1089,7 +1102,7 @@ new WebIdentityPrincipal
                                   │   BEARER TOKEN   │
                                   └──────────────────┘
 
-BEARER_TOKEN                      #Like CREDS but as a single STR.
+BEARER_TOKEN                      #Short-term CREDS but as a single STR.
                                   #Meant to be passed in a HTTP header or ENVVAR
                                   #  - as opposed to usual AWS signature headers
                                   #Only for specific SERVICEs like CodeArtifact
