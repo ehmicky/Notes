@@ -1,0 +1,225 @@
+
+                                  ┏━━━━━━━━━━━━━━━━━┓
+                                  ┃   AWS_NETWORK   ┃
+                                  ┗━━━━━━━━━━━━━━━━━┛
+
+                                  ┌─────────────────┐
+                                  │   IDEMPOTENCY   │
+                                  └─────────────────┘
+
+REQ.ClientToken                   #STR. Do not perform if already performed with same STR.
+                                  #Meant for idempotence.
+                                  #Only for some SERVICEs (EC2, VPC, some of S3)
+                                  #Sometimes called ClientRequestToken
+
+DELETING RESOURCES ==>            #Must delete other resources that use it first
+
+                                  ┌──────────────────────────┐
+                                  │   EVENTUAL CONSISTENCY   │
+                                  └──────────────────────────┘
+
+EVENTUAL CONSISTENCY ==>          #Many endpoints use eventual consistency:
+                                  #  - action happens async, after response
+                                  #  - effects takes time to propagate, i.e. different clients might return different results
+                                  #After change:
+                                  #  - should test existence
+                                  #  - with exponential retry delays up to a limit (e.g. 5 mins)
+                                  #  - can be slow, i.e. avoid in critical paths
+
+WAIT ==>                          #Most clients (but not REST API) implement wait methods.
+                                  #It calls an ACTION repeatedly until a specific condition fulfills.
+                                  #Using an exponential backoff, multiplying by 2 each time.
+                                  #Documented with the ACTION it repeats
+                                  #Client parameters:
+                                  #  - same as ACTION
+                                  #  - client-specific backoff|cancellation
+
+                                  ┌──────────────────────────────┐
+                                  │   EVENTUAL CONSISTENCY SDK   │
+                                  └──────────────────────────────┘
+
+waitUntilWAITComplete
+ (WAIT_OPTS, COMMAND_OPTS)        #Wait until WAIT complete
+ ->>OBJ                           #COMMAND_OPTS are of the underlying COMMAND
+OBJ.state                         #STR among:
+                                  #  - 'SUCCESS'
+                                  #  - 'FAILURE': condition failed
+                                  #  - 'TIMEOUT': WAIT_OPTS.maxWaitTime
+                                  #  - 'ABORTED': WAIT_OPTS.abortSignal
+                                  #  - 'RETRY': too many attempts (NUM is COMMAND-specific)
+OBJ.reason                        #STR
+
+WAIT_OPTS.client                  #CLIENT
+
+WAIT_OPTS.minDelay                #NUM (in secs, def: 30) start of exponential backoff
+WAIT_OPTS.maxDelay                #NUM (in secs, def: 120) end of exponential backoff
+WAIT_OPTS.maxWaitTime             #Max NUM secs total (def: none)
+
+WAIT_OPTS.abortSignal             #ABORT_SIGNAL
+
+                                  ┌──────────────────────────────┐
+                                  │   EVENTUAL CONSISTENCY CLI   │
+                                  └──────────────────────────────┘
+
+aws SERVICE WAIT-complete
+aws SERVICE wait WAIT             #Wait until WAIT complete
+
+                                  ┌───────────┐
+                                  │   RETRY   │
+                                  └───────────┘
+
+SERVER ERROR RETRIES ==>          #Should retry on 5**, with exponential backoff
+                                  #Different from retries which wait for eventual consistency
+
+                                  ┌──────────────────┐
+                                  │   RETRY CONFIG   │
+                                  └──────────────────┘
+
+CONFIG.retry_mode                 #One of:
+ENVVAR AWS_RETRY_MODE             #  - 'legacy'
+                                  #      - retry on socket errors and throttling
+                                  #      - exponential backoff multiplying by 2
+                                  #  - 'standard' (def): same but also:
+                                  #      - retry on quotas and timeouts
+                                  #      - exponential backoff max 20s
+                                  #  - 'adaptive': same but also:
+                                  #      - backoff is error-specific
+
+CONFIG.max_attempts
+ENVVAR AWS_MAX_ATTEMPTS           #NUM of retries (def: 5 with retry_mode 'legacy', 3 otherwise)
+
+                                  ┌───────────────┐
+                                  │   RETRY SDK   │
+                                  └───────────────┘
+
+COPTS.retryMode|maxAttempts       #Like CONFIG.*
+
+amz-sdk-request [C]               #'attempt=NUM; max=NUM' of retries
+                                  #Optional. Set by multiple SDKs
+
+amz-sdk-invocation-id [C]         #'UUID' not changed when doing retries
+                                  #Optional. Set by multiple SDKs
+
+METADATA.attempts                 #NUM of retries
+METADATA.totalRetryDelay          #NUM of retry delay
+
+                                  ┌───────────────┐
+                                  │   RETRY CLI   │
+                                  └───────────────┘
+
+--debug                           #Prints retries
+
+                                  ┌────────────────────┐
+                                  │   TIMEOUT CONFIG   │
+                                  └────────────────────┘
+
+CONNECTION TIMEOUT ==>            #Timeout on TCP|TLS connection start
+                                  #Depends on CONFIG.defaults_mode:
+                                  #  - 'in-region': 1s
+                                  #  - else: 3s
+                                  #  - 'mobile': 30s
+
+                                  ┌─────────────────┐
+                                  │   TIMEOUT CLI   │
+                                  └─────────────────┘
+
+--cli-connect-timeout             #NUM (secs, def: 60). Timeout for connection
+--cli-read-timeout                #NUM (secs, def: 60). Timeout, excluding connection
+
+                                  ┌─────────────────┐
+                                  │   TIMEOUT SDK   │
+                                  └─────────────────┘
+
+*HOPTS|SOPTS.requestTimeout       #NUM (in ms) to timeout HTTP connection
+                                  #See AWS JavaScript doc for *HOPTS|SOPTS
+
+                                  ┌────────────────────────┐
+                                  │   PERFORMANCE CONFIG   │
+                                  └────────────────────────┘
+
+CONFIG.tcp_keepalive              #BOOL (def: false)
+
+CONFIG.parameter_validation       #BOOL (def: true). Validate request parameters
+                                  #Can disable for performance.
+
+                                  ┌─────────────────────┐
+                                  │   PERFORMANCE SDK   │
+                                  └─────────────────────┘
+
+ENVVAR AWS_NODEJS_CONNECTION
+ _REUSE_ENABLED                   #If '1' (def), use a pool of TCP connections
+
+COPTS.requestHandler              #REQ_HANDLER. How HTTP requests are done.
+                                  #Def:
+                                  #  - Node.js: node-http-handler
+                                  #  - browsers: fetch-http-handler
+                                  #Can also directly pass *HOPTS instead of REQ_HANDLER:
+                                  #  - most SERVICEs use NHOPTS in Node, FHOPTS in browser
+                                  #  - some SERVICEs use N2HOPTS in Node, FHOPTS in browser
+                                  #     - Kinesis, Lex Runtime v2, QBusiness, TranscribeStreaming
+                                  #Cached, i.e. if multiple CLIENTs, should:
+                                  #  - pass same REQ_HANDLER instance as COPTS.requestHandler
+                                  #  - not use *HOPTS shortcut syntax
+
+@aws-sdk/node-http-handler        #Use Node HTTP
+new NodeHttpHandler([NHOPTS])     #REQ_HANDLER
+NHOPTS.http[s]Agent               #AGENT|AGENT_OPTS
+                                  #E.g. can set AGENT_OPTS.maxSockets NUM to parallelize HTTP requests
+
+@aws-sdk/node-http2-handler       #Use Node HTTP2
+new NodeHttp2Handler
+ ([N2HOPTS])                      #REQ_HANDLER
+N2HOPTS.sessionTimeout            #Node HTTP2_SESSION.setTimeout()
+N2HOPTS.maxConcurrentStreams      #Like Node HTTP2 maxConcurrentStreams
+N2HOPTS
+ .disableConcurrentStreams        #BOOL (def: false)
+
+@aws-sdk/fetch-http-handler       #Use fetch()
+new FetchHttpHandler([FHOPTS])    #REQ_HANDLER
+
+@aws-sdk/xhr-http-handler         #Use XHR
+new XhrHttpHandler([XHOPTS])      #REQ_HANDLER
+
+                                  ┌────────────────┐
+                                  │   SSL CONFIG   │
+                                  └────────────────┘
+
+CONFIG.ca_bundle
+ENVVAR AWS_CA_BUNDLE              #'PATH.pem'. Override CA certificate bundle
+
+                                  ┌─────────────┐
+                                  │   SSL CLI   │
+                                  └─────────────┘
+
+--no-verify-ssl                   #BOOL (def: false)
+
+--ca-bundle                       #Like CONFIG.ca_bundle
+
+--debug                           #Prints SSL info
+
+                                  ┌────────────────────┐
+                                  │   USER AGENT API   │
+                                  └────────────────────┘
+
+x-amz-user-agent [C]              #Optional. Set by multiple SDKs
+
+                                  ┌────────────────────┐
+                                  │   USER AGENT SDK   │
+                                  └────────────────────┘
+
+COPTS.customUserAgent             #STR|USER_AGENTS. x-amz-user-agent [C]
+USER_AGENTS                       #['NAME'[, VERSION]]_ARR
+
+                                  ┌────────────────────┐
+                                  │   USER AGENT CLI   │
+                                  └────────────────────┘
+
+--debug                           #Prints user agent
+
+                                  ┌────────────┐
+                                  │   QUOTAS   │
+                                  └────────────┘
+
+QUOTAS ==>                        #Also named "limits"
+                                  #"Flexible": when can increase through support request
+                                  #Usually per REGION
