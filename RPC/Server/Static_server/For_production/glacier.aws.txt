@@ -38,27 +38,22 @@ PAGINATION ==>                    #Req: Marker STR, Limit NUM (def|max: 100 with
 
 PRICING ==>                       #Same as S3 StorageClass 'GLACIER' (see its doc)
 
+                                  ┌──────────┐
+                                  │   AUTH   │
+                                  └──────────┘
+
 AmazonGlacierFullAccess           #AWS managed POLICY. Grants all Glacier PACTIONs
 AmazonGlacierReadOnlyAccess       #Same but readonly
+
+                                  ┌─────────┐
+                                  │   SDK   │
+                                  └─────────┘
 
 @aws-sdk/middleware-sdk-glacier   #MFUNCs used by Glacier client
 
                                   ┌───────────┐
                                   │   VAULT   │
                                   └───────────┘
-
-PUT /vaults/VAULT                 #Req: empty
-CreateVault()                     #Res: Location [S]
-                                  #Upserts
-GET /vaults/VAULT                 #Req: empty
-DescribeVault()                   #Res: VAULT
-GET /vaults                       #Req: empty
-ListVaults()                      #Res: VaultList VAULT_ARR
-DELETE /vaults/VAULT              #Req: empty
-DeleteVault()                     #Res: empty
-                                  #Fails if either:
-                                  #  - not empty in last inventory
-                                  #  - upload since last inventory
 
 VAULT                             #Like S3 BUCKET, but for Glacier
                                   #Max 1e3 per REGION
@@ -75,6 +70,23 @@ x-amz-archive-description:
 IJOB_ARCHIVE.ArchiveDescription   #Max 1024 chars
 UPLOAD.ArchiveDescription         #'ARCHIVE_DESC'|null
 
+                                  ┌───────────────┐
+                                  │   VAULT API   │
+                                  └───────────────┘
+
+PUT /vaults/VAULT                 #Req: empty
+CreateVault()                     #Res: Location [S]
+                                  #Upserts
+GET /vaults/VAULT                 #Req: empty
+DescribeVault()                   #Res: VAULT
+GET /vaults                       #Req: empty
+ListVaults()                      #Res: VaultList VAULT_ARR
+DELETE /vaults/VAULT              #Req: empty
+DeleteVault()                     #Res: empty
+                                  #Fails if either:
+                                  #  - not empty in last inventory
+                                  #  - upload since last inventory
+
 POST /vaults/VAULT/tags
  ?operation=add                   #Req: Tags TAGS
 AddTagsToVault()                  #Res: empty
@@ -88,12 +100,6 @@ RemoveTagsFromVault()             #Res: empty
                                   │   SIMPLE UPLOAD   │
                                   └───────────────────┘
 
-POST /vaults/VAULT/archives       #Req: ARCHIVE_CONTENTS, x-amz-content-sha256 [C], x-amz-sha256-tree-hash [C], x-amz-archive-description [C]
-UploadArchive()                   #Res: x-amz-archive-id [S], Location [S], x-amz-sha256-tree-hash [S]
-DELETE /vaults/VAULT
- /archives/ARCHIVE_MID            #Req: empty
-DeleteArchive()                   #Res: empty
-
 ARCHIVE                           #Like S3 object, but for Glacier
                                   #No limit per VAULT
                                   #Max 4GiB
@@ -102,12 +108,64 @@ Location: /vaults/VAULT
  /archives/ARCHIVE_MID [S]        #
 
 ARCHIVE_CONTENTS                  #ARCHIVE contents, as is
-PARAMS.Body                       #ARCHIVE_CONTENTS can be STR, DATAVIEW|ARRBUFFER|UINT8ARR|BUFFER|BLOB or RSTREAM|ISTREAM
---body PATH                       #Same for CLI
+
+                                  ┌───────────────────────┐
+                                  │   SIMPLE UPLOAD API   │
+                                  └───────────────────────┘
+
+POST /vaults/VAULT/archives       #Req: ARCHIVE_CONTENTS, x-amz-content-sha256 [C], x-amz-sha256-tree-hash [C], x-amz-archive-description [C]
+UploadArchive()                   #Res: x-amz-archive-id [S], Location [S], x-amz-sha256-tree-hash [S]
+DELETE /vaults/VAULT
+ /archives/ARCHIVE_MID            #Req: empty
+DeleteArchive()                   #Res: empty
+
+                                  ┌────────────────────────┐
+                                  │   SIMPLE UPLOADS SDK   │
+                                  └────────────────────────┘
+
+PARAMS.Body                       #ARCHIVE_CONTENTS as STR, DATAVIEW|ARRBUFFER|UINT8ARR|BUFFER|BLOB or RSTREAM|ISTREAM
+
+                                  ┌────────────────────────┐
+                                  │   SIMPLE UPLOADS CLI   │
+                                  └────────────────────────┘
+
+--body PATH                       #ARCHIVE_CONTENTS
 
                                   ┌──────────────────────┐
                                   │   MULTIPART UPLOAD   │
                                   └──────────────────────┘
+
+UPLOAD                            #Like ARCHIVE, but in several requests (PARTs)
+                                  #Max 1e4 PARTs
+                                  #Max 40TiB for total ARCHIVE
+                                  #  - should be used if > 100MiB
+                                  #Once complete, expires within 24h
+x-amz-multipart-upload-id:
+ UPLOAD_MID [S]
+UPLOAD.MultipartUploadId          #UPLOAD_MID
+UPLOAD.VaultARN                   #VAULT_ARN
+Location: /vaults/VAULT
+ /multipart-uploads/UPLOAD_MID [S]#
+UPLOAD.CreationDate               #'DATE'
+
+PART_CONTENTS                     #PART contents, as is
+
+x-amz-archive-size: NUM [C]       #Total size, in bytes
+
+x-amz-part-size: NUM [C]          #NUM. PART size, in bytes.
+UPLOAD.PartSizeInBytes            #Min 4MiB, max 4GiB. Must be power of 2
+                                  #Each PART must have same size, except last one
+
+Content-Range:                    #Start|end indices of the PART
+ bytes NUM-NUM2/* [C]             #Can upload PARTs in:
+                                  #  - random order
+                                  #  - parallel
+UPLOAD.Parts                      #PART_ARR
+PART.RangeInBytes                 #'NUM-NUM2'
+
+                                  ┌──────────────────────────┐
+                                  │   MULTIPART UPLOAD API   │
+                                  └──────────────────────────┘
 
 POST /vaults/VAULT
  /multipart-uploads               #Req: x-amz-part-size [C], x-amz-archive-description [C]
@@ -128,35 +186,17 @@ DELETE /vaults/VAULT
  /multipart-uploads/UPLOAD_MID    #Req: empty
 AbortMultipartUpload()            #Res: empty
 
-UPLOAD                            #Like ARCHIVE, but in several requests (PARTs)
-                                  #Max 1e4 PARTs
-                                  #Max 40TiB for total ARCHIVE
-                                  #  - should be used if > 100MiB
-                                  #Once complete, expires within 24h
-x-amz-multipart-upload-id:
- UPLOAD_MID [S]
-UPLOAD.MultipartUploadId          #UPLOAD_MID
-UPLOAD.VaultARN                   #VAULT_ARN
-Location: /vaults/VAULT
- /multipart-uploads/UPLOAD_MID [S]#
-UPLOAD.CreationDate               #'DATE'
+                                  ┌──────────────────────────┐
+                                  │   MULTIPART UPLOAD SDK   │
+                                  └──────────────────────────┘
 
-PART_CONTENTS                     #PART contents, as is
-PARAMS.Body
---body PATH                       #Like ARCHIVE_CONTENTS
+PARAMS.Body                       #PART_CONTENTS as STR, DATAVIEW|ARRBUFFER|UINT8ARR|BUFFER|BLOB or RSTREAM|ISTREAM
 
-x-amz-archive-size: NUM [C]       #Total size, in bytes
+                                  ┌──────────────────────────┐
+                                  │   MULTIPART UPLOAD CLI   │
+                                  └──────────────────────────┘
 
-x-amz-part-size: NUM [C]          #NUM. PART size, in bytes.
-UPLOAD.PartSizeInBytes            #Min 4MiB, max 4GiB. Must be power of 2
-                                  #Each PART must have same size, except last one
-
-Content-Range:                    #Start|end indices of the PART
- bytes NUM-NUM2/* [C]             #Can upload PARTs in:
-                                  #  - random order
-                                  #  - parallel
-UPLOAD.Parts                      #PART_ARR
-PART.RangeInBytes                 #'NUM-NUM2'
+--body PATH                       #PART_CONTENTS
 
                                   ┌───────────────┐
                                   │   CHECKSUMS   │
@@ -171,6 +211,10 @@ PART|AJOB|IJOB_ARCHIVE
  .SHA256TreeHash
 ARCHIVE_CHECKSUMS.treeHash        #'HASH'. Markle tree of each ARCHIVE_CONTENT's 1MiB parts
 
+                                  ┌───────────────────┐
+                                  │   CHECKSUMS SDK   │
+                                  └───────────────────┘
+
 @aws-sdk/
  body-checksum-node|browser
 @aws-sdk/sha256-tree-hash         #Used by SDK|CLI to automatically compute x-amz-content-sha256 [C] and x-amz-sha256-tree-hash [C]
@@ -180,6 +224,28 @@ ARCHIVE_CHECKSUMS.treeHash        #'HASH'. Markle tree of each ARCHIVE_CONTENT's
                                   ┌──────────────┐
                                   │   READ JOB   │
                                   └──────────────┘
+
+x-amz-job-id: JOB_MID [S]
+JOB.JobId                         #JOB_MID
+Location: /vaults/VAULT
+ /jobs/JOB_MID [S]
+JOB.VaultARN                      #VAULT_ARN
+
+JOB.Action                        #'ArchiveRetrieval', 'InventoryRetrieval', 'Select'
+JOB.JobDescription                #'JOB_DESC'
+
+JOB.CreationDate                  #'DATE'
+JOB.CompletionDate                #'DATE'|null
+JOB.Completed                     #BOOL
+JOB.StatusCode                    #'InProgress|Succeeded|Failed'
+JOB.StatusMessage                 #STR
+
+JOB_RES                           #Only available after JOB completes
+                                  #Once completed, JOB expires within 24h
+
+                                  ┌──────────────────┐
+                                  │   READ JOB API   │
+                                  └──────────────────┘
 
 POST /vaults/VAULT/jobs           #Req: jobParameters JOB
 InitiateJob()                     #  - no JobId, VaultARN, CreationDate, CompletionDate, Completed, StatusCode, StatusMessage
@@ -201,27 +267,21 @@ GET /vaults/VAULT/jobs/JOB_MID
 GetJobOutput()                    #Res: JOB_RES
                                   #  - (for IJOB) x-amz-sha256-tree-hash [S]
 
-x-amz-job-id: JOB_MID [S]
-JOB.JobId                         #JOB_MID
-Location: /vaults/VAULT
- /jobs/JOB_MID [S]
-JOB.VaultARN                      #VAULT_ARN
-
-JOB.Action                        #'ArchiveRetrieval', 'InventoryRetrieval', 'Select'
-JOB.JobDescription                #'JOB_DESC'
-
-JOB.CreationDate                  #'DATE'
-JOB.CompletionDate                #'DATE'|null
-JOB.Completed                     #BOOL
-JOB.StatusCode                    #'InProgress|Succeeded|Failed'
-JOB.StatusMessage                 #STR
-
-JOB_RES                           #Only available after JOB completes
-                                  #Once completed, JOB expires within 24h
-
                                   ┌─────────────────────────┐
                                   │   VAULT NOTIFICATIONS   │
                                   └─────────────────────────┘
+
+VAULT_NOTIF                       #SNS notification when JOB succeeds|fails
+VAULT_NOTIF.SNSTopic              #TOPIC_ARN
+VAULT_NOTIF.Events                #'EVENT'_ARR, among:
+                                  #  - 'ArchiveRetrievalCompleted'
+                                  #  - 'InventoryRetrievalCompleted'
+
+JOB.SNSTopic                      #TOPIC_ARN. Like VAULT_NOTIF, but for a single JOB
+
+                                  ┌─────────────────────────────┐
+                                  │   VAULT NOTIFICATIONS API   │
+                                  └─────────────────────────────┘
 
 PUT /vaults/VAULT
  /notification-configuration      #Req: vaultNotificationConfig VAULT_NOTIF
@@ -232,14 +292,6 @@ GetVaultNotifications()           #Res: VAULT_NOTIF
 DELETE /vaults/VAULT
  /notification-configuration      #Req: empty
 DeleteVaultNotifications()        #Res: empty
-
-VAULT_NOTIF                       #SNS notification when JOB succeeds|fails
-VAULT_NOTIF.SNSTopic              #TOPIC_ARN
-VAULT_NOTIF.Events                #'EVENT'_ARR, among:
-                                  #  - 'ArchiveRetrievalCompleted'
-                                  #  - 'InventoryRetrievalCompleted'
-
-JOB.SNSTopic                      #TOPIC_ARN. Like VAULT_NOTIF, but for a single JOB
 
                                   ┌──────────────────┐
                                   │   READ ARCHIVE   │
@@ -267,11 +319,6 @@ Content-Type:
                                   │   PROVISIONED CAPACITY   │
                                   └──────────────────────────┘
 
-POST /provisioned-capacity        #Req: empty
-PurchaseProvisionedCapacity()     #Res: x-amz-capacity-id [S]
-GET /provisioned-capacity         #Req: empty
-ListProvisionedCapacity()         #Res: ProvisionedCapacityList CAPACITY
-
 CAPACITY                          #Ensures at least 3 AJOBs with Tier 'Expedited' every 5m, with up to 150MB/s
                                   #Max 2 per ACCOUNT
 x-amz-capacity-id:
@@ -280,14 +327,18 @@ CAPACITY.CapacityId               #CAPACITY_MID
 CAPACITY.StartDate                #'DATE'
 CAPACITY.ExpirationDate           #End 'DATE', one month later
 
+                                  ┌──────────────────────────────┐
+                                  │   PROVISIONED CAPACITY API   │
+                                  └──────────────────────────────┘
+
+POST /provisioned-capacity        #Req: empty
+PurchaseProvisionedCapacity()     #Res: x-amz-capacity-id [S]
+GET /provisioned-capacity         #Req: empty
+ListProvisionedCapacity()         #Res: ProvisionedCapacityList CAPACITY
+
                                   ┌──────────────────────┐
                                   │   RETRIEVAL LIMITS   │
                                   └──────────────────────┘
-
-PUT /policies/data-retrieval      #Req: RETRIEVAL_LIMITS
-SetDataRetrievalPolicy()          #Res: empty
-GET /policies/data-retrieval      #Req: empty
-GetDataRetrievalPolicy()          #Res: RETRIEVAL_LIMITS
 
 RETRIEVAL_LIMITS.Policy.Rules     #RETRIEVAL_RULE_ARR
 RETRIEVAL_RULE                    #Sets max download bytes per hour|day of AJOBs
@@ -296,6 +347,15 @@ RETRIEVAL_RULE.Strategy           #One of:
                                   #  - 'FreeTier': only allow within free tier (prorated per day)
                                   #  - 'BytesPerHour': use RETRIEVAL_RULE.BytesPerHour
 RETRIEVAL_RULE.BytesPerHour       #NUM (in bytes). Max download per hour
+
+                                  ┌──────────────────────────┐
+                                  │   RETRIEVAL LIMITS API   │
+                                  └──────────────────────────┘
+
+PUT /policies/data-retrieval      #Req: RETRIEVAL_LIMITS
+SetDataRetrievalPolicy()          #Res: empty
+GET /policies/data-retrieval      #Req: empty
+GetDataRetrievalPolicy()          #Res: RETRIEVAL_LIMITS
 
                                   ┌───────────────────┐
                                   │   LIST ARCHIVES   │
@@ -347,6 +407,22 @@ SJOB_RES                          #None
                                   │   ACCESS POLICY   │
                                   └───────────────────┘
 
+ACCESS_POLICY.Policy              #'POLICY_DOC'. "Vault policy"
+                                  #Resource-based POLICY,
+                                  #Can use resource-level permission on a VAULT
+                                  #Only one per VAULT
+                                  #Max 20KB
+
+                                  ┌────────────────────────┐
+                                  │   ACCESS POLICY AUTH   │
+                                  └────────────────────────┘
+
+COND_KEY glacier:ArchiveAgeInDays #NUM. On InitialJob() or DeleteArchive()
+
+                                  ┌───────────────────────┐
+                                  │   ACCESS POLICY API   │
+                                  └───────────────────────┘
+
 PUT /vaults/VAULT/access-policy   #Req: ACCESS_POLICY
 SetVaultAccessPolicy()            #Res: empty
 GET /vaults/VAULT/access-policy   #Req: empty
@@ -354,17 +430,22 @@ GetVaultAccessPolicy()            #Res: ACCESS_POLICY
 DELETE /vaults/VAULT/access-policy#Req: empty
 DeleteVaultAccessPolicy()         #Res: empty
 
-ACCESS_POLICY.Policy              #'POLICY_DOC'. "Vault policy"
-                                  #Resource-based POLICY,
-                                  #Can use resource-level permission on a VAULT
-                                  #Only one per VAULT
-                                  #Max 20KB
-
-COND_KEY glacier:ArchiveAgeInDays #NUM. On InitialJob() or DeleteArchive()
-
                                   ┌──────────┐
                                   │   LOCK   │
                                   └──────────┘
+
+LOCK                              #Like ACCESS_POLICY, but becomes readonly once 'Locked'
+x-amz-lock-id: LOCK_MID [S]       #
+LOCK.Policy                       #Like ACCESS_POLICY.Policy
+LOCK.State                        #Whether Policy can be changed, either 'InProgress' (yes) or 'Locked' (no)
+LOCK.CreationDate                 #'DATE'
+LOCK.ExpirationDate               #Max 'DATE' to set State 'Locked', otherwise deletes LOCK
+                                  #null when State 'Locked'
+                                  #24h after CreationDate
+
+                                  ┌──────────────┐
+                                  │   LOCK API   │
+                                  └──────────────┘
 
 POST /vaults/VAULT/lock-policy    #Req: LOCK
 InitiateVaultLock()               #  - only Policy
@@ -377,12 +458,3 @@ POST /vaults/VAULT                #Req: empty
 CompleteVaultLock()               #Sets LOCK.State 'Locked'
 DELETE /vaults/VAULT/lock-policy  #Req: empty
 AbortVaultLock()                  #Res: empty
-
-LOCK                              #Like ACCESS_POLICY, but becomes readonly once 'Locked'
-x-amz-lock-id: LOCK_MID [S]       #
-LOCK.Policy                       #Like ACCESS_POLICY.Policy
-LOCK.State                        #Whether Policy can be changed, either 'InProgress' (yes) or 'Locked' (no)
-LOCK.CreationDate                 #'DATE'
-LOCK.ExpirationDate               #Max 'DATE' to set State 'Locked', otherwise deletes LOCK
-                                  #null when State 'Locked'
-                                  #24h after CreationDate
