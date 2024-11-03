@@ -21,6 +21,8 @@ INSTALL ==>                       #Download|extract zip from GitHub releases
 --update|-u                       #Update instead of new install
                                   #Previous versions kept at INSTALL_DIR/X.Y.Z
                                   #Current version is symlink from INSTALL_DIR/current to INSTALL_DIR/X.Y.Z
+GLOBAL_CONFIG.lastVersionCheck    #DATE_NUM of last version check
+                                  #Once per week, check for new version and print if exists
 
 --install-dir|-i                  #'INSTALL_DIR' (def: /usr/local/aws-sam-cli) containing binary + source code
 --bin-dir|-b                      #'DIR' (def: /usr/local/bin) with symlink to `sam` executable
@@ -29,8 +31,12 @@ INSTALL ==>                       #Download|extract zip from GitHub releases
                                   │   CONFIG   │
                                   └────────────┘
 
+~/.aws-sam/metadata.json          #GLOBAL_CONFIG. Undocumented by SAM, but we document some of it here
+                                  #As opposed to CONFIG (per-project)
+
 sam ...
 --config-file                     #'PATH' to CONFIG (def: './samconfig.y[a]ml|toml')
+                                  #Relative paths use TEMPLATE's DIR
 --config-env                      #'SAM_PROFILE' (def: 'default')
 --save-params                     #Save CLI FLAGs to CONFIG file
 
@@ -52,12 +58,25 @@ TOML SYNTAX ==>                   #Multiple VALs: "VAL ..."
                                   │   GENERAL   │
                                   └─────────────┘
 
-ENVVAR SAM_CLI_BETA_FEATURES      #Enable all beta features
-sam ... --[no-]beta-features     !#BOOL (def: false). Noted like this
+GLOBAL_CONFIG.experimentalAll
+ENVVAR SAM_CLI_BETA_FEATURES
+sam ... --[no-]beta-features      #BOOL (def: false). Enable all SAM_CLI_BETA_* features
 
-ENVVAR SAM_CLI_BETA_*             #Enable a specific beta feature
+GLOBAL_CONFIG
+ .experimentalBuildPerformance
+ENVVAR
+ SAM_CLI_BETA_BUILD_PERFORMANCE   #BOOL (def: false). ???
+GLOBAL_CONFIG
+ .experimentalCargoLambda
+ENVVAR
+ SAM_CLI_BETA_RUST_CARGO_LAMBDA   #BOOL (def: false). ???
 
+GLOBAL_CONFIG.telemetryEnabled
 ENVVAR SAM_CLI_TELEMETRY=0        #Disable telemetry
+
+GLOBAL_CONFIG.installationId      #'UUID' created at install time, used for telemetry
+TEMPLATE.Metadata.SamCliInfo
+ .installationId                  #Set for the STACK created by --resolve-s3
 
 sam ...
 --debug                           #Debug logs
@@ -79,13 +98,16 @@ sam local generate-event
                                   │   STACK CONFIG   │
                                   └──────────────────┘
 
-sam validate|build|sync|package
- |deploy|publish|local|list
- |publish
---template[-file]|-t              #'PATH' to TEMPLATE (def: 'template.y[a]ml|json')
+sam validate|build|sync|package   #'PATH' to TEMPLATE
+ |deploy|publish|local|list       #Def:
+ENVVAR SAM_TEMPLATE_FILE          #  - './aws-sam/build/template.yaml': with sam package|deploy|publish|local
+--template[-file]|-t              #  - 'template.y[a]ml|json'
 
-sam remote|sync|deploy|delete|list
+sam remote|sync|deploy|delete
+--stack-name                      #CloudFormation 'STACK'. Required
+sam list
 --stack-name                      #CloudFormation 'STACK'
+                                  #If not provided, only provide local information, i.e. does not fetch CloudFormation API
 
 sam build|local|sync|remote|list
 --parameter-overrides             #'PARAM=VAL,...'. STACK.Parameters
@@ -95,30 +117,13 @@ sam build|local|sync|remote|list
                                   └──────────┘
 
 sam validate                      #Validate TEMPLATE syntax
---lint                            #Run cfn-lint
-
-                                  ┌───────────────┐
-                                  │   TERRAFORM   │
-                                  └───────────────┘
-
-sam build|local
---hook-name                       #'SAM_BUILD_PLUGIN'
-                                  #Only available one: 'terraform', to support Terraform templates
---[skip-]prepare-infra            #BOOL (def: true). Run preparation logic even if no STACK changes
-                                  #Only with --hook-name
-
-sam build
---terraform-project-root-path     #Terraform root 'DIR' (def: .)
-
-sam local
---terraform-plan-file PATH        #Terraform plan 'PATH'
+--lint                            #BOOL (def: false). Run cfn-lint
 
                                   ┌──────────┐
                                   │   INIT   │
                                   └──────────┘
 
 sam init                          #Scaffolds
-                                  #Interactive if no options
 
 --output-dir|-o                   #Output 'DIR'
 --name|-n                         #'PROJECT_NAME', e.g. used in README, etc.
@@ -157,7 +162,7 @@ sam init                          #Scaffolds
                                   │   STACK CREATE   │
                                   └──────────────────┘
 
-sam deploy                        #Creates a STACK and deploy it
+sam deploy                        #Upserts a STACK, in a production stage
 --guided|-g                       #Interactive mode
                                   #Does not work with --[no-]resolve-s3
 --[no-]confirm-changeset          #BOOL (def: false). Confirm before deploying, after showing diff
@@ -181,7 +186,8 @@ ENVVAR SAM_CLI_POLL_DELAY         #NUM (in secs, def: 5). How often to poll with
                                   │   STACK UPDATE   │
                                   └──────────────────┘
 
-sam sync                          #Update STACK by doing a CHANGESET
+sam sync                          #Update STACK, in a development stage
+                                  #Uses a CHANGESET
 --[no-]watch                      #BOOL (def: false). Re-perform when local file changes
 --watch-exclude                   #'[[NESTED_STACK/]RESOURCE=]FILE|DIR' to not watch
 --[no-]skip-deploy-sync           #BOOL (def: false). Do not sync bootstrap STACK if TEMPLATE did not change
@@ -192,6 +198,9 @@ sam sync                          #Update STACK by doing a CHANGESET
                                   #  - AWS::Serverless|ApiGatewyaV2::Api, AWS::Serverless:HttpApi, AWS::ApiGatewayV2::Api
                                   #  - AWS::Serverless|StepFunctions::StateMachine
 --code                            #Same using all the above RESTYPEs
+
+GLOBAL_CONFIG                     #BOOL. If false (def), confirm that a development stage is used
+ .accelerateOptInStacks           #Set to MD5('TEMPLATE_PATH' + 'STACK') after the confirmation
 
                                   ┌──────────────────┐
                                   │   STACK DELETE   │
@@ -248,8 +257,10 @@ sam build
 --container-env-var|-e            #'[FUNCTION|LAYER.]ENVVAR=VAL' passed to container
 --container-env-var-file|-ef      #Same but as 'PATH.json' containing OBJ
 --mount-with|-mw                  #'READ' (def) or 'WRITE'. Allow containing to write to source DIR
---[skip-]pull-image               #BOOL (def: true). Use latest container image for Lambda SDK
---docker-network                  #Docker 'NETWORK_NAME' (def: bridge)
+--[skip-]pull-image
+ENVVAR SAM_SKIP_PULL_IMAGE        #BOOL (def: true). Use latest container image for Lambda SDK
+--docker-network
+ENVVAR SAM_DOCKER_NETWORK         #Docker 'NETWORK_NAME' (def: bridge)
 
                                   ┌────────────┐
                                   │   ASSETS   │
@@ -365,7 +376,7 @@ sam local invoke [FUNCTION]       #Invoke Lambda FUNCTION locally (emulation)
 --debug-args                      #Debugger 'ARG ...'
 
 --container-env-vars
---skip-pull-image
+--[skip-]pull-image
 --docker-network                  #Like sam build
 --force-image-build               #Unless set, do not rebuild container image unless has changed
 --docker-volume-basedir|-v        #'DIR' of the TEMPLATE ???
@@ -478,3 +489,30 @@ sam traces                        #Print X-Ray traces
 
 sam logs
 --include-traces|-i               #Also print X-Ray traces
+
+                                  ┌─────────┐
+                                  │   CDK   │
+                                  └─────────┘
+
+If CDK, cannot use sam validate|package|deploy|sync
+
+                                  ┌───────────────┐
+                                  │   TERRAFORM   │
+                                  └───────────────┘
+
+sam build|local
+--hook-name                       #'SAM_BUILD_PLUGIN'
+                                  #Only available one: 'terraform', to support Terraform templates
+--[skip-]prepare-infra            #BOOL (def: true). Run preparation logic even if no STACK changes
+                                  #Only with --hook-name
+
+sam build
+--terraform-project-root-path     #Terraform root 'DIR' (def: .)
+
+sam local
+--terraform-plan-file PATH        #Terraform plan 'PATH'
+
+GLOBAL_CONFIG
+ .experimentalTerraformSupport
+ENVVAR
+ SAM_CLI_BETA_TERRAFORM_SUPPORT   #BOOL (def: false). ???
