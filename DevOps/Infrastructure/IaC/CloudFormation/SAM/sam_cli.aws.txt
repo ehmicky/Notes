@@ -496,7 +496,9 @@ RESOURCE.Metadata.SamResourceId   #Original 'RESOURCE'
 sam package|deploy|sync|delete
 --s3-bucket                       #S3 'BUCKET' for `sam package`
                                   #Also used by TEMPLATEs themselves of:
-                                  #  - --template-file, if > 51KB
+                                  #  - --template-file
+                                  #     - `sam deploy`: if > 51KB
+                                  #     - `sam sync`: always
                                   #  - --resolve-image-repos
 --s3-prefix                       #S3 virtual 'FOLDER' (def: none)
 
@@ -587,7 +589,10 @@ sam sync                          #Update STACK, in a development stage
                                   #Always use default values for --on-failure, --disable-rollback, --max-wait-duration
 --[no-]watch                      #BOOL (def: false, recommended: true). Re-perform when local file changes
 --watch-exclude                   #'[NESTED_STACK/]RESOURCE=FILE|DIR' to not watch
---[no-]skip-deploy-sync           #BOOL (def: true). Do not sync bootstrap STACK if TEMPLATE did not change
+--[no-]skip-deploy-sync           #BOOL (def: true). Do not sync bootstrap STACK (???) if TEMPLATE did not change since last `sam sync`
+                                  #  - only for the RESTYPEs below
+                                  #  - not if > 50 such RESOURCEs
+                                  #Except if last `sam sync` was >= 7 days ago
 --[no-]dependency-layer           #BOOL (def: true). Put FUNCTION dependencies into a LAYER
                                   #Only for FUNCTIONs with PackageType Zip
                                   #Not if --use-container
@@ -599,7 +604,62 @@ sam sync                          #Update STACK, in a development stage
                                   #  - AWS::Serverless|Lambda::Function|LayerVersion
                                   #  - AWS::Serverless|ApiGatewyaV2::Api, AWS::Serverless:HttpApi, AWS::ApiGatewayV2::Api
                                   #  - AWS::Serverless|StepFunctions::StateMachine
---code                            #Same using all the above RESTYPEs. ???
+--code                            #BOOL (def: false). ???
+
+--dependency-layer is used by `sam build`, i.e. both --code and no --code
+  - but actual LAYER is deployed by --code
+If --code:
+  - uses --resource[-id] (def: no RESOURCEs)
+     - --resource-id must be among the RESTYPEs above
+  - _physical_id_mapping.RESOURCE: STACK_RESOURCEs from ListStackResources() (including on nested STACKs)
+  - `sam package` is done on-the-fly, per-RESOURCE to be sync'd
+  - for each RESOURCE to sync:
+     - do not sync if RESOURCE's contents did not change using either:
+        - local cache (BUILD_DIR/sync.toml)
+           - contents is:
+              - FUNCTION|LAYER:
+                 - PackageType Zip: contents
+                 - PackageType Image: local IMAGE hash
+              - API: OpenAPI spec (BodyS3Location|DefinitionUri)
+              - STATE_MACHINE: DefinitionUri
+        - remote call:
+           - FUNCTION|LAYER:
+              - PackageType Zip: CodeSha256
+              - PackageType Image: not cached
+           - API: not cached
+     - direct CRUD to update RESOURCE
+        - no STACK update, i.e. drift
+     - for each flow:
+        - _get_resource_api_calls() used as a key for execution parallel graph
+        - set_up()
+        - gather_resources()
+        - if compare_remote() true, ignore
+        - sync()
+        - gather_dependencies()
+  - for:
+     - Lambda FUNC:
+        -
+
+If no --code:
+  - uses --skip-deploy-sync and SYNC_STATE.latest_infra_sync_time
+  - upserts STACK, but without a CHANGESET
+     - i.e. removes drift introduced by --code
+  - execute same logic as --code:
+     - providing:
+        - --skip-deploy-sync skipped it
+        - there are some RESTYPEs to sync
+     - ignores --resource-id
+     - built_result not None??? (because called `sam build`)
+
+BUILD_DIR/sync.toml               #SYNC_CONFIG
+SYNC_CONFIG.sync_state            #SYNC_STATE
+SYNC_STATE.dependency_layer       #BOOL. --[no-]dependency-layer
+SYNC_STATE.latest_infra_sync_time #'DATE'. Last time `sam sync` was called (and not skipped)
+                                  #Used by --[no-]skip-deploy-sync
+SYNC_CONFIG.resource_sync_states
+ .RESOURCE                        #RESOURCE_SYNC_STATE
+RESOURCE_SYNC_STATE.hash          #'HASH' of the RESOURCE's contents
+RESOURCE_SYNC_STATE.sync_time     #'DATE'
 
 GLOBAL_CONFIG                     #BOOL. If false (def), confirm that a development stage is used
  .accelerateOptInStacks           #Set to MD5('TEMPLATE_PATH' + 'STACK') after the confirmation
