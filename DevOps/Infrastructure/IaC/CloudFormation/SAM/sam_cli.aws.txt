@@ -102,7 +102,8 @@ sam list
 --stack-name                      #CloudFormation 'STACK'
                                   #If not provided, only provide local information, i.e. does not fetch CloudFormation API
 
-sam build|local|sync|remote|list
+sam build|local|deploy|sync|remote
+ |list
 --parameter-overrides             #'PARAM=VAL,...'. STACK.Parameters
 
                                   ┌──────────┐
@@ -210,7 +211,7 @@ ml-apigw-pytorch|tensorflow       #Machine learning FUNCTION
 
 sam deploy                        #Upserts a STACK, in a production stage
 --guided|-g                       #Interactive mode
-                                  #Does not work with --[no-]resolve-s3
+                                  #Does not work with --resolve-s3
 --[no-]confirm-changeset          #BOOL (def: false, recommended: true). Confirm before deploying, after showing diff
 --no-execute-changeset            #BOOL. If false (def), use a CHANGESET
 --[no-]fail-on-empty-changeset    #BOOL (def: true). Non-zero exit code if no STACK changes
@@ -224,9 +225,9 @@ sam deploy|sync
 sam deploy
 --on-failure                      #STACK.OnFailure
 --[no-]disable-rollback           #BOOL (def: false). STACK.DisableRollback
---max-wait-duration               #NUM (in mins). Deployment timeout
+--max-wait-duration               #NUM (in mins, def: 1h). Deployment timeout
 
-ENVVAR SAM_CLI_POLL_DELAY         #NUM (in secs, def: 5). How often to poll with DescribeStack() WAIT
+ENVVAR SAM_CLI_POLL_DELAY         #NUM (in secs, def: 5s). How often to poll with DescribeStack() WAIT
 
                                   ┌──────────────────┐
                                   │   STACK UPDATE   │
@@ -238,7 +239,9 @@ sam sync                          #Update STACK, in a development stage
 --watch-exclude                   #'[NESTED_STACK/]RESOURCE=FILE|DIR' to not watch
 --[no-]skip-deploy-sync           #BOOL (def: false). Do not sync bootstrap STACK if TEMPLATE did not change
 --[no-]dependency-layer           #BOOL (def: false). Put FUNCTION dependencies into a LAYER
-                                  #No dependencies installed|restored in BUILD_DIR
+                                  #Only for FUNCTIONs with PackageType Zip
+                                  #Only for BuildMethod 'nodejs*', 'esbuild', 'python*', 'java*'
+                                  #Uses a nested STACK 'AwsSamAutoDependencyLayerNestedStack'
 --resource-id                     #'[NESTED_STACK/]RESOURCE'. Only sync that RESOURCE
 --resource                        #Same using RESTYPEs among:
                                   #  - AWS::Serverless|Lambda::Function|LayerVersion
@@ -266,70 +269,80 @@ sam list resources                #Print all STACK_RESOURCEs
 sam list stack-outputs            #Print all STACK_OUTPUTs
 sam list endpoints                #Print Lambda and API Gateway local|remote URIs
 
-                                  ┌───────────┐
-                                  │   BUILD   │
-                                  └───────────┘
+                                  ┌────────────────┐
+                                  │   BUILD MAIN   │
+                                  └────────────────┘
 
 sam build [FUNCTION|LAYER]        #Build AWS::Serverless|Lambda::Function|LayerVersion
                                   #Does package|runtime-related build step:
                                   #  - e.g. `npm pack`, `npm install`, `esbuild`, `go build`
                                   #  - not other build logic like `tsc`, `babel`, etc., which must be performed before
-                                  #Def FUNCTION|LAYER: all
+                                  #Does not zip nor upload to S3|ECR: `sam package` does it instead, afterwards
+                                  #FUNCTION|LAYER:
+                                  #  - def: all
+                                  #  - FUNCTION includes its FUNC_VERSION.Layers
                                   #Run by `sam deploy|sync`???
 --exclude|-x                      #'FUNCTION|LAYER' to exclude
 
-SOURCE_DIR                        #FUNCTION|LAYER's 'DIR' specified as RESPROP
+SOURCE_DIR                        #FUNCTION|LAYER's 'DIR' specified as RESPROP, e.g. FUNCTION.Code 'DIR'
+sam build|sync
+--base-dir|-s                     #'DIR' (def: TEMPLATE's DIR) used to resolve relative PATHs in TEMPLATE
+                                  #Only for properties used by `sam build`, not `sam package`
+                                  #  - except those used by both (e.g.  FUNCTION.Code 'DIR')
+
 BUILD_DIR                         #'BASE_BUILD_DIR/FUNCTION|LAYER'
                                   #SOURCE_DIR is copied, transformed and output to BUILD_DIR
                                   #Re-created on each build
 sam build
 --build-dir|-c                    #'BASE_BUILD_DIR' (def: './.aws-sam/build/')
-sam build|sync
---base-dir|-s                     #'DIR' (def: TEMPLATE's DIR) used to resolve relative PATHs in TEMPLATE
-                                  #Only for properties used by `sam build`, not `sam package`, except those used by both (e.g. FUNCTION.Code 'PATH')
+
+                                  ┌───────────────────────┐
+                                  │   BUILD PERFORMANCE   │
+                                  └───────────────────────┘
 
 sam build
 --parallel|-p                     #BOOL (def: false, recommended: true). Build all FUNCTIONs|LAYERs in parallel
 
 sam build
---[no-]cached|-c                  #BOOL (def: false, recommended: true). Cache dependencies (e.g. node_modules), avoiding install step
-                                  #Note: cached dependencies are not invalidated when new versions are available
---cache-dir|-cd                   #Cache 'DIR' (def: ./.aws-sam/cache/). When is it used???
-./.aws-sam/deps                   #Contains cached dependencies, e.g. node_modules
- /FUNCTION_UUID|LAYER_UUID        #Only if --cached
+--[no-]cached|-c                  #BOOL (def: false, recommended: true). Caches build
+                                  #Noop if --use-container or if PackageType Image
+                                  #Uses, depending on BuildMethod:
+                                  #  - 'nodejs*', 'esbuild', 'python*', 'ruby*': ./.aws-sam/deps
+                                  #  - 'go*', 'java*', 'dotnet*', 'rust*', 'provided': ./.aws-sam/cache (--cache-dir)
+./.aws-sam/deps                   #Cached dependencies, e.g. node_modules, avoiding install step
+ /FUNCTION_UUID|LAYER_UUID        #Invalidated when --manifest contents changes
+                                  #  - e.g. new dependency, or when dependency version range changed
+                                  #  - but not when a new dependency version is available but its version change stayed the same
+                                  #     - should use --no-cached to invalidate then
+--cache-dir|-cd                   #'CACHE_DIR' (def: ./.aws-sam/cache/)
+CACHE_DIR/FUNCTION_UUID|LAYER_UUID#Cached BUILD_DIR, avoiding whole build step
+                                  #Invalidated when SOURCE_DIR contents or list of files changes
 
 GLOBAL_CONFIG
  .experimentalBuildPerformance
-ENVVAR
- SAM_CLI_BETA_BUILD_PERFORMANCE   #BOOL (def: false). If multiple FUNCTIONs share exact same set of dependencies, make them share it, for performance
+ENVVAR                            #BOOL (def: false). If multiple FUNCTIONs share exact same set of dependencies,
+ SAM_CLI_BETA_BUILD_PERFORMANCE   #make them share it, for performance
 
 sam build|sync
 --[no-]build-in-source            #Update|re-use dependencies inside SOURCE_DIR
                                   #As opposed to installing them fresh inside BUILD_DIR
                                   #Symlink BUILD_DIR's dependencies to SOURCE_DIR's
                                   #Depending on BuildMethod:
+                                  #  - 'node*', 'esbuild', 'provided*|makefile': can be false (def) or true
+                                  #     - if 'esbuild', implies --no-cached
                                   #  - 'go*', 'rust*', 'dotnet*': always true
                                   #  - 'python*', 'java*', 'ruby*': always false
-                                  #  - 'node*', 'esbuild', 'provided*|makefile': can be false (def) or true
-                                  #     - 'esbuild' implies --no-cached
 
-sam build
---manifest|-m                     #'PATH' to RUNTIME-specific dependencies manifest
-                                  #Def: SOURCE_DIR/FILENAME with FILENAME depending on BuildMethod:
-                                  #  - 'nodejsX.x' or 'esbuild': use package.json
-                                  #  - 'pythonX.Y': requirements.txt
-                                  #  - 'rubyX.x': Gemfile
-                                  #  - 'goX.x': go.mod
-                                  #  - 'javaX': either build.gradle[.kts] or pom.xml
-                                  #  - 'dotnet[X]': .csproj
-                                  #  - 'rust-cargolambda': Cargo.toml
-                                  #  - 'provided[.al2|al2023]' or 'makefile': Makefile
+                                  ┌────────────────────┐
+                                  │   BUILD ZIP MAIN   │
+                                  └────────────────────┘
 
-RESOURCE.Metadata.Build*          #BUILD_METADATA. Only with AWS::Serverless|Lambda::Function|LayerVersion
-                                  #Only if PackageType Zip
-                                  #Done even if not set
-                                  #Not done if already zipped: FUNCTION.Code[Uri][.ZipFile] 'PATH.zip' or FUNCTION.InlineCode set
-BUILD_METADATA.BuildMethod        #Can be:
+ZIP BUILD ==>                     #Done on AWS::Serverless|Lambda::Function|LayerVersion, if PackageType Zip
+                                  #Not done if already zipped, i.e. FUNCTION.Code[Uri][.ZipFile] 'PATH.zip' or FUNCTION.InlineCode set
+                                  #Uses the following RESOURCE.Metadata.* and CLI flags
+
+RESOURCE.Metadata.BuildMethod     #Main build logic, mostly RUNTIME-based
+                                  #Can be:
                                   #  - 'nodejsX.x'
                                   #  - 'esbuild'
                                   #  - 'pythonX.Y'
@@ -344,62 +357,79 @@ BUILD_METADATA.BuildMethod        #Can be:
                                   #     - cannot use LAYERs
                                   #Def: guessed based on RUNTIME
                                   #  - for Node.js: 'nodejsX.x', not 'esbuild'
-                                  #Currently, this documentation only describes nodejs* and esbuild
                                   #Based on a Python library called aws-lambda-builders
+RESOURCE.Metadata.BuildProperties #BUILD_PROPS. BuildMethod-specific options
 
-BUILDMETHOD NODE ==>              #Included|excluded files:
+sam build
+--manifest|-m                     #'PATH' to RUNTIME-specific dependencies manifest
+                                  #Def: SOURCE_DIR/FILENAME with FILENAME depending on BuildMethod:
+                                  #  - 'nodejsX.x' or 'esbuild': package.json
+                                  #  - 'pythonX.Y': requirements.txt
+                                  #  - 'rubyX.x': Gemfile
+                                  #  - 'goX.x': go.mod
+                                  #  - 'javaX': either build.gradle[.kts] or pom.xml
+                                  #  - 'dotnet[X]': .csproj
+                                  #  - 'rust-cargolambda': Cargo.toml
+                                  #  - 'provided[.al2|al2023]' or 'makefile': Makefile
+
+                                  ┌────────────────────┐
+                                  │   BUILD ZIP NODE   │
+                                  └────────────────────┘
+
+BuildMethod 'nodejsX.x'           #Included|excluded files:
                                   #  - uses PACKAGE.files and .npmignore (with `npm pack` under-the-hood)
                                   #  - includes package-lock.json, npm-shrinkwrap.json
                                   #  - includes .npmrc but deletes at end
                                   #  - excludes .git/, .aws-sam/
                                   #Runs `npm install --production`
+
 BUILD_PROPS.UseNpmCi              #BOOL (def: false). Use `npm ci` instead
                                   #Always false if no package-lock.json nor npm-shrinkwrap.json
-                                  #Only with BuildMethod 'node*' or 'esbuild'
 
-BUILDMETHOD ESBUILD ==>           #Like Node.js, but runs `esbuild` after dependencies are installed|restored
+                                  ┌───────────────────────┐
+                                  │   BUILD ZIP ESBUILD   │
+                                  └───────────────────────┘
+
+BuildMethod 'esbuild'             #Like Node.js, but runs `esbuild` after dependencies are installed|restored
                                   #Must install `esbuild` as a dependency
-ESBUILD_PROPS.*                   #BUILD_PROPS.* with BuildMethod 'esbuild'
-ESBUILD_PROPS.EntryPoints         #'PATH'_ARR (def: 'HANDLER')
-ESBUILD_PROPS.FLAG                #VAL. FLAG is in PascalCase. `esbuild --FLAG`
-                                  #Flags always used: --bundle --platform=node
-                                  #Default flags: --target=es2020 --format=cjs --minify
-ESBUILD_PROPS.External            #STR_ARR (def: []). `esbuild --external`.
+
+BUILD_PROPS.EntryPoints           #'PATH'_ARR (def: 'HANDLER')
+BUILD_PROPS.FLAG                  #VAL. `esbuild --FLAG`
+                                  #FLAG is in PascalCase
+                                  #Def: --target=es2020 --format=cjs --minify
+                                  #Always used: --bundle --platform=node
+BUILD_PROPS.External              #STR_ARR (def: []). `esbuild --external`.
                                   #Special STR value './node_modules/*':
                                   #  - does --external for each PACKAGE.dependencies
                                   #  - i.e. does not bundle node_modules
+BUILD_PROPS.Sourcemap             #BOOL (def: false). Make esbuild produce source maps
+                                  #Also sets RESPROP Environment.Variables.NODE_OPTIONS "... --enable-source-maps"
 
-BUILD_METADATA.BuildProperties    #BUILD_PROPS
-BUILD_PROPS.*                     #Some BuildMethods have specific additional options
-BUILD_PROPS.Sourcemap             #BOOL (def: false). ???
+                                  ┌────────────────────────┐
+                                  │   BUILD ZIP PROVIDED   │
+                                  └────────────────────────┘
 
-BUILD_METADATA                    #Main 'DIR', used instead of 'SOURCE_DIR'
- .ProjectRootDirectory            #Only with BuildMethod 'provided*'
-BUILD_METADATA.ContextPath        #'DIR' containing Makefile, used instead of 'SOURCE_DIR'
-                                  #Only with BuildMethod 'provided*'
+BuildMethod 'provided*'           #Not fully documented yet
+RESOURCE.Metadata
+ .ProjectRootDirectory            #Main 'DIR', used instead of 'SOURCE_DIR'
+RESOURCE.Metadata.ContextPath     #'DIR' containing Makefile, used instead of 'SOURCE_DIR'
 
-RESOURCE.Metadata.Docker*         #DOCKER_METADATA. Only with AWS::Serverless|Lambda::Function|LayerVersion
-                                  #Only if PackageType Image
-                                  #If set, runs `docker build`
-                                  #  - `--architecture linux/arm64|amd64` depending on FUNC_VERSION.Architectures or LAYER_VERSION.CompatibleArchitectures
-                                  #Not used if ImageUri is 'PATH.tar' (from `docker save`): use `docker load` instead
-                                  #'FUNCTION|LAYER' is used as image name
-DOCKER_METADATA.Dockerfile        #'PATH'. Required
-DOCKER_METADATA.DockerContext     #'DIR'. Required
-DOCKER_METADATA.DockerBuildArgs   #OBJ (def: {}). `docker build --build-arg VAR=VAL`
-DOCKER_METADATA.DockerBuildTarget #STR (def: none). `docker build --target STR`
-DOCKER_METADATA.DockerTag         #'TAG' (def: 'latest'). `docker build --tag TAG`
+OTHER BUILDMETHODS ==>            #Not fully documented yet
+
+                                  ┌─────────────────────────┐
+                                  │   BUILD ZIP CONTAINER   │
+                                  └─────────────────────────┘
 
 sam build|sync
---use-container|-u                #Run build itself inside a Docker container
+--use-container|-u                #Run build inside a Docker container
                                   #Only if PackageType Zip
-                                  #Ignores --cached
+                                  #The FUNCTION|LAYER does not use a container, just `sam build` itself
                                   #128MB memory limit
 
---build-image|-bi                 #'[FUNCTION|LAYER.]URI'. Container image used by --use-container
+--build-image|-bi                 #'[FUNCTION|LAYER.]URI'. Container image
 
 public.ecr.aws/sam/build-RUNTIME  #Default value for --build-image
- [:latest|X.Y.Z[-CPU_ARCH]]       #Executes aws-lambda-layers, i.e. BuildMethod-specific logic like without --use-container
+ [:latest|X.Y.Z[-CPU_ARCH]]       #Executes aws-lambda-layers, i.e. BuildMethod-specific logic described above
                                   #Uses public.ecr.aws/lambda/RUNTIME:*-CPU_ARCH
                                   #Has aws CLI and sam CLI
                                   #  - X.Y.Z is SAM CLI's version
@@ -408,14 +438,40 @@ public.ecr.aws/sam/build-RUNTIME  #Default value for --build-image
 sam build
 --skip-pull-image                 #BOOL. If false (def), calls `docker pull` even if --build-image available locally,
 ENVVAR SAM_SKIP_PULL_IMAGE        #i.e. force getting latest version
---container-env-var|-e            #'[FUNCTION|LAYER.]ENVVAR=VAL' passed to container (from --use-container)
+
+--container-env-var|-e            #'[FUNCTION|LAYER.]ENVVAR=VAL' passed to container
 --container-env-var-file|-ef      #Same but as 'PATH.json' containing { FUNCTION|LAYER|Parameters: { ENVVAR: 'VAL',... },... }
+
 --mount-with|-mw                  #'READ' (def) or 'WRITE'. If 'WRITE', dependencies update inside the container
                                   #also update them in the local SOURCE_DIR
+
 --docker-network
 ENVVAR SAM_DOCKER_NETWORK         #Docker 'NETWORK_NAME' (def: bridge)
 
-./.aws-sam/build.toml             #BUILD_MANIFEST. Automatically generated by `sam build`
+                                  ┌─────────────────┐
+                                  │   BUILD IMAGE   │
+                                  └─────────────────┘
+
+IMAGE BUILD ==>                   #Runs `docker build`, for AWS::Serverless|Lambda::Function|LayerVersion, if PackageType Image
+                                  #Not done if ImageUri is 'PATH.tar' (from `docker save`): use `docker load` instead
+                                  #'FUNCTION|LAYER' is used as image name
+                                  #Uses the following RESOURCE.Metadata.*
+
+RESOURCE.Metadata.Dockerfile      #'PATH'. Required
+RESOURCE.Metadata.DockerContext   #'DIR'. Required
+RESOURCE.Metadata.DockerBuildArgs #OBJ (def: {}). `docker build --build-arg VAR=VAL`
+RESOURCE.Metadata
+ .DockerBuildTarget               #STR (def: none). `docker build --target STR`
+RESOURCE.Metadata.DockerTag       #'TAG' (def: 'latest'). `docker build --tag TAG`
+FUNC_VERSION.Architectures
+LAYER_VERSION
+ .CompatibleArchitectures         #Used as `docker build --architecture linux/arm64|amd64`
+
+                                  ┌────────────────────┐
+                                  │   BUILD INTERNAL   │
+                                  └────────────────────┘
+
+./.aws-sam/build.toml             #BUILD_MANIFEST. Internal information used and automatically generated by `sam build`
                                   #Has information about each FUNCTION|LAYER having been built
 BUILD_MANIFEST
  .function_build_definitions      #FUNCTION_MANIFEST
@@ -426,53 +482,21 @@ FUNCTION_MANIFEST.runtime         #FUNC_VERSION.Runtime
 FUNCTION_MANIFEST.packagetype     #FUNC_VERSION.PackageType
 FUNCTION_MANIFEST.architecture    #FUNC_VERSION.Architectures[0]
 FUNCTION_MANIFEST.handler         #FUNC_VERSION.Handler
-FUNCTION_MANIFEST.env_vars        #OBJ???
-FUNCTION_MANIFEST.metadata        #OBJ???
-FUNCTION_MANIFEST.source_hash     #STR???
-FUNCTION_MANIFEST.manifest_hash   #STR???
+FUNCTION_MANIFEST.metadata        #FUNCTION.Metadata
+FUNCTION_MANIFEST.env_vars        #OBJ. --container-env-var[-file]
+FUNCTION_MANIFEST.manifest_hash   #'HASH' of --manifest file
+FUNCTION_MANIFEST.source_hash     #'HASH' of 'SOURCE_DIR' contents + filenames
+                                  #Only if --cache-dir used
 
 BUILD_MANIFEST
  .layer_build_definitions
- .LAYER_UUID                      #LAYER_MANIFEST
+ .LAYER_UUID                      #LAYER_MANIFEST. Same for LAYERs
 LAYER_MANIFEST.layer_name         #'LAYER'
 LAYER_MANIFEST.codeuri
  |architecture|env_vars
  |source_hash|manifest_hash       #Same as FUNCTION_MANIFEST.*
-LAYER_MANIFEST.build_method       #???
+LAYER_MANIFEST.build_method       #BuildMethod
 LAYER_MANIFEST.compatible_runtimes#LAYER_VERSION.CompatibleRuntimes
-
-resources_to_build:
-  - all Function() and LayerVersion() (AWS::Lambda|Serverless::LayerVersion)
-  - filtered by sam build [FUNCTION|LAYER] argument
-     - FUNCTION includes all its LAYERs (if buildable themselves and not excluded)
-  - except ones from --exclude
-  - only ones with 'BuildableZip' or 'BuildableImage'
-Locates each FUNCTION.Layers
-  - including in nested STACKs, but only with `sam sync` (not `sam build`)
-SamFunctionProvider():
-  - self.functions.RESOURCE_PATH Function() for all AWS::Lambda|Serverless::Function in TEMPLATE
-LayerVersion()
-Function():
-  - function_id 'FUNCTION'
-  - codeuri: RESPROP Code (or CodeUri if AWS::Serverless::Function) if PackageType Zip:
-     - 'PATH': as is
-     - undefined: '.'
-     - OBJ (e.g. {ZipFile}): None
-  - imageuri: RESPROP Code.ImageUri (or ImageUri if AWS::Serverless::Function)
-  - layers are LayerVersion(), but unlike resources_to_build:
-     - no compatible_architectures
-     - no codeuri, compatible_runtimes, metadata if 'PATH' (as opposed to {Ref})
-  - others: RESPROPs
-  - function_build_info:
-     (PackageType Zip)
-     - 'InlineCode' if RESPROP InlineCode (only for AWS::Serverless::Function) or Code.ZipFile (for AWS::Lambda::Function)
-     - 'PreZipped' if Code 'PATH.zip'
-     - 'SkipBuild': CDK HFOPTS.bundling was used
-     - 'BuildableZip': else
-     (PackageType Image)
-     - 'BuildableImage': has Metadata.Dockerfile + DockerContext
-     - 'NonBuildableImage': else
-`result` of `_build_function()` is Docker 'IMAGE:TAG' if Image
 
                                   ┌────────────┐
                                   │   ASSETS   │
@@ -768,6 +792,7 @@ sam package                       #Handles ASSETs already built by CDK, based on
 sam build|local
 --hook-name                       #'SAM_BUILD_PLUGIN'
                                   #Only available one: 'terraform', to support Terraform templates
+                                  #Cannot use --build-in-source
 --[skip-]prepare-infra            #BOOL (def: true). Run preparation logic even if no STACK changes
                                   #Only with --hook-name
 
