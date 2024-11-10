@@ -5,10 +5,11 @@
 
 VERSION ==>                       #2024-11-05
 
-SAM ==>                           #Documented as part of SAM, but mostly uncorrolated to both SAM CLI and SAM transforms
-                                  #Exceptions:
-                                  #  - SAM `publish` CLI command calls the SAR API
-                                  #  - AWS::Serverless::Application can reference APP
+SAM CLI ==>                       #Uncorrelated to SAR
+                                  #Exception: `publish` CLI command which calls the SAR CLI
+
+SAM TRANSFORM ==>                 #Uncorrelated to SAR
+                                  #Exception: AWS::Serverless::Application can reference APP
 
                                   ┌─────────┐
                                   │   API   │
@@ -104,7 +105,7 @@ DASHBOARD ==>                     #Can see list of:
                                   #  - private ones shared with current user
                                   #Either:
                                   #  - in normal UI
-                                  #  - without login at: https://serverlessrepo.aws.amazon.com/applications
+                                  #  - without login at https://serverlessrepo.aws.amazon.com/applications
 
                                   ┌──────────────────────┐
                                   │   APPLICATION AUTH   │
@@ -130,8 +131,6 @@ APP_VERSION.creationTime          #'DATE'
 
 APP_VERSION.templateBody          #STR. TEMPLATE's contents
                                   #Must be self-sufficient, i.e. should after `aws cloudformation package` or `sam package`
-                                  #Max 50MB contents per APP_VERSION
-                                  #Max 5GB contents for all APPs per ACCOUNT + REGION
 APP_VERSION.templateUrl           #Same but as S3 'URL'
 
 APP_VERSION.sourceCodeUrl         #'URL' to source code, e.g. to GitHub commit, for documentation
@@ -151,11 +150,10 @@ AWS::Serverless|Lambda::          #Can be included as any other RESTYPE
                                   #  - instead of distributing a global LAYER_ARN
                                   #  - pro: consumers get local copies, i.e. less dependent
 
-BUCKET
- 'awsserverlessrepo-changesets*'  #If APP_VERSION.licenseUrl|readmeUrl|templateUrl not provided, API automatically uploads
-                                  #APP_VERSION.licenseBody|readmeBody|templateBody to it
-                                  #APP_POLICY grants access to this BUCKET automatically
-                                  #     - on the
+BUCKET                            #If APP_VERSION.licenseUrl|readmeUrl|templateUrl not provided,
+ 'awsserverlessrepo-changesets*'  #API automatically uploads APP_VERSION.licenseBody|readmeBody|templateBody to that BUCKET
+                                  #Max 50MB contents per APP_VERSION (including sourceCodeArchiveUrl's contents)
+                                  #Max 5GB contents for all APP_VERSIONs per ACCOUNT + REGION
 
                                   ┌──────────────────┐
                                   │   VERSION AUTH   │
@@ -164,13 +162,11 @@ BUCKET
 PACTION s3:GetObject              #Used:
                                   #  - by SERVICE serverlessrepo.amazonaws.com
                                   #  - to retrieve APP_VERSION.licenseUrl|readmeUrl|templateUrl
-                                  #If APP_VERSION.*Url was user-provided
-                                  #  - e.g. when using `sam publish`
-                                  #  - must allow:
-                                  #     - SERVICE serverlessrepo.amazonaws.com
-                                  #     - on the specific OBJECT
-                                  #        - or any within the BUCKET: 'arn:aws:s3:::BUCKET/*'
-                                  #     - COND_KEY 'aws:SourceAccount' 'ACCOUNT_ID'
+                                  #If APP_VERSION.*Url was user-provided, must allow:
+                                  #  - SERVICE serverlessrepo.amazonaws.com
+                                  #  - on the specific OBJECT
+                                  #     - or any within the BUCKET: 'arn:aws:s3:::BUCKET/*'
+                                  #  - COND_KEY 'aws:SourceAccount' 'ACCOUNT_ID'
                                   #APP_POLICY automatically grants access to this BUCKET to any ACCOUNT_ID that can access the APP
                                   #  - i.e. users within that ACCOUNT can see TEMPLATEs of each others
                                   #  - can restrict with a IAM POLICY that:
@@ -200,6 +196,7 @@ APP_VERSION.templateBody          #Can use 'file://...'
                                   └─────────────────┘
 
 sam publish                       #Calls CreateApplication() using APP_METADATA
+                                  #Uses APP_VERSION.templateBody (not APP_VERSION.templateUrl)
 --fail-on-same-version            #BOOL. If APP_VERSION already exists:
                                   #  - false (def): fail
                                   #  - true: calls UpdateApplication() + CreateApplicationVersion()
@@ -229,36 +226,6 @@ APP_PARAM.type|minLength|maxLength
 
 APP_PARAM.referencedByResources   #'RESOURCE'_ARR using this APP_PARAM
 
-                                  ┌──────────────┐
-                                  │   TEMPLATE   │
-                                  └──────────────┘
-
-APP_TEMPLATE                      #Reference an existing APP_VERSION's TEMPLATE
-APP_TEMPLATE.templateId           #APP_TEMPLATE_MID
-APP_TEMPLATE.applicationId        #'APP_ID'
-APP_TEMPLATE.semanticVersion      #'APP_VERSION'
-APP_TEMPLATE.creationTime         #'DATE'
-
-APP_TEMPLATE.templateUrl          #S3 'URL' to TEMPLATE
-
-APP_TEMPLATE.expirationTime       #'DATE' when expires
-                                  #Always 1 hour after creationTime
-APP_TEMPLATE.status               #One of:
-                                  #  - 'PREPARING'
-                                  #  - 'ACTIVE'
-                                  #  - 'EXPIRED'
-
-                                  ┌──────────────────┐
-                                  │   TEMPLATE API   │
-                                  └──────────────────┘
-
-POST                              #Req: APP_TEMPLATE
- /applications/APP_ID/templates   #  - no template*, status, *Time
-CreateCloudFormationTemplate()    #Res: APP_TEMPLATE
-GET /applications/APP_ID
- /templates/APP_TEMPLATE_MID      #Req: empty
-GetCloudFormationTemplate()       #Res: APP_TEMPLATE
-
                                   ┌───────────────┐
                                   │   CHANGESET   │
                                   └───────────────┘
@@ -266,7 +233,8 @@ GetCloudFormationTemplate()       #Res: APP_TEMPLATE
 APP_CHANGESET                     #Calls CreateChangeSet(), but sets CHANGESET.Template* using an APP's TEMPLATE
 APP_CHANGESET.applicationId       #'APP_ID'
 APP_CHANGESET.semanticVersion     #'APP_VERSION'
-APP_CHANGESET.templateId          #'APP_TEMPLATE_MID' (def: guessed)
+APP_CHANGESET.templateId          #'APP_TEMPLATE_MID'
+                                  #Def: automatically calls CreateCloudFormationTemplate()
 
 APP_CHANGESET.changeSetId
  |changeSetName|stackId
@@ -291,6 +259,34 @@ POST                              #Req: APP_CHANGESET
  /applications/APP_ID/changesets  #  - no changeSetId, stackId
 CreateCloudFormationChangeSet()   #Res: APP_CHANGESET
                                   #  - only applicationId, semanticVersion, changeSetId, stackId
+
+                                  ┌──────────────┐
+                                  │   TEMPLATE   │
+                                  └──────────────┘
+
+APP_TEMPLATE                      #Clone an APP_VERSION's TEMPLATE, but in current REGION|ACCOUNT
+                                  #Done by CreateCloudFormationTemplate() explicitely|implicitely
+APP_TEMPLATE.templateId           #APP_TEMPLATE_MID
+APP_TEMPLATE.applicationId        #'APP_ID'
+APP_TEMPLATE.semanticVersion      #'APP_VERSION'
+APP_TEMPLATE.creationTime         #'DATE'
+
+APP_TEMPLATE.templateUrl          #S3 'URL' to TEMPLATE
+
+APP_TEMPLATE.expirationTime       #Max 'DATE' to use through CreateCloudFormationTemplate()
+                                  #Always 1 hour after creationTime
+APP_TEMPLATE.status               #One of: 'PREPARING', 'ACTIVE', 'EXPIRED'
+
+                                  ┌──────────────────┐
+                                  │   TEMPLATE API   │
+                                  └──────────────────┘
+
+POST                              #Req: APP_TEMPLATE
+ /applications/APP_ID/templates   #  - no template*, status, *Time
+CreateCloudFormationTemplate()    #Res: APP_TEMPLATE
+GET /applications/APP_ID
+ /templates/APP_TEMPLATE_MID      #Req: empty
+GetCloudFormationTemplate()       #Res: APP_TEMPLATE
 
                                   ┌────────────┐
                                   │   POLICY   │
@@ -329,13 +325,20 @@ UnshareApplication()              #Res: none
 GET /applications/APP_ID/policy   #Req: empty
 GetApplicationPolicy()            #Res: APP_POLICY
 
+                                  ┌───────────────┐
+                                  │   TRANSFORM   │
+                                  └───────────────┘
+
+AWS::Serverless::Application      #Expands to a nested STACK
+                                  #  - i.e. requires STACK.Capabilities CAPABILITY_AUTO_EXPAND
+
                                   ┌─────────────┐
                                   │   NESTING   │
                                   └─────────────┘
 
-AWS::Serverless::Application      #Can be used in TEMPLATE, i.e. nesting
-                                  #Since it expands to a STACK, requires STACK.Capabilities CAPABILITY_AUTO_EXPAND
-                                  #Is shown as a warning in the UI
+NESTING ==>                       #APP using another APP in its TEMPLATE, through AWS::Serverless::Application
+                                  #Is shown as a warning in the UI, due to STACK.Capabilities CAPABILITY_AUTO_EXPAND
+                                  #Nested APP must be published before its parent
 
                                   ┌──────────────────┐
                                   │   NESTING AUTH   │
