@@ -955,18 +955,35 @@ sam logs
                                   │   CI/CD PIPELINE   │
                                   └────────────────────┘
 
-sam pipeline bootstrap            #Create|deploy RESOURCEs needed for CI/CD
+sam pipeline bootstrap            #Create|deploy RESOURCEs needed for `sam package|deploy|sync|delete`,
+                                  #for auth (USER, ROLEs, OPENID_PROVIDER) and assets (BUCKET, ECR REPO)
+
+aws-sam-cli-managed-BSTAGE-       #PIPELINE_STACK. Upserted with a CHANGESET
+ pipeline-resources               #Not upserted if no RESOURCEs to upsert
+
+TAG 'ManagedStackSource'          #Is set on PIPELINE_STACK and USER|ROLEs|BUCKETs, with value 'AwsSamCli'
 
 --[no-]confirm-changeset          #BOOL (def: true). Confirm before upserting STACK
 --[no-]interactive                #BOOL (def: true). Interactive mode
 
 --stage                           #'SAM_PROFILE'. Namespaces 'STACK' name
-                                  #Only [:alnum:]-
-                                  #Required
+                                  #Required. Only [:alnum:]-
 
---bucket                          #S3 'BUCKET_ARN'
---image-repository                #ECR 'REPO_ARN'
---[no-]create-image-repository    #BOOL (def: false). Automatically creates ECR REPO for all FUNCTIONs instead of using --image-repository
+--bucket                          #S3 'BUCKET_ARN' to use with `sam package|deploy --bucket`
+                                  #Def: created by PIPELINE_STACK with:
+                                  #  - allows PIPELINE_ROLE|CLOUDFORMATION_ROLE to s3:GetBucket*|GetObject*|PutObject*|List*
+                                  #  - LOGGING to another BUCKET2, with file prefix 'artifact-logs'
+                                  #  - VERSIONING
+                                  #  - DeletionPolicy 'Retain'
+                                  #  - force HTTPS
+
+--image-repository                #ECR 'REPO_ARN' to use with `sam package|deploy|sync --image-repository`
+                                  #Def: created by PIPELINE_STACK and allows:
+                                  #  - lambda.amazonaws.com to ecr:GetDownloadUrlForLayer, BatchGetImage, Set|Get|DeleteRepositoryPolicy
+                                  #  - PIPELINE_ROLE|CLOUDFORMATION_ROLE to ecr:GetDownloadUrlForLayer|BatchCheckLayerAvailability,
+                                  #    Put|BatchGet|BatchDeleteImage, InitiateLayerUpload|UploadLayerPart|CompleteLayerUpload
+                                  #  - PIPELINE_ROLE to ecr:GetAuthorizationToken
+--[no-]create-image-repository    #BOOL. If false (def), ignore --image-repository and do not use ECR REPOs
 
 --pipeline-execution-role         #PIPELINE_ROLE. ROLE_ARN used to run `sam deploy|sync|delete`
                                   #Def: created by PIPELINE_STACK and allowed:
@@ -979,32 +996,40 @@ sam pipeline bootstrap            #Create|deploy RESOURCEs needed for CI/CD
                                   #  - allowed any PACTION on any RESOURCE
 
 --permissions-provider 'iam'      #Default value for this flag
---pipeline-user                   #IAM USER_ARN that can assume PIPELINE_ROLE
+--pipeline-user                   #IAM USER_ARN used to assume PIPELINE_ROLE
+                                  #Must assume it using (depending on PIPELINE_ROLE's TAG 'Role' value):
+                                  #  - 'pipeline-execution-role' (def): USER
+                                  #  - 'aws-sam-pipeline-codebuild-service-role': USER's ACCOUNT's ROOT
+                                  #Def: created by PIPELINE_STACK
                                   #Only if --permissions-provider 'iam'
+ACCESS_KEY                        #If PIPELINE_STACK creates USER, it also creates its ACCESS_KEY
+                                  #Its ACCESS_KEY_ID|SECRET_ACCESS_KEY are:
+                                  #  - stored as a Secrets Manager SECRET
+                                  #  - printed
+                                  #  - but not stored in pipelineconfig.toml
 
-     - must be used to assume PIPELINE_ROLE
-        - alternatively, can use USER's ACCOUNT's ROOT
-           - providing has TAG 'Role' with value 'aws-sam-pipeline-codebuild-service-role'
-     - only if --permissions-provider 'iam'
-
---permissions-provider 'oidc'     #
---oidc-provider                   #Can be:
-                                  #  - 'github-actions': must set --github-* and --deployment-branch
-                                  #  - 'gitlab': must set --gitlab-* and --deployment-branch
-                                  #  - 'bitbucket-pipelines': must set --bitbucket-repo-uuid
+--permissions-provider 'oidc'     #Make PIPELINE_STACK create an OPENID_PROVIDER (unless exists already) used to assume PIPELINE_ROLE
+--oidc-provider-url               #OPENID_PROVIDER.Url. Required
+--oidc-client-id                  #OPENID_PROVIDER.ClientIDList[0]. Required
+--oidc-provider                   #Can be 'github-actions', 'gitlab' or 'bitbucket-pipelines'
                                   #To set when using --permissions-provider 'oidc'
 --cicd-provider                   #Same as --oidc-provider
                                   #Exception: with --interactive, prompts for --oidc-provider even if --permissions-provider 'iam'
---oidc-provider-url               #OPENID_PROVIDER.Url
---oidc-client-id                  #OPENID_PROVIDER.ClientIDList[0]
 
+--oidc-provider 'github-actions'  #Subject claim is 'repo:USER/REPO:ref:refs/heads/BRANCH'
+                                  #Must set following flags
 --github-org                      #GitHub 'USER'
 --github-repo                     #GitHub 'REPO'
 --deployment-branch               #Git 'BRANCH'
 
+--oidc-provider 'gitlab'          #Subject claim is 'project_path:USER/REPO:ref_type:branch:ref:BRANCH'
+                                  #Must set following flags
 --gitlab-group                    #GitLab 'USER'
 --gitlab-project                  #GitLab 'REPO'
+--deployment-branch               #Git 'BRANCH'
 
+--oidc-provider                   #Subject claim is 'REPO_UUID:*'
+ 'bitbucket-pipelines'            #Must set following flags
 --bitbucket-repo-uuid             #BitBucket REPO UUID
 
 ./.aws-sam/pipeline/
@@ -1012,50 +1037,14 @@ sam pipeline bootstrap            #Create|deploy RESOURCEs needed for CI/CD
 CONFIG.SAM_PROFILE.pipeline_bootstrap.parameters.FLAG for:
   - all FLAGs except --confirm-changeset, --interactive, --create-image-repository
   - same as input, except for RESOURCEs newly created (BUCKET|REPO|ROLEs|USER)
-Prints RESOURCEs newly created or not (BUCKET|REPO|ROLEs|USER), and also ACCESS_KEY_ID + SECRET_ACCESS_KEY
+Prints RESOURCEs newly created or not (BUCKET|REPO|ROLEs|USER)
 Reloads CONFIG, but with SAM_PROFILE 'default'
   - only OIDC flags, --permissions-provider and --pipeline-user
 
 When overriding below RESOURCEs, customize it
   - i.e. must manually allow PACTIONs, except s3|ecr:*
   - see https://github.com/aws/aws-sam-cli/blob/develop/samcli/lib/pipeline/bootstrap/stage_resources.yaml
-  - can also manually modify STACK after creation???
-STACK 'aws-sam-cli-managed-BSTAGE-pipeline-resources'
-  - upserted using a CHANGESET
-  - not upserted if no RESOURCEs to upsert
-RESOURCES:
-  - PIPELINE_ROLE
-  - CLOUDFORMATION_ROLE
-  - USER
-  - Secrets Manager SECRET:
-     - value is JSON_OBJ with USER's ACCESS_KEY: aws_access_key_id 'ACCESS_KEY_ID', aws_secret_access_key 'SECRET_ACCESS_KEY'
-  - OPENID_PROVIDER
-     - must be used to assume PIPELINE_ROLE
-        - must match:
-           - --oidc-provider-url
-           - --oidc-client-id
-           - subject claim, depending on --oidc-provider:
-              - GitHub: 'repo:USER/REPO:ref:refs/heads/BRANCH' (--github-org, --github-repo, --deployment-branch)
-              - GitLab: 'project_path:USER/REPO:ref_type:branch:ref:BRANCH' (--gitlab-group, --gitlab-project, --deployment-branch)
-              - BitBucket: 'REPO_UUID:*' (--bitbucket-repo-uuid)
-     - only if --permissions-provider 'oidc' and not already existing
-  - BUCKET
-     - to use with `sam package|deploy --bucket`
-     - DeletionPolicy 'Retain'
-     - VERSIONING
-     - LOGGING to another BUCKET, with file prefix 'artifact-logs'
-     - allow s3:GetBucket*|GetObject*|PutObject*|List* for PIPELINE_ROLE|CLOUDFORMATION_ROLE
-     - force HTTPS
-     - overridden by --bucket
-  - ECR REPO
-     - to use with `sam package|deploy|sync --image-repository`
-     - allows lambda.amazonaws.com to ecr:GetDownloadUrlForLayer, BatchGetImage, Set|Get|DeleteRepositoryPolicy
-     - allow ecr:GetDownloadUrlForLayer|BatchCheckLayerAvailability, Put|BatchGet|BatchDeleteImage,
-       InitiateLayerUpload|UploadLayerPart|CompleteLayerUpload for PIPELINE_ROLE|CLOUDFORMATION_ROLE
-     - allow ecr:GetAuthorizationToken for PIPELINE_ROLE
-     - only if --create-image-repository
-     - overridden by --image-repository
-  - TAG 'ManagedStackSource' with value 'AwsSamCli' on STACK|BUCKETs|USER|ROLEs
+  - can also manually modify STACK after creation
 
 sam pipeline init                 #Creates CI/CD configuration file, e.g. GitHub actions workflows
 --bootstrap                       #Also runs sam pipeline bootstrap --interactive
