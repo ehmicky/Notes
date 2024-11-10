@@ -578,7 +578,7 @@ sam deploy|sync
                                   #Recommended: 'CAPABILITY_IAM'
 --notification-arns               #STACK.NotificationARNs
 --tags                            #'TAG=VAL ...'. STACK.Tags
---role-arn                        #'ROLE_ARN' executing CHANGESET
+--role-arn                        #'ROLE_ARN'. STACK.RoleARN
 
 sam deploy
 --on-failure                      #STACK.OnFailure
@@ -1007,43 +1007,50 @@ PARAMs:
      - BitBucket: 'REPO_UUID:*'
      - 'oidc': none
   - IdentityProviderThumbprint: OPENID_PROVIDER.ThumbprintList[0] (automatically created)
+When overriding below RESOURCEs, customize it
+  - i.e. must manually allow PACTIONs, except s3|ecr:*
+  - see https://github.com/aws/aws-sam-cli/blob/develop/samcli/lib/pipeline/bootstrap/stage_resources.yaml
+  - can also directly modify TEMPLATE???
+--cicd-provider 'oidc' + OPENID_PROVIDER does not exist
 RESOURCES:
-  - OPENID_PROVIDER
-     - ThumbprintList automatically computed
-  - USER
-     - IPOLICY allowing sts:AssumeRole on 'pipeline-execution-role'
-     - ACCESS_KEY
-  - Secrets Manager SECRET:
-     - value is JSON_OBJ: aws_access_key_id 'ACCESS_KEY_ID', aws_secret_access_key 'SECRET_ACCESS_KEY'
-     - STACK_OUTPUT 'PipelineUserSecretKey'
-  - ROLE1
+  - PIPELINE_ROLE
+     - to use to run `sam deploy|sync|delete`
+     - allowed cloudformation:Create|Describe|ExecuteChangeSet, DescribeStack[Events|Resource]|DeleteStack, GetTemplate[Summary] on any STACK
+     - allowed iam:PassRole to CLOUDFORMATION_ROLE
+     - overridden by --pipeline-execution-role
+  - CLOUDFORMATION_ROLE
+     - to pass to `sam deploy|sync --role-arn`
      - assumable by cloudformation.amazonaws.com
      - allowed any PACTION on any RESOURCE
-  - ROLE2
-     - assumable by:
-        - if --cicd-provider 'oidc', all of:
-           - authenticated with OPENID_PROVIDER
-           - right CLIENT_ID
-           - right SubjectClaim
-        - else either:
-           - USER
-           - USER's ACCOUNT's ROOT, providing has TAG 'Role' with value 'aws-sam-pipeline-codebuild-service-role'
-     - allowed:
-        - iam:PassRole to ROLE1
-        - cloudformation:Create|Describe|ExecuteChangeSet, DescribeStack[Events|Resource]|DeleteStack, GetTemplate[Summary] on any STACK
-        - s3:GetBucket*|GetObject*|PutObject*|List* on BUCKET
-        - ecr:GetAuthorizationToken
-        - ecr:GetDownloadUrlForLayer|BatchCheckLayerAvailability, Put|BatchGet|BatchDeleteImage, InitiateLayerUpload|UploadLayerPart|CompleteLayerUpload on ECR_REPO
-     - TAG 'Role' with value 'pipeline-execution-role'
+     - overridden by --cloudformation-execution-role
+  - OPENID_PROVIDER
+     - must be used to assume PIPELINE_ROLE with right:
+        - CLIENT_ID
+        - SubjectClaim
+     - only if --cicd-provider 'oidc'
+  - USER
+     - must be used to assume PIPELINE_ROLE
+        - alternatively, can use USER's ACCOUNT's ROOT
+           - providing has TAG 'Role' with value 'aws-sam-pipeline-codebuild-service-role'
+     - only if --cicd-provider 'iam'
+  - Secrets Manager SECRET:
+     - value is JSON_OBJ with USER's ACCESS_KEY: aws_access_key_id 'ACCESS_KEY_ID', aws_secret_access_key 'SECRET_ACCESS_KEY'
   - BUCKET
+     - to use with `sam package|deploy --bucket`
      - DeletionPolicy 'Retain'
-     - has VERSIONING
-     - allow s3:GetBucket*|GetObject*|PutObject*|List* on everything for ROLE1|ROLE2
-     - force HTTPS
+     - VERSIONING
      - LOGGING to another BUCKET, with file prefix 'artifact-logs'
+     - allow s3:GetBucket*|GetObject*|PutObject*|List* for PIPELINE_ROLE|CLOUDFORMATION_ROLE
+     - force HTTPS
+     - overridden by --bucket
   - ECR REPO
+     - to use with `sam package|deploy|sync --image-repository`
      - allows lambda.amazonaws.com to ecr:GetDownloadUrlForLayer, BatchGetImage, Set|Get|DeleteRepositoryPolicy
-     - ???
+     - allow ecr:GetDownloadUrlForLayer|BatchCheckLayerAvailability, Put|BatchGet|BatchDeleteImage,
+       InitiateLayerUpload|UploadLayerPart|CompleteLayerUpload for PIPELINE_ROLE|CLOUDFORMATION_ROLE
+     - allow ecr:GetAuthorizationToken for PIPELINE_ROLE
+     - only if --create-image-repository
+     - overridden by --image-repository
   - TAG 'ManagedStackSource' with value 'AwsSamCli' on BUCKETs|USER|ROLEs
 
 ./.aws-sam/pipeline/
