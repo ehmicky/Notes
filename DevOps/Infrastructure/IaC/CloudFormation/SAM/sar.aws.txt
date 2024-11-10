@@ -6,13 +6,14 @@
 VERSION ==>                       #2024-11-05
 
 SAM ==>                           #Documented as part of SAM, but uncorrolated to both SAM CLI and SAM transforms
-                                  #Exception: publishing happens using a SAM CLI command
+                                  #Exception: the SAM `publish` CLI command calls the SAR API
 
                                   ┌─────────┐
                                   │   API   │
                                   └─────────┘
 
 SAR                               #AWS Serverless Application Repository
+                                  #Registry (like npm) for CloudFormation TEMPLATEs
 
 serverlessrepo.amazonaws.com      #SERVICE_DOMAIN
                                   #With SDK, called serverlessapplicationrepository
@@ -31,7 +32,10 @@ PRICING ==>                       #Free
                                   │   APPLICATION   │
                                   └─────────────────┘
 
-APP                               #Max 100 per ACCOUNT + REGION (soft)
+APP                               #Group of APP_VERSIONs, and metadata|info
+                                  #Like a npm package, but for CloudFormation TEMPLATEs
+                                  #Max 100 per ACCOUNT + REGION (soft)
+
 APP_ARN                           #'arn:aws:serverlessrepo:REGION:ACCOUNT_ID:applications/APP_ID'
 APP[_VERSION].applicationId       #'APP_ID'
 APP.name                          #'APP'
@@ -71,7 +75,7 @@ CreateApplication()               #  - no applicationId, *verifiedAuthor*, creat
                                   #Res: APP
                                   #  - no *Body
 PATCH /applications/APP_ID        #Req: APP
-UpdateApplication()               #  - no applicationId, *verifiedAuthor*, creationTime
+UpdateApplication()               #  - no *verifiedAuthor*, creationTime
                                   #  - no version, name, spdxLicenseId, license*
                                   #Res: APP
                                   #  - no *Body
@@ -102,26 +106,29 @@ APP.licenseBody|readmeBody        #Can use 'file://...'
                                   └─────────────┘
 
 APP.version                       #APP_VERSION
+                                  #Like a npm package version, but for a CloudFormation TEMPLATE
 APP_VERSION.semanticVersion       #'APP_VERSION'. Must be a semver, e.g. 'X.Y.Z'
 APP_VERSION.creationTime          #'DATE'
 
-APP_VERSION.sourceCodeArchiveUrl  #S3 'URL' to source code zip file, for publishing
+APP_VERSION.templateBody          #STR. TEMPLATE's contents
                                   #Max 50MB contents per APP_VERSION
                                   #Max 5GB contents for all APPs per ACCOUNT + REGION
-APP_VERSION.sourceCodeUrl         #'URL' to source code, e.g. to GitHub commit, for documentation
-
-APP_VERSION.templateBody          #STR. TEMPLATE's contents
 APP_VERSION.templateUrl           #Same but as S3 'URL'
 
+APP_VERSION.sourceCodeUrl         #'URL' to source code, e.g. to GitHub commit, for documentation
+APP_VERSION.sourceCodeArchiveUrl  #S3 'URL' to source code zip file, for documentation
+
 APP_VERSION.resourcesSupported    #BOOL. False if some of the RESOURCEs are not supported in caller's REGION
+                                  #Computed by API, using TEMPLATE
 APP_VERSION.requiredCapabilities  #Minimum STACK.Capabilities required
+                                  #Computed by API, using TEMPLATE
 
                                   ┌─────────────────┐
                                   │   VERSION API   │
                                   └─────────────────┘
 
 PUT /applications/APP_ID          #Req: APP_VERSION
- /versions/APP_VERSION            #  - no semanticVersion, creationTime, requiredCapabilities, resourcesSupported, parameterDefinitions
+ /versions/APP_VERSION            #  - no creationTime, requiredCapabilities, resourcesSupported, parameterDefinitions
 CreateApplicationVersion()        #Res: APP_VERSION
                                   #  - no templateBody
 GET /applications/APP_ID/versions #Req: none
@@ -158,6 +165,7 @@ APP_METADATA
                                   └────────────────┘
 
 APP_VERSION.parameterDefinitions  #APP_PARAM_ARR. TEMPLATE.Parameters
+                                  #Computed by API, using TEMPLATE
 APP_PARAM.name                    #'PARAM'
 APP_PARAM.type|minLength|maxLength
  |minValue|maxValue|allowedPattern
@@ -167,15 +175,12 @@ APP_PARAM.type|minLength|maxLength
 
 APP_PARAM.referencedByResources   #'RESOURCE'_ARR using this APP_PARAM
 
-APP_CHANGESET.parameterOverrides  #APP_PARAMVAL_ARR. STACK.Parameters
-APP_PARAMVAL.name                 #'PARAM'.
-APP_PARAMVAL.value                #'VAL'
-
                                   ┌──────────────┐
                                   │   TEMPLATE   │
                                   └──────────────┘
 
-APP_TEMPLATE.templateId           #TEMPLATE_MID
+APP_TEMPLATE                      #Reference an existing APP_VERSION's TEMPLATE
+APP_TEMPLATE.templateId           #APP_TEMPLATE_MID
 APP_TEMPLATE.applicationId        #'APP_ID'
 APP_TEMPLATE.semanticVersion      #'APP_VERSION'
 APP_TEMPLATE.creationTime         #'DATE'
@@ -194,19 +199,20 @@ APP_TEMPLATE.status               #One of:
                                   └──────────────────┘
 
 POST                              #Req: APP_TEMPLATE
- /applications/APP_ID/templates   #  - no applicationId, template*, status, *Time
+ /applications/APP_ID/templates   #  - no template*, status, *Time
 CreateCloudFormationTemplate()    #Res: APP_TEMPLATE
 GET /applications/APP_ID
- /templates/TEMPLATE_MID          #Req: empty
+ /templates/APP_TEMPLATE_MID      #Req: empty
 GetCloudFormationTemplate()       #Res: APP_TEMPLATE
 
                                   ┌───────────────┐
                                   │   CHANGESET   │
                                   └───────────────┘
 
+APP_CHANGESET                     #Calls CreateChangeSet(), but sets CHANGESET.Template* using an APP's TEMPLATE
 APP_CHANGESET.applicationId       #'APP_ID'
 APP_CHANGESET.semanticVersion     #'APP_VERSION'
-APP_CHANGESET.templateId          #'TEMPLATE_MID'
+APP_CHANGESET.templateId          #'APP_TEMPLATE_MID' (def: guessed)
 
 APP_CHANGESET.changeSetId
  |changeSetName|stackId|stackName
@@ -214,13 +220,14 @@ APP_CHANGESET.changeSetId
  |clientToken|notificationArns
  |tags|rollbackConfiguration
  |resourceTypes                   #CHANGESET.* (see CloudFormation docs)
+APP_CHANGESET.parameterOverrides  #CHANGESET.Parameters but as OBJ_ARR: name 'PARAM', value 'VAL'
 
                                   ┌───────────────────┐
                                   │   CHANGESET API   │
                                   └───────────────────┘
 
 POST                              #Req: APP_CHANGESET
- /applications/APP_ID/changesets  #  - no applicationId, changeSetId, stackId
+ /applications/APP_ID/changesets  #  - no changeSetId, stackId
 CreateCloudFormationChangeSet()   #Res: APP_CHANGESET
                                   #  - only applicationId, semanticVersion, changeSetId, stackId
 
@@ -228,13 +235,16 @@ CreateCloudFormationChangeSet()   #Res: APP_CHANGESET
                                   │   POLICY   │
                                   └────────────┘
 
+APP_POLICY                        #Resource-based POLICY on APP, APP_VERSION, APP_TEMPLATE, APP_CHANGESET
+                                  #By default: none, i.e. private
 APP_POLICY.statements             #APP_STATEMENT_ARR
                                   #Max 6KB
 APP_STATEMENT.statementId         #STR. Like IAM STATEMENT.Sid
-APP_STATEMENT.actions             #'PACTION'_ARR
-                                  #  - no CreateApplication[Version], UpdateApplication, DeleteApplication, ListApplications
-                                  #    GetCloudFormationTemplate, *ApplicationPolicy, UnshareApplication
-                                  #  - Deploy: same as all available PACTIONs
+APP_STATEMENT.actions             #'PACTION'_ARR among only:
+                                  #  - SearchApplications, GetApplication, ListApplicationVersions, ListApplicationDependencies
+                                  #  - CreateCloudFormationTemplate
+                                  #  - CreateCloudFormationChangeSet
+                                  #  - Deploy: all of the above
 APP_STATEMENT.principals          #'ACCOUNT_ID|*'_ARR. STATEMENT.Principal
 APP_STATEMENT.principalOrgIDs     #'ORG_ID'_ARR. COND_KEY aws:PrincipalOrgID
 
@@ -247,21 +257,11 @@ COND_KEY
 
 PUT /applications/APP_ID/policy   #Req: APP_POLICY
 PutApplicationPolicy()            #Res: APP_POLICY
+POST /applications/APP_ID/unshare #Req: organizationId 'ORG_ID'
+UnshareApplication()              #Res: none
+                                  #Updates APP_STATEMENT.principalOrgIDs
 GET /applications/APP_ID/policy   #Req: empty
 GetApplicationPolicy()            #Res: APP_POLICY
-
-                                  ┌─────────────┐
-                                  │   UNSHARE   │
-                                  └─────────────┘
-
-APP_UNSHARE.organizationId        #'ORG_ID'
-
-                                  ┌─────────────────┐
-                                  │   UNSHARE API   │
-                                  └─────────────────┘
-
-POST /applications/APP_ID/unshare #Req: APP_UNSHARE
-UnshareApplication()              #Res: none
 
                                   ┌──────────────────────┐
                                   │   DEPENDENCIES API   │
