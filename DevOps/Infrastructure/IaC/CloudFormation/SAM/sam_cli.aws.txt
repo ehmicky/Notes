@@ -31,13 +31,16 @@ GLOBAL_CONFIG.lastVersionCheck    #DATE_NUM of last version check
                                   │   CONFIG   │
                                   └────────────┘
 
-~/.aws-sam/metadata.json          #GLOBAL_CONFIG. Undocumented by SAM, but we document some of it here
+./.aws-sam/                       #SAM_LDIR
+~/.aws-sam/                       #SAM_GDIR
+SAM_GDIR/metadata.json            #GLOBAL_CONFIG. Undocumented by SAM, but we document some of it here
                                   #As opposed to CONFIG (per-project)
 
 sam ...
 --config-file                     #'PATH' to CONFIG (def: './samconfig.y[a]ml|toml')
                                   #Relative paths use TEMPLATE's DIR
 --config-env                      #'SAM_PROFILE' (def: 'default')
+                                  #Each should have its own CREDS
 --save-params                     #Save CLI FLAGs to CONFIG file
 
 CONFIG.version                    #Must be 0.1
@@ -93,7 +96,7 @@ sam local generate-event
 
 sam validate|build|sync|package   #'PATH' to TEMPLATE
  |deploy|publish|local|list       #Def:
-ENVVAR SAM_TEMPLATE_FILE          #  - './.aws-sam/build/template.yaml': with sam package|deploy|publish|local
+ENVVAR SAM_TEMPLATE_FILE          #  - 'SAM_LDIR/build/template.yaml': with sam package|deploy|publish|local
 --template[-file]|-t              #  - 'template.y[a]ml|json'
 
 sam sync|deploy|delete|list|logs
@@ -231,7 +234,7 @@ aws-sam-cli-managed-BSTAGE-       #PIPELINE_STACK, used to create those RESOURCE
 
 TAG 'ManagedStackSource'          #Is set on PIPELINE_STACK and USER|ROLEs|BUCKETs, with value 'AwsSamCli'
 
-./.aws-sam/pipeline/              #Stores ARNs of USER|ROLEs|BUCKET|REPO, whether created by PIPELINE_STACK or not
+SAM_LDIR/pipeline/                #Stores ARNs of USER|ROLEs|BUCKET|REPO, whether created by PIPELINE_STACK or not
  pipelineconfig.toml              #Is a CONFIG with multiple CONFIG.SAM_PROFILE.pipeline_bootstrap.parameters.FLAG
                                   #  - e.g. USER is stored as CONFIG.SAM_PROFILE.pipeline_bootstrap.parameters.pipeline_user
                                   #Created by `sam pipeline bootstrap`, which also prints those RESOURCE ARNs
@@ -253,9 +256,10 @@ CUSTOMIZING RESOURCES ==>         #The RESOURCEs can be customized:
 --[no-]confirm-changeset          #BOOL (def: true). Confirm before upserting STACK
 --[no-]interactive                #BOOL (def: true). Interactive mode
 
---stage                           #'SAM_PROFILE'. Namespaces 'STACK' name
+--stage                           #'SAM_PROFILE'. Meant to represent a stage (dev, staging, production, etc.)
+                                  #Namespaces 'STACK' name
+                                  #Each should have its own CREDS
                                   #Required. Only [:alnum:]-
-                                  #Meant to represent a stage (dev, staging, production, etc.)
 
 --cloudformation-execution-role
 --bucket
@@ -329,54 +333,29 @@ sam pipeline init                 #Scaffolds CI/CD configuration file, e.g. GitH
                                   #Always interactive
                                   #Re-uses RESOURCEs created by `sam pipeline bootstrap`
                                   #  - must be called first
-                                  #  - can be called multiple times, with different --stage=SAM_PROFILE
                                   #  - its result is retrieved using pipelineconfig.toml
 
 --bootstrap                       #First runs `sam pipeline bootstrap --interactive`
                                   #Also prompts for --cicd-provider
                                   #No other flags
 
-Templates either in:
-  - aws-sam-cli-pipeline-init-templates repo
-     - contains TOP_DIR
-     - ROOT_DIR cloned inside ~/.aws-sam/aws-sam-cli-app-pipeline-templates
-  - any git repo
-     - either TOP_DIR|ROOT_DIR
-     - cloned inside TMP_DIR/custom-pipeline-template
+STAGES ==>                        #`sam pipeline bootstrap` must be called twice, with different --stage=SAM_PROFILE
+                                  #First for staging, second for production
+                                  #Produces identical CI/CD setup for each
+                                  #Can call a third time with --stage=default for shared RESOURCEs
 
-TOP_DIR/manifest.yaml
-  - providers OBJ_ARR: id STR, displayName STR
-     - picks one
-     - only with aws-sam-cli-pipeline-init-templates
-  - templates OBJ_ARR: provider STR, location STR, displayName STR
-     - picks one among providers
-     - location is ROOT_DIR
+SAM_GDIR/pipeline/generated-files/#Contains generated files
 
-ROOT_DIR: cookiecutter template
+aws-sam-cli-pipeline-init-        #Repo containing the cookiecutter templates
+ templates                        #Available templates: GitHub actions, GitLab, BitBucket, Jenkins, CodeDeploy
+SAM_GDIR/aws-sam-cli-app-
+ pipeline-templates               #Caches that repo
 
-ROOT_DIR/questions.json
-  - augments context through prompts
-  - cookiecutter-specifiec
+GITHUB ACTIONS TEMPLATE ==>       #Scaffolds GitHub actions WORKFLOW file
+                                  #???
 
-ROOT_DIR/metadata.json
-  - number_of_stages NUM (def: 2)
-     - NUM of SAM_PROFILEs to use
-     - --bootstrap calls `sam pipeline bootstrap` once for each
-
-SAM_PROFILE 'default':
-  - default values, not actually used otherwise
-
-context:
-  - SAM_PROFILE,FLAG VAL: for all --FLAG stored in pipelineconfig.toml
-     - can also use NUM,FLAG instead (except for SAM_PROFILE 'default')
-  - stage_names_message STR: message about available SAM_PROFILEs
-  - shared_values 'default'
-  - outputDir '.'
-
-Template applied in local clone of ROOT_DIR
-  - but copied to ~/.aws-sam/pipeline/generated-files/
-
-Recommended: different CREDS for different SAM_PROFILEs
+CUSTOM TEMPLATES ==>              #Can be used
+                                  #Not documented yet
 
                                   ┌────────────────┐
                                   │   BUILD MAIN   │
@@ -408,7 +387,7 @@ BUILD_DIR                         #'BASE_BUILD_DIR/FUNCTION|LAYER'
                                   #SOURCE_DIR is copied, transformed and output to BUILD_DIR
                                   #Re-created on each build
 sam build
---build-dir|-c                    #'BASE_BUILD_DIR' (def: './.aws-sam/build/')
+--build-dir|-c                    #'BASE_BUILD_DIR' (def: 'SAM_LDIR/build/')
 
                                   ┌───────────────────────┐
                                   │   BUILD PERFORMANCE   │
@@ -421,14 +400,14 @@ sam build
 --[no-]cached|-c                  #BOOL (def: false, recommended: true). Caches build
                                   #Noop if --use-container or if PackageType Image
                                   #Uses, depending on BuildMethod:
-                                  #  - 'nodejs*', 'esbuild', 'python*', 'ruby*': ./.aws-sam/deps
-                                  #  - 'go*', 'java*', 'dotnet*', 'rust*', 'provided': ./.aws-sam/cache (--cache-dir)
-./.aws-sam/deps                   #Cached dependencies, e.g. node_modules, avoiding install step
+                                  #  - 'nodejs*', 'esbuild', 'python*', 'ruby*': SAM_LDIR/deps
+                                  #  - 'go*', 'java*', 'dotnet*', 'rust*', 'provided': SAM_LDIR/cache (--cache-dir)
+SAM_LDIR/deps                     #Cached dependencies, e.g. node_modules, avoiding install step
  /FUNCTION_UUID|LAYER_UUID        #Invalidated when --manifest contents changes
                                   #  - e.g. new dependency, or when dependency version range changed
                                   #  - but not when a new dependency version is available but its version change stayed the same
                                   #     - should use --no-cached to invalidate then
---cache-dir|-cd                   #'CACHE_DIR' (def: ./.aws-sam/cache/)
+--cache-dir|-cd                   #'CACHE_DIR' (def: SAM_LDIR/cache/)
 CACHE_DIR/FUNCTION_UUID|LAYER_UUID#Cached BUILD_DIR, avoiding whole build step
                                   #Invalidated when SOURCE_DIR contents or list of files changes
 
@@ -494,7 +473,7 @@ BuildMethod 'nodejsX.x'           #Included|excluded files:
                                   #  - uses PACKAGE.files and .npmignore (with `npm pack` under-the-hood)
                                   #  - includes package-lock.json, npm-shrinkwrap.json
                                   #  - includes .npmrc but deletes at end
-                                  #  - excludes .git/, .aws-sam/
+                                  #  - excludes .git/, SAM_LDIR
                                   #Runs `npm install --production`
 
 BUILD_PROPS.UseNpmCi              #BOOL (def: false). Use `npm ci` instead
@@ -587,7 +566,7 @@ LAYER_VERSION
                                   │   BUILD INTERNAL   │
                                   └────────────────────┘
 
-./.aws-sam/build.toml             #BUILD_MANIFEST. Internal information used and automatically generated by `sam build`
+SAM_LDIR/build.toml               #BUILD_MANIFEST. Internal information used and automatically generated by `sam build`
                                   #Has information about each FUNCTION|LAYER having been built
 BUILD_MANIFEST
  .function_build_definitions      #FUNCTION_MANIFEST
@@ -848,7 +827,7 @@ BUILD_DIR/sync.toml               #Automatically created by `sam sync`
                                   #Not if --use-container
                                   #Only for BuildMethod 'nodejs*' (not 'esbuild'), 'python*', 'java*'
                                   #Uses a nested STACK 'AwsSamAutoDependencyLayerNestedStack'
-                                  #BUILD_DIR is ./.aws-sam/auto-dependency-layer/ instead
+                                  #BUILD_DIR is SAM_LDIR/auto-dependency-layer/ instead
                                   #The LAYER is uploaded during --code
                                   #However, must be specified with --no-code too
 
@@ -974,7 +953,7 @@ sam local invoke ['FUNCTION']     #Invoke Lambda FUNCTION locally (emulation)
                                   └───────────────────────────┘
 
 ENVVAR SAM_LAYER_CACHE_BASEDIR    #'DIR' caching LAYERs used by FUNCTION
---layer-cache-basedir             #Def: ~/.aws-sam/layers-pkg
+--layer-cache-basedir             #Def: SAM_GDIR/layers-pkg
                                   #Cached at DIR/LAYER_NAME/
                                   #Cache not invalidated on new LAYER_VERSIONs
                                   #Cache invalidated on --force-image-build
