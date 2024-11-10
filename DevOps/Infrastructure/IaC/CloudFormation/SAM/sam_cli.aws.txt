@@ -96,13 +96,23 @@ sam validate|build|sync|package   #'PATH' to TEMPLATE
 ENVVAR SAM_TEMPLATE_FILE          #  - './.aws-sam/build/template.yaml': with sam package|deploy|publish|local
 --template[-file]|-t              #  - 'template.y[a]ml|json'
 
-sam remote|sync|deploy|delete|list
- |logs
+sam sync|deploy|delete|list|logs
 --stack-name                      #CloudFormation 'STACK'. Required
+sam remote
+--stack-name                      #CloudFormation 'STACK'. Required unless a RESOURCE ARN is passed
 
 sam build|local|deploy|sync|remote
  |list
 --parameter-overrides             #'PARAM=VAL,...'. STACK.Parameters
+
+'RESOURCE'                        #Can be:
+                                  #  - 'RESOURCE' name in TEMPLATE.Resources.RESOURCE
+                                  #     - if in NESTED_STACK, can be prefixed with 'NESTED_STACK/...'
+                                  #     - not with sam logs
+                                  #  - RESOURCE's PhysicalResourceId (e.g. for FUNCTION, FUNC_VERSION.FunctionName)
+                                  #     - not with sam build|sync
+                                  #  - RESOURCE ARN
+                                  #     - only with sam remote
 
                                   ┌──────────┐
                                   │   LINT   │
@@ -210,12 +220,12 @@ ml-apigw-pytorch|tensorflow       #Machine learning FUNCTION
                                   │   BUILD MAIN   │
                                   └────────────────┘
 
-sam build [FUNCTION|LAYER]        #Build AWS::Serverless|Lambda::Function|LayerVersion
+sam build ['FUNCTION|LAYER']      #Build AWS::Serverless|Lambda::Function|LayerVersion
                                   #Does package|runtime-related build step:
                                   #  - e.g. `npm pack`, `npm install`, `esbuild`, `go build`
                                   #  - not other build logic like `tsc`, `babel`, etc., which must be performed before
                                   #Does not zip nor upload to S3|ECR: `sam package` does it instead, afterwards
-                                  #FUNCTION|LAYER:
+                                  #'FUNCTION|LAYER':
                                   #  - def: all
                                   #  - FUNCTION includes its FUNC_VERSION.Layers
                                   #Run by `sam sync`, but always:
@@ -534,7 +544,7 @@ sam pipeline bootstrap
 sam package|deploy|sync
 --image-repository                #ECR 'REPO[_URL]' for `sam package`
                                   #IMAGEs use 'RESOURCE' as name
---image-repositories              #Same but as '[NESTED_STACK/]FUNCTION=REPO[_URL]'
+--image-repositories              #Same but as 'FUNCTION=REPO[_URL]'
 
 sam deploy
 --resolve-image-repos             #BOOL (def: false, recommended: true)
@@ -601,9 +611,9 @@ sam sync                          #Live reloading
                                   #  - AWS::Serverless|Lambda::Function|LayerVersion
                                   #  - AWS::Serverless|ApiGatewyaV2::Api, AWS::Serverless:HttpApi, AWS::ApiGatewayV2::Api
                                   #  - AWS::Serverless|StepFunctions::StateMachine
---resource                        #Filter per 'RESTYPE' (def: all)
+--resource                        #Filter by 'RESTYPE' (def: all)
                                   #Only with --code
---resource-id                     #Filter per '[NESTED_STACK/]RESOURCE' (def: all)
+--resource-id                     #Filter by 'RESOURCE' (def: all)
                                   #Only with --code
 CACHING ==>                       #`sam sync --code` always caches, using RESOURCE's contents
                                   #I.e. if contents did not change, do not update RESOURCEs using CRUD direct API
@@ -635,7 +645,7 @@ BUILD_DIR/sync.toml               #Automatically created by `sam sync`
                                   #  - TEMPLATE: sam sync --no-code
                                   #     - unless --code set
                                   #Also does `sam sync --no-code` at start|end
---watch-exclude                   #'[NESTED_STACK/]RESOURCE=FILE|DIR' to not watch
+--watch-exclude                   #'RESOURCE=FILE|DIR' to not watch
 
 --[no-]dependency-layer           #BOOL (def: true). Put FUNCTION dependencies into a LAYER
                                   #Only meant to speed up `sam sync`, not to be used in production
@@ -732,12 +742,9 @@ sam pipeline init                 #Creates CI/CD configuration file, e.g. GitHub
                                   │   INVOKE REMOTE   │
                                   └───────────────────┘
 
-sam remote invoke [RESOURCE]      #Invoke RESOURCE in AWS API
+sam remote invoke ['RESOURCE']    #Invoke RESOURCE in AWS API
                                   #RESOURCE can be Lambda FUNCTION, Step Functions STATE_MACHINE, SQS QUEUE or Kinesis data stream
-                                  #RESOURCE:
-                                  #  - either 'RESOURCE', RESOURCE_MID or RESOURCE_ARN
-                                  #  - def: guessed if only one possible in current STACK
-                                  #--stack-name is optional: guessed if RESOURCE_MID|ARN specified
+                                  #Def RESOURCE: guessed if only one possible in current STACK
 
 --event|-e                        #Input, i.e. main REQ.PARAM
                                   #Def: none|empty
@@ -781,8 +788,7 @@ KINESIS ==>                       #Calls PutRecord()
                                   │   INVOKE LOCAL ONCE   │
                                   └───────────────────────┘
 
-sam local invoke FUNCTION         #Invoke Lambda FUNCTION locally (emulation)
-                                  #FUNCTION is either its 'RESOURCE' name or FUNC_VERSION.FunctionName
+sam local invoke 'FUNCTION'       #Invoke Lambda FUNCTION locally (emulation)
                                   #Does not work if RESPROP Code.ZipFile or InlineCode
 
 sam local invoke                  #Prints available FUNCTIONs
@@ -790,7 +796,6 @@ sam local invoke                  #Prints available FUNCTIONs
 --event|-e                        #'PATH.json' or '-' (stdin) to REQ
                                   #Def: empty {}
 --env-vars|-n                     #'PATH.json' containing '{ FUNCTION|Parameters: { ENVVAR: 'VAL',... },... }'
-                                  #FUNCTION is either its '[NESTED_STACK/]RESOURCE' name, FUNCTION_MID or FUNC_VERSION.FunctionName
                                   #Current ENVVARs are also used, with priority lower than --env-vars, higher than emulated ones
                                   #Emulates all Lambda ENVVARs, with exceptions:
                                   #  - AWS_SAM_LOCAL 'true'
@@ -888,8 +893,7 @@ sam local generate-event
 
 sam remote test-event             #CRUD for Lambda TEST_EVENTs, i.e. INVOCATION_REQs
  put|list|get|delete              #Meant for end-to-end tests, when calling Lambda through its API
- [FUNCTION]                       #FUNCTION: same as `sam remote invoke`
-                                  #Uses API calls on EventBridge schema registry 'lambda-testevent-schemas'
+ ['FUNCTION']                     #Uses API calls on EventBridge schema registry 'lambda-testevent-schemas'
                                   #Automatically creates|deletes the schemas
                                   #Automatically deletes old versions, keeping max 5 of them
 
@@ -913,7 +917,7 @@ sam logs                          #Prints Cloudwatch logs in current STACK
                                   #Uses FilterLogEvents(), DescribeLogStreams(), ListStackResources()
 
 --cw-log-group                    #'LOG_GROUP' (def: all)
---name|-n                         #'[NESTED_STACK/]FUNCTION|API|STATE_MACHINE' (def: all)
+--name|-n                         #'FUNCTION|API|STATE_MACHINE' (def: all)
                                   #Also shows logs from other FUNCTION|API|STATE_MACHINEs sharing the same LOG_GROUP
                                   #Noop if --cw-log-group
 
@@ -992,16 +996,3 @@ Does sam CLI have same behavior regardless of whether AWS::Serverless::*: ???
   - already processed: e.g. by CDK
   - i.e. sam CLI and transforms are completely uncorrolated
   - should check whole source code of sam CLI for 'AWS::Serverless::*'
-
-Uses 'NESTED_STACK/RESOURCE' full path (full_path), 'RESOURCE' TEMPLATE name (function_id|name), 'FUNCTION' physical name (functionname), or MID, or ARN???
-sam build FUNCTION|LAYER: full_path, TEMPLATE name, physical name
-sam build|sync --build-image: 'RESOURCE' TEMPLATE name
-sam build|sync --container-env-var[-file]: 'RESOURCE' TEMPLATE name
-sam sync --resource-id: '[NESTED_STACK/]RESOURCE' TEMPLATE name
-sam sync --watch-exclude: '[NESTED_STACK/]RESOURCE' TEMPLATE name
-sam remote invoke RESOURCE: 'FUNCTION' physical name
-sam remote test-event ... FUNCTION: 'FUNCTION' physical name
-sam local invoke FUNCTION: full_path, TEMPLATE name, physical name
-sam local invoke --env-vars: full_path, TEMPLATE name, physical name
-sam local invoke --container-env-vars: full_path, TEMPLATE name, physical name
-sam logs --name: resource 'NAME' from API standpoint
