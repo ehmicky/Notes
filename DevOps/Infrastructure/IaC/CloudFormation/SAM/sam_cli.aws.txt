@@ -534,9 +534,6 @@ sam package|deploy|sync
 --kms-key-id                      #S3 'KMS_KEY_MID' (def: uses SSE-S3)
 --metadata                        #'OBJ_JSON' or 'VAR=VAL,...'. S3 x-amz-meta-* [C]
 
-sam pipeline bootstrap
---bucket                          #Like --s3-bucket
-
                                   ┌────────────────┐
                                   │   ECR ASSETS   │
                                   └────────────────┘
@@ -560,10 +557,6 @@ sam deploy
                                   #'ECR_STACK' is 'MAIN_STACK-MAIN_STACK_HASH-CompanionStack'
                                   #  - i.e. one bootstrap STACK per main STACK
                                   #Automatically deletes REPO|STACK when removing FUNCTIONs with PackageType Image
-
-sam pipeline bootstrap
---image-repository                #Same but using REPO_ARN
---[no-]create-image-repository    #BOOL (def: false). Automatically creates ECR REPO for all FUNCTIONs instead of using --image-repository
 
                                   ┌──────────────────┐
                                   │   STACK UPSERT   │
@@ -848,13 +841,35 @@ sam local start-lambda            #Like `sam local invoke` but as a local HTTP s
 --debug-function                  #'FUNCTION' to receive --debug*
                                   #Only if --warm-containers
 
+                                  ┌──────────────────────────────┐
+                                  │   INVOKE LOCAL API GATEWAY   │
+                                  └──────────────────────────────┘
+
 sam local start-api               #Like `sam local start-lambda` but emulates any STACK's API Gateway API too
                                   #Endpoint is: HTTP_METHOD http://HOST:PORT/PATH
-                                  #Seems to use AWS::Serverless::Function CodeUri
-                                  #Seems to live reload
+                                  #Emulates:
+                                  #  - v1|v2
+                                  #  - every ROUTE
+                                  #  - STAGE: only routing and STAGE_VARs
+                                  #  - OpenAPI spec
+                                  #  - CORS
+                                  #  - API.binaryMediaTypes
+                                  #Does not emulate:
+                                  #  - WebSocket API
+                                  #  - GRESP, MODEL, REQVALID, APIKEY, USAGEPLAN, DNAME, MAPPING, CCERTIFICATE, VPCLINK
 --FLAG                            #Like sam local start-lambda
---disable-authorizer              #BOOL. If false (def), uses Lambda AUTHORIZERs
+
 --static-dir|-s                   #'DIR' (def: 'public'). Serve DIR as static files at /
+                                  #If `sam build` was run, DIR is relative to BUILD_DIR, not cwd
+                                  #Uses Content-Disposition: inline; filename=FILE [S]
+                                  #Guesses Content-Type [S]
+                                  #Sets ETag [S] but Expires [S] expires right away and Cache-Control: no-cache; max-age=0 [S]
+                                  #Uses werkzeug under-the-hood
+
+--disable-authorizer              #BOOL. If false (def), emulates API Gateway AUTHORIZERs
+                                  #Does not emulate: authorizerType 'JWT|COGNITO_USER_POOLS', authorizerCredentials,
+                                  #authorizerResultTtlInSeconds, identityValidationExpression
+
 --ssl-cert-file                   #'PATH' (def: none) to SSL certificate
 --ssl-key-file                    #'PATH' (def: none) to SSL key
 
@@ -942,11 +957,17 @@ sam logs
 
 sam pipeline bootstrap            #Create|deploy RESOURCEs needed for CI/CD
 
---[no-]confirm-changeset          #Like sam deploy
---[no-]interactive                #BOOL (def: false). Interactive mode
+--[no-]confirm-changeset          #BOOL (def: true). Like sam deploy
+--[no-]interactive                #BOOL (def: true). Interactive mode
 
---stage                           #STR prefixing all RESOURCE names
+--stage                           #'BSTAGE'. Prefixes all RESOURCE names
+                                  #Only [:alnum:]-
                                   #Similar to CDK STAGE
+                                  #Required
+
+--bucket                          #S3 'BUCKET_ARN'
+--image-repository                #ECR 'REPO_ARN'
+--[no-]create-image-repository    #BOOL (def: false). Automatically creates ECR REPO for all FUNCTIONs instead of using --image-repository
 
 --pipeline-user                   #IAM USER_ARN used by CI/CD provider to call CloudFormation
                                   #Must share ACCESS_KEY_ID and SECRET_ACCESS_KEY with CI/CD provider
@@ -957,11 +978,11 @@ sam pipeline bootstrap            #Create|deploy RESOURCEs needed for CI/CD
 --pipeline-execution-role         #ROLE_ARN (def: automatically created) used by CI/CD provider to call CloudFormation
 --cloudformation-execution-role   #ROLE_ARN (def: automatically created) used as STACK.RoleARN, i.e. for CloudFormation to provision
 
---cicd-provider                   #Can be 'github-actions', 'gitlab', 'bitbucket-pipelines' or 'oidc'
+--cicd-provider                   #Can be 'github-actions', 'gitlab', 'bitbucket-pipelines' or 'oidc' (def)
 
 --github-org                      #GitHub 'USER'
 --github-repo                     #GitHub 'REPO'
---deployment-branch               #Git 'BRANCH'. Only with GitHub actions
+--deployment-branch               #Git 'BRANCH'. Only with GitHub actions and GitLab
 
 --gitlab-group                    #GitLab 'USER'
 --gitlab-project                  #GitLab 'REPO'
@@ -972,6 +993,15 @@ sam pipeline bootstrap            #Create|deploy RESOURCEs needed for CI/CD
                                   #To set when using --cicd-provider 'oidc'
 --oidc-provider-url               #'URL' of OIDC provider
 --oidc-client-id                  #'CLIENT_ID' with OIDC
+
+STACK 'aws-sam-cli-managed-BSTAGE-pipeline-resources'
+PARAMs:
+  - ArtifactsBucketArn, ImageRepositoryArn, CreateImageRepository, PipelineUserArn, PipelineExecutionRoleArn, CloudFormationExecutionRoleArn: --FLAG
+  - IdentityProviderThumbprint: ?
+     - if --permissions-provider 'oidc'
+
+./.aws-sam/pipeline/
+ pipelineconfig.toml              #CONFIG created by `sam pipeline bootstrap`???
 
 sam pipeline init                 #Creates CI/CD configuration file, e.g. GitHub actions workflows
 --bootstrap                       #Also runs sam pipeline bootstrap --interactive
