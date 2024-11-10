@@ -49,7 +49,11 @@ APP.creationTime                  #'DATE'
 APP.author                        #STR
                                   #Max 127 chars, only [:alnum:]-
 APP.verifiedAuthorUrl             #'URL' of author
-APP.isVerifiedAuthor              #BOOL. Whether verified by AWS, which is done in UI
+APP.isVerifiedAuthor              #BOOL. Whether verified by AWS
+                                  #Shown as a badge in the UI
+                                  #Must send:
+                                  #  - author name, ACCOUNT_ID, GitHub page
+                                  #  - to serverlessrepo-verified-author@amazon.com
 
 APP.spdxLicenseId                 #STR, e.g. 'MIT'
 APP.licenseBody                   #STR. License's contents
@@ -95,7 +99,12 @@ DeleteApplication()               #Res: none
                                   │   APPLICATION UI   │
                                   └────────────────────┘
 
-DASHBOARD ==>                     #In UI, can see list of public APP[_VERSION], or private ones shared with current user
+DASHBOARD ==>                     #Can see list of:
+                                  #  - public APP[_VERSION]
+                                  #  - private ones shared with current user
+                                  #Either:
+                                  #  - in normal UI
+                                  #  - without login at: https://serverlessrepo.aws.amazon.com/applications
 
                                   ┌──────────────────────┐
                                   │   APPLICATION AUTH   │
@@ -137,16 +146,36 @@ APP_VERSION.requiredCapabilities  #Minimum STACK.Capabilities required
 AVAILABLE RESTYPES ==>            #Not all RESTYPEs are supported
                                   #See list in https://docs.aws.amazon.com/serverlessrepo/latest/devguide/list-supported-resources.html
 
+AWS::Serverless|Lambda::          #Can be included as any other RESTYPE
+ LayerVersion                     #This can be used as an alternative way to share a LAYER
+                                  #  - instead of distributing a global LAYER_ARN
+                                  #  - pro: consumers get local copies, i.e. less dependent
+
+BUCKET
+ 'awsserverlessrepo-changesets*'  #If APP_VERSION.licenseUrl|readmeUrl|templateUrl not provided, API automatically uploads
+                                  #APP_VERSION.licenseBody|readmeBody|templateBody to it
+                                  #APP_POLICY grants access to this BUCKET automatically
+                                  #     - on the
+
                                   ┌──────────────────┐
                                   │   VERSION AUTH   │
                                   └──────────────────┘
 
-PACTION s3:GetObject              #Required if APP_VERSION.templateUrl
-                                  #  - for SERVICE serverlessrepo.amazonaws.com
-                                  #  - on the specific OBJECT
-                                  #     - or any within the BUCKET: 'arn:aws:s3:::BUCKET/*'
-                                  #  - COND_KEY 'aws:SourceAccount' 'ACCOUNT_ID'
-                                  #Including when using `sam publish`
+PACTION s3:GetObject              #Used:
+                                  #  - by SERVICE serverlessrepo.amazonaws.com
+                                  #  - to retrieve APP_VERSION.licenseUrl|readmeUrl|templateUrl
+                                  #If APP_VERSION.*Url was user-provided
+                                  #  - e.g. when using `sam publish`
+                                  #  - must allow:
+                                  #     - SERVICE serverlessrepo.amazonaws.com
+                                  #     - on the specific OBJECT
+                                  #        - or any within the BUCKET: 'arn:aws:s3:::BUCKET/*'
+                                  #     - COND_KEY 'aws:SourceAccount' 'ACCOUNT_ID'
+                                  #APP_POLICY automatically grants access to this BUCKET to any ACCOUNT_ID that can access the APP
+                                  #  - i.e. users within that ACCOUNT can see TEMPLATEs of each others
+                                  #  - can restrict with a IAM POLICY that:
+                                  #     - denies s3:GetObject
+                                  #     - on "arn:aws:s3:::awsserverlessrepo-changesets*/*"
 
                                   ┌─────────────────┐
                                   │   VERSION API   │
@@ -240,11 +269,12 @@ APP_CHANGESET.semanticVersion     #'APP_VERSION'
 APP_CHANGESET.templateId          #'APP_TEMPLATE_MID' (def: guessed)
 
 APP_CHANGESET.changeSetId
- |changeSetName|stackId|stackName
+ |changeSetName|stackId
  |description|capabilities
  |clientToken|notificationArns
  |tags|rollbackConfiguration
  |resourceTypes                   #CHANGESET.* (see CloudFormation docs)
+APP_CHANGESET.stackName           #'STACK'. Actual STACK name will be 'serverlessrepo-STACK'
 APP_CHANGESET.parameterOverrides  #CHANGESET.Parameters but as OBJ_ARR: name 'PARAM', value 'VAL'
 
                                   ┌──────────────────┐
@@ -282,7 +312,7 @@ APP_STATEMENT.principalOrgIDs     #'ORG_ID'_ARR (def: any)
                                   #Current user must be a member
 
 COND_KEY                          #One of:
- serverlessrepo:applicationType   #  - 'private': no APP_POLICY
+ serverlessrepo:applicationType   #  - 'private': no APP_POLICY, or APP_POLICY.statements empty ARR
                                   #  - 'shared': APP_STATEMENT.principals 'ACCOUNT_ID' or APP_STATEMENT.principalOrgIDs set
                                   #  - 'public': APP_STATEMENT.principals '*' and no APP_STATEMENT.principalOrgIDs
                                   #Only on  same PACTIONs available as APP_STATEMENT.actions
@@ -299,9 +329,25 @@ UnshareApplication()              #Res: none
 GET /applications/APP_ID/policy   #Req: empty
 GetApplicationPolicy()            #Res: APP_POLICY
 
-                                  ┌──────────────────────┐
-                                  │   DEPENDENCIES API   │
-                                  └──────────────────────┘
+                                  ┌─────────────┐
+                                  │   NESTING   │
+                                  └─────────────┘
+
+AWS::Serverless::Application      #Can be used in TEMPLATE, i.e. nesting
+                                  #Since it expands to a STACK, requires STACK.Capabilities CAPABILITY_AUTO_EXPAND
+                                  #Is shown as a warning in the UI
+
+                                  ┌──────────────────┐
+                                  │   NESTING AUTH   │
+                                  └──────────────────┘
+
+PACTION serverlessrepo:
+ CreateCloudFormationTemplate
+ |GetApplication                  #Must be allowed for others to nest this APP
+
+                                  ┌─────────────────┐
+                                  │   NESTING API   │
+                                  └─────────────────┘
 
 GET                               #Req: APP_VERSION
  /applications/APP_ID/dependencies#  - only semanticVersion
