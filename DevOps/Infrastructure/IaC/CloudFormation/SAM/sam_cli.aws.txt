@@ -781,32 +781,30 @@ KINESIS ==>                       #Calls PutRecord()
                                   │   INVOKE LOCAL ONCE   │
                                   └───────────────────────┘
 
-sam local invoke [FUNCTION]       #Invoke Lambda FUNCTION locally (emulation)
-                                  #Does not work with:
-                                  #  - AWS::Lambda::Function with RESPROP Code.ZipFile
-                                  #  - AWS::Serverless::Function with RESPROP InlineCode
+sam local invoke FUNCTION         #Invoke Lambda FUNCTION locally (emulation)
+                                  #FUNCTION is either its 'RESOURCE' name or FUNC_VERSION.FunctionName
+                                  #Does not work if RESPROP Code.ZipFile or InlineCode
+
+sam local invoke                  #Prints available FUNCTIONs
 
 --event|-e                        #'PATH.json' or '-' (stdin) to REQ
                                   #Def: empty {}
---env-vars|-n                     #'PATH.json' containing { FUNCTION|Parameters: { ENVVAR: 'VAL',... },... }
-                                  #FUNCTION is either its 'RESOURCE' name or FUNC_VERSION.FunctionName
+--env-vars|-n                     #'PATH.json' containing '{ FUNCTION|Parameters: { ENVVAR: 'VAL',... },... }'
+                                  #FUNCTION is either its '[NESTED_STACK/]RESOURCE' name, FUNCTION_MID or FUNC_VERSION.FunctionName
                                   #Current ENVVARs are also used, with priority lower than --env-vars, higher than emulated ones
-                                  #Emulated ENVVARs:
-                                  #  - AWS_LAMBDA_FUNCTION_*, AWS_LAMBDA_LOG_* : guessed from FUNCTION RESPROPs
+                                  #Emulates all Lambda ENVVARs, with exceptions:
+                                  #  - AWS_SAM_LOCAL 'true'
                                   #  - AWS_LAMBDA_FUNCTION_VERSION '$LATEST'
                                   #  - AWS_LAMBDA_LOG_STREAM_NAME '$default'
-                                  #  - AWS_REGION, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN: short-term CREDS
                                   #  - AWS_ACCOUNT_ID '123456789012'
-                                  #  - AWS_LAMBDA_INITIALIZATION_TYPE: always 'on-demand'
-                                  #  - AWS_EXECUTION_ENV, LAMBDA_RUNTIME_DIR, LANG, TZ, PATH, LD_LIBRARY_PATH, NODE_PATH: not set
-                                  #Also sets ENVVARs:
-                                  #  - AWS_SAM_LOCAL 'true'
-                                  #  - AWS_LAMBDA_EVENT_BODY ???
+                                  #  - AWS_LAMBDA_INITIALIZATION_TYPE 'on-demand'
+                                  #  - AWS_REGION, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN: short-term CREDS
+
+--log-file|-l                     #'PATH' (def: stdout|stderr) to output FUNCTION logs
 
 --shutdown                        #BOOL (def: false). Emulate FUNC_INSTANCE shutdown after invocation
                                   #Meant to test Lambda extensions' shutdown behavior
-
---log-file|-l                     #'PATH' (def: stdout|stderr) to output FUNCTION logs
+                                  #Regardless, container can be interrupted by CTRL-C
 
 ENVVAR SAM_LAYER_CACHE_BASEDIR    #'DIR' caching LAYERs used by FUNCTION
 --layer-cache-basedir             #Def: ~/.aws-sam/layers-pkg
@@ -818,57 +816,31 @@ ENVVAR SAM_LAYER_CACHE_BASEDIR    #'DIR' caching LAYERs used by FUNCTION
 ENVVAR SAM_DEBUG_PORT
 --debug-port|-d                   #PORT_NUM. Start debugger in localhost:PORT_NUM
                                   #If set, FUNC_VERSION.Timeout will also be set to 10h
---debugger-path                   #'DIR' to debugger command
---debug-args                      #Debugger 'ARG ...'
+--debug-args                      #Debugger 'ARG ...', e.g. `--inspect-brk`
+--debugger-path                   #'DIR' to custom debugger command
 
---container-env-vars
-ENVVAR SAM_DOCKER_NETWORK
---docker-network                  #Like sam build
-ENVVAR SAM_SKIP_PULL_IMAGE        #Like same build
---skip-pull-image                 #If PackageType Image, always set
-ENVVAR SAM_FORCE_IMAGE_BUILD
---force-image-build               #BOOL. If false (def), do not rebuild container image unless has changed
-ENVVAR SAM_DOCKER_VOLUME_BASEDIR  #TEMPLATE's 'DIR'
---docker-volume-basedir|-v        #Used as cwd in container
-                                  #Also used to resolve FUNCTION|LAYER Code[Uri] 'PATH'
---invoke-image|-ii                #'[FUNCTION.]URI'. Container image
+aws-lambda-rie-ARCH               #Docker image running Lambda locally
+                                  #Repository is aws-lambda-runtime-interface-emulator
+                                  #Vendored inside SAM CLI
+                                  #Built locally with `docker build`
+--invoke-image|-ii                #'[FUNCTION.]URI'. Base container image used by aws-lambda-rie
                                   #If PackageType Image, uses FUNC_VERSION.Code.ImageUri instead
                                   #Def: 'public.ecr.aws/lambda/RUNTIME:VERSION-ARCH'
+ENVVAR SAM_FORCE_IMAGE_BUILD      #BOOL. If false (def), do not rebuild container image unless has changed:
+--force-image-build               #  - new version of --invoke-image
+                                  #  - changed RUNTIME or RUNTIME version
+                                  #  - added|removed LAYER (but not LAYER_VERSION)
+--container-env-vars              #'[FUNCTION.]ENVVAR=VAL' (def: none) passed during `docker build`
+ENVVAR SAM_DOCKER_NETWORK
+--docker-network                  #Like sam build
+ENVVAR SAM_SKIP_PULL_IMAGE        #Like sam build
+--skip-pull-image                 #If PackageType Image, always set
+ENVVAR SAM_DOCKER_VOLUME_BASEDIR  #TEMPLATE's 'DIR'
+--docker-volume-basedir|-v        #Also used to resolve FUNCTION|LAYER Code[Uri] 'PATH'
 --container-host                  #'HOST' (def: 'localhost') of container
---container-host-interface        #'NETWORK_IP' (def: '127.0.0.1') of container
+--container-host-interface        #'IP' (def: '127.0.0.1') of container
                                   #Can be '0.0.0.0'
 --add-host                        #'HOST:IP' added to container's host file
-
-image:
-  - locally built image
-  - `docker build`
-  - uses:
-     - --invoke-image as base
-     - aws-lambda-rie-ARCH added on top
-     - includes LAYERs
-  - cached:
-     - not cached if any LAYER is in same TEMPLATE
-     - invalidated by:
-        - added|removed LAYER (but not LAYER_VERSION)
-        - different RUNTIME or RUNTIME version
-        - --force-image-build
-        - new version of --invoke-image
-     - automatically cleaned up
-
-entry: /var/rapid/aws-lambda-rie
-
-cwd: /var/task
-
---debug*:
-  - changes main command
-  - RUNTIME-specific
-     - for Node: node ARG... /var/runtime/index.mjs
-  - --debugger-path 'DIR' is mounted in container to /tmp/lambci_debug_files
-
-aws-lambda-rie-ARCH:
-  - Docker image running Lambda locally
-  - repository is aws-lambda-runtime-interface-emulator
-  - vendored inside SAM CLI
 
                                   ┌─────────────────────────┐
                                   │   INVOKE LOCAL SERVER   │
@@ -1014,8 +986,21 @@ GLOBAL_CONFIG
 ENVVAR
  SAM_CLI_BETA_TERRAFORM_SUPPORT   #BOOL (def: false). ???
 
-Does sam CLI have same behavior regardless of whether AWS::Serverless::*:
+Does sam CLI have same behavior regardless of whether AWS::Serverless::*: ???
   - not processed yet: normal usage
   - already processed: e.g. by CDK
   - i.e. sam CLI and transforms are completely uncorrolated
   - should check whole source code of sam CLI for 'AWS::Serverless::*'
+
+Uses 'NESTED_STACK/RESOURCE' name (full_path), 'RESOURCE' TEMPLATE name (function_id|name), 'FUNCTION' physical name (functionname), or MID, or ARN???
+sam build FUNCTION|LAYER
+sam build|sync --build-image
+sam build|sync --container-env-var[-file]
+sam sync --resource-id
+sam sync --watch-exclude
+sam remote invoke RESOURCE
+sam remote test-event ... FUNCTION
+sam local invoke FUNCTION
+sam local invoke --env-vars
+sam local invoke --container-env-vars
+sam logs --name
