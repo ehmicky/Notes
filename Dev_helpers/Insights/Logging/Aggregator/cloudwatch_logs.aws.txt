@@ -36,7 +36,8 @@ PAGINATION ==>                    #REQ.limit NUM (def|max: 50) + REQ|RES.nextTok
                                   #  - def|max 1e4 or 1MB: FilterLogEvents()
                                   #  - def|max 1e4 and use RES.nextBackwardToken|nextForwardToken: GetLogEvents()
                                   #  - def|max 1e3 and use REQ.maxResults: DescribeQueryDefinitions()
-                                  #  - no pagination: DescribeAccountPolicies(), GetLogGroupFields(), TestMetricFilter()
+                                  #  - no pagination: DescribeAccountPolicies(), GetLogGroupFields(), TestMetricFilter(),
+                                  #    DescribeIndexPolicies(), DescribeFieldIndexes()
                                   #  - pagination but never used due to limit: DescribeExportTasks(), DescribeQueries(),
                                   #    DescribeResourcePolicies()
 
@@ -132,6 +133,8 @@ LOG_GROUP[_REQ].logGroupClass     #Can be 'STANDARD' (def) or 'INFREQUENT_ACCESS
                                   #  - METRIC_FILTER
                                   #  - SUBSCRIPTION
                                   #  - EXPORT
+                                  #  - TRANSFORMER
+                                  #  - INDEX_POLICY
                                   #  - MASK_POLICY
                                   #  - cloudwatch:GenerateQuery
                                   #  - embedded METRICs
@@ -315,7 +318,7 @@ LLEVENT                           #Log message
                                   #Max 256KB
 LLEVENT.eventId                   #MID
 
-LLEVENT.message                   #STR
+LLEVENT.message                   #'LMESSAGE'
 
 LLEVENT.ingestionTime             #DATE_NUM of LLEVENT itelf
 LLEVENT.timestamp                 #DATE_NUM of event being logged
@@ -520,7 +523,7 @@ cw ...                            #Version 4.1.3
 --no-version-check                #Unless set, check for updates
 
 cw tail                           #Similar to `aws logs tail`
- [LOG_GROUP[:LOG_STREAM]...]      #By default, only prints LLEVENT.message
+ [LOG_GROUP[:LOG_STREAM]...]      #By default, only prints 'LMESSAGE'
                                   #Def LOG_GROUP: stdin (newline-separated)
                                   #LOG_STREAM can be just the prefix
                                   #Pros:
@@ -548,7 +551,7 @@ cw tail                           #Similar to `aws logs tail`
 --retry|-r                        #Retry on network errors
 
 --grep|-g STR                     #Like FilterLogEvents() filterPattern
---grepv|-v REGEXP                 #Inverted match against LLEVENT.message
+--grepv|-v REGEXP                 #Inverted match against 'LMESSAGE'
 --query|-q STR                    #Like `aws --query`, i.e. applies JMESPath (see its doc)
                                   #If cannot apply for a given LLEVENT, ignored
 
@@ -667,6 +670,180 @@ CTSV_FILTER_PATTERN.whereNumber
  ->CTSV_FILTER_PATTERN            #FVAR OP NUM [&& ...]
 
                                   ┌─────────────────┐
+                                  │   TRANSFORMER   │
+                                  └─────────────────┘
+
+TRANSFORMER                       #Transforms 'LMESSAGE' used by:
+                                  #  - always: QUERY, INDEX_POLICY
+                                  #  - opt-in: METRIC_FILTER, SUBSCRIPTION
+                                  #Not applied elsewhere, i.e. not by LLEVENTS_REQ
+                                  #  - i.e. stored both transformed and original 'LMESSAGE'
+                                  #Done on LLEVENT creation
+                                  #Not applied on past LLEVENTs
+
+TRANSFORMER.creationTime          #DATE_NUM
+TRANSFORMER.lastModifiedTime      #DATE_NUM
+
+TRANSFORMER.logGroupIdentifier    #LOG_GROUP_ARN
+                                  #In input, can also be 'LOG_GROUP'
+                                  #To apply on all LOG_GROUPs, see APOLICY
+
+                                  ┌─────────────────────┐
+                                  │   TRANSFORMER API   │
+                                  └─────────────────────┘
+
+PutTransformer()                  #Req: TRANSFORMER
+                                  #  - no *Time
+                                  #Res: none
+GetTransformer()                  #Req: TRANSFORMER
+                                  #  - only logGroupIdentifier
+                                  #Res: TRANSFORMER
+DeleteTransformer()               #Req: TRANSFORMER
+                                  #  - only logGroupIdentifier
+                                  #Res: none
+
+                                  ┌──────────────────────┐
+                                  │   TRANSFORMER TEST   │
+                                  └──────────────────────┘
+
+TRANSFORMER_TEST_REQ              #Dry run a TRANSFORMER
+TRANSFORMER_TEST_REQ              #'LMESSAGE'_ARR
+ .logEventMessages                #Max 50 items
+TRANSFORMER_TEST_REQ
+ .transformerConfig               #TRANSFORMER_CONFIG_ARR
+
+TRANSFORMER_TEST_RES.eventNumber  #NUM index
+TRANSFORMER_TEST_RES.eventMessage #STR, before TRANSFORMER
+TRANSFORMER_TEST_RES
+ .transformedEventMessage         #STR, after TRANSFORMER
+
+                                  ┌──────────────────────────┐
+                                  │   TRANSFORMER TEST API   │
+                                  └──────────────────────────┘
+
+TestTransformer()                 #Req: TRANSFORMER_TEST_REQ
+                                  #Res: transformedLogs TRANSFORMER_TEST_RES_ARR
+
+                                  ┌────────────────────────┐
+                                  │   TRANSFORMER CONFIG   │
+                                  └────────────────────────┘
+
+TRANSFORMER.transformerConfig     #TRANSFORMER_CONFIG_ARR
+                                  #Max 20 items
+TRANSFORMER_CONFIG                #Sets of transformations to apply
+                                  #Only one key (i.e. transformation) must be specified in each TRANSFORMER_CONFIG.*
+
+TRANSFORMER_CONFIG.parse*         #Must be first
+                                  #Max 200 FIELDs transformed
+
+TRANSFORMER_CONFIG.parseJSON      #TRANSFORMER_JSON
+TRANSFORMER_JSON.destination      #STR
+TRANSFORMER_JSON.source           #STR
+
+TRANSFORMER_CONFIG.parseKeyValue  #TRANSFORMER_PARSE
+TRANSFORMER_PARSE.destination     #STR
+TRANSFORMER_PARSE.fieldDelimiter  #STR
+TRANSFORMER_PARSE.keyPrefix       #STR
+TRANSFORMER_PARSE
+ .keyValueDelimiter               #STR
+TRANSFORMER_PARSE.nonMatchValue   #STR
+TRANSFORMER_PARSE
+ .overwriteIfExists               #BOOL
+TRANSFORMER_PARSE.source          #STR
+
+TRANSFORMER_CONFIG
+ .parseCloudfront.source          #STR
+
+TRANSFORMER_CONFIG
+ .parsePostgres.source            #STR
+
+TRANSFORMER_CONFIG
+ .parseRoute53.source             #STR
+
+TRANSFORMER_CONFIG.parseVPC.source#STR
+
+TRANSFORMER_CONFIG.parseWAF.source#STR
+
+
+TRANSFORMER_CONFIG.addKeys.entries#TRANSFORMER_ADD_ARR
+                                  #Only once per TRANSFORMER_CONFIG_ARR
+TRANSFORMER_ADD.key               #'PROP'
+TRANSFORMER_ADD.value             #'VAL'
+TRANSFORMER_ADD.overwriteIfExists #BOOL
+
+TRANSFORMER_CONFIG                #TRANSFORMER_COPY_ARR
+ .copyValue.entries               #Only once per TRANSFORMER_CONFIG_ARR
+TRANSFORMER_COPY.source           #'PROP'
+TRANSFORMER_COPY.target           #'PROP'
+TRANSFORMER_COPY.overwriteIfExists#BOOL
+
+TRANSFORMER_CONFIG
+ .moveKeys.entries                #Like copyValue, but deletes source instead
+
+TRANSFORMER_CONFIG
+ .renameKeys.entries              #TRANSFORMER_RENAME_ARR
+TRANSFORMER_RENAME.key            #STR
+TRANSFORMER_RENAME.renameTo       #STR
+TRANSFORMER_RENAME
+ .overwriteIfExists               #BOOL
+
+TRANSFORMER_CONFIG
+ .deleteKeys.withKeys             #STR_ARR
+
+TRANSFORMER_CONFIG
+ .lowerCaseString.withKeys        #STR_ARR
+
+TRANSFORMER_CONFIG
+ .upperCaseString.withKeys        #STR_ARR
+
+TRANSFORMER_CONFIG
+ .trimString.withKeys             #STR_ARR
+
+TRANSFORMER_CONFIG
+ .splitString.entries             #TRANSFORMER_SPLIT_ARR
+TRANSFORMER_SPLIT.delimiter       #STR
+TRANSFORMER_SPLIT.source          #STR
+
+TRANSFORMER_CONFIG
+ .substituteString.entries        #TRANSFORMER_SUBSTITUTE_ARR
+TRANSFORMER_SUBSTITUTE.from       #STR
+TRANSFORMER_SUBSTITUTE.source     #STR
+TRANSFORMER_SUBSTITUTE.to         #STR
+
+TRANSFORMER_CONFIG.listToMap      #TRANSFORMER_MAP
+TRANSFORMER_MAP.flatten           #BOOL
+TRANSFORMER_MAP.flattenedElement  #STR
+TRANSFORMER_MAP.key               #STR
+TRANSFORMER_MAP.source            #STR
+TRANSFORMER_MAP.target            #STR
+TRANSFORMER_MAP.valueKey          #STR
+
+TRANSFORMER_CONFIG
+ .typeConverter.entries           #TRANSFORMER_CONVERT_ARR
+TRANSFORMER_CONVERT.key           #STR
+TRANSFORMER_CONVERT.type          #STR
+
+TRANSFORMER_CONFIG
+ .dateTimeConverter               #TRANSFORMER_DATE
+TRANSFORMER_DATE.locale           #STR
+TRANSFORMER_DATE.matchPatterns    #STR_ARR
+TRANSFORMER_DATE.source           #STR
+TRANSFORMER_DATE.sourceTimezone   #STR
+TRANSFORMER_DATE.target           #STR
+TRANSFORMER_DATE.targetFormat     #STR
+TRANSFORMER_DATE.targetTimezone   #STR
+
+TRANSFORMER_CONFIG.csv            #TRANSFORMER_CSV
+TRANSFORMER_CSV.columns           #STR_ARR
+TRANSFORMER_CSV.delimiter         #STR
+TRANSFORMER_CSV.quoteCharacter    #STR
+TRANSFORMER_CSV.source            #STR
+
+TRANSFORMER_CONFIG.grok           #TRANSFORMER_GROK
+TRANSFORMER_GROK.match            #STR
+TRANSFORMER_GROK.source           #STR
+
+                                  ┌─────────────────┐
                                   │   METRIC MAIN   │
                                   └─────────────────┘
 
@@ -676,8 +853,11 @@ METRIC_FILTER                     #Create CloudWatch METRIC_DATA from LLEVENTs
 METRIC_FILTER.filterName          #'METRIC_FILTER'
 METRIC_FILTER.creationTime        #DATE_NUM
 
-METRIC_FILTER.filterPattern       #'FILTER_PATTERN'
 METRIC_FILTER.logGroupName        #'LOG_GROUP'
+
+METRIC_FILTER.filterPattern       #'FILTER_PATTERN'
+METRIC_FILTER
+ .applyOnTransformedLogs          #BOOL (def: false). Use TRANSFORMER (if any)
 
 METRIC_FILTER
  .metricTransformations           #METRIC_TRANSFORM_ARR. METRIC_DATA being created
@@ -744,7 +924,7 @@ ICLOG_GROUP.extractMetric         #Creates a METRIC_FILTER with metricValue '$.V
                                   └─────────────────┘
 
 TEST_FILTER_REQ                   #Try a METRIC_FILTER against test LLEVENTs
-TEST_FILTER_REQ.logEventMessages  #STR_ARR of test LLEVENT.message
+TEST_FILTER_REQ.logEventMessages  #Test 'LMESSAGE'_ARR
                                   #Max 50
 TEST_FILTER_REQ.filterPattern     #'FILTER_PATTERN'
 
@@ -767,6 +947,7 @@ QUERY                             #Advanced search|query for LLEVENTs
                                   #Called "Logs Insights"
                                   #60m timeout. Once complete, deleted after 7d
                                   #Max 30 running at once (5 if INFREQUENT_ACCESS)
+                                  #Max 1e4 matching LOG_GROUPs
 QUERY.queryId                     #QUERY_MID
 QUERY.createTime                  #DATE_NUM
 
@@ -923,7 +1104,7 @@ QUERY_STRING                      #The syntax is the next chapters
 FIELD                             #One of the following
 `FIELD`                           #Quoting needed unless only [[:alnum:].@]
 
-VARR                              #If LLEVENT.message 'OBJ|ARR_JSON', OBJ|ARR.VARR
+VARR                              #If 'LMESSAGE' is 'OBJ|ARR_JSON', OBJ|ARR.VARR
                                   #VARR: 1|many of .VAR, .NUM
                                   #Max 200 per LLEVENT, 1000 per LOG_GROUP
 
@@ -1052,6 +1233,69 @@ OPTS.parse|limitStatements        #If multiple items, repeat COMMAND with each i
 OPTS.parse|limit                  #Same but as STR
 OPTS.fields                       #'FIELD_EXPR'_ARR
 OPTS.limit                        #NUM
+
+                                  ┌──────────────┐
+                                  │   INDEXING   │
+                                  └──────────────┘
+
+INDEX_POLICY                      #Creates indexes (like databases) on specific FIELDs
+                                  #Goal: speedup COMMAND `filter[Index]`
+                                  #Only for future LLEVENTs, not past ones
+                                  #Only if 'LMESSAGE' is 'OBJ|ARR_JSON'
+                                  #Max 20 per LOG_GROUP (or ACCOUNT if source 'ACCOUNT')
+INDEX_POLICY.lastUpdateTime       #DATE_NUM of last refresh
+
+INDEX_POLICY.logGroupIdentifier   #LOG_GROUP_ARN
+                                  #In input, can also be 'LOG_GROUP'
+                                  #To apply on all LOG_GROUPs, see APOLICY
+
+INDEX_POLICY.policyDocument       #'OBJ_JSON': Fields: 'FIELD'_ARR
+                                  #'FIELD':
+                                  #  - can be a VARR, using same dot notation as FIELDs
+                                  #  - case-sensitive
+                                  #  - cannot be @message, @timestamp, @log, @ptr
+                                  #  - must be escaped with @ if starts with @
+                                  #     - except @ingestionTime, @logStream
+                                  #  - max 100 chars
+                                  #Max 5KB
+
+COMMAND filter BOOL_EXPR          #Skips LLEVENTs without a FIELD if indexed
+                                  #Can only use = or IN
+COMMAND filterIndex BOOL_EXPR     #Same but also skip LOG_GROUPs without indexed FIELD
+
+                                  ┌──────────────────┐
+                                  │   INDEXING API   │
+                                  └──────────────────┘
+
+PutIndexPolicy()                  #Req: INDEX_POLICY
+                                  #  - no policyName, lastUpdateTime, source
+                                  #Res: indexPolicy INDEX_POLICY
+DescribeIndexPolicies()           #Req: INDEX_POLICY
+                                  #  - only logGroupIdentifier STR -> logGroupIdentifiers ARR
+                                  #Res: indexPolicies INDEX_POLICY_ARR
+DeleteIndexPolicy()               #Req: INDEX_POLICY
+                                  #  - only logGroupIdentifier
+                                  #Res: none
+
+                                  ┌─────────────────────┐
+                                  │   INDEXING FIELDS   │
+                                  └─────────────────────┘
+
+INDEXED_FIELD                     #FIELD targetted by an INDEX_POLICY
+INDEXED_FIELD.fieldIndexName      #'FIELD'
+INDEXED_FIELD.logGroupIdentifier  #'LOG_GROUP'
+
+INDEXED_FIELD.lastScanTime        #DATE_NUM. Most recent index refresh
+INDEXED_FIELD.firstEventTime      #DATE_NUM. Earliest LLEVENT.timestamp
+INDEXED_FIELD.lastEventTime       #DATE_NUM. Latest LLEVENT.timestamp
+
+                                  ┌─────────────────────────┐
+                                  │   INDEXING FIELDS API   │
+                                  └─────────────────────────┘
+
+DescribeFieldIndexes()            #Req: INDEX_POLICY
+                                  #  - only logGroupIdentifier STR -> logGroupIdentifiers ARR
+                                  #Res: fieldIndexes INDEXED_FIELD_ARR
 
                                   ┌─────────────┐
                                   │   PATTERN   │
@@ -1544,14 +1788,16 @@ AWS::Logs::DeliveryDestination    #Includes RESPROPs: DeliveryDestinationPolicy 
 
 SUBSCRIPTION                      #Send a LOG_GROUP's LLEVENTs to a Lambda FUNCTION or Kinesis STREAM|FIREHOSE
                                   #On delivery failure due to 5** or throttling, retry for up to 24h
-                                  #To apply to all LOG_GROUPs of an ACCOUNT: see APOLICY below
                                   #Max 2 per LOG_GROUP
 SUBSCRIPTION.filterName           #'SUBSCRIPTION'
 SUBSCRIPTION.creationTime         #DATE_NUM
 
 SUBSCRIPTION.logGroupName         #'LOG_GROUP'
+                                  #To apply on all LOG_GROUPs, see APOLICY
 
 SUBSCRIPTION.filterPattern        #'FILTER_PATTERN'
+SUBSCRIPTION
+ .applyOnTransformedLogs          #BOOL (def: false). Use TRANSFORMER (if any)
 
 SUBSCRIPTION.destinationArn       #ARN of either Lambda FUNCTION, Kinesis STREAM|FIREHOSE or DESTINATION
 
@@ -1893,10 +2139,12 @@ cdk-nag
                                   └───────────────┘
 
 DATA_POLICY                       #Mask sensitive data in LLEVENTs of a LOG_GROUP with ***
-                                  #To apply to all LOG_GROUPs of an ACCOUNT: see APOLICY below
                                   #Not logged by CloudTrail
-DATA_POLICY.logGroupIdentifier    #'LOG_GROUP'|LOG_GROUP_ARN
 DATA_POLICY.lastUpdatedTime       #DATE_NUM
+
+DATA_POLICY.logGroupIdentifier    #LOG_GROUP_ARN
+                                  #In input, can also be 'LOG_GROUP'
+                                  #To apply on all LOG_GROUPs, see APOLICY
 
 DATA_POLICY.policyDocument        #'MASK_POLICY'
                                   #Max 30KB
@@ -1969,7 +2217,7 @@ MPAYLOAD.dataIdentifiers          #DDATAID_ARR
 DDATAID.name                      #'DATAID'
 DDATAID.count                     #NUM of masked values
 DDATAID.detections                #DDATAID_VAL_ARR
-DDATAID_VAL.start|end             #NUM. Byte position in LLEVENT.message
+DDATAID_VAL.start|end             #NUM. Byte position in 'LMESSAGE'
 
                                   ┌───────────────────────────┐
                                   │   MASK DESTINATION AUTH   │
@@ -2091,11 +2339,11 @@ OPTS.identifiers                  #MASK_STATEMENT.DataIdentifier
 new CustomDataIdentifier
  ('DATAID', 'REGEXP')             #CCUSTOM_DATAID. MASK_POLICY.Configuration.CustomDataIdentifier
 
-                                  ┌───────────────────────────────┐
-                                  │   MASK/SUBSCRIPTION ACCOUNT   │
-                                  └───────────────────────────────┘
+                                  ┌────────────────────┐
+                                  │   ACCOUNT POLICY   │
+                                  └────────────────────┘
 
-APOLICY                           #Like DATA_POLICY|SUBSCRIPTION but for all LOG_GROUPs in an ACCOUNT
+APOLICY                           #Like DATA_POLICY|SUBSCRIPTION|INDEX_POLICY|TRANSFORMER but for all LOG_GROUPs in an ACCOUNT
                                   #Max 1 per ACCOUNT
                                   #Not logged by CloudTrail
 APOLICY.policyName                #'APOLICY'
@@ -2107,27 +2355,38 @@ APOLICY.scope                     #Always 'ALL'
 APOLICY.policyType                #Either:
                                   #  - 'DATA_PROTECTION_POLICY': DATA_POLICY
                                   #  - 'SUBSCRIPTION_FILTER_POLICY': SUBSCRIPTION
+                                  #  - 'FIELD_INDEX_POLICY': INDEX_POLICY
+                                  #  - 'TRANSFORMER_POLICY': TRANSFORMER
 APOLICY.policyDocument            #Either:
                                   #  - MASK_POLICY: if policyType 'DATA_PROTECTION_POLICY'
                                   #  - SUBSCRIPTION: if policyType 'SUBSCRIPTION_FILTER_POLICY'
                                   #     - only DestinationArn, RoleArn, FilterPattern, Distribution
-APOLICY.selectionCriteria         #'LogGroupName NOT IN ["LOG_GROUP",...]'
+                                  #  - INDEX_POLICY.policyDocument: if policyType 'FIELD_INDEX_POLICY'
+                                  #  - TRANSFORMER_CONFIG_ARR: if policyType 'TRANSFORMER_POLICY'
+APOLICY.selectionCriteria         #With:
+                                  #  - DATA_POLICY: none
+                                  #  - SUBSCRIPION: 'LogGroupName NOT IN ["LOG_GROUP",...]'
+                                  #     - prevents cycles if destination produces logs itself
+                                  #  - INDEX_POLICY|TRANSFORMER: 'LogGroupNamePrefix="STR" ...'
+                                  #     - max 5 LogGroupNamePrefix
                                   #Exclude specific LOG_GROUPs
-                                  #Meant to prevent cycles if destination produces logs itself
-                                  #Only with policyType 'SUBSCRIPTION_FILTER_POLICY'
+                                  #Multiple APOLICYs cannot include some of the same LOG_GROUPs
                                   #Max 25KB
 
 LOG_GROUP.inheritedProperties     #'ACCOUNT_DATA_PROTECTION' if LOG_GROUP has a APOLICY
 
-                                  ┌────────────────────────────────────┐
-                                  │   MASK/SUBSCRIPTION ACCOUNT AUTH   │
-                                  └────────────────────────────────────┘
+INDEX_POLICY.source               #Whether 'LOG_GROUP' or 'ACCOUNT'-wide
+INDEX_POLICY.policyName           #'APOLICY'
 
-PERMISSIONS ==>                   #APOLICY requires DATA_POLICY|SUBSCRIPTION-related PACTIONs too
+                                  ┌─────────────────────────┐
+                                  │   ACCOUNT POLICY AUTH   │
+                                  └─────────────────────────┘
 
-                                  ┌───────────────────────────────────┐
-                                  │   MASK/SUBSCRIPTION ACCOUNT API   │
-                                  └───────────────────────────────────┘
+PERMISSIONS ==>                   #APOLICY requires DATA_POLICY|SUBSCRIPTION|INDEX_POLICY-related PACTIONs too
+
+                                  ┌────────────────────────┐
+                                  │   ACCOUNT POLICY API   │
+                                  └────────────────────────┘
 
 PutAccountPolicy()                #Req: APOLICY
                                   #  - no lastUpdatedTime, accountId
@@ -2141,9 +2400,9 @@ DeleteAccountPolicy()             #Req: APOLICY
                                   #  - only policyName, policyType
                                   #Res: empty
 
-                                  ┌──────────────────────────────────┐
-                                  │   MASK/SUBCRIPTION ACCOUNT IAC   │
-                                  └──────────────────────────────────┘
+                                  ┌────────────────────────┐
+                                  │   ACCOUNT POLICY IAC   │
+                                  └────────────────────────┘
 
 AWS::Logs::AccountPolicy          #RESPROPs: PolicyName, PolicyType, Scope, PolicyDocument STR, SelectionCriteria
                                   #RESATTRs: AccountId
