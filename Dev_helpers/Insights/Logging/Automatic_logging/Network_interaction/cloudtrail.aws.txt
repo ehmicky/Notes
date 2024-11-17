@@ -49,6 +49,7 @@ PRICING ==>                       #TRAIL:
                                   #     - also, S3 costs: 1$/43GB (all EVENTs)
                                   #        - free: first year for each EVENT
                                   #           - i.e. completely free if RetentionPeriod 1 year (default)
+                                  #        - see TotalPaidStorageBytes
                                   #  - FIXED_RETENTION_PRICING:
                                   #     - 1$/400MB input
                                   #     - after 5TB: 2.5x cheaper, 25TB: 5x cheaper
@@ -1051,6 +1052,13 @@ PACTION cloudtrail:LookupEvents   #Used by ListInsightsMetricData() instead
 ListInsightsMetricData()          #Req: INSIGHT_COUNT_REQ
                                   #Res: INSIGHT_COUNT_RES
 
+                                  ┌───────────────────────────┐
+                                  │   INSIGHT COUNT METRICS   │
+                                  └───────────────────────────┘
+
+AWS/CloudTrail/
+ HourlyEventsAnalyzed             #NUM of INSIGHT EVENTs, hourly
+
                                   ┌────────────────┐
                                   │   DATA STORE   │
                                   └────────────────┘
@@ -1145,7 +1153,10 @@ AWS::CloudTrail::EventDataStore   #RESPROPs:
                                   └────────────────────────┘
 
 AWS/CloudTrail/HourlyDataIngested #Bytes/hour processed by DATASTORE
-AWS/CloudTrail/TotalDataRetained  #Total bytes, updated daily
+AWS/CloudTrail/TotalDataRetained  #Total bytes, uncompressed, updated daily
+AWS/CloudTrail/TotalStorageBytes  #Total bytes, compressed
+AWS/CloudTrail/                   #Total bytes, compressed, excluding the first year
+ TotalPaidStorageBytes            #Only if DATASTORE.BillingMode 'EXTENDABLE_RETENTION_PRICING'
 
                                   ┌──────────────────┐
                                   │   CHANNEL MAIN   │
@@ -1567,17 +1578,148 @@ aws cloudtrail                    #Check integrity of QUERY_RESULTS_FILEs using 
                                   │   DASHBOARD   │
                                   └───────────────┘
 
-TRAIL_DASHBOARD_ARN               #'arn:aws:cloudtrail:REGION:ACCOUNT_ID:dashboard/DASHBOARD'
+TRAIL_DASHBOARD                   #Like CloudWatch DASHBOARDs, but for CloudTrail DATASTOREs (not TRAILs)
+TRAIL_DASHBOARD.DashboardArn      #TRAIL_DASHBOARD_ARN. 'arn:aws:cloudtrail:REGION:ACCOUNT_ID:dashboard/DASHBOARD'
+TRAIL_DASHBOARD.DashboardId       #TRAIL_DASHBOARD_MID
+TRAIL_DASHBOARD.Name              #'TRAIL_DASHBOARD'
+                                  #Only [:alnum:]_-
+TRAIL_DASHBOARD.CreatedTimestamp  #DATE_NUM
+TRAIL_DASHBOARD.UpdatedTimestamp  #DATE_NUM
+
+TRAIL_DASHBOARD.Type              #Either 'CUSTOM' or 'MANAGED'
+                                  #'MANAGED' is a special singleton TRAIL_DASHBOARD with pre-defined:
+                                  #  - Name 'AWSCloudTrail-Highlights'
+                                  #  - TerminationProtectionEnabled true
+                                  #  - TRAIL_WIDGETs
+                                  #'MANAGED' requires setting REFRESH.Frequency to 6h
+
+TRAIL_DASHBOARD
+ .TerminationProtectionEnabled    #BOOL (def: true). Do not allow deleting
+
+TRAIL_DASHBOARD.Status            #One of: 'CREATING', 'CREATED', 'UPDATING', 'UPDATED', 'DELETING'
+
+TRAIL_DASHBOARD.Widgets           #TRAIL_WIDGET_ARR
+                                  #Max 10 items
+
+TRAIL_WIDGET.ViewProperties
+ .VIEW_PROP                       #STR
+VIEW_PROP View                    #One of: 'Table', 'PieChart', 'BarChart', 'LineChart'
+VIEW_PROP Title                   #STR
+VIEW_PROP Height|Width            #NUM (in inches)
+VIEW_PROP FilterColumn            #BOOL 'FIELD'. Exclude LOG_EVENT if this FIELD is false
+                                  #Only with View 'PieChart|BarChart|LineChart'
+VIEW_PROP ValueColumn             #'FIELD' to use for each bar's value
+                                  #Only with View 'PieChart|BarChart'
+VIEW_PROP LabelColumn             #'FIELD' to use for each bar's label
+                                  #Only with View 'PieChart|BarChart'
+VIEW_PROP Orientation             #'Horizontal' or 'Vertical' (def)
+                                  #Only with View 'BarChart'
+VIEW_PROP YAxisColumn|XAxisColumn #'FIELD' to use for each axis
+                                  #Only with View 'LineChart'
 
                                   ┌────────────────────┐
                                   │   DASHBOARD AUTH   │
                                   └────────────────────┘
 
-PACTION                           #???
- cloudtrail:StartDashboardRefresh #Must be allowed to:
+PACTION cloudtrail:StartQuery     #Must be allowed using a RESOURCE_POLICY on DATASTORE with:
                                   #  - Principal.Service 'cloudtrail.amazonaws.com'
                                   #  - COND_KEY AWS:SourceArn TRAIL_DASHBOARD_ARN
+                                  #     - including for 'AWSCloudTrail-Highlights'
                                   #  - COND_KEY AWS:SourceAccount ACCOUNT_ID
+
+                                  ┌───────────────────┐
+                                  │   DASHBOARD API   │
+                                  └───────────────────┘
+
+CreateDashboard()                 #Req: TRAIL_DASHBOARD
+                                  #  - no DashboardId, *Timestamp, LastRefresh*, Status, QueryAlias
+                                  #  - no Type -> use Name 'AWSCloudTrail-Highlights' instead
+                                  #Res: TRAIL_DASHBOARD
+                                  #  - no *Timestamp, DashboardArn, DashboardId, LastRefresh*, Status
+UpdateDashboard()                 #Req: TRAIL_DASHBOARD
+                                  #  - no Name, *Timestamp, LastRefresh*, Status, QueryAlias, TagsList
+                                  #Res: TRAIL_DASHBOARD
+                                  #  - no DashboardId, LastRefresh*, Status, TagsList
+ListDashboards()                  #Req: TRAIL_DASHBOARD
+                                  #  - only Name -> NamePrefix, Type
+                                  #Res: Dashboards TRAIL_DASHBOARD_ARR
+                                  #  - only DashboardArn, Type
+GetDashboard()                    #Req: TRAIL_DASHBOARD
+                                  #  - only DashboardId
+                                  #Res: TRAIL_DASHBOARD
+                                  #  - no DashboardId, Name, TagsList
+DeleteDashboard()                 #Req: TRAIL_DASHBOARD
+                                  #  - only DashboardId
+                                  #Res: empty
+
+                                  ┌───────────────────┐
+                                  │   DASHBOARD IAC   │
+                                  └───────────────────┘
+
+AWS::CloudTrail::Dashboard        #RESPROPs: Name, TerminationProtectionEnabled, Widgets
+                                  #  - no TRAIL_WIDGET.QueryAlias
+
+                                  ┌───────────────────────┐
+                                  │   DASHBOARD REFRESH   │
+                                  └───────────────────────┘
+
+TRAIL_DASHBOARD.LastRefreshId     #STR identifying the last refresh
+
+TRAIL_DASHBOARD
+ .LastRefreshFailureReason        #'ERROR'
+
+TRAIL_DASHBOARD.RefreshSchedule   #REFRESH. Automatically refreshes the dashboard at regular intervals
+                                  #Regardless, can do manually with StartDashboardRefresh()
+REFRESH.Status                    #'ENABLED' or 'DISABLED' (def)
+REFRESH.Frequency                 #{Value: NUM, Unit: 'HOURS|DAYS'}
+                                  #Must be 1|6|12|24h or 1d
+REFRESH.TimeOfDay                 #'HH:MM' (def: '00:00'). When to run
+                                  #If Frequency.Unit 'HOURS', only uses the 'MM' part
+
+                                  ┌────────────────────────────┐
+                                  │   DASHBOARD REFRESH AUTH   │
+                                  └────────────────────────────┘
+
+PACTION                           #If TRAIL_DASHBOARD.RefreshSchedule, must be allowed using a RESOURCE_POLICY on TRAIL_DASHBOARD to:
+ cloudtrail:StartDashboardRefresh #  - Principal.Service 'cloudtrail.amazonaws.com'
+                                  #  - COND_KEY AWS:SourceArn TRAIL_DASHBOARD_ARN
+                                  #  - COND_KEY AWS:SourceAccount ACCOUNT_ID
+
+                                  ┌───────────────────────────┐
+                                  │   DASHBOARD REFRESH API   │
+                                  └───────────────────────────┘
+
+StartDashboardRefresh()           #Req: TRAIL_DASHBOARD
+                                  #  - only DashboardId
+                                  #  - only one with QueryParameterValues
+                                  #Res: TRAIL_DASHBOARD
+                                  #  - only LastRefreshId -> RefreshId
+
+                                  ┌───────────────────────────┐
+                                  │   DASHBOARD REFRESH IAC   │
+                                  └───────────────────────────┘
+
+AWS::CloudTrail::Dashboard        #Includes RESPROPs: RefreshSchedule
+
+                                  ┌─────────────────────┐
+                                  │   DASHBOARD QUERY   │
+                                  └─────────────────────┘
+
+TRAIL_WIDGET.QueryAlias           #'TRAIL_QUERY_ID', created by API
+                                  #Max 256 chars, [:alnum:]._-
+
+TRAIL_WIDGET.QueryParameterValues
+ .TRAIL_QUERY_PARAM               #
+TRAIL_WIDGET.QueryParameters      #'TRAIL_QUERY_PARAM'_ARR
+                                  #Substitute '?' in 'TRAIL_QUERY' with those values
+TRAIL_QUERY_PARAM
+ $EventDataStoreId$               #DATASTORE_MID. Required if Type 'MANAGED'
+TRAIL_QUERY_PARAM
+ $StartTime|EndTime$              #'DATE'
+TRAIL_QUERY_PARAM $Period$        #'second|minute|hour|day'
+
+TRAIL_WIDGET.QueryStatement       #'TRAIL_QUERY'
+                                  #Max 10KB
 
                                   ┌────────────┐
                                   │   POLICY   │
@@ -1619,12 +1761,13 @@ AWS::CloudTrail::ResourcePolicy   #RESPROPs: ResourceArn, ResourcePolicy
                                   │   TAGS   │
                                   └──────────┘
 
-RESOURCE_TAGS.ResourceId          #TRAIL_ARN|CHANNEL_ARN|DATASTORE_ARN
+RESOURCE_TAGS.ResourceId          #TRAIL_ARN|CHANNEL_ARN|DATASTORE_ARN|TRAIL_DASHBOARD_ARN
 RESOURCE_TAGS.TagsList            #TAG_PAIRS
 
 TRAIL.TagsList
 CHANNEL.Tags
-DATASTORE.TagsList                #TAG_PAIRS
+DATASTORE.TagsList
+TRAIL_DASHBOARD.TagsList          #TAG_PAIRS
 
                                   ┌──────────────┐
                                   │   TAGS API   │
@@ -1642,5 +1785,5 @@ RemoveTags()                      #Req: RESOURCE_TAGS
                                   │   TAGS IAC   │
                                   └──────────────┘
 
-AWS::CloudTrail::
- Trail|EventDataStore|Channel     #Includes RESPROPs: Tags
+AWS::CloudTrail::Trail
+ |EventDataStore|Channel|Dashboard#Includes RESPROPs: Tags
