@@ -223,14 +223,11 @@ STANDARD QUEUE ==>                #Non-FIFO QUEUE
                                   #  - delivery has to be exactly ordered
                                   #All of the features below are the opposite with FIFOs
 
-DATA REDUNDANCY ==>               #Pro. MESSAGEs are replicated on multiple AZs
-
 THROTTLING ==>                    #Pro. No throttling
 
 PROCESSING ==>                    #Pro. Receivers can process MESSAGEs in parallel
 
-ORDER ==>                         #Con. Receiving order is randomly sampled among multiple AZs
-                                  #I.e. best effort, might be out-of-order
+ORDER ==>                         #Con. Best effort, might be out-of-order
 
 AT-MOST ONCE DELIVERY ==>         #Con. A MESSAGE:
                                   #  - sent with 1 SendMessage()
@@ -238,6 +235,7 @@ AT-MOST ONCE DELIVERY ==>         #Con. A MESSAGE:
                                   #This might happen if an AZ goes down:
                                   #  - while other AZs are up and deliver that MESSAGE
                                   #  - i.e. the former does not know that MESSAGE was already delivered
+                                  #     - as opposed to FIFO, which can determine where it left thanks to order
                                   #I.e. processing must be idempotent
 
                                   ┌──────────┐
@@ -261,10 +259,11 @@ MESSAGE_SEND|SYS_ATTRS            #'MESSAGE_GROUP_ID'. FIFO ordering applies per
 MESSAGE_SEND_RES|SYS_ATTRS        #'NUM'. Increases monotonically (but not necessarily consecutively) per MESSAGE within a given MESSAGE_GROUP
  .SequenceNumber                  #Always 128 chars, padded with 0s
 
-MESSAGE_SEND|SYS_ATTRS            #'MESSAGE_SEND_DID'. If 2 SendMessage*() with the same MESSAGE_SEND_DID are sent,
- .MessageDeduplicationId          #within 5m, only the first successful one is used
+MESSAGE_SEND|SYS_ATTRS            #'MESSAGE_SEND_DID'. If 2 SendMessage*() with the same MESSAGE_SEND_DID are sent:
+ .MessageDeduplicationId          #  - within 5m
+                                  #  - then only the first successful one is used
                                   #I.e. exactly-once delivery, avoiding duplicate sends
-                                  #Can happen either if:
+                                  #I.e. mostly meant if:
                                   #  - 2 concurrent senders at the same time
                                   #  - sending fails (e.g. network error) and is repeated
                                   #Continues working even after MESSAGE has been received and|or deleted
@@ -282,22 +281,24 @@ PROCESSING ==>                    #VisibilityTimeout locks the whole MESSAGE_GRO
                                   #  - if no dead-letter QUEUE2, completely blocks it
                                   #If all MESSAGE_GROUPs are in-flight, ReceiveMessage() will be return empty
 
-MESSAGES_RCV                      #'MESSAGE_RCV_DID'. If 2 ReceiveMessage*() with the same MESSAGE_RCV_DID are sent,
- .ReceiveRequestAttemptId         #within min(5m, VisibilityTimeout), only the first successful one is used
+MESSAGES_RCV                      #'MESSAGE_RCV_DID'. If 2 ReceiveMessage*() with the same MESSAGE_RCV_DID are sent:
+ .ReceiveRequestAttemptId         #  - within min(5m, VisibilityTimeout)
+                                  #  - then only the first successful one is used
                                   #I.e. exactly-once processing, avoiding duplicate receiving
-                                  #Not if ChangeMessageVisibility() or DeleteMessage() already called
                                   #I.e. mostly meant if:
                                   #  - 2 concurrent receivers at the same time
                                   #  - receiving fails (e.g. network error) and is repeated
+                                  #Not if ChangeMessageVisibility() or DeleteMessage() already called
                                   #Not related to MESSAGE failure retries, since retries are done after VisibilityTimeout expired
                                   #Only with FIFO. Optional but recommended
                                   #Max 128 chars, [:graph:]
 
 QUEUE_ATTRS.FifoThroughputLimit   #Throttles either:
                                   #  - 'perQueue' (def): max 300 (hard) SendMessage[Batch]() per second per QUEUE
-                                  #  - 'perMessageGroupId' (recommended): max 7e4 (soft, REGION-specific) SendMessage[Batch]() per second per MESSAGE_GROUP
+                                  #  - 'perMessageGroupId' (recommended):
+                                  #     - max 7e4 (soft, REGION-specific) SendMessage[Batch]() per second per MESSAGE_GROUP
+                                  #     - requires QUEUE_ATTRS.DeduplicationScope 'messageGroup'
                                   #The same quota applies separately for DeleteMessage[Batch]() and for ReceiveMessage()
-                                  #If 'perMessageGroupId', QUEUE_ATTRS.DeduplicationScope must be 'messageGroup'
                                   #Only with FIFO
 
                                   ┌──────────────┐
@@ -343,11 +344,14 @@ SYS_ATTRS
  .ApproximateFirstReceiveTimestamp#DATE_NUM of first ReceiveMessage()
 
 MESSAGE_SEND_RES|MESSAGE_RCV_RES
- .MessageId                       #'MESSAGE_SEND_MID'
+ .MessageId                       #'MESSAGE_MID'
 MESSAGE_RCV_RES|MESSAGE_DELETE    #'MESSAGE_RCV_MID'
  |MESSAGE_VSB.ReceiptHandle       #Created during ReceiveMessage(), used by ChangeMessageVisibility|DeleteMessage()
                                   #If multiple ReceiveMessage() for a given MESSAGE, ChangeMessageVisibility|DeleteMessage()
                                   #must use the most recent 'MESSAGE_RCV_MID'
+
+DATA REDUNDANCY ==>               #MESSAGEs are replicated on multiple AZs
+                                  #Fot both FIFO and non-FIFO
 
                                   ┌──────────────────┐
                                   │   MESSAGE AUTH   │
@@ -697,7 +701,7 @@ QUEUE_ATTRS.RedrivePolicy         #'REDRIVE_POLICY_JSON'
 REDRIVE_POLICY.deadLetterTargetArn#QUEUE2_ARN
                                   #Can be in different REGION|ACCOUNT, but less performant
 REDRIVE_POLICY.maxReceiveCount    #NUM (def: 10) of MESSAGE failures before moving MESSAGE to dead-letter QUEUE2
-                                  #I.e. max NUM of retries
+                                  #I.e. max NUM of retries + 1
 
 QUEUE_ATTRS.RedriveAllowPolicy    #'REDRIVE_APOLICY_JSON'. Restrict which other QUEUE2 can use this QUEUE as dead-letter
                                   #Must be in same REGION + ACCOUNT, unless redrivePermission 'byQueue'
@@ -837,11 +841,14 @@ MESSAGES_RCV_RES.Messages         #MESSAGE_RCV_RES_ARR
 MESSAGES_RCV.MaxNumberOfMessages  #NUM (min|def: 1, max|recommended: 10). Max size of MESSAGES_RCV_RES.Messages
                                   #Might receive less
                                   #Might receive 0
-                                  #  - with non-FIFO, can happen even some MESSAGEs are stored, due to randomly sampling AZs
+                                  #  - can happen even some MESSAGEs are stored, because randomly samples underlying AZs
 
 FIFO ==>                          #Throttling limit is per API call, i.e. eased by batching
+                                  #When sending a batch:
+                                  #  - more efficient with MESSAGEs of the same MESSAGE_GROUP
+                                  #  - because MESSAGEs with same MESSAGE_GROUP are physically located close to each other
                                   #When receiving a batch:
-                                  #  - API tries to give MESSAGEs with same MESSAGE_GROUP
+                                  #  - API tries to give MESSAGEs of the same MESSAGE_GROUP
                                   #     - but does not guarantee it
                                   #  - can process MESSAGEs with same MESSAGE_GROUP in parallel
                                   #     - but must delete them in order or (better) in a batch
@@ -1209,7 +1216,7 @@ PARTIAL BATCHES ==>               #See Lambda doc for EVENT_SOURCE.FunctionRespo
 FIFO ==>                          #If a MESSAGE fails, every MESSAGE after it within the same MESSAGE_GROUP must be marked as fail too
 
 RES.batchItemFailures[*]
- .itemIdentifier                  #'MESSAGE_SEND_MID'
+ .itemIdentifier                  #'MESSAGE_MID'
 
 FULL ERROR ==>                    #If all MESSAGEs fail, can be due to:
                                   #  - MESSAGE-specific reasons: should return RES.batchItemFailures
