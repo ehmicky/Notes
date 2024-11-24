@@ -13,11 +13,14 @@ Composer:
      - ENVVARs + POLICY to send to SQS
      - SQS EVENT_SOURCE
 
+Composer: go through previous SERVICEs: S3, API Gateway, Lambda???
+
 To learn:
   - new_services doc
      - stopped at CloudFormation > Composer
   - https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/welcome.html
-     - already done: Quotas, Security, Related resources, Document history
+     - stopped at Managing a queue
+     - already done: Temporary queues, Quotas, Security, Related resources, Document history
   - @aws-sdk/middleware-sdk-sqs
   - Lambda on SQS
      - move my current doc
@@ -189,7 +192,6 @@ DATA REDUNDANCY ==>               #With non-FIFO QUEUE, MESSAGEs are replicated 
 QUEUE_ATTRS.FifoQueue             #BOOL (def: false). FIFO, i.e. ensures that receiving order is same as sending order
                                   #'QUEUE' must end with '.fifo'
                                   #Receiver must process MESSAGEs serially (within a given MESSAGE_GROUP)
-                                  #  - within a batch, can process in parallel
                                   #  - i.e. failed MESSAGEs prevent further consumption, unless there is a dead-letter QUEUE2
 
 MESSAGE_SEND|SYS_ATTRS            #'MESSAGE_GROUP_ID'. FIFO ordering applies per-MESSAGE_GROUP
@@ -244,72 +246,41 @@ AWS/SQS/
 MESSAGE                           #*Message*() are logged with CloudTrail as data EVENTs
                                   #  - except *MessageMoveTask*()
                                   #  - QUEUE is LOG_RESOURCE
-MESSAGES_SEND.Entries             #MESSAGE_SEND_ARR (no QueueUrl)
-                                  #SendMessageBatch(): max 10 items
-MESSAGE_SEND[_RES|_ERROR].Id      #'MESSAGE_BATCH_SEND_MID'. Required
-                                  #Max 80 chars, [:alnum:]_-
-MESSAGE[S]_SEND|MESSAGES_RCV
+
+MESSAGE_DELETE                    #PurgeQueue() deletes all MESSAGEs
+                                  #DeleteMessage*() is idempotent, i.e. duplicate deletions are allowed
+                                  #  - whether with same MESSAGE_RCV_MID (i.e. same retry) or not
+
+MESSAGE_SEND|MESSAGES_RCV
+ |MESSAGE_DELETE|MESSAGE_VSB
  .QueueUrl                        #'QUEUE_URL'
 
 SYS_ATTRS.SentTimestamp           #DATE_NUM of first SendMessage()
 SYS_ATTRS
  .ApproximateFirstReceiveTimestamp#DATE_NUM of first ReceiveMessage()
 
-MESSAGES_SEND_RES.Successful      #MESSAGE_SEND_RES_ARR
-MESSAGES_RCV_RES.Messages         #MESSAGE_RCV_RES_ARR
 MESSAGE_SEND_RES|MESSAGE_RCV_RES
  .MessageId                       #'MESSAGE_SEND_MID'
-MESSAGE_RCV_RES.ReceiptHandle     #'MESSAGE_RCV_MID'
-
-MESSAGES_SEND_RES.Failed          #MESSAGE_SEND_ERROR_ARR
-MESSAGE_SEND_ERROR.Code           #'CODE'
-MESSAGE_SEND_ERROR.Message        #'MESSAGE'
-MESSAGE_SEND_ERROR.SenderFault    #BOOL. Whether caused by user or by API
-
-DELETION ==>                      #PurgeQueue() deletes all MESSAGEs
-                                  #DeleteMessage*() is idempotent, i.e. duplicate deletions are allowed
-                                  #  - whether with same MESSAGE_RCV_MID (i.e. same retry) or not
-
-                                  ┌──────────────────┐
-                                  │   MESSAGE AUTH   │
-                                  └──────────────────┘
-
-PACTION
- sqs:SendMessage|DeleteMessage    #Includes SendMessageBatch|DeleteMessageBatch() (which do not have their own PACTION)
+MESSAGE_RCV_RES|MESSAGE_DELETE
+ |MESSAGE_VSB.ReceiptHandle       #'MESSAGE_RCV_MID'
 
                                   ┌─────────────────┐
                                   │   MESSAGE API   │
                                   └─────────────────┘
 
 SendMessage()                     #Req: MESSAGE_SEND
-                                  #  - no Id
                                   #Res: MESSAGE_SEND_RES
-                                  #  - no Id
-SendMessageBatch()                #Req: MESSAGES_SEND
-                                  #Res: MESSAGES_SEND_RES
 ReceiveMessage()                  #Req: MESSAGES_RCV
                                   #Res: MESSAGES_RCV_RES
-DeleteMessage()                   #Req: MESSAGE_RCV_RES
-                                  #  - only ReceiptHandle, QueueUrl
+DeleteMessage()                   #Req: MESSAGE_DELETE
                                   #Res: empty
-DeleteMessageBatch()              #Req: MESSAGES_SEND
-                                  #  - Entries[*]: only Id, ReceiptHandle
-                                  #Res: MESSAGES_SEND_RES
-                                  #  - Successful[*]: only Id
-PurgeQueue()                      #Res: MESSAGE_SEND_RES
+PurgeQueue()                      #Res: MESSAGE_DELETE
                                   #  - only QueueUrl
                                   #Res: empty
 
                                   ┌──────────────────────┐
                                   │   MESSAGE SDK JAVA   │
                                   └──────────────────────┘
-
-BUFFERED ASYNCHRONOUS CLIENT ==>  #AmazonSQSBufferedAsyncClient, part of Java SDK
-                                  #Automatically batches SendMessage|DeleteMessage|ChangeMessageVisibility() based either on:
-                                  #  - MESSAGE count
-                                  #  - duration frequency
-                                  #Also prefetches ReceiveMessage() so can process MESSAGEs right away
-                                  #Not with FIFOs
 
 JMS CLIENT ==>                    #"Java Messaging Library"
                                   #Client built on top of Java SDK, to make it compatible with JMS,
@@ -359,7 +330,7 @@ ATTR_VALUE.BinaryValue            #STR. Value, when DataType 'Binary'
                                   #Must be base64'd
 
 QUEUE_ATTRS.MaximumMessageSize    #NUM (in bytes, min 1KB, def|max 256KB)
-                                  #Max size of MESSAGE_SEND|MESSAGES_SEND
+                                  #Max size of MESSAGE_SEND
 
 MESSAGE_SEND_RES.MD5OfMessageBody #MD5 'HASH' of 'MESSAGE_BODY', after URL|base64 decoding
 MESSAGE_RCV_RES.MD5OfBody         #Meant for integrity checking
@@ -390,14 +361,11 @@ AWS::SQS::Queue                   #Includes RESPROPs: MaximumMessageSize
                                   │   CONTENT METRICS   │
                                   └─────────────────────┘
 
-AWS/SQS/SentMessageSize           #Total size of all MESSAGE[S]_SENDs
+AWS/SQS/SentMessageSize           #Total size of all MESSAGE_SENDs
 
                                   ┌─────────────┐
                                   │   POLLING   │
                                   └─────────────┘
-
-MESSAGES_RCV.MaxNumberOfMessages  #NUM (min|def: 1, max|recommended: 10). Max size of MESSAGES_RCV_RES.Messages
-                                  #Migh receive less, including 0, even when more are available
 
 QUEUE_ATTRS                       #NUM (in secs, def 0, max|recommended 20)
  .ReceiveMessageWaitTimeSeconds   #If no MESSAGE available, wait up to NUMs before returning
@@ -435,14 +403,14 @@ QUEUE_ATTRS.Approximate
  NumberOfMessagesDelayed          #NUM of delayed MESSAGEs
 
 QUEUE_ATTRS|MESSAGES_RCV          #Max NUM (min 0, def 30s, max 12h) of secs for consumers to process a MESSAGE
- .VisibilityTimeout               #I.e. like a processing lock
+ |MESSAGE_VSB.VisibilityTimeout   #I.e. like a processing lock
                                   #Period starts when MESSAGE is received
                                   #During that time, MESSAGE cannot be received again ("in-flight")
                                   #  - i.e. if too low, risk of multiple consumers receiving same MESSAGE
                                   #Once processed, MESSAGE must be deleted
                                   #Else, MESSAGE reception is considered failed ("poison pill")
                                   #  - i.e. if too high, slows down retrying failed consumption
-                                  #Can increase processing time with ChangeMessageVisibility[Batch]()
+                                  #Can increase processing time with ChangeMessageVisibility()
                                   #  - it sets VisibilityTimeout from the time it is called
 QUEUE_ATTRS.Approximate           #NUM of in-flight MESSAGEs
  NumberOfMessagesNotVisible       #Max 12e4 (soft) if non-FIFO, 2e4 (hard) if FIFO
@@ -459,24 +427,12 @@ QUEUE_ATTRS.MessageRetentionPeriod#NUM (in secs, min 1m, def 4d, max 14d)
 
 PRICING ==>                       #None of the above impact pricing since storage is free
 
-                                  ┌───────────────────┐
-                                  │   TIMELINE AUTH   │
-                                  └───────────────────┘
-
-PACTION
- sqs:ChangeMessageVisibility      #Includes ChangeMessageVisibilityBatch() (which does not have its own PACTION)
-
                                   ┌──────────────────┐
                                   │   TIMELINE API   │
                                   └──────────────────┘
 
-ChangeMessageVisibility()         #Req: MESSAGES_RCV
-                                  #  - only QueueUrl, ReceiptHandle, VisibilityTimeout
+ChangeMessageVisibility()         #Req: MESSAGE_VSB
                                   #Res: empty
-ChangeMessageVisibilityBatch()    #Req: MESSAGES_SEND
-                                  #  - Entries[*]: only Id, ReceiptHandle, VisibilityTimeout
-                                  #Res: MESSAGES_SEND_RES
-                                  #  - Successful[*]: only Id
 
                                   ┌──────────────────┐
                                   │   TIMELINE IAC   │
@@ -587,6 +543,98 @@ CancelMessageMoveTask()           #Req: MOVE
                                   #  - only TaskHandle
                                   #Res: MOVE
                                   #  - only ApproximateNumberOfMessagesMoved
+
+                                  ┌───────────┐
+                                  │   BATCH   │
+                                  └───────────┘
+
+BATCH.QueueUrl                    #'QUEUE_URL'
+BATCH.Entries                     #BATCH_ENTRY_ARR
+                                  #Max 10 items
+BATCH_ENTRY.Id                    #'BATCH_ENTRY_MID'. Required
+                                  #Max 80 chars, [:alnum:]_-
+BATCH_ENTRY.*                     #With:
+                                  #  - SendMessageBatch(): MESSAGE_SEND
+                                  #  - DeleteMessageBatch(): MESSAGE_DELETE
+                                  #  - ChangeMessageVisibilityBatch(): MESSAGE_VSB
+                                  #No QueueUrl
+
+BATCH_RES.Successful              #BATCH_SUCCESS_ARR
+BATCH_SUCCESS.Id                  #'BATCH_ENTRY_MID'
+BATCH_SUCCESS.*                   #MESSAGE_SEND_RES (only with SendMessageBatch())
+
+BATCH_RES.Failed                  #BATCH_ERROR_ARR
+BATCH_ERROR.Id                    #'BATCH_ENTRY_MID'
+BATCH_ERROR.Code                  #'CODE'
+BATCH_ERROR.Message               #'MESSAGE'
+BATCH_ERROR.SenderFault           #BOOL. Whether caused by user or by API
+
+QUEUE_ATTRS.MaximumMessageSize    #Is max size of whole BATCH
+
+MESSAGES_RCV_RES.Messages         #MESSAGE_RCV_RES_ARR
+MESSAGES_RCV.MaxNumberOfMessages  #NUM (min|def: 1, max|recommended: 10). Max size of MESSAGES_RCV_RES.Messages
+                                  #Migh receive less, including 0, even when more are available
+
+FIFO ==>                          #Within a batch, can process MESSAGEs in parallel
+                                  #Throttling limit is per API call, i.e. eased by batching
+
+BUFFERING ==>                     #Client can buffer:
+                                  #  - holding SendMessage(), to increase batch size
+                                  #  - prefetching ReceiveMessage(), to decrease latency to process MESSAGEs
+                                  #Can be cased either on MESSAGE count threshold, or on duration frequency
+
+                                  ┌────────────────┐
+                                  │   BATCH AUTH   │
+                                  └────────────────┘
+
+PACTION sqs:SendMessage
+ |DeleteMessage                   #Includes sqs:SendMessageBatch|DeleteMessageBatch|ChangeMessageVisibilityBatch()
+ |ChangeMessageVisibility         #(which do not have their own PACTION)
+
+                                  ┌───────────────┐
+                                  │   BATCH API   │
+                                  └───────────────┘
+
+SendMessageBatch()                #Req: BATCH
+                                  #Res: BATCH_RES
+DeleteMessageBatch()              #Req: BATCH
+                                  #Res: BATCH_RES
+ChangeMessageVisibilityBatch()    #Req: BATCH
+                                  #Res: BATCH_RES
+
+                                  ┌────────────────────┐
+                                  │   BATCH SDK JAVA   │
+                                  └────────────────────┘
+
+BUFFERED ASYNCHRONOUS CLIENT ==>  #AmazonSQSBufferedAsyncClient, part of Java SDK
+                                  #Automatically batches SendMessage|DeleteMessage|ChangeMessageVisibility()
+                                  #Also prefetches ReceiveMessage()
+                                  #Not with FIFOs
+
+                                  ┌───────────────────┐
+                                  │   BATCH METRICS   │
+                                  └───────────────────┘
+
+AWS/SQS/SentMessageSize           #Is total size of whole BATCHs
+
+                                  ┌───────────────┐
+                                  │   MULTIPLEX   │
+                                  └───────────────┘
+
+TEMPORARY|VIRTUAL QUEUE ==>       #Logical namespace within a QUEUE, e.g. using a MESSAGE_ATTR, as opposed to a different QUEUE
+                                  #Cheaper: no API calls to CRUD the QUEUE
+                                  #For performance, should use distinct MESSAGE_GROUPs
+
+REQUEST-RESPONSE QUEUE ==>        #Using one queue for input, another for output back to original consumer
+                                  #Can use temporary queues to identify|trace client connection
+
+                                  ┌────────────────────────┐
+                                  │   MULTIPLEX SDK JAVA   │
+                                  └────────────────────────┘
+
+TEMPORARY QUEUE CLIENT ==>        #Built on top of Java SDK
+                                  #Meant for request-response queue, using temporary queues
+                                  #Repository is awslabs/amazon-sqs-java-temporary-queues-client
 
                                   ┌────────────────┐
                                   │   ENCRYPTION   │
