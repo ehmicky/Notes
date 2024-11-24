@@ -8,7 +8,6 @@ To learn:
      - see current doc
         - including EVENT_SOURCE.MetricsConfig.Metrics
      - https://docs.aws.amazon.com/lambda/latest/dg/with-sqs.html
-     - https://docs.aws.amazon.com/aws-managed-policy/latest/reference/AWSLambdaSQSQueueExecutionRole.html
      - if different ACCOUNT, cannot use SSE-SQS (but can use SSE-KMS or no encryption)
      - link to @aws-lambda-powertools/batch and @middy/sqs-partial-batch-failure
      - https://docs.powertools.aws.dev/lambda/typescript/latest/utilities/batch/#key-features
@@ -1089,58 +1088,57 @@ AWS::SQS::Queue                   #Includes RESPROPs: Tags TAG_PAIRS
                                   │   LAMBDA   │
                                   └────────────┘
 
-EVENT_SOURCE                      #Set Lambda FUNCTION as receiver, polling for it
-
-EVENT_SOURCE.MetricsConfig|FilterCriteria|*        #See Lambda doc
-
 EVENT_SOURCE.EventSourceArn       #SQS QUEUE_ARN
+                                  #Set Lambda FUNCTION as receiver, polling for it
+EVENT_SOURCE.*                    #See Lambda doc
 
-EVENT_SOURCE.BatchSize            #Target|max NUM of MESSAGEs to pass
-                                  #Def: 10, max: 10 (if FIFO) or 1e4 (if non-FIFO)
-EVENT_SOURCE                      #NUM (in secs). Maximum duration to gather MESSAGEs for each batch
+EVENT_SOURCE.BatchSize            #Target|max NUM of MESSAGEs in each REQ
+                                  #Def: 10
+                                  #Max: 10 (if FIFO) or 1e4 (if non-FIFO)
+
+EVENT_SOURCE                      #NUM (in secs). Maximum duration to gather MESSAGEs for each REQ
  .MaximumBatchingWindowInSeconds  #Def|min:
                                   #  - if BatchSize > 10: 1
                                   #  - else: 0, as soon as possible
                                   #Max: 5m
 
-EVENT_SOURCE                      #NUM. Max CONCURRENCY
- .ScalingConfig.MaximumConcurrency#Min 2, max 1e4
-
-EVENT_SOURCE
- .FunctionResponseTypes           #See Lambda doc. 'RECORD_ID' is RECORD.messageId
+EVENT_SOURCE                      #NUM. Max CONCURRENCY of the FUNCTION
+ .ScalingConfig.MaximumConcurrency#Def none, min 2, max 1e4
 
                                   ┌─────────────────┐
                                   │   LAMBDA AUTH   │
                                   └─────────────────┘
 
 PACTION sqs:ReceiveMessage
- |ChangeMessageVisibility
- |GetQueueUrl|DeleteMessage       #Required for SQS EVENT_SOURCE
- |GetQueueAttributes              #Also kms:*, if needed
+ |ChangeMessageVisibility         #Must be allowed on FUNC_VERSION.Role
+ |DeleteMessage|GetQueueAttributes#Also kms:Descrypt, if SSE-KMS
 
-AWSLambdaSQSQueueExecutionRole    #AWS managed POLICYs for FUNC_VERSION.Role
+AWSLambdaSQSQueueExecutionRole    #AWS managed POLICY for FUNC_VERSION.Role allowing:
+                                  #  - sqs:ReceiveMessage|DeleteMessage|GetQueueAttributes on any QUEUE
+                                  #  - logs:CreateLogGroup|CreateLogStream|PutLogEvents on any LOG_GROUP
 
                                   ┌────────────────┐
                                   │   LAMBDA IAC   │
                                   └────────────────┘
 
-AWS::Lambda::EventSourceMapping   #Includes RESPROPs: ScalingConfig, FunctionResponseTypes
+AWS::Lambda::EventSourceMapping   #Also includes RESPROPs: ScalingConfig
+                                  #See Lambda doc for the others
 
-new SqsEventSource(ICQUEUE[,OPTS])#CCEVENT_SOURCE
-OPTS.*                            #Like CEVENT_SOURCE_OPTS.*, except:
-                                  #  - no target
-                                  #  - eventSourceArn -> ICQUEUE
+new EventSourceMapping
+ (...CARGS, CEVENT_SOURCE_OPTS)   #See Lambda doc
 
 CEVENT_SOURCE_OPTS.maxConcurrency #NUM. EVENT_SOURCE.scalingConfig.maximumConcurrency
 
-CEVENT_SOURCE_OPTS
- .reportBatchItemFailures         #See Lambda doc
+new SqsEventSource(ICQUEUE[,OPTS])#CCEVENT_SOURCE (see Lambda doc)
+OPTS.*                            #Like CEVENT_SOURCE_OPTS.* (see Lambda doc), except:
+                                  #  - no target
+                                  #  - eventSourceArn -> ICQUEUE
 
                                   ┌────────────────┐
                                   │   LAMBDA SAM   │
                                   └────────────────┘
 
-AWS::Serverless::Function         #Includes RESPROPs: Events.EVENT: Properties: Queue 'QUEUE_ARN', ScalingConfig, FunctionResponseTypes
+AWS::Serverless::Function         #Includes RESPROPs: Events.EVENT: Properties: Queue 'QUEUE_ARN', ScalingConfig
 
 AWS::Serverless::Connector        #Can be used with:
                                   #  - Source: QUEUE (RESOURCE_REF.Arn)
@@ -1162,7 +1160,7 @@ QUEUE ENHANCED COMPONENT ==>      #Can connect QUEUE to FUNCTION to create an EV
                                   │   LAMBDA METRICS   │
                                   └────────────────────┘
 
-AWS/Lambda/DeletedEventCount      #NUM of records deleted after success|failure
+AWS/Lambda/DeletedEventCount      #NUM of DeleteMessage()
 
 AWS/Lambda/PolledEventCount
 AWS/Lambda/InvokedEventCount
@@ -1172,4 +1170,18 @@ AWS/Lambda/FailedInvokeEventCount #See Lambda doc
                                   │   LAMBDA LINT   │
                                   └─────────────────┘
 
-cfn-lint E3634                    #Do not use EVENT_SOURCE.StartingPosition when using SQS EVENT_SOURCE
+cfn-lint E3634                    #Do not set EVENT_SOURCE.StartingPosition when using SQS EVENT_SOURCE
+
+                                  ┌────────────────────┐
+                                  │   LAMBDA PAYLOAD   │
+                                  └────────────────────┘
+
+REQ.Records                       #LRECORD_ARR
+LRECORD.body                      #'LMESSAGE_JSON'
+LMESSAGE.*                        #MESSAGE_SEND_RES.* but camelCase'd
+LMESSAGE.eventSource              #Always 'aws:sqs'
+LMESSAGE.eventSourceArn           #'QUEUE_ARN'
+LMESSAGE.awsRegion                #'REGION'
+
+RES.batchItemFailures[*]          #'MESSAGE_SEND_MID'
+ .itemIdentifier                  #Only if partial batch (see Lambda doc)
