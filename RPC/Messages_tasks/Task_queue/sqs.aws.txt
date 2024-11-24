@@ -219,6 +219,20 @@ ICQUEUE.metric
  ('METRIC'[, CMETRIC_OPTS])
  ->CMETRIC                        #Also sets DVAR QueueName
 
+CFACADE.monitorQueue
+ (CXMONITORING_OPTS)              #See cdk-monitoring-constructs doc
+CXMONITORING_OPTS.queue           #ICQUEUE
+
+CFACADE.monitorQueueWithDlq       #Same but, for the dead-letter QUEUE2, adds:
+ (CXMONITORING_OPTS)              #  - METRICs|WIDGETs for ApproximateNumberOfMessagesVisible (max), NumberOfMessagesSent (sum),
+                                  #    ApproximateAgeOfOldestMessage
+                                  #  - MALARMs QueueMaxSize, QueueMaxIncomingMessages, QueueMaxMessageAge
+                                  #     - name prepended with 'DeadLetter'
+CXMONITORING_OPTS.queue           #ICQUEUE
+CXMONITORING_OPTS.deadLetterQueue #ICQUEUE2
+CXMONITORING_OPTS.addDeadLetter
+ QueueToSummaryDashboard          #BOOL (def: false). Whether to include WIDGETs in summary CDASHBOARD
+
                                   ┌──────────┐
                                   │   FIFO   │
                                   └──────────┘
@@ -364,10 +378,18 @@ CQUEUE.grantPurge
 AWS/SQS/NumberOfMessagesSent      #NUM of MESSAGEs sent
                                   #Includes duplicate sends
                                   #If dead-letter QUEUE, only MESSAGEs sent manually, not through dead-letter mechanism
+                                  #cdk-monitoring-constructs:
+                                  #  - sum: METRIC, summary WIDGET, MALARM QueueMin|MaxIncomingMessages < CXALARM_OPTS.min|maxIncomingMessagesCount
+                                  #  - rate: METRIC, summary WIDGET
+
 AWS/SQS/NumberOfMessagesReceived  #NUM of MESSAGEs received
                                   #Includes retries
+
 AWS/SQS/NumberOfMessagesDeleted   #NUM of MESSAGEs deleted
                                   #Includes duplicate deletions
+                                  #cdk-monitoring-constructs:
+                                  #  - sum: METRIC
+                                  #  - rate: METRIC, summary WIDGET
 
                                   ┌─────────────────────────┐
                                   │   MESSAGE METRICS IAC   │
@@ -474,6 +496,8 @@ CQUEUE_OPTS.maxMessageSizeBytes   #NUM. QUEUE_ATTRS.MaximumMessageSize
                                   └─────────────────────┘
 
 AWS/SQS/SentMessageSize           #Total size of all MESSAGE_SENDs
+                                  #cdk-monitoring-constructs:
+                                  #  - average: METRIC, WIDGET
 
                                   ┌─────────────────────────┐
                                   │   CONTENT METRICS IAC   │
@@ -578,13 +602,22 @@ CQUEUE_OPTS.retentionPeriod       #DURATION. QUEUE_ATTRS.MessageRetentionPeriod
                                   └──────────────────────┘
 
 AWS/SQS/Approximate
- NumberOfMessagesDelayed
+ NumberOfMessagesDelayed          #QUEUE_ATTRS.ApproximateNumberOfMessagesDelayed
 AWS/SQS/Approximate
- NumberOfMessages[Not]Visible     #QUEUE_ATTRS.*
+ NumberOfMessagesNotVisible       #QUEUE_ATTRS.ApproximateNumberOfMessagesNotVisible
+AWS/SQS/Approximate               #QUEUE_ATTRS.ApproximateNumberOfMessages - QUEUE_ATTRS.ApproximateNumberOfMessagesNotVisible
+ NumberOfMessagesVisible          #cdk-monitoring-constructs:
+                                  #  - max: METRIC, summary WIDGET, MALARM QueueMin|MaxSize <|> CXALARM_OPTS.min|maxMessageCount
+                                  #  - draining rate (in secs):
+                                  #     - METRIC, summary WIDGET, MALARM QueueMaxTimeToDrainMessages > CXALARM_OPTS.maxTimeToDrain
+                                  #     - estimated duration to have 0 MESSAGEs stored
+                                  #     - comparing NUM of MESSAGEs stored vs rate of MESSAGE_SENDs / MESSAGE_DELETEs
 
 AWS/SQS/                          #Age (NUM of seconds) of oldest MESSAGE
  ApproximateAgeOfOldestMessage    #If not FIFO, MESSAGEs that are retried 3+ times have their age reset
                                   #Excludes failed MESSAGEs
+                                  #cdk-monitoring-constructs:
+                                  #  - max: METRIC, summary WIDGET, MALARM QueueMaxMessageAge > CXALARM_OPTS.maxAgeInSeconds
 
                                   ┌──────────────────────┐
                                   │   TIMELINE METRICS   │
@@ -980,49 +1013,3 @@ UntagQueue()                      #Req: QUEUE_TAGS
                                   └──────────────┘
 
 AWS::SQS::Queue                   #Includes RESPROPs: Tags TAG_PAIRS
-
-
-CFACADE.monitorQueue
- (CXMONITORING_OPTS)              #See cdk-monitoring-constructs doc
-CXMONITORING_OPTS.queue           #ICQUEUE
-
-ApproximateNumberOfMessagesVisible:
-  - max: METRIC, summary WIDGET
-  - draining rate (in secs): METRIC, summary WIDGET
-     - estimated duration to have 0 MESSAGEs stored
-     - comparing NUM of MESSAGEs stored vs rate of MESSAGE_SENDs / MESSAGE_DELETEs
-NumberOfMessagesSent:
-  - sum: METRIC, summary WIDGET
-  - rate: METRIC, summary WIDGET
-NumberOfMessagesDeleted:
-  - sum: METRIC
-  - rate: METRIC, summary WIDGET
-ApproximateAgeOfOldestMessage: max: METRIC, summary WIDGET
-SentMessageSize: average: METRIC, WIDGET
-
-MALARM QueueMinSize < CXALARM_OPTS.minMessageCount
-MALARM QueueMaxSize > CXALARM_OPTS.maxMessageCount
-MALARM QueueMaxMessageAge > CXALARM_OPTS.maxAgeInSeconds
-MALARM QueueMaxTimeToDrainMessages > CXALARM_OPTS.maxTimeToDrain
-MALARM QueueMinIncomingMessages < CXALARM_OPTS.minIncomingMessagesCount
-MALARM QueueMaxIncomingMessages > CXALARM_OPTS.maxIncomingMessagesCount
-
-                                  #cdk-monitoring-constructs:
-                                  #  - count: METRIC, WIDGET, MALARM MinInvocationCount < CXALARM_OPTS.minCount
-                                  #  - rate/s: METRIC, summary WIDGET, MALARM Low|HighTps < > CXALARM_OPTS.min|maxTps
-
-CFACADE.monitorQueueWithDlq
- (CXMONITORING_OPTS)              #Same but also covers the dead-letter QUEUE2
-CXMONITORING_OPTS.queue           #ICQUEUE
-CXMONITORING_OPTS.deadLetterQueue #ICQUEUE2
-CXMONITORING_OPTS.addDeadLetter
- QueueToSummaryDashboard          #BOOL (def: false). Whether use WIDGETs or summary WIDGETs
-
-Only for
-ApproximateNumberOfMessagesVisible max
-NumberOfMessagesSent sum
-ApproximateAgeOfOldestMessage max
-
-MALARM DeadLetterQueueMaxSize
- |DeadLetterQueueMaxMessage
- |DeadLetterQueueMaxIncomingMessages: same but on DLQ
