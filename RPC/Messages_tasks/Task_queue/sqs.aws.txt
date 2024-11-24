@@ -16,16 +16,43 @@ To learn:
      - move POLICY_TEMPLATE doc from SAM transform doc
   - search "SQS" in my docs
 
+                                  ┌─────────┐
+                                  │   API   │
+                                  └─────────┘
+
 FORMAT ==>                        #Use either:
                                   #  - X-Amz-Target: AmazonSQS.ACTION [C], JSON request|response
                                   #  - REQ.Action 'ACTION', query string request (ARR uses VAR.NUM), XML response
-                                  #NUM are actually 'NUM' when using the API
 
 RES.ResponseMetadata.RequestId    #REQ_ID
 
 PAGINATION ==>                    #Uses REQ.MaxResults (def|max: 1e3) + REQ|RES.NextToken
                                   #Only REQ.MaxResults (def: 1, max: 10): ListMessageMoveTasks()
                                   #No pagination: ListQueueTags()
+
+                                  ┌───────────┐
+                                  │   QUEUE   │
+                                  └───────────┘
+
+QUEUE                             #CreateQueue() is idempotent, if using exact same QUEUE.*
+                                  #Deleting removes any MESSAGE
+                                  #Updating|deleting take up to 1m
+                                  #  - including QUEUE_ATTRS.Approximate*, which need that time to stabilize
+
+QUEUE_ATTRS.QueueArn              #'QUEUE_ARN'. 'arn:aws:sqs:REGION:ACCOUNT_ID:QUEUE'
+QUEUE.QueueUrl                    #QUEUE_URL. 'https://sqs.REGION.amazonaws.com/ACCOUNT_ID/QUEUE'
+QUEUE.QueueName                   #'QUEUE'
+                                  #Max 80 chars, [:alnum:]-_
+QUEUE.QueueOwnerAWSAccountId      #'ACCOUNT_ID' (def: current)
+
+QUEUE_ATTRS.CreatedTimestamp      #DATE_NUM
+QUEUE_ATTRS.LastModifiedTimestamp #DATE_NUM
+
+QUEUE.Attributes                  #QUEUE_ATTRS
+
+                                  ┌───────────────┐
+                                  │   QUEUE API   │
+                                  └───────────────┘
 
 CreateQueue()                     #Req: QUEUE
                                   #  - no QueueUrl
@@ -54,37 +81,22 @@ DeleteQueue()                     #Req: QUEUE
                                   #  - only QueueUrl
                                   #Res: empty
 
-QUEUE                             #CreateQueue() is idempotent, if using exact same QUEUE.*
-                                  #Deleting removes any MESSAGE
-                                  #Updating|deleting take up to 1m
-                                  #  - including QUEUE_ATTRS.Approximate*, which need that time to stabilize
-QUEUE_ATTRS.QueueArn              #'QUEUE_ARN'. 'arn:aws:sqs:REGION:ACCOUNT_ID:QUEUE'
-QUEUE.QueueUrl                    #QUEUE_URL. 'https://sqs.REGION.amazonaws.com/ACCOUNT_ID/QUEUE'
-QUEUE.QueueName                   #'QUEUE'
-                                  #Max 80 chars, [:alnum:]-_
-QUEUE.QueueOwnerAWSAccountId      #'ACCOUNT_ID' (def: current)
-QUEUE_ATTRS.CreatedTimestamp      #DATE_NUM
-QUEUE_ATTRS.LastModifiedTimestamp #DATE_NUM
-QUEUE.Attributes                  #QUEUE_ATTRS
-
-QUEUE_ATTRS.SqsManagedSseEnabled  #BOOL (def: true). "SSE-SQS". Encrypts MESSAGEs at rest using SQS-managed KMS key 'aws/sqs'
-                                  #If true, SendMessage|ReceiveMessage() cannot be anonymous
-QUEUE_ATTRS.KmsMasterKeyId        #KMS_ID (def: none). "SSE-KMS". Same but with custom key
-QUEUE_ATTRS
- .KmsDataKeyReusePeriodSeconds    #NUM of secs (min 1m, def 5m, max 1d) to re-use KMS data key, for performance and cost
+                                  ┌──────────┐
+                                  │   FIFO   │
+                                  └──────────┘
 
 QUEUE_ATTRS.FifoQueue             #BOOL (def: false). FIFO, i.e. ensures that receiving order is same as sending order
                                   #'QUEUE' must end with '.fifo'
                                   #If not specified considered "standard QUEUE"
 
-MESSAGE_SEND.MessageGroupId       #'MESSAGE_GROUP_ID'. FIFO ordering applies per-MESSAGE_GROUP
-                                  #I.e. MESSAGE_GROUPs are interleaved
+MESSAGE_SEND|SYS_ATTRS            #'MESSAGE_GROUP_ID'. FIFO ordering applies per-MESSAGE_GROUP
+ .MessageGroupId                  #I.e. MESSAGE_GROUPs are interleaved
                                   #Only with FIFO. Required
                                   #Max 128 chars, [:graph:]
-MESSAGE_SEND_RES.SequenceNumber   #'NUM'. Increases monotonically (but not necessarily consecutively) per MESSAGE within a given MESSAGE_GROUP
-                                  #Always 128 chars, padded with 0s
+MESSAGE_SEND_RES|SYS_ATTRS        #'NUM'. Increases monotonically (but not necessarily consecutively) per MESSAGE within a given MESSAGE_GROUP
+ .SequenceNumber                  #Always 128 chars, padded with 0s
 
-MESSAGE_SEND                      #'MESSAGE_DID'. If 2 MESSAGEs with the same MESSAGE_DID are sent (within 5m), the second one is ignored
+MESSAGE_SEND|SYS_ATTRS            #'MESSAGE_DID'. If 2 MESSAGEs with the same MESSAGE_DID are sent (within 5m), the second one is ignored
  .MessageDeduplicationId          #I.e. avoid duplicate sends
                                   #Only with FIFO. Required
                                   #Max 128 chars, [:graph:]
@@ -93,15 +105,145 @@ QUEUE_ATTRS
 QUEUE_ATTRS.DeduplicationScope    #Whether to namespace MESSAGE_DID with MESSAGE_GROUP_ID: 'queue' (no), 'messageGroup' (yes)
 
 QUEUE_ATTRS.FifoThroughputLimit   #Either:
-                                  #  - 'perQueue' (def): max 300 MESSAGE/s, per QUEUE
-                                  #  - 'perMessageGroupId': max 7e4 MESSAGE/s (REGION-specific), per MESSAGE_GROUP
-                                  #In both cases, 10x more if using SendMessageBatch()
+                                  #  - 'perQueue' (def): max 300 SendMessage[Batch]() per second per QUEUE
+                                  #  - 'perMessageGroupId': max 7e4 (REGION-specific) SendMessage[Batch]() per second per MESSAGE_GROUP
                                   #If 'perMessageGroupId', QUEUE_ATTRS.DeduplicationScope must be 'messageGroup'
 
-ListDeadLetterSourceQueues()      #Req: QUEUE
+                                  ┌─────────────┐
+                                  │   MESSAGE   │
+                                  └─────────────┘
+
+MESSAGES_SEND.Entries             #MESSAGE_SEND_ARR (no QueueUrl)
+                                  #SendMessageBatch(): max 10 items
+MESSAGE_SEND[_RES]                #'MESSAGE_SEND_MID'. Required
+ |MESSAGE_FAILURE.Id              #Max 80 chars, [:alnum:]_-
+MESSAGE[S]_SEND|MESSAGE_RCV
+ .QueueUrl                        #'QUEUE_URL'
+
+SYS_ATTRS.SentTimestamp           #DATE_NUM
+
+MESSAGE_SEND.MessageBody          #'MESSAGE_BODY'
+MESSAGE_RCV_RES.Body              #Must be URL encoded
+
+MESSAGE_SEND|MESSAGE_RCV_RES
+ .MessageAttributes               #MESSAGE_ATTRS. Custom metadata
+MESSAGE_ATTRS.MESSAGE_ATTR        #ATTR_VALUE
+                                  #MESSAGE_ATTR max 256 chars, [:alnum:]_-. and cannot start with . AWS. or Amazon.
+MESSAGE_RCV.MessageAttributeNames #'MESSAGE_ATTR'_ARR to receive in MESSAGE_RCV_RES.MessageAttributes
+                                  #Can be 'All' (def) or use *
+
+MESSAGE_SEND
+ .MessageSystemAttributes         #SYS_ATTRS
+SYS_ATTRS.SYS_ATTR                #ATTR_VALUE
+MESSAGE_RCV                       #'SYS_ATTR'_ARR to set in MESSAGE_RCV.Attributes
+ .MessageSystemAttributeNames     #Can be 'All' (def) or use *
+                                  #Cannot be 'AWSTraceHeader' nor 'SqsManagedSseEnabled'
+MESSAGE_RCV.Attributes.SYS_ATTR   #STR
+
+ATTR_VALUE.DataType               #Value's type among 'String', 'Number' or 'Binary'
+ATTR_VALUE.StringValue            #STR. Value, when DataType 'String|Number'
+                                  #Must be URL encoded
+ATTR_VALUE.BinaryValue            #STR. Value, when DataType 'Binary'
+                                  #Must be base64'd
+
+SYS_ATTRS.SenderId                #USER_MID|ROLE_MID that called SendMessage*()
+SYS_ATTRS.AWSTraceHeader          #STR
+
+QUEUE_ATTRS.MaximumMessageSize    #NUM (in bytes, min 1KB, def|max 256KB)
+                                  #Max size of MESSAGE_SEND|MESSAGES_SEND
+
+QUEUE_ATTRS                       #NUM (in secs, def 0, max 20)
+ .ReceiveMessageWaitTimeSeconds   #If no MESSAGE available, wait up to NUMs before returning
+MESSAGE_RCV.WaitTimeSeconds       #I.e. long polling
+
+MESSAGE_RCV.MaxNumberOfMessages   #NUM (min|def: 1, max: 10)
+                                  #Migh receive less, including 0, even when more are available
+MESSAGE_RCV
+ .ReceiveRequestAttemptId         #STR
+
+MESSAGES_RCV_RES.Messages         #MESSAGE_RCV_RES_ARR
+
+MESSAGES_RES.Successful           #MESSAGE_SEND_RES_ARR
+MESSAGE_SEND_RES|MESSAGE_RCV_RES
+ .MessageId                       #'MESSAGE_SEND_MID'
+MESSAGE_RCV_RES.ReceiptHandle     #'MESSAGE_RCV_MID'
+MESSAGE_SEND_RES.MD5OfMessageBody
+MESSAGE_RCV_RES.MD5OfBody         #MD5 'HASH' of 'MESSAGE_BODY', after URL decoding
+MESSAGE_SEND_RES|MESSAGE_RCV_RES
+ .MD5OfMessage[System]Attributes  #Same for Message[System]Attributes
+
+MESSAGES_RES.Failed               #MESSAGE_FAILURE_ARR
+MESSAGE_FAILURE.Code              #'CODE'
+MESSAGE_FAILURE.Message           #'MESSAGE'
+MESSAGE_FAILURE.SenderFault       #BOOL. Whether caused by user or by API
+
+                                  ┌─────────────────┐
+                                  │   MESSAGE API   │
+                                  └─────────────────┘
+
+SendMessage()                     #Req: MESSAGE_SEND
+                                  #  - no Id
+                                  #Res: MESSAGE_SEND_RES
+                                  #  - no Id
+SendMessageBatch()                #Req: MESSAGES_SEND
+                                  #Res: MESSAGES_RES
+ReceiveMessage()                  #Req: MESSAGE_RCV
+                                  #Res: MESSAGES_RCV_RES_ARR
+DeleteMessage()                   #Req: MESSAGE_RCV_RES
+                                  #  - only ReceiptHandle, QueueUrl
+                                  #Res: empty
+DeleteMessageBatch()              #Req: MESSAGES_SEND
+                                  #  - Entries[*]: only Id, ReceiptHandle
+                                  #Res: MESSAGES_RES
+                                  #  - Successful[*]: only Id
+PurgeQueue()                      #Res: MESSAGE_SEND_RES
                                   #  - only QueueUrl
-                                  #Res: QUEUE
-                                  #  - only QueueUrl -> QueueUrls ARR
+                                  #Res: empty
+                                  #Delete all MESSAGEs
+
+                                  ┌──────────────┐
+                                  │   TIMELINE   │
+                                  └──────────────┘
+
+QUEUE_ATTRS                       #NUM of MESSAGEs "stored", i.e. not received yet
+ .ApproximateNumberOfMessages     #No limits
+
+QUEUE_ATTRS|MESSAGE_SEND          #NUM (in secs, def: 0, max: 15m)
+ .DelaySeconds                    #Period after MESSAGE sending when MESSAGE cannot be received
+                                  #Not with FIFO QUEUEs
+QUEUE_ATTRS.Approximate
+ NumberOfMessagesDelayed          #NUM of delayed MESSAGEs
+
+QUEUE_ATTRS|MESSAGE_RCV           #Max NUM (min 0, def 30s, max 12h) of secs for consumers to process a MESSAGE
+ .VisibilityTimeout               #Period starts when MESSAGE is received
+                                  #During that time, MESSAGE cannot be received again ("in-flight")
+                                  #  - i.e. if too low, risk of multiple consumers receiving same MESSAGE
+                                  #Once consumed, MESSAGE must either be deleted, or its VisibilityTimeout increased
+                                  #ChangeMessageVisibility[Batch]() sets VisibilityTimeout from the time it is called
+                                  #Else, MESSAGE reception is considered failed
+                                  #  - i.e. if too high, slows down retrying failed consumption
+QUEUE_ATTRS.Approximate           #NUM of in-flight MESSAGEs
+ NumberOfMessagesNotVisible       #Max 12e4 if non-FIFO, 2e4 if FIFO
+
+QUEUE_ATTRS.MessageRetentionPeriod#NUM (in secs, min 1m, def 4d, max 14d)
+                                  #Delete MESSAGEs older than NUMs
+                                  #Updates impact existing MESSAGEs, and take up to 15m
+
+                                  ┌──────────────────┐
+                                  │   TIMELINE API   │
+                                  └──────────────────┘
+
+ChangeMessageVisibility()         #Req: MESSAGE_RCV
+                                  #  - only QueueUrl, ReceiptHandle, VisibilityTimeout
+                                  #Res: empty
+ChangeMessageVisibilityBatch()    #Req: MESSAGES_SEND
+                                  #  - Entries[*]: only Id, ReceiptHandle, VisibilityTimeout
+                                  #Res: MESSAGES_RES
+                                  #  - Successful[*]: only Id
+
+                                  ┌─────────────────┐
+                                  │   DEAD-LETTER   │
+                                  └─────────────────┘
 
 QUEUE_ATTRS.RedrivePolicy         #'REDRIVE_POLICY_JSON'. Send failed MESSAGEs from this QUEUE to a dead-letter QUEUE2
 REDRIVE_POLICY.deadLetterTargetArn#QUEUE2_ARN
@@ -116,108 +258,40 @@ REDRIVE_APOLICY.redrivePermission #'allowAll' (def), 'denyAll' or 'byQueue'
 REDRIVE_APOLICY.sourceQueueArns   #Specific 'QUEUE2_ARN'_ARR, when using redrivePermission 'byQueue'
                                   #Max 10 items
 
-SendMessage()                     #Req: MESSAGE_SEND
-                                  #  - no Id
-                                  #Res: MESSAGE_SEND_RES
-                                  #  - no Id
-SendMessageBatch()                #Req: MESSAGES_SEND
-                                  #Res: MESSAGES_RES
-ReceiveMessage()                  #Req: MESSAGE_RCV
-                                  #Res: Messages MESSAGE_RCV_RES_ARR
-DeleteMessage()                   #Req: MESSAGE_RCV_RES
-                                  #  - only ReceiptHandle, QueueUrl
-                                  #Res: empty
-DeleteMessageBatch()              #Req: MESSAGES_SEND
-                                  #  - Entries[*]: only Id, ReceiptHandle
-                                  #Res: MESSAGES_RES
-                                  #  - Successful[*]: only Id
-PurgeQueue()                      #Res: MESSAGE_SEND_RES
+                                  ┌─────────────────────┐
+                                  │   DEAD-LETTER API   │
+                                  └─────────────────────┘
+
+ListDeadLetterSourceQueues()      #Req: QUEUE
                                   #  - only QueueUrl
-                                  #Res: empty
+                                  #Res: QUEUE
+                                  #  - only QueueUrl -> QueueUrls ARR
 
-MESSAGES_SEND.Entries             #MESSAGE_SEND_ARR (no QueueUrl)
-MESSAGE_SEND.Id                   #STR
-MESSAGE[S]_SEND|MESSAGE_RCV
- .QueueUrl                        #'QUEUE_URL'
+                                  ┌──────────┐
+                                  │   MOVE   │
+                                  └──────────┘
 
-MESSAGE_SEND.MessageBody
-MESSAGE_RCV_RES.Body              #'MESSAGE_BODY'
-QUEUE_ATTRS.MaximumMessageSize    #NUM (in bytes, min 1KB, def|max 256KB)
-                                  #Max size of 'MESSAGE_BODY'
+MOVE                              #Move all MESSAGEs from a dead-letter QUEUE to another QUEUE2
+                                  #Max 1 per QUEUE at a time
+MOVE.TaskHandle                   #'MOVE_MID'
+MOVE.SourceArn                    #'QUEUE_ARN'. Must be dead-letter
+MOVE.DestinationArn               #'QUEUE2_ARN'
+                                  #Def: the dead-letter's source
+MOVE.StartedTimestamp             #DATE_NUM
 
-MESSAGE_RCV.MessageAttributeNames #'MESSAGE_ATTR_KEY'_ARR
-MESSAGE_RCV
- .MessageSystemAttributeNames     #'MESSAGE_ATTR_KEY'_ARR
-MESSAGE_SEND|MESSAGE_RCV_RES
- .MessageAttributes
- .MESSAGE_ATTR_KEY
-MESSAGE_SEND
- .MessageSystemAttributes
- .MESSAGE_ATTR_KEY                #MESSAGE_ATTR
-MESSAGE_ATTR.BinaryListValues     #BLOB_ARR
-MESSAGE_ATTR.BinaryValue          #BLOB
-MESSAGE_ATTR.DataType             #STR
-MESSAGE_ATTR.StringListValues     #STR_ARR
-MESSAGE_ATTR.StringValue          #STR
+MOVE.Status                       #Among 'RUNNING', 'COMPLETED', 'FAILED', 'CANCELLING', 'CANCELLED'
+                                  #Cancelling does not rollback
+MOVE.FailureReason                #STR, when Status 'FAILED'
 
-MESSAGE_RCV.Attributes.KEY        #STR
+MOVE.MaxNumberOfMessagesPerSecond #NUM (def: undocumented, max: 500) of MESSAGEs per sec
+MOVE
+.ApproximateNumberOfMessagesToMove#Total NUM of MESSAGEs
+MOVE
+ .ApproximateNumberOfMessagesMoved#NUM of MESSAGEs moved
 
-MESSAGES_RES.Successful           #MESSAGE_SEND_RES_ARR
-MESSAGE_SEND_RES.Id               #STR
-MESSAGE_SEND_RES.MD5OfMessageBody
-MESSAGE_RCV_RES.MD5OfBody         #STR
-MESSAGE_SEND_RES|MESSAGE_RCV_RES
- .MD5OfMessageAttributes          #STR
-MESSAGE_SEND_RES
- .MD5OfMessageSystemAttributes    #STR
-MESSAGE_SEND_RES|MESSAGE_RCV_RES
- .MessageId                       #STR
-MESSAGE_RCV_RES.ReceiptHandle     #STR
-
-MESSAGES_RES.Failed               #MESSAGE_FAILURE_ARR
-MESSAGE_FAILURE.Id                #STR
-MESSAGE_FAILURE.Code              #STR
-MESSAGE_FAILURE.Message           #STR
-MESSAGE_FAILURE.SenderFault       #BOOL
-
-MESSAGE_RCV.MaxNumberOfMessages   #NUM
-MESSAGE_RCV
- .ReceiveRequestAttemptId         #STR
-
-QUEUE_ATTRS
- .ReceiveMessageWaitTimeSeconds   #NUM (in secs, def 0, max 20)
-MESSAGE_RCV.WaitTimeSeconds       #If no MESSAGE available, wait up to NUMs before returning
-
-ChangeMessageVisibility()         #Req: MESSAGE_RCV
-                                  #  - only QueueUrl, ReceiptHandle, VisibilityTimeout
-                                  #Res: empty
-ChangeMessageVisibilityBatch()    #Req: MESSAGES_SEND
-                                  #  - Entries[*]: only Id, ReceiptHandle, VisibilityTimeout
-                                  #Res: MESSAGES_RES
-                                  #  - Successful[*]: only Id
-
-QUEUE_ATTRS
- .ApproximateNumberOfMessages     #NUM of MESSAGEs not received yet
-
-QUEUE_ATTRS|MESSAGE_SEND          #NUM (in secs, def: 0, max: 15m)
- .DelaySeconds                    #Period after MESSAGE sending when MESSAGE cannot be received
-                                  #Not with FIFO QUEUEs
-QUEUE_ATTRS.Approximate
- NumberOfMessagesDelayed          #NUM of delayed MESSAGEs
-
-QUEUE_ATTRS|MESSAGE_RCV           #Max NUM (min 0, def 30s, max 12h) of secs for consumers to process a MESSAGE
- .VisibilityTimeout               #Period starts when MESSAGE is received
-                                  #During that time, MESSAGE cannot be received again ("in-flight")
-                                  #  - i.e. if too low, risk of multiple consumers receiving same MESSAGE
-                                  #Once consumed, MESSAGE must either be deleted, or its VisibilityTimeout increased
-                                  #Else, MESSAGE reception is considered failed
-                                  #  - i.e. if too high, slows down retrying failed consumption
-QUEUE_ATTRS.Approximate
- NumberOfMessagesNotVisible       #NUM of in-flight MESSAGEs
-
-QUEUE_ATTRS.MessageRetentionPeriod#NUM (in secs, min 1m, def 4d, max 14d)
-                                  #Delete MESSAGEs older than NUMs
-                                  #Updates impact existing MESSAGEs, and take up to 15m
+                                  ┌──────────────┐
+                                  │   MOVE API   │
+                                  └──────────────┘
 
 StartMessageMoveTask()            #Req: MOVE
                                   #  - only SourceArn, DestinationArn, MaxNumberOfMessagesPerSecond
@@ -231,19 +305,52 @@ CancelMessageMoveTask()           #Req: MOVE
                                   #Res: MOVE
                                   #  - only ApproximateNumberOfMessagesMoved
 
-MOVE.TaskHandle                   #'MOVE_MID'
-MOVE.SourceArn                    #'QUEUE_ARN'
-MOVE.DestinationArn               #'QUEUE2_ARN'
-MOVE.StartedTimestamp             #DATE_NUM
+                                  ┌────────────────┐
+                                  │   ENCRYPTION   │
+                                  └────────────────┘
 
-MOVE.Status                       #STR
-MOVE.FailureReason                #STR
+QUEUE_ATTRS|SYS_ATTRS             #BOOL (def: true). "SSE-SQS". Encrypts MESSAGEs at rest using SQS-managed KMS key 'aws/sqs'
+ .SqsManagedSseEnabled            #If true, SendMessage|ReceiveMessage() cannot be anonymous
 
-MOVE.MaxNumberOfMessagesPerSecond #NUM
-MOVE
- .ApproximateNumberOfMessagesMoved#NUM
-MOVE
-.ApproximateNumberOfMessagesToMove#NUM
+QUEUE_ATTRS.KmsMasterKeyId        #KMS_ID (def: none). "SSE-KMS". Same but with custom key
+
+QUEUE_ATTRS
+ .KmsDataKeyReusePeriodSeconds    #NUM of secs (min 1m, def 5m, max 1d) to re-use KMS data key, for performance and cost
+
+                                  ┌────────────┐
+                                  │   POLICY   │
+                                  └────────────┘
+
+QUEUE_ATTRS.Policy                #IAM 'POLICY_DOC'
+                                  #Resource-level on a QUEUE, i.e. Resource is QUEUE_ARN
+                                  #Can set COND_KEY aws:SourceAccount for cross-ACCOUNT
+                                  #PACTION can only be:
+                                  #  - '*'
+                                  #  - sqs:*Message* (except *MessageMoveTask)
+                                  #  - sqs:PurgeQueue
+                                  #  - sqs:GetQueue*
+                                  #  - sqs:ListDeadLetterSourceQueues
+                                  #Max 7 PACTIONs
+                                  #No 'PACTIONBatch': included in 'PACTION'
+                                  #Def: allow sqs:ReceiveMessage to any
+
+PERMISSION                        #Sets QUEUE_ATTRS.Policy
+PERMISSION.Label                  #STATEMENT.Sid
+PERMISSION.QueueUrl               #'QUEUE_URL'. STATEMENT.Resource
+PERMISSION.Actions                #'PACTION|*'_ARR. STATEMENT.Actions
+PERMISSION.AWSAccountIds          #'ACCOUNT_ID'_ARR. COND_KEY aws:SourceAccount
+                                  #Required
+
+                                  ┌─────────────────┐
+                                  │   POLICY AUTH   │
+                                  └─────────────────┘
+
+PACTION AddPermission
+ |RemovePermission                #Do not require PACTION SetQueueAttributes, even though they set QUEUE_ATTRS.Policy
+
+                                  ┌────────────────┐
+                                  │   POLICY API   │
+                                  └────────────────┘
 
 AddPermission()                   #Req: PERMISSION
                                   #Res: empty
@@ -251,26 +358,17 @@ RemovePermission()                #Req: PERMISSION
                                   #  - only QueueUrl, Label
                                   #Res: empty
 
-QUEUE_ATTRS.Policy                #IAM 'POLICY_DOC'
-                                  #Resource-level on a QUEUE, i.e. Resource is QUEUE_ARN
-                                  #Can set COND_KEY aws:SourceAccount for cross-ACCOUNT
-                                  #PACTION can only be:
-                                  #  - sqs:*Message* (except *MessageMoveTask)
-                                  #  - sqs:PurgeQueue
-                                  #  - sqs:GetQueue*
-                                  #  - sqs:ListDeadLetterSourceQueues
-                                  #No 'PACTIONBatch': included in 'PACTION'
-                                  #Def: allow sqs:ReceiveMessage to any
+                                  ┌──────────┐
+                                  │   TAGS   │
+                                  └──────────┘
 
-PERMISSION                        #Sets QUEUE_ATTRS.Policy
-PERMISSION.Label                  #STATEMENT.Sid
-PERMISSION.QueueUrl               #'QUEUE_URL'. STATEMENT.Resource
-PERMISSION.Actions                #'PACTION'_ARR. STATEMENT.Actions
-PERMISSION.AWSAccountIds          #'ACCOUNT_ID'_ARR. COND_KEY aws:SourceAccount
-                                  #Required
+QUEUE_TAGS.QueueUrl               #'QUEUE_URL'
+QUEUE.tags
+QUEUE_TAGS.Tags                   #TAGS OBJ
 
-PACTION AddPermission
- |RemovePermission                #Do not require PACTION SetQueueAttributes, even though they set QUEUE_ATTRS.Policy
+                                  ┌──────────────┐
+                                  │   TAGS API   │
+                                  └──────────────┘
 
 TagQueue()                        #Req: QUEUE_TAGS
                                   #Res: empty
@@ -281,7 +379,3 @@ ListQueueTags()                   #Req: QUEUE_TAGS
 UntagQueue()                      #Req: QUEUE_TAGS
                                   #  - Tags OBJ -> TagKeys STR_ARR
                                   #Res: empty
-
-QUEUE_TAGS.QueueUrl               #'QUEUE_URL'
-QUEUE.tags
-QUEUE_TAGS.Tags                   #TAGS OBJ
