@@ -5,8 +5,6 @@
 
 To learn:
   - S3 notifications to SQS
-     - see my current doc
-     - https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-key-management.html#sqs-what-permissions-for-sse
      - https://github.com/aws-powertools/powertools-lambda-typescript/blob/main/packages/jmespath/src/envelopes.ts#L81
   - API Gateway SQS integration
      - move my current doc
@@ -31,7 +29,7 @@ To learn:
         - see documentation of it under S3
      - https://github.com/aws-powertools/powertools-lambda-typescript/blob/main/packages/jmespath/src/envelopes.ts#L71
   - https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/welcome.html
-     - stopped at FIFO queues > FIFO delivery logic
+     - stopped at FIFO queues > High throughput for FIFO queues in Amazon SQS
      - already done: Temporary queues, Quotas, Security, Related resources, Document history
   - https://github.com/bbc/sqs-producer
      - compare with https://github.com/montumodi/sqs-bulk-loader
@@ -130,7 +128,7 @@ QUEUE.Attributes                  #QUEUE_ATTRS
                                   └────────────────┘
 
 PACTION sqs:GetQueueAttributes
- |GetQueueUrl                     #Often allowed to senders|consumers
+ |GetQueueUrl                     #Often allowed to senders|receivers
 
                                   ┌───────────────┐
                                   │   QUEUE API   │
@@ -278,15 +276,22 @@ ORDER ==>                         #Ensures that receiving order is same as sendi
 
 MESSAGE_SEND|SYS_ATTRS            #'MESSAGE_GROUP_ID'. FIFO ordering applies per-MESSAGE_GROUP
  .MessageGroupId                  #I.e. MESSAGE_GROUPs are interleaved
+                                  #Receivers cannot select MESSAGE_GROUPs, they get random ones
+                                  #High NUM of MESSAGE_GROUPs has better performance:
+                                  #  - higher parallelism for receivers, since VisibilityTimeout locks per-MESSAGE_GROUP
+                                  #  - lower throttling, when it is per-MESSAGE_GROUP
                                   #Only with FIFO. Required
                                   #Max 128 chars, [:graph:]
                                   #No limits on NUM of MESSAGE_GROUPs
 MESSAGE_SEND_RES|SYS_ATTRS        #'NUM'. Increases monotonically (but not necessarily consecutively) per MESSAGE within a given MESSAGE_GROUP
  .SequenceNumber                  #Always 128 chars, padded with 0s
 
-MESSAGE_SEND|SYS_ATTRS            #'MESSAGE_SEND_DID'. If 2 SendMessage*() with the same MESSAGE_SEND_DID are sent (within 5m),
- .MessageDeduplicationId          #the second one is ignored
+MESSAGE_SEND|SYS_ATTRS            #'MESSAGE_SEND_DID'. If 2 SendMessage*() with the same MESSAGE_SEND_DID are sent,
+ .MessageDeduplicationId          #within 5m, only the first successful one is used
                                   #I.e. exactly-once delivery, avoiding duplicate sends
+                                  #Can happen either if:
+                                  #  - 2 concurrent senders at the same time
+                                  #  - sending fails (e.g. network error) and is retried
                                   #Continues working even after MESSAGE has been received and|or deleted
                                   #Only with FIFO. Required
                                   #Max 128 chars, [:graph:]
@@ -294,20 +299,29 @@ QUEUE_ATTRS
  .ContentBasedDeduplication       #BOOL (def: false). Make MESSAGE_SEND_DID default to SHA-256 of 'MESSAGE_BODY'
 QUEUE_ATTRS.DeduplicationScope    #Whether to namespace MESSAGE_SEND_DID with MESSAGE_GROUP_ID: 'queue' (no), 'messageGroup' (yes)
 
-PROCESSING ==>                    #Receiver must process MESSAGEs serially (within a given MESSAGE_GROUP)
-                                  #I.e. failed MESSAGEs prevent further consumption
+PROCESSING ==>                    #VisibilityTimeout locks the whole MESSAGE_GROUP, not just the MESSAGE
+                                  #I.e. each MESSAGE_GROUP is processed by at most once ReceiveMessage() at a time
+                                  #  - but one ReceiveMessage() might be processing multiple MESSAGE_GROUPs at a time
+                                  #Receiver must process MESSAGEs serially, within a given MESSAGE_GROUP
+                                  #I.e. failed MESSAGEs prevent further consumption of their MESSAGE_GROUP
                                   #  - if no dead-letter QUEUE2, completely blocks it
+                                  #If all MESSAGE_GROUPs are in-flight, ReceiveMessage() will be return empty
 
-MESSAGES_RCV                      #'MESSAGE_RCV_DID'. If 2 ReceiveMessage*() with the same MESSAGE_RCV_DID are sent (within 5m),
- .ReceiveRequestAttemptId         #the first one fails if it tries to DeleteMessage*()
-                                  #I.e. exactly-once processing, avoiding duplicate processing
-                                  #Only with FIFO. Required for retries
+MESSAGES_RCV                      #'MESSAGE_RCV_DID'. If 2 ReceiveMessage*() with the same MESSAGE_RCV_DID are sent,
+ .ReceiveRequestAttemptId         #within min(5m, VisibilityTimeout), only the first successful one is used
+                                  #I.e. exactly-once processing, avoiding duplicate receiving
+                                  #Not if ChangeMessageVisibility() or DeleteMessage() already called
+                                  #I.e. mostly meant if:
+                                  #  - 2 concurrent receivers at the same time
+                                  #  - receiving fails (e.g. network error) and is retried
+                                  #Required for retries within the VisibilityTimeout
+                                  #Only with FIFO
                                   #Max 128 chars, [:graph:]
 
 QUEUE_ATTRS.FifoThroughputLimit   #Throttles either:
                                   #  - 'perQueue' (def): max 300 (hard) SendMessage[Batch]() per second per QUEUE
                                   #  - 'perMessageGroupId' (recommended): max 7e4 (soft, REGION-specific) SendMessage[Batch]() per second per MESSAGE_GROUP
-                                  #The same quota applies separetely for DeleteMessage[Batch](), and for ReceiveMessage()
+                                  #The same quota applies separately for DeleteMessage[Batch]() and for ReceiveMessage()
                                   #If 'perMessageGroupId', QUEUE_ATTRS.DeduplicationScope must be 'messageGroup'
                                   #Only with FIFO
 
@@ -596,23 +610,25 @@ ICQUEUE
 QUEUE_ATTRS                       #NUM of MESSAGEs "stored", i.e. not received yet
  .ApproximateNumberOfMessages     #No limits
 
-QUEUE_ATTRS|MESSAGE_SEND          #NUM (in secs, def: 0, max: 15m)
- .DelaySeconds                    #Period after MESSAGE sending when MESSAGE cannot be received
+QUEUE_ATTRS.DelaySeconds          #NUM (in secs, def: 0, max: 15m)
+                                  #Period after MESSAGE sending when MESSAGE cannot be received
+MESSAGE_SEND.DelaySeconds         #Same for individual MESSAGE
                                   #Not with FIFO QUEUEs
 QUEUE_ATTRS.Approximate
  NumberOfMessagesDelayed          #NUM of delayed MESSAGEs
 
-QUEUE_ATTRS|MESSAGES_RCV          #Max NUM (min 0, def 30s, max 12h) of secs for consumers to process a MESSAGE
+QUEUE_ATTRS|MESSAGES_RCV          #Max NUM (min 0, def 30s, max 12h) of secs for receivers to process a MESSAGE
  |MESSAGE_VSB.VisibilityTimeout   #I.e. like a processing lock
                                   #Period starts when MESSAGE is received
                                   #During that time, MESSAGE cannot be received again ("in-flight")
-                                  #  - i.e. if too low, risk of multiple consumers receiving same MESSAGE
+                                  #  - i.e. if too low, risk of multiple receivers receiving same MESSAGE
                                   #Once processed, MESSAGE must be deleted
                                   #Else, MESSAGE reception is considered failed ("poison pill")
                                   #  - i.e. if too high, slows down retrying failed consumption
                                   #Can increase processing time with ChangeMessageVisibility()
                                   #  - it sets VisibilityTimeout from the time it is called
                                   #Can set to 0 to force timeout
+                                  #With FIFO, the whole MESSAGE_GROUP is locked instead, not just the MESSAGE
                                   #If some MESSAGEs have different VisibilityTimeout
                                   #  - prefer using multiple QUEUEs with different VisibilityTimeout
                                   #  - instead of setting MESSAGES_RCV.VisibilityTimeout
@@ -701,7 +717,7 @@ QUEUE_ATTRS.RedrivePolicy         #'REDRIVE_POLICY_JSON'
                                   #Can either:
                                   #  - fix underlying problem, then redrive MESSAGEs
                                   #     - i.e. not consume the MESSAGEs
-                                  #  - process the MESSAGEs from the dead-letter QUEUE by another consumer
+                                  #  - process the MESSAGEs from the dead-letter QUEUE by another receiver
 REDRIVE_POLICY.deadLetterTargetArn#QUEUE2_ARN
                                   #Can be in different REGION|ACCOUNT, but less performant
 REDRIVE_POLICY.maxReceiveCount    #NUM (def: 10) of MESSAGE failures before moving MESSAGE to dead-letter QUEUE2
@@ -843,14 +859,16 @@ QUEUE_ATTRS.MaximumMessageSize    #Is max size of whole BATCH
 
 MESSAGES_RCV_RES.Messages         #MESSAGE_RCV_RES_ARR
 MESSAGES_RCV.MaxNumberOfMessages  #NUM (min|def: 1, max|recommended: 10). Max size of MESSAGES_RCV_RES.Messages
-                                  #Migh receive less, including 0, even when more are available
+                                  #Might receive less
+                                  #Might receive 0
+                                  #  - with non-FIFO, can happen even some MESSAGEs are stored, due to randomly sampling AZs
 
-FIFO ==>                          #When receiving a batch:
+FIFO ==>                          #Throttling limit is per API call, i.e. eased by batching
+                                  #When receiving a batch:
                                   #  - API tries to give MESSAGEs with same MESSAGE_GROUP
                                   #     - but does not guarantee it
                                   #  - can process MESSAGEs with same MESSAGE_GROUP in parallel
-                                  #     - but must delete them in order
-                                  #Throttling limit is per API call, i.e. eased by batching
+                                  #     - but must delete them in order or (better) in a batch
 
 BUFFERING ==>                     #Client can buffer:
                                   #  - holding SendMessage(), to increase batch size
@@ -899,7 +917,7 @@ TEMPORARY|VIRTUAL QUEUE ==>       #Logical namespace within a QUEUE, e.g. using 
                                   #Cheaper: no API calls to CRUD the QUEUE
                                   #For performance, should use distinct MESSAGE_GROUPs
 
-REQUEST-RESPONSE QUEUE ==>        #Using one queue for input, another for output back to original consumer
+REQUEST-RESPONSE QUEUE ==>        #Using one queue for input, another for output back to original sender
                                   #Can use temporary queues to identify|trace client connection
 
                                   ┌────────────────────────┐
