@@ -3101,15 +3101,16 @@ AWS/Lambda/AsyncEventAge          #NUM of secs to process async INVOCATIONs
                                   └───────────────────────┘
 
 EVENT_INVOKE.DestinationConfig    #ARN receiving response (INVOKE_PAYLOAD) on final success|error
- .onSuccess|onFailure.Destination #Can be:
-                                  #  - SQS QUEUE (not FIFO)
+ .OnSuccess|OnFailure.Destination #Can be:
+                                  #  - SQS QUEUE (not FIFO): INVOKE_PAYLOAD is 'MESSAGE_BODY_JSON'
                                   #  - SNS TOPIC (not FIFO)
                                   #  - EventBridge EVENT_BUS
-                                  #  - another FUNCTION
+                                  #  - another FUNCTION: INVOKE_PAYLOAD is REQ
                                   #  - S3 BUCKET
                                   #     - only onFailure
-                                  #     - contents is INVOKE_PAYLOAD as JSON
+                                  #     - INVOKE_PAYLOAD is contents as JSON
                                   #     - 'OBJECT' is 'aws/lambda/async/<function-name>/YYYY/MM/DD/YYYY-MM-DDTHH.MM.SS-RANDOM'
+                                  #Only if InvocationType 'Event'
 
 INVOKE_PAYLOAD.version            #Always '1.0'
 INVOKE_PAYLOAD.timestamp          #'DATE'
@@ -3131,7 +3132,7 @@ INVOKE_CONTEXT.condition          #'RetriesExhausted', if failed after too many 
                                   └────────────────────────────┘
 
 PACTION sqs:SendMessage           #Required with FUNC_VERSION.Role for EVENT_INVOKE.DestinationConfig with SQS
- |GetQueueAttributes|GetQueueUrl  #Also kms:* if needed
+                                  #Also kms:Decrypt|GenerateDataKey if SSE-KMS
 PACTION sns:Publish               #Required with FUNC_VERSION.Role for EVENT_INVOKE.DestinationConfig with SNS
 PACTION events:PutEvents          #Required with FUNC_VERSION.Role for EVENT_INVOKE.DestinationConfig with EventBridge
 PACTION lambda:InvokeFunction     #Required with FUNC_VERSION.Role for EVENT_INVOKE.DestinationConfig with Lambda
@@ -3191,20 +3192,19 @@ cfn-lint-serverless
                                   │   ASYNC DEAD LETTER   │
                                   └───────────────────────┘
 
-FUNC_VERSION                      #ARN receiving request (INVOCATION_REQ) on final error
- .DeadLetterConfig.TargetArn      #Can be:
-                                  #  - SQS_QUEUE_ARN (not FIFO)
-                                  #  - SNS_TOPIC_ARN (not FIFO)
-                                  #Unlike EVENT_INVOKE.DestinationConfig.OnFailure.Destination:
-                                  #  - FUNC_VERSION-specific, not FUNCTION-specific
-                                  #  - payload is INVOCATION_REQ, i.e. SQS|SNS can be used as EVENT_SOURCE to retry the event later
-                                  #Only if InvocationType 'Event'
+FUNC_VERSION                      #Like EVENT_INVOKE.DestinationConfig.OnFailure.Destination except payload is INVOCATION_REQ
+ .DeadLetterConfig.TargetArn      #  - i.e. meant to retry
+                                  #  - e.g. can retry by setting SQS|SNS as EVENT_SOURCE
+                                  #Also:
+                                  #  - only SQS|SNS
+                                  #  - FUNCTION-specific, not FUNC_VERSION-specific
 
                                   ┌────────────────────────────┐
                                   │   ASYNC DEAD LETTER AUTH   │
                                   └────────────────────────────┘
 
 PACTION sqs:SendMessage           #Required with FUNC_VERSION.Role for FUNC_VERSION.DeadLetterConfig with SQS
+                                  #Also kms:Decrypt|GenerateDataKey if SSE-KMS
 PACTION sns:Publish               #Required with FUNC_VERSION.Role for FUNC_VERSION.DeadLetterConfig with SNS
 
                                   ┌───────────────────────────┐
@@ -3292,7 +3292,7 @@ EVENT_SOURCE.BatchSize            #Batch each NUM records from the source togeth
                                   #  - up to payload size limit (6MB)
                                   #Def: 100, max: 1e4
 EVENT_SOURCE                      #NUM (in secs). Maximum duration to gather records for each batch
- .MaximumBatchingWindowInSeconds  #Def: 500ms, min: 0, max: 300
+ .MaximumBatchingWindowInSeconds  #Def: 500ms, min: 0, max: 5m
 
 EVENT_SOURCE.StartingPosition     #STR. Position where to start reading stream source, among:
                                   #  - 'LATEST': at most recent time
@@ -3642,89 +3642,6 @@ AWS::Serverless::Function         #Includes RESPROPs: Events.EVENT: Properties:
                                   #     - regardless: always generate a ROLE
                                   #  - SecretsManagerKmsKeyId KMS KEY_MID
 
-                                  ┌───────────────┐
-                                  │   BATCH SQS   │
-                                  └───────────────┘
-
-EVENT_SOURCE.EventSourceArn       #SQS QUEUE_ARN
-
-EVENT_SOURCE.BatchSize            #Same as above, but def 10 and (if FIFO) max 10
-EVENT_SOURCE                      #Same as above, but def 0, i.e. as soon as possible
- .MaximumBatchingWindowInSeconds  #Also min 1, unless EVENT_SOURCE.BatchSize <=10
-
-EVENT_SOURCE                      #NUM. Max CONCURRENCY
- .ScalingConfig.MaximumConcurrency#Min 2, max 1e4
-
-EVENT_SOURCE                      #If FUNCTION fails, all RECORDs are considered failed
- .FunctionResponseTypes           #If ['ReportBatchItemFailures'] (def: [], i.e. disabled):
-                                  #  - FUNCTION can partially succeed
-                                  #     - also known as "partial batch"
-                                  #  - it specifies which RECORD failed or not
-                                  #  - does so with RES: batchItemFailures OBJ_ARR: itemIdentifier 'RECORD_ID'
-                                  #     - 'RECORD_ID' is RECORD.messageId
-                                  #     - only for RECORDs that failed
-
-                                  ┌────────────────────┐
-                                  │   BATCH SQS AUTH   │
-                                  └────────────────────┘
-
-PACTION sqs:ReceiveMessage
- |ChangeMessageVisibility
- |GetQueueUrl|DeleteMessage       #Required for SQS EVENT_SOURCE
- |GetQueueAttributes              #Also kms:*, if needed
-
-AWSLambdaSQSQueueExecutionRole    #AWS managed POLICYs for FUNC_VERSION.Role
-
-                                  ┌───────────────────┐
-                                  │   BATCH SQS IAC   │
-                                  └───────────────────┘
-
-AWS::Lambda::EventSourceMapping   #Includes RESPROPs: ScalingConfig, FunctionResponseTypes
-
-new SqsEventSource(ICQUEUE[,OPTS])#CCEVENT_SOURCE
-OPTS.*                            #Like CEVENT_SOURCE_OPTS.*, except:
-                                  #  - no target
-                                  #  - eventSourceArn -> ICQUEUE
-
-CEVENT_SOURCE_OPTS.maxConcurrency #NUM. EVENT_SOURCE.scalingConfig.maximumConcurrency
-
-CEVENT_SOURCE_OPTS
- .reportBatchItemFailures         #BOOL (def: false). EVENT_SOURCE.FunctionResponseTypes
-
-                                  ┌───────────────────┐
-                                  │   BATCH SQS SAM   │
-                                  └───────────────────┘
-
-AWS::Serverless::Function         #Includes RESPROPs: Events.EVENT: Properties: Queue 'QUEUE_ARN', ScalingConfig, FunctionResponseTypes
-
-AWS::Serverless::Connector        #Can be used with:
-                                  #  - Source: QUEUE (RESOURCE_REF.Arn)
-                                  #  - Destination: Lambda FUNCTION (RESOURCE_REF.RoleName)
-                                  #  - Permissions 'Read' and|or 'Write'
-                                  #Transformed to a MPOLICY on 'ROLE':
-                                  #  - allowing:
-                                  #     - Read: sqs:ReceiveMessage|GetQueueAttributes
-                                  #     - Write: sqs:DeleteMessage
-                                  #  - on QUEUE
-
-                                  ┌────────────────────────┐
-                                  │   BATCH SQS COMPOSER   │
-                                  └────────────────────────┘
-
-QUEUE ENHANCED COMPONENT ==>      #Can connect QUEUE to FUNCTION to create an EVENT_SOURCE
-
-                                  ┌───────────────────────┐
-                                  │   BATCH SQS METRICS   │
-                                  └───────────────────────┘
-
-AWS/Lambda/DeletedEventCount      #NUM of records deleted after success|failure
-
-                                  ┌────────────────────┐
-                                  │   BATCH SQS LINT   │
-                                  └────────────────────┘
-
-cfn-lint E3634                    #Do not use EVENT_SOURCE.StartingPosition when using SQS EVENT_SOURCE
-
                                   ┌───────────────────┐
                                   │   BATCH KINESIS   │
                                   └───────────────────┘
@@ -3899,20 +3816,20 @@ AWS::Serverless::Function         #Includes RESPROPs: Events.EVENT: Properties:
                                   │   BATCH DESTINATION   │
                                   └───────────────────────┘
 
-EVENT_SOURCE.DestinationConfig    #ARN receiving response (INVOKE_PAYLOAD) on final success|error
+EVENT_SOURCE.DestinationConfig    #ARN receiving response on final success|error
  .onSuccess|onFailure.destination #Only with Kinesis|DynamoDB|Kafka
                                   #Can be:
                                   #  - SQS QUEUE (not FIFO)
                                   #  - SNS TOPIC (not FIFO)
                                   #  - S3 BUCKET
-
-INVOKE_PAYLOAD                    #Same as EVENT_INVOKE.DestinationConfig
+                                  #Response is INVOKE_PAYLOAD, same as EVENT_INVOKE.DestinationConfig
 
                                   ┌────────────────────────────┐
                                   │   BATCH DESTINATION AUTH   │
                                   └────────────────────────────┘
 
 PACTION sqs:SendMessage           #Required with FUNC_VERSION.Role for EVENT_SOURCE.DestinationConfig with SQS
+                                  #Also kms:Decrypt|GenerateDataKey if SSE-KMS
 PACTION sns:Publish               #Required with FUNC_VERSION.Role for EVENT_SOURCE.DestinationConfig with SNS
 PACTION s3:PutObject|ListBucket   #Required with FUNC_VERSION.Role for EVENT_SOURCE.DestinationConfig with S3
                                   #Should also use COND_KEY s3:ResourceAccount ACCOUNT_ID
