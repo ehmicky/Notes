@@ -27,11 +27,15 @@ VERSION ==>                       #2024-11-15
                                   │   API   │
                                   └─────────┘
 
+NAME ==>                          #Simple Queue Service
+
+SERVICE_DOMAIN                    #'sqs.REGION'
+
 FORMAT ==>                        #Use either:
                                   #  - X-Amz-Target: AmazonSQS[_VERSION].ACTION [C], JSON request|response
                                   #  - REQ.Action|Version, query string request (ARR uses VAR.NUM), XML response
 
-RES.ResponseMetadata.RequestId    #REQ_ID
+REQ_ID                            #RES.ResponseMetadata.RequestId
 
 PAGINATION ==>                    #Uses REQ.MaxResults (def|max: 1e3) + REQ|RES.NextToken
                                   #Only REQ.MaxResults (def: 1, max: 10): ListMessageMoveTasks()
@@ -186,6 +190,12 @@ DELETION ==>                      #PurgeQueue() deletes all MESSAGEs
                                   #DeleteMessage*() is idempotent, i.e. duplicate deletions are allowed
                                   #  - whether with same MESSAGE_RCV_MID (i.e. same retry) or not
 
+                                  ┌──────────────────┐
+                                  │   MESSAGE AUTH   │
+                                  └──────────────────┘
+
+PACTION SendMessage|DeleteMessage #Includes SendMessageBatch|DeleteMessageBatch() (which do not have their own PACTION)
+
                                   ┌─────────────────┐
                                   │   MESSAGE API   │
                                   └─────────────────┘
@@ -315,6 +325,12 @@ QUEUE_ATTRS.MessageRetentionPeriod#NUM (in secs, min 1m, def 4d, max 14d)
                                   #Delete MESSAGEs older than NUMs
                                   #Updates impact existing MESSAGEs, and take up to 15m
 
+                                  ┌───────────────────┐
+                                  │   TIMELINE AUTH   │
+                                  └───────────────────┘
+
+PACTION ChangeMessageVisibility   #Includes ChangeMessageVisibilityBatch() (which does not have its own PACTION)
+
                                   ┌──────────────────┐
                                   │   TIMELINE API   │
                                   └──────────────────┘
@@ -344,7 +360,7 @@ AWS/SQS/                          #Age (NUM of seconds) of oldest MESSAGE
                                   │   DEAD-LETTER   │
                                   └─────────────────┘
 
-QUEUE_ATTRS.RedrivePolicy         #'REDRIVE_POLICY_JSON'. Send failed MESSAGEs from this QUEUE to a dead-letter QUEUE2
+QUEUE_ATTRS.RedrivePolicy         #'REDRIVE_POLICY_JSON'. Send failed MESSAGEs from this QUEUE ("source") to a dead-letter QUEUE2
 REDRIVE_POLICY.deadLetterTargetArn#QUEUE2_ARN
                                   #Can be in different REGION|ACCOUNT, but less performant
 REDRIVE_POLICY.maxReceiveCount    #NUM (def: 10) of MESSAGE failures before moving MESSAGE to dead-letter QUEUE2
@@ -356,6 +372,16 @@ QUEUE_ATTRS.RedriveAllowPolicy    #'REDRIVE_APOLICY_JSON'. Restrict which other 
 REDRIVE_APOLICY.redrivePermission #'allowAll' (def), 'denyAll' or 'byQueue'
 REDRIVE_APOLICY.sourceQueueArns   #Specific 'QUEUE2_ARN'_ARR, when using redrivePermission 'byQueue'
                                   #Max 10 items
+
+                                  ┌──────────────────────┐
+                                  │   DEAD-LETTER AUTH   │
+                                  └──────────────────────┘
+
+PACTION sqs:SendMessage           #Must be allowed for the source QUEUE, on the dead-letter QUEUE2
+PACTION sqs:GetQueueAttributes
+ |ReceiveMessage
+ |ChangeMessageVisibility
+ |DeleteMessage                   #Must be allowed for dead-letter QUEUE2, on the source QUEUE
 
                                   ┌─────────────────────┐
                                   │   DEAD-LETTER API   │
@@ -387,6 +413,16 @@ MOVE
 .ApproximateNumberOfMessagesToMove#Total NUM of MESSAGEs
 MOVE
  .ApproximateNumberOfMessagesMoved#NUM of MESSAGEs moved
+
+                                  ┌───────────────┐
+                                  │   MOVE AUTH   │
+                                  └───────────────┘
+
+PACTION sqs:GetQueueAttributes    #Must be allowed for source QUEUE (using COND_KEY aws:SourceArn), on the dead-letter QUEUE2,
+                                  #for Start|List|CancelMessageMoveTask()
+PACTION
+ sqs:ReceiveMessage|DeleteMessage #Same for Start|CancelMessageMoveTask()
+PACTION sqs:SendMessage           #Same for StartMessageMoveTask()
 
                                   ┌──────────────┐
                                   │   MOVE API   │
@@ -438,7 +474,7 @@ QUEUE_ATTRS.Policy                #IAM 'POLICY_DOC'. QUEUE_POLICY
                                   #Resource-level on a QUEUE, i.e. Resource is QUEUE_ARN
                                   #Principal:
                                   #  - must be 'ACCOUNT_ID'
-                                  #     - but can use COND_KEY aws:PrincipalArn
+                                  #     - but can use COND_KEY aws:PrincipalArn or aws:SourceArn|SourceAccount
                                   #  - can be from another ACCOUNT
                                   #  - '*' allows anonymous requests
                                   #If cross-ACCOUNT, PACTION can only be:
@@ -448,7 +484,6 @@ QUEUE_ATTRS.Policy                #IAM 'POLICY_DOC'. QUEUE_POLICY
                                   #  - sqs:GetQueue*
                                   #  - sqs:ListDeadLetterSourceQueues
                                   #Max 7 PACTIONs
-                                  #No 'PACTIONBatch': included in 'PACTION'
                                   #Def: allow sqs:ReceiveMessage to any
 
 PERMISSION                        #Sets QUEUE_ATTRS.Policy
