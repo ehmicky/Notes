@@ -30,14 +30,15 @@ PAGINATION ==>                    #Uses REQ.MaxResults (def|max: 1e3) + REQ|RES.
                                   #Only REQ.MaxResults (def: 1, max: 10): ListMessageMoveTasks()
                                   #No pagination: ListQueueTags()
 
+EVENTUAL CONSISTENCY ==>          #Updating|deleting take up to 1m
+                                  #  - including *.Approximate*, which need that time to stabilize
+
                                   ┌───────────┐
                                   │   QUEUE   │
                                   └───────────┘
 
 QUEUE                             #CreateQueue() is idempotent, if using exact same QUEUE.*
                                   #Deleting removes any MESSAGE
-                                  #Updating|deleting take up to 1m
-                                  #  - including QUEUE_ATTRS.Approximate*, which need that time to stabilize
 
 QUEUE_ATTRS.QueueArn              #'QUEUE_ARN'. 'arn:aws:sqs:REGION:ACCOUNT_ID:QUEUE'
 QUEUE.QueueUrl                    #QUEUE_URL. 'https://sqs.REGION.amazonaws.com/ACCOUNT_ID/QUEUE'
@@ -96,13 +97,18 @@ MESSAGE_SEND|SYS_ATTRS            #'MESSAGE_GROUP_ID'. FIFO ordering applies per
 MESSAGE_SEND_RES|SYS_ATTRS        #'NUM'. Increases monotonically (but not necessarily consecutively) per MESSAGE within a given MESSAGE_GROUP
  .SequenceNumber                  #Always 128 chars, padded with 0s
 
-MESSAGE_SEND|SYS_ATTRS            #'MESSAGE_DID'. If 2 MESSAGEs with the same MESSAGE_DID are sent (within 5m), the second one is ignored
+MESSAGE_SEND|SYS_ATTRS            #'MESSAGE_SEND_DID'. If 2 SendMessage*() with the same MESSAGE_SEND_DID are sent (within 5m), the second one is ignored
  .MessageDeduplicationId          #I.e. avoid duplicate sends
                                   #Only with FIFO. Required
                                   #Max 128 chars, [:graph:]
 QUEUE_ATTRS
- .ContentBasedDeduplication       #BOOL (def: false). Make MESSAGE_DID default to SHA-256 of 'MESSAGE_BODY'
-QUEUE_ATTRS.DeduplicationScope    #Whether to namespace MESSAGE_DID with MESSAGE_GROUP_ID: 'queue' (no), 'messageGroup' (yes)
+ .ContentBasedDeduplication       #BOOL (def: false). Make MESSAGE_SEND_DID default to SHA-256 of 'MESSAGE_BODY'
+QUEUE_ATTRS.DeduplicationScope    #Whether to namespace MESSAGE_SEND_DID with MESSAGE_GROUP_ID: 'queue' (no), 'messageGroup' (yes)
+
+MESSAGES_RCV                      #'MESSAGE_RCV_DID'. If 2 ReceiveMessage*() with the same MESSAGE_RCV_DID are sent (within 5m), the second one does not fail
+ .ReceiveRequestAttemptId         #I.e. meant for retrying failed MESSAGEs
+                                  #Only with FIFO
+                                  #Max 128 chars, [:graph:]
 
 QUEUE_ATTRS.FifoThroughputLimit   #Either:
                                   #  - 'perQueue' (def): max 300 SendMessage[Batch]() per second per QUEUE
@@ -115,67 +121,25 @@ QUEUE_ATTRS.FifoThroughputLimit   #Either:
 
 MESSAGES_SEND.Entries             #MESSAGE_SEND_ARR (no QueueUrl)
                                   #SendMessageBatch(): max 10 items
-MESSAGE_SEND[_RES]                #'MESSAGE_SEND_MID'. Required
- |MESSAGE_FAILURE.Id              #Max 80 chars, [:alnum:]_-
-MESSAGE[S]_SEND|MESSAGE_RCV
+MESSAGE_SEND[_RES|_ERROR].Id      #'MESSAGE_BATCH_SEND_MID'. Required
+                                  #Max 80 chars, [:alnum:]_-
+MESSAGE[S]_SEND|MESSAGES_RCV
  .QueueUrl                        #'QUEUE_URL'
 
-SYS_ATTRS.SentTimestamp           #DATE_NUM
+SYS_ATTRS.SentTimestamp           #DATE_NUM of SendMessage()
+SYS_ATTRS
+ .ApproximateFirstReceiveTimestamp#DATE_NUM of first ReceiveMessage()
 
-MESSAGE_SEND.MessageBody          #'MESSAGE_BODY'
-MESSAGE_RCV_RES.Body              #Must be URL encoded
-
-MESSAGE_SEND|MESSAGE_RCV_RES
- .MessageAttributes               #MESSAGE_ATTRS. Custom metadata
-MESSAGE_ATTRS.MESSAGE_ATTR        #ATTR_VALUE
-                                  #MESSAGE_ATTR max 256 chars, [:alnum:]_-. and cannot start with . AWS. or Amazon.
-MESSAGE_RCV.MessageAttributeNames #'MESSAGE_ATTR'_ARR to receive in MESSAGE_RCV_RES.MessageAttributes
-                                  #Can be 'All' (def) or use *
-
-MESSAGE_SEND
- .MessageSystemAttributes         #SYS_ATTRS
-SYS_ATTRS.SYS_ATTR                #ATTR_VALUE
-MESSAGE_RCV                       #'SYS_ATTR'_ARR to set in MESSAGE_RCV.Attributes
- .MessageSystemAttributeNames     #Can be 'All' (def) or use *
-                                  #Cannot be 'AWSTraceHeader' nor 'SqsManagedSseEnabled'
-MESSAGE_RCV.Attributes.SYS_ATTR   #STR
-
-ATTR_VALUE.DataType               #Value's type among 'String', 'Number' or 'Binary'
-ATTR_VALUE.StringValue            #STR. Value, when DataType 'String|Number'
-                                  #Must be URL encoded
-ATTR_VALUE.BinaryValue            #STR. Value, when DataType 'Binary'
-                                  #Must be base64'd
-
-SYS_ATTRS.SenderId                #USER_MID|ROLE_MID that called SendMessage*()
-SYS_ATTRS.AWSTraceHeader          #STR
-
-QUEUE_ATTRS.MaximumMessageSize    #NUM (in bytes, min 1KB, def|max 256KB)
-                                  #Max size of MESSAGE_SEND|MESSAGES_SEND
-
-QUEUE_ATTRS                       #NUM (in secs, def 0, max 20)
- .ReceiveMessageWaitTimeSeconds   #If no MESSAGE available, wait up to NUMs before returning
-MESSAGE_RCV.WaitTimeSeconds       #I.e. long polling
-
-MESSAGE_RCV.MaxNumberOfMessages   #NUM (min|def: 1, max: 10)
-                                  #Migh receive less, including 0, even when more are available
-MESSAGE_RCV
- .ReceiveRequestAttemptId         #STR
-
+MESSAGES_SEND_RES.Successful      #MESSAGE_SEND_RES_ARR
 MESSAGES_RCV_RES.Messages         #MESSAGE_RCV_RES_ARR
-
-MESSAGES_RES.Successful           #MESSAGE_SEND_RES_ARR
 MESSAGE_SEND_RES|MESSAGE_RCV_RES
  .MessageId                       #'MESSAGE_SEND_MID'
 MESSAGE_RCV_RES.ReceiptHandle     #'MESSAGE_RCV_MID'
-MESSAGE_SEND_RES.MD5OfMessageBody
-MESSAGE_RCV_RES.MD5OfBody         #MD5 'HASH' of 'MESSAGE_BODY', after URL decoding
-MESSAGE_SEND_RES|MESSAGE_RCV_RES
- .MD5OfMessage[System]Attributes  #Same for Message[System]Attributes
 
-MESSAGES_RES.Failed               #MESSAGE_FAILURE_ARR
-MESSAGE_FAILURE.Code              #'CODE'
-MESSAGE_FAILURE.Message           #'MESSAGE'
-MESSAGE_FAILURE.SenderFault       #BOOL. Whether caused by user or by API
+MESSAGES_SEND_RES.Failed          #MESSAGE_SEND_ERROR_ARR
+MESSAGE_SEND_ERROR.Code           #'CODE'
+MESSAGE_SEND_ERROR.Message        #'MESSAGE'
+MESSAGE_SEND_ERROR.SenderFault    #BOOL. Whether caused by user or by API
 
                                   ┌─────────────────┐
                                   │   MESSAGE API   │
@@ -186,20 +150,72 @@ SendMessage()                     #Req: MESSAGE_SEND
                                   #Res: MESSAGE_SEND_RES
                                   #  - no Id
 SendMessageBatch()                #Req: MESSAGES_SEND
-                                  #Res: MESSAGES_RES
-ReceiveMessage()                  #Req: MESSAGE_RCV
-                                  #Res: MESSAGES_RCV_RES_ARR
+                                  #Res: MESSAGES_SEND_RES
+ReceiveMessage()                  #Req: MESSAGES_RCV
+                                  #Res: MESSAGES_RCV_RES
 DeleteMessage()                   #Req: MESSAGE_RCV_RES
                                   #  - only ReceiptHandle, QueueUrl
                                   #Res: empty
 DeleteMessageBatch()              #Req: MESSAGES_SEND
                                   #  - Entries[*]: only Id, ReceiptHandle
-                                  #Res: MESSAGES_RES
+                                  #Res: MESSAGES_SEND_RES
                                   #  - Successful[*]: only Id
 PurgeQueue()                      #Res: MESSAGE_SEND_RES
                                   #  - only QueueUrl
                                   #Res: empty
                                   #Delete all MESSAGEs
+
+                                  ┌─────────────────────┐
+                                  │   MESSAGE CONTENT   │
+                                  └─────────────────────┘
+
+MESSAGE_SEND.MessageBody          #'MESSAGE_BODY'
+MESSAGE_RCV_RES.Body              #Must be URL encoded
+
+MESSAGE_SEND.MessageAttributes    #MESSAGE_ATTRS. Custom metadata
+MESSAGE_ATTRS.MESSAGE_ATTR        #ATTR_VALUE
+                                  #MESSAGE_ATTR max 256 chars, [:alnum:]_-. and cannot start with . AWS. or Amazon.
+MESSAGES_RCV.MessageAttributeNames#'MESSAGE_ATTR'_ARR to receive in MESSAGE_RCV_RES.MessageAttributes
+                                  #Can be 'All' (def) or use *
+MESSAGE_RCV_RES.MessageAttributes #MESSAGE_ATTRS
+
+MESSAGE_SEND                      #SYS_ATTRS. Known metadata, with specific 'SYS_ATTR' documented in this doc
+ .MessageSystemAttributes         #Computed by API, except for 'AWSTraceHeader'
+SYS_ATTRS.SYS_ATTR                #ATTR_VALUE
+MESSAGES_RCV                      #'SYS_ATTR'_ARR to set in MESSAGE_RCV.Attributes
+ .MessageSystemAttributeNames     #Can be 'All' (def) or use *
+                                  #Cannot be 'AWSTraceHeader' nor 'SqsManagedSseEnabled'
+MESSAGE_RCV_RES
+ .Attributes.SYS_ATTR             #STR
+
+ATTR_VALUE.DataType               #Value's type among 'String', 'Number' or 'Binary'
+ATTR_VALUE.StringValue            #STR. Value, when DataType 'String|Number'
+                                  #Must be URL encoded
+ATTR_VALUE.BinaryValue            #STR. Value, when DataType 'Binary'
+                                  #Must be base64'd
+
+QUEUE_ATTRS.MaximumMessageSize    #NUM (in bytes, min 1KB, def|max 256KB)
+                                  #Max size of MESSAGE_SEND|MESSAGES_SEND
+
+MESSAGE_SEND_RES.MD5OfMessageBody #MD5 'HASH' of 'MESSAGE_BODY', after URL decoding
+MESSAGE_RCV_RES.MD5OfBody         #Meant for integrity checking
+MESSAGE_SEND_RES|MESSAGE_RCV_RES
+ .MD5OfMessageAttributes          #Same for MessageAttributes
+MESSAGE_SEND_RES
+ .MD5OfMessageSystemAttributes    #Same for MessageSystemAttributes
+
+SYS_ATTRS.AWSTraceHeader          #STR. Set by user (unlike other SYS_ATTRS)
+
+                                  ┌─────────────┐
+                                  │   POLLING   │
+                                  └─────────────┘
+
+MESSAGES_RCV.MaxNumberOfMessages  #NUM (min|def: 1, max: 10). Max size of MESSAGES_RCV_RES.Messages
+                                  #Migh receive less, including 0, even when more are available
+
+QUEUE_ATTRS                       #NUM (in secs, def 0, max 20)
+ .ReceiveMessageWaitTimeSeconds   #If no MESSAGE available, wait up to NUMs before returning
+MESSAGES_RCV.WaitTimeSeconds      #I.e. long polling
 
                                   ┌──────────────┐
                                   │   TIMELINE   │
@@ -214,7 +230,7 @@ QUEUE_ATTRS|MESSAGE_SEND          #NUM (in secs, def: 0, max: 15m)
 QUEUE_ATTRS.Approximate
  NumberOfMessagesDelayed          #NUM of delayed MESSAGEs
 
-QUEUE_ATTRS|MESSAGE_RCV           #Max NUM (min 0, def 30s, max 12h) of secs for consumers to process a MESSAGE
+QUEUE_ATTRS|MESSAGES_RCV          #Max NUM (min 0, def 30s, max 12h) of secs for consumers to process a MESSAGE
  .VisibilityTimeout               #Period starts when MESSAGE is received
                                   #During that time, MESSAGE cannot be received again ("in-flight")
                                   #  - i.e. if too low, risk of multiple consumers receiving same MESSAGE
@@ -225,6 +241,8 @@ QUEUE_ATTRS|MESSAGE_RCV           #Max NUM (min 0, def 30s, max 12h) of secs for
 QUEUE_ATTRS.Approximate           #NUM of in-flight MESSAGEs
  NumberOfMessagesNotVisible       #Max 12e4 if non-FIFO, 2e4 if FIFO
 
+SYS_ATTRS.ApproximateReceiveCount #NUM of MESSAGE failures
+
 QUEUE_ATTRS.MessageRetentionPeriod#NUM (in secs, min 1m, def 4d, max 14d)
                                   #Delete MESSAGEs older than NUMs
                                   #Updates impact existing MESSAGEs, and take up to 15m
@@ -233,12 +251,12 @@ QUEUE_ATTRS.MessageRetentionPeriod#NUM (in secs, min 1m, def 4d, max 14d)
                                   │   TIMELINE API   │
                                   └──────────────────┘
 
-ChangeMessageVisibility()         #Req: MESSAGE_RCV
+ChangeMessageVisibility()         #Req: MESSAGES_RCV
                                   #  - only QueueUrl, ReceiptHandle, VisibilityTimeout
                                   #Res: empty
 ChangeMessageVisibilityBatch()    #Req: MESSAGES_SEND
                                   #  - Entries[*]: only Id, ReceiptHandle, VisibilityTimeout
-                                  #Res: MESSAGES_RES
+                                  #Res: MESSAGES_SEND_RES
                                   #  - Successful[*]: only Id
 
                                   ┌─────────────────┐
@@ -340,6 +358,8 @@ PERMISSION.QueueUrl               #'QUEUE_URL'. STATEMENT.Resource
 PERMISSION.Actions                #'PACTION|*'_ARR. STATEMENT.Actions
 PERMISSION.AWSAccountIds          #'ACCOUNT_ID'_ARR. COND_KEY aws:SourceAccount
                                   #Required
+
+SYS_ATTRS.SenderId                #USER_MID|ROLE_MID that called SendMessage*()
 
                                   ┌─────────────────┐
                                   │   POLICY AUTH   │
