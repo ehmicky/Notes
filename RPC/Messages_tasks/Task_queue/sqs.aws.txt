@@ -277,7 +277,7 @@ MESSAGE_SEND|SYS_ATTRS            #'MESSAGE_SEND_DID'. If 2 SendMessage*() with 
                                   #I.e. exactly-once delivery, avoiding duplicate sends
                                   #Can happen either if:
                                   #  - 2 concurrent senders at the same time
-                                  #  - sending fails (e.g. network error) and is retried
+                                  #  - sending fails (e.g. network error) and is repeated
                                   #Continues working even after MESSAGE has been received and|or deleted
                                   #Only with FIFO. Required
                                   #Max 128 chars, [:graph:]
@@ -299,9 +299,9 @@ MESSAGES_RCV                      #'MESSAGE_RCV_DID'. If 2 ReceiveMessage*() wit
                                   #Not if ChangeMessageVisibility() or DeleteMessage() already called
                                   #I.e. mostly meant if:
                                   #  - 2 concurrent receivers at the same time
-                                  #  - receiving fails (e.g. network error) and is retried
-                                  #Required for retries within the VisibilityTimeout
-                                  #Only with FIFO
+                                  #  - receiving fails (e.g. network error) and is repeated
+                                  #Not related to MESSAGE failure retries, since retries are done after VisibilityTimeout expired
+                                  #Only with FIFO. Optional but recommended
                                   #Max 128 chars, [:graph:]
 
 QUEUE_ATTRS.FifoThroughputLimit   #Throttles either:
@@ -610,6 +610,7 @@ QUEUE_ATTRS|MESSAGES_RCV          #Max NUM (min 0, def 30s, max 12h) of secs for
                                   #  - i.e. if too low, risk of multiple receivers receiving same MESSAGE
                                   #Once processed, MESSAGE must be deleted
                                   #Else, MESSAGE reception is considered failed ("poison pill")
+                                  #  - i.e. can only retry once VisibilityTimeout passed
                                   #  - i.e. if too high, slows down retrying failed consumption
                                   #Can increase processing time with ChangeMessageVisibility()
                                   #  - it sets VisibilityTimeout from the time it is called
@@ -1088,22 +1089,35 @@ AWS::SQS::Queue                   #Includes RESPROPs: Tags TAG_PAIRS
                                   │   LAMBDA   │
                                   └────────────┘
 
-EVENT_SOURCE.EventSourceArn       #SQS QUEUE_ARN
-                                  #Set Lambda FUNCTION as receiver, polling for it
+EVENT_SOURCE.EventSourceArn       #SQS QUEUE_ARN (FIFO or not)
+                                  #Set Lambda FUNCTION as receiver, automatically:
+                                  #  - passes MESSAGEs from ReceiveMessage() as REQ
+                                  #  - calls DeleteMessage() on successful RES
+                                  #QUEUE and FUNCTION must be in same REGION, but can be cross-ACCOUNTs
 EVENT_SOURCE.*                    #See Lambda doc
 
-EVENT_SOURCE.BatchSize            #Target|max NUM of MESSAGEs in each REQ
+EVENT_SOURCE.BatchSize            #NUM. MESSAGES_RCV.MaxNumberOfMessages
                                   #Def: 10
                                   #Max: 10 (if FIFO) or 1e4 (if non-FIFO)
 
-EVENT_SOURCE                      #NUM (in secs). Maximum duration to gather MESSAGEs for each REQ
+EVENT_SOURCE                      #NUM (in secs). MESSAGES_RCV.WaitTimeSeconds
  .MaximumBatchingWindowInSeconds  #Def|min:
                                   #  - if BatchSize > 10: 1
                                   #  - else: 0, as soon as possible
                                   #Max: 5m
 
 EVENT_SOURCE                      #NUM. Max CONCURRENCY of the FUNCTION
- .ScalingConfig.MaximumConcurrency#Def none, min 2, max 1e4
+ .ScalingConfig.MaximumConcurrency#On FUNCTION error|throttling, automatically temporarily decreases CONCURRENCY
+                                  #Min 2, max|def 1e4
+
+EVENT_SOURCE.FilterCriteria       #Filters against LMESSAGE
+                                  #LMESSAGE.body is OBJ (not 'OBJ_JSON') if valid JSON, else STR
+
+QUEUE_ATTRS.VisibilityTimeout     #Recommended value: FUNC_VERSION.Timeout * (REDRIVE_POLICY.maxReceiveCount + 1) + MaximumBatchingWindowInSeconds
+
+PARTIAL BATCHES ==>               #See Lambda doc
+                                  #Does not call DeleteMessage() on the MESSAGEs failed with RES.batchItemFailures
+                                  #If FIFO: if a MESSAGE fails, every MESSAGE after it must be marked as fail too
 
                                   ┌─────────────────┐
                                   │   LAMBDA AUTH   │
