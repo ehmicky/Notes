@@ -10,7 +10,7 @@ SUMMARY ==>                       #Functions: versions, aliases, alias routing, 
                                   #Additional code: layer, internal|external extension
                                   #Runtimes: versions|upgrades, custom, options, Node|Python|Java|Ruby|DotNet, Custom|Deno
                                   #Environment: memory, CPU, envvar, /tmp, EFS, VPC, logging, insights
-                                  #Invoke: instance, sync|async, dry, streaming, URL, destination
+                                  #Invoke: instance, sync|async, dry, streaming, URL, destination, local
                                   #Event source: batch size|duration, filters, concurrency
                                   #Errors: timeout, retries, dead letter, tracing, recursion
                                   #Concurrency: total, reserved, provisioned
@@ -2063,6 +2063,27 @@ Invoke()                          #  - Request payload: Payload
                                   #  - X-Amz-* [S] headers: Executed-Version|Log-Result|Function-Error
                                   #  - body: ResponseBody
 
+                                  ┌────────────────┐
+                                  │   INVOKE SAM   │
+                                  └────────────────┘
+
+sam remote invoke ['FUNCTION']    #Calls Invoke[WithResponseStream]()
+                                  #Def: guessed if only one possible in current STACK
+
+--event|-e                        #REQ.Payload (def: none|empty)
+--event-file                      #Same but as 'FILE' or '-' (stdin)
+--test-event-name                 #See below
+
+--parameter                       #'PARAM=VAL ...'. REQ.*
+                                  #Def: REQ.InvocationType 'RequestResponse', REQ.LogType 'Tail'
+                                  #Always sets REQ.FunctionArn
+
+--output                          #Either:
+                                  #  - 'text' (def)
+                                  #     - prints INVOCATION_RES.ResponseBody on stdout, INVOCATION_RES.LogResult on stderr
+                                  #  - 'json'
+                                  #     - prints all on stdout
+
                                   ┌───────────────────┐
                                   │   INVOKE PULUMI   │
                                   └───────────────────┘
@@ -2122,6 +2143,30 @@ PACTION
  schemas:Create|DescribeRegistry
 PACTION
  schemas:List|DeleteSchemaVersion #Required
+
+                                  ┌────────────────────┐
+                                  │   TEST EVENT SAM   │
+                                  └────────────────────┘
+
+sam remote test-event             #CRUD for Lambda TEST_EVENTs, i.e. INVOCATION_REQs
+ put|list|get|delete              #Meant for end-to-end tests, when calling Lambda through its API
+ ['FUNCTION']                     #Uses API calls on EventBridge schema registry 'lambda-testevent-schemas'
+                                  #Automatically creates|deletes the schemas
+                                  #Automatically deletes old versions, keeping max 5 of them
+
+sam remote test-event
+ put|get|delete
+--name                            #'TEST_EVENT'
+
+sam remote test-event put         #
+--file                            #'PATH.json|yaml' or '-' (stdin) with REQ input
+--force|-f                        #Unless set, fails if TEST_EVENT already exists
+
+sam remote test-event get         #
+--output-file                     #'PATH.json' (def: stdout) for REQ output
+
+sam remote invoke
+--test-event-name                 #'TEST_EVENT'. Use it instead of --event
 
                                   ┌────────────────────────┐
                                   │   TEST EVENT TOOLKIT   │
@@ -2224,6 +2269,113 @@ RES_OBJ.statusCode                #NUM. Required if returning REQ_OBJ.body, else
 RES_OBJ.headers                   #OBJ
 RES_OBJ.cookies                   #'VAR=VAL[;...]'_ARR
 RES_OBJ.body                      #ISTREAM|STR (def: '')
+
+                                  ┌────────────────────┐
+                                  │   LOCAL MAIN SAM   │
+                                  └────────────────────┘
+
+sam local invoke ['FUNCTION']     #Invoke Lambda FUNCTION locally (emulation)
+                                  #Does not work if RESPROP Code.ZipFile or InlineCode
+                                  #Must be run after `sam build` (if used)
+
+--event|-e                        #REQ, as a 'PATH.json' or '-' (stdin)
+                                  #Def: empty {}
+
+--env-vars|-n                     #'PATH.json' containing '{ FUNCTION|Parameters: { ENVVAR: 'VAL',... },... }'
+                                  #Current ENVVARs are not used
+                                  #Always emulates all Lambda ENVVARs, with exceptions:
+                                  #  - AWS_SAM_LOCAL 'true'
+                                  #  - AWS_LAMBDA_FUNCTION_VERSION '$LATEST'
+                                  #  - AWS_LAMBDA_LOG_STREAM_NAME '$LATEST'
+                                  #  - AWS_ACCOUNT_ID '123456789012'
+                                  #  - AWS_LAMBDA_INITIALIZATION_TYPE 'on-demand'
+                                  #  - AWS_REGION, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN: short-term CREDS
+
+--log-file|-l                     #'PATH' to output:
+                                  #  - INVOCATION_RES.ResponseBody (def: stdout)
+                                  #  - INVOCATION_RES.LogResult (def: stderr)
+                                  #sam logs are always printed on stderr
+
+--shutdown                        #BOOL (def: false). Emulate FUNC_INSTANCE shutdown after invocation
+                                  #Meant to test Lambda extensions' shutdown behavior
+                                  #Regardless, container can be interrupted by CTRL-C
+
+                                  ┌────────────────────────┐
+                                  │   LOCAL ADVANCED SAM   │
+                                  └────────────────────────┘
+
+ENVVAR SAM_LAYER_CACHE_BASEDIR    #'DIR' caching LAYERs used by FUNCTION
+--layer-cache-basedir             #Def: SAM_GDIR/layers-pkg
+                                  #Cached at DIR/LAYER_NAME/
+                                  #Cache not invalidated on new LAYER_VERSIONs
+                                  #Cache invalidated on --force-image-build
+                                  #Not cached if LAYER defined in same TEMPLATE as FUNCTION
+
+ENVVAR SAM_DEBUG_PORT
+--debug-port|-d                   #PORT_NUM. Start debugger in localhost:PORT_NUM
+                                  #If set, FUNC_VERSION.Timeout will also be set to 10h
+ENVVAR DEBUGGER_ARGS
+--debug-args                      #Debugger 'ARG ...', e.g. `--inspect-brk`
+--debugger-path                   #'DIR' to custom debugger command
+--container-env-vars              #'[FUNCTION.]ENVVAR=VAL' (def: none) passed during `docker build`
+                                  #Only used when debugging
+
+                                  ┌─────────────────────┐
+                                  │   LOCAL IMAGE SAM   │
+                                  └─────────────────────┘
+
+aws-lambda-rie-ARCH               #Go binary running Lambda locally
+                                  #Vendored inside SAM CLI
+                                  #Repository is aws-lambda-runtime-interface-emulator
+
+--invoke-image|-ii                #'[FUNCTION.]URI'. Base container image that runs aws-lambda-rie
+                                  #If PackageType Image, uses FUNC_VERSION.Code.ImageUri instead
+                                  #Def: 'public.ecr.aws/lambda/RUNTIME:VERSION-ARCH'
+                                  #Built locally with `docker build`
+
+ENVVAR SAM_FORCE_IMAGE_BUILD      #BOOL. If false (def), do not rebuild --invoke-image unless has changed, including:
+--force-image-build               #  - new version of --invoke-image
+                                  #  - changed RUNTIME or RUNTIME version
+                                  #  - added|removed LAYER (but not LAYER_VERSION)
+
+ENVVAR SAM_DOCKER_NETWORK
+--docker-network                  #Like sam build
+
+ENVVAR SAM_SKIP_PULL_IMAGE        #Like sam build
+--skip-pull-image                 #If PackageType Image, always set
+
+ENVVAR SAM_DOCKER_VOLUME_BASEDIR  #TEMPLATE's 'DIR'
+--docker-volume-basedir|-v        #Only meant for remote execution edge cases
+
+--container-host                  #'HOST' (def: 'localhost') of container
+--container-host-interface        #'IP' (def: '127.0.0.1') of container
+                                  #Can be '0.0.0.0'
+--add-host                        #'HOST:IP' added to container's host file
+
+                                  ┌──────────────────────┐
+                                  │   LOCAL SERVER SAM   │
+                                  └──────────────────────┘
+
+sam local start-api               #See API Gateway doc
+
+sam local start-lambda            #Like `sam local invoke` but as a local HTTP server, with all Lambda FUNCTIONs
+                                  #Only endpoint is: POST http://HOST:PORT/2015-03-31/functions/FUNCTION/invocations
+                                  #Cannot pass X-Amz-Invocation-Type [C] nor X-Amz-Log-Type [C]
+                                  #Uses Flask under-the-hood
+--FLAG                            #Like sam local invoke, except no --event
+--host                            #'HOST' (def: '127.0.0.1')
+--port|-p                         #PORT_NUM (def: 3001)
+--warm-containers                 #Whether to:
+                                  #  - default: creates a new FUNC_INSTANCE for each request
+                                  #  - 'EAGER' (recommended) or 'LAZY':
+                                  #     - keep the same FUNC_INSTANCE for all requests
+                                  #        - it is only started on first request
+                                  #     - also, watch for TEMPLATE file changes, automatically reloading
+                                  #Also, whether to build and start underlying container:
+                                  #  - default or 'LAZY': on first request
+                                  #  - 'EAGER': right away
+--debug-function                  #'FUNCTION' to receive --debug*
+                                  #Only if --warm-containers
 
                                   ┌─────────┐
                                   │   URL   │
