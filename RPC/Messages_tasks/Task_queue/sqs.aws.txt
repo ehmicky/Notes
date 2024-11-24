@@ -112,6 +112,13 @@ QUEUE_ATTRS.LastModifiedTimestamp #DATE_NUM
 
 QUEUE.Attributes                  #QUEUE_ATTRS
 
+                                  ┌────────────────┐
+                                  │   QUEUE AUTH   │
+                                  └────────────────┘
+
+PACTION sqs:GetQueueAttributes
+ |GetQueueUrl                     #Often allowed to senders|consumers
+
                                   ┌───────────────┐
                                   │   QUEUE API   │
                                   └───────────────┘
@@ -147,21 +154,32 @@ DeleteQueue()                     #Req: QUEUE
                                   │   QUEUE IAC   │
                                   └───────────────┘
 
-AWS::SQS::Queue                   #RESPROPs:
-                                  #  - QueueName
-                                  #     - def|recommended: random ID
-                                  #     - if provided, cannot set QUEUE.FifoQueue
+AWS::SQS::Queue                   #RESPROPs: QueueName
+                                  #  - def|recommended: random ID
+                                  #  - if provided, cannot set QUEUE.FifoQueue
                                   #RESATTRs:
                                   #  - Arn, QueueName
                                   #  - QueueUrl: returned by { Ref }
 
 new Queue(...CARGS[, CQUEUE_OPTS])#CQUEUE
-CQUEUE.queueArn                   #'QUEUE_ARN'_TK
-CQUEUE.queueUrl                   #'QUEUE_URL', as a CFNREF_STR_TK resolving to { Ref }
+Queue.fromQueueAttributes         #Using OPTS:
+ (...CARGS, OPTS)->ICQUEUE        #  - queueArn 'QUEUE_ARN': required
+                                  #  - queueName, queueUrl: def guessed from queueArn
+                                  #  - keyArn 'KMS_KEY_ARN'
+                                  #  - fifo BOOL
+Queue.fromQueueArn
+ (...CARGS, 'QUEUE_ARN')->ICQUEUE #Same but only setting OPTS.queueArn
+
+ICQUEUE.queueArn                  #'QUEUE_ARN'[_TK]
+ICQUEUE.queueUrl                  #'QUEUE_URL', as a CFNREF_STR_TK resolving to { Ref }
 CQUEUE_OPTS.queueName             #QUEUE.*
-CQUEUE.queueName                  #'QUEUE'_TK
+ICQUEUE.queueName                 #'QUEUE'[_TK]
 CQUEUE_OPTS.removalPolicy         #Passed to CZRESOURCE.applyRemovalPolicy()
                                   #Def: RemovalPolicy.DESTROY
+
+CQUEUE.grantSendMessages
+ |grantConsumeMessages|grantPurge
+ (...)                            #See below. Also allows sqs:GetQueueAttributes|GetQueueUrl, using CQUEUE_MPOLICY
 
                                   ┌────────────────────┐
                                   │   QUEUE COMPOSER   │
@@ -236,7 +254,7 @@ QUEUE_ATTRS.FifoThroughputLimit   #Throttles either:
 
 AWS::SQS::Queue                   #Includes RESPROPs: FifoQueue true|undefined, ContentBasedDeduplication, DeduplicationScope, FifoThroughputLimit
 
-CQUEUE[_OPTS].fifo                #BOOL. QUEUE.FifoQueue
+ICQUEUE[_OPTS].fifo               #BOOL. QUEUE.FifoQueue
                                   #Def: true if 'QUEUE' ends with '.fifo' or if QUEUE.*Deduplication*|FifoThroughputLimit set
 CQUEUE_OPTS
  .contentBasedDeduplication
@@ -277,6 +295,14 @@ MESSAGE_SEND_RES|MESSAGE_RCV_RES
 MESSAGE_RCV_RES|MESSAGE_DELETE
  |MESSAGE_VSB.ReceiptHandle       #'MESSAGE_RCV_MID'
 
+                                  ┌──────────────────┐
+                                  │   MESSAGE AUTH   │
+                                  └──────────────────┘
+
+PACTION sqs:ReceiveMessage
+ |ChangeMessageVisibility
+ |DeleteMessage                   #Should all be allowed to receivers
+
                                   ┌─────────────────┐
                                   │   MESSAGE API   │
                                   └─────────────────┘
@@ -299,6 +325,17 @@ JMS CLIENT ==>                    #"Java Messaging Library"
                                   #Client built on top of Java SDK, to make it compatible with JMS,
                                   #which is a Java-specific Messaging API
                                   #Repository is awslabs/amazon-sqs-java-messaging-lib
+
+                                  ┌─────────────────┐
+                                  │   MESSAGE IAC   │
+                                  └─────────────────┘
+
+CQUEUE.grantSendMessages
+ (YGRANTABLE)->CGRANT             #Allows sqs:SendMessage, using CQUEUE_MPOLICY
+CQUEUE.grantConsumeMessages
+ (YGRANTABLE)->CGRANT             #Allows sqs:ReceiveMessage|ChangeMessageVisibility|DeleteMessage, using CQUEUE_MPOLICY
+CQUEUE.grantPurge
+ (YGRANTABLE)->CGRANT             #Allows sqs:PurgeQueue, using CQUEUE_MPOLICY
 
                                   ┌─────────────────────┐
                                   │   MESSAGE METRICS   │
@@ -547,7 +584,7 @@ ListDeadLetterSourceQueues()      #Req: QUEUE
 
 AWS::SQS::Queue                   #Includes RESPROPs: RedrivePolicy OBJ, RedriveAllowPolicy OBJ
 
-CQUEUE_OPTS.deadLetterQueue       #CREDRIVE_POLICY. QUEUE_ATTRS.RedrivePolicy
+CQUEUE[_OPTS].deadLetterQueue     #CREDRIVE_POLICY. QUEUE_ATTRS.RedrivePolicy
 CREDRIVE_POLICY.queue             #ICQUEUE. REDRIVE_POLICY.deadLetterTargetArn
 CREDRIVE_POLICY.maxReceiveCount   #REDRIVE_POLICY.*
 
@@ -745,14 +782,23 @@ PACTION                           #Must be allowed on
 AWS::SQS::Queue                   #Includes RESPROPs: SqsManagedSseEnabled, KmsMasterKeyId, KmsDataKeyReusePeriodSeconds
 
 CQUEUE_OPTS.encryption            #QUEUE_ATTRS.SqsManagedSseEnabled. One of:
-                                  #  - 'NONE'
+ICQUEUE.encryptionType            #  - 'NONE'
                                   #  - 'SQS_MANAGED' (def): SSE-SQS
                                   #  - 'KMS' (def if CQUEUE_OPTS.encryptionMasterKey): SSE-KMS
                                   #  - 'KMS_MANAGED': SSE-KMS
-CQUEUE[_OPTS].encryptionMasterKey #ICKEY. QUEUE_ATTRS.KmsMasterKeyId
-                                  #With encryption 'KMS': def new ICKEY
-                                  #With encryption 'KMS_MANAGER': always 'aws/sqs'
+CQUEUE_OPTS.encryptionMasterKey   #ICKEY. QUEUE_ATTRS.KmsMasterKeyId
+ICQUEUE.encryptionMasterKey       #With CQUEUE_OPTS.encryption:
+                                  #  - 'KMS': def new ICKEY
+                                  #  - 'KMS_MANAGER': always use 'aws/sqs' (but does not set ICQUEUE.encryptionMasterKey)
 CQUEUE_OPTS.dataKeyReuse          #DURATION. QUEUE_ATTRS.KmsDataKeyReusePeriodSeconds
+
+CQUEUE_OPTS.enforceSSL            #BOOL (def: false, recommended: true). Adds a POLICY which denies sqs:* on QUEUE from any PRINCIPAL
+                                  #if COND_KEY aws:SecureTransport false
+
+CQUEUE.grantSendMessages
+ (YGRANTABLE)->CGRANT             #See above. Also calls ICKEY.grantEncryptDecrypt(YGRANTABLE), if CQUEUE_OPTS.encryption 'KMS'
+CQUEUE.grantConsumeMessages
+ (YGRANTABLE)->CGRANT             #Same but uses ICKEY.grantDecrypt(YGRANTABLE) instead
 
                                   ┌────────────┐
                                   │   POLICY   │
@@ -815,6 +861,16 @@ AWS::SQS::QueuePolicy             #RESPROPs: QueuePolicyDocument POLICY_DOC_OBJ,
                                   #RESATTR: Id POLICY_MID
                                   #Is a MPOLICY, i.e. identity-level
                                   #With Cloud Control, cannot read|list
+
+new QueuePolicy(...CARGS, OPTS)   #CQUEUE_MPOLICY. AWS::SQS::QueuePolicy
+CQUEUE_MPOLICY.document           #CPOLICY_DOC, initially empty
+OPTS.queues                       #ICQUEUE_ARR
+
+CQUEUE                            #Is RGRANTABLE, using CQUEUE_MPOLICY
+                                  #If ICQUEUE, is RGRANTABLE but noop
+CQUEUE.grant
+ (YGRANTABLE, 'PACTION',...)
+ ->CGRANT                         #Allows PACTION on QUEUE, using CQUEUE_MPOLICY
 
                                   ┌──────────┐
                                   │   TAGS   │
