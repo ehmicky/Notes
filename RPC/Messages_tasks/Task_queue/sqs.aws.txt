@@ -19,6 +19,7 @@ To learn:
 FORMAT ==>                        #Use either:
                                   #  - X-Amz-Target: AmazonSQS.ACTION [C], JSON request|response
                                   #  - REQ.Action 'ACTION', query string request (ARR uses VAR.NUM), XML response
+                                  #NUM are actually 'NUM' when using the API
 
 RES.ResponseMetadata.RequestId    #REQ_ID
 
@@ -76,18 +77,26 @@ QUEUE_ATTRS.FifoQueue             #BOOL (def: false). FIFO, i.e. ensures that re
                                   #'QUEUE' must end with '.fifo'
                                   #If not specified considered "standard QUEUE"
 
-MESSAGE_SEND.MessageGroupId       #STR
+MESSAGE_SEND.MessageGroupId       #'MESSAGE_GROUP_ID'. FIFO ordering applies per-MESSAGE_GROUP
+                                  #I.e. MESSAGE_GROUPs are interleaved
                                   #Only with FIFO. Required
-MESSAGE_SEND_RES.SequenceNumber   #STR
+                                  #Max 128 chars, [:graph:]
+MESSAGE_SEND_RES.SequenceNumber   #'NUM'. Increases monotonically (but not necessarily consecutively) per MESSAGE within a given MESSAGE_GROUP
+                                  #Always 128 chars, padded with 0s
 
 MESSAGE_SEND                      #'MESSAGE_DID'. If 2 MESSAGEs with the same MESSAGE_DID are sent (within 5m), the second one is ignored
- .MessageDeduplicationId          #Only with FIFO. Required
+ .MessageDeduplicationId          #I.e. avoid duplicate sends
+                                  #Only with FIFO. Required
                                   #Max 128 chars, [:graph:]
 QUEUE_ATTRS
  .ContentBasedDeduplication       #BOOL (def: false). Make MESSAGE_DID default to SHA-256 of 'MESSAGE_BODY'
+QUEUE_ATTRS.DeduplicationScope    #Whether to namespace MESSAGE_DID with MESSAGE_GROUP_ID: 'queue' (no), 'messageGroup' (yes)
 
-QUEUE_ATTRS.DeduplicationScope    #
-QUEUE_ATTRS.FifoThroughputLimit   #
+QUEUE_ATTRS.FifoThroughputLimit   #Either:
+                                  #  - 'perQueue' (def): max 300 MESSAGE/s, per QUEUE
+                                  #  - 'perMessageGroupId': max 7e4 MESSAGE/s (REGION-specific), per MESSAGE_GROUP
+                                  #In both cases, 10x more if using SendMessageBatch()
+                                  #If 'perMessageGroupId', QUEUE_ATTRS.DeduplicationScope must be 'messageGroup'
 
 ListDeadLetterSourceQueues()      #Req: QUEUE
                                   #  - only QueueUrl
@@ -187,28 +196,28 @@ ChangeMessageVisibilityBatch()    #Req: MESSAGES_SEND
                                   #Res: MESSAGES_RES
                                   #  - Successful[*]: only Id
 
+QUEUE_ATTRS
+ .ApproximateNumberOfMessages     #NUM of MESSAGEs not received yet
+
 QUEUE_ATTRS|MESSAGE_SEND          #NUM (in secs, def: 0, max: 15m)
  .DelaySeconds                    #Period after MESSAGE sending when MESSAGE cannot be received
                                   #Not with FIFO QUEUEs
 QUEUE_ATTRS.Approximate
- NumberOfMessagesDelayed          #
+ NumberOfMessagesDelayed          #NUM of delayed MESSAGEs
 
 QUEUE_ATTRS|MESSAGE_RCV           #Max NUM (min 0, def 30s, max 12h) of secs for consumers to process a MESSAGE
  .VisibilityTimeout               #Period starts when MESSAGE is received
-                                  #During that time, MESSAGE cannot be received again
+                                  #During that time, MESSAGE cannot be received again ("in-flight")
                                   #  - i.e. if too low, risk of multiple consumers receiving same MESSAGE
                                   #Once consumed, MESSAGE must either be deleted, or its VisibilityTimeout increased
                                   #Else, MESSAGE reception is considered failed
                                   #  - i.e. if too high, slows down retrying failed consumption
-
 QUEUE_ATTRS.Approximate
- NumberOfMessagesNotVisible       #
+ NumberOfMessagesNotVisible       #NUM of in-flight MESSAGEs
 
 QUEUE_ATTRS.MessageRetentionPeriod#NUM (in secs, min 1m, def 4d, max 14d)
                                   #Delete MESSAGEs older than NUMs
                                   #Updates impact existing MESSAGEs, and take up to 15m
-QUEUE_ATTRS
- .ApproximateNumberOfMessages     #
 
 StartMessageMoveTask()            #Req: MOVE
                                   #  - only SourceArn, DestinationArn, MaxNumberOfMessagesPerSecond
@@ -243,17 +252,22 @@ RemovePermission()                #Req: PERMISSION
                                   #Res: empty
 
 QUEUE_ATTRS.Policy                #IAM 'POLICY_DOC'
-
-PERMISSION                        #Cross-ACCOUNT resource-level permissions on a QUEUE
-PERMISSION.Label                  #'PERMISSION' name
-PERMISSION.QueueUrl               #'QUEUE_URL'
-PERMISSION.Actions                #'PACTION'_ARR. Only for:
-                                  #  - *Message* (except *MessageMoveTask)
-                                  #  - PurgeQueue
-                                  #  - GetQueue*
-                                  #  - ListDeadLetterSourceQueues
+                                  #Resource-level on a QUEUE, i.e. Resource is QUEUE_ARN
+                                  #Can set COND_KEY aws:SourceAccount for cross-ACCOUNT
+                                  #PACTION can only be:
+                                  #  - sqs:*Message* (except *MessageMoveTask)
+                                  #  - sqs:PurgeQueue
+                                  #  - sqs:GetQueue*
+                                  #  - sqs:ListDeadLetterSourceQueues
                                   #No 'PACTIONBatch': included in 'PACTION'
-PERMISSION.AWSAccountIds          #'ACCOUNT_ID'_ARR
+                                  #Def: allow sqs:ReceiveMessage to any
+
+PERMISSION                        #Sets QUEUE_ATTRS.Policy
+PERMISSION.Label                  #STATEMENT.Sid
+PERMISSION.QueueUrl               #'QUEUE_URL'. STATEMENT.Resource
+PERMISSION.Actions                #'PACTION'_ARR. STATEMENT.Actions
+PERMISSION.AWSAccountIds          #'ACCOUNT_ID'_ARR. COND_KEY aws:SourceAccount
+                                  #Required
 
 PACTION AddPermission
  |RemovePermission                #Do not require PACTION SetQueueAttributes, even though they set QUEUE_ATTRS.Policy
