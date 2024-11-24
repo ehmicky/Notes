@@ -55,7 +55,7 @@ DeleteQueue()                     #Req: QUEUE
 
 QUEUE                             #CreateQueue() is idempotent, if using exact same QUEUE.*
                                   #Deleting removes any MESSAGE
-                                  #Updating|deleting take up to 1m (15m for MessageRetentionPeriod)
+                                  #Updating|deleting take up to 1m
                                   #  - including QUEUE_ATTRS.Approximate*, which need that time to stabilize
 QUEUE_ATTRS.QueueArn              #'QUEUE_ARN'. 'arn:aws:sqs:REGION:ACCOUNT_ID:QUEUE'
 QUEUE.QueueUrl                    #QUEUE_URL. 'https://sqs.REGION.amazonaws.com/ACCOUNT_ID/QUEUE'
@@ -66,8 +66,9 @@ QUEUE_ATTRS.CreatedTimestamp      #DATE_NUM
 QUEUE_ATTRS.LastModifiedTimestamp #DATE_NUM
 QUEUE.Attributes                  #QUEUE_ATTRS
 
-QUEUE_ATTRS.MaximumMessageSize    #
-QUEUE_ATTRS.MessageRetentionPeriod#
+QUEUE_ATTRS.MessageRetentionPeriod#NUM (in secs, min 1m, def 4d, max 14d)
+                                  #Delete MESSAGEs older than NUMs
+                                  #Updates impact existing MESSAGEs, and take up to 15m
 QUEUE_ATTRS
  .ApproximateNumberOfMessages     #
 
@@ -75,8 +76,9 @@ QUEUE_ATTRS
  .ContentBasedDeduplication       #
 QUEUE_ATTRS.DeduplicationScope    #
 
-QUEUE_ATTRS.SqsManagedSseEnabled  #
-QUEUE_ATTRS.KmsMasterKeyId        #
+QUEUE_ATTRS.SqsManagedSseEnabled  #BOOL (def: true). "SSE-SQS". Encrypts MESSAGEs at rest using SQS-managed KMS key 'aws/sqs'
+                                  #If true, SendMessage|ReceiveMessage() cannot be anonymous
+QUEUE_ATTRS.KmsMasterKeyId        #KMS_ID (def: none). "SSE-KMS". Same but with custom key
 QUEUE_ATTRS
  .KmsDataKeyReusePeriodSeconds    #
 
@@ -90,8 +92,18 @@ ListDeadLetterSourceQueues()      #Req: QUEUE
                                   #Res: QUEUE
                                   #  - only QueueUrl -> QueueUrls ARR
 
-QUEUE_ATTRS.RedrivePolicy         #
-QUEUE_ATTRS.RedriveAllowPolicy    #
+QUEUE_ATTRS.RedrivePolicy         #'REDRIVE_POLICY_JSON'. Send failed MESSAGEs from this QUEUE to a dead-letter QUEUE2
+REDRIVE_POLICY.deadLetterTargetArn#QUEUE2_ARN
+                                  #Can be in different REGION|ACCOUNT, but less performant
+REDRIVE_POLICY.maxReceiveCount    #NUM (def: 10) of MESSAGE failures before moving MESSAGE to dead-letter QUEUE2
+                                  #I.e. max NUM of retries
+
+QUEUE_ATTRS.RedriveAllowPolicy    #'REDRIVE_APOLICY_JSON'. Restrict which other QUEUE2 can use this QUEUE as dead-letter
+                                  #Must be in same REGION + ACCOUNT, unless redrivePermission 'byQueue'
+                                  #If QUEUE2 is [not] FIFO, so must be QUEUE
+REDRIVE_APOLICY.redrivePermission #'allowAll' (def), 'denyAll' or 'byQueue'
+REDRIVE_APOLICY.sourceQueueArns   #Specific 'QUEUE2_ARN'_ARR, when using redrivePermission 'byQueue'
+                                  #Max 10 items
 
 SendMessage()                     #Req: MESSAGE_SEND
                                   #  - no Id
@@ -116,16 +128,15 @@ MESSAGES_SEND.Entries             #MESSAGE_SEND_ARR (no QueueUrl)
 MESSAGE_SEND.Id                   #STR
 MESSAGE[S]_SEND|MESSAGE_RCV
  .QueueUrl                        #'QUEUE_URL'
+
 MESSAGE_SEND.MessageBody
 MESSAGE_RCV_RES.Body              #STR
+QUEUE_ATTRS.MaximumMessageSize    #NUM (in bytes, min 1KB, def|max 256KB)
+                                  #Max size of MESSAGE_SEND.MessageBody
+
 MESSAGE_SEND
  .MessageDeduplicationId          #STR
 MESSAGE_SEND.MessageGroupId       STR
-
-QUEUE_ATTRS.Approximate
- NumberOfMessagesDelayed          #
-QUEUE_ATTRS.DelaySeconds          #
-MESSAGE_SEND.DelaySeconds         #NUM
 
 MESSAGE_RCV.MessageAttributeNames #'MESSAGE_ATTR_KEY'_ARR
 MESSAGE_RCV
@@ -168,8 +179,8 @@ MESSAGE_RCV
  .ReceiveRequestAttemptId         #STR
 
 QUEUE_ATTRS
- .ReceiveMessageWaitTimeSeconds   #
-MESSAGE_RCV.WaitTimeSeconds       #NUM
+ .ReceiveMessageWaitTimeSeconds   #NUM (in secs, def 0, max 20)
+MESSAGE_RCV.WaitTimeSeconds       #If no MESSAGE available, wait up to NUMs before returning
 
 ChangeMessageVisibility()         #Req: MESSAGE_RCV
                                   #  - only QueueUrl, ReceiptHandle, VisibilityTimeout
@@ -179,8 +190,19 @@ ChangeMessageVisibilityBatch()    #Req: MESSAGES_SEND
                                   #Res: MESSAGES_RES
                                   #  - Successful[*]: only Id
 
-QUEUE_ATTRS.VisibilityTimeout     #
-MESSAGE_RCV.VisibilityTimeout     #NUM
+QUEUE_ATTRS|MESSAGE_SEND          #NUM (in secs, def: 0, max: 15m)
+ .DelaySeconds                    #Period after MESSAGE sending when MESSAGE cannot be received
+                                  #Not with FIFO QUEUEs
+QUEUE_ATTRS.Approximate
+ NumberOfMessagesDelayed          #
+
+QUEUE_ATTRS|MESSAGE_RCV           #Max NUM (min 0, def 30s, max 12h) of secs for consumers to process a MESSAGE
+ .VisibilityTimeout               #Period starts when MESSAGE is received
+                                  #During that time, MESSAGE cannot be received again
+                                  #  - i.e. if too low, risk of multiple consumers receiving same MESSAGE
+                                  #Once consumed, MESSAGE must either be deleted, or its VisibilityTimeout increased
+                                  #Else, MESSAGE reception is considered failed
+                                  #  - i.e. if too high, slows down retrying failed consumption
 
 QUEUE_ATTRS.Approximate
  NumberOfMessagesNotVisible       #
@@ -217,7 +239,7 @@ RemovePermission()                #Req: PERMISSION
                                   #  - only QueueUrl, Label
                                   #Res: empty
 
-QUEUE_ATTRS.Policy                #
+QUEUE_ATTRS.Policy                #IAM 'POLICY_DOC'
 
 PERMISSION                        #Cross-ACCOUNT resource-level permissions on a QUEUE
 PERMISSION.Label                  #'PERMISSION' name
