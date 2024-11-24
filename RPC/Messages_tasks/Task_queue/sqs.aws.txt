@@ -3,6 +3,11 @@
                                   ┃   SQS   ┃
                                   ┗━━━━━━━━━┛
 
+Composer:
+  - QUEUE
+  - API Gateway: SQS INTEGRATION
+  - S3: SQS NOTIFICATIONS
+
 To learn:
   - new_services doc
      - stopped at CloudFormation > Composer
@@ -166,12 +171,19 @@ INACTIVE QUEUE ==>                #QUEUE without any activity for 6h+
                                   │   FIFO   │
                                   └──────────┘
 
+STANDARD QUEUE ==>                #Non-FIFO QUEUE
+                                  #Receiving order is randomly sampled among MESSAGEs available
+                                  #Pros:
+                                  #  - Receiver can process MESSAGEs in parallel
+                                  #  - No throttling
+                                  #Cons:
+                                  #  - Order is not guaranteed, although does a best effort
+                                  #  - At-most-once delivery + processing, i.e. processing should be idempotent
+DATA REDUNDANCY ==>               #With non-FIFO QUEUE, MESSAGEs are replicated on multiple servers
+
 QUEUE_ATTRS.FifoQueue             #BOOL (def: false). FIFO, i.e. ensures that receiving order is same as sending order
                                   #'QUEUE' must end with '.fifo'
-                                  #Else:
-                                  #  - "standard QUEUE"
-                                  #  - receiving order is randomly sampled among MESSAGEs available
-                                  #Con: receiver must process MESSAGEs serially (within a given MESSAGE_GROUP)
+                                  #Receiver must process MESSAGEs serially (within a given MESSAGE_GROUP)
                                   #  - within a batch, can process in parallel
                                   #  - i.e. failed MESSAGEs prevent further consumption, unless there is a dead-letter QUEUE2
 
@@ -183,25 +195,27 @@ MESSAGE_SEND|SYS_ATTRS            #'MESSAGE_GROUP_ID'. FIFO ordering applies per
 MESSAGE_SEND_RES|SYS_ATTRS        #'NUM'. Increases monotonically (but not necessarily consecutively) per MESSAGE within a given MESSAGE_GROUP
  .SequenceNumber                  #Always 128 chars, padded with 0s
 
-MESSAGE_SEND|SYS_ATTRS            #'MESSAGE_SEND_DID'. If 2 SendMessage*() with the same MESSAGE_SEND_DID are sent (within 5m), the second one is ignored
- .MessageDeduplicationId          #I.e. avoid duplicate sends
+MESSAGE_SEND|SYS_ATTRS            #'MESSAGE_SEND_DID'. If 2 SendMessage*() with the same MESSAGE_SEND_DID are sent (within 5m),
+ .MessageDeduplicationId          #the second one is ignored
+                                  #I.e. exactly-once delivery, avoiding duplicate sends
                                   #Only with FIFO. Required
                                   #Max 128 chars, [:graph:]
 QUEUE_ATTRS
  .ContentBasedDeduplication       #BOOL (def: false). Make MESSAGE_SEND_DID default to SHA-256 of 'MESSAGE_BODY'
 QUEUE_ATTRS.DeduplicationScope    #Whether to namespace MESSAGE_SEND_DID with MESSAGE_GROUP_ID: 'queue' (no), 'messageGroup' (yes)
 
-MESSAGES_RCV                      #'MESSAGE_RCV_DID'. If 2 ReceiveMessage*() with the same MESSAGE_RCV_DID are sent (within 5m), the second one does not fail
- .ReceiveRequestAttemptId         #I.e. meant for retrying failed MESSAGEs
-                                  #Only with FIFO
+MESSAGES_RCV                      #'MESSAGE_RCV_DID'. If 2 ReceiveMessage*() with the same MESSAGE_RCV_DID are sent (within 5m),
+ .ReceiveRequestAttemptId         #the first one fails if it tries to DeleteMessage*()
+                                  #I.e. exactly-once processing, avoiding duplicate processing
+                                  #Only with FIFO. Required for retries
                                   #Max 128 chars, [:graph:]
 
-QUEUE_ATTRS.FifoThroughputLimit   #Either:
+QUEUE_ATTRS.FifoThroughputLimit   #Throttles either:
                                   #  - 'perQueue' (def): max 300 (hard) SendMessage[Batch]() per second per QUEUE
                                   #  - 'perMessageGroupId' (recommended): max 7e4 (soft, REGION-specific) SendMessage[Batch]() per second per MESSAGE_GROUP
                                   #The same quota applies separetely for DeleteMessage[Batch](), and for ReceiveMessage()
                                   #If 'perMessageGroupId', QUEUE_ATTRS.DeduplicationScope must be 'messageGroup'
-                                  #Only with FIFO. Non-FIFO QUEUEs have no throttling
+                                  #Only with FIFO
 
                                   ┌──────────────┐
                                   │   FIFO IAC   │
@@ -416,7 +430,8 @@ QUEUE_ATTRS.Approximate
  NumberOfMessagesDelayed          #NUM of delayed MESSAGEs
 
 QUEUE_ATTRS|MESSAGES_RCV          #Max NUM (min 0, def 30s, max 12h) of secs for consumers to process a MESSAGE
- .VisibilityTimeout               #Period starts when MESSAGE is received
+ .VisibilityTimeout               #I.e. like a processing lock
+                                  #Period starts when MESSAGE is received
                                   #During that time, MESSAGE cannot be received again ("in-flight")
                                   #  - i.e. if too low, risk of multiple consumers receiving same MESSAGE
                                   #Once processed, MESSAGE must be deleted
