@@ -31,7 +31,7 @@ To learn:
         - see documentation of it under S3
      - https://github.com/aws-powertools/powertools-lambda-typescript/blob/main/packages/jmespath/src/envelopes.ts#L71
   - https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/welcome.html
-     - stopped at Managing a queue
+     - stopped at FIFO queues > FIFO delivery logic
      - already done: Temporary queues, Quotas, Security, Related resources, Document history
   - https://github.com/bbc/sqs-producer
      - compare with https://github.com/montumodi/sqs-bulk-loader
@@ -240,24 +240,41 @@ CXMONITORING_OPTS.deadLetterQueue #ICQUEUE2
 CXMONITORING_OPTS.addDeadLetter
  QueueToSummaryDashboard          #BOOL (def: false). Whether to include WIDGETs in summary CDASHBOARD
 
+                                  ┌──────────────┐
+                                  │   NON-FIFO   │
+                                  └──────────────┘
+
+STANDARD QUEUE ==>                #Non-FIFO QUEUE
+                                  #Preferred unless either:
+                                  #  - processing cannot be idempotent
+                                  #  - delivery has to be exactly ordered
+                                  #All of the features below are the opposite with FIFOs
+
+DATA REDUNDANCY ==>               #Pro. MESSAGEs are replicated on multiple AZs
+
+THROTTLING ==>                    #Pro. No throttling
+
+PROCESSING ==>                    #Pro. Receivers can process MESSAGEs in parallel
+
+ORDER ==>                         #Con. Receiving order is randomly sampled among multiple AZs
+                                  #I.e. best effort, might be out-of-order
+
+AT-MOST ONCE DELIVERY ==>         #Con. A MESSAGE:
+                                  #  - sent with 1 SendMessage()
+                                  #  - might be delivered to 2 ReceiveMessage()
+                                  #This might happen if an AZ goes down:
+                                  #  - while other AZs are up and deliver that MESSAGE
+                                  #  - i.e. the former does not know that MESSAGE was already delivered
+                                  #I.e. processing must be idempotent
+
                                   ┌──────────┐
                                   │   FIFO   │
                                   └──────────┘
 
-STANDARD QUEUE ==>                #Non-FIFO QUEUE
-                                  #Receiving order is randomly sampled among MESSAGEs available
-                                  #Pros:
-                                  #  - Receiver can process MESSAGEs in parallel
-                                  #  - No throttling
-                                  #Cons:
-                                  #  - Order is not guaranteed, although does a best effort
-                                  #  - At-most-once delivery + processing, i.e. processing should be idempotent
-DATA REDUNDANCY ==>               #With non-FIFO QUEUE, MESSAGEs are replicated on multiple servers
-
-QUEUE_ATTRS.FifoQueue             #BOOL (def: false). FIFO, i.e. ensures that receiving order is same as sending order
+QUEUE_ATTRS.FifoQueue             #BOOL (def: false). Whether is FIFO QUEUE
                                   #'QUEUE' must end with '.fifo'
-                                  #Receiver must process MESSAGEs serially (within a given MESSAGE_GROUP)
-                                  #  - i.e. failed MESSAGEs prevent further consumption, unless there is a dead-letter QUEUE2
+
+ORDER ==>                         #Ensures that receiving order is same as sending order
 
 MESSAGE_SEND|SYS_ATTRS            #'MESSAGE_GROUP_ID'. FIFO ordering applies per-MESSAGE_GROUP
  .MessageGroupId                  #I.e. MESSAGE_GROUPs are interleaved
@@ -275,6 +292,10 @@ MESSAGE_SEND|SYS_ATTRS            #'MESSAGE_SEND_DID'. If 2 SendMessage*() with 
 QUEUE_ATTRS
  .ContentBasedDeduplication       #BOOL (def: false). Make MESSAGE_SEND_DID default to SHA-256 of 'MESSAGE_BODY'
 QUEUE_ATTRS.DeduplicationScope    #Whether to namespace MESSAGE_SEND_DID with MESSAGE_GROUP_ID: 'queue' (no), 'messageGroup' (yes)
+
+PROCESSING ==>                    #Receiver must process MESSAGEs serially (within a given MESSAGE_GROUP)
+                                  #I.e. failed MESSAGEs prevent further consumption
+                                  #  - if no dead-letter QUEUE2, completely blocks it
 
 MESSAGES_RCV                      #'MESSAGE_RCV_DID'. If 2 ReceiveMessage*() with the same MESSAGE_RCV_DID are sent (within 5m),
  .ReceiveRequestAttemptId         #the first one fails if it tries to DeleteMessage*()
@@ -669,8 +690,15 @@ cfn-lint I3013                    #Must explicitely set QUEUE_ATTRS.MessageReten
                                   │   DEAD-LETTER   │
                                   └─────────────────┘
 
-QUEUE_ATTRS.RedrivePolicy         #'REDRIVE_POLICY_JSON'. Send repeatedly failed MESSAGEs from this QUEUE ("source") to a dead-letter QUEUE2
-                                  #Recommended
+QUEUE_ATTRS.RedrivePolicy         #'REDRIVE_POLICY_JSON'
+                                  #Send repeatedly failed MESSAGEs from this QUEUE ("source") to a dead-letter QUEUE2 ("DLQ")
+                                  #Recommended to ensure:
+                                  #  - no unprocesses MESSAGEs
+                                  #  - no blocked FIFOs due to MESSAGE failures (see above)
+                                  #Can either:
+                                  #  - fix underlying problem, then redrive MESSAGEs
+                                  #     - i.e. not consume the MESSAGEs
+                                  #  - process the MESSAGEs from the dead-letter QUEUE by another consumer
 REDRIVE_POLICY.deadLetterTargetArn#QUEUE2_ARN
                                   #Can be in different REGION|ACCOUNT, but less performant
 REDRIVE_POLICY.maxReceiveCount    #NUM (def: 10) of MESSAGE failures before moving MESSAGE to dead-letter QUEUE2
@@ -738,7 +766,8 @@ cdk-nag SQSQueueDLQ               #Every non-dead-letter QUEUE must have a dead-
                                   └──────────┘
 
 MOVE                              #Move all MESSAGEs from a dead-letter QUEUE to another QUEUE2
-                                  #E.g. back to source QUEUE2 to retry dead-letter MESSAGEs, after fixing the underlying problem
+                                  #"Redrive": when back to source QUEUE2
+                                  #  - to retry dead-letter MESSAGEs, after fixing the underlying problem
                                   #Max 1 per QUEUE at a time
 MOVE.TaskHandle                   #'MOVE_MID'
 MOVE.SourceArn                    #'QUEUE_ARN'. Must be dead-letter
