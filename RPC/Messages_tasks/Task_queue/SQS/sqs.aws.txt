@@ -5,9 +5,8 @@
 
 To learn:
   - https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/welcome.html
-     - stopped at FIFO queues > High throughput for FIFO queues in Amazon SQS
+     - stopped at Features and capabilities > Message metadata for Amazon SQS
      - already done: Temporary queues, Quotas, Security, Related resources, Document history
-  - https://github.com/montumodi/sqs-bulk-loader
   - https://github.com/bbc/sqs-consumer
      - compare with https://github.com/Doist/sqs-workers
   - https://github.com/Admiral-Piett/goaws
@@ -229,14 +228,23 @@ PROCESSING ==>                    #Pro. Receivers can process MESSAGEs in parall
 
 ORDER ==>                         #Con. Best effort, might be out-of-order
 
-AT-MOST ONCE DELIVERY ==>         #Con. A MESSAGE:
+AT-MOST ONCE PROCESSING ==>       #Con. Processing must be idempotent due to following risks:
+                                  #double sending|receiving|storing|processing
+                                  #All result in a MESSAGE:
                                   #  - sent with 1 SendMessage()
-                                  #  - might be delivered to 2 ReceiveMessage()
-                                  #This might happen if an AZ goes down:
-                                  #  - while other AZs are up and deliver that MESSAGE
-                                  #  - i.e. the former does not know that MESSAGE was already delivered
-                                  #     - as opposed to FIFO, which can determine where it left thanks to order
-                                  #I.e. processing must be idempotent
+                                  #  - processed by 2 ReceiveMessage()
+                                  #FIFO does not have those problems, i.e. has exactly-once processing
+                                  #  - except double processing risk, but mitigated with high enough VisibilityTimeout
+DOUBLE SENDING ==>                #Either:
+                                  #  - 2 concurrent senders at the same time
+                                  #  - sending fails (e.g. network error) and is repeated
+DOUBLE RECEIVING ==>              #Either:
+                                  #  - 2 concurrent receivers at the same time
+                                  #  - receiving fails (e.g. network error) and is repeated
+DOUBLE STORING ==>                #If an AZ goes down, while other AZs are up and deliver that MESSAGE
+                                  #I.e. the former does not know that MESSAGE was already delivered
+                                  #As opposed to FIFO, which can determine where it left thanks to order
+DOUBLE PROCESSING ==>             #When VisibilityTimeout too low, i.e. second receivers starts while another is ongoing
 
                                   ┌──────────┐
                                   │   FIFO   │
@@ -262,10 +270,7 @@ MESSAGE_SEND_RES|SYS_ATTRS        #'NUM'. Increases monotonically (but not neces
 MESSAGE_SEND|SYS_ATTRS            #'MESSAGE_SEND_DID'. If 2 SendMessage*() with the same MESSAGE_SEND_DID are sent:
  .MessageDeduplicationId          #  - within 5m
                                   #  - then only the first successful one is used
-                                  #I.e. exactly-once delivery, avoiding duplicate sends
-                                  #I.e. mostly meant if:
-                                  #  - 2 concurrent senders at the same time
-                                  #  - sending fails (e.g. network error) and is repeated
+                                  #I.e. avoid double sending (see above)
                                   #Continues working even after MESSAGE has been received and|or deleted
                                   #Only with FIFO. Required
                                   #Max 128 chars, [:graph:]
@@ -284,10 +289,7 @@ PROCESSING ==>                    #VisibilityTimeout locks the whole MESSAGE_GRO
 MESSAGES_RCV                      #'MESSAGE_RCV_DID'. If 2 ReceiveMessage*() with the same MESSAGE_RCV_DID are sent:
  .ReceiveRequestAttemptId         #  - within min(5m, VisibilityTimeout)
                                   #  - then only the first successful one is used
-                                  #I.e. exactly-once processing, avoiding duplicate receiving
-                                  #I.e. mostly meant if:
-                                  #  - 2 concurrent receivers at the same time
-                                  #  - receiving fails (e.g. network error) and is repeated
+                                  #I.e. avoid double receiving (see above)
                                   #Not if ChangeMessageVisibility() or DeleteMessage() already called
                                   #Not related to MESSAGE failure retries, since retries are done after VisibilityTimeout expired
                                   #Only with FIFO. Optional but recommended
@@ -340,6 +342,7 @@ MESSAGE_SEND|MESSAGES_RCV
  .QueueUrl                        #'QUEUE_URL'
 
 SYS_ATTRS.SentTimestamp           #DATE_NUM of first SendMessage()
+                                  #If DLQ + non-FIFO: of when sent to the source QUEUE instead
 SYS_ATTRS
  .ApproximateFirstReceiveTimestamp#DATE_NUM of first ReceiveMessage()
 
@@ -625,6 +628,9 @@ SYS_ATTRS.ApproximateReceiveCount #NUM of times this MESSAGE failed
 QUEUE_ATTRS.MessageRetentionPeriod#NUM (in secs, min 1m, def 4d, max 14d)
                                   #Delete MESSAGEs older than NUMs
                                   #Updates impact existing MESSAGEs, and take up to 15m
+                                  #Based on SYS_ATTRS.SentTimestamp
+                                  #  - i.e. if DLQ + non-FIFO, includes time spent in source QUEUE
+                                  #     - i.e. MessageRetentionPeriod should be > source QUEUE's, to avoid risk of expiring right away
 
 PRICING ==>                       #None of the above impact pricing since storage is free
 
@@ -663,6 +669,7 @@ AWS/SQS/Approximate               #QUEUE_ATTRS.ApproximateNumberOfMessages - QUE
 
 AWS/SQS/                          #Age (NUM of seconds) of oldest MESSAGE
  ApproximateAgeOfOldestMessage    #If not FIFO, MESSAGEs that are retried 3+ times have their age reset
+                                  #If DLQ, based on when sent to DLQ (not source QUEUE), regardless of whether FIFO or not
                                   #Excludes failed MESSAGEs
                                   #cdk-monitoring-constructs:
                                   #  - max: METRIC, summary WIDGET, MALARM QueueMaxMessageAge > CXALARM_OPTS.maxAgeInSeconds
@@ -767,7 +774,11 @@ cdk-nag SQSQueueDLQ               #Every non-dead-letter QUEUE must have a dead-
 MOVE                              #Move all MESSAGEs from a dead-letter QUEUE to another QUEUE2
                                   #"Redrive": when back to source QUEUE2
                                   #  - to retry dead-letter MESSAGEs, after fixing the underlying problem
-                                  #Max 1 per QUEUE at a time
+                                  #MESSAGEs are re-sent
+                                  #  - i.e. new SentTimestamp, MESSAGE_MID, etc.
+                                  #Both QUEUEs must be FIFO or not
+                                  #Max 1 per QUEUE at a time, 100 per ACCOUNT at a time
+                                  #36h timeout
 MOVE.TaskHandle                   #'MOVE_MID'
 MOVE.SourceArn                    #'QUEUE_ARN'. Must be dead-letter
 MOVE.DestinationArn               #'QUEUE2_ARN'
@@ -851,7 +862,7 @@ FIFO ==>                          #Throttling limit is per API call, i.e. eased 
                                   #  - API tries to give MESSAGEs of the same MESSAGE_GROUP
                                   #     - but does not guarantee it
                                   #  - can process MESSAGEs with same MESSAGE_GROUP in parallel
-                                  #     - but must delete them in order or (better) in a batch
+                                  #     - can delete in any order, although DeleteMessageBatch() is cheaper and more efficient
 
 BUFFERING ==>                     #Client can buffer:
                                   #  - holding SendMessage(), to increase batch size
