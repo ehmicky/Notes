@@ -4,7 +4,6 @@
                                   ┗━━━━━━━━━┛
 
 To learn:
-  - https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/Welcome.html
   - https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/welcome.html
   - @aws-sdk/middleware-sdk-sqs
   - IAM:
@@ -15,6 +14,8 @@ To learn:
      - move documentation about AWS::Serverless::Connector
      - move POLICY_TEMPLATE doc from SAM transform doc
   - search "SQS" in my docs
+
+VERSION ==>                       #2024-11-15
 
                                   ┌─────────┐
                                   │   API   │
@@ -39,6 +40,7 @@ EVENTUAL CONSISTENCY ==>          #Updating|deleting take up to 1m
 
 QUEUE                             #CreateQueue() is idempotent, if using exact same QUEUE.*
                                   #Deleting removes all MESSAGEs
+                                  #GetQueue*() and List*Queue*() are not logged by CloudTrail
 
 QUEUE_ATTRS.QueueArn              #'QUEUE_ARN'. 'arn:aws:sqs:REGION:ACCOUNT_ID:QUEUE'
 QUEUE.QueueUrl                    #QUEUE_URL. 'https://sqs.REGION.amazonaws.com/ACCOUNT_ID/QUEUE'
@@ -82,12 +84,24 @@ DeleteQueue()                     #Req: QUEUE
                                   #  - only QueueUrl
                                   #Res: empty
 
+                                  ┌───────────────────┐
+                                  │   QUEUE METRICS   │
+                                  └───────────────────┘
+
+DVAR QueueName                    #'QUEUE', sent with all METRICs
+
+INACTIVE QUEUE ==>                #QUEUE without any activity for 6h+
+                                  #Does not send any more METRICs
+                                  #"Activity" includes GetQueueAttributes(), i.e. can be used to re-activate
+                                  #Re-activating takes up to 15m
+
                                   ┌──────────┐
                                   │   FIFO   │
                                   └──────────┘
 
 QUEUE_ATTRS.FifoQueue             #BOOL (def: false). FIFO, i.e. ensures that receiving order is same as sending order
                                   #'QUEUE' must end with '.fifo'
+                                  #Failed MESSAGEs prevent further consumption, unless there is a dead-letter QUEUE2
                                   #Else:
                                   #  - "standard QUEUE"
                                   #  - receiving order is randomly samples among MESSAGEs available
@@ -117,10 +131,22 @@ QUEUE_ATTRS.FifoThroughputLimit   #Either:
                                   #  - 'perMessageGroupId': max 7e4 (REGION-specific) SendMessage[Batch]() per second per MESSAGE_GROUP
                                   #If 'perMessageGroupId', QUEUE_ATTRS.DeduplicationScope must be 'messageGroup'
 
+                                  ┌──────────────────┐
+                                  │   FIFO METRICS   │
+                                  └──────────────────┘
+
+AWS/SQS/ApproximateNumberOfGroups
+ WithInflightMessages             #NUM of MESSAGE_GROUPs with in-flight MESSAGEs
+AWS/SQS/
+ NumberOfDeduplicatedSentMessages #NUM of duplicate sends ignored thanks to MESSAGE_SEND_DID
+
                                   ┌─────────────┐
                                   │   MESSAGE   │
                                   └─────────────┘
 
+MESSAGE                           #*Message*() are logged with CloudTrail as data EVENTs
+                                  #  - except *MessageMoveTask*()
+                                  #  - QUEUE is LOG_RESOURCE
 MESSAGES_SEND.Entries             #MESSAGE_SEND_ARR (no QueueUrl)
                                   #SendMessageBatch(): max 10 items
 MESSAGE_SEND[_RES|_ERROR].Id      #'MESSAGE_BATCH_SEND_MID'. Required
@@ -142,6 +168,10 @@ MESSAGES_SEND_RES.Failed          #MESSAGE_SEND_ERROR_ARR
 MESSAGE_SEND_ERROR.Code           #'CODE'
 MESSAGE_SEND_ERROR.Message        #'MESSAGE'
 MESSAGE_SEND_ERROR.SenderFault    #BOOL. Whether caused by user or by API
+
+DELETION ==>                      #PurgeQueue() deletes all MESSAGEs
+                                  #DeleteMessage*() is idempotent, i.e. duplicate deletions are allowed
+                                  #  - whether with same MESSAGE_RCV_MID (i.e. same retry) or not
 
                                   ┌─────────────────┐
                                   │   MESSAGE API   │
@@ -165,11 +195,22 @@ DeleteMessageBatch()              #Req: MESSAGES_SEND
 PurgeQueue()                      #Res: MESSAGE_SEND_RES
                                   #  - only QueueUrl
                                   #Res: empty
-                                  #Delete all MESSAGEs
 
                                   ┌─────────────────────┐
-                                  │   MESSAGE CONTENT   │
+                                  │   MESSAGE METRICS   │
                                   └─────────────────────┘
+
+AWS/SQS/NumberOfMessagesSent      #NUM of MESSAGEs sent
+                                  #Includes duplicate sends
+                                  #If dead-letter QUEUE, only MESSAGEs sent manually, not through dead-letter mechanism
+AWS/SQS/NumberOfMessagesReceived  #NUM of MESSAGEs received
+                                  #Includes retries
+AWS/SQS/NumberOfMessagesDeleted   #NUM of MESSAGEs deleted
+                                  #Includes duplicate deletions
+
+                                  ┌─────────────┐
+                                  │   CONTENT   │
+                                  └─────────────┘
 
 MESSAGE_SEND.MessageBody          #'MESSAGE_BODY'
 MESSAGE_RCV_RES.Body              #Must be URL encoded
@@ -208,6 +249,12 @@ MESSAGE_SEND_RES
 
 SYS_ATTRS.AWSTraceHeader          #STR. Set by user (unlike other SYS_ATTRS)
 
+                                  ┌─────────────────────┐
+                                  │   CONTENT METRICS   │
+                                  └─────────────────────┘
+
+AWS/SQS/SentMessageSize           #Total size of all MESSAGE[S]_SENDs
+
                                   ┌─────────────┐
                                   │   POLLING   │
                                   └─────────────┘
@@ -218,6 +265,12 @@ MESSAGES_RCV.MaxNumberOfMessages  #NUM (min|def: 1, max: 10). Max size of MESSAG
 QUEUE_ATTRS                       #NUM (in secs, def 0, max 20)
  .ReceiveMessageWaitTimeSeconds   #If no MESSAGE available, wait up to NUMs before returning
 MESSAGES_RCV.WaitTimeSeconds      #I.e. long polling
+
+                                  ┌─────────────────────┐
+                                  │   POLLING METRICS   │
+                                  └─────────────────────┘
+
+AWS/SQS/NumberOfEmptyReceives     #NUM of ReceiveMessage*() that returned 0 MESSAGEs
 
                                   ┌──────────────┐
                                   │   TIMELINE   │
@@ -238,7 +291,7 @@ QUEUE_ATTRS|MESSAGES_RCV          #Max NUM (min 0, def 30s, max 12h) of secs for
                                   #  - i.e. if too low, risk of multiple consumers receiving same MESSAGE
                                   #Once consumed, MESSAGE must either be deleted, or its VisibilityTimeout increased
                                   #ChangeMessageVisibility[Batch]() sets VisibilityTimeout from the time it is called
-                                  #Else, MESSAGE reception is considered failed
+                                  #Else, MESSAGE reception is considered failed ("poison pill")
                                   #  - i.e. if too high, slows down retrying failed consumption
 QUEUE_ATTRS.Approximate           #NUM of in-flight MESSAGEs
  NumberOfMessagesNotVisible       #Max 12e4 if non-FIFO, 2e4 if FIFO
@@ -260,6 +313,19 @@ ChangeMessageVisibilityBatch()    #Req: MESSAGES_SEND
                                   #  - Entries[*]: only Id, ReceiptHandle, VisibilityTimeout
                                   #Res: MESSAGES_SEND_RES
                                   #  - Successful[*]: only Id
+
+                                  ┌──────────────────────┐
+                                  │   TIMELINE METRICS   │
+                                  └──────────────────────┘
+
+AWS/SQS/Approximate
+ NumberOfMessagesDelayed
+AWS/SQS/Approximate
+ NumberOfMessages[Not]Visible     #QUEUE_ATTRS.*
+
+AWS/SQS/                          #Age (NUM of seconds) of oldest MESSAGE
+ ApproximateAgeOfOldestMessage    #If not FIFO, MESSAGEs that are retried 3+ times have their age reset
+                                  #Excludes failed MESSAGEs
 
                                   ┌─────────────────┐
                                   │   DEAD-LETTER   │
@@ -329,8 +395,12 @@ CancelMessageMoveTask()           #Req: MOVE
                                   │   ENCRYPTION   │
                                   └────────────────┘
 
-QUEUE_ATTRS|SYS_ATTRS             #BOOL (def: true). "SSE-SQS". Encrypts MESSAGEs at rest using SQS-managed KMS key 'aws/sqs'
- .SqsManagedSseEnabled            #If true, SendMessage|ReceiveMessage() cannot be anonymous
+QUEUE_ATTRS|SYS_ATTRS             #BOOL (def: true). "SSE-SQS". Encrypts MESSAGE_BODY at rest using SQS-managed KMS key 'aws/sqs'
+ .SqsManagedSseEnabled            #Does not encrypt other parts of MESSAGE.* (e.g. MESSAGE_ATTRS)
+                                  #If using a dead-letter QUEUE2, uses source QUEUE's encryption settings:
+                                  #  - if QUEUE encrypted but not QUEUE2, QUEUE2 won't decrypt it on ReceiveMessage()
+                                  #  - if QUEUE2 encrypted but not QUEUE, MESSAGEs in QUEUE2 won't be encrypted
+                                  #If true, SendMessage|ReceiveMessage() cannot be anonymous
 
 QUEUE_ATTRS.KmsMasterKeyId        #KMS_ID (def: none). "SSE-KMS". Same but with custom key
 
