@@ -24,10 +24,11 @@ TODO:
      - see https://github.com/Admiral-Piett/goaws README for SNS
   - https://docs.aws.amazon.com/sns/latest/dg/welcome.html
      - already done:
+        - Message filtering
+        - Message data protection
         - Message delivery:
            - Raw message delivery
            - Message delivery retries
-        - Message data protection
         - Security > Logging and monitoring
   - https://aws.amazon.com/sns/faqs
   - check sns_backup.txt in Desktop
@@ -418,39 +419,47 @@ AWS/Usage/ResourceCount           #NUM of pending SUB_CONFIRMs
                                   │   FILTER   │
                                   └────────────┘
 
-SUB_ATTRS.FilterPolicy            #'FILTER_JSON'. Filter which MESSAGEs to receive
+SUB_ATTRS.FilterPolicy            #'FILTERS_JSON'. Filter which MESSAGEs to receive
                                   #Updates take up to 15m to enter into effect
                                   #Max 200 per TOPIC (soft), 1e4 per ACCOUNT (soft)
                                   #Max 256KB
 
-SUB_ATTRS.FilterPolicyScope       #Whether FILTER is applied on:
+SUB_ATTRS.FilterPolicyScope       #Whether FILTERS are applied on:
                                   #  - 'MessageAttributes' (def)
                                   #     - not with DataType 'Binary'
                                   #  - 'MessageBody': must be JSON
 
-FILTER.*                          #And'd, i.e. must all match
-FILTER.$or                        #FILTER_ARR
-                                  #Can be combined with FILTER.*, e.g. { PROP: {...}, $or: [...] }
+FILTERS.*                         #And'd, i.e. must all match
+                                  #Empty MESSAGEs never match, even FILTER.exists false
+FILTERS.$or                       #FILTERS_ARR
+                                  #Can be combined with FILTERS.*, e.g. { PROP: ARR, $or: FILTERS_ARR }
+                                  #Can be nested
                                   #Min 2 items
 
-FILTER.PROP[.PROP...]             #PROP_FILTER. Filters depending on FilterPolicyScope:
+FILTERS.PROP[.PROP...]            #Filters depending on FilterPolicyScope:
                                   #  - MessageAttributes: MESSAGE_ATTRS.PROP
                                   #  - MessageBody: MESSAGE_BODY.PROP[.PROP...]
                                   #ARR of either:
                                   #  - STR|NUM|BOOL|null: ARR.includes() (case-sensitive)
-                                  #  - PROP_FILTER (ARR has a single item)
+                                  #  - FILTER (ARR has a single item)
                                   #Max 5 PROPs
-                                  #Max 150 for the cartesian product of all FILTER.PROPs:
+                                  #Max 150 complexity, where complexity is the cartesian product of all FILTERS.*:
                                   #  - NUM of PROPs (key)
                                   #  - NUM of ARR items (value)
+                                  #  - if nested $or, compute its complexity recursively
 
-PROP_FILTER.anything-but          #ARR. !ARR.includes() (case-sensitive)
-PROP_FILTER.equals-ignore-case    #STR. === (case-insensitive)
-PROP_FILTER.numeric               #['OP', NUM[, 'OP2', NUM2]]
+FILTER.anything-but               #ARR|FILTER. !ARR.includes() (case-sensitive)
+FILTER.equals-ignore-case         #STR. === (case-insensitive)
+FILTER.numeric                    #['OP', NUM[, 'OP2', NUM2]]
                                   #OP is = > >= < <=
                                   #Min|max NUM [-]1e9, 5 decimal points
-PROP_FILTER.exists                #BOOL. !==|=== undefined
-PROP_FILTER.prefix|suffix         #STR. startsWith|endsWith(STR)
+FILTER.exists                     #BOOL. !==|=== null|undefined
+FILTER.prefix|suffix              #STR. startsWith|endsWith(STR)
+FILTER.cidr                       #'CIDR'. Matches IP
+
+DATATYPE ARRAY ==>                #If DataType '*.Array':
+                                  #  - matches if any item does, i.e. ARR2.some(VAL => ...): FILTER.anything-but
+                                  #  - matches if all items do, i.e. ARR2.every(VAL => ...): ARR (ARR.includes())
 
                                   ┌────────────────┐
                                   │   FILTER IAC   │
@@ -458,11 +467,11 @@ PROP_FILTER.prefix|suffix         #STR. startsWith|endsWith(STR)
 
 AWS::SNS::Subscription            #Includes RESPROPs: FilterPolicy OBJ, FilterDeliveryScope
 
-CSUB_OPTS.filterPolicy.PROP       #CPROP_FILTER
+CSUB_OPTS.filterPolicy.PROP       #CFILTER
 new SubscriptionFilter(???)
 
 CSUB_OPTS
- .filterPolicyWithMessageBody.PROP#CPROP_FILTER_OR_POLICY
+ .filterPolicyWithMessageBody.PROP#CFILTER_OR_POLICY
 
                                   ┌────────────────────┐
                                   │   FILTER METRICS   │
@@ -659,10 +668,11 @@ MESSAGE.MessageStructure          #If 'json' (def: undefined), MESSAGE_BODY is '
 
 MESSAGE
  .MessageAttributes.MESSAGE_ATTR  #ATTR_VALUE. Custom metadata
-ATTR_VALUE.DataType               #Value's type among 'String', 'String.Array', 'Number' or 'Binary'
+ATTR_VALUE.DataType               #Value's type among 'String', 'String.Array', 'Number.Array' or 'Binary'
                                   #Can append with any '.DESCRIPTION', e.g. 'Number.float', max 256 chars
-ATTR_VALUE.StringValue            #STR. Value, when DataType 'String[.Array]|Number'
+ATTR_VALUE.StringValue            #STR. Value, when DataType 'String[.Array]|Number[.Array]'
                                   #'NUM' must be single-precision float
+                                  #ARR is in JSON, i.e. '[NUM,...]' or '["STR",...]'
                                   #Must be [:print:]
 ATTR_VALUE.BinaryValue            #STR. Value, when DataType 'Binary'
                                   #Must be base64'd
