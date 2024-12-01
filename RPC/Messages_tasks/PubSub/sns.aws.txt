@@ -1480,6 +1480,7 @@ CSUB_OPTS.subscriptionRoleArn     #SUB_ATTRS.SubscriptionRoleArn
 
 SUB.Protocol                      #'email[-json]'. Send as email (SMTP)
                                   #Sent from no-reply@sns.amazonaws.com
+                                  #Rather basic. For end users, prefer SES
 SUB.Endpoint                      #'EMAIL_ADDRESS'
 
 SUB_ATTRS.RawMessageDelivery      #Must use PROTOCOL 'email' (false) vs 'email-json' (true) instead
@@ -1504,71 +1505,27 @@ new EmailSubscription
 
 CTOPIC_OPTS.displayName           #TOPIC_ATTRS.*
 
-                                  ┌──────────────────┐
-                                  │   SMS SETTINGS   │
-                                  └──────────────────┘
+                                  ┌──────────────┐
+                                  │   SMS MAIN   │
+                                  └──────────────┘
 
 SUB.Protocol                      #'sms'. Send an SMS
-SUB.Endpoint                      #'PHONE_NUMBER'
-                                  #E.164 format, i.e. use + followed by multiple digits
-MESSAGE.PhoneNumber               #'PHONE_NUMBER', specified instead of MESSAGE.TopicArn
-                                  #I.e. send a MESSAGE without using a TOPIC
-
-SUB_ATTRS.RawMessageDelivery      #Cannot be set. Always behave as if true
+                                  #Uses AWS End User Messaging SMS under-the-hood
+                                  #  - should be used instead if need more advanced features
 
 SUB_CONFIRM                       #Required. NOTIFICATION with Type '*Confirmation' is sent as SMS instead
                                   #Must send SMS back: "Yes DISPLAY_NAME" (ConfirmSubscription()), "Stop" (Unsubscribe())
 
 SMS_UI_SETTINGS                   #Submitted via UI when exiting the sandbox
                                   #SMS_UI_SETTINGS keys are only for documentation, since it is done via UI
-SMS_UI_SETTINGS.SenderRegion      #'REGION'
-SMS_UI_SETTINGS.ReceiverRegions   #'REGION'_ARR
-SMS_UI_SETTINGS.ReceiverCountries #'COUNTRY'_ARR
-SMS_UI_SETTINGS.AppLocation       #STR. Website URL or app name
 
 SMS_SETTINGS.attributes           #SMS_ATTRS
-SMS_ATTRS.DefaultSenderID         #STR. Sender field
-                                  #Max 11 chars, [:alnum:] (at least one letter)
-TOPIC_ATTRS.DisplayName           #STR. Use first 10 chars uppercased as start of SMS body, followed by >
-                                  #Max 100 chars, [:alnum:]-_
-MESSAGE.Message                   #STR. SMS contents
-                                  #Each 140 ASCII (or 70 UTF-16) chars (cut at whitespaces) create a separate part
-                                  #Max 1600 chars
-MESSAGE.Subject                   #If set, used as MESSAGE.Message
-SMS_UI_SETTINGS.MessageTemplates  #???
 
-SMS_ATTRS.DefaultSMSType          #Either:
-                                  #  - 'Promotional' (def): marketing, cheaper
-                                  #  - 'Transactional': application, more reliable
-                                  #  - 'Premium'???
-SMS_UI_SETTINGS.DefaultSMSType    #'Promotional', 'Transactional' or 'OneTimePassword'
+SMS_UI_SETTINGS.AppLocation       #STR. Website URL or app name
 
-SMS_ATTRS|SMS_UI_SETTINGS         #Max NUM of USD to spend
- .MonthlySpendLimit               #Def: undocumented??? Max 1 USD (soft) per ACCOUNT???
-
-SMS_ATTRS.UsageReportS3Bucket     #'BUCKET'. Logs successful NOTIFICATIONs as an OBJECT
-                                  #Once per day
-                                  #Is a CSV file with NOTIFICATION rows and SMS_USAGE columns
-SMS_USAGE[0]                      #NOTIFICATION.Timestamp
-SMS_USAGE[1]                      #NOTIFICATION.MessageId
-SMS_USAGE[2]                      #'PHONE_NUMBER'
-SMS_USAGE[3]                      #SMS_ATTRS.DefaultSMSType
-SMS_USAGE[4]                      #STR. Delivery status???
-SMS_USAGE[5]                      #NUM. Price in USD
-SMS_USAGE[6]                      #NUM. Part number
-SMS_USAGE[7]                      #NUM. Total number of parts
-
-                                  ┌───────────────────────┐
-                                  │   SMS SETTINGS AUTH   │
-                                  └───────────────────────┘
-
-PACTION s3:ListBucket             #For SMS_ATTRS.UsageReportS3Bucket, must be allowed:
- |GetBucketLocation|PutObject     #  - on Resource BUCKET_ARN
-                                  #  - for Principal.Service sns.amazonaws.com
-
-                                  ┌──────────────────────┐
-                                  │   SMS SETTINGS API   │
-                                  └──────────────────────┘
+                                  ┌──────────────────┐
+                                  │   SMS MAIN API   │
+                                  └──────────────────┘
 
 SetSMSAttributes()                #Req: SMS_SETTINGS
                                   #Res: empty
@@ -1576,42 +1533,50 @@ GetSMSAttributes()                #Req: SMS_SETTINGS
                                   #  - attributes OBJ -> 'SMS_ATTR'_ARR
                                   #Res: SMS_SETTINGS
 
-                                  ┌──────────────────────┐
-                                  │   SMS SETTINGS IAC   │
-                                  └──────────────────────┘
-
-AWS::SNS::Topic                   #Includes RESPROPs: DisplayName
+                                  ┌──────────────────┐
+                                  │   SMS MAIN IAC   │
+                                  └──────────────────┘
 
 new SmsSubscription
  ('PHONE_NUMBER'[, CSUB_OPTS])    #CCSUB
 
+                                  ┌─────────────────┐
+                                  │   SMS MESSAGE   │
+                                  └─────────────────┘
+
+SUB_ATTRS.RawMessageDelivery      #Cannot be set. Always behave as if true
+
+SMS_ATTRS.DefaultSenderID         #STR. Sender field
+                                  #Max 11 chars, [:alnum:] (at least one letter)
+
+TOPIC_ATTRS.DisplayName           #STR. Use first 10 chars uppercased as start of SMS body, followed by >
+                                  #Max 100 chars, [:alnum:]-_
+
+MESSAGE.Message                   #STR. SMS contents
+                                  #Each 140 ASCII (or 70 UTF-16) chars (cut at whitespaces) create a separate part
+                                  #Max 1600 chars
+MESSAGE.Subject                   #If set, used as MESSAGE.Message
+
+SMS_UI_SETTINGS.MessageTemplates  #???
+
+                                  ┌──────────────────────┐
+                                  │   SMS MESSAGE AUTH   │
+                                  └──────────────────────┘
+
+PACTION sms-voice:SendTextMessage
+ |CreateVerifiedDestinationPhoneNumber
+ |DeleteVerifiedDestinationPhoneNumber
+ |VerifyDestinationPhoneNumber
+                                  #Must be allowed
+ |GetAccountTier                  #COND_KEY aws:CalledViaLast 'sns.amazonaws.com'
+
+                                  ┌─────────────────────┐
+                                  │   SMS MESSAGE IAC   │
+                                  └─────────────────────┘
+
+AWS::SNS::Topic                   #Includes RESPROPs: DisplayName
+
 CTOPIC_OPTS.displayName           #TOPIC_ATTRS.*
-
-                                  ┌──────────────────────────┐
-                                  │   SMS SETTINGS METRICS   │
-                                  └──────────────────────────┘
-
-AWS/SNS/SMSSuccessRate            #NUM/s of SMSs sent
-
-AWS/SNS/SMSMonthToDateSpentUSD    #NUM of USD charged for sending SMS since start of month
-
-DVAR PhoneNumber                  #'PHONE_NUMBER'
-                                  #Only when using MESSAGE.PhoneNumber
-                                  #Sent with all METRICs except AWS/SNS/SMSMonthToDateSpentUSD
-DVAR Country                      #Destination 'COUNTRY'
-                                  #Sent with all METRICs except AWS/SNS/SMSMonthToDateSpentUSD|SMSSuccessRate
-DVAR SMSType                      #SMS_ATTRS.DefaultSMSType
-                                  #Sent with all METRICs except AWS/SNS/SMSMonthToDateSpentUSD|SMSSuccessRate
-
-                                  ┌──────────────────────────────┐
-                                  │   SMS SETTINGS METRICS IAC   │
-                                  └──────────────────────────────┘
-
-ICTOPIC.metricSMSSuccessRate
- ([CMETRIC_OPTS])->CMETRIC        #Uses statistic 'Sum'
-ICTOPIC
- .metricSMSMonthToDateSpentUSD
- ([CMETRIC_OPTS])->CMETRIC        #Uses statistic 'Maximum'
 
                                   ┌────────────────┐
                                   │   SMS SENDER   │
@@ -1626,12 +1591,33 @@ SMS_SENDER.NumberCapabilities     #STR_ARR among 'SMS', 'MMS', 'VOICE'
 SMS_SENDER.RouteType              #SMS_ATTRS.DefaultSMSType
 SMS_SENDER.Status                 #'ACTIVE' or 'INACTIVE'
 
+SMS_UI_SETTINGS.SenderRegion      #'REGION'
+
+                                  ┌─────────────────────┐
+                                  │   SMS SENDER AUTH   │
+                                  └─────────────────────┘
+
+PACTION                           #Must be allowed
+ sms-voice:DescribePhoneNumbers   #COND_KEY aws:CalledViaLast 'sns.amazonaws.com'
+
                                   ┌────────────────────┐
                                   │   SMS SENDER API   │
                                   └────────────────────┘
 
 ListOriginationNumbers()          #Req: empty
                                   #Res: PhoneNumbers SMS_SENDER_ARR
+
+                                  ┌──────────────────┐
+                                  │   SMS RECEIVER   │
+                                  └──────────────────┘
+
+SUB.Endpoint                      #'PHONE_NUMBER'
+                                  #E.164 format, i.e. use + followed by multiple digits
+MESSAGE.PhoneNumber               #'PHONE_NUMBER', specified instead of MESSAGE.TopicArn
+                                  #I.e. send a MESSAGE without using a TOPIC
+
+SMS_UI_SETTINGS.ReceiverRegions   #'REGION'_ARR
+SMS_UI_SETTINGS.ReceiverCountries #'COUNTRY'_ARR
 
                                   ┌───────────────┐
                                   │   SMS ALLOW   │
@@ -1642,6 +1628,14 @@ SMS_UI_SETTINGS.OptInMethod       #How receivers opt in to SMSs???
 SMS_BLOCK.phoneNumber             #'PHONE_NUMBER'
 SMS_BLOCK.isOptedOut              #BOOL. Whether PHONE_NUMBER blocked our number
                                   #Can be set from false to true, but only once per PHONE_NUMER per 30 days
+
+                                  ┌────────────────────┐
+                                  │   SMS ALLOW AUTH   │
+                                  └────────────────────┘
+
+PACTION sms-voice:
+ DescribeOptedOutNumbers          #Must be allowed
+ |DeleteOptedOutNumber            #COND_KEY aws:CalledViaLast 'sns.amazonaws.com'
 
                                   ┌───────────────────┐
                                   │   SMS ALLOW API   │
@@ -1709,6 +1703,86 @@ ListSMSSandboxPhoneNumbers()      #Req: empty
 DeleteSMSSandboxPhoneNumber()     #Req: SMS_SANDBOX_RECEIVER
                                   #  - only PhoneNumber
                                   #Res: empty
+
+                                  ┌────────────────┐
+                                  │   SMS CHARGE   │
+                                  └────────────────┘
+
+SMS_ATTRS.DefaultSMSType          #Either:
+                                  #  - 'Promotional' (def): marketing, cheaper
+                                  #  - 'Transactional': application, more reliable
+                                  #  - 'Premium'???
+SMS_UI_SETTINGS.DefaultSMSType    #'Promotional', 'Transactional' or 'OneTimePassword'
+
+SMS_ATTRS|SMS_UI_SETTINGS         #Max NUM of USD to spend
+ .MonthlySpendLimit               #Def: undocumented??? Max 1 USD (soft) per ACCOUNT???
+
+                                  ┌─────────────────────┐
+                                  │   SMS CHARGE AUTH   │
+                                  └─────────────────────┘
+
+PACTION sms-voice:
+ SetTextMessageSpendLimitOverride #Must be allowed
+ |DescribeSpendLimits             #COND_KEY aws:CalledViaLast 'sns.amazonaws.com'
+
+                                  ┌────────────────────────┐
+                                  │   SMS CHARGE METRICS   │
+                                  └────────────────────────┘
+
+AWS/SNS/SMSMonthToDateSpentUSD    #NUM of USD charged for sending SMS since start of month
+
+                                  ┌────────────────────────────┐
+                                  │   SMS CHARGE METRICS IAC   │
+                                  └────────────────────────────┘
+
+ICTOPIC
+ .metricSMSMonthToDateSpentUSD
+ ([CMETRIC_OPTS])->CMETRIC        #Uses statistic 'Maximum'
+
+                                  ┌─────────────────┐
+                                  │   SMS METRICS   │
+                                  └─────────────────┘
+
+AWS/SNS/SMSSuccessRate            #NUM/s of SMSs sent
+
+DVAR PhoneNumber                  #'PHONE_NUMBER'
+                                  #Only when using MESSAGE.PhoneNumber
+                                  #Sent with all METRICs except AWS/SNS/SMSMonthToDateSpentUSD
+DVAR Country                      #Destination 'COUNTRY'
+                                  #Sent with all METRICs except AWS/SNS/SMSMonthToDateSpentUSD|SMSSuccessRate
+DVAR SMSType                      #SMS_ATTRS.DefaultSMSType
+                                  #Sent with all METRICs except AWS/SNS/SMSMonthToDateSpentUSD|SMSSuccessRate
+
+                                  ┌─────────────────────┐
+                                  │   SMS METRICS IAC   │
+                                  └─────────────────────┘
+
+ICTOPIC.metricSMSSuccessRate
+ ([CMETRIC_OPTS])->CMETRIC        #Uses statistic 'Sum'
+
+                                  ┌─────────────────┐
+                                  │   SMS LOGGING   │
+                                  └─────────────────┘
+
+SMS_ATTRS.UsageReportS3Bucket     #'BUCKET'. Logs successful NOTIFICATIONs as an OBJECT
+                                  #Once per day
+                                  #Is a CSV file with NOTIFICATION rows and SMS_USAGE columns
+SMS_USAGE[0]                      #NOTIFICATION.Timestamp
+SMS_USAGE[1]                      #NOTIFICATION.MessageId
+SMS_USAGE[2]                      #'PHONE_NUMBER'
+SMS_USAGE[3]                      #SMS_ATTRS.DefaultSMSType
+SMS_USAGE[4]                      #STR. Delivery status???
+SMS_USAGE[5]                      #NUM. Price in USD
+SMS_USAGE[6]                      #NUM. Part number
+SMS_USAGE[7]                      #NUM. Total number of parts
+
+                                  ┌──────────────────────┐
+                                  │   SMS LOGGING AUTH   │
+                                  └──────────────────────┘
+
+PACTION s3:ListBucket             #For SMS_ATTRS.UsageReportS3Bucket, must be allowed:
+ |GetBucketLocation|PutObject     #  - on Resource BUCKET_ARN
+                                  #  - for Principal.Service sns.amazonaws.com
 
                                   ┌──────────────────┐
                                   │   APP ENDPOINT   │
