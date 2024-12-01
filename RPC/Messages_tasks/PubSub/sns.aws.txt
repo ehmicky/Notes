@@ -1521,6 +1521,8 @@ SMS_UI_SETTINGS                   #Submitted via UI when exiting the sandbox
 
 SMS_SETTINGS.attributes           #SMS_ATTRS
 
+MESSAGE_ATTRS.AWS.SNS.SMS         #SMESSAGE
+
 SMS_UI_SETTINGS.AppLocation       #STR. Website URL or app name
 
                                   ┌──────────────────┐
@@ -1546,9 +1548,6 @@ new SmsSubscription
 
 SUB_ATTRS.RawMessageDelivery      #Cannot be set. Always behave as if true
 
-SMS_ATTRS.DefaultSenderID         #STR. Sender field
-                                  #Max 11 chars, [:alnum:] (at least one letter)
-
 TOPIC_ATTRS.DisplayName           #STR. Use first 10 chars uppercased as start of SMS body, followed by >
                                   #Max 100 chars, [:alnum:]-_
 
@@ -1564,11 +1563,14 @@ SMS_UI_SETTINGS.MessageTemplates  #???
                                   └──────────────────────┘
 
 PACTION sms-voice:SendTextMessage
- |CreateVerifiedDestinationPhoneNumber
- |DeleteVerifiedDestinationPhoneNumber
+ |GetAccountTier
  |VerifyDestinationPhoneNumber
-                                  #Must be allowed
- |GetAccountTier                  #COND_KEY aws:CalledViaLast 'sns.amazonaws.com'
+ |CreateVerified
+  DestinationPhoneNumber
+ |DescribeVerified
+  DestinationNumbers              #Must be allowed
+ |DeleteVerified                  #COND_KEY aws:CalledViaLast 'sns.amazonaws.com'
+  DestinationPhoneNumber          #COND_KEY aws:SourceAccount 'ACCOUNT_ID'
 
                                   ┌─────────────────────┐
                                   │   SMS MESSAGE IAC   │
@@ -1593,12 +1595,26 @@ SMS_SENDER.Status                 #'ACTIVE' or 'INACTIVE'
 
 SMS_UI_SETTINGS.SenderRegion      #'REGION'
 
+SMS_ATTRS.DefaultSenderID         #STR. Sender ID
+SMESSAGE.SenderID                 #Shown in SMS message
+                                  #Alternative to SMS_SENDER, that uses a name instead of a PHONE_NUMBER
+                                  #Whether to use SMS_SENDER, Sender ID (or both) is country-specific
+                                  #3-11 chars, [:alnum:] (at least one letter)
+
+COMPANY REGISTRATION ==>          #Required to get a sender ID in:
+                                  #  - UK, Australia
+                                  #  - India, Sri Lanka
+                                  #  - Philippines, Vietnam, Thailand
+                                  #  - UAE, Kuwait, Qatar, Saudi Arabia, Egypt, Jordan, Turkey
+                                  #  - Belarus, Russia
+
                                   ┌─────────────────────┐
                                   │   SMS SENDER AUTH   │
                                   └─────────────────────┘
 
 PACTION                           #Must be allowed
  sms-voice:DescribePhoneNumbers   #COND_KEY aws:CalledViaLast 'sns.amazonaws.com'
+                                  #COND_KEY aws:SourceAccount 'ACCOUNT_ID'
 
                                   ┌────────────────────┐
                                   │   SMS SENDER API   │
@@ -1633,9 +1649,9 @@ SMS_BLOCK.isOptedOut              #BOOL. Whether PHONE_NUMBER blocked our number
                                   │   SMS ALLOW AUTH   │
                                   └────────────────────┘
 
-PACTION sms-voice:
- DescribeOptedOutNumbers          #Must be allowed
- |DeleteOptedOutNumber            #COND_KEY aws:CalledViaLast 'sns.amazonaws.com'
+PACTION sms-voice:                #Must be allowed
+ DescribeOptedOutNumbers          #COND_KEY aws:CalledViaLast 'sns.amazonaws.com'
+ |DeleteOptedOutNumber            #COND_KEY aws:SourceAccount 'ACCOUNT_ID'
 
                                   ┌───────────────────┐
                                   │   SMS ALLOW API   │
@@ -1677,11 +1693,15 @@ GetSMSSandboxAccountStatus()      #Req: empty
 
 SMS_SANDBOX_RECEIVER              #When in sandbox, can only send to SMS_SANDBOX_RECEIVERs
                                   #I.e. requires OTP confirmation from receivers
+                                  #Can delete only 24h after VerifySMSSandboxPhoneNumber()
+                                  #Max 10
 SMS_SANDBOX_RECEIVER.PhoneNumber  #'PHONE_NUMBER'
 
 SMS_SANDBOX_RECEIVER              #STR. Token allowing receiving SMSs
  .OneTimePassword                 #Sent by CreateSMSSandboxPhoneNumber(), must be confirmed by VerifySMSSandboxPhoneNumber()
                                   #5-8 digits
+                                  #Expires after 15m
+                                  #Can send 5/h per PHONE_NUMBER
 SMS_SANDBOX_RECEIVER.LanguageCode #Language used with the token's SMS
                                   #Among "en-US|GB", "es-ES|419", "de-DE", "fr-CA|FR", "it-IT", "ja-JP", "pt-BR", "kr-KR", "zh-CN|TW"
 SMS_SANDBOX_RECEIVER.Status       #'Pending' or 'Verified'. Whether confirmed with token
@@ -1721,9 +1741,9 @@ SMS_ATTRS|SMS_UI_SETTINGS         #Max NUM of USD to spend
                                   │   SMS CHARGE AUTH   │
                                   └─────────────────────┘
 
-PACTION sms-voice:
- SetTextMessageSpendLimitOverride #Must be allowed
- |DescribeSpendLimits             #COND_KEY aws:CalledViaLast 'sns.amazonaws.com'
+PACTION sms-voice:                #Must be allowed
+ SetTextMessageSpendLimitOverride #COND_KEY aws:CalledViaLast 'sns.amazonaws.com'
+ |DescribeSpendLimits             #COND_KEY aws:SourceAccount 'ACCOUNT_ID'
 
                                   ┌────────────────────────┐
                                   │   SMS CHARGE METRICS   │
@@ -2004,3 +2024,35 @@ MMESSAGE.Match
 MMESSAGE.SuppressPopup
 MMESSAGE.Tag
 MMESSAGE.Type                     #Only with Windows desktop???
+
+SMESSAGE.OriginationNumber
+A custom string of 5–14 numbers, which can include an optional leading plus sign (+).
+This string of numbers appears as the sender's phone number on the receiving device.
+The string must match an origination number that's configured in your AWS account for the destination country.
+The origination number can be a 10DLC number, toll-free number, person-to-person (P2P) long code, or short code.
+For more information, see Phone numbers in the AWS End User Messaging SMS User Guide.
+If you don't specify an origination number, Amazon SNS chooses an origination number based on your AWS account configuration.
+
+SMESSAGE.MaxPrice
+The maximum price in USD that you're willing to spend to send the SMS message.
+If Amazon SNS determines that sending the message would incur a cost that exceeds your maximum price, it doesn't send the message.
+This attribute has no effect if your month-to-date SMS costs have already exceeded the quota set for the MonthlySpendLimit attribute.
+You can set the MonthlySpendLimit attribute using the SetSMSAttributes request.
+If you're sending the message to an Amazon SNS topic, the maximum price applies to each message delivery to each phone number that is subscribed to the topic.
+
+SMESSAGE.SMSType
+The type of message that you're sending:
+        Promotional (default) – Non-critical messages, such as marketing messages.
+        Transactional – Critical messages that support customer transactions, such as one-time passcodes for multi-factor authentication.
+This message-level attribute overrides the account-level attribute DefaultSMSType, which you can set using the SetSMSAttributes request.
+
+SMESSAGE.EntityId
+This attribute is required only for sending SMS messages to recipients in India.
+This is your entity ID or principal entity (PE) ID for sending SMS messages to recipients in India.
+This ID is a unique string of 1–50 characters that the Telecom Regulatory Authority of India (TRAI) provides to identify the entity that you registered with the TRAI.
+
+SMESSAGE.TemplateId
+This attribute is required only for sending SMS messages to recipients in India.
+This is your template for sending SMS messages to recipients in India.
+This ID is a unique, TRAI-provided string of 1–50 characters that identifies the template that you registered with the TRAI.
+The template ID must be associated with the sender ID that you specified for the message.
