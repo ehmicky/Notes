@@ -5,26 +5,14 @@
 
 VERSION ==>                       #2024-09-24
 
-If FUNCTION|QUEUE|DELIVERY_STREAM is in a different ACCOUNT than principal calling Subscribe()
-  - sends SUB_CONFIRM
-
-TOPIC and SUB must be in same ACCOUNT|REGION
-FUNCTION|QUEUE can be in different REGION from TOPIC|SUB
-  - API calls must be made in TOPIC|SUB's ACCOUNT|REGION, not FUNCTION|QUEUE's
-  - opt-in REGIONs:
-     - both REGIONs cannot be opt-in
-     - FUNCTION (not QUEUE) cannot be in an opt-in REGION
-     - if only one of the two REGIONs is opt-in:
-        - in permissions, Principal.Service must be sns.REGION.amazonaws.com (not sns.amazonaws.com), using TOPIC|SUB's REGION
-
 TODO:
+  - https://github.com/Admiral-Piett/goaws
+     - see current doc of `goaws`, moving the SNS-specific part at the bottom
+     - see https://github.com/Admiral-Piett/goaws README for SNS
   - SAM:
      - https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/sam-property-function-sns.html
      - see example of how to document this with AWS::Serverless::Function documentation in CloudWatch Logs
      - test locally using sam-translate binary
-  - https://github.com/Admiral-Piett/goaws
-     - see current doc of `goaws`, moving the SNS-specific part at the bottom
-     - see https://github.com/Admiral-Piett/goaws README for SNS
   - https://docs.aws.amazon.com/sns/latest/dg/welcome.html
      - already done:
         - Message filtering
@@ -298,6 +286,7 @@ CTOPIC_OPTS
                                   └──────────────────┘
 
 SUB                               #Forwards MESSAGEs to an endpoint
+                                  #Must be same ACCOUNT|REGION as TOPIC
                                   #Max 12.5e6 (soft) per non-FIFO TOPIC, 100 (soft) per FIFO TOPIC
 SUB.SubscriptionArn               #'SUB_ARN'. 'TOPIC_ARN:SUB_MID'
 SUB.TopicArn                      #'TOPIC_ARN'
@@ -314,10 +303,6 @@ TOPIC_ATTRS.SubscriptionsDeleted  #NUM of Unsubscribe()
 
 COND_KEY sns:Protocol
 COND_KEY sns:Endpoint             #SUB.*. Only with Subscribe()
-
-PACTION sns:Subscribe             #If Subscribe() called from a different ACCOUNT, must be allowed:
-                                  #  - to Principal.AWS ACCOUNT_ID
-                                  #  - on that TOPIC
 
                                   ┌──────────────────────┐
                                   │   SUBSCRIPTION API   │
@@ -382,7 +367,7 @@ CTOPIC.grantSubscribe(YGRANTABLE)
                                   └─────────────┘
 
 SUB_CONFIRM                       #Confirms SUB creation
-                                  #Only with HTTP|email
+                                  #Whether used or not is PROTOCOL-specific (each documented below)
                                   #Max 5e3 (soft) pending SUB_CONFIRMs per ACCOUNT
 SUB_CONFIRM.TopicArn              #'TOPIC_ARN'
 
@@ -1216,7 +1201,7 @@ AWS/SNS/MessagesWith[No]Findings  #NUM of MESSAGEs matching MASK_OP.Audit.[No]Fi
 SUB.Protocol                      #'http[s]'. Send using HTTP request, with POST
 SUB.Endpoint                      #'http[s]://...' to send to
 
-SUB_CONFIRM                       #Required
+SUB_CONFIRM                       #Always required
 
 DELIVERY_POLICY                   #Content-Type [C] of NOTIFICATIONs
  .requestPolicy.headerContentType #'MIME' among 'text/plain' (def), 'application/json', 'application/xml'
@@ -1254,13 +1239,20 @@ INVOCATION ==>                    #InvocationType 'Event'
 
 NOTIFICATION.*Url                 #Named like this instead of NOTIFICATION.*URL
 
+CROSS-ACCOUNT ==>                 #FUNCTION can be in different ACCOUNT than principal calling Subscribe(), but sends SUB_CONFIRM then
+
+CROSS-REGION ==>                  #FUNCTION can be in different REGION than TOPIC|SUB
+                                  #If same ACCOUNT, SNS API calls must be made in TOPIC|SUB's REGION, not FUNCTION's
+OPT-IN REGIONS ==>                #FUNCTION's REGION cannot be opt-in
+
                                   ┌─────────────────┐
                                   │   LAMBDA AUTH   │
                                   └─────────────────┘
 
 PACTION lambda:InvokeFunction     #Must be allowed:
                                   #  - Resource FUNCTION
-                                  #  - Principal.Service 'sns.amazonaws.com'
+                                  #  - Principal.Service 'sns[.REGION].amazonaws.com'
+                                  #     - REGION is required if TOPIC|SUB's REGION is opt-in
                                   #  - COND_KEY aws:SourceArn TOPIC_ARN
 
                                   ┌────────────────┐
@@ -1310,13 +1302,18 @@ MESSAGE_BODY                      #Is NOTIFICATION
 
 SUB_ATTRS.RawMessageDelivery      #If true, max 10 MESSAGE_ATTRs
 
+CROSS-ACCOUNT ==>                 #Like Lambda, including for SUB_CONFIRM
+CROSS-REGION ==>                  #Like Lambda
+OPT-IN REGIONS ==>                #QUEUE's and TOPIC|SUB's REGIONs cannot be both opt-in at the same time
+
                                   ┌──────────────┐
                                   │   SQS AUTH   │
                                   └──────────────┘
 
 PACTION sqs:SendMessage           #Must be allowed:
                                   #  - Resource QUEUE
-                                  #  - Principal.Service 'sns.amazonaws.com'
+                                  #  - Principal.Service 'sns[.REGION].amazonaws.com'
+                                  #     - REGION is required if either QUEUE or TOPIC|SUB's REGION is opt-in
                                   #  - COND_KEY aws:SourceArn TOPIC_ARN
                                   #Also kms:Decrypt|GenerateDataKey, if SSE-KMS
 
@@ -1368,9 +1365,19 @@ SUB.Protocol                      #'firehose'. Send to Kinesis Firehose delivery
                                   #Max 5 per DELIVERY_STREAM's ACCOUNT + TOPIC
 SUB.Endpoint                      #'DELIVERY_STREAM_ARN'
 
+CROSS-ACCOUNT ==>                 #Like Lambda, including for SUB_CONFIRM
+CROSS-REGION ==>                  #Like Lambda
+OPT-IN REGIONS ==>                #DELIVERY_STREAM's and TOPIC|SUB's REGIONs cannot be both opt-in at the same time
+
+                                  ┌──────────────────┐
+                                  │   KINESIS AUTH   │
+                                  └──────────────────┘
+
 SUB_ATTRS.SubscriptionRoleArn     #ROLE_ARN used to write to Firehose delivery stream
-                                  #Must be assumable by sns.amazonaws.com
-                                  #Current principal must have iam:PassRole
+                                  #Must be assumable by sns[.REGION].amazonaws.com
+                                  #  - REGION is required if either QUEUE or TOPIC|SUB's REGION is opt-in
+
+PACTION iam:PassRole              #Must be allowed on current principal
 
                                   ┌─────────────────┐
                                   │   KINESIS IAC   │
@@ -1418,6 +1425,8 @@ MESSAGE.PhoneNumber               #'PHONE_NUMBER', specified instead of MESSAGE.
                                   #I.e. send a MESSAGE without using a TOPIC
 
 SUB_ATTRS.RawMessageDelivery      #Cannot be set. Always behave as if true
+
+SUB_CONFIRM                       #Not used
 
 SMS_UI_SETTINGS                   #Submitted via UI when exiting the sandbox
                                   #SMS_UI_SETTINGS keys are only for documentation, since it is done via UI
@@ -1622,6 +1631,8 @@ APP_ENDPOINT.Attributes           #APP_ENDPOINT_ATTRS
 
 SUB_ATTRS.RawMessageDelivery      #Cannot be set. Always behave as if true
 
+SUB_CONFIRM                       #Not used
+
 APP_ENDPOINT                      #Mobile device
                                   #Creating is idempotent
 
@@ -1794,3 +1805,9 @@ DVAR Application                  #'APP_PLATFORM'
                                   #Sent with all METRICs except AWS/SNS/SMSMonthToDateSpentUSD|SMSSuccessRate
 DVAR Platform                     #'APP_PLATFORM_TYPE'
                                   #Sent with all METRICs except AWS/SNS/SMSMonthToDateSpentUSD|SMSSuccessRate
+
+                                  ┌───────────┐
+                                  │   LOCAL   │
+                                  └───────────┘
+
+goaws                             #See its doc
