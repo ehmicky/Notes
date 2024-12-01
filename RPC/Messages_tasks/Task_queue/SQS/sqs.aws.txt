@@ -24,7 +24,7 @@ SERVICE_DOMAIN                    #sqs.amazonaws.com
 FORMAT ==>                        #X-Amz-Target: AmazonSQS[_VERSION].ACTION [C]
                                   #Request|response: JSON
 
-REQ_ID                            #x-amzn-requestid [S]
+REQ_ID                            #x-amzn-RequestId [S]
 
 ERROR_OBJ                         #__type, message
 
@@ -117,7 +117,7 @@ CreateQueue()                     #Req: QUEUE
                                   #Res: QUEUE
                                   #  - only QueueUrl
 SetQueueAttributes()              #Req: QUEUE
-                                  #  - only QueueUrl, Attributes
+                                  #  - only QueueUrl, Attributes (patch, not full replace)
                                   #  - no QUEUE_ATTRS: QueueArn, *Timestamp, Approximate*, FifoQueue
                                   #Res: empty
 GetQueueAttributes()              #Req: QUEUE
@@ -247,9 +247,9 @@ AT-MOST ONCE PROCESSING ==>       #Con. Processing must be idempotent due to fol
 DOUBLE SENDING ==>                #Either:
                                   #  - 2 concurrent senders at the same time
                                   #  - sending fails (e.g. network error) and is repeated
-DOUBLE RECEIVING ==>              #Either:
-                                  #  - 2 concurrent receivers at the same time
-                                  #  - receiving fails (e.g. network error) and is repeated
+MISSED RECEIVING ==>              #ReceiveMessage() fails (e.g. network error) but API acknowledged it
+                                  #When repeated, MESSAGE is now considered already received,
+                                  #I.e. client never received it and cannot process it
 DOUBLE STORING ==>                #If an AZ goes down, while other AZs are up and deliver that MESSAGE
                                   #I.e. the former does not know that MESSAGE was already delivered
                                   #As opposed to FIFO, which can determine where it left thanks to order
@@ -273,7 +273,7 @@ MESSAGE|SYS_ATTRS.MessageGroupId  #'MESSAGE_GROUP_ID'. FIFO ordering applies per
                                   #Only with FIFO. Required
                                   #Max 128 chars, [:graph:]
                                   #No limits on NUM of MESSAGE_GROUPs
-MESSAGE_RES|SYS_ATTRS             #'NUM'. Increases monotonically (but not necessarily consecutively) per MESSAGE within a given MESSAGE_GROUP
+MESSAGE_RES|SYS_ATTRS             #'NUM'. Increases monotonically (but not consecutively) per MESSAGE within a given MESSAGE_GROUP
  .SequenceNumber                  #Always 128 chars, padded with 0s
 
 MESSAGE|SYS_ATTRS                 #'MESSAGE_DID'. If 2 SendMessage*() with the same MESSAGE_DID are sent:
@@ -297,11 +297,10 @@ PROCESSING ==>                    #VisibilityTimeout locks the whole MESSAGE_GRO
 
 MESSAGES_RCV                      #'MESSAGE_RCV_DID'. If 2 ReceiveMessage*() with the same MESSAGE_RCV_DID are sent:
  .ReceiveRequestAttemptId         #  - within min(5m, VisibilityTimeout)
-                                  #  - then only the first successful one is used
-                                  #I.e. avoid double receiving (see above)
+                                  #  - then the second one is not impacted by the VisibilityTimeout lock from the first
+                                  #I.e. avoid missed receiving (see above)
                                   #Not if ChangeMessageVisibility() or DeleteMessage() already called
-                                  #Not related to MESSAGE failure retries, since retries are done after VisibilityTimeout expired
-                                  #Only with FIFO. Optional but recommended
+                                  #Only with FIFO. Optional but recommends setting a unique one per request, re-using it on network retries
                                   #Max 128 chars, [:graph:]
 
 QUEUE_ATTRS.FifoThroughputLimit   #Throttles either:
@@ -349,7 +348,6 @@ MESSAGE_DELETE                    #PurgeQueue() deletes all MESSAGEs
 MESSAGE[_RCV|DELETE|VSB].QueueUrl #'QUEUE_URL'
 
 SYS_ATTRS.SentTimestamp           #DATE_NUM of first SendMessage()
-                                  #If DLQ + non-FIFO: of when sent to the source QUEUE instead
 SYS_ATTRS
  .ApproximateFirstReceiveTimestamp#DATE_NUM of first ReceiveMessage()
 
@@ -619,9 +617,8 @@ QUEUE_ATTRS.MessageRetentionPeriod#NUM (in secs, min 1m, def 4d, max 14d)
                                   #When updating:
                                   #  - take up to 15m
                                   #  - might delete existing MESSAGEs, if under the threshold
-                                  #Based on SYS_ATTRS.SentTimestamp
-                                  #  - i.e. if DLQ + non-FIFO, includes time spent in source QUEUE
-                                  #     - i.e. MessageRetentionPeriod should be > source QUEUE's, to avoid risk of expiring right away
+                                  #If DLQ + non-FIFO, includes time spent in source QUEUE
+                                  #  - i.e. MessageRetentionPeriod should be > source QUEUE's, to avoid risk of expiring right away
                                   #Does not impact pricing since storage is free
 
                                   ┌───────────────────┐
@@ -734,7 +731,7 @@ PROCESSING FAILURE ==>            #If processing failed, should ChangeMessageVis
                                   #  - i.e. might not be the most optimal duration to retry
                                   #I.e. if VisibilityTimeout too high, it slows down retries when ChangeMessageVisibility() could not be called
                                   #  - e.g. due to unknown errors|bugs
-SYS_ATTRS.ApproximateReceiveCount #NUM of times this MESSAGE failed
+SYS_ATTRS.ApproximateReceiveCount #NUM of times this MESSAGE was returned by ReceiveMessage()
 
 HEARTBEAT ==>                     #Calling ChangeMessageVisibility() at regular intervals
                                   #Typically using same VisibilityTimeout, and at frequency a little lower than VisibilityTimeout
@@ -808,6 +805,9 @@ ICQUEUE.ApproximateNumberOf
 
 QUEUE_ATTRS.RedrivePolicy         #'REDRIVE_POLICY_JSON'
                                   #Send repeatedly failed MESSAGEs from this QUEUE ("source") to a dead-letter QUEUE2 ("DLQ")
+                                  #Preserves everything
+                                  #  - including MESSAGE_MID
+                                  #  - including SYS_ATTRS.*: SentTimestamp, ApproximateFirstReceiveTimestamp, ApproximateReceiveCount, etc.
                                   #Recommended to ensure:
                                   #  - no unprocesses MESSAGEs
                                   #  - no blocked FIFOs due to MESSAGE failures (see above)
@@ -818,7 +818,11 @@ QUEUE_ATTRS.RedrivePolicy         #'REDRIVE_POLICY_JSON'
 REDRIVE_POLICY.deadLetterTargetArn#QUEUE2_ARN
                                   #Can be in different REGION|ACCOUNT, but less performant
 REDRIVE_POLICY.maxReceiveCount    #NUM (def: 10) of MESSAGE failures before moving MESSAGE to dead-letter QUEUE2
-                                  #I.e. max NUM of retries + 1
+                                  #For example, if 3:
+                                  #  - first 2 ReceiveMessage() return the MESSAGE, but do not delete it before VisibilityTimeout
+                                  #  - MESSAGE not moved to DLQ yet
+                                  #  - third ReceiveMessage() is called, finds the MESSAGE, but ignores it
+                                  #  - MESSAGE now moved to DLQ
                                   #Should be at least 2, due to the risk of ghost receives
 
 QUEUE_ATTRS.RedriveAllowPolicy    #'REDRIVE_APOLICY_JSON'. Restrict which other QUEUE2 can use this QUEUE as dead-letter
