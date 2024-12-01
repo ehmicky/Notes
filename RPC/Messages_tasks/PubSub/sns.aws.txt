@@ -74,7 +74,7 @@ TOPIC_ATTRS.TracingConfig         #'PassThrough' or 'Active'. X-Ray settings
                                   │   TOPIC AUTH   │
                                   └────────────────┘
 
-PACTION iam:PassRole              #Required with APP_ATTRS.*FeedbackRoleArn???
+PACTION iam:PassRole              #Required with TOPIC_ATTRS.*FeedbackRoleArn???
 
                                   ┌───────────────┐
                                   │   TOPIC API   │
@@ -133,10 +133,21 @@ TOPIC_ATTRS.FifoTopic             #BOOL (def: false). Whether is FIFO TOPIC
 
 ORDER ==>                         #Ensures that receiving order is same as sending order
 
-MESSAGE.MessageGroupId            #
-MESSAGE_RES.SequenceNumber        #
+MESSAGE.MessageGroupId            #'MESSAGE_GROUP_ID'. FIFO ordering applies per-MESSAGE_GROUP
+                                  #I.e. MESSAGE_GROUPs are interleaved
+                                  #High NUM of MESSAGE_GROUPs has better performance
+                                  #Only with FIFO. Required
+                                  #Max 128 chars, [:graph:]
+                                  #No limits on NUM of MESSAGE_GROUPs
+MESSAGE_RES.SequenceNumber        #'NUM'. Increases monotonically (but not consecutively) per MESSAGE within a given MESSAGE_GROUP
+                                  #Always 128 chars, padded with 0s
 
-MESSAGE.MessageDeduplicationId    #'MESSAGE_DID'
+MESSAGE.MessageDeduplicationId    #'MESSAGE_DID'. If 2 Publish() with the same MESSAGE_DID are sent:
+                                  #  - within 5m
+                                  #  - then only the first successful one is used
+                                  #I.e. avoid double sending
+                                  #Only with FIFO. Required
+                                  #Max 128 chars, [:graph:]
 TOPIC_ATTRS
  .ContentBasedDeduplication       #BOOL (def: false). Make MESSAGE_DID default to SHA-256 of 'MESSAGE_BODY'
 
@@ -239,14 +250,17 @@ ConfirmSubscription()             #Req: SUB_CONFIRM
                                   │   MESSAGE   │
                                   └─────────────┘
 
-MESSAGE_RES.MessageId             #
-MESSAGE.TopicArn                  #
+MESSAGE_RES.MessageId             #'MESSAGE_MID'
+MESSAGE.TopicArn                  #'TOPIC_ARN'
 
 MESSAGE.Message                   #'MESSAGE_BODY'
-MESSAGE.MessageStructure          #
+                                  #Max 256KB
+MESSAGE.MessageStructure          #If 'json' (def: undefined), MESSAGE_BODY is 'OBJ_JSON' of {PROTOCOL|default: 'MESSAGE_BODY', ...}
+                                  #I.e. PROTOCOL-specific MESSAGE_BODY
+                                  #One `default` is required
 
 MESSAGE
- .MessageAttributes.MESSAGE_ATTR  #ATTR_VALUE
+ .MessageAttributes.MESSAGE_ATTR  #ATTR_VALUE. Custom metadata
 ATTR_VALUE.DataType               #Value's type among 'String', 'String.Array', 'Number' or 'Binary'
                                   #Can append with any '.DESCRIPTION', e.g. 'Number.float', max 256 chars
 ATTR_VALUE.StringValue            #STR. Value, when DataType 'String[.Array]|Number'
@@ -449,9 +463,9 @@ SUB_ATTRS.SubscriptionRoleArn     #ROLE_ARN used to write to Firehose delivery s
 SUB.Protocol                      #'email[-json]'. Send as email
 SUB.Endpoint                      #'EMAIL_ADDRESS'
 
-TOPIC_ATTRS.DisplayName           #'From' field in email
-
-MESSAGE.Subject                   #
+TOPIC_ATTRS.DisplayName           #'From' email field
+MESSAGE.Subject                   #'Subject' email field
+                                  #Max 100 chars, no control characters nor newlines
 
                                   ┌──────────────────┐
                                   │   SMS SETTINGS   │
@@ -459,10 +473,13 @@ MESSAGE.Subject                   #
 
 SUB.Protocol                      #'sms'. Send an SMS
 SUB.Endpoint                      #'PHONE_NUMBER'
+                                  #E.164 format, i.e. use + followed by multiple digits
+MESSAGE.PhoneNumber               #'PHONE_NUMBER', specified instead of MESSAGE.TopicArn
 
 TOPIC_ATTRS.DisplayName           #'From' field in SMS
-
-MESSAGE.PhoneNumber               #
+MESSAGE.Message                   #STR. SMS contents
+                                  #Each 140 ASCII (or 70 UTF-16) chars (cut at whitespaces) create a separate SMS
+                                  #Max 1600 chars
 
 SMS_SETTINGS.attributes           #
 SMS_ATTRS.MonthlySpendLimit       #
@@ -553,32 +570,79 @@ DeleteSMSSandboxPhoneNumber()     #Req: SMS_SANDBOX
                                   #  - only PhoneNumber
                                   #Res: empty
 
-                                  ┌──────────────┐
-                                  │   APP MAIN   │
-                                  └──────────────┘
+                                  ┌──────────────────┐
+                                  │   APP ENDPOINT   │
+                                  └──────────────────┘
 
 SUB.Protocol                      #'application'. Send as a mobile app push notification
+SUB.Endpoint
+APP_ENDPOINT.EndpointArn          #'APP_ENDPOINT_ARN'
+MESSAGE.TargetArn                 #'APP_ENDPOINT_ARN', specified instead of MESSAGE.TopicArn
+APP_ENDPOINT.Attributes           #APP_ENDPOINT_ATTRS
 
-APP.PlatformApplicationArn        #
-APP.Name                          #
-APP.Attributes                    #APP_ATTRS
+APP_ENDPOINT_ATTRS.Enabled        #
 
-APP.Platform                      #
+APP_ENDPOINT.Token                #
+APP_ENDPOINT.CustomUserData       #
 
-APP_ATTRS.PlatformCredential      #
-APP_ATTRS.PlatformPrincipal       #
+                                  ┌──────────────────────┐
+                                  │   APP ENDPOINT API   │
+                                  └──────────────────────┘
 
-APP_ATTRS
+CreatePlatformEndpoint()          #Req: APP_ENDPOINT
+                                  #  - no EndpointArn
+                                  #Res: APP_ENDPOINT
+                                  #  - only EndpointArn
+SetEndpointAttributes()           #Req: APP_ENDPOINT
+                                  #  - only EndpointArn, Attributes
+                                  #  - CustomUserData|Token -> Attributes.*
+                                  #Res: empty
+ListEndpointsByPlatformApplication#Req: APP_ENDPOINT
+ ()                               #  - only PlatformApplicationArn
+                                  #Res: Endpoints APP_ENDPOINT_ARR
+                                  #  - only EndpointArn, Attributes
+GetEndpointAttributes()           #Req: APP_ENDPOINT
+                                  #  - only Attributes
+                                  #  - CustomUserData|Token -> Attributes.*
+                                  #Res: empty
+DeleteEndpoint()                  #Req: APP_ENDPOINT
+                                  #  - only EndpointArn
+                                  #Res: empty
+
+                                  ┌──────────────────┐
+                                  │   APP PLATFORM   │
+                                  └──────────────────┘
+
+APP_ENDPOINT|APP_PLATFORM
+ .PlatformApplicationArn          #
+APP_PLATFORM.Name                 #
+APP_PLATFORM.Attributes           #APP_PLATFORM_ATTRS
+
+APP_PLATFORM.Platform             #
+
+APP_PLATFORM_ATTRS
+ .PlatformCredential              #
+APP_PLATFORM_ATTRS
+ .PlatformPrincipal               #
+
+APP_PLATFORM_ATTRS
  .AppleCertificateExpiryDate      #
-APP_ATTRS.ApplePlatformTeamID     #
-APP_ATTRS.ApplePlatformBundleID   #
+APP_PLATFORM_ATTRS
+ .ApplePlatformTeamID             #
+APP_PLATFORM_ATTRS
+ .ApplePlatformBundleID           #
 
-APP_ATTRS.AuthenticationMethod    #
+APP_PLATFORM_ATTRS
+ .AuthenticationMethod            #
 
-APP_ATTRS.EventEndpointCreated    #
-APP_ATTRS.EventEndpointDeleted    #
-APP_ATTRS.EventEndpointUpdated    #
-APP_ATTRS.EventDeliveryFailure    #
+APP_PLATFORM_ATTRS
+ .EventEndpointCreated            #
+APP_PLATFORM_ATTRS
+ .EventEndpointDeleted            #
+APP_PLATFORM_ATTRS
+ .EventEndpointUpdated            #
+APP_PLATFORM_ATTRS
+ .EventDeliveryFailure            #
 
 TOPIC_ATTRS.Application
  SuccessFeedbackRoleArn           #???
@@ -587,79 +651,41 @@ TOPIC_ATTRS.Application
 TOPIC_ATTRS.Application
  FailureFeedbackRoleArn           #???
 
-APP_ATTRS.SuccessFeedbackRoleArn
-APP_ATTRS
+APP_PLATFORM_ATTRS
+ .SuccessFeedbackRoleArn
+APP_PLATFORM_ATTRS
  .SuccessFeedbackSampleRate
-APP_ATTRS.FailureFeedbackRoleArn  #Same as TOPIC_ATTRS???
+APP_PLATFORM_ATTRS
+ .FailureFeedbackRoleArn          #Same as TOPIC_ATTRS???
 
-                                  ┌───────────────────┐
-                                  │   APP MAIN AUTH   │
-                                  └───────────────────┘
+                                  ┌───────────────────────┐
+                                  │   APP PLATFORM AUTH   │
+                                  └───────────────────────┘
 
-PACTION iam:PassRole              #Required with APP_ATTRS.*FeedbackRoleArn???
+PACTION iam:PassRole              #Required with APP_PLATFORM_ATTRS.*FeedbackRoleArn???
 
-                                  ┌──────────────────┐
-                                  │   APP MAIN API   │
-                                  └──────────────────┘
+                                  ┌──────────────────────┐
+                                  │   APP PLATFORM API   │
+                                  └──────────────────────┘
 
-CreatePlatformApplication()       #Req: APP
+CreatePlatformApplication()       #Req: APP_PLATFORM
                                   #  - no PlatformApplicationArn
                                   #  - Attributes: no AppleCertificateExpiryDate, AuthenticationMethod,
                                   #    *FeedbackRoleArn, SuccessFeedbackSampleRate
-                                  #Res: APP
+                                  #Res: APP_PLATFORM
                                   #  - only PlatformApplicationArn
-SetPlatformApplicationAttributes()#Req: APP
+SetPlatformApplicationAttributes()#Req: APP_PLATFORM
                                   #  - only PlatformApplicationArn, Attributes
                                   #  - Attributes: no AppleCertificateExpiryDate, AuthenticationMethod,
                                   #    *FeedbackRoleArn, SuccessFeedbackSampleRate
                                   #Res: empty
 ListPlatformApplications()        #Req: empty
-                                  #Res: PlatformApplications APP_ARR
+                                  #Res: PlatformApplications APP_PLATFORM_ARR
                                   #  - only PlatformApplicationArn, Attributes
-GetPlatformApplicationAttributes()#Req: APP
+GetPlatformApplicationAttributes()#Req: APP_PLATFORM
                                   #  - only PlatformApplicationArn
-                                  #Res: APP
+                                  #Res: APP_PLATFORM
                                   #  - only Attributes: no PlatformCredential, PlatformPrincipal
-DeletePlatformApplication()       #Req: APP
+DeletePlatformApplication()       #Req: APP_PLATFORM
                                   #  - only PlatformApplicationArn
-                                  #Res: empty
-
-                                  ┌──────────────────┐
-                                  │   APP ENDPOINT   │
-                                  └──────────────────┘
-
-SUB.Endpoint
-ENDPOINT.EndpointArn              #'ENDPOINT_ARN'
-ENDPOINT.PlatformApplicationArn   #
-ENDPOINT.Attributes               #ENDPOINT_ATTRS
-
-MESSAGE.TargetArn                 #
-
-ENDPOINT_ATTRS.Enabled            #
-
-ENDPOINT.Token                    #
-ENDPOINT.CustomUserData           #
-
-                                  ┌──────────────────────┐
-                                  │   APP ENDPOINT API   │
-                                  └──────────────────────┘
-
-CreatePlatformEndpoint()          #Req: ENDPOINT
-                                  #  - no EndpointArn
-                                  #Res: ENDPOINT
-                                  #  - only EndpointArn
-SetEndpointAttributes()           #Req: ENDPOINT
-                                  #  - only EndpointArn, Attributes
-                                  #  - CustomUserData|Token -> Attributes.*
-                                  #Res: empty
-ListEndpointsByPlatformApplication#Req: ENDPOINT
- ()                               #  - only PlatformApplicationArn
-                                  #Res: Endpoints ENDPOINT_ARR
-                                  #  - only EndpointArn, Attributes
-GetEndpointAttributes()           #Req: ENDPOINT
-                                  #  - only Attributes
-                                  #  - CustomUserData|Token -> Attributes.*
-                                  #Res: empty
-DeleteEndpoint()                  #Req: ENDPOINT
-                                  #  - only EndpointArn
                                   #Res: empty
