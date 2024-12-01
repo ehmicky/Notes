@@ -201,85 +201,13 @@ UntagResource()                   #Req: TOPIC_TAGS
 
 AWS::SNS::Topic                   #Includes RESPROPs: Tags TAG_PAIRS
 
-                                  ┌──────────────┐
-                                  │   NON-FIFO   │
-                                  └──────────────┘
-
-ORDER ==>                         #Best effort, might be out-of-order
-
-DOUBLE PROCESSING ==>             #Sometimes, a MESSAGE might be delivered to a SUB more than once
-                                  #I.e. processing should be idempotent
-                                  #Not if FIFO
-
-                                  ┌──────────┐
-                                  │   FIFO   │
-                                  └──────────┘
-
-TOPIC_ATTRS.FifoTopic             #BOOL (def: false). Whether is FIFO TOPIC
-                                  #'TOPIC' must end with '.fifo'
-                                  #Everything in this section is only for FIFO
-
-ORDER ==>                         #Ensures that receiving order is same as sending order
-
-MESSAGE.MessageGroupId            #'MESSAGE_GROUP_ID'. FIFO ordering applies per-MESSAGE_GROUP
-                                  #I.e. MESSAGE_GROUPs are interleaved
-                                  #High NUM of MESSAGE_GROUPs has better performance
-                                  #Required
-                                  #Max 128 chars, [:graph:]
-                                  #No limits on NUM of MESSAGE_GROUPs
-MESSAGE_RES.SequenceNumber        #'NUM'. Increases monotonically (but not consecutively) per MESSAGE within a given MESSAGE_GROUP
-                                  #Always 16 chars
-
-MESSAGE.MessageDeduplicationId    #'MESSAGE_DID'. If 2 Publish() with the same MESSAGE_DID are sent:
-                                  #  - within 5m
-                                  #  - then only the first successful one is used
-                                  #I.e. avoid double sending
-                                  #Required
-                                  #Max 128 chars, [:graph:]
-TOPIC_ATTRS
- .ContentBasedDeduplication       #BOOL (def: false). Make MESSAGE_DID default to SHA-256 of 'MESSAGE_BODY'
-
-                                  ┌──────────────┐
-                                  │   FIFO IAC   │
-                                  └──────────────┘
-
-AWS::SNS::Topic                   #Includes RESPROPs: FifoTopic, ContentBasedDeduplication
-
-CTOPIC[_OPTS].fifo                #TOPIC_ATTRS.FifoTopic
-                                  #Automatically appends '.fifo' to 'TOPIC'
-CTOPIC[_OPTS]
- .contentBasedDeduplication       #TOPIC_ATTRS.ContentBasedDeduplication
-
-                                  ┌─────────────────┐
-                                  │   FIFO REPLAY   │
-                                  └─────────────────┘
-
-TOPIC_ATTRS.ArchivePolicy         #NUM (in days, min|def 0, max 1y).
- .MessageRetentionPeriod          #Stores MESSAGEs, in order to replay them
-TOPIC_ATTRS.BeginningArchiveTime  #DATE_NUM. Earliest time to replay from, based on MessageRetentionPeriod
-
-SUB_ATTRS.ReplayPolicy            #'REPLAY_JSON'. Re-send MESSAGEs stored in TOPIC
-REPLAY.PointType                  #Always 'Timestamp'
-REPLAY.StartingPoint              #'DATE'
-REPLAY.EndingPoint                #'DATE' (def: now)
-
-SUB_ATTRS.ReplayStatus            #'Pending', 'In progress', 'Completed' or 'Failed'
-
-                                  ┌─────────────────────┐
-                                  │   FIFO REPLAY IAC   │
-                                  └─────────────────────┘
-
-AWS::SNS::Topic                   #Includes RESPROPs: ArchivePolicy, ReplayPolicy OBJ
-
-CTOPIC_OPTS
- .messageRetentionPeriodInDays    #TOPIC_ATTRS.ArchivePolicy.MessageRetentionPeriod
-
                                   ┌──────────────────┐
                                   │   SUBSCRIPTION   │
                                   └──────────────────┘
 
 SUB                               #Forwards MESSAGEs to an endpoint
                                   #Must be same ACCOUNT|REGION as TOPIC
+                                  #Can be multiple per TOPIC ("Fanout")
                                   #Max 12.5e6 (soft) per non-FIFO TOPIC, 100 (soft) per FIFO TOPIC
 SUB.SubscriptionArn               #'SUB_ARN'. 'TOPIC_ARN:SUB_MID'
 SUB.TopicArn                      #'TOPIC_ARN'
@@ -288,6 +216,7 @@ SUB.Attributes                    #SUB_ATTRS
 SUB.Protocol                      #'PROTOCOL':
                                   #  - "A2A" (Application-to-application): HTTP, Lambda, SQS, Kinesis
                                   #  - "A2P" (Application-to-person): email, SMS, push
+                                  #     - "custom-managed": A2P or HTTP
                                   #Each documented below
 SUB.Endpoint                      #PROTOCOL-specific destination, defined below
 
@@ -359,6 +288,8 @@ CTOPIC.grantSubscribe(YGRANTABLE)
 
 SUB_CONFIRM                       #Confirms SUB creation
                                   #Whether used or not is PROTOCOL-specific (each documented below)
+                                  #Cannot delete SUB while pending
+                                  #Delete SUB after 2 days if no SUB_CONFIRM
                                   #Max 5e3 (soft) pending SUB_CONFIRMs per ACCOUNT
 SUB_CONFIRM.TopicArn              #'TOPIC_ARN'
 
@@ -380,7 +311,6 @@ SUB_ATTRS
  .ConfirmationWasAuthenticated    #BOOL. Whether SUB_CONFIRM was authenticated
 
 NOTIFICATION.Token                #STR. Only set if NOTIFICATION.Type '*Confirmation'
-                                  #Expires after 2 days
 SUB_CONFIRM.Token                 #NOTIFICATION.Token. Authenticate anonymous ConfirmSubscription()
                                   #Not used by Unsubscribe()
                                   #  - however, forging requires knowing TOPIC_MID, ACCOUNT_ID and REGION
@@ -545,13 +475,13 @@ MESSAGE THROTTLING ==>            #Max MESSAGEs per second to each TOPIC
                                   #Is:
                                   #  - same REGION: 30000|9000|1500|300 (REGION-specific, soft) and 20MB/s
                                   #  - cross-REGIONs: 1000 (soft) and 6MB/s
+                                  #  - FIFO SQS: 300/s per MESSAGE_GROUP
                                   #  - SMS: 20 (soft)
                                   #  - email: 10
 
-DELIVERY_POLICY                   #NUM (def: unlimited). Max NOTIFICATIONs per second from TOPIC to this SUB
- .defaultThrottlePolicy           #If too low, can create a backlog of MESSAGEs available in TOPIC but not sent to SUB
- .maxReceivesPerSecond            #  - dropped after 1h???
-DELIVERY_POLICY.throttlePolicy    #Same but when using SUB_ATTRS.DeliveryPolicy (as opposed to TOPIC_ATTRS.DeliveryPolicy)
+DELIVERY_POLICY.throttlePolicy    #NUM (def: unlimited). Max NOTIFICATIONs per second from TOPIC to this SUB
+ .maxReceivesPerSecond            #If too low, can create a backlog of MESSAGEs available in TOPIC but not sent to SUB
+                                  #  - dropped after 1h???
 
                                   ┌──────────────────┐
                                   │   THROTTLE IAC   │
@@ -600,15 +530,20 @@ TOPIC_ATTRS|SUB_ATTRS
  .EffectiveDeliveryPolicy         #Same but also shows default values
 DELIVERY_POLICY.PROTOCOL          #PDELIVERY_POLICY
                                   #Only allowed PROTOCOL is 'http'. Other PROTOCOLs always use the default value
-DELIVERY_POLICY                   #BOOL (def: true). Ignores SUB_ATTRS.DeliveryPolicy, i.e. only use TOPIC_ATTRS.DeliveryPolicy
+
+DELIVERY_POLICY.default*          #Instead of DELIVERY_POLICY.* when using TOPIC_ATTRS.DeliveryPolicy (as opposed to SUB_ATTRS.DeliveryPolicy)
+DELIVERY_POLICY                   #BOOL (def: false). Ignores SUB_ATTRS.DeliveryPolicy, i.e. only use TOPIC_ATTRS.DeliveryPolicy
  .disableSubscriptionOverrides    #Seems to be undocumented
 
 DELIVERY_POLICY.healthyRetryPolicy#RETRY_POLICY. How to retry when fail to send NOTIFICATIONs from TOPIC to SUB
                                   #NOTIFICATION is considered failed once no more retries
                                   #Retries "server-side errors":
-                                  #  - reached endpoint but 5** response
+                                  #  - could not reach endpoint
+                                  #  - 5** response
                                   #Does not retry "client-side errors":
-                                  #  - could not reach endpoint (e.g. deleted endpoint, auth)
+                                  #  - invalid API call
+                                  #     - including no endpoint (e.g. deleted QUEUE)
+                                  #  - AWS auth error
                                   #  - 4** response
 RETRY_POLICY.minDelayTarget       #NUM (in secs, min 1). Retry start delay
                                   #Def 20s with HTTP, 10s with email|SMS|APP, 1s else
@@ -734,7 +669,7 @@ MESSAGE.MessageStructure          #If 'json' (def: undefined), MESSAGE_BODY is '
 
 MESSAGE
  .MessageAttributes.MESSAGE_ATTR  #ATTR_VALUE. Custom metadata
-ATTR_VALUE.DataType               #Value's type among 'String', 'String.Array', 'Number.Array' or 'Binary'
+ATTR_VALUE.DataType               #Value's type among 'String[.Array]', 'Number[.Array]' or 'Binary'
                                   #Can append with any '.DESCRIPTION', e.g. 'Number.float', max 256 chars
 ATTR_VALUE.StringValue            #STR. Value, when DataType 'String[.Array]|Number[.Array]'
                                   #'NUM' must be single-precision float
@@ -744,7 +679,13 @@ ATTR_VALUE.BinaryValue            #STR. Value, when DataType 'Binary'
                                   #Must be base64'd
 
 DATA REDUNDANCY ==>               #MESSAGEs are replicated on multiple AZs
-                                  #Fot both FIFO and non-FIFO
+
+ORDER ==>                         #Best effort, might be out-of-order
+                                  #Not with SQS FIFO
+
+DOUBLE PROCESSING ==>             #Sometimes, a MESSAGE might be delivered to a SUB more than once
+                                  #I.e. processing should be idempotent
+                                  #Not with SQS FIFO
 
                                   ┌─────────────────┐
                                   │   MESSAGE API   │
@@ -1050,7 +991,9 @@ TOPIC_ATTRS.Policy                #IAM 'POLICY_DOC'. TOPIC_POLICY
                                   #  - this can worked around using either:
                                   #     - COND_KEY aws:PrincipalArn or aws:SourceArn|SourceAccount
                                   #     - identity-level POLICY instead
-                                  #Def: empty
+                                  #Def:
+                                  #  - allows PACTIONs sns:DeleteTopic|*TopicAttributes sns:Subscribe|ListsubscriptionsByTopic, sns:Publish, sns:*Permission
+                                  #  - for any principal in current ACCOUNT: using Principal.AWS '*' + COND_KEY aws::SourceOwner 'ACCOUNT_ID'
 
 PERMISSION                        #Sets TOPIC_ATTRS.Policy
                                   #POLICY_DOC.Id is 'arn:aws:sqs:REGION:ACCOUNT_ID/TOPIC/SNSDefaultPolicy'
@@ -1387,6 +1330,59 @@ AWS::Serverless::Connector        #Can be used with:
                                   └──────────────────┘
 
 TOPIC ENHANCEMENT COMPONENT ==>   #Can connect to SQS enhanced component to create SUB
+
+                                  ┌──────────────┐
+                                  │   SQS FIFO   │
+                                  └──────────────┘
+
+TOPIC_ATTRS.FifoTopic             #BOOL (def: false). Whether is FIFO TOPIC
+                                  #'TOPIC' must end with '.fifo'
+                                  #Only with SQS
+                                  #QUEUE can be FIFO or not
+
+ORDER ==>                         #Ensures that receiving order is same as sending order
+
+MESSAGE.MessageGroupId
+MESSAGE_RES.SequenceNumber
+MESSAGE.MessageDeduplicationId
+TOPIC_ATTRS
+ .ContentBasedDeduplication       #Like SQS
+
+                                  ┌──────────────────┐
+                                  │   SQS FIFO IAC   │
+                                  └──────────────────┘
+
+AWS::SNS::Topic                   #Includes RESPROPs: FifoTopic, ContentBasedDeduplication
+
+CTOPIC[_OPTS].fifo                #TOPIC_ATTRS.FifoTopic
+                                  #Automatically appends '.fifo' to 'TOPIC'
+CTOPIC[_OPTS]
+ .contentBasedDeduplication       #TOPIC_ATTRS.ContentBasedDeduplication
+
+                                  ┌────────────────┐
+                                  │   SQS REPLAY   │
+                                  └────────────────┘
+
+TOPIC_ATTRS.ArchivePolicy         #NUM (in days, min|def 0, max 1y).
+ .MessageRetentionPeriod          #Stores MESSAGEs, in order to replay them
+                                  #Only with FIFO
+TOPIC_ATTRS.BeginningArchiveTime  #DATE_NUM. Earliest time to replay from, based on MessageRetentionPeriod
+
+SUB_ATTRS.ReplayPolicy            #'REPLAY_JSON'. Re-send MESSAGEs stored in TOPIC
+REPLAY.PointType                  #Always 'Timestamp'
+REPLAY.StartingPoint              #'DATE'
+REPLAY.EndingPoint                #'DATE' (def: now)
+
+SUB_ATTRS.ReplayStatus            #'Pending', 'In progress', 'Completed' or 'Failed'
+
+                                  ┌────────────────────┐
+                                  │   SQS REPLAY IAC   │
+                                  └────────────────────┘
+
+AWS::SNS::Topic                   #Includes RESPROPs: ArchivePolicy, ReplayPolicy OBJ
+
+CTOPIC_OPTS
+ .messageRetentionPeriodInDays    #TOPIC_ATTRS.ArchivePolicy.MessageRetentionPeriod
 
                                   ┌─────────────┐
                                   │   KINESIS   │
@@ -1748,7 +1744,7 @@ APP_PLATFORM_ATTRS                #Either:
                                   │   APP PLATFORM CHINA   │
                                   └────────────────────────┘
 
-APP_PLATFORM.Platform             #'Baidu' (Baidu Cloud Push)
+APP_PLATFORM.Platform             #'BAIDU' (Baidu Cloud Push)
                                   #For Android in China
 APP_PLATFORM_ATTRS
  .PlatformPrincipal               #Public API key
@@ -1848,3 +1844,30 @@ DVAR Platform                     #'APP_PLATFORM_TYPE'
                                   └───────────┘
 
 goaws                             #See its doc
+
+MESSAGE_ATTRS.AWS.SNS.MOBILE
+ .APP_PLATFORM_TYPE               #MMESSAGE
+
+MMESSAGE.TTL                      #???
+                                  #Also for APP_PLATFORM_TYPE:
+                                  #  - APNS_MDM|APNS_PASSBOOK|APNS_VOIP[_SANDBOX]
+                                  #  - MACOS[_SANDBOX]
+
+MMESAGE.DeployStatus
+MMESAGE.MessageKey
+MMESAGE.MessageType               #Only with Baidu???
+
+MMESSAGE.COLLAPSE_ID
+MMESSAGE.PRIORITY
+MMESSAGE.PUSH_TYPE
+MMESSAGE.TOPIC                    #Only with Apple???
+
+MMESAGE.NotificationClass
+MMESAGE.Type                      #Only with Windows phone???
+
+MMESSAGE.CachePolicy
+MMESSAGE.Group
+MMESSAGE.Match
+MMESSAGE.SuppressPopup
+MMESSAGE.Tag
+MMESSAGE.Type                     #Only with Windows desktop???
