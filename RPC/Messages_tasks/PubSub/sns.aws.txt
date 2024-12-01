@@ -50,8 +50,10 @@ PAGINATION ==>                    #Uses REQ|RES.NextToken
                                   #No pagination: ListTagsForResource()
                                   #Others: page size always 100
 
-THROTTLING ==>                    #30/s: ListTopics(), ListSubscriptions[ByTopic](), ListEndpointsByPlatformApplication()
+THROTTLING ==>                    #100/s: Subscribe()
+                                  #30/s: ListTopics(), ListSubscriptions[ByTopic](), ListEndpointsByPlatformApplication()
                                   #15/s: ListPlatformApplications()
+                                  #10/s: *Tag*()
 
                                   ┌───────────┐
                                   │   TOPIC   │
@@ -141,6 +143,9 @@ TOPIC_ATTRS
 TOPIC_ATTRS.ArchivePolicy         #STR. Retention period???
 TOPIC_ATTRS.BeginningArchiveTime  #DATE_NUM. Earliest time to replay from, based on retention???
 
+SUB_ATTRS.ReplayPolicy            #STR. Replay MESSAGEs stored in TOPIC???
+SUB_ATTRS.ReplayStatus            #'Pending', 'In progress', 'Completed' or 'Failed'
+
                                   ┌──────────────────┐
                                   │   SUBSCRIPTION   │
                                   └──────────────────┘
@@ -149,23 +154,13 @@ SUB.SubscriptionArn               #
 SUB.TopicArn                      #
 SUB.Attributes                    #SUB_ATTRS
 
-SUB.Protocol                      #
-SUB.Endpoint                      #
+SUB.Protocol                      #'PROTOCOL'. All valid values are documented below
+SUB.Endpoint                      #Destination. PROTOCOL-specific, defined below
 
-SUB_ATTRS.DeliveryPolicy          #
-SUB_ATTRS.EffectiveDeliveryPolicy #
+SUB_ATTRS.FilterPolicy            #'FILTER_JSON'. Filter which MESSAGEs to receive???
+SUB_ATTRS.FilterPolicyScope       #Whether FILTER is applied on 'MessageAttributes' (def) or 'MessageBody'
 
-SUB_ATTRS.FilterPolicy            #
-SUB_ATTRS.FilterPolicyScope       #
-
-SUB_ATTRS.RawMessageDelivery      #
-
-SUB_ATTRS.RedrivePolicy           #
-
-SUB_ATTRS.ReplayPolicy            #
-SUB_ATTRS.ReplayStatus            #
-
-SUB_ATTRS.SubscriptionRoleArn     #
+SUB_ATTRS.RedrivePolicy           #VAL. Sends failed MESSAGEs to SQS DLQ???
 
 TOPIC_ATTRS.SubscriptionsDeleted  #NUM of Unsubscribe()
 
@@ -209,9 +204,13 @@ Unsubscribe()                     #Req: SUB
                                   │   CONFIRM   │
                                   └─────────────┘
 
+SUB_CONFIRM                       #Required if both:
+                                  #  - HTTP|email
+                                  #  - TOPIC and endpoint are in different ACCOUNTs
 SUB_CONFIRM.TopicArn              #
 
 SUB_CONFIRM.Token                 #
+                                  #Expires after 2d
 
 SUB_CONFIRM
  .AuthenticateOnUnsubscribe       #
@@ -368,6 +367,9 @@ GetDataProtectionPolicy()         #Req: TOPIC
                                   │   HTTP   │
                                   └──────────┘
 
+SUB.Protocol                      #'http[s]'. Send using HTTP request, with POST
+SUB.Endpoint                      #'URL' to send to
+
 TOPIC_ATTRS
  .HTTPSuccessFeedbackRoleArn      #ROLE_ARN used to generate CloudWatch Logs???
 TOPIC_ATTRS
@@ -375,14 +377,19 @@ TOPIC_ATTRS
 TOPIC_ATTRS
  .HTTPFailureFeedbackRoleArn      #ROLE_ARN used to generate CloudWatch Logs???
 
-TOPIC_ATTRS.DeliveryPolicy        #STR. How to retry on failure???
-                                  #Only with HTTP
-TOPIC_ATTRS
+TOPIC_ATTRS|SUB_ATTRS             #STR. How to retry on failure???
+ .DeliveryPolicy                  #Only with HTTP
+TOPIC_ATTRS|SUB_ATTRS
  .EffectiveDeliveryPolicy         #Same but adds default values???
+
+SUB_ATTRS.RawMessageDelivery      #BOOL (def: false). No need to process JSON???
 
                                   ┌────────────┐
                                   │   LAMBDA   │
                                   └────────────┘
+
+SUB.Protocol                      #'lambda'. Send to a Lambda FUNCTION
+SUB.Endpoint                      #'FUNC_ARN'
 
 TOPIC_ATTRS
  .LambdaSuccessFeedbackRoleArn    #???
@@ -395,6 +402,9 @@ TOPIC_ATTRS
                                   │   SQS   │
                                   └─────────┘
 
+SUB.Protocol                      #'sqs'. Send to a SQS QUEUE
+SUB.Endpoint                      #'QUEUE_ARN'
+
 TOPIC_ATTRS
  .SQSSuccessFeedbackRoleArn       #???
 TOPIC_ATTRS
@@ -402,9 +412,14 @@ TOPIC_ATTRS
 TOPIC_ATTRS
  .SQSFailureFeedbackRoleArn       #???
 
+SUB_ATTRS.RawMessageDelivery      #Like above
+
                                   ┌─────────────┐
                                   │   KINESIS   │
                                   └─────────────┘
+
+SUB.Protocol                      #
+SUB.Endpoint                      #
 
 TOPIC_ATTRS
  .FirehoseSuccessFeedbackRoleArn  #???
@@ -413,9 +428,27 @@ TOPIC_ATTRS
 TOPIC_ATTRS
  .FirehoseFailureFeedbackRoleArn  #???
 
+SUB_ATTRS.SubscriptionRoleArn     #ROLE_ARN used to write to Firehose delivery stream
+                                  #Must be assumable by sns.amazonaws.com
+                                  #Current principal must have iam:PassRole
+
+                                  ┌───────────┐
+                                  │   EMAIL   │
+                                  └───────────┘
+
+SUB.Protocol                      #'email[-json]'. Send as email
+SUB.Endpoint                      #'EMAIL_ADDRESS'
+
+TOPIC_ATTRS.DisplayName           #'From' field in email
+
                                   ┌──────────────────┐
                                   │   SMS SETTINGS   │
                                   └──────────────────┘
+
+SUB.Protocol                      #'sms'. Send an SMS
+SUB.Endpoint                      #'PHONE_NUMBER'
+
+TOPIC_ATTRS.DisplayName           #'From' field in SMS
 
 SMS_SETTINGS.attributes           #
 SMS_ATTRS.MonthlySpendLimit       #
@@ -446,8 +479,6 @@ SMS_SENDER.NumberCapabilities     #
 SMS_SENDER.PhoneNumber            #
 SMS_SENDER.RouteType              #
 SMS_SENDER.Status                 #
-
-TOPIC_ATTRS.DisplayName           #'From' field in SMS and email???
 
                                   ┌────────────────────┐
                                   │   SMS SENDER API   │
@@ -511,6 +542,8 @@ DeleteSMSSandboxPhoneNumber()     #Req: SMS_SANDBOX
                                   ┌──────────────┐
                                   │   APP MAIN   │
                                   └──────────────┘
+
+SUB.Protocol                      #'application'. Send as a mobile app push notification
 
 APP.PlatformApplicationArn        #
 APP.Name                          #
@@ -581,7 +614,8 @@ DeletePlatformApplication()       #Req: APP
                                   │   APP ENDPOINT   │
                                   └──────────────────┘
 
-ENDPOINT.EndpointArn              #
+SUB.Endpoint
+ENDPOINT.EndpointArn              #'ENDPOINT_ARN'
 ENDPOINT.PlatformApplicationArn   #
 ENDPOINT.Attributes               #ENDPOINT_ATTRS
 
