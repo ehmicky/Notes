@@ -402,13 +402,6 @@ GetDataProtectionPolicy()         #Req: TOPIC
 SUB.Protocol                      #'http[s]'. Send using HTTP request, with POST
 SUB.Endpoint                      #'URL' to send to
 
-TOPIC_ATTRS
- .HTTPSuccessFeedbackRoleArn      #ROLE_ARN used to generate CloudWatch Logs???
-TOPIC_ATTRS
- .HTTPSuccessFeedbackSampleRate   #0-100. Percentage of MESSAGEs to log???
-TOPIC_ATTRS
- .HTTPFailureFeedbackRoleArn      #ROLE_ARN used to generate CloudWatch Logs???
-
 TOPIC_ATTRS|SUB_ATTRS             #'DELIVERY_POLICY_JSON'. How to retry on failure???
  .DeliveryPolicy                  #Only with HTTP
 TOPIC_ATTRS|SUB_ATTRS
@@ -426,6 +419,13 @@ RETRY_POLICY.numMaxDelayRetries   #NUM
 RETRY_POLICY.backoffFunction      #One of 'linear', 'arithmetic', 'geometric', 'exponential'
 
 SUB_ATTRS.RawMessageDelivery      #BOOL (def: false). No need to process JSON???
+
+TOPIC_ATTRS
+ .HTTPSuccessFeedbackRoleArn      #ROLE_ARN used to generate CloudWatch Logs???
+TOPIC_ATTRS                       #0-100. Percentage of successful MESSAGEs to log???
+ .HTTPSuccessFeedbackSampleRate   #Failed MESSAGEs are always logged
+TOPIC_ATTRS
+ .HTTPFailureFeedbackRoleArn      #ROLE_ARN used to generate CloudWatch Logs???
 
                                   ┌────────────┐
                                   │   LAMBDA   │
@@ -448,14 +448,14 @@ TOPIC_ATTRS
 SUB.Protocol                      #'sqs'. Send to a SQS QUEUE
 SUB.Endpoint                      #'QUEUE_ARN'
 
+SUB_ATTRS.RawMessageDelivery      #Like above
+
 TOPIC_ATTRS
  .SQSSuccessFeedbackRoleArn       #???
 TOPIC_ATTRS
  .SQSSuccessFeedbackSampleRate    #???
 TOPIC_ATTRS
  .SQSFailureFeedbackRoleArn       #???
-
-SUB_ATTRS.RawMessageDelivery      #Like above
 
                                   ┌─────────────┐
                                   │   KINESIS   │
@@ -464,16 +464,16 @@ SUB_ATTRS.RawMessageDelivery      #Like above
 SUB.Protocol                      #'firehose'. Send to Kinesis Firehose delivery stream
 SUB.Endpoint                      #'DELIVERY_STREAM_ARN'
 
+SUB_ATTRS.SubscriptionRoleArn     #ROLE_ARN used to write to Firehose delivery stream
+                                  #Must be assumable by sns.amazonaws.com
+                                  #Current principal must have iam:PassRole
+
 TOPIC_ATTRS
  .FirehoseSuccessFeedbackRoleArn  #???
 TOPIC_ATTRS
 .FirehoseSuccessFeedbackSampleRate#???
 TOPIC_ATTRS
  .FirehoseFailureFeedbackRoleArn  #???
-
-SUB_ATTRS.SubscriptionRoleArn     #ROLE_ARN used to write to Firehose delivery stream
-                                  #Must be assumable by sns.amazonaws.com
-                                  #Current principal must have iam:PassRole
 
                                   ┌───────────┐
                                   │   EMAIL   │
@@ -494,20 +494,47 @@ SUB.Protocol                      #'sms'. Send an SMS
 SUB.Endpoint                      #'PHONE_NUMBER'
                                   #E.164 format, i.e. use + followed by multiple digits
 MESSAGE.PhoneNumber               #'PHONE_NUMBER', specified instead of MESSAGE.TopicArn
+                                  #I.e. send a MESSAGE without using a TOPIC
 
-TOPIC_ATTRS.DisplayName           #'From' field in SMS
+SMS_SETTINGS.attributes           #SMS_ATTRS
+SMS_ATTRS.DefaultSenderID         #STR. Sender field
+                                  #Max 11 chars, [:alnum:] (at least one letter)
+TOPIC_ATTRS.DisplayName           #SMS title???
 MESSAGE.Message                   #STR. SMS contents
-                                  #Each 140 ASCII (or 70 UTF-16) chars (cut at whitespaces) create a separate SMS
+                                  #Each 140 ASCII (or 70 UTF-16) chars (cut at whitespaces) create a separate part
                                   #Max 1600 chars
 
-SMS_SETTINGS.attributes           #
-SMS_ATTRS.MonthlySpendLimit       #
-SMS_ATTRS.DeliveryStatusIAMRole   #
+SMS_ATTRS.DefaultSMSType          #Either:
+                                  #  - 'Promotional' (def): marketing, cheaper
+                                  #  - 'Transactional': application, more reliable
+                                  #  - 'Premium'???
+
+SMS_ATTRS.MonthlySpendLimit       #Max NUM of USD to spend
+                                  #Def: undocumented???
+
+SMS_ATTRS.UsageReportS3Bucket     #'BUCKET'. Logs successful MESSAGEs as an OBJECT
+                                  #Once per day
+                                  #Is a CSV file with MESSAGE rows and SMS_USAGE columns
+SMS_USAGE[0]                      #DATE_NUM
+SMS_USAGE[1]                      #MESSAGE_MID
+SMS_USAGE[2]                      #'PHONE_NUMBER'
+SMS_USAGE[3]                      #SMS_ATTRS.DefaultSMSType
+SMS_USAGE[4]                      #STR. Delivery status???
+SMS_USAGE[5]                      #NUM. Price in USD
+SMS_USAGE[6]                      #NUM. Part number
+SMS_USAGE[7]                      #NUM. Total number of parts
+
+SMS_ATTRS.DeliveryStatusIAMRole
 SMS_ATTRS
-.DeliveryStatusSuccessSamplingRate#
-SMS_ATTRS.DefaultSenderID         #
-SMS_ATTRS.DefaultSMSType          #
-SMS_ATTRS.UsageReportS3Bucket     #
+.DeliveryStatusSuccessSamplingRate#Like above???
+
+                                  ┌───────────────────────┐
+                                  │   SMS SETTINGS AUTH   │
+                                  └───────────────────────┘
+
+PACTION s3:ListBucket             #For SMS_ATTRS.UsageReportS3Bucket, must be allowed:
+ |GetBucketLocation|PutObject     #  - on Resource BUCKET_ARN
+                                  #  - for Principal.Service sns.amazonaws.com
 
                                   ┌──────────────────────┐
                                   │   SMS SETTINGS API   │
@@ -523,12 +550,14 @@ GetSMSAttributes()                #Req: SMS_SETTINGS
                                   │   SMS SENDER   │
                                   └────────────────┘
 
-SMS_SENDER.CreatedAt              #
-SMS_SENDER.Iso2CountryCode        #
-SMS_SENDER.NumberCapabilities     #
-SMS_SENDER.PhoneNumber            #
-SMS_SENDER.RouteType              #
-SMS_SENDER.Status                 #
+SMS_SENDER                        #Phone number used when sending SMS
+SMS_SENDER.CreatedAt              #DATE_NUM
+SMS_SENDER.PhoneNumber            #'PHONE_NUMBER'
+
+SMS_SENDER.Iso2CountryCode        #'COUNTRY_CODE' (2 chars, ISO 3166-1 alpha-2)
+SMS_SENDER.NumberCapabilities     #STR_ARR among 'SMS', 'MMS', 'VOICE'
+SMS_SENDER.RouteType              #SMS_ATTRS.DefaultSMSType
+SMS_SENDER.Status                 #'ACTIVE' or 'INACTIVE'
 
                                   ┌────────────────────┐
                                   │   SMS SENDER API   │
@@ -537,55 +566,64 @@ SMS_SENDER.Status                 #
 ListOriginationNumbers()          #Req: empty
                                   #Res: PhoneNumbers SMS_SENDER_ARR
 
-                                  ┌──────────────────┐
-                                  │   SMS RECEIVER   │
-                                  └──────────────────┘
+                                  ┌───────────────┐
+                                  │   SMS BLOCK   │
+                                  └───────────────┘
 
-SMS_RECEIVER.phoneNumber          #'PHONE_NUMBER'
-SMS_RECEIVER.isOptedOut           #
+SMS_BLOCK.phoneNumber             #'PHONE_NUMBER'
+SMS_BLOCK.isOptedOut              #BOOL. Whether PHONE_NUMBER blocked our number
+                                  #Can be set from false to true, but only once per PHONE_NUMER per 30 days
 
-                                  ┌──────────────────────┐
-                                  │   SMS RECEIVER API   │
-                                  └──────────────────────┘
+                                  ┌───────────────────┐
+                                  │   SMS BLOCK API   │
+                                  └───────────────────┘
 
-OptInPhoneNumber()                #Req: SMS_RECEIVER
+OptInPhoneNumber()                #Req: SMS_BLOCK
                                   #  - no isOptedOut
                                   #Res: empty
 ListPhoneNumbersOptedOut()        #Req: empty
                                   #Res: phoneNumbers 'PHONE_NUMBER'_ARR
-CheckIfPhoneNumberIsOptedOut()    #Req: SMS_NUMBER
+CheckIfPhoneNumberIsOptedOut()    #Req: SMS_BLOCK
                                   #  - no isOptedOut
-                                  #Res: SMS_NUMBER
+                                  #Res: SMS_BLOCK
                                   #  - only isOptedOut
 
                                   ┌─────────────────┐
                                   │   SMS SANDBOX   │
                                   └─────────────────┘
 
-SMS_SANDBOX.PhoneNumber           #'PHONE_NUMBER'
-SMS_SANDBOX.LanguageCode          #
-SMS_SANDBOX.Status                #
-SMS_SANDBOX.IsInSandbox           #
-SMS_SANDBOX.OneTimePassword       #
+SMS SANDBOX ==>                   #ACCOUNT is initially in SMS sandbox
+                                  #Can only send to SMS_SANDBOX_RECEIVERs, i.e. requires confirmation from receivers
+                                  #Must first test using SMS_SANDBOX_RECEIVERs
+                                  #Then must create a AWS Support case to get out of SMS sandbox
+                                  #  - under "Service quota increase" > "SNS Text Messaging"
+
+SMS_SANDBOX_RECEIVER.PhoneNumber  #'PHONE_NUMBER'
+SMS_SANDBOX_RECEIVER              #STR. Token confirming creation
+ .OneTimePassword                 #Sent by CreateSMSSandboxPhoneNumber(), must be confirmed by VerifySMSSandboxPhoneNumber()
+                                  #5-8 digits
+SMS_SANDBOX_RECEIVER.LanguageCode #
+SMS_SANDBOX_RECEIVER.Status       #
+SMS_SANDBOX_RECEIVER.IsInSandbox  #
 
                                   ┌─────────────────────┐
                                   │   SMS SANDBOX API   │
                                   └─────────────────────┘
 
-CreateSMSSandboxPhoneNumber()     #Req: SMS_SANDBOX
+CreateSMSSandboxPhoneNumber()     #Req: SMS_SANDBOX_RECEIVER
                                   #  - no Status
                                   #Res: empty
-VerifySMSSandboxPhoneNumber()     #Req: SMS_SANDBOX
+VerifySMSSandboxPhoneNumber()     #Req: SMS_SANDBOX_RECEIVER
                                   #  - only PhoneNumber
                                   #  - only one with OneTimePassword
                                   #Res: empty
 ListSMSSandboxPhoneNumbers()      #Req: empty
-                                  #Res: PhoneNumbers SMS_SANDBOX_ARR
+                                  #Res: PhoneNumbers SMS_SANDBOX_RECEIVER_ARR
                                   #  - no LanguageCode
 GetSMSSandboxAccountStatus()      #Req: empty
-                                  #Res: SMS_SANDBOX
+                                  #Res: SMS_SANDBOX_RECEIVER
                                   #  - only one with IsInSandbox
-DeleteSMSSandboxPhoneNumber()     #Req: SMS_SANDBOX
+DeleteSMSSandboxPhoneNumber()     #Req: SMS_SANDBOX_RECEIVER
                                   #  - only PhoneNumber
                                   #Res: empty
 
@@ -597,6 +635,7 @@ SUB.Protocol                      #'application'. Send as a mobile app push noti
 SUB.Endpoint
 APP_ENDPOINT.EndpointArn          #'APP_ENDPOINT_ARN'
 MESSAGE.TargetArn                 #'APP_ENDPOINT_ARN', specified instead of MESSAGE.TopicArn
+                                  #I.e. send a MESSAGE without using a TOPIC
 APP_ENDPOINT.Attributes           #APP_ENDPOINT_ATTRS
 
 APP_ENDPOINT_ATTRS.Enabled        #
