@@ -660,8 +660,10 @@ cfn-lint I3013                    #Must explicitely set QUEUE_ATTRS.MessageReten
 
 QUEUE_ATTRS.DelaySeconds          #NUM (in secs, def: 0, max: 15m)
                                   #Period after MESSAGE sending when MESSAGE cannot be received
+                                  #Updates are applied on existing MESSAGEs with FIFO, but not with non-FIFO
 MESSAGE.DelaySeconds              #Same for individual MESSAGE
                                   #Not with FIFO QUEUEs
+                                  #Named "message timer"
 QUEUE_ATTRS.Approximate
  NumberOfMessagesDelayed          #NUM of delayed MESSAGEs
 
@@ -695,7 +697,11 @@ ICQUEUE.metricApproximateNumberOf
 QUEUE_ATTRS|MESSAGES_RCV          #NUM (min 0, def 30s, max 12h)
  |MESSAGE_VSB.VisibilityTimeout   #Locks MESSAGE for NUM secs after each ReceiveMessage()
                                   #During that time, any other ReceiveMessage() will not receive that MESSAGE
-                                  #Must be > duration to process the MESSAGE
+                                  #Must be > max duration to:
+                                  #  - resolve ReceiveMessage(), including:
+                                  #     - HTTP request timeout, e.g. SOPTS.requestTimeout or --cli-read-timeout
+                                  #     - throttling and retries
+                                  #  - process the MESSAGE
                                   #Used on both first ReceiveMessage() and any retry
 
 IN-FLIGHT MESSAGE ==>             #MESSAGE under VisibilityTimeout lock
@@ -709,6 +715,7 @@ PROCESSING SUCCESS ==>            #Must call DeleteMessage() to acknowledge succ
 PROCESSING EXTENSION ==>          #Can increase processing time with ChangeMessageVisibility()
                                   #It sets VisibilityTimeout from the time it is called
                                   #E.g. using the same VisibilityTimeout restarts it
+                                  #Max value is 12h - (time spent since ReceiveMessage())
 
 PROCESSING TIMEOUT ==>            #When VisibilityTimeout reached before DeleteMessage()
                                   #MESSAGE is considered failed ("poison pill")
@@ -951,8 +958,13 @@ QUEUE_ATTRS.MaximumMessageSize    #Is max size of whole BATCH
 MESSAGES_RCV_RES.Messages         #MESSAGE_RCV_RES_ARR
 MESSAGES_RCV.MaxNumberOfMessages  #NUM (min|def: 1, max|recommended: 10). Max size of MESSAGES_RCV_RES.Messages
                                   #Might receive less
-                                  #Might receive 0
-                                  #  - can happen even some MESSAGEs are stored, because randomly samples underlying AZs
+
+EMPTY RECEIVE ==>                 #Might receive 0
+                                  #Can happen even some MESSAGEs are stored:
+                                  #  - short polling: because randomly samples underlying AZs
+                                  #  - long polling: uses all underlying AZs so less likely
+                                  #     - however, can still happen if internal requests used by API timed out
+                                  #     - this is rare but more likely if WaitTimeSeconds is low
 
 FIFO ==>                          #Throttling limit is per API call, i.e. eased by batching
                                   #When sending a batch:
